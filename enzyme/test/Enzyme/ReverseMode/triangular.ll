@@ -65,7 +65,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: for.cond3.preheader:                              ; preds = %for.cond.cleanup6, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup6 ], [ 0, %entry ]
-; CHECK-NEXT:   %iv.next = add nuw i64 %iv, 1
+; CHECK-NEXT:   %iv.next = add nsw i64 %iv, 1
 ; CHECK-NEXT:   %[[mallocgep1:.+]] = getelementptr inbounds double*, double** %call_malloccache, i64 %iv
 ; CHECK-NEXT:   %[[mallocsize1:.+]] = mul nuw nsw i64 %iv.next, 8
 ; CHECK-NEXT:   %[[malloccall2:.+]] = tail call noalias nonnull i8* @malloc(i64 %[[mallocsize1]])
