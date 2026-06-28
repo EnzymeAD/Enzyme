@@ -19,7 +19,7 @@ config.name = 'Enzyme'
 # For now we require '&&' between commands, until they get globally killed and
 # the test runner updated.
 execute_external = platform.system() != 'Windows'
-config.test_format = lit.formats.ShTest(execute_external)
+config.test_format = lit.formats.ShTest(execute_external, force_execute_external=True)
 
 # suffixes: A list of file extensions to treat as test files.
 config.suffixes = ['.mlir', '.ll', '.c', '.cpp', '.cu', '.f90']
