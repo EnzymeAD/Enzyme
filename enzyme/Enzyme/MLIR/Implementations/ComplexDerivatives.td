@@ -41,7 +41,7 @@ def : MLIRDerivative<"complex", "ReOp", (Op $x),
 def : MLIRDerivative<"complex", "CreateOp", (Op $re, $im),
                     [
                       (ComplexRe (DiffeRet)),
-                      (ComplexIm (DiffeRet))
+                      (NegF (ComplexIm (DiffeRet)))
                     ]
                   >;
 

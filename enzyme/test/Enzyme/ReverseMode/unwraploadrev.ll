@@ -61,7 +61,7 @@ for.cond.cleanup52:                               ; preds = %for.body53.us
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %m_sizeZ.i = getelementptr inbounds { double*, i64 }, { double*, i64 }* %domain, i64 0, i32 1
 ; CHECK-NEXT:   %i3 = load i64, i64* %m_sizeZ.i, align 8, !tbaa !10
-; CHECK-NEXT:   %0 = add nuw i64 %i3, 1
+; CHECK-NEXT:   %0 = add nsw i64 %i3, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %0, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %_augmented_malloccache = bitcast i8* %malloccall to double**

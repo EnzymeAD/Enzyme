@@ -260,20 +260,9 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots tag (for now).
-    if (bund.getTag() != "jl_roots") {
-      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
-      llvm_unreachable("unsupported tag");
-    }
-
-    // In the future we can reduce the number of roots
-    // we preserve by identifying which operands they
-    // correspond to. For now, fall back and preserve all
-    // primals and shadows
-    // assert(bund.inputs().size() == types.size());
-    for (auto inp : bund.inputs()) {
-      if (inp != val)
-        continue;
+    // Only handle jl_roots & gc-transition tags (for now).
+    StringRef tag = bund.getTag();
+    if (tag == "jl_roots") {
       bool anyPrimal = false;
       bool anyShadow = false;
       for (auto ty : types) {
@@ -283,10 +272,31 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
           anyShadow = true;
       }
 
-      if (anyPrimal && !shadow)
+      // In the future we can reduce the number of roots
+      // we preserve by identifying which operands they
+      // correspond to. For now, fall back and preserve all
+      // primals and shadows
+      // assert(bund.inputs().size() == types.size());
+      for (auto inp : bund.inputs()) {
+        if (inp != val)
+          continue;
+
+        if (anyPrimal && !shadow)
+          return true;
+        if (anyShadow && shadow)
+          return true;
+      }
+    } else if (tag == "gc-transition") {
+      if (shadow)
+        continue;
+      for (auto inp : bund.inputs()) {
+        if (inp != val)
+          continue;
         return true;
-      if (anyShadow && shadow)
-        return true;
+      }
+    } else {
+      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
+      llvm_unreachable("unsupported tag");
     }
   }
   return false;
@@ -303,18 +313,14 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots tag (for now).
-    if (bund.getTag() != "jl_roots") {
-      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
-      llvm_unreachable("unsupported tag");
-    }
-    SmallVector<Value *, 2> bunds;
-    // In the future we can reduce the number of roots
-    // we preserve by identifying which operands they
-    // correspond to. For now, fall back and preserve all
-    // primals and shadows
-    // assert(bund.inputs().size() == types.size());
-    for (auto inp : bund.inputs()) {
+    // Only handle jl_roots & gc-transition tags (for now).
+    StringRef tag = bund.getTag();
+    if (tag == "jl_roots") {
+      // In the future we can reduce the number of roots
+      // we preserve by identifying which operands they
+      // correspond to. For now, fall back and preserve all
+      // primals and shadows
+      // assert(bund.inputs().size() == types.size());
       bool anyPrimal = false;
       bool anyShadow = false;
       for (auto ty : types) {
@@ -324,20 +330,35 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
           anyShadow = true;
       }
 
-      if (anyPrimal) {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
+        if (anyPrimal) {
+          Value *newv = getNewFromOriginal(inp);
+          if (lookup)
+            newv = lookupM(newv, Builder2, available);
+          bunds.push_back(newv);
+        }
+        if (anyShadow && !isConstantValue(inp)) {
+          Value *shadow = invertPointerM(inp, Builder2);
+          if (lookup)
+            shadow = lookupM(shadow, Builder2);
+          bunds.push_back(shadow);
+        }
+      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
+    } else if (tag == "gc-transition") {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
         if (lookup)
           newv = lookupM(newv, Builder2, available);
         bunds.push_back(newv);
       }
-      if (anyShadow && !isConstantValue(inp)) {
-        Value *shadow = invertPointerM(inp, Builder2);
-        if (lookup)
-          shadow = lookupM(shadow, Builder2);
-        bunds.push_back(shadow);
-      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
+    } else {
+      errs() << "unsupported tag " << tag << " for " << *orig << "\n";
+      llvm_unreachable("unsupported tag");
     }
-    Defs.push_back(OperandBundleDef(bund.getTag().str(), bunds));
   }
   return Defs;
 }
