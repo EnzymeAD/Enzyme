@@ -427,6 +427,7 @@ public:
 
       bool multiDim = false;
       bool gpuAlloc = false;
+      Attribute memorySpace = nullptr;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
         auto gpuAllocOp = pushedValue.getDefiningOp<gpu::AllocOp>();
@@ -449,6 +450,7 @@ public:
                                 })) {
           multiDim = true;
           gpuAlloc = true;
+          memorySpace = gpuAllocOp.getMemref().getType().getMemorySpace();
           dynamicDims.append(gpuAllocOp.getDynamicSizes().begin(),
                              gpuAllocOp.getDynamicSizes().end());
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
@@ -466,6 +468,10 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
 
       if (cacheType == LoopCacheType::TENSOR) {
         {
@@ -527,9 +533,11 @@ public:
                                              /*symbolOperands=*/ValueRange{})
                             .getMemref();
           } else {
-            initValue =
+            auto allocOp =
                 memref::AllocOp::create(rewriter, info.initOp->getLoc(),
                                         cast<MemRefType>(newType), dynamicDims);
+            allocOp->setAttr("enzyme.cache_alloc", rewriter.getUnitAttr());
+            initValue = allocOp.getResult();
           }
           newPushValues.push_back(initValue);
         }
@@ -707,10 +715,13 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      bool gpuAlloc = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
         if (cacheType == LoopCacheType::MEMREF && svOp) {
           multiDim = true;
+          if (svOp.getSourceType().getMemorySpaceAsInt() == 1)
+            gpuAlloc = true;
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -810,9 +821,11 @@ public:
 
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
+          // Infer the type using the pushed value so it will have the correct
+          // memory space for GPU allocations
           auto RT = memref::SubViewOp::inferRankReducedResultType(
-              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
-              sizes, strides);
+              MT.getShape(), cast<MemRefType>(info.pushOp.getValue().getType()),
+              offsets, sizes, strides);
 
           popValue = memref::SubViewOp::create(
               rewriter, info.popOp->getLoc(), RT, popNewValue,
@@ -844,7 +857,14 @@ public:
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        memref::DeallocOp::create(rewriter, info.initOp->getLoc(), popNewValue);
+        if (gpuAlloc) {
+          gpu::DeallocOp::create(
+              rewriter, info.initOp.getLoc(), /*resultTypes=*/TypeRange(),
+              /*asyncDependencies=*/ValueRange(), popNewValue);
+        } else {
+          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
+                                    popNewValue);
+        }
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
