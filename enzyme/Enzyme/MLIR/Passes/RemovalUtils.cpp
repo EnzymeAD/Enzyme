@@ -1110,7 +1110,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   });
 
   SetVector<Value> newCaches;
-  pruneCaches(Orig, roots, initialCaches, newCaches);
+  constexpr bool PRUNE_CACHES = true;
+  if (PRUNE_CACHES)
+    pruneCaches(Orig, roots, initialCaches, newCaches);
+  else
+    newCaches.insert_range(initialCaches);
 
   // compute path from new caches to required
   parent.clear();
@@ -1375,7 +1379,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
           ->dump());
 
   // TODO: try to do lic here, move it later
-  bool enableLIC = true;
+  constexpr bool enableLIC = true;
   if (enableLIC) {
     SmallVector<CacheInfo> licCaches;
     if (auto fwdLoop = dyn_cast<LoopLikeOpInterface>(forward->getParentOp())) {
