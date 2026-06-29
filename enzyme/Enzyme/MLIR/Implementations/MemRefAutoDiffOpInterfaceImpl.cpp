@@ -17,6 +17,7 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
@@ -246,6 +247,14 @@ public:
     SmallVector<mlir::Value> dynamicSizes(numDynamicDims);
     for (unsigned i = 0; i < numDynamicDims; ++i) {
       dynamicSizes[i] = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    }
+    if (MT.getMemorySpaceAsInt() == 1) {
+      // TODO: change the if op remover to alleviate the need for this
+      return gpu::AllocOp::create(builder, loc, MT,
+                                  /*asyncDependencies=*/ValueRange(),
+                                  dynamicSizes,
+                                  /*symbolOperands=*/ValueRange())
+          .getMemref();
     }
     return mlir::memref::AllocOp::create(builder, loc, MT, dynamicSizes);
   }
