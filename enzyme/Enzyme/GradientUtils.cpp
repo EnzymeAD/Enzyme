@@ -623,7 +623,11 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
   if (!opt)
     return L;
   assert(opt);
+#if LLVM_VERSION_MAJOR >= 23
+  return DebugLoc(cast<DILocation>(*opt));
+#else
   return DebugLoc(cast<MDNode>(*opt));
+#endif
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
@@ -3599,8 +3603,6 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           if (auto orig = dyn_cast<CallInst>(&I)) {
             StringRef funcName = getFuncNameFromCall(orig);
             assert(funcName.size());
-
-            auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
 
             SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14

@@ -4275,7 +4275,10 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::ArrayRef<llvm::Value *> Args,
                                     llvm::Instruction *FMFSource,
                                     const llvm::Twine &Name) {
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 23
+  llvm::CallInst *nres = dyn_cast<llvm::CallInst>(
+      B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name));
+#elif LLVM_VERSION_MAJOR >= 16
   llvm::CallInst *nres = B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name);
 #else
   SmallVector<Intrinsic::IITDescriptor, 1> Table;
