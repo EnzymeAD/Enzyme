@@ -5,12 +5,12 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 
-#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
-#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/raw_ostream.h"
 
 // TODO: Remove dependency on dialects in favour of differential dependency
@@ -20,6 +20,9 @@
 using namespace mlir;
 
 static bool isPossiblyActive(Type type) {
+  if (auto tensorType = dyn_cast<TensorType>(type)) {
+    return isPossiblyActive(tensorType.getElementType());
+  }
   return isa<FloatType, ComplexType>(type);
 }
 
@@ -49,12 +52,14 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
     return;
   }
 
-  auto funcOp = cast<FunctionOpInterface>(arg.getOwner()->getParentOp());
-  auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
-                                        arg.getArgNumber());
-  return propagateIfChanged(
-      lattice, lattice->join(ForwardOriginsLattice::single(lattice->getAnchor(),
-                                                           origin)));
+  if (auto funcOp =
+          dyn_cast<FunctionOpInterface>(arg.getOwner()->getParentOp())) {
+    auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
+                                          arg.getArgNumber());
+    return propagateIfChanged(lattice,
+                              lattice->join(ForwardOriginsLattice::single(
+                                  lattice->getAnchor(), origin)));
+  }
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::markResultsUnknown(
@@ -64,35 +69,17 @@ void enzyme::ForwardActivityAnnotationAnalysis::markResultsUnknown(
   }
 }
 
-/// True iff all results differentially depend on all operands
-// TODO: differential dependency/activity interface
-// TODO: Select cond is not fully active
-static bool isFullyActive(Operation *op) {
-  return isa<LLVM::FMulOp, LLVM::FAddOp, LLVM::FDivOp, LLVM::FSubOp,
-             LLVM::FNegOp, LLVM::FAbsOp, LLVM::SqrtOp, LLVM::SinOp, LLVM::CosOp,
-             LLVM::Exp2Op, LLVM::ExpOp, LLVM::LogOp, LLVM::InsertValueOp,
-             LLVM::ExtractValueOp, LLVM::BitcastOp, LLVM::SelectOp>(op);
-}
-
 LogicalResult enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<const ForwardOriginsLattice *> operands,
     ArrayRef<ForwardOriginsLattice *> results) {
-  if (isFullyActive(op)) {
-    for (ForwardOriginsLattice *result : results) {
-      for (const ForwardOriginsLattice *operand : operands) {
-        join(result, *operand);
-      }
-    }
-    return success();
-  }
-
-  auto activityIface = dyn_cast<enzyme::ActivityOpInterface>(op);
-  if (isPure(op) || (activityIface && activityIface.isInactive()))
+  auto iface = dyn_cast<enzyme::ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    markResultsUnknown(results);
+    if (!isMemoryEffectFree(op))
+      markResultsUnknown(results);
     return success();
   }
 
@@ -108,6 +95,17 @@ LogicalResult enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
       continue;
     }
     processMemoryRead(op, value, results);
+  }
+
+  // Propagate sparse differential dependencies, excluding any inactive
+  // arguments.
+  for (auto &&[i, operand] : llvm::enumerate(operands)) {
+    if (iface && iface.isArgInactive(i))
+      continue;
+
+    for (ForwardOriginsLattice *result : results) {
+      join(result, *operand);
+    }
   }
   return success();
 }
@@ -187,9 +185,9 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitExternalCall(
 }
 
 /// Visit everything transitively pointed-to by any pointer in start.
-static void traversePointsToSets(const enzyme::AliasClassSet &start,
-                                 const enzyme::PointsToSets &pointsToSets,
-                                 function_ref<void(DistinctAttr)> visit) {
+void enzyme::traversePointsToSets(const enzyme::AliasClassSet &start,
+                                  const enzyme::PointsToSets &pointsToSets,
+                                  function_ref<void(DistinctAttr)> visit) {
   using enzyme::AliasClassSet;
   AliasClassSet current(start);
   while (!current.isUndefined()) {
@@ -243,9 +241,7 @@ void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
 }
 
 void enzyme::BackwardActivityAnnotationAnalysis::setToExitState(
-    BackwardOriginsLattice *lattice) {
-  propagateIfChanged(lattice, lattice->markUnknown());
-}
+    BackwardOriginsLattice *lattice) {}
 
 void enzyme::BackwardActivityAnnotationAnalysis::markOperandsUnknown(
     ArrayRef<BackwardOriginsLattice *> operands) {
@@ -257,19 +253,14 @@ void enzyme::BackwardActivityAnnotationAnalysis::markOperandsUnknown(
 LogicalResult enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<BackwardOriginsLattice *> operands,
     ArrayRef<const BackwardOriginsLattice *> results) {
-  if (isFullyActive(op)) {
-    for (BackwardOriginsLattice *operand : operands)
-      for (const BackwardOriginsLattice *result : results)
-        meet(operand, *result);
-  }
-
-  auto activityIface = dyn_cast<enzyme::ActivityOpInterface>(op);
-  if (isPure(op) || (activityIface && activityIface.isInactive()))
+  auto iface = dyn_cast<enzyme::ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    markOperandsUnknown(operands);
+    if (!isMemoryEffectFree(op))
+      markOperandsUnknown(operands);
     return success();
   }
 
@@ -295,6 +286,16 @@ LogicalResult enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
       changed |= originsMap->insert(srcClasses->getAliasClassesObject(),
                                     result->getOriginsObject());
     propagateIfChanged(originsMap, changed);
+  }
+
+  // Propagate sparse differential dependencies, excluding any inactive
+  // arguments.
+  for (auto &&[i, operand] : llvm::enumerate(operands)) {
+    if (iface && iface.isArgInactive(i))
+      continue;
+
+    for (const BackwardOriginsLattice *result : results)
+      meet(operand, *result);
   }
   return success();
 }
@@ -380,7 +381,7 @@ void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
     ForwardOriginsMap *lattice) {
   auto point = dyn_cast<ProgramPoint *>(lattice->getAnchor());
   auto *block = point->getBlock();
-  if (!block)
+  if (!(block && isa<FunctionOpInterface>(block->getParentOp())))
     return;
 
   auto funcOp = cast<FunctionOpInterface>(block->getParentOp());
@@ -402,13 +403,14 @@ LogicalResult enzyme::DenseActivityAnnotationAnalysis::visitOperation(
     Operation *op, const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   join(after, before);
 
-  auto activityIface = dyn_cast<enzyme::ActivityOpInterface>(op);
-  if (activityIface && activityIface.isInactive())
+  auto iface = dyn_cast<enzyme::ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    propagateIfChanged(after, after->markAllOriginsUnknown());
+    if (!isMemoryEffectFree(op))
+      propagateIfChanged(after, after->markAllOriginsUnknown());
     return success();
   }
 
@@ -674,7 +676,8 @@ LogicalResult enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    propagateIfChanged(before, before->markAllOriginsUnknown());
+    if (!isMemoryEffectFree(op))
+      propagateIfChanged(before, before->markAllOriginsUnknown());
     return success();
   }
 
@@ -814,35 +817,6 @@ void annotateHardcoded(FunctionOpInterface func) {
     func->setAttr(enzyme::EnzymeDialect::getAliasSummaryAttrName(),
                   ArrayAttr::get(ctx, arr));
   }
-}
-
-/// Starting from callee, compute a reverse (bottom-up) topological sorting of
-/// all functions transitively called from callee.
-void reverseToposortCallgraph(CallableOpInterface callee,
-                              SymbolTableCollection *symbolTable,
-                              SmallVectorImpl<CallableOpInterface> &sorted) {
-  DenseSet<CallableOpInterface> permanent;
-  DenseSet<CallableOpInterface> temporary;
-  std::function<void(CallableOpInterface)> visit =
-      [&](CallableOpInterface node) {
-        if (permanent.contains(node))
-          return;
-        if (temporary.contains(node))
-          assert(false && "unimplemented cycle in call graph");
-
-        temporary.insert(node);
-        node.walk([&](CallOpInterface call) {
-          auto neighbour = cast<CallableOpInterface>(
-              call.resolveCallableInTable(symbolTable));
-          visit(neighbour);
-        });
-
-        temporary.erase(node);
-        permanent.insert(node);
-        sorted.push_back(node);
-      };
-
-  visit(callee);
 }
 
 void initializeSparseBackwardActivityAnnotations(FunctionOpInterface func,
@@ -986,14 +960,180 @@ void topDownActivityAnalysis(
     }
   });
 }
+
+// Convenience for making debugging less verbose
+std::string format(Attribute attribute) {
+  return llvm::TypeSwitch<Attribute, std::string>(attribute)
+      .Case([](DistinctAttr attr) { return format(attr.getReferencedAttr()); })
+      .Case([](ArrayAttr attr) {
+        std::string res;
+        llvm::raw_string_ostream ss(res);
+        ss << "[";
+        for (unsigned i = 0; i < attr.size(); ++i) {
+          ss << format(attr[i]);
+          if (i < attr.size() - 1)
+            ss << ", ";
+        }
+        ss << "]";
+        return res;
+      })
+      .Case([](enzyme::PseudoAliasClassAttr attr) {
+        return ("pclass<(" + Twine(attr.getArgNumber()) + ", " +
+                Twine(attr.getDepth()) + ")>")
+            .str();
+      })
+      .Case([](enzyme::ArgumentOriginAttr attr) {
+        return ("arg" + Twine(attr.getArgNumber())).str();
+      })
+      .Case([](enzyme::ReturnOriginAttr attr) {
+        return ("ret" + Twine(attr.getReturnNumber())).str();
+      })
+      .Default([](Attribute attr) {
+        std::string res;
+        llvm::raw_string_ostream ss(res);
+        ss << attr;
+        return res;
+      });
+}
 } // namespace
+
+/// Starting from callee, compute a reverse (bottom-up) topological sorting of
+/// all functions transitively called from callee.
+LogicalResult
+enzyme::reverseToposortCallgraph(CallableOpInterface callee,
+                                 SymbolTableCollection *symbolTable,
+                                 SmallVectorImpl<CallableOpInterface> &sorted) {
+  DenseSet<CallableOpInterface> permanent;
+  DenseSet<CallableOpInterface> temporary;
+  std::function<LogicalResult(CallableOpInterface)> visit =
+      [&](CallableOpInterface node) {
+        if (permanent.contains(node))
+          return success();
+        if (temporary.contains(node))
+          // Cycle in call graph, toposort not possible
+          return failure();
+
+        temporary.insert(node);
+        auto walkResult = node.walk([&](CallOpInterface call) {
+          auto neighbour = cast<CallableOpInterface>(
+              call.resolveCallableInTable(symbolTable));
+          if (failed(visit(neighbour)))
+            return WalkResult::interrupt();
+          return WalkResult::advance();
+        });
+        if (walkResult.wasInterrupted())
+          return failure();
+
+        temporary.erase(node);
+        permanent.insert(node);
+        sorted.push_back(node);
+        return success();
+      };
+
+  return visit(callee);
+}
+
+void enzyme::computeSummaries(
+    FunctionOpInterface funcOp, DataFlowSolver &solver,
+    enzyme::PointsToSets &p2sets, enzyme::ForwardOriginsMap &forwardOriginsMap,
+    enzyme::BackwardOriginsMap &backwardOriginsMap,
+    SmallVectorImpl<enzyme::ForwardOriginsLattice> &returnOperandOrigins,
+    SmallVectorImpl<enzyme::AliasClassLattice> &returnAliasClasses) {
+  assert(returnOperandOrigins.size() == funcOp.getNumResults());
+  assert(returnAliasClasses.size() == funcOp.getNumResults());
+
+  // Create the overall summary by joining sets at all return sites.
+  for (Operation &op : funcOp.getCallableRegion()->getOps()) {
+    if (op.hasTrait<OpTrait::ReturnLike>()) {
+      ProgramPoint *point = solver.getProgramPointAfter(&op);
+      (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(point));
+      auto *returnOrigins =
+          solver.lookupState<enzyme::ForwardOriginsMap>(point);
+      if (returnOrigins)
+        (void)forwardOriginsMap.join(*returnOrigins);
+
+      for (OpOperand &operand : op.getOpOperands()) {
+        (void)returnAliasClasses[operand.getOperandNumber()].join(
+            *solver.lookupState<enzyme::AliasClassLattice>(operand.get()));
+        (void)returnOperandOrigins[operand.getOperandNumber()].join(
+            *solver.lookupState<enzyme::ForwardOriginsLattice>(operand.get()));
+      }
+    }
+  }
+
+  (void)backwardOriginsMap.meet(
+      *solver.getOrCreateState<enzyme::BackwardOriginsMap>(
+          solver.getProgramPointBefore(
+              &funcOp.getCallableRegion()->front().front())));
+}
+
+void enzyme::serializeSummaries(
+    Operation *op, const enzyme::PointsToSets &p2sets,
+    const enzyme::ForwardOriginsMap &forwardOriginsMap,
+    ArrayRef<enzyme::ForwardOriginsLattice> returnOperandOrigins,
+    ArrayRef<enzyme::AliasClassLattice> returnAliasClasses) {
+  using namespace mlir::enzyme;
+  MLIRContext *ctx = op->getContext();
+  // Sparse alias annotations
+  SmallVector<Attribute> aliasAttributes(returnAliasClasses.size());
+  llvm::transform(returnAliasClasses, aliasAttributes.begin(),
+                  [&](enzyme::AliasClassLattice lattice) {
+                    return lattice.serialize(ctx);
+                  });
+  op->setAttr(EnzymeDialect::getAliasSummaryAttrName(),
+              ArrayAttr::get(ctx, aliasAttributes));
+
+  // Points-to-pointer annotations
+  StringRef pointerSummaryName = EnzymeDialect::getPointerSummaryAttrName();
+  op->setAttr(pointerSummaryName, p2sets.serialize(ctx));
+
+  op->setAttr(EnzymeDialect::getDenseActivityAnnotationAttrName(),
+              forwardOriginsMap.serialize(ctx));
+
+  // Serialize return origins
+  SmallVector<Attribute> serializedReturnOperandOrigins(
+      returnOperandOrigins.size());
+  llvm::transform(returnOperandOrigins, serializedReturnOperandOrigins.begin(),
+                  [ctx](enzyme::ForwardOriginsLattice lattice) -> Attribute {
+                    return lattice.serialize(ctx);
+                  });
+  op->setAttr(EnzymeDialect::getSparseActivityAnnotationAttrName(),
+              ArrayAttr::get(ctx, serializedReturnOperandOrigins));
+}
+
+void enzyme::removeSummaries(Operation *op) {
+  op->removeAttr(EnzymeDialect::getAliasSummaryAttrName());
+  op->removeAttr(EnzymeDialect::getPointerSummaryAttrName());
+  op->removeAttr(EnzymeDialect::getDenseActivityAnnotationAttrName());
+  op->removeAttr(EnzymeDialect::getSparseActivityAnnotationAttrName());
+}
+
+LogicalResult
+enzyme::runActivityAnnotationsForFunction(FunctionOpInterface funcOp,
+                                          DataFlowSolver &solver) {
+  using namespace mlir::enzyme;
+
+  SymbolTableCollection symbolTable;
+  MLIRContext *ctx = funcOp.getContext();
+  dataflow::loadBaselineAnalyses(solver);
+  solver.load<enzyme::AliasAnalysis>(ctx,
+                                     /*relative=*/true);
+  solver.load<enzyme::PointsToPointerAnalysis>();
+  solver.load<enzyme::ForwardActivityAnnotationAnalysis>();
+  solver.load<enzyme::DenseActivityAnnotationAnalysis>();
+  solver.load<enzyme::BackwardActivityAnnotationAnalysis>(symbolTable);
+  solver.load<enzyme::DenseBackwardActivityAnnotationAnalysis>(symbolTable);
+
+  initializeSparseBackwardActivityAnnotations(funcOp, solver);
+  return solver.initializeAndRun(funcOp);
+}
 
 void enzyme::runActivityAnnotations(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argActivities,
     const ActivityPrinterConfig &activityConfig) {
   SymbolTableCollection symbolTable;
   SmallVector<CallableOpInterface> sorted;
-  reverseToposortCallgraph(callee, &symbolTable, sorted);
+  (void)reverseToposortCallgraph(callee, &symbolTable, sorted);
   raw_ostream &os = llvm::outs();
 
   // TODO: is there any way of serializing information in a block argument?
@@ -1012,63 +1152,26 @@ void enzyme::runActivityAnnotations(
     DataFlowConfig dataFlowConfig;
     dataFlowConfig.setInterprocedural(false);
     DataFlowSolver solver(dataFlowConfig);
-    SymbolTableCollection symbolTable;
-
-    solver.load<dataflow::SparseConstantPropagation>();
-    solver.load<dataflow::DeadCodeAnalysis>();
-    solver.load<enzyme::AliasAnalysis>(callee.getContext(),
-                                       /*relative=*/true);
-    solver.load<enzyme::PointsToPointerAnalysis>();
-    solver.load<enzyme::ForwardActivityAnnotationAnalysis>();
-    solver.load<enzyme::DenseActivityAnnotationAnalysis>();
-    solver.load<enzyme::BackwardActivityAnnotationAnalysis>(symbolTable);
-    solver.load<enzyme::DenseBackwardActivityAnnotationAnalysis>(symbolTable);
-
-    initializeSparseBackwardActivityAnnotations(funcOp, solver);
-
-    if (failed(solver.initializeAndRun(node))) {
+    if (failed(runActivityAnnotationsForFunction(funcOp, solver))) {
       assert(false && "dataflow solver failed");
     }
 
     // Create the overall summary by joining sets at all return sites.
     enzyme::PointsToSets p2sets(nullptr);
     enzyme::ForwardOriginsMap forwardOriginsMap(nullptr);
-    size_t numResults = node.getResultTypes().size();
+    enzyme::BackwardOriginsMap backwardOriginsMap(nullptr);
+    size_t numResults = funcOp.getResultTypes().size();
     SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
         numResults, ForwardOriginsLattice(nullptr));
     SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
         numResults, AliasClassLattice(nullptr));
+    computeSummaries(funcOp, solver, p2sets, forwardOriginsMap,
+                     backwardOriginsMap, returnOperandOrigins,
+                     returnAliasClasses);
+    serializeSummaries(funcOp, p2sets, forwardOriginsMap, returnOperandOrigins,
+                       returnAliasClasses);
+    Attribute backwardOrigins = backwardOriginsMap.serialize(node.getContext());
 
-    for (Operation &op : node.getCallableRegion()->getOps()) {
-      if (op.hasTrait<OpTrait::ReturnLike>()) {
-        ProgramPoint *point = solver.getProgramPointAfter(&op);
-        (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(point));
-        auto *returnOrigins =
-            solver.lookupState<enzyme::ForwardOriginsMap>(point);
-        if (returnOrigins)
-          (void)forwardOriginsMap.join(*returnOrigins);
-
-        for (OpOperand &operand : op.getOpOperands()) {
-          (void)returnAliasClasses[operand.getOperandNumber()].join(
-              *solver.lookupState<enzyme::AliasClassLattice>(operand.get()));
-          (void)returnOperandOrigins[operand.getOperandNumber()].join(
-              *solver.lookupState<enzyme::ForwardOriginsLattice>(
-                  operand.get()));
-        }
-      }
-    }
-
-    // Sparse alias annotations
-    SmallVector<Attribute> aliasAttributes(returnAliasClasses.size());
-    llvm::transform(returnAliasClasses, aliasAttributes.begin(),
-                    [&](enzyme::AliasClassLattice lattice) {
-                      return lattice.serialize(node.getContext());
-                    });
-    node->setAttr(EnzymeDialect::getAliasSummaryAttrName(),
-                  ArrayAttr::get(node.getContext(), aliasAttributes));
-
-    // Points-to-pointer annotations
-    node->setAttr(pointerSummaryName, p2sets.serialize(node.getContext()));
     if (activityConfig.verbose) {
       os << "[ata] p2p summary:\n";
       if (node->getAttrOfType<ArrayAttr>(pointerSummaryName).size() == 0) {
@@ -1076,51 +1179,28 @@ void enzyme::runActivityAnnotations(
       }
       for (ArrayAttr pair : node->getAttrOfType<ArrayAttr>(pointerSummaryName)
                                 .getAsRange<ArrayAttr>()) {
-        os << "     " << pair[0] << " -> " << pair[1] << "\n";
+        os << "     " << format(pair[0]) << " -> " << format(pair[1]) << "\n";
       }
-    }
 
-    node->setAttr(EnzymeDialect::getDenseActivityAnnotationAttrName(),
-                  forwardOriginsMap.serialize(node.getContext()));
-    if (activityConfig.verbose) {
       os << "[ata] forward value origins:\n";
       for (ArrayAttr pair :
            node->getAttrOfType<ArrayAttr>(
                    EnzymeDialect::getDenseActivityAnnotationAttrName())
                .getAsRange<ArrayAttr>()) {
-        os << "     " << pair[0] << " originates from " << pair[1] << "\n";
+        os << "     " << format(pair[0]) << " originates from "
+           << format(pair[1]) << "\n";
       }
-    }
 
-    auto *backwardOriginsMap =
-        solver.getOrCreateState<enzyme::BackwardOriginsMap>(
-            solver.getProgramPointBefore(
-                &node.getCallableRegion()->front().front()));
-    Attribute backwardOrigins =
-        backwardOriginsMap->serialize(node.getContext());
-    if (activityConfig.verbose) {
       os << "[ata] backward value origins:\n";
       for (ArrayAttr pair :
            cast<ArrayAttr>(backwardOrigins).getAsRange<ArrayAttr>()) {
-        os << "     " << pair[0] << " goes to " << pair[1] << "\n";
+        os << "     " << format(pair[0]) << " goes to " << format(pair[1])
+           << "\n";
       }
-    }
 
-    // Serialize return origins
-    MLIRContext *ctx = node.getContext();
-    SmallVector<Attribute> serializedReturnOperandOrigins(
-        returnOperandOrigins.size());
-    llvm::transform(returnOperandOrigins,
-                    serializedReturnOperandOrigins.begin(),
-                    [ctx](enzyme::ForwardOriginsLattice lattice) -> Attribute {
-                      return lattice.serialize(ctx);
-                    });
-    node->setAttr(
-        EnzymeDialect::getSparseActivityAnnotationAttrName(),
-        ArrayAttr::get(node.getContext(), serializedReturnOperandOrigins));
-    if (activityConfig.verbose) {
       os << "[ata] return origins: "
-         << node->getAttr(EnzymeDialect::getSparseActivityAnnotationAttrName())
+         << format(node->getAttr(
+                EnzymeDialect::getSparseActivityAnnotationAttrName()))
          << "\n";
     }
 
@@ -1140,7 +1220,7 @@ void enzyme::runActivityAnnotations(
               aliasClasses, p2sets, [&](DistinctAttr aliasClass) {
                 (void)out.first.merge(forwardOriginsMap.getOrigins(aliasClass));
                 (void)out.second.merge(
-                    backwardOriginsMap->getOrigins(aliasClass));
+                    backwardOriginsMap.getOrigins(aliasClass));
               });
         };
 
@@ -1156,6 +1236,7 @@ void enzyme::runActivityAnnotations(
           }
         };
 
+    MLIRContext *ctx = node.getContext();
     auto annotateActivity = [&](Operation *op) {
       assert(op->getNumResults() < 2 && op->getNumRegions() == 0 &&
              "annotation only supports the LLVM dialect");
@@ -1255,10 +1336,10 @@ void enzyme::runActivityAnnotations(
             joinActiveValueState(result, activityAttributes);
             os << op->getAttr("tag") << "(#" << result.getResultNumber()
                << ")\n"
-               << "  sources: " << activityAttributes.first.serialize(ctx)
-               << "\n"
-               << "  sinks:   " << activityAttributes.second.serialize(ctx)
-               << "\n";
+               << "  sources: "
+               << format(activityAttributes.first.serialize(ctx)) << "\n"
+               << "  sinks:   "
+               << format(activityAttributes.second.serialize(ctx)) << "\n";
           }
         }
       }
@@ -1268,7 +1349,7 @@ void enzyme::runActivityAnnotations(
   if (!argActivities.empty() && activityConfig.annotate) {
     SmallVector<enzyme::Activity> resActivities;
     for (Type resultType : callee.getResultTypes()) {
-      resActivities.push_back(isa<FloatType, ComplexType>(resultType)
+      resActivities.push_back(isPossiblyActive(resultType)
                                   ? Activity::enzyme_active
                                   : Activity::enzyme_const);
     }

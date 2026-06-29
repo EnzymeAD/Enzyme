@@ -37,6 +37,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"true",
       /*description=*/"Whether or not to run verifier for the postpasses pass manager."
     >,
+    Option<
+      /*C++ variable name=*/"dataflowActivity",
+      /*CLI argument=*/"dataflow",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use the dataflow activity analysis"
+    >,
   ];
 }
 
@@ -132,6 +139,13 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*type=*/"std::string",
       /*default=*/"",
       /*description=*/"The activity of the arguments"
+    >,
+    Option<
+      /*C++ variable name=*/"dataflowActivity",
+      /*CLI argument=*/"dataflow",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use the dataflow activity analysis"
     >,
   ];
 }
