@@ -32,7 +32,6 @@ using namespace mlir::enzyme;
 } // namespace enzyme
 } // namespace mlir
 
-using llvm::errs;
 namespace {
 
 struct ApplySimplificationPattern
@@ -54,7 +53,8 @@ struct MathematicSimplification
   void runOnOperation() override {
     if (fastmath) {
       getOperation()->walk([&](arith::ArithFastMathInterface op) {
-        if (op.getFastMathFlagsAttr().getValue() == arith::FastMathFlags::none)
+        auto flags = op.getFastMathFlagsAttr();
+        if (!(flags && flags.getValue() != arith::FastMathFlags::none))
           op->setAttr(op.getFastMathAttrName(),
                       arith::FastMathFlagsAttr::get(
                           op.getContext(), arith::FastMathFlags::fast));
