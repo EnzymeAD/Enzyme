@@ -502,9 +502,11 @@ public:
             initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
                                          newType, dynamicDims);
           } else {
-            initValue =
+            auto allocOp =
                 memref::AllocOp::create(rewriter, info.initOp->getLoc(),
                                         cast<MemRefType>(newType), dynamicDims);
+            allocOp->setAttr("enzyme.cache_alloc", rewriter.getUnitAttr());
+            initValue = allocOp.getResult();
           }
           newPushValues.push_back(initValue);
         }
@@ -797,9 +799,11 @@ public:
 
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
+          // Infer the type using the pushed value so it will have the correct
+          // memory space for GPU allocations
           auto RT = memref::SubViewOp::inferRankReducedResultType(
-              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
-              sizes, strides);
+              MT.getShape(), cast<MemRefType>(info.pushOp.getValue().getType()),
+              offsets, sizes, strides);
 
           popValue = memref::SubViewOp::create(
               rewriter, info.popOp->getLoc(), RT, popNewValue,
