@@ -18,6 +18,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/Utils.h"
 
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -31,18 +32,36 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     return cast<TypedAttr>(ATI.createNullAttr());
   }
   if (auto T = dyn_cast<TensorType>(type)) {
-    auto ET = dyn_cast<FloatType>(T.getElementType());
-    if (!ET) {
-      llvm::errs() << " unsupported eltype: " << ET << " of type " << type
-                   << "\n";
+    if (auto ET = dyn_cast<FloatType>(T.getElementType())) {
+      APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<APFloat>(values));
+    } else if (auto CET = dyn_cast<ComplexType>(T.getElementType())) {
+      auto ET = cast<FloatType>(CET.getElementType());
+      mlir::Complex<APFloat> values[] = {
+          mlir::Complex<APFloat>(APFloat(ET.getFloatSemantics(), value),
+                                 APFloat(ET.getFloatSemantics(), "0"))};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<mlir::Complex<APFloat>>(values));
+    } else {
+      llvm::errs() << " unsupported eltype: " << T.getElementType()
+                   << " of type " << type << "\n";
+      llvm_unreachable("unsupported eltype");
     }
-    APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
-    return DenseElementsAttr::get(cast<ShapedType>(type),
-                                  ArrayRef<APFloat>(values));
+  } else if (auto T = cast<FloatType>(type)) {
+    APFloat apvalue(T.getFloatSemantics(), value);
+    return FloatAttr::get(T, apvalue);
+    // NOTE `complex::ConstantOp` doesn't accept `TypedAttr`, only `ArrayAttr`
+    // } else if (auto T = cast<ComplexType>(type)) {
+    //   auto F = cast<FloatType>(T.getElementType());
+    //   return mlir::ArrayAttr::get({
+    //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), value)),
+    //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), "0"));
+    //   });
+  } else {
+    llvm::errs() << " unsupported type: " << type << "\n";
+    llvm_unreachable("unsupported eltype");
   }
-  auto T = cast<FloatType>(type);
-  APFloat apvalue(T.getFloatSemantics(), value);
-  return FloatAttr::get(T, apvalue);
 }
 
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
@@ -119,10 +138,10 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   }
 
   gutils->getNewFromOriginal(inst->getBlock())
-      ->push_back(
-          newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                          newVals, attrs, OpaqueProperties(nullptr),
-                          newInst->getSuccessors(), newInst->getNumRegions()));
+      ->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
+                                  TypeRange(), newVals, attrs,
+                                  mlir::PropertyRef(), newInst->getSuccessors(),
+                                  newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
 }
@@ -280,8 +299,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
     for (auto &successor : successors) {
       OperandRange operandRange = termIface.getSuccessorOperands(successor);
       ValueRange targetValues =
-          successor.isParent() ? parentOp->getResults()
-                               : regionBranchOp.getSuccessorInputs(successor);
+          successor.isOperation()
+              ? parentOp->getResults()
+              : regionBranchOp.getSuccessorInputs(successor);
       assert(operandRange.size() == targetValues.size());
       for (auto &&[i, target] : llvm::enumerate(targetValues)) {
         if (!gutils->isConstantValue(target))
@@ -322,6 +342,12 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
                     << "\n";
     return failure();
   }
+  auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+  if (!iface) {
+    op->emitError() << " ControlFlowAutoDiffOpInterface not implemented for "
+                    << *op << "\n";
+    return failure();
+  }
 
   // TODO: we may need to record, for every successor, which of its inputs
   // need a shadow to recreate the body correctly.
@@ -336,11 +362,11 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (const RegionSuccessor &successor : entrySuccessors) {
 
     OperandRange operandRange =
-        regionBranchOp.getEntrySuccessorOperands(successor);
+        iface.getSuccessorOperands(regionBranchOp, successor);
 
     ValueRange targetValues =
-        successor.isParent() ? op->getResults()
-                             : regionBranchOp.getSuccessorInputs(successor);
+        successor.isOperation() ? op->getResults()
+                                : regionBranchOp.getSuccessorInputs(successor);
 
     // Need to know which of the arguments are being forwarded to from
     // operands.
@@ -349,7 +375,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       if (gutils->isConstantValue(regionValue))
         continue;
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-      if (successor.isParent())
+      if (successor.isOperation())
         resultPositionsToShadow.insert(i);
     }
   }

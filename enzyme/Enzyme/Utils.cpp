@@ -53,6 +53,7 @@
 
 #include "llvm-c/Core.h"
 
+#include "BlasAttributor.inc"
 #include "LibraryFuncs.h"
 
 using namespace llvm;
@@ -99,9 +100,315 @@ llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
 
+llvm::cl::opt<bool> EnzymeCheckDerivativeNaN(
+    "enzyme-check-nan", cl::init(false), cl::Hidden,
+    cl::desc("Add NaN checks to all derivative intermediate values"));
+
 llvm::cl::opt<bool> EnzymeNonPower2Cache(
     "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
     cl::desc("Disable caching of integers which are not a power of 2"));
+}
+
+#define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+bool attributeKnownFunctions(llvm::Function &F) {
+  bool changed = false;
+  if (F.getName() == "fprintf") {
+    for (auto &arg : F.args()) {
+      if (arg.getType()->isPointerTy()) {
+        addFunctionNoCapture(&F, arg.getArgNo());
+        changed = true;
+      }
+    }
+  }
+  if (F.getName().contains("__enzyme_float") ||
+      F.getName().contains("__enzyme_double") ||
+      F.getName().contains("__enzyme_integer") ||
+      F.getName().contains("__enzyme_pointer") ||
+      F.getName().contains("__enzyme_todense") ||
+      F.getName().contains("__enzyme_ignore_derivatives") ||
+      F.getName().contains("__enzyme_iter") ||
+      F.getName().contains("__enzyme_virtualreverse")) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ReadNone);
+#endif
+    if (!(F.getName().contains("__enzyme_todense") ||
+          F.getName().contains("__enzyme_ignore_derivatives"))) {
+      for (auto &arg : F.args()) {
+        if (arg.getType()->isPointerTy()) {
+          arg.addAttr(Attribute::ReadNone);
+          addFunctionNoCapture(&F, arg.getArgNo());
+        }
+      }
+    }
+  }
+  if (F.getName() == "memcmp") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    for (int i = 0; i < 2; i++)
+      if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
+        addFunctionNoCapture(&F, i);
+        F.addParamAttr(i, Attribute::ReadOnly);
+      }
+  }
+
+  if (F.getName() ==
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+  }
+  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
+      addFunctionNoCapture(&F, 2);
+      F.addParamAttr(2, Attribute::WriteOnly);
+    }
+    if (FT->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  auto name = getFuncName(&F);
+  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
+      addFunctionNoCapture(&F, 2);
+      F.addParamAttr(2, Attribute::ReadOnly);
+    }
+    if (FT->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
+      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+
+    // OpenMPI vs MPICH
+    if (FT->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+      F.addParamAttr(0, Attribute::ReadOnly);
+    }
+    if (FT->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 1);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+    }
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 1);
+    }
+  }
+  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      addFunctionNoCapture(&F, 1);
+    }
+    if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(2, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 2);
+    }
+  }
+  // Map of MPI function name to the arg index of its type argument
+  std::map<std::string, int> MPI_TYPE_ARGS = {
+      {"MPI_Send", 2},      {"MPI_Ssend", 2},     {"MPI_Bsend", 2},
+      {"MPI_Recv", 2},      {"MPI_Brecv", 2},     {"PMPI_Send", 2},
+      {"PMPI_Ssend", 2},    {"PMPI_Bsend", 2},    {"PMPI_Recv", 2},
+      {"PMPI_Brecv", 2},
+
+      {"MPI_Isend", 2},     {"MPI_Irecv", 2},     {"PMPI_Isend", 2},
+      {"PMPI_Irecv", 2},
+
+      {"MPI_Reduce", 3},    {"PMPI_Reduce", 3},
+
+      {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
+  {
+    auto found = MPI_TYPE_ARGS.find(name.str());
+    if (found != MPI_TYPE_ARGS.end()) {
+      for (auto user : F.users()) {
+        if (auto CI = dyn_cast<CallBase>(user))
+          if (CI->getCalledFunction() == &F) {
+            if (Constant *C =
+                    dyn_cast<Constant>(CI->getArgOperand(found->second))) {
+              while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+                C = CE->getOperand(0);
+              }
+              if (auto GV = dyn_cast<GlobalVariable>(C)) {
+                if (GV->getName() == "ompi_mpi_cxx_bool") {
+                  changed = true;
+                  CI->addAttribute(
+                      AttributeList::FunctionIndex,
+                      Attribute::get(CI->getContext(), "enzyme_inactive"));
+                }
+              }
+            }
+          }
+      }
+    }
+  }
+
+  if (F.getName() == "omp_get_max_threads" ||
+      F.getName() == "omp_get_thread_num") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+  }
+  if (F.getName() == "frexp" || F.getName() == "frexpf" ||
+      F.getName() == "frexpl") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+#endif
+    F.addParamAttr(1, Attribute::WriteOnly);
+  }
+  if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
+      F.getName() == "__mth_i_ipowi") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ReadNone);
+#endif
+  }
+
+  const char *NonEscapingFns[] = {
+      "julia.ptls_states",
+      "julia.get_pgcstack",
+      "lgamma_r",
+      "memcmp",
+      "_ZNSt6chrono3_V212steady_clock3nowEv",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
+      "createERmm",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "fprintf",
+      "fwrite",
+      "fputc",
+      "strtol",
+      "getenv",
+      "memchr",
+      "cublasSetMathMode",
+      "cublasSetStream_v2",
+      "cuMemPoolTrimTo",
+      "cuDeviceGetMemPool",
+      "cuStreamSynchronize",
+      "cuStreamDestroy",
+      "cuStreamQuery",
+      "cuCtxGetCurrent",
+      "cuDeviceGet",
+      "cuDeviceGetName",
+      "cuDriverGetVersion",
+      "cudaRuntimeGetVersion",
+      "cuDeviceGetCount",
+      "cuMemPoolGetAttribute",
+      "cuMemGetInfo_v2",
+      "cuDeviceGetAttribute",
+      "cuDevicePrimaryCtxRetain",
+  };
+  for (auto fname : NonEscapingFns)
+    if (name == fname) {
+      changed = true;
+      F.addAttribute(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    }
+  changed |= attributeTablegen(F);
+  return changed;
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -525,6 +832,73 @@ Constant *getString(Module &M, StringRef Str) {
   return ConstantExpr::getInBoundsGetElementPtr(s->getType(), gv, Idxs);
 }
 
+void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss) {
+  SmallPtrSet<llvm::Instruction *, 8> visited;
+  while (true) {
+    if (visited.contains(inst))
+      break;
+    visited.insert(inst);
+
+    // Print debug info for this instruction
+    if (auto dbgLoc = inst->getDebugLoc()) {
+      auto *loc = dbgLoc.get();
+      while (loc) {
+        if (auto *scope = loc->getScope()) {
+          StringRef name = scope->getName();
+          // Remove trailing semicolons (Julia-style function name decoration)
+          while (!name.empty() && name.back() == ';')
+            name = name.drop_back();
+          if (auto *file = scope->getFile()) {
+            StringRef dir = file->getDirectory();
+            StringRef fn = file->getFilename();
+            ss << " in '" << name << "' at ";
+            if (!dir.empty())
+              ss << dir << "/";
+            ss << fn << ":" << loc->getLine() << "\n";
+          } else {
+            ss << " in '" << name << "' at unknown:" << loc->getLine() << "\n";
+          }
+        }
+        loc = loc->getInlinedAt();
+      }
+    }
+
+    // Move up the call chain
+    Function *f = inst->getParent()->getParent();
+
+    // Collect callers with debug info
+    SmallVector<CallInst *, 4> callersWithDbg;
+    for (auto *U : f->users()) {
+      auto *CI = dyn_cast<CallInst>(U);
+      if (!CI)
+        continue;
+      if (!CI->getDebugLoc())
+        continue;
+      callersWithDbg.push_back(CI);
+    }
+
+    if (callersWithDbg.empty())
+      break;
+
+    // Deduplicate by debug location MDNode
+    SmallVector<CallInst *, 4> uniqueCallSites;
+    SmallPtrSet<const MDNode *, 4> seenMD;
+    for (auto *CI : callersWithDbg) {
+      if (seenMD.insert(CI->getDebugLoc().getAsMDNode()).second)
+        uniqueCallSites.push_back(CI);
+    }
+
+    if (uniqueCallSites.size() > 1) {
+      ss << " (multiple call sites)\n";
+      break;
+    } else if (uniqueCallSites.size() == 1) {
+      inst = uniqueCallSites[0];
+      continue;
+    }
+    break;
+  }
+}
+
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig) {
@@ -589,9 +963,17 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateRetVoid();
   }
 
+  std::string Message2 = Message;
+  if (!CustomRuntimeInactiveError) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << Message << "\n";
+    emit_backtrace(orig, ss);
+    Message2 = ss.str();
+  }
   Value *args[] = {B.CreatePointerCast(primal, getInt8PtrTy(M.getContext())),
                    B.CreatePointerCast(shadow, getInt8PtrTy(M.getContext())),
-                   getString(M, Message)};
+                   getString(M, Message2)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
 }
@@ -628,7 +1010,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned dstalign,
                                              unsigned srcalign,
                                              unsigned dstaddr, unsigned srcaddr,
-                                             unsigned bitwidth) {
+                                             unsigned bitwidth,
+                                             bool runtimeActivity) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
@@ -639,12 +1022,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     name += "dadd" + std::to_string(dstaddr);
   if (srcaddr)
     name += "sadd" + std::to_string(srcaddr);
+  if (runtimeActivity)
+    name += "_runtime_activity";
+  std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
+                                PointerType::get(elementType, srcaddr),
+                                IntegerType::get(M.getContext(), bitwidth)};
+  if (runtimeActivity) {
+    argTys.push_back(Type::getInt1Ty(M.getContext())); // dst_inactive
+    argTys.push_back(Type::getInt1Ty(M.getContext())); // src_inactive
+  }
   FunctionType *FT =
-      FunctionType::get(Type::getVoidTy(M.getContext()),
-                        {PointerType::get(elementType, dstaddr),
-                         PointerType::get(elementType, srcaddr),
-                         IntegerType::get(M.getContext(), bitwidth)},
-                        false);
+      FunctionType::get(Type::getVoidTy(M.getContext()), argTys, false);
 
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
 
@@ -666,17 +1054,51 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
-  auto dst = F->arg_begin();
+  Argument *dst = &*F->arg_begin();
   dst->setName("dst");
-  auto src = dst + 1;
+  Argument *src = dst + 1;
   src->setName("src");
-  auto num = src + 1;
+  Argument *num = src + 1;
   num->setName("num");
+
+  Argument *dst_inactive = nullptr;
+  Argument *src_inactive = nullptr;
+  if (runtimeActivity) {
+    dst_inactive = num + 1;
+    dst_inactive->setName("dst_inactive");
+    src_inactive = dst_inactive + 1;
+    src_inactive->setName("src_inactive");
+  }
+
+  BasicBlock *checkSrc = nullptr;
+  BasicBlock *memsetDst = nullptr;
+  if (runtimeActivity) {
+    checkSrc = BasicBlock::Create(M.getContext(), "check_src", F, body);
+    memsetDst = BasicBlock::Create(M.getContext(), "memset_dst", F, body);
+  }
 
   {
     IRBuilder<> B(entry);
-    B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
-                   end, body);
+    Value *cond = B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0));
+    if (runtimeActivity) {
+      cond = B.CreateOr(cond, dst_inactive);
+      B.CreateCondBr(cond, end, checkSrc);
+
+      B.SetInsertPoint(checkSrc);
+      B.CreateCondBr(src_inactive, memsetDst, body);
+
+      B.SetInsertPoint(memsetDst);
+      auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
+      Value *dst_i8 = B.CreatePointerCast(
+          dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
+      B.CreateMemSet(dst_i8, B.getInt8(0),
+                     B.CreateMul(num, ConstantInt::get(num->getType(), elSize),
+                                 "", /*HasNUW*/ true, /*HasNSW*/ true),
+                     MaybeAlign(dstalign));
+      B.CreateBr(end);
+    } else {
+      B.CreateCondBr(cond, end, body);
+    }
   }
 
   auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
@@ -684,7 +1106,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0),
+                     runtimeActivity ? checkSrc : entry);
 
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
@@ -1687,16 +2110,15 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 }
 
 // TODO implement differential memmove
-Function *
-getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
-                                    unsigned srcalign, unsigned dstaddr,
-                                    unsigned srcaddr, unsigned bitwidth) {
+Function *getOrInsertDifferentialFloatMemmove(
+    Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
+    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
            "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth);
+                                            srcaddr, bitwidth, runtimeActivity);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
@@ -3252,6 +3674,94 @@ llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask) {
+  if (EnzymeCheckDerivativeNaN && toset->getType()->isFPOrFPVectorTy()) {
+    auto current_bb = BuilderM.GetInsertBlock();
+    auto fn = current_bb->getParent();
+    auto mod = fn->getParent();
+    auto &Context = mod->getContext();
+
+    std::string type_str;
+    llvm::raw_string_ostream type_ss(type_str);
+    toset->getType()->print(type_ss);
+    std::string fn_name = "__enzyme_sanitize_nan_" + type_str;
+
+    llvm::FunctionType *SanitizeFT = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(Context),
+        {toset->getType(), getInt8PtrTy(Context)}, false);
+
+    auto SanitizeFCallee = mod->getOrInsertFunction(fn_name, SanitizeFT);
+    llvm::Function *SanitizeF =
+        llvm::cast<llvm::Function>(SanitizeFCallee.getCallee());
+
+    if (SanitizeF->empty()) {
+      SanitizeF->setLinkage(Function::LinkageTypes::InternalLinkage);
+      llvm::BasicBlock *entry =
+          llvm::BasicBlock::Create(Context, "entry", SanitizeF);
+      llvm::BasicBlock *good =
+          llvm::BasicBlock::Create(Context, "good", SanitizeF);
+      llvm::BasicBlock *bad =
+          llvm::BasicBlock::Create(Context, "bad", SanitizeF);
+
+      llvm::IRBuilder<> B(entry);
+      llvm::Value *inp = SanitizeF->getArg(0);
+      llvm::Value *msg_ptr = SanitizeF->getArg(1);
+
+      llvm::Value *cmp = B.CreateFCmpUNO(inp, inp);
+      if (auto VT = llvm::dyn_cast<llvm::VectorType>(inp->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
+        unsigned len = VT->getElementCount().getKnownMinValue();
+#else
+        unsigned len = VT->getNumElements();
+#endif
+        llvm::Value *res = B.CreateExtractElement(cmp, (uint64_t)0);
+        for (unsigned i = 1; i < len; ++i) {
+          res = B.CreateOr(res, B.CreateExtractElement(cmp, (uint64_t)i));
+        }
+        cmp = res;
+      }
+      B.CreateCondBr(cmp, bad, good);
+
+      B.SetInsertPoint(good);
+      B.CreateRetVoid();
+
+      B.SetInsertPoint(bad);
+      if (CustomErrorHandler) {
+        CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
+                           wrap(msg_ptr), wrap(&B));
+      } else {
+        llvm::FunctionType *PutsFT = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
+        auto PutsF = mod->getOrInsertFunction("puts", PutsFT);
+        B.CreateCall(PutsF, msg_ptr);
+
+        llvm::FunctionType *ExitFT =
+            llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                    {llvm::Type::getInt32Ty(Context)}, false);
+        auto ExitF = mod->getOrInsertFunction("exit", ExitFT);
+        B.CreateCall(
+            ExitF, llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 1));
+      }
+      B.CreateUnreachable();
+    }
+
+    std::string stringv = "Enzyme: Found nan while computing derivative of ";
+    if (val) {
+      std::string str;
+      llvm::raw_string_ostream ss(str);
+      if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        ss << *inst << "\n";
+        emit_backtrace(inst, ss);
+      } else {
+        ss << *val << "\n";
+      }
+      stringv += ss.str();
+    } else {
+      stringv += "\n";
+    }
+
+    BuilderM.CreateCall(SanitizeFCallee, {toset, getString(*mod, stringv)});
+  }
+
   if (EnzymeSanitizeDerivatives)
     return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
                                             wrap(&BuilderM), wrap(mask)));
@@ -3765,7 +4275,10 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::ArrayRef<llvm::Value *> Args,
                                     llvm::Instruction *FMFSource,
                                     const llvm::Twine &Name) {
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 23
+  llvm::CallInst *nres = dyn_cast<llvm::CallInst>(
+      B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name));
+#elif LLVM_VERSION_MAJOR >= 16
   llvm::CallInst *nres = B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name);
 #else
   SmallVector<Intrinsic::IITDescriptor, 1> Table;
@@ -3835,7 +4348,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
+    ;
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
@@ -3870,7 +4388,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    if (auto inst = dyn_cast<Instruction>(todiff))
+      emit_backtrace(inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     context.ip->CreateCall(PutsF, msg);
 
@@ -3903,7 +4426,11 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
@@ -4216,15 +4743,6 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   return {};
 }
 
-bool isTargetNVPTX(llvm::Module &M) {
-#if LLVM_VERSION_MAJOR > 20
-  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
-         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
-#else
-  return M.getTargetTriple().find("nvptx") != std::string::npos;
-#endif
-}
-
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
                                         llvm::Value *value,
                                         ArrayRef<unsigned> path) {
@@ -4266,7 +4784,6 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       default:
         llvm_unreachable("Unhandled");
       }
-
       switch (direction) {
       case SRetRootMovement::SRetPointerToRootPointer: {
         Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);

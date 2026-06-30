@@ -30,4 +30,5 @@ MLIRIR
 MLIRMemRefDialect
 )
 
+add_subdirectory(Impulse)
 add_subdirectory(LLVMExt)

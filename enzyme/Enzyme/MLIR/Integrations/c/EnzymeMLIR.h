@@ -15,10 +15,6 @@ extern "C" {
 // Probabilistic Programming Ops
 //===----------------------------------------------------------------------===//
 
-MLIR_CAPI_EXPORTED MlirType enzymeTraceTypeGet(MlirContext ctx);
-
-MLIR_CAPI_EXPORTED MlirType enzymeConstraintTypeGet(MlirContext ctx);
-
 typedef enum {
   EnzymeRngDistribution_Uniform = 0,
   EnzymeRngDistribution_Normal = 1,

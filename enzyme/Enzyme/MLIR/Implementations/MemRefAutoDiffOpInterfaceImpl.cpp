@@ -242,7 +242,15 @@ public:
   }
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
                               Location loc) const {
-    llvm_unreachable("Cannot create null of memref (todo polygeist null)");
+    // Create a memref of the given type with the required number of
+    // dynamic dimensions, all set to 0
+    MemRefType MT = cast<MemRefType>(self);
+    unsigned numDynamicDims = MT.getNumDynamicDims();
+    SmallVector<mlir::Value> dynamicSizes(numDynamicDims);
+    for (unsigned i = 0; i < numDynamicDims; ++i) {
+      dynamicSizes[i] = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    }
+    return mlir::memref::AllocOp::create(builder, loc, MT, dynamicSizes);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

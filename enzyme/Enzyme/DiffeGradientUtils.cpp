@@ -51,6 +51,26 @@
 
 using namespace llvm;
 
+namespace {
+bool elementwiseReadForContext(const Instruction *orig, const Value *origptr) {
+  if (orig) {
+    if (const Function *F = orig->getFunction()) {
+      if (F->hasFnAttribute("enzyme_elementwise_read")) {
+        return true;
+      }
+    }
+  }
+  const Value *base = getBaseObject(origptr);
+  if (auto *arg = dyn_cast<Argument>(base)) {
+    if (const Function *F = arg->getParent()) {
+      return F->getAttributes().hasParamAttr(arg->getArgNo(),
+                                             "enzyme_elementwise_read");
+    }
+  }
+  return false;
+}
+} // namespace
+
 DiffeGradientUtils::DiffeGradientUtils(
     EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, TypeResults TR,
@@ -344,15 +364,176 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
     return res;
   }
 
-  llvm::errs() << " VT: " << *VT << " idxs:{";
+  if (auto VecT = dyn_cast<VectorType>(VT)) {
+    if (!VecT->getElementCount().isScalable()) {
+      Type *elemTy = VecT->getElementType();
+      auto elemBytes = (DL.getTypeSizeInBits(elemTy) + 7) / 8;
+
+      // Only handle element-aligned windows
+      if (elemBytes != 0 && start % elemBytes == 0 && size % elemBytes == 0) {
+        unsigned left_idx = start / elemBytes;
+        unsigned right_idx = (start + size) / elemBytes; // exclusive
+
+        unsigned numElts = VecT->getElementCount().getFixedValue();
+        if (left_idx > numElts)
+          left_idx = numElts;
+        if (right_idx > numElts)
+          right_idx = numElts;
+
+        auto maskVec = [&](Value *dsub) -> Value * {
+          if (left_idx == 0 && right_idx == numElts)
+            return dsub;
+          Value *masked = Constant::getNullValue(VT);
+          for (unsigned i = left_idx; i < right_idx; i++) {
+            Value *vidx =
+                ConstantInt::get(Type::getInt32Ty(val->getContext()), i);
+            Value *el = BuilderM.CreateExtractElement(dsub, vidx);
+            masked = BuilderM.CreateInsertElement(masked, el, vidx);
+          }
+          return masked;
+        };
+
+        if (getWidth() == 1) {
+          SmallVector<unsigned, 1> eidxs;
+          for (auto idx : idxs.slice(ignoreFirstSlicesOfDif))
+            eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+
+          Value *subdif = extractMeta(BuilderM, dif, eidxs);
+          return addToDiffe(val, maskVec(subdif), BuilderM, addingType, idxs,
+                            mask);
+        } else {
+          SmallVector<SelectInst *, 4> res;
+          for (unsigned j = 0; j < getWidth(); j++) {
+            SmallVector<Value *, 1> lidxs;
+            SmallVector<unsigned, 1> eidxs = {(unsigned)j};
+
+            lidxs.push_back(
+                ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
+            for (auto idx : idxs.slice(ignoreFirstSlicesOfDif))
+              eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+            for (auto idx : idxs)
+              lidxs.push_back(idx);
+
+            Value *subdif = extractMeta(BuilderM, dif, eidxs);
+            for (auto v : addToDiffe(val, maskVec(subdif), BuilderM, addingType,
+                                     lidxs, mask))
+              res.push_back(v);
+          }
+          return res;
+        }
+      }
+    }
+  }
+
+  auto addingSize = addingType ? (DL.getTypeSizeInBits(addingType) + 7) / 8 : 0;
+  if (size < storeSize && addingType && !mask && addingSize != 0 &&
+      size % addingSize == 0 && start % addingSize == 0) {
+    if (getWidth() == 1) {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      Value *subdif = extractMeta(BuilderM, dif, eidxs);
+      IRBuilder<> A(inversionAllocs);
+      auto Al = A.CreateAlloca(subdif->getType());
+      BuilderM.CreateStore(subdif, Al);
+      if (start > 0) {
+        Value *ptr_i8 = BuilderM.CreatePointerCast(
+            Al, getUnqual(Type::getInt8Ty(val->getContext())));
+        BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                              MaybeAlign(1));
+      }
+      if (storeSize > start + size) {
+        Value *ptr_i8 = BuilderM.CreatePointerCast(
+            Al, getUnqual(Type::getInt8Ty(val->getContext())));
+        Value *gep = BuilderM.CreateInBoundsGEP(
+            Type::getInt8Ty(val->getContext()), ptr_i8,
+            ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                             start + size));
+        BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                              storeSize - start - size, MaybeAlign(1));
+      }
+      Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
+    } else {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      Value *subdif = extractMeta(BuilderM, dif, eidxs);
+      IRBuilder<> A(inversionAllocs);
+      auto Al = A.CreateAlloca(subdif->getType());
+      BuilderM.CreateStore(subdif, Al);
+      if (start > 0) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
+          Value *ptr_i8 = BuilderM.CreatePointerCast(
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
+          BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                                MaybeAlign(1));
+        }
+      }
+      if (storeSize > start + size) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
+          Value *ptr_i8 = BuilderM.CreatePointerCast(
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
+          Value *gep = BuilderM.CreateInBoundsGEP(
+              Type::getInt8Ty(val->getContext()), ptr_i8,
+              ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                               start + size));
+          BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                                storeSize - start - size, MaybeAlign(1));
+        }
+      }
+      Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
+    }
+  }
+
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "Unhandled accumulate with partial sizes:\n";
+  ss << " val: " << *val << "\n";
+  ss << " VT: " << *VT << " idxs:{";
   for (auto idx : idxs)
-    llvm::errs() << *idx << ",";
-  llvm::errs() << "} start=" << start << " size=" << size
-               << " storeSize=" << storeSize << " val=" << *val << "\n";
-  assert(0 && "unhandled accumulate with partial sizes");
+    ss << *idx << ",";
+  ss << "} start=" << start << " size=" << size << " storeSize=" << storeSize
+     << " val=" << *val << "\n";
+  if (addingType)
+    ss << " addingType: " << *addingType << "\n";
+  else
+    ss << " addingType: null\n";
+  if (CustomErrorHandler) {
+    CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
+                       nullptr, nullptr, wrap(&BuilderM));
+  } else {
+    DebugLoc loc;
+    if (auto inst = dyn_cast<Instruction>(val))
+      EmitFailure("UnhandledAccumulate", inst->getDebugLoc(), inst, ss.str());
+    else {
+      llvm::errs() << ss.str() << "\n";
+      llvm_unreachable("UnhandledAccumulate");
+    }
+  }
   return {};
 }
 
+static bool isZero(llvm::Constant *cst) {
+#if LLVM_VERSION_MAJOR >= 22
+  return cst->isNullValue() || cst->isNegativeZeroValue();
+#else
+  return cst->isZeroValue();
+#endif
+}
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, ArrayRef<Value *> idxs,
@@ -390,7 +571,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     //! optimize fadd of select to select of fadd
     if (SelectInst *select = dyn_cast<SelectInst>(dif)) {
       if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
@@ -399,7 +580,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
@@ -413,7 +594,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (BitCastInst *bc = dyn_cast<BitCastInst>(dif)) {
       if (SelectInst *select = dyn_cast<SelectInst>(bc->getOperand(0))) {
         if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(), old,
                 faddForNeg(old,
@@ -426,7 +607,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(),
                 faddForNeg(old,
@@ -872,15 +1053,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         Type *tys[] = {ArrayType::get(i8, start), addingType,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
-        auto Al = A.CreateAlloca(ST);
+        auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
         BuilderM.CreateStore(
             dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
-        auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs);
-        dif = BuilderM.CreateLoad(addingType, difp);
+        auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs, "gep.ptr");
+        dif = BuilderM.CreateLoad(addingType, difp, "gep.load");
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -895,10 +1076,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           dif = BuilderM.CreateBitCast(dif, addingType);
         else {
           IRBuilder<> A(inversionAllocs);
-          auto Al = A.CreateAlloca(addingType);
-          BuilderM.CreateStore(
-              dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
-          dif = BuilderM.CreateLoad(addingType, Al);
+          auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
+          BuilderM.CreateStore(dif, Al);
+          dif = BuilderM.CreateLoad(
+              addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
+              "cast.load");
         }
       }
       return dif;
@@ -923,6 +1105,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   // not captured/escaping and created in this function. This assumes that
   // all additional parallelism in this function is outlined.
   if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
+    Atomic = false;
+  if (Atomic && elementwiseReadForContext(orig, origptr))
     Atomic = false;
 
   if (Atomic) {

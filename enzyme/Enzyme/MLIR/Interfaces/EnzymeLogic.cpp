@@ -64,10 +64,10 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
     }
   }
 
-  nBB->push_back(
-      newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                      retargs, newInst->getAttrs(), OpaqueProperties(nullptr),
-                      newInst->getSuccessors(), newInst->getNumRegions()));
+  nBB->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
+                                 TypeRange(), retargs, newInst->getAttrs(),
+                                 mlir::PropertyRef(), newInst->getSuccessors(),
+                                 newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
 }

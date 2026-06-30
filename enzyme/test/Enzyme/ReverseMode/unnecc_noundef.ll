@@ -44,7 +44,7 @@ entry:
 
 ; Need to check that we don't pass undef to diffelast since we load it in the reverse pass.
 
-; CHECK: define internal void @diffemat(ptr nocapture writeonly %dst, ptr nocapture %"dst'", ptr nocapture readonly align 8 dereferenceable(16) %rhs, ptr nocapture align 8 %"rhs'", { ptr, ptr } %tapeArg)
+; CHECK: define internal void @diffemat(ptr nocapture writeonly %dst, ptr nocapture %"dst'", ptr nocapture readonly align 8 %rhs, ptr nocapture align 8 %"rhs'", { ptr, ptr } %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"malloccall'mi" = alloca { ptr, i32 }, i64 1, align 8 
 ; CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr nonnull dereferenceable(16) dereferenceable_or_null(16) %"malloccall'mi", i8 0, i64 16, i1 false)

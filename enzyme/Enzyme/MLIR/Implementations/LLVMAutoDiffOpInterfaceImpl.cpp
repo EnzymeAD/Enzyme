@@ -207,6 +207,96 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct ExtractValueOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          ExtractValueOpInterfaceReverse, LLVM::ExtractValueOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto evOp = cast<LLVM::ExtractValueOp>(op);
+    Value container = evOp.getContainer();
+
+    auto containerIface = dyn_cast<AutoDiffTypeInterface>(container.getType());
+    if (!containerIface)
+      return failure();
+
+    if (!gutils->isConstantValue(evOp)) {
+      Value gradient = gutils->diffe(evOp, builder);
+      gutils->zeroDiffe(evOp, builder);
+      // Create a zero aggregate matching the container type, then insert the
+      // gradient at the extracted position.
+      if (!gutils->isConstantValue(container)) {
+        Value zero = containerIface.createNullValue(builder, op->getLoc());
+        Value grad = LLVM::InsertValueOp::create(builder, op->getLoc(), zero,
+                                                 gradient, evOp.getPosition());
+        gutils->addToDiffe(container, grad, builder);
+      }
+    }
+
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
+struct InsertValueOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          InsertValueOpInterfaceReverse, LLVM::InsertValueOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto ivOp = cast<LLVM::InsertValueOp>(op);
+    Value container = ivOp.getContainer();
+    Value value = ivOp.getValue();
+
+    auto resultIface = dyn_cast<AutoDiffTypeInterface>(ivOp.getType());
+    if (!resultIface)
+      return failure();
+
+    if (!gutils->isConstantValue(ivOp)) {
+      Value gradient = gutils->diffe(ivOp, builder);
+      gutils->zeroDiffe(ivOp, builder);
+
+      // Propagate gradient to the inserted value: extract from the result
+      // gradient at the insertion position.
+      auto valIface = dyn_cast<AutoDiffTypeInterface>(value.getType());
+      if (valIface && !gutils->isConstantValue(value)) {
+        Value valGrad = LLVM::ExtractValueOp::create(
+            builder, op->getLoc(), gradient, ivOp.getPosition());
+        gutils->addToDiffe(value, valGrad, builder);
+      }
+
+      // Propagate gradient to the container: zero out the inserted position
+      // in the result gradient, then add to the container gradient.
+      if (!gutils->isConstantValue(container)) {
+        Value zeroVal =
+            valIface
+                ? valIface.createNullValue(builder, op->getLoc())
+                : LLVM::ZeroOp::create(builder, op->getLoc(), value.getType());
+        Value containerGrad = LLVM::InsertValueOp::create(
+            builder, op->getLoc(), gradient, zeroVal, ivOp.getPosition());
+        gutils->addToDiffe(container, containerGrad, builder);
+      }
+    }
+
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 std::optional<Value> findPtrSize(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
     return allocOp.getSize();
@@ -242,6 +332,72 @@ struct PointerClonableTypeInterface
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
     llvm_ext::FreeOp::create(builder, value.getLoc(), value);
   }
+};
+
+class StructTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<StructTypeInterface,
+                                                  LLVM::LLVMStructType> {
+public:
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    llvm::errs() << " unsupported: createNullAttribute of LLVMStructType\n";
+    return nullptr;
+  }
+
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
+    auto structTy = cast<LLVM::LLVMStructType>(self);
+    Value result = LLVM::PoisonOp::create(builder, loc, structTy);
+    for (auto &&[i, elemTy] : llvm::enumerate(structTy.getBody())) {
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!elemIface) {
+        Value zero = LLVM::ZeroOp::create(builder, loc, elemTy);
+        result = LLVM::InsertValueOp::create(builder, loc, result, zero, i);
+        continue;
+      }
+      Value nullElem = elemIface.createNullValue(builder, loc);
+      result = LLVM::InsertValueOp::create(builder, loc, result, nullElem, i);
+    }
+    return result;
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto structTy = cast<LLVM::LLVMStructType>(self);
+    Value result = LLVM::PoisonOp::create(builder, loc, structTy);
+    for (auto &&[i, elemTy] : llvm::enumerate(structTy.getBody())) {
+      Value aElem = LLVM::ExtractValueOp::create(builder, loc, a, i);
+      Value bElem = LLVM::ExtractValueOp::create(builder, loc, b, i);
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      Value sum;
+      if (elemIface) {
+        sum = elemIface.createAddOp(builder, loc, aElem, bElem);
+      } else {
+        sum = aElem;
+      }
+      result = LLVM::InsertValueOp::create(builder, loc, result, sum, i);
+    }
+    return result;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 
 static Value packIntoStruct(ValueRange values, OpBuilder &builder,
@@ -303,9 +459,14 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
+    LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
+    LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
+        *context);
+    LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(
+        *context);
     LLVM::UnreachableOp::template attachInterface<
         detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
     LLVM::LLVMFuncOp::attachInterface<AutoDiffLLVMFuncOpFunctionInterface>(

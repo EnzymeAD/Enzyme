@@ -57,7 +57,7 @@ declare void @_Z17__enzyme_autodiffz(...)
 declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 
 ; we must actually save or set the matmul
-; CHECK: define internal void @diffe_Z3mulR4ProdPd(ptr nocapture align 8 dereferenceable(16) %P, ptr nocapture align 8 %"P'", ptr noalias nocapture readonly %rhs, ptr nocapture %"rhs'", { ptr, ptr, ptr, ptr } %tapeArg)
+; CHECK: define internal void @diffe_Z3mulR4ProdPd(ptr nocapture align 8 %P, ptr nocapture align 8 %"P'", ptr noalias nocapture readonly %rhs, ptr nocapture %"rhs'", { ptr, ptr, ptr, ptr } %tapeArg)
 ; CHECK-NEXT: invertentry:
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double, align 8

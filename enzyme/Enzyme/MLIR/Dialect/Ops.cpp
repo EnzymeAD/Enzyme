@@ -25,6 +25,7 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include <type_traits>
 
 #define DEBUG_TYPE "enzyme"
 
@@ -162,6 +163,16 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult JacobianOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ForwardDiffOp
 //===----------------------------------------------------------------------===//
@@ -172,7 +183,7 @@ template <typename SourceOp> struct EnzymeOpCreator;
 
 template <> struct EnzymeOpCreator<AutoDiffOp> {
   static AutoDiffOp create(PatternRewriter &rewriter, AutoDiffOp uop,
-                           ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                           TypeRange out_ty, ValueRange in_args,
                            ArrayAttr newInActivity, ArrayAttr newRetActivity) {
 
     return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
@@ -183,21 +194,22 @@ template <> struct EnzymeOpCreator<AutoDiffOp> {
 
 template <> struct EnzymeOpCreator<AutoDiffRegionOp> {
   static AutoDiffRegionOp create(PatternRewriter &rewriter,
-                                 AutoDiffRegionOp uop, ArrayRef<Type> out_ty,
-                                 ArrayRef<Value> in_args,
-                                 ArrayAttr newInActivity,
+                                 AutoDiffRegionOp uop, TypeRange out_ty,
+                                 ValueRange in_args, ArrayAttr newInActivity,
                                  ArrayAttr newRetActivity) {
     auto newOp = AutoDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
-    newOp.getBody().takeBody(uop.getBody());
+
+    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
+                                newOp.getBody().begin());
     return newOp;
   }
 };
 
 template <> struct EnzymeOpCreator<ForwardDiffOp> {
   static ForwardDiffOp create(PatternRewriter &rewriter, ForwardDiffOp uop,
-                              ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                              TypeRange out_ty, ValueRange in_args,
                               ArrayAttr newInActivity,
                               ArrayAttr newRetActivity) {
     return ForwardDiffOp::create(
@@ -207,14 +219,15 @@ template <> struct EnzymeOpCreator<ForwardDiffOp> {
 };
 
 template <> struct EnzymeOpCreator<ForwardDiffRegionOp> {
-  static ForwardDiffRegionOp
-  create(PatternRewriter &rewriter, ForwardDiffRegionOp uop,
-         ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
-         ArrayAttr newInActivity, ArrayAttr newRetActivity) {
+  static ForwardDiffRegionOp create(PatternRewriter &rewriter,
+                                    ForwardDiffRegionOp uop, TypeRange out_ty,
+                                    ValueRange in_args, ArrayAttr newInActivity,
+                                    ArrayAttr newRetActivity) {
     auto newOp = ForwardDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
-    newOp.getBody().takeBody(uop.getBody());
+    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
+                                newOp.getBody().begin());
     return newOp;
   }
 };
@@ -569,12 +582,6 @@ void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                 MLIRContext *context) {
 
   patterns.add<FwdRetOpt<ForwardDiffOp>, FwdInpOpt<ForwardDiffOp>>(context);
-}
-
-void ForwardDiffRegionOp::getCanonicalizationPatterns(
-    RewritePatternSet &patterns, MLIRContext *context) {
-  patterns.add<FwdRetOpt<ForwardDiffRegionOp>, FwdInpOpt<ForwardDiffRegionOp>>(
-      context);
 }
 
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -1090,6 +1097,69 @@ public:
   }
 };
 
+template <typename SourceRegionOp>
+class RemoveUnusedArgs final : public OpRewritePattern<SourceRegionOp> {
+
+private:
+  using SourceOpCreator = EnzymeOpCreator<SourceRegionOp>;
+
+public:
+  using OpRewritePattern<SourceRegionOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceRegionOp uop,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> newInArgs;
+    SmallVector<size_t> argIdxToErase;
+    SmallVector<ActivityAttr> newInActivityArgs;
+    llvm::SmallVector<Value> blockArg(uop.getBody().getArguments());
+    auto in_idx = 0;
+    for (auto [idx, act] : llvm::enumerate(
+             uop.getActivity().template getAsRange<ActivityAttr>())) {
+      auto act_val = act.getValue();
+      Value res = uop.getInputs()[in_idx++];
+
+      if (blockArg[idx].use_empty()) {
+        argIdxToErase.push_back(idx);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          in_idx++;
+        }
+      } else {
+        newInActivityArgs.push_back(act);
+        newInArgs.push_back(res);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          res = uop.getInputs()[in_idx++];
+          newInArgs.push_back(res);
+        }
+      }
+    }
+
+    if (argIdxToErase.empty())
+      return failure();
+
+    // only needed for Autodiff region op
+    if constexpr (std::is_same_v<SourceRegionOp, AutoDiffRegionOp>) {
+      newInArgs.append(uop.getDifferentialReturns());
+    }
+
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
+    auto newOp =
+        SourceOpCreator::create(rewriter, uop, uop.getResultTypes(), newInArgs,
+                                newInActivity, uop.getRetActivity());
+
+    for (auto idx : llvm::reverse(argIdxToErase)) {
+      newOp.getBody().eraseArgument(idx);
+    }
+
+    rewriter.replaceOp(uop, newOp);
+    return success();
+  }
+};
+
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<ReverseRetOpt<AutoDiffOp>>(context);
@@ -1097,164 +1167,13 @@ void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 
 void AutoDiffRegionOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
-  patterns.add<ReverseRetOpt<AutoDiffRegionOp>>(context);
-}
-//===----------------------------------------------------------------------===//
-// SampleOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  if (getLogpdfAttr()) {
-    auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
-        *this, getLogpdfAttr());
-    if (!global)
-      return emitOpError("'")
-             << getLogpdf().value() << "' does not reference a valid global "
-             << "funcOp";
-  }
-
-  return success();
+  patterns
+      .add<ReverseRetOpt<AutoDiffRegionOp>, RemoveUnusedArgs<AutoDiffRegionOp>>(
+          context);
 }
 
-//===----------------------------------------------------------------------===//
-// GenerateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// SimulateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// UpdateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult UpdateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// RegenerateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult
-RegenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// MHOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult MHOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// MCMCOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult MCMCOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
-LogicalResult MCMCOp::verify() {
-  bool hasHMC = getHmcConfig().has_value();
-  bool hasNUTS = getNutsConfig().has_value();
-
-  if (hasHMC + hasNUTS != 1) {
-    return emitOpError(
-        "Exactly one of hmc_config or nuts_config must be specified");
-  }
-
-  // TODO: More verification
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// InitTraceOp
-//===----------------------------------------------------------------------===//
-
-namespace {
-struct RemoveUnusedInitTrace : public OpRewritePattern<InitTraceOp> {
-  using OpRewritePattern<InitTraceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(InitTraceOp op,
-                                PatternRewriter &rewriter) const final {
-    if (op.use_empty()) {
-      rewriter.eraseOp(op);
-      return success();
-    }
-    return failure();
-  }
-};
-} // namespace
-
-void InitTraceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
-                                              MLIRContext *context) {
-  patterns.add<RemoveUnusedInitTrace>(context);
+void ForwardDiffRegionOp::getCanonicalizationPatterns(
+    RewritePatternSet &patterns, MLIRContext *context) {
+  patterns.add<FwdRetOpt<ForwardDiffRegionOp>, FwdInpOpt<ForwardDiffRegionOp>,
+               RemoveUnusedArgs<ForwardDiffRegionOp>>(context);
 }

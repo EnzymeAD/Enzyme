@@ -30,8 +30,8 @@ def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                       (SelectIfComplex $x,
                         (ComplexCreate
                           (TypeOf $x),
-                          (DivF (ComplexRe $x), (AbsF $x)),
-                          (NegF (DivF (ComplexIm $x), (AbsF $x)))
+                          (CheckedMulF (DiffeRet), (DivF (ComplexRe $x), (AbsF $x))),
+                          (CheckedMulF (DiffeRet), (NegF (DivF (ComplexIm $x), (AbsF $x))))
                         ),
                         (Arith_Select (CmpF (Arith_OGE), $x, (ConstantFP<"0","arith","ConstantOp"> $x)), (DiffeRet), (NegF (DiffeRet)))
                       )

@@ -81,7 +81,7 @@ extern "C" {
 
 __attribute__((noinline))
 static void matvec(const Tensor<float, 2>* __restrict K, const Tensor<float, 4>* __restrict In, Tensor<float, 4>* Out) {
-  Eigen::array<ptrdiff_t, 2> dims({1, 2});
+  Eigen::array<ptrdiff_t, 2> dims{1, 2};
   *Out = In->convolve(*K, dims);
 }
 

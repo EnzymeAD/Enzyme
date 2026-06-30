@@ -39,6 +39,10 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 
+#if LLVM_VERSION_MAJOR <= 22
+#define SCEVUse const SCEV *
+#endif
+
 using namespace llvm;
 
 bool MustExitScalarEvolution::loopIsFiniteByAssumption(const Loop *L) {
@@ -359,8 +363,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     }
 #endif
 
-  const SCEV *LHS = getSCEV(ExitCond->getOperand(0));
-  const SCEV *RHS = getSCEV(ExitCond->getOperand(1));
+  SCEVUse LHS = getSCEV(ExitCond->getOperand(0));
+  SCEVUse RHS = getSCEV(ExitCond->getOperand(1));
 
 #define PROP_PHI(LHS)                                                          \
   if (auto un = dyn_cast<SCEVUnknown>(LHS)) {                                  \
@@ -440,7 +444,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), 1))};
       // Since this is not an infinite loop by induction, RHS cannot be
@@ -464,7 +468,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
       // Since this is not an infinite loop by induction, RHS cannot be
@@ -598,7 +602,7 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
   // Create an AddExpr for "PreStart" after subtracting Step. Full SCEV
   // subtraction is expensive. For this purpose, perform a quick and dirty
   // difference, by checking for Step in the operand list.
-  SmallVector<const SCEV *, 4> DiffOps;
+  SmallVector<SCEVUse, 4> DiffOps;
   for (const SCEV *Op : SA->operands())
     if (Op != Step)
       DiffOps.push_back(Op);
@@ -621,9 +625,15 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
   //
 
   const SCEV *BECount = SE->getBackedgeTakenCount(L);
+#if LLVM_VERSION_MAJOR >= 23
+  if (PreAR && any(PreAR->getNoWrapFlags(WrapType)) &&
+      !isa<SCEVCouldNotCompute>(BECount) && SE->isKnownPositive(BECount))
+    return PreStart;
+#else
   if (PreAR && PreAR->getNoWrapFlags(WrapType) &&
       !isa<SCEVCouldNotCompute>(BECount) && SE->isKnownPositive(BECount))
     return PreStart;
+#endif
 
   // 2. Direct overflow check on the step operation's expression.
   unsigned BitWidth = SE->getTypeSizeInBits(AR->getType());
@@ -632,7 +642,12 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       SE->getAddExpr((SE->*GetExtendExpr)(PreStart, WideTy, Depth),
                      (SE->*GetExtendExpr)(Step, WideTy, Depth));
   if ((SE->*GetExtendExpr)(Start, WideTy, Depth) == OperandExtendedStart) {
-    if (PreAR && AR->getNoWrapFlags(WrapType)) {
+#if LLVM_VERSION_MAJOR >= 23
+    if (PreAR && any(AR->getNoWrapFlags(WrapType)))
+#else
+    if (PreAR && AR->getNoWrapFlags(WrapType))
+#endif
+    {
       // If we know `AR` == {`PreStart`+`Step`,+,`Step`} is `WrapType` (FlagNSW
       // or FlagNUW) and that `PreStart` + `Step` is `WrapType` too, then
       // `PreAR` == {`PreStart`,+,`Step`} is also `WrapType`.  Cache this fact.
@@ -680,7 +695,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   (void)CanAnalyze;
   assert(CanAnalyze && "don't call from other places!");
 
-  int SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
+  auto SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
   SCEV::NoWrapFlags SignOrUnsignWrap =
       ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
@@ -839,7 +854,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // implicit/exceptional) which causes the loop to execute before the
   // exiting instruction we're analyzing would trigger UB.
   auto WrapType = IsSigned ? SCEV::FlagNSW : SCEV::FlagNUW;
+
+#if LLVM_VERSION_MAJOR >= 23
+  bool NoWrap = ControlsExit && any(IV->getNoWrapFlags(WrapType));
+#else
   bool NoWrap = ControlsExit && IV->getNoWrapFlags(WrapType);
+#endif
+
   ICmpInst::Predicate Cond = IsSigned ? ICmpInst::ICMP_SLT : ICmpInst::ICMP_ULT;
 
   const SCEV *Stride = IV->getStepRecurrence(*this);

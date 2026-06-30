@@ -187,11 +187,11 @@ entry:
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"A'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %A to double*
-; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !10, !noalias !13
+; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope ![[scope:[0-9]+]], !noalias ![[noalias:[0-9]+]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %[[enzyme_memcpy_double_mat_64_exit21]]
-; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope !13, !noalias !10
+; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope ![[noalias]], !noalias ![[scope]]
 ; CHECK-NEXT:   %[[i42:.+]] = bitcast double* %cache.A to i8*
 ; CHECK-NEXT:   %[[i43:.+]] = bitcast double* %cache.B to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one

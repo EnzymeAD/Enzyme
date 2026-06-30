@@ -19,6 +19,8 @@ def DifferentiatePass : Pass<"enzyme"> {
     "cf::ControlFlowDialect",
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect"
   ];
   let options = [
     Option<
@@ -38,14 +40,13 @@ def DifferentiatePass : Pass<"enzyme"> {
   ];
 }
 
-def ProbProgPass : Pass<"probprog"> {
-  let summary = "ProbProg Passes";
+def ExpandImpulsePass : Pass<"expand-impulse"> {
+  let summary = "Materialize Impulse ops to probabilistic programming algorithms";
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect",
-    "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
+    "impulse::ImpulseDialect",
   ];
   let options = [
     Option<
@@ -53,7 +54,7 @@ def ProbProgPass : Pass<"probprog"> {
       /*CLI argument=*/"postpasses",
       /*type=*/"std::string",
       /*default=*/"",
-      /*description=*/"Optimization passes to apply to generated probabilistic programs"
+      /*description=*/"Optimization passes to apply to expanded probabilistic programs"
     >,
     Option<
       /*C++ variable name=*/"debugDump",
@@ -86,7 +87,9 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "arith::ArithDialect",
     "complex::ComplexDialect",
     "cf::ControlFlowDialect",
-    "enzyme::EnzymeDialect"
+    "enzyme::EnzymeDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect"
   ];
   let options = [
     Option<

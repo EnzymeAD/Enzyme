@@ -1,3 +1,5 @@
+message("Building Fortran tests")
+
 add_subdirectory(ForwardMode)
 add_subdirectory(ReverseMode)
 

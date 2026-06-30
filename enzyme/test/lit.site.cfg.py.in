@@ -118,6 +118,15 @@ config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
 config.substitutions.append(('%hasMPFR', has_mpfr))
 
+# Fortran-specific configuration
+if int(config.llvm_ver) >= 13:
+    config.available_features.add('fortran')
+config.fc = "@Fortran_COMPILER@"
+config.substitutions.append(('%fc', config.fc))
+if config.fc == "ifx":
+    config.available_features.add('ifx')
+config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:

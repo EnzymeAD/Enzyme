@@ -11,6 +11,7 @@
 #ifndef ENZYME_MLIR_INTERFACES_HMC_UTILS_H
 #define ENZYME_MLIR_INTERFACES_HMC_UTILS_H
 
+#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/TransformUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,16 +23,18 @@
 #include "mlir/IR/Value.h"
 
 namespace mlir {
-namespace enzyme {
-namespace MCMC {
+namespace impulse {
 
 struct SupportInfo {
   int64_t offset;
+  int64_t traceOffset;
   int64_t size;
-  enzyme::SupportAttr support;
+  impulse::SupportAttr support;
 
-  SupportInfo(int64_t offset, int64_t size, enzyme::SupportAttr support)
-      : offset(offset), size(size), support(support) {}
+  SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
+              impulse::SupportAttr support)
+      : offset(offset), traceOffset(traceOffset), size(size), support(support) {
+  }
 };
 
 struct IntegrationResult {
@@ -53,12 +56,6 @@ struct InitialHMCState {
   Value U0;    // Initial potential energy
   Value grad0; // Initial gradient at position q0
   Value rng;   // RNG state for SampleHMC
-};
-
-struct HMCResult {
-  Value trace;
-  Value accepted;
-  Value rng;
 };
 
 /// Result of one MCMC kernel step
@@ -101,31 +98,74 @@ struct IntegratorState {
 struct HMCContext {
   FlatSymbolRefAttr fn;
   ArrayRef<Value> fnInputs;
+  SmallVector<Type> fnResultTypes;
   Value originalTrace;
   ArrayAttr selection;
+  ArrayAttr allAddresses;
   Value invMass;
   Value massMatrixSqrt;
   Value stepSize;
   Value trajectoryLength;
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
+  FlatSymbolRefAttr logpdfFn;
+  DictionaryAttr autodiffAttrs;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-             Value originalTrace, ArrayAttr selection, Value invMass,
+             ArrayRef<Type> fnResultTypes, Value originalTrace,
+             ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
              Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
-             int64_t positionSize, ArrayRef<SupportInfo> supports)
-      : fn(fn), fnInputs(fnInputs), originalTrace(originalTrace),
-        selection(selection), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
+             int64_t positionSize, ArrayRef<SupportInfo> supports,
+             DictionaryAttr autodiffAttrs = {})
+      : fn(fn), fnInputs(fnInputs),
+        fnResultTypes(fnResultTypes.begin(), fnResultTypes.end()),
+        originalTrace(originalTrace), selection(selection),
+        allAddresses(allAddresses), invMass(invMass),
+        massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
+        trajectoryLength(trajectoryLength), positionSize(positionSize),
+        supports(supports.begin(), supports.end()),
+        autodiffAttrs(autodiffAttrs) {}
+
+  HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
+             Value invMass, Value massMatrixSqrt, Value stepSize,
+             Value trajectoryLength, int64_t positionSize,
+             DictionaryAttr autodiffAttrs = {})
+      : fnInputs(fnInputs), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
         stepSize(stepSize), trajectoryLength(trajectoryLength),
-        positionSize(positionSize), supports(supports.begin(), supports.end()) {
+        positionSize(positionSize), logpdfFn(logpdfFn),
+        autodiffAttrs(autodiffAttrs) {}
+
+  bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
+
+  int64_t getFullTraceSize() const {
+    auto traceType = cast<RankedTensorType>(originalTrace.getType());
+    return traceType.getShape()[1];
+  }
+
+  Type getElementType() const {
+    return cast<RankedTensorType>(stepSize.getType()).getElementType();
+  }
+
+  RankedTensorType getPositionType() const {
+    return RankedTensorType::get({1, positionSize}, getElementType());
+  }
+
+  RankedTensorType getScalarType() const {
+    return RankedTensorType::get({}, getElementType());
   }
 
   bool hasConstrainedSupports() const {
     for (const auto &info : supports) {
-      if (info.support && info.support.getKind() != enzyme::SupportKind::REAL)
+      if (info.support && info.support.getKind() != impulse::SupportKind::REAL)
         return true;
     }
     return false;
+  }
+
+  HMCContext withStepSize(Value newStepSize) const {
+    HMCContext copy = *this;
+    copy.stepSize = newStepSize;
+    return copy;
   }
 };
 
@@ -135,15 +175,31 @@ struct NUTSContext : public HMCContext {
   int64_t maxTreeDepth;
 
   NUTSContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-              Value originalTrace, ArrayAttr selection, Value invMass,
+              ArrayRef<Type> fnResultTypes, Value originalTrace,
+              ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
               Value massMatrixSqrt, Value stepSize, int64_t positionSize,
               ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
-              int64_t maxTreeDepth)
-      : HMCContext(fn, fnInputs, originalTrace, selection, invMass,
-                   massMatrixSqrt, stepSize,
+              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
+      : HMCContext(fn, fnInputs, fnResultTypes, originalTrace, selection,
+                   allAddresses, invMass, massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize,
-                   supports),
+                   supports, autodiffAttrs),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
+
+  NUTSContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
+              Value invMass, Value massMatrixSqrt, Value stepSize,
+              int64_t positionSize, Value H0, Value maxDeltaEnergy,
+              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
+      : HMCContext(logpdfFn, fnInputs, invMass, massMatrixSqrt, stepSize,
+                   /* Unused trajectoryLength */ Value(), positionSize,
+                   autodiffAttrs),
+        H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
+
+  NUTSContext withH0(Value newH0) const {
+    NUTSContext copy = *this;
+    copy.H0 = newH0;
+    return copy;
+  }
 };
 
 struct NUTSTreeState {
@@ -260,7 +316,8 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
 ///   - Computes initial kinetic energy and Hamiltonian
 ///   - Computes initial gradient via AutoDiffRegionOp
 InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
-                        const HMCContext &ctx, bool debugDump = false);
+                        const HMCContext &ctx, Value initialPosition = Value(),
+                        bool debugDump = false);
 
 /// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
 MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
@@ -271,14 +328,6 @@ MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
 MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
                             Value grad, Value U, Value rng,
                             const NUTSContext &ctx, bool debugDump = false);
-
-/// PostProcess HMC samples
-HMCResult PostProcessHMC(OpBuilder &builder, Location loc, Value q,
-                         Value accepted, Value rng, const HMCContext &ctx);
-
-/// PostProcess NUTS samples
-HMCResult PostProcessNUTS(OpBuilder &builder, Location loc, Value q, Value rng,
-                          const NUTSContext &ctx);
 
 /// Builds a base tree (leaf node) by taking one leapfrog step.
 NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
@@ -411,8 +460,7 @@ Value constrainPosition(OpBuilder &builder, Location loc, Value unconstrained,
 Value computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
                                      Value unconstrained,
                                      ArrayRef<SupportInfo> supports);
-} // namespace MCMC
-} // namespace enzyme
+} // namespace impulse
 } // namespace mlir
 
 #endif // ENZYME_MLIR_INTERFACES_HMC_UTILS_H

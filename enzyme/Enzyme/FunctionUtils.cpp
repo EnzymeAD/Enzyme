@@ -130,6 +130,10 @@ cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                            cl::desc("Force inlining of autodiff"));
 
+cl::opt<int> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(0),
+                                 cl::Hidden,
+                                 cl::desc("Force inlining of autodiff"));
+
 cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
                             cl::desc("Force noalias of autodiff"));
 #if LLVM_VERSION_MAJOR < 16
@@ -286,6 +290,10 @@ void RecursivelyReplaceAddressSpace(
     SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
     SmallVector<Instruction *, 1> &toErase, bool legal) {
   SmallVector<StoreInst *, 1> toPostCache;
+  // Since MTI may have both source and dest replaced, we keep a list of the
+  // ones being replaced to the current dst, src so we can still follow usage
+  // chain.
+  DenseMap<MemTransferInst *, std::pair<Value *, Value *>> MTIReplacements;
   while (Todo.size()) {
     auto cur = Todo.back();
     Todo.pop_back();
@@ -296,6 +304,7 @@ void RecursivelyReplaceAddressSpace(
       auto AS = cast<PointerType>(rep->getType())->getAddressSpace();
       if (AS == ASC->getDestAddressSpace()) {
         ASC->replaceAllUsesWith(rep);
+        assert(ASC);
         toErase.push_back(ASC);
         continue;
       }
@@ -306,6 +315,7 @@ void RecursivelyReplaceAddressSpace(
           Todo.push_back(
               std::make_tuple(rep, (Value *)ASC, cast<Instruction>(U)));
         }
+        assert(ASC);
         toErase.push_back(ASC);
         continue;
       }
@@ -338,6 +348,7 @@ void RecursivelyReplaceAddressSpace(
         Todo.push_back(
             std::make_tuple((Value *)nCI0, (Value *)CI, cast<Instruction>(U)));
       }
+      assert(CI);
       toErase.push_back(CI);
       continue;
     }
@@ -366,6 +377,7 @@ void RecursivelyReplaceAddressSpace(
         Todo.push_back(
             std::make_tuple((Value *)nGEP, (Value *)GEP, cast<Instruction>(U)));
       }
+      assert(GEP);
       toErase.push_back(GEP);
       continue;
     }
@@ -413,6 +425,7 @@ void RecursivelyReplaceAddressSpace(
           Todo.push_back(
               std::make_tuple((Value *)nP, (Value *)P, cast<Instruction>(U)));
         }
+        assert(P);
         toErase.push_back(P);
         for (int i = Todo.size() - 1; i >= 0; i--) {
           if (std::get<2>(Todo[i]) != P)
@@ -446,6 +459,7 @@ void RecursivelyReplaceAddressSpace(
           Todo.push_back(
               std::make_tuple((Value *)nII, (Value *)II, cast<Instruction>(U)));
         }
+        assert(II);
         toErase.push_back(II);
         continue;
       }
@@ -532,40 +546,35 @@ void RecursivelyReplaceAddressSpace(
           nargs));
       nMS->copyMetadata(*MS);
       nMS->setAttributes(MS->getAttributes());
+      assert(MS);
       toErase.push_back(MS);
       continue;
     }
     if (auto MTI = dyn_cast<MemTransferInst>(inst)) {
-      IRBuilder<> B(MTI);
+      auto &dstsrc = MTIReplacements[MTI];
+      if (!dstsrc.first) {
+        dstsrc.first = MTI->getArgOperand(0);
+      }
+      if (!dstsrc.second) {
+        dstsrc.second = MTI->getArgOperand(1);
+      }
 
-      Value *nargs[4] = {MTI->getArgOperand(0), MTI->getArgOperand(1),
-                         MTI->getArgOperand(2), MTI->getArgOperand(3)};
+      if (MTI->getArgOperand(0) == prev)
+        dstsrc.first = rep;
 
-      if (nargs[0] == prev)
-        nargs[0] = rep;
-
-      if (nargs[1] == prev)
-        nargs[1] = rep;
-
-      Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
-                     nargs[2]->getType()};
-
-      auto nMTI = cast<CallInst>(B.CreateCall(
-          getIntrinsicDeclaration(MTI->getParent()->getParent()->getParent(),
-                                  MTI->getIntrinsicID(), tys),
-          nargs));
-      nMTI->copyMetadata(*MTI);
-      nMTI->setAttributes(MTI->getAttributes());
-      toErase.push_back(MTI);
+      if (MTI->getArgOperand(1) == prev)
+        dstsrc.second = rep;
       continue;
     }
     if (auto CI = dyn_cast<CallInst>(inst)) {
       if (auto F = CI->getCalledFunction()) {
         if (F->getName() == "julia.write_barrier" && legal) {
+          assert(CI);
           toErase.push_back(CI);
           continue;
         }
         if (F->getName() == "julia.write_barrier_binding" && legal) {
+          assert(CI);
           toErase.push_back(CI);
           continue;
         }
@@ -590,6 +599,26 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
+    if (auto cmp = dyn_cast<CmpInst>(inst)) {
+      IRBuilder<> B(cmp);
+      Value *op0 = cmp->getOperand(0);
+      Value *op1 = cmp->getOperand(1);
+      if (op0 == prev && isa<Constant>(op1)) {
+        cmp->setOperand(0, rep);
+        cmp->setOperand(1, B.CreateAddrSpaceCast(op1, rep->getType()));
+      } else if (op1 == prev && isa<Constant>(op0)) {
+        cmp->setOperand(0, B.CreateAddrSpaceCast(op0, rep->getType()));
+        cmp->setOperand(1, rep);
+      } else {
+        auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
+        for (size_t i = 0; i < cmp->getNumOperands(); i++) {
+          if (cmp->getOperand(i) == prev) {
+            cmp->setOperand(i, Addr);
+          }
+        }
+      }
+      continue;
+    }
 
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -610,7 +639,28 @@ void RecursivelyReplaceAddressSpace(
     llvm_unreachable("Illegal address space propagation");
   }
 
+  for (auto MTIPair : MTIReplacements) {
+    auto MTI = MTIPair.first;
+    auto dst = MTIPair.second.first;
+    auto src = MTIPair.second.second;
+
+    Value *nargs[] = {dst, src, MTI->getArgOperand(2), MTI->getArgOperand(3)};
+
+    Type *tys[] = {dst->getType(), src->getType(), nargs[2]->getType()};
+
+    IRBuilder<> B(MTI);
+    auto nMTI = cast<CallInst>(B.CreateCall(
+        getIntrinsicDeclaration(MTI->getParent()->getParent()->getParent(),
+                                MTI->getIntrinsicID(), tys),
+        nargs));
+    nMTI->copyMetadata(*MTI);
+    nMTI->setAttributes(MTI->getAttributes());
+    assert(MTI);
+    MTI->eraseFromParent();
+  }
+
   for (auto I : llvm::reverse(toErase)) {
+    assert(I);
     I->eraseFromParent();
   }
   for (auto SI : toPostCache) {
@@ -626,8 +676,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
   }
   SmallVector<Instruction *, 1> toErase;
-  if (auto I = dyn_cast<Instruction>(AI))
+  if (auto I = dyn_cast<Instruction>(AI)) {
+    assert(I);
     toErase.push_back(I);
+  }
   RecursivelyReplaceAddressSpace(Todo, toErase, legal);
 }
 
@@ -764,8 +816,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         Todo.push_back(
             std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
       }
-      if (auto I = dyn_cast<Instruction>(AI))
+      if (auto I = dyn_cast<Instruction>(AI)) {
+        assert(I);
         toErase.push_back(I);
+      }
     } else {
       assert(rep->getType() == AI->getType());
       AI->replaceAllUsesWith(rep);
@@ -1046,17 +1100,19 @@ void simplifyExtractions(Function *NewF) {
 
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
   simplifyExtractions(NewF);
-  SmallVector<Instruction *, 1> Todo;
+  SmallVector<Instruction *, 1> InitialTodo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (hasMetadata(&I, "enzyme_backstack")) {
-        Todo.push_back(&I);
+        InitialTodo.push_back(&I);
         // TODO
         // I.eraseMetadata("enzyme_backstack");
       }
     }
   }
-  for (auto T : Todo) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  SmallVector<Instruction *, 1> toErase;
+  for (auto T : InitialTodo) {
     auto T0 = T->getOperand(0);
     if (auto CI = dyn_cast<BitCastInst>(T0))
       T0 = CI->getOperand(0);
@@ -1073,8 +1129,16 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
 #endif
-    RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
+    for (auto U : T->users()) {
+      Todo.push_back(
+          std::make_tuple((Value *)AIV, (Value *)T, cast<Instruction>(U)));
+    }
+    if (auto I = dyn_cast<Instruction>(T)) {
+      assert(I);
+      toErase.push_back(I);
+    }
   }
+  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ true);
 
 #if LLVM_VERSION_MAJOR >= 22
   {
@@ -1801,6 +1865,11 @@ bool DetectPointerArgOfFn(llvm::Function &F,
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
           arg.removeAttr(Attribute::WriteOnly);
         }
+#if LLVM_VERSION_MAJOR >= 18
+        if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::Writable)) {
+          arg.removeAttr(Attribute::Writable);
+        }
+#endif
         arg.addAttr(Attribute::ReadNone);
         changed = true;
       }
@@ -1809,6 +1878,11 @@ bool DetectPointerArgOfFn(llvm::Function &F,
         arg.addAttr(Attribute::ReadOnly);
         changed = true;
       }
+#if LLVM_VERSION_MAJOR >= 18
+      if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::Writable)) {
+        arg.removeAttr(Attribute::Writable);
+      }
+#endif
     } else if (!read) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
         arg.addAttr(Attribute::WriteOnly);
@@ -2063,10 +2137,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
   }
 
   if (calls_todo.size() == 0) {
-    if (local)
+    if (local) {
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
-    else
+    } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
+    }
   }
   return true;
 }
@@ -2224,10 +2299,11 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2))
+        if (LocalReadOnlyFunctions.contains(F2)) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        else
+        } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        }
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -2296,6 +2372,31 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
       FAM.invalidate(*NewF, PA);
+
+      OptimizationLevel Level = OptimizationLevel::O0;
+
+      switch (EnzymePostInlineOpt) {
+      default:
+      case 0:
+        Level = OptimizationLevel::O0;
+        break;
+      case 1:
+        Level = OptimizationLevel::O1;
+        break;
+      case 2:
+        Level = OptimizationLevel::O2;
+        break;
+      case 3:
+        Level = OptimizationLevel::O3;
+        break;
+      }
+      if (Level != OptimizationLevel::O0) {
+        PassBuilder PB;
+        FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+            Level, ThinOrFullLTOPhase::None);
+        PA = FPM.run(*NewF, FAM);
+        FAM.invalidate(*NewF, PA);
+      }
     }
   }
 
@@ -3099,6 +3200,12 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
+      if (F->hasParamAttribute(ii, Attribute::Dereferenceable)) {
+        NewF->removeParamAttr(jj, Attribute::Dereferenceable);
+      }
+      if (F->hasParamAttribute(ii, Attribute::DereferenceableOrNull)) {
+        NewF->removeParamAttr(jj, Attribute::DereferenceableOrNull);
+      }
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
@@ -3106,27 +3213,30 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       hasPtrInput = true;
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
-      if (width == 1)
-        for (auto ty : ShadowParamAttrsToPreserve)
+      if (width == 1) {
+        for (auto ty : ShadowParamAttrsToPreserve) {
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
           }
+        }
+      }
 
       for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
                         "enzyme_type", "enzymejl_rooted_typ",
                         "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
-          if (width == 1)
+          if (width == 1) {
             NewF->addParamAttr(jj + 1,
                                F->getAttributes().getParamAttr(ii, attr));
-          else
+          } else {
             NewF->addParamAttr(jj + 1,
                                Attribute::get(F->getContext(),
                                               attr + std::string("_v"),
                                               F->getAttributes()
                                                   .getParamAttr(ii, attr)
                                                   .getValueAsString()));
+          }
         }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
@@ -3200,12 +3310,13 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
-        if (auto F2 = CI->getCalledFunction()) {
-          if (F2->getName() == "free") {
-            if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
-              Metadata *op = MD->getOperand(0);
-              frees[op].push_back(CI);
-            }
+        if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
+          Metadata *op = MD->getOperand(0);
+          if (cast<ConstantInt>(
+                  cast<ConstantAsMetadata>(cast<MDNode>(op)->getOperand(0))
+                      ->getValue())
+                  ->isOne()) {
+            frees[op].push_back(CI);
           }
         }
       }
@@ -3233,8 +3344,13 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
             if (!freeCall) {
               if (auto MD = hasMetadata(CI, "enzyme_cache_alloc")) {
                 Metadata *op = MD->getOperand(0);
-                if (frees[op].size() == 1)
-                  freeCall = frees[op][0];
+                if (cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                          cast<MDNode>(op)->getOperand(0))
+                                          ->getValue())
+                        ->isOne()) {
+                  if (frees[op].size() == 1)
+                    freeCall = frees[op][0];
+                }
               }
             }
             if (freeCall)

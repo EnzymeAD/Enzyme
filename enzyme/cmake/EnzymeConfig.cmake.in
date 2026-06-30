@@ -48,5 +48,8 @@ if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags
         LLDEnzymePrintTypeFlags
         LLDEnzymePrintFlags
         LLDEnzymeNoStrictAliasingFlags
-        LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} LLDEnzyme-${LLD_LLVM_VERSION_MAJOR})
+        LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} 
+        ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} 
+        LLDEnzyme-${LLD_LLVM_VERSION_MAJOR}
+        EnzymeReactantSupport-${Enzyme_LLVM_VERSION_MAJOR})
 endif()

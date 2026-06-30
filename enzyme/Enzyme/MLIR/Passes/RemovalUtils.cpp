@@ -546,7 +546,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       for (auto user : poped.getUsers()) {
         if (user->getBlock() != reverse || !isMovable(user)) {
           G[info.pushedValue()].insert(Node(user));
-          llvm::errs() << "adding required = " << user << "\n";
           Required.insert(user);
           isRequired = true;
           break;
@@ -754,7 +753,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       int64_t newSize = computeSizeOfType(candidate),
               newRank = computeRankOfType(candidate);
 
-      if (newRank <= curRank || (newRank == curRank && newSize <= curSize)) {
+      if (newRank < curRank || (newRank == curRank && newSize < curSize)) {
         newCaches.remove(cur);
         newCaches.insert(candidate);
         todo.push_back(candidate);
