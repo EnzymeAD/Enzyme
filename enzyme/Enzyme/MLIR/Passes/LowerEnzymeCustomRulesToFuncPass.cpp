@@ -54,6 +54,8 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
   enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
   enzyme::CustomReverseRuleReverseOp reverse = nullptr;
 
+  SmallVector<Operation *> toCopyOnBoth;
+
   for (Operation &op : *bodyDef) {
     if (auto AP = dyn_cast<enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
       if (primal) {
@@ -67,6 +69,9 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         return failure();
       }
       reverse = RO;
+    } else if (isa<enzyme::InitOp>(op) || isa<enzyme::YieldOp>(op)) {
+    } else {
+      toCopyOnBoth.push_back(&op);
     }
   }
 
@@ -203,6 +208,22 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     }
   }
 
+  {
+    IRMapping mapping;
+    OpBuilder builder(&primalFunc.getBody().front(),
+                      primalFunc.getBody().front().begin());
+    for (int i = toCopyOnBoth.size() - 1; i >= 0; --i) {
+      auto op = toCopyOnBoth[i];
+      auto newOp = builder.clone(*op, mapping);
+      for (auto [newRes, oldRes] :
+           llvm::zip_equal(newOp->getResults(), op->getResults())) {
+        oldRes.replaceUsesWithIf(newRes, [&](OpOperand &use) {
+          return primalFunc->isProperAncestor(use.getOwner());
+        });
+      }
+    }
+  }
+
   reverseFunc.getBody().takeBody(reverse.getBody());
   SmallVector<Location> cacheLocs = llvm::map_to_vector(
       caches, [](CacheInfo info) { return info.initOp->getLoc(); });
@@ -221,6 +242,25 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       term->erase();
     }
   }
+
+  {
+    IRMapping mapping;
+    OpBuilder builder(&reverseFunc.getBody().front(),
+                      reverseFunc.getBody().front().begin());
+    for (int i = toCopyOnBoth.size() - 1; i >= 0; --i) {
+      auto op = toCopyOnBoth[i];
+      auto newOp = builder.clone(*op, mapping);
+      for (auto [newRes, oldRes] :
+           llvm::zip_equal(newOp->getResults(), op->getResults())) {
+        oldRes.replaceUsesWithIf(newRes, [&](OpOperand &use) {
+          return reverseFunc->isProperAncestor(use.getOwner());
+        });
+      }
+    }
+  }
+
+  for (auto op : toCopyOnBoth)
+    op->erase();
 
   symbolTable.insert(primalFunc);
   SymbolTable::setSymbolVisibility(primalFunc,
