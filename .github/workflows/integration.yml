@@ -37,6 +37,7 @@ jobs:
           - linux-x86-a2-48-a100-4gpu
         package:
           - mfem
+          - gridkit
     steps:
       - uses: actions/checkout@v7
       - name: add llvm
@@ -55,5 +56,5 @@ jobs:
         run: make -j `nproc`
       - name: "Run tests"
         run: |
-          bash integration/${{ matrix.package }}/run.sh ${{ matrix.llvm }} enzyme/build/ClangEnzyme-${{ matrix.llvm }}.so `nproc`
+          bash integration/${{ matrix.package }}/run.sh ${{ matrix.llvm }} enzyme/build `nproc`
         shell: bash
