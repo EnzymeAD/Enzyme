@@ -38,6 +38,9 @@ jobs:
         package:
           - mfem
           - gridkit
+        exclude:
+          - os: linux-x86-a2-48-a100-4gpu
+            package: gridkit
     steps:
       - uses: actions/checkout@v7
       - name: add llvm
