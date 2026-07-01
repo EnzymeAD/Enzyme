@@ -671,8 +671,9 @@ static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
   p << ' ';
 
   call_interface_impl::printFunctionSignature(
-      p, fnType.getInputs(), nullptr, /*isVariadic*/ false, fnType.getResults(),
-      nullptr, &body, /*printEmptyResult*/ false);
+      p, fnType.getInputs(), /*argAttrs*/ nullptr, /*isVariadic*/ false,
+      fnType.getResults(), /*resultAttrs*/ nullptr, &body,
+      /*printEmptyResult*/ false);
 
   p << ' ';
   p.printRegion(body, /*printEntryBlockArgs*/ false,

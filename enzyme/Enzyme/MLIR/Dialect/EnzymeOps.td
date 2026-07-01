@@ -99,7 +99,7 @@ def PlaceholderOp : Enzyme_Op<"placeholder",
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero); 
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -304,7 +304,7 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
   let assemblyFormat = [{
     `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-  
+
   let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
 
@@ -464,7 +464,7 @@ def GenericAdjointOp : Enzyme_Op<"genericAdjoint", [AttrSizedOperandSegments]> {
                        OptionalAttr<StrAttr>:$library_call);
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   let regions = (region AnyRegion:$region);
-  
+
 }
 
 def BroadcastOp : Enzyme_Op<"broadcast"> {
@@ -502,7 +502,7 @@ def ConcatOp : Enzyme_Op<"concat"> {
 
   let arguments = (ins Variadic<AnyType>:$inputs);
   let results = (outs AnyType:$output);
-  
+
   let assemblyFormat = [{
     `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
@@ -516,7 +516,7 @@ def ExtractOp : Enzyme_Op<"extract"> {
 
   let arguments = (ins AnyType:$input, I64Attr:$index);
   let results = (outs AnyType:$output);
-  
+
   let assemblyFormat = [{
      $input `[` $index `]` attr-dict `:` functional-type($input, results)
   }];

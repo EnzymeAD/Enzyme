@@ -15,7 +15,6 @@
 #include "mlir/IR/PatternMatch.h"
 #include <cassert>
 #include <deque>
-#include <optional>
 
 #include "llvm/ADT/MapVector.h"
 
@@ -143,15 +142,21 @@ void mlir::enzyme::removalBlockExplore(
 
 typedef llvm::PointerUnion<Operation *, Value> Node;
 
-void dump(const Node &n,
-          std::optional<SetVector<Operation *>> Required = std::nullopt) {
+void dump(const Node &n) {
   if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", " << "Value" << "]\n";
+    llvm::errs() << "[" << cast<Value>(n) << ", "
+                 << "Value"
+                 << "]\n";
   else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", " << "Operation"
+    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
+                 << "Operation"
                  << "]\n";
   else
-    llvm::errs() << "[" << "NULL" << ", " << "None" << "]\n";
+    llvm::errs() << "["
+                 << "NULL"
+                 << ", "
+                 << "None"
+                 << "]\n";
 }
 
 struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
@@ -162,9 +167,7 @@ struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
   }
 };
 
-static void
-dumpGraphviz(Graph &G,
-             std::optional<SetVector<Operation *>> Required = std::nullopt) {
+static void dumpGraphviz(Graph &G) {
   auto serialize = [&](Node n) -> std::string {
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -199,34 +202,7 @@ dumpGraphviz(Graph &G,
 
   using llvm::errs;
   errs() << "digraph G {\n";
-
   for (auto &pair : G) {
-    if (auto op = dyn_cast<Operation *>(pair.first)) {
-      auto col = op->getAttrOfType<StringAttr>("dbg_color");
-      errs() << "  \"" << serialize(pair.first) << "\""
-             << "[shape=box, style=filled, fillcolor="
-             << (col ? col.getValue() : "none") << ", color="
-             << ((Required.has_value() ? Required->contains(op) : false)
-                     ? "red"
-                     : "black")
-             << "];\n";
-    }
-    for (const auto &N : pair.second) {
-      if (auto op = dyn_cast<Operation *>(N)) {
-        auto col = op->getAttrOfType<StringAttr>("dbg_color");
-        errs() << "  \"" << serialize(N) << "\""
-               << "[shape=box, style=filled, fillcolor="
-               << (col ? col.getValue() : "none") << ", color="
-               << ((Required.has_value() ? Required->contains(op) : false)
-                       ? "red"
-                       : "black")
-               << "];\n";
-      }
-    }
-  }
-
-  for (auto &pair : G) {
-
     for (const auto &N : pair.second) {
       errs() << "  \"" << serialize(pair.first) << "\" -> \"" << serialize(N)
              << "\";\n";
@@ -236,10 +212,9 @@ dumpGraphviz(Graph &G,
   errs() << "}\n";
 }
 
-static void
-dump(Graph &G, std::optional<SetVector<Operation *>> Required = std::nullopt) {
+static void dump(Graph &G) {
   if (DebugGraphviz) {
-    dumpGraphviz(G, Required);
+    dumpGraphviz(G);
   } else {
     for (auto &pair : G) {
       dump(pair.first);
@@ -433,14 +408,12 @@ static void annotate_ops(Block *forward, Block *reverse) {
     auto debugName =
         StringAttr::get(op->getContext(),
                         op->getName().stripDialect() + llvm::Twine(counter++));
-    op->setAttr("dbg_color", StringAttr::get(op->getContext(), "orange"));
     op->setAttr("dbg", debugName);
   });
   reverse->walk([&](Operation *op) {
     auto debugName =
         StringAttr::get(op->getContext(),
                         op->getName().stripDialect() + llvm::Twine(counter++));
-    op->setAttr("dbg_color", StringAttr::get(op->getContext(), "cyan2"));
     op->setAttr("dbg", debugName);
   });
 }
@@ -530,7 +503,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   // nodes that cannot be recomputed
   SetVector<Value> roots;
-  DenseMap<Value, Value> popToPushValues;
 
   // Walk Backward
   //
@@ -579,17 +551,14 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
           break;
         }
       }
-      if (!isRequired) {
-        Value pushed = info.pushedValue();
-        popToPushValues[poped] = pushed;
+      if (!isRequired)
         for (auto user : poped.getUsers()) {
-          G[Node(pushed)].insert(user);
+          G[Node(info.pushedValue())].insert(user);
           for (Value res : user->getResults()) {
             G[Node(user)].insert(res);
             worklist.push_back(res);
           }
         }
-      }
     }
 
     // Walk Forward
@@ -633,12 +602,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         if (G.contains(Node(v))) {
           continue;
         }
-        if (v.getDefiningOp<enzyme::PopOp>()) {
-          auto it = popToPushValues.find(v);
-          // Poped value would be part of the graph through the pushed value.
-          if (it != popToPushValues.end() && G.contains(Node(it->second)))
-            continue;
-        }
         Required.insert(op);
         break;
       }
@@ -653,10 +616,10 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   }
 
   LLVM_DEBUG(llvm::dbgs() << "pre filter graph: \n";);
-  LLVM_DEBUG(dump(G, Required));
+  LLVM_DEBUG(dump(G));
   G = filterGraph(G, roots, Required);
   LLVM_DEBUG(llvm::dbgs() << "post filter graph: \n";);
-  LLVM_DEBUG(dump(G, Required));
+  LLVM_DEBUG(dump(G));
 
   Graph Orig = G;
 

@@ -56,7 +56,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
 
   SmallVector<Operation *> toCopyOnBoth;
 
-  for (Operation &op : *bodyDef) {
+  for (Operation &op : bodyDef->without_terminator()) {
     if (auto AP = dyn_cast<enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
       if (primal) {
         AP->emitError() << "multiple augmented primal ops in a custom rule";
@@ -69,7 +69,8 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         return failure();
       }
       reverse = RO;
-    } else if (isa<enzyme::InitOp>(op) || isa<enzyme::YieldOp>(op)) {
+    } else if (isa<enzyme::InitOp>(op)) {
+      // allowed
     } else {
       toCopyOnBoth.push_back(&op);
     }

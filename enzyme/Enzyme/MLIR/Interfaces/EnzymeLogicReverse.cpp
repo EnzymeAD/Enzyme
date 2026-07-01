@@ -347,7 +347,9 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
 
     if (!argAttrs.empty() && act == DIFFE_TYPE::DUP_ARG)
-      argAttrs.insert(argAttrs.begin() + i + 1 - (argAttrs.size() - fn.getNumArguments()), nullptr);
+      argAttrs.insert(argAttrs.begin() + i + 1 -
+                          (argAttrs.size() - fn.getNumArguments()),
+                      nullptr);
   }
 
   SmallVector<Attribute> retActivityAttrs;
@@ -372,13 +374,37 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       builder, fn.getLoc(), ruleNameAttr, TypeAttr::get(fn.getFunctionType()),
       argActivityAttr, retActivityAttr);
 
-  Block *ruleBody = new Block();
-  customRule.getBody().push_back(ruleBody);
+  auto ip = builder.saveInsertionPoint();
+  Block *ruleBody = builder.createBlock(&customRule.getBody());
+  builder.restoreInsertionPoint(ip);
 
   OpBuilder ruleBuilder(ruleBody, ruleBody->begin());
 
   SmallVector<Type> revInputTypes, revOutputTypes, primalInputTypes,
       primalOutputTypes;
+
+  for (auto [input, activity] : llvm::zip_equal(
+           cast<FunctionType>(fn.getFunctionType()).getInputs(), constants)) {
+    primalInputTypes.push_back(input);
+    auto shadow = cast<AutoDiffTypeInterface>(input).getShadowType(/*width=*/1);
+
+    if (activity == DIFFE_TYPE::DUP_ARG)
+      primalInputTypes.push_back(shadow);
+
+    if (activity == DIFFE_TYPE::OUT_DIFF)
+      revOutputTypes.push_back(input);
+  }
+
+  for (auto [output, activity] : llvm::zip_equal(
+           cast<FunctionType>(fn.getFunctionType()).getResults(), retType)) {
+    primalOutputTypes.push_back(output);
+
+    auto shadow =
+        cast<AutoDiffTypeInterface>(output).getShadowType(/*width=*/1);
+
+    if (activity == DIFFE_TYPE::OUT_DIFF)
+      revInputTypes.push_back(shadow);
+  }
 
   auto revFuncType =
       FunctionType::get(fn.getContext(), revInputTypes, revOutputTypes);
@@ -386,7 +412,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
 
   auto reverse = enzyme::CustomReverseRuleReverseOp::create(
-      ruleBuilder, fn.getLoc(), revFuncType, /* argAttrs */ nullptr, /* resAttrs */ nullptr);
+      ruleBuilder, fn.getLoc(), revFuncType, /* argAttrs */ nullptr,
+      /* resAttrs */ nullptr);
   enzyme::YieldOp::create(ruleBuilder, fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
@@ -440,7 +467,13 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     auto gradientType = enzyme::GradientType::get(ty.getContext(), shadowType);
     auto reverseEntry = &reverse.getBody().front();
     OpBuilder gBuilder(reverseEntry, reverseEntry->begin());
-    return enzyme::InitOp::create(gBuilder, loc, gradientType);
+
+    auto grad = enzyme::InitOp::create(gBuilder, loc, gradientType);
+    auto toset =
+        cast<AutoDiffTypeInterface>(shadowType).createNullValue(gBuilder, loc);
+    enzyme::SetOp::create(gBuilder, loc, grad, toset);
+
+    return grad;
   };
   gutils->registerGradientCreatorHook(gradientCreatorHook);
 
@@ -486,9 +519,12 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     }
   }
 
+  llvm::errs() << "primalFuncType = " << primalFuncType << "\n";
+
   ruleBuilder.setInsertionPoint(reverse);
   auto augmentedPrimal = enzyme::CustomReverseRuleAugmentedPrimalOp::create(
-      ruleBuilder, fn.getLoc(), primalFuncType, /*argAttrs*/ nullptr, /*resAttrs*/ nullptr);
+      ruleBuilder, fn.getLoc(), primalFuncType, /*argAttrs*/ nullptr,
+      /*resAttrs*/ nullptr);
   augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
   for (Block &b : augmentedPrimal.getBody()) {
     if (b.getNumSuccessors() == 0) {

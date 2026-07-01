@@ -2,14 +2,13 @@
 #define ENZYME_DIALECT_LLVMEXT_OPS_TD
 
 include "Dialect.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def LLVMPtr : Type<CPred<"::llvm::isa<::mlir::LLVM::LLVMPointerType>($_self)">>;
 
 def AllocOp : LLVMExtOp<"alloc", []> {
   let summary = "Allocates memory";
   let arguments = (ins I64 : $size);
-  let results = (outs Res<LLVMPtr, "allocated ptr", [MemAlloc]> : $result);
+  let results = (outs LLVMPtr : $result);
 
   let assemblyFormat = [{
     $size attr-dict `:` functional-type($size, results)
@@ -18,7 +17,7 @@ def AllocOp : LLVMExtOp<"alloc", []> {
 
 def FreeOp : LLVMExtOp<"free", []> {
   let summary = "Frees memory";
-  let arguments = (ins Arg<LLVMPtr, "ptr to free", [MemFree]> : $ptr);
+  let arguments = (ins LLVMPtr : $ptr);
   let results = (outs);
 
   let assemblyFormat = [{
