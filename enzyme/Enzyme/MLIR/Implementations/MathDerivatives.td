@@ -7,7 +7,7 @@ def : MLIRDerivative<"math", "CosOp", (Op $x),
                   >;
 def : MLIRDerivative<"math", "ExpOp", (Op $x),
                     [
-                      (CheckedMulF (DiffeRet), (ExpF $x))
+                      (CheckedMulF (DiffeRet), (Result))
                     ]
                   >;
 def : MLIRDerivative<"math", "SinOp", (Op $x),

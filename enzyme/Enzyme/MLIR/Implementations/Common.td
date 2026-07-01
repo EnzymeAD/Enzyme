@@ -81,6 +81,10 @@ class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
   bit usesCustom = usesCustom_;
 }
 
+class ResultIndex<int index_> {
+  int index = index_;
+}
+def Result : ResultIndex</*index=*/0>;
 class DiffeRetIndex<list<int> indices_> {
   list<int> indices = indices_;
 }
