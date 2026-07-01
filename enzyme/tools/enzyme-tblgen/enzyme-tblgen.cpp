@@ -432,6 +432,47 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << "out; })\n";
       }
       return true;
+    } else if (opName == "ResultIndex" || Def->isSubClassOf("ResultIndex")) {
+      if (intrinsic != MLIRDerivatives) {
+        PrintFatalError(pattern->getLoc(),
+                        "ResultIndex only supported in MLIR derivatives");
+        return false;
+      }
+
+      if (resultRoot->getNumArgs() != 0) {
+        PrintFatalError(pattern->getLoc(), "no arg supported for ResultIndex");
+        return false;
+      }
+
+      auto index = dyn_cast<IntInit>(Def->getValueInit("index"));
+
+      os << "({"
+         << " // Computing ResultIndex (index=" << index->getValue() << ")"
+         << argPattern << "\n";
+
+      llvm::SmallString<32> buf;
+      if (startsWith(argPattern.toStringRef(buf), "fwdarg")) {
+        os << curIndent << INDENT
+           << "mlir::Value resultIndex = "
+              "gutils->getNewFromOriginal(op->getResult("
+           << index->getValue() << "));\n";
+        os << curIndent << INDENT
+           << "builder.setInsertionPointAfterValue(resultIndex)"
+              ";\n";
+        os << curIndent << INDENT << "resultIndex;\n";
+      } else {
+        os << curIndent << INDENT
+           << "auto neededArgs = cachedArguments(op, gutils);\n";
+        os << curIndent << INDENT << "int numNeededArgs = 0;\n";
+        os << curIndent << INDENT << "for (auto needed : neededArgs)\n";
+        os << curIndent << INDENT << INDENT
+           << "if (needed) numNeededArgs += 1;\n";
+        os << curIndent << INDENT << "gutils->popCache(caches[numNeededArgs + "
+           << index->getValue() << "], builder);\n";
+      }
+      os << curIndent << "})";
+
+      return false;
     } else if (opName == "TypeOf" || Def->isSubClassOf("TypeOf")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op TypeOf supported");
@@ -1408,6 +1449,8 @@ void handleUse(
   if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
     return;
   }
+  if (opName == "ResultIndex" || Def->isSubClassOf("ResultIndex"))
+    return;
   if (!Def->isSubClassOf("Operation")) {
     errs() << *resultTree << "\n";
     errs() << opName << " " << *Def << "\n";
@@ -1728,6 +1771,13 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "         return toret;\n";
   os << "       }\n";
 
+  os << "       SmallVector<bool> cachedResults(Operation *op,\n"
+        "                                       MGradientUtilsReverse *gutils) "
+        "const {\n"
+        "         SmallVector<bool> neededResults(op->getNumResults(), "
+        "false);\n"
+        "         return neededResults;\n}\n";
+
   os << "       SmallVector<Value> cacheValues(Operation *op,\n";
   os << "                                 MGradientUtilsReverse *gutils) "
         "const {\n";
@@ -1743,6 +1793,15 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
         "getOperand(en.index())), builder);\n";
   os << "              toret.push_back(cache);\n";
   os << "            }\n";
+  os << "          "
+        "builder.setInsertionPointAfter(gutils->getNewFromOriginal(op));\n";
+  os << "          auto neededResults = cachedResults(op, gutils);\n";
+  os << "          for (auto en : llvm::enumerate(neededResults)) {\n";
+  os << "            Value cache = "
+        "gutils->initAndPushCache(gutils->getNewFromOriginal(op->getResult(en."
+        "index())), builder);\n";
+  os << "            toret.push_back(cache);\n";
+  os << "          }";
   os << "          return toret;\n";
   os << "       }\n";
   os << "\n";
