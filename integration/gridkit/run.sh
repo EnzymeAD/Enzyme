@@ -15,6 +15,7 @@ git checkout ea96fba7bcc9c9cc402eafd7ec3311bb08889598
 
 cmake \
   -DCMAKE_CXX_COMPILER=clang++-$CLANGV \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DGRIDKIT_ENABLE_ENZYME=On \
   -DENZYME_DIR=${ENZYME_DIR} \
   ..
