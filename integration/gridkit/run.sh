@@ -8,6 +8,9 @@ ENZYME_DIR=$2
 echo "CLANGV: $CLANGV" 
 echo "ENZYME_DIR: $ENZYME_DIR"
 
+ls $ENZYME_DIR
+ls ../$ENZYME_DIR
+
 git clone https://github.com/ORNL/GridKit.git
 mkdir GridKit/build
 cd GridKit/build
@@ -17,7 +20,7 @@ cmake \
   -DCMAKE_CXX_COMPILER=clang++-$CLANGV \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DGRIDKIT_ENABLE_ENZYME=On \
-  -DENZYME_DIR=${ENZYME_DIR} \
+  -DENZYME_DIR=../${ENZYME_DIR} \
   ..
 
 make -j
