@@ -82,7 +82,6 @@ module {
 // CHECK-DAG: %[[HALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
 // CHECK-DAG: %[[ZERO_1D:.+]] = arith.constant dense<0.000000e+00> : tensor<1xf64>
 // CHECK-DAG: %[[ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-DAG: %[[EPS_INIT:.+]] = arith.constant dense<4.44{{.+}}> : tensor<f64>
 // CHECK-DAG: %[[ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1xf64>
 // CHECK-DAG: %[[C9:.+]] = arith.constant dense<9> : tensor<i64>
 // CHECK-DAG: %[[C10:.+]] = arith.constant dense<10> : tensor<i64>
@@ -116,7 +115,7 @@ module {
 // CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
 //
 // --- Warmup loop: 16 iter_args ---
-// CHECK-NEXT: %[[WARMUP:.+]]:16 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[ZERO_F]], %[[ZERO_F]], %[[ZERO_F]], %[[C0]], %[[EPS_INIT]], %[[ZERO_1D]], %[[ZERO_1D]], %[[C0]], %[[C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
+// CHECK-NEXT: %[[WARMUP:.+]]:16 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[ZERO_F]], %[[ZERO_F]], %[[ZERO_F]], %[[C0]], %[[ZERO_F]], %[[ZERO_1D]], %[[ZERO_1D]], %[[C0]], %[[C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
 // CHECK-NEXT: ^bb0(%[[WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[INV_MASS:.+]]: tensor<1x1xf64>, %[[MASS_SQRT:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling with mass matrix ---
@@ -275,7 +274,6 @@ module {
 // CHECK-DAG: %[[S_GAMMA:.+]] = arith.constant dense<5.000000e-02> : tensor<f64>
 // CHECK-DAG: %[[S_TARGET:.+]] = arith.constant dense<8.000000e-01> : tensor<f64>
 // CHECK-DAG: %[[S_T0:.+]] = arith.constant dense<1.000000e+01> : tensor<f64>
-// CHECK-DAG: %[[S_EPS_INIT:.+]] = arith.constant dense<4.44{{.+}}> : tensor<f64>
 // CHECK-DAG: %[[S_C10:.+]] = arith.constant dense<10> : tensor<i64>
 // CHECK-DAG: %[[S_C9:.+]] = arith.constant dense<9> : tensor<i64>
 // CHECK-DAG: %[[S_C1:.+]] = arith.constant dense<1> : tensor<i64>
@@ -292,7 +290,7 @@ module {
 // CHECK: }
 //
 // --- Warmup loop: 13 iter_args (no Welford mean/m2/n) ---
-// CHECK: %[[S_WARMUP:.+]]:13 = impulse.for(%[[S_C0]] : tensor<i64>) to(%[[S_C10]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[S_ONE_1D]], %[[S_ONE_1D]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_C0]], %[[S_EPS_INIT]], %[[S_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
+// CHECK: %[[S_WARMUP:.+]]:13 = impulse.for(%[[S_C0]] : tensor<i64>) to(%[[S_C10]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[S_ONE_1D]], %[[S_ONE_1D]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_C0]], %[[S_ZERO_F]], %[[S_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
 // CHECK-NEXT: ^bb0(%[[S_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling ---
@@ -386,7 +384,7 @@ module {
 // CHECK-DAG: %[[M_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[M_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1xf64>
 // CHECK-DAG: %[[M_ZERO_1D:.+]] = arith.constant dense<0.000000e+00> : tensor<1xf64>
-// CHECK-DAG: %[[M_EPS_INIT:.+]] = arith.constant dense<4.44{{.+}}> : tensor<f64>
+// CHECK-DAG: %[[M_ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 //
 // --- Init ---
 // CHECK: impulse.randomSplit
@@ -395,7 +393,7 @@ module {
 // CHECK: } attributes
 //
 // --- Warmup loop: 16 iter_args (includes Welford state) ---
-// CHECK-NEXT: %[[M_WARMUP:.+]]:16 = impulse.for(%[[M_C0]] : tensor<i64>) to(%[[M_C10]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[M_C0]], %[[M_EPS_INIT]], %[[M_ZERO_1D]], %[[M_ZERO_1D]], %[[M_C0]], %[[M_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
+// CHECK-NEXT: %[[M_WARMUP:.+]]:16 = impulse.for(%[[M_C0]] : tensor<i64>) to(%[[M_C10]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[M_C0]], %[[M_ZERO_F]], %[[M_ZERO_1D]], %[[M_ZERO_1D]], %[[M_C0]], %[[M_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
 // CHECK-NEXT: ^bb0(%[[M_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[M_INV:.+]]: tensor<1x1xf64>, %[[M_SQRT:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling with mass matrix ---
@@ -481,7 +479,7 @@ module {
 // CHECK-DAG: %[[N_C9:.+]] = arith.constant dense<9> : tensor<i64>
 // CHECK-DAG: %[[N_C1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG: %[[N_C0:.+]] = arith.constant dense<0> : tensor<i64>
-// CHECK-DAG: %[[N_EPS_INIT:.+]] = arith.constant dense<4.44{{.+}}> : tensor<f64>
+// CHECK-DAG: %[[N_ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[N_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1x1xf64>
 //
 // --- Init ---
@@ -491,7 +489,7 @@ module {
 // CHECK: } attributes
 //
 // --- Warmup loop: 13 iter_args ---
-// CHECK-NEXT: %[[N_WARMUP:.+]]:13 = impulse.for(%[[N_C0]] : tensor<i64>) to(%[[N_C10]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[N_ONE_1D]], %[[N_ONE_1D]], %{{.+}}, %{{.+}}, %{{.+}}, %[[N_C0]], %[[N_EPS_INIT]], %[[N_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
+// CHECK-NEXT: %[[N_WARMUP:.+]]:13 = impulse.for(%[[N_C0]] : tensor<i64>) to(%[[N_C10]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[N_ONE_1D]], %[[N_ONE_1D]], %{{.+}}, %{{.+}}, %{{.+}}, %[[N_C0]], %[[N_ZERO_F]], %[[N_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
 // CHECK-NEXT: ^bb0(%[[N_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling ---
