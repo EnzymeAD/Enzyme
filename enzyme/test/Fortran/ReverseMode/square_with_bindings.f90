@@ -9,16 +9,22 @@
 !       handle the indirection involved in the enzyme_autodiff binding
 
 program app
-    use enzyme, only: enzyme_autodiff
+    use enzyme, only: enzyme_dup, enzyme_autodiff
     implicit none
     real :: x, dx
 
+    ! Test without an activity descriptor
     x = 3
     print *, square(x)
-
     dx = 0
     call enzyme_autodiff(square, x, dx)
+    print *, dx
 
+    ! Test with an activity descriptor
+    x = 4
+    print *, square(x)
+    dx = 0
+    call enzyme_autodiff(square, enzyme_dup, x, dx)
     print *, dx
 
 contains
@@ -32,3 +38,5 @@ end program app
 
 ! CHECK: 9
 ! CHECK-NEXT: 6
+! CHECK-NEXT: 16
+! CHECK-NEXT: 8
