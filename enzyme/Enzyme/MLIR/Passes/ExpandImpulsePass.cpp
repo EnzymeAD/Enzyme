@@ -28,6 +28,8 @@
 
 #include "llvm/ADT/APFloat.h"
 
+#include <type_traits>
+
 #define DEBUG_TYPE "expand-impulse"
 
 using namespace mlir;
@@ -222,6 +224,58 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
     currentPositionOffset += sampleSize;
   }
 
+  return supports;
+}
+
+/// Position offsets follow `selection`, trace offsets `all_addresses`.
+static SmallVector<impulse::SupportInfo>
+collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
+  SmallVector<impulse::SupportInfo> supports;
+  ArrayAttr selection = regionOp.getSelectionAttr();
+  ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
+  if (!selection || !allAddresses || regionOp.getSampler().empty())
+    return supports;
+
+  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+  for (Operation &op : regionOp.getSampler().front())
+    if (auto site = dyn_cast<impulse::SampleRegionOp>(&op))
+      if (auto address = site.getAddressAttr())
+        siteByAddress[address] = site;
+
+  auto siteSize = [](impulse::SampleRegionOp site) -> int64_t {
+    int64_t size = 0;
+    for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
+      size +=
+          cast<RankedTensorType>(site.getResult(i).getType()).getNumElements();
+    return size;
+  };
+
+  int64_t positionOffset = 0;
+  for (Attribute addr : selection) {
+    auto it = siteByAddress.find(addr);
+    if (it == siteByAddress.end())
+      return {};
+    impulse::SampleRegionOp site = it->second;
+
+    int64_t traceOffset = 0;
+    bool foundInTrace = false;
+    for (Attribute traceAddr : allAddresses) {
+      if (traceAddr == addr) {
+        foundInTrace = true;
+        break;
+      }
+      auto traceIt = siteByAddress.find(traceAddr);
+      if (traceIt == siteByAddress.end())
+        return {};
+      traceOffset += siteSize(traceIt->second);
+    }
+    if (!foundInTrace)
+      return {};
+
+    supports.emplace_back(positionOffset, traceOffset, siteSize(site),
+                          site.getSupportAttr());
+    positionOffset += siteSize(site);
+  }
   return supports;
 }
 
@@ -592,20 +646,36 @@ struct ExpandImpulsePass
     }
   };
 
-  struct LowerMCMCPattern : public mlir::OpRewritePattern<impulse::InferOp> {
+  template <typename MCMCOpT>
+  struct LowerMCMCPattern : public mlir::OpRewritePattern<MCMCOpT> {
+    static constexpr bool isRegionForm =
+        std::is_same_v<MCMCOpT, impulse::InferRegionOp>;
+
     bool debugDump;
 
     LowerMCMCPattern(MLIRContext *context, bool debugDump,
                      PatternBenefit benefit = 1)
-        : OpRewritePattern(context, benefit), debugDump(debugDump) {}
+        : mlir::OpRewritePattern<MCMCOpT>(context, benefit),
+          debugDump(debugDump) {}
 
-    LogicalResult matchAndRewrite(impulse::InferOp mcmcOp,
+    LogicalResult matchAndRewrite(MCMCOpT mcmcOp,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
       bool hasLogpdfFn = static_cast<bool>(mcmcOp.getLogpdfFnAttr());
 
-      if (!hasLogpdfFn) {
+      if constexpr (isRegionForm) {
+        if (mcmcOp.getLogpdf().empty()) {
+          mcmcOp.emitError("Impulse: infer_region requires a constructed "
+                           "logpdf region (run sicm first)");
+          return failure();
+        }
+        if (!hasLogpdfFn && mcmcOp.getSampler().empty()) {
+          mcmcOp.emitError("Impulse: model-mode infer_region requires a "
+                           "sampler region");
+          return failure();
+        }
+      } else if (!hasLogpdfFn) {
         auto fnAttr = mcmcOp.getFnAttr();
         if (!fnAttr) {
           mcmcOp.emitError("Impulse: either fn or logpdf_fn must be provided");
@@ -619,15 +689,15 @@ struct ExpandImpulsePass
         }
       }
 
-      if (!mcmcOp.getStepSize()) {
-        mcmcOp.emitError("Impulse: MCMC requires step_size parameter");
-        return failure();
-      }
-
+      // Other configs fall through to their own patterns; do not error here.
       bool isHMC = mcmcOp.getHmcConfig().has_value();
       bool isNUTS = mcmcOp.getNutsConfig().has_value();
-      if (!isHMC && !isNUTS) {
-        mcmcOp.emitError("Impulse: Unknown MCMC algorithm");
+      if (!isHMC && !isNUTS)
+        return rewriter.notifyMatchFailure(
+            mcmcOp, "no hmc_config/nuts_config; not an HMC/NUTS op");
+
+      if (!mcmcOp.getStepSize()) {
+        mcmcOp.emitError("Impulse: MCMC requires step_size parameter");
         return failure();
       }
 
@@ -660,6 +730,23 @@ struct ExpandImpulsePass
         positionSize = initPosType.getNumElements();
         selection = mcmcOp.getSelectionAttr();
         allAddresses = mcmcOp.getAllAddressesAttr();
+      } else if constexpr (isRegionForm) {
+        fnInputs.assign(inputs.begin() + 1, inputs.end());
+        originalTrace = mcmcOp.getOriginalTrace();
+        selection = mcmcOp.getSelectionAttr();
+        allAddresses = mcmcOp.getAllAddressesAttr();
+
+        supports = collectSupportInfoForRegion(mcmcOp);
+        if (supports.empty()) {
+          mcmcOp.emitError("Impulse: failed to collect per-site support info "
+                           "from the infer_region sampler");
+          return failure();
+        }
+        positionSize = 0;
+        for (const auto &info : supports)
+          positionSize += info.size;
+        if (positionSize <= 0)
+          return failure();
       } else {
         fnInputs.assign(inputs.begin() + 1, inputs.end());
         originalTrace = mcmcOp.getOriginalTrace();
@@ -747,15 +834,21 @@ struct ExpandImpulsePass
                                 Value currentMassMatrixSqrt,
                                 Value currentStepSize) -> HMCContext {
         if (hasLogpdfFn) {
-          return HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
-                            currentMassMatrixSqrt, currentStepSize,
-                            trajectoryLength, positionSize, autodiffAttrs);
+          HMCContext ctx(logpdfFnAttr, fnInputs, currentInvMass,
+                         currentMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, autodiffAttrs);
+          if constexpr (isRegionForm)
+            ctx.logpdfRegion = &mcmcOp.getLogpdf();
+          return ctx;
         } else {
-          return HMCContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                            originalTrace, selection, allAddresses,
-                            currentInvMass, currentMassMatrixSqrt,
-                            currentStepSize, trajectoryLength, positionSize,
-                            supports, autodiffAttrs);
+          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                         originalTrace, selection, allAddresses, currentInvMass,
+                         currentMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, supports,
+                         autodiffAttrs);
+          if constexpr (isRegionForm)
+            ctx.logpdfRegion = &mcmcOp.getLogpdf();
+          return ctx;
         }
       };
 
@@ -763,16 +856,21 @@ struct ExpandImpulsePass
           [&](Value currentInvMass, Value currentMassMatrixSqrt,
               Value currentStepSize, Value U) -> NUTSContext {
         if (hasLogpdfFn) {
-          return NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
-                             currentMassMatrixSqrt, currentStepSize,
-                             positionSize, U, maxDeltaEnergy, maxTreeDepth,
-                             autodiffAttrs);
+          NUTSContext ctx(logpdfFnAttr, fnInputs, currentInvMass,
+                          currentMassMatrixSqrt, currentStepSize, positionSize,
+                          U, maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
+          if constexpr (isRegionForm)
+            ctx.logpdfRegion = &mcmcOp.getLogpdf();
+          return ctx;
         } else {
-          return NUTSContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
-                             originalTrace, selection, allAddresses,
-                             currentInvMass, currentMassMatrixSqrt,
-                             currentStepSize, positionSize, supports, U,
-                             maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
+          NUTSContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                          originalTrace, selection, allAddresses,
+                          currentInvMass, currentMassMatrixSqrt,
+                          currentStepSize, positionSize, supports, U,
+                          maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
+          if constexpr (isRegionForm)
+            ctx.logpdfRegion = &mcmcOp.getLogpdf();
+          return ctx;
         }
       };
 
@@ -2249,7 +2347,9 @@ void ExpandImpulsePass::runOnOperation() {
   patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
                LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
       &getContext());
-  patterns.add<LowerMCMCPattern>(&getContext(), debugDump);
+  patterns.add<LowerMCMCPattern<impulse::InferOp>,
+               LowerMCMCPattern<impulse::InferRegionOp>>(&getContext(),
+                                                         debugDump);
 
   mlir::GreedyRewriteConfig config;
 

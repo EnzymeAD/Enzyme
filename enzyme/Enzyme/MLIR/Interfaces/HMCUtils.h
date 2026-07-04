@@ -113,6 +113,9 @@ struct HMCContext {
   FlatSymbolRefAttr logpdfFn;
   DictionaryAttr autodiffAttrs;
 
+  /// Block arguments take constrained position slices in `selection` order.
+  Region *logpdfRegion = nullptr;
+
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              ArrayRef<Type> fnResultTypes, Value originalTrace,
              ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
@@ -138,6 +141,8 @@ struct HMCContext {
         autodiffAttrs(autodiffAttrs) {}
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
+
+  bool hasLogpdfRegion() const { return logpdfRegion != nullptr; }
 
   int64_t getFullTraceSize() const {
     auto traceType = cast<RankedTensorType>(originalTrace.getType());

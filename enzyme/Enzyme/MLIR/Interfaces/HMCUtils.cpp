@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/IRMapping.h"
 
 #include <cmath>
 #include <limits>
@@ -349,6 +350,33 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
   return result;
 }
 
+/// Values captured from above the `infer_region` op are sample-invariant.
+static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
+                                 Value qConstrained, const HMCContext &ctx) {
+  Block &lpBlock = ctx.logpdfRegion->front();
+  auto elemType = ctx.getElementType();
+
+  IRMapping mapping;
+  int64_t offset = 0;
+  for (BlockArgument arg : lpBlock.getArguments()) {
+    auto argType = cast<RankedTensorType>(arg.getType());
+    int64_t numElements = argType.getNumElements();
+    auto sliceType = RankedTensorType::get({1, numElements}, elemType);
+    Value slice = impulse::SliceOp::create(
+        builder, loc, sliceType, qConstrained,
+        builder.getDenseI64ArrayAttr({0, offset}),
+        builder.getDenseI64ArrayAttr({1, offset + numElements}),
+        builder.getDenseI64ArrayAttr({1, 1}));
+    Value component = impulse::ReshapeOp::create(builder, loc, argType, slice);
+    mapping.map(arg, component);
+    offset += numElements;
+  }
+
+  for (Operation &op : lpBlock.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+}
+
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
@@ -362,11 +390,12 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
   bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffPosition = position;
   auto autodiffPositionType = positionType;
   auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     autodiffPosition =
         impulse::ReshapeOp::create(builder, loc, flatType, position);
     autodiffPositionType = flatType;
@@ -401,7 +430,17 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
 
-  if (isCustomLogpdf) {
+  if (ctx.hasLogpdfRegion()) {
+    // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
+    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
+    Value logDensity = cloneLogpdfRegionAt(builder, loc, q_constrained, ctx);
+    Value negWeight = arith::NegFOp::create(builder, loc, logDensity);
+    Value jacobianCorrection =
+        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
+    Value U =
+        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
+    enzyme::YieldOp::create(builder, loc, ValueRange{U, rng});
+  } else if (isCustomLogpdf) {
     SmallVector<Value> callArgs;
     callArgs.push_back(qArg);
     callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -446,7 +485,7 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointAfter(autodiffOp);
 
   Value grad = autodiffOp.getResult(2);
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     grad = impulse::ReshapeOp::create(builder, loc, positionType, grad);
   }
 
@@ -718,18 +757,24 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   if (ctx.hasCustomLogpdf()) {
     q0 = initialPosition;
-    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-    auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Flat);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, callArgs);
-    U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    if (ctx.hasLogpdfRegion()) {
+      Value q0_constrained = constrainPosition(builder, loc, q0, ctx.supports);
+      Value weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+      Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
+      Value jacobian0 =
+          computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
+      U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+    } else {
+      auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+      auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
+      SmallVector<Value> callArgs;
+      callArgs.push_back(q0Flat);
+      callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+      auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                         TypeRange{scalarType}, callArgs);
+      U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    }
   } else {
-    auto fullTraceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
     // 1. Extract initial position vector (constrained)
     auto q0_constrained =
         gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
@@ -738,25 +783,32 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
     q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
 
     // 3. Compute initial potential energy: U0 = -weight + correction
-    Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
-                                                 ctx.originalTrace, ctx);
+    Value weight0;
+    if (ctx.hasLogpdfRegion()) {
+      weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+    } else {
+      auto fullTraceType =
+          RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
+      Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
+                                                   ctx.originalTrace, ctx);
 
-    SmallVector<Value> generateInputsInit;
-    generateInputsInit.push_back(rngForAutodiff);
-    generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+      SmallVector<Value> generateInputsInit;
+      generateInputsInit.push_back(rngForAutodiff);
+      generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-    SmallVector<Type> generateResultTypesInit;
-    generateResultTypesInit.push_back(fullTraceType);
-    generateResultTypesInit.push_back(scalarType);
-    generateResultTypesInit.append(ctx.fnResultTypes.begin(),
-                                   ctx.fnResultTypes.end());
+      SmallVector<Type> generateResultTypesInit;
+      generateResultTypesInit.push_back(fullTraceType);
+      generateResultTypesInit.push_back(scalarType);
+      generateResultTypesInit.append(ctx.fnResultTypes.begin(),
+                                     ctx.fnResultTypes.end());
 
-    auto generateOpInit = impulse::GenerateOp::create(
-        builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
-        fullTraceInit, ctx.allAddresses, ctx.allAddresses,
-        builder.getStringAttr(""));
+      auto generateOpInit = impulse::GenerateOp::create(
+          builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
+          fullTraceInit, ctx.allAddresses, ctx.allAddresses,
+          builder.getStringAttr(""));
 
-    auto weight0 = generateOpInit.getWeight();
+      weight0 = generateOpInit.getWeight();
+    }
     auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
     auto jacobian0 =
         computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
@@ -765,11 +817,12 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   // 4. Compute initial gradient at q0
   bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffQ0 = q0;
   auto autodiffQ0Type = positionType;
   auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     autodiffQ0 = impulse::ReshapeOp::create(builder, loc, flatType, q0);
     autodiffQ0Type = flatType;
     autodiffGradType = flatType;
@@ -807,7 +860,18 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointToStart(autodiffInitBlock);
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
-  if (isCustomLogpdf) {
+  if (ctx.hasLogpdfRegion()) {
+    auto q0Arg_constrained =
+        constrainPosition(builder, loc, q0Arg, ctx.supports);
+    Value logDensityInit =
+        cloneLogpdfRegionAt(builder, loc, q0Arg_constrained, ctx);
+    auto negWeightInit = arith::NegFOp::create(builder, loc, logDensityInit);
+    auto jacobianInit =
+        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
+    auto U0_init =
+        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
+    enzyme::YieldOp::create(builder, loc, ValueRange{U0_init, rngForAutodiff});
+  } else if (isCustomLogpdf) {
     SmallVector<Value> callArgs;
     callArgs.push_back(q0Arg);
     callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -852,7 +916,7 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointAfter(autodiffInit);
 
   Value grad0 = autodiffInit.getResult(2);
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     grad0 = impulse::ReshapeOp::create(builder, loc, positionType, grad0);
   }
 
@@ -891,6 +955,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
   // 2. Sample fresh momentum p ~ N(0, M)
   Value rngForMomentum = rngMomentum;
+  // Logpdf mode skips this split for NumPyro RNG parity.
   if (!ctx.hasCustomLogpdf()) {
     auto momSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
@@ -1020,6 +1085,7 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
 
   // 2. Sample fresh momentum p ~ N(0, M)
   Value rngForMomentum = rngMomentum;
+  // Logpdf mode skips this split for NumPyro RNG parity.
   if (!ctx.hasCustomLogpdf()) {
     auto momSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
