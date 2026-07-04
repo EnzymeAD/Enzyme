@@ -82,6 +82,26 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
   ];
 }
 
+def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
+  let summary = "Inline impulse.infer ops into impulse.infer_region ops.";
+  let description = [{
+    Converts trace-based `impulse.infer @fn(...)` into `impulse.infer_region`
+    with the model body inlined into the sampler region, each `impulse.sample`
+    converted to an `impulse.sample_region` (sampler and logpdf function bodies
+    inlined as sub-regions), and sub-model sample sites recursively dissolved
+    (their addresses prefixed with the enclosing site's address). Only models
+    the region pipeline fully supports are converted; anything else is left as
+    a flat `impulse.infer` for the regular expand-impulse lowering.
+
+    The logpdf region is NOT built here: the `sicm` pass (Enzyme-JAX)
+    constructs it after sampler-region SICM, so it is born optimized.
+  }];
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "impulse::ImpulseDialect",
+  ];
+}
+
 def BatchPass : Pass<"enzyme-batch"> {
   let summary = "Batch Passes";
   let dependentDialects = [
