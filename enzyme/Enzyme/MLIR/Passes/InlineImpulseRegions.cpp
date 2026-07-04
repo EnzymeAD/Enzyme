@@ -310,7 +310,7 @@ struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
     if (!inferOp.getHmcConfig().has_value() &&
         !inferOp.getNutsConfig().has_value())
       return failure();
-    auto initialPos = inferOp.getInitialPosition();
+    auto initialPos = inferOp.getInitPosition();
     if (!initialPos)
       return failure();
     auto initialPosType = dyn_cast<RankedTensorType>(initialPos.getType());

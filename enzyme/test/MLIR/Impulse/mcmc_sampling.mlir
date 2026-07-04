@@ -12,33 +12,33 @@ module {
   func.func @sampling_basic(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "sampling_basic", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
 
   func.func @sampling_thinning(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "sampling_thinning", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10, thinning = 2 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>
   }
 
   func.func @sampling_with_warmup(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
         name = "sampling_with_warmup", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 5, num_samples = 10 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
 }

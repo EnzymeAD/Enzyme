@@ -122,9 +122,9 @@ LogicalResult InferOp::verify() {
   bool hasHMC = getHmcConfig().has_value();
   bool hasNUTS = getNutsConfig().has_value();
 
-  if (hasHMC + hasNUTS != 1) {
+  if (hasHMC + hasNUTS > 1) {
     return emitOpError(
-        "Exactly one of hmc_config or nuts_config must be specified");
+        "at most one of hmc_config or nuts_config may be specified");
   }
 
   if (!getFnAttr() && !getLogpdfFnAttr()) {
@@ -135,21 +135,30 @@ LogicalResult InferOp::verify() {
     return emitOpError("specifying both `fn` and `logpdf_fn` is unsupported");
   }
 
-  if (getLogpdfFnAttr() && !getInitialPosition()) {
+  if (getLogpdfFnAttr() && !getInitPosition()) {
     return emitOpError(
-        "custom logpdf mode requires `initial_position` to be provided");
+        "custom logpdf mode requires `init_position` to be provided");
   }
 
-  constexpr unsigned kAdaptationStateSize = 9;
-  unsigned numIn = getAdaptationStateIn().size();
-  if (numIn != 0 && numIn != kAdaptationStateSize) {
-    return emitOpError("`adaptation_state_in` must have either 0 or ")
-           << kAdaptationStateSize << " operands, got " << numIn;
+  unsigned numStateOut = getStateOut().size();
+  ArrayAttr schema = getStateSchemaAttr();
+  if (numStateOut != 0) {
+    if (!schema)
+      return emitOpError(
+          "`state_schema` is required when `state_out` is non-empty");
+    if (schema.size() != numStateOut)
+      return emitOpError("`state_schema` size (")
+             << schema.size() << ") must match `state_out` size ("
+             << numStateOut << ")";
+  } else if (schema && schema.size() != 0) {
+    return emitOpError(
+        "`state_schema` must be empty when `state_out` is empty");
   }
-  unsigned numOut = getAdaptationStateOut().size();
-  if (numOut != 0 && numOut != kAdaptationStateSize) {
-    return emitOpError("`adaptation_state_out` must have either 0 or ")
-           << kAdaptationStateSize << " results, got " << numOut;
+
+  unsigned numStateIn = getStateIn().size();
+  if (numStateIn != 0 && numStateIn != numStateOut) {
+    return emitOpError("`state_in` must be empty or match `state_out` size (")
+           << numStateOut << "), got " << numStateIn;
   }
 
   return success();

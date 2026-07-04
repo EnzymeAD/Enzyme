@@ -211,38 +211,18 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
   }];
 }
 
-def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference for probabilistic programs";
-  let description = [{
-    Runs MCMC inference on selected addresses.
-
-    Two modes of operation:
-    1. Trace-based mode: `fn` and `original_trace` are provided. The model
-       function with `impulse.sample` ops defines the density.
-    2. Custom logpdf mode: `logpdf_fn` and `initial_position` are provided.
-       The logpdf function maps position -> scalar log-density directly.
-
-    The `selection` attribute determines which addresses to sample via HMC/NUTS.
-    All sample addresses are included in the trace tensor for consistency.
-
-    Returns: (trace, diagnostics, log_densities, rng, final_position, final_gradient,
-              final_potential_energy, final_step_size, final_inverse_mass_matrix)
-    - trace: tensor<num_samples x position_size x f64>
-    - diagnostics: tensor<num_samples x 2 x i1> - placeholder for future expansion
-    - log_densities: tensor<num_samples x f64> - log densities of samples
-    - rng: updated RNG state
-    - final_position: tensor<1 x position_size x f64> - position after last sample
-    - final_gradient: tensor<1 x position_size x f64> - gradient at final position
-    - final_potential_energy: tensor<f64> - potential energy at final position
-    - final_step_size: tensor<f64> - adapted step size (after warmup)
-    - final_inverse_mass_matrix: tensor - adapted inverse mass matrix (after warmup)
-  }];
-
-  let arguments = (ins
+// The `init_*` operands are read only on a cold start (empty `state_in`).
+class Impulse_InferSignatureArgs {
+  dag args = (ins
     OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
-    Variadic<AnyRankedTensor>:$adaptation_state_in,
+    Variadic<AnyRankedTensor>:$state_in,
     Optional<AnyRankedTensor>:$original_trace,
+
+    Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$init_step_size,
+    Optional<AnyRankedTensor>:$init_position,
+
     AddressArrayAttr:$selection,
     AddressArrayAttr:$all_addresses,
 
@@ -252,47 +232,65 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
 
     OptionalAttr<I64Attr>:$total_warmup,
 
-    // Algorithm-specific MCMC parameters
-    Optional<AnyRankedTensor>:$inverse_mass_matrix,
-    Optional<AnyRankedTensor>:$step_size,
-
-    // Algorithm-specific configurations
     OptionalAttr<HMCConfigAttr>:$hmc_config,
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
 
-    // Custom logpdf mode
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
-    Optional<AnyRankedTensor>:$initial_position,
 
-    Optional<AnyRankedTensor>:$initial_gradient,
-    Optional<AnyRankedTensor>:$initial_potential_energy,
-
-    Optional<AnyRankedTensor>:$warmup_offset,
+    OptionalAttr<StrArrayAttr>:$state_schema,
 
     OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
+}
 
-  let results = (outs AnyRankedTensor:$trace, AnyRankedTensor:$diagnostics,
-      AnyRankedTensor:$log_densities, AnyType:$output_rng_state,
-      AnyRankedTensor:$final_position, AnyRankedTensor:$final_gradient,
-      AnyRankedTensor:$final_potential_energy, AnyRankedTensor:$final_step_size,
-      AnyRankedTensor:$final_inverse_mass_matrix,
+// `diagnostics` columns are [accepted, diverging].
+class Impulse_InferSignatureResults {
+  dag outputs = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$diagnostics,
+    AnyRankedTensor:$log_densities,
+    AnyType:$output_rng_state,
+    Variadic<AnyRankedTensor>:$state_out
+  );
+}
 
-      Variadic<AnyRankedTensor>:$adaptation_state_out);
+def InferOp : Impulse_Op<"infer",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]>,
+    Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
+  let summary = "MCMC inference for probabilistic programs";
+  let description = [{
+    Runs MCMC inference on selected addresses.
+
+    Two modes of operation:
+    1. Trace-based mode: `fn` and `original_trace` are provided. The model
+       function with `impulse.sample` ops defines the density.
+    2. Custom logpdf mode: `logpdf_fn` and `init_position` are provided.
+       The logpdf function maps position -> scalar log-density directly.
+
+    The `selection` attribute determines which addresses to sample via HMC/NUTS.
+    All sample addresses are included in the trace tensor for consistency.
+
+    Resumable algorithm state (adapted step size, inverse mass matrix, dual
+    averaging / Welford accumulators, warmup progress, and the final
+    position/gradient/potential energy) is carried opaquely as a bundle:
+    `state_in` warm-starts a run (empty = cold start), `state_out` returns it,
+    and `state_schema` names each slot. `trace`, `diagnostics`,
+    `log_densities`, and `output_rng_state` are the only universal results.
+  }];
+
+  let arguments = args;
+  let results = outputs;
 
   let assemblyFormat = [{
     ($fn^)?
     `(` $inputs `)`
     (`given` $original_trace^)?
-    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
-    (`step_size` `=` $step_size^)?
+    (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
+    (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
-    (`initial_position` `=` $initial_position^)?
-    (`initial_gradient` `=` $initial_gradient^)?
-    (`initial_potential_energy` `=` $initial_potential_energy^)?
-    (`warmup_offset` `=` $warmup_offset^)?
-    (`adaptation_state_in` `=` $adaptation_state_in^)?
+    (`init_position` `=` $init_position^)?
+    (`state` `=` `[` $state_in^ `]`)?
     prop-dict attr-dict `:` functional-type(operands, results)
   }];
 
@@ -336,7 +334,8 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
 }
 
 def InferRegionOp : Impulse_Op<"infer_region",
-    [AutomaticAllocationScope, AttrSizedOperandSegments]> {
+    [AutomaticAllocationScope, AttrSizedOperandSegments]>,
+    Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
   let summary = "MCMC inference region with sampler and joint logpdf";
   let description = [{
     Region-form of `impulse.infer`, produced by `inline-infer-regions` and
@@ -359,53 +358,12 @@ def InferRegionOp : Impulse_Op<"infer_region",
     `num_position_args`/`position_size` bookkeeping for the joint logpdf.
   }];
 
-  let arguments = (ins
-    OptionalAttr<FlatSymbolRefAttr>:$fn,
-    Variadic<AnyType>:$inputs,
-    Variadic<AnyRankedTensor>:$adaptation_state_in,
-    Optional<AnyRankedTensor>:$original_trace,
-    AddressArrayAttr:$selection,
-    AddressArrayAttr:$all_addresses,
-
-    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
-    DefaultValuedAttr<I64Attr, "1">:$num_samples,
-    DefaultValuedAttr<I64Attr, "1">:$thinning,
-
-    OptionalAttr<I64Attr>:$total_warmup,
-
-    Optional<AnyRankedTensor>:$inverse_mass_matrix,
-    Optional<AnyRankedTensor>:$step_size,
-
-    OptionalAttr<HMCConfigAttr>:$hmc_config,
-    OptionalAttr<NUTSConfigAttr>:$nuts_config,
-
-    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
-    Optional<AnyRankedTensor>:$initial_position,
-
-    Optional<AnyRankedTensor>:$initial_gradient,
-    Optional<AnyRankedTensor>:$initial_potential_energy,
-
-    Optional<AnyRankedTensor>:$warmup_offset,
-
-    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
-    DefaultValuedStrAttr<StrAttr, "">:$name,
-
+  let arguments = !con(args, (ins
     DefaultValuedAttr<I64Attr, "0">:$num_position_args,
     DefaultValuedAttr<I64Attr, "0">:$position_size
-  );
+  ));
 
-  let results = (outs
-    AnyRankedTensor:$trace,
-    AnyRankedTensor:$diagnostics,
-    AnyType:$output_rng_state,
-    AnyRankedTensor:$final_position,
-    AnyRankedTensor:$final_gradient,
-    AnyRankedTensor:$final_potential_energy,
-    AnyRankedTensor:$final_step_size,
-    AnyRankedTensor:$final_inverse_mass_matrix,
-
-    Variadic<AnyRankedTensor>:$adaptation_state_out
-  );
+  let results = outputs;
 
   let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
 
@@ -413,14 +371,11 @@ def InferRegionOp : Impulse_Op<"infer_region",
     ($fn^)?
     `(` $inputs `)`
     (`given` $original_trace^)?
-    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
-    (`step_size` `=` $step_size^)?
+    (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
+    (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
-    (`initial_position` `=` $initial_position^)?
-    (`initial_gradient` `=` $initial_gradient^)?
-    (`initial_potential_energy` `=` $initial_potential_energy^)?
-    (`warmup_offset` `=` $warmup_offset^)?
-    (`adaptation_state_in` `=` $adaptation_state_in^)?
+    (`init_position` `=` $init_position^)?
+    (`state` `=` `[` $state_in^ `]`)?
     `sampler` $sampler `logpdf` $logpdf
     attr-dict `:` functional-type(operands, results)
   }];

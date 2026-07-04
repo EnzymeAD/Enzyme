@@ -13,14 +13,15 @@ module {
       -> (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:18 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:13 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
-        name = "expose_both", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 4, num_samples = 1 }>
+        name = "expose_both", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 4, num_samples = 1,
+        state_schema = ["da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx"] }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>)
-        -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>,
+        -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>,
             tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>)
-    return %res#3, %res#9, %res#10, %res#11, %res#12, %res#13, %res#14, %res#15, %res#16, %res#17
+    return %res#3, %res#4, %res#5, %res#6, %res#7, %res#8, %res#9, %res#10, %res#11, %res#12
       : tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
   }
 
@@ -31,19 +32,19 @@ module {
       -> (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:18 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
-      warmup_offset = %off
-      adaptation_state_in = %da0, %da1, %da2, %da3, %da4, %wm, %wm2, %wn, %widx
+    %res:14 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
+      state = [%da0, %da1, %da2, %da3, %da4, %wm, %wm2, %wn, %widx, %off]
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
         name = "resume_offset", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]],
-        num_warmup = 4, total_warmup = 100, num_samples = 1 }>
+        num_warmup = 4, total_warmup = 100, num_samples = 1,
+        state_schema = ["da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx", "warmup_offset"] }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>,
-         tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>,
-         tensor<1x1xf64>, tensor<f64>, tensor<i64>)
-        -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>,
-            tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>)
-    return %res#3, %res#9, %res#10, %res#11, %res#12, %res#13, %res#14, %res#15, %res#16, %res#17
+         tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>, tensor<i64>,
+         tensor<1x1xf64>, tensor<f64>)
+        -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>,
+            tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>, tensor<i64>)
+    return %res#3, %res#4, %res#5, %res#6, %res#7, %res#8, %res#9, %res#10, %res#11, %res#12
       : tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
   }
 }

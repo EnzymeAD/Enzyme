@@ -17,7 +17,7 @@ module {
   func.func @nuts_strong_zero(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[1.0, -1.0]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = "impulse.infer"(%rng, %step_size, %init_pos) {
+    %res:4 = "impulse.infer"(%rng, %step_size, %init_pos) {
       logpdf_fn = @logpdf,
       nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
       autodiff_attrs = {strong_zero = true},
@@ -26,8 +26,8 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0, 0, 0>
-    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1>
+    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 
@@ -41,7 +41,7 @@ module {
   func.func @nuts_default(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[1.0, -1.0]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = "impulse.infer"(%rng, %step_size, %init_pos) {
+    %res:4 = "impulse.infer"(%rng, %step_size, %init_pos) {
       logpdf_fn = @logpdf,
       nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
       name = "nuts_default",
@@ -49,8 +49,8 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0, 0, 0>
-    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1>
+    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 
@@ -63,7 +63,7 @@ module {
   func.func @hmc_strong_zero(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = "impulse.infer"(%rng, %step_size, %init_pos) {
+    %res:4 = "impulse.infer"(%rng, %step_size, %init_pos) {
       logpdf_fn = @logpdf,
       hmc_config = #impulse.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_step_size = false, adapt_mass_matrix = false>,
       autodiff_attrs = {strong_zero = true},
@@ -72,8 +72,8 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0, 0, 0>
-    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1>
+    } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
