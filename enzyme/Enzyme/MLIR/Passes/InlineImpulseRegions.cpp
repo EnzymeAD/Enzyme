@@ -299,12 +299,70 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
   }
 };
 
+struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
+  using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::InferOp inferOp,
+                                PatternRewriter &rewriter) const override {
+    auto logpdfFnAttr = inferOp.getLogpdfFnAttr();
+    if (!logpdfFnAttr)
+      return failure();
+    if (!inferOp.getHmcConfig().has_value() &&
+        !inferOp.getNutsConfig().has_value())
+      return failure();
+    auto initialPos = inferOp.getInitialPosition();
+    if (!initialPos)
+      return failure();
+    auto initialPosType = dyn_cast<RankedTensorType>(initialPos.getType());
+    if (!initialPosType || !initialPosType.hasStaticShape())
+      return failure();
+
+    SymbolTableCollection symbolTable;
+    auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(inferOp, logpdfFnAttr));
+    if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
+        !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
+      return failure();
+    // logpdf_fn takes (position, inputs[1:]...): the position replaces the rng.
+    if (logpdfFn.getNumArguments() != inferOp.getInputs().size())
+      return failure();
+
+    // infer_region mirrors infer's operands and attributes one-to-one.
+    OperationState state(inferOp.getLoc(),
+                         impulse::InferRegionOp::getOperationName());
+    state.addOperands(inferOp->getOperands());
+    state.addTypes(inferOp->getResultTypes());
+    for (NamedAttribute attr : inferOp->getAttrs())
+      state.addAttribute(attr.getName(), attr.getValue());
+    state.addRegion();
+    state.addRegion();
+    auto regionOp = cast<impulse::InferRegionOp>(rewriter.create(state));
+
+    inlineFunctionIntoRegion(rewriter, logpdfFn, regionOp.getLogpdf());
+
+    Block &logpdfBlock = regionOp.getLogpdf().front();
+    auto inputs = inferOp.getInputs();
+    for (int64_t i = logpdfBlock.getNumArguments() - 1; i >= 1; --i) {
+      logpdfBlock.getArgument(i).replaceAllUsesWith(inputs[i]);
+      logpdfBlock.eraseArgument(i);
+    }
+
+    regionOp.setNumPositionArgsAttr(rewriter.getI64IntegerAttr(1));
+    regionOp.setPositionSizeAttr(
+        rewriter.getI64IntegerAttr(initialPosType.getNumElements()));
+
+    // The sampler region stays empty: the density is the user logpdf.
+    rewriter.replaceOp(inferOp, regionOp.getResults());
+    return success();
+  }
+};
+
 struct InlineInferIntoRegion
     : public enzyme::impl::InlineInferIntoRegionPassBase<
           InlineInferIntoRegion> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<InlineInferOp>(&getContext());
+    patterns.add<InlineInferOp, InlineLogpdfInferOp>(&getContext());
 
     GreedyRewriteConfig config;
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
