@@ -22,9 +22,11 @@ struct StateSlot {
   mlir::RankedTensorType type;
 };
 
+/// `numChains` dimension (the multi-chain lowering stacks per-chain finals).
+/// `positionSize` and `invMassType` are the SINGLE-chain (per-chain) sizes.
 inline llvm::SmallVector<StateSlot>
 buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
-                 mlir::RankedTensorType invMassType) {
+                 mlir::RankedTensorType invMassType, int64_t numChains = 1) {
   auto *ctx = elemType.getContext();
   auto i64Scalar =
       mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
@@ -59,6 +61,14 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
         {"window_idx", i64Scalar},
         {"warmup_offset", i64Scalar},
     });
+  }
+  if (numChains > 1) {
+    for (StateSlot &s : slots) {
+      llvm::SmallVector<int64_t> shape;
+      shape.push_back(numChains);
+      shape.append(s.type.getShape().begin(), s.type.getShape().end());
+      s.type = mlir::RankedTensorType::get(shape, s.type.getElementType());
+    }
   }
   return slots;
 }

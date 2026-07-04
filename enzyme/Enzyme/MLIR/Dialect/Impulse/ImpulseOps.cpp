@@ -128,6 +128,13 @@ LogicalResult InferOp::verify() {
         "at most one of hmc_config or nuts_config may be specified");
   }
 
+  int64_t numChains = getNumChains();
+  if (numChains < 1)
+    return emitOpError("`num_chains` must be >= 1");
+  if (numChains > 1 && !hasHMC && !hasNUTS)
+    return emitOpError("`num_chains` > 1 requires a sampling config "
+                       "(hmc_config or nuts_config)");
+
   if (!getFnAttr() && !getLogpdfFnAttr()) {
     return emitOpError("one of `fn` or `logpdf_fn` must be specified");
   }
@@ -173,13 +180,28 @@ LogicalResult InferOp::verify() {
                          "`inverse_mass_matrix` slots");
     auto posType = dyn_cast<RankedTensorType>(getStateOut()[*posIdx].getType());
     auto immType = dyn_cast<RankedTensorType>(getStateOut()[*immIdx].getType());
-    if (!posType || posType.getRank() != 2 || !immType)
+    // Single-chain `position` is rank-2 `1xN`; chain-major (num_chains > 1) is
+    // rank-3 `Cx1xN` with the leading dim equal to num_chains. Derive the
+    // per-chain sizes by stripping the chain dim, then compare the full
+    // (chain-major) schema types.
+    int64_t expectedPosRank = numChains > 1 ? 3 : 2;
+    if (!posType || posType.getRank() != expectedPosRank || !immType)
       return emitOpError("`position`/`inverse_mass_matrix` state slots must be "
                          "ranked tensors of the expected rank");
+    if (numChains > 1 && posType.getShape()[0] != numChains)
+      return emitOpError("chain-major `position` slot leading dim (")
+             << posType.getShape()[0] << ") must equal num_chains ("
+             << numChains << ")";
+    int64_t positionSize = posType.getShape().back();
+    RankedTensorType singleImmType =
+        numChains > 1 ? RankedTensorType::get(immType.getShape().drop_front(),
+                                              immType.getElementType())
+                      : immType;
 
     bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
-    auto expected = impulse::buildStateSchema(
-        adaptive, posType.getShape()[1], posType.getElementType(), immType);
+    auto expected = impulse::buildStateSchema(adaptive, positionSize,
+                                              posType.getElementType(),
+                                              singleImmType, numChains);
     if (expected.size() != numStateOut)
       return emitOpError("`state_schema` size (")
              << numStateOut << ") does not match the canonical "

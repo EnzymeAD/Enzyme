@@ -821,7 +821,6 @@ struct ExpandImpulsePass
         if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
           invMass = m;
       }
-      Value adaptedInvMass = invMass;
 
       auto elemType =
           cast<RankedTensorType>(stepSize.getType()).getElementType();
@@ -871,9 +870,6 @@ struct ExpandImpulsePass
             (invMassType.getRank() == 2 && invMassType.getShape()[0] == 1);
       }
 
-      auto adaptedMassMatrixSqrt =
-          computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
-
       auto autodiffAttrs = mcmcOp.getAutodiffAttrsAttr();
 
       auto makeHMCContext = [&](Value currentInvMass,
@@ -920,119 +916,73 @@ struct ExpandImpulsePass
         }
       };
 
-      Value currentQ, currentGrad, currentU, currentRng;
+      // input for a single chain, or `randomSplit(rng, num_chains)[c]` for
+      // chain c). Returns the single-chain replacement values in op-result
+      // order: {trace, diagnostics, output_rng_state, state_out...}. Every
+      // rng-dependent computation lives here so num_chains > 1 replays it per
+      // split key; the rng-independent setup above is shared. For num_chains ==
+      // 1 this is called once with `rngInput`, byte-identical to the
+      // pre-multichain lowering.
+      auto runOneChain = [&](Value chainRng) -> SmallVector<Value> {
+        Value adaptedInvMass = invMass;
+        auto adaptedMassMatrixSqrt =
+            computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
-      Value resumePosition = stateInSlot(mcmcOp, state_slot::kPosition);
-      Value resumeGrad = stateInSlot(mcmcOp, state_slot::kGradient);
-      Value resumePE = stateInSlot(mcmcOp, state_slot::kPotentialEnergy);
+        Value currentQ, currentGrad, currentU, currentRng;
 
-      // is skipped and `rngInput` threads through unchanged.
-      if (isResume && resumePosition && resumeGrad && resumePE) {
-        currentQ = resumePosition;
-        currentGrad = resumeGrad;
-        currentU = resumePE;
-        currentRng = rngInput;
-      } else {
-        auto baseCtx =
-            makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
-        auto initState = InitHMC(
-            rewriter, loc, rngInput, baseCtx,
-            hasLogpdfFn ? mcmcOp.getInitPosition() : Value(), debugDump);
-        currentQ = initState.q0;
-        currentGrad = initState.grad0;
-        currentU = initState.U0;
-        currentRng = initState.rng;
-      }
+        Value resumePosition = stateInSlot(mcmcOp, state_slot::kPosition);
+        Value resumeGrad = stateInSlot(mcmcOp, state_slot::kGradient);
+        Value resumePE = stateInSlot(mcmcOp, state_slot::kPotentialEnergy);
 
-      auto runSampleStepWithStepSize =
-          [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-              Value rng, Value currentStepSize) -> MCMCKernelResult {
-        if (isHMC) {
-          auto ctx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                    currentStepSize);
-          return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
+        if (isResume && resumePosition && resumeGrad && resumePE) {
+          currentQ = resumePosition;
+          currentGrad = resumeGrad;
+          currentU = resumePE;
+          currentRng = chainRng;
         } else {
-          auto nutsCtx = makeNUTSContext(adaptedInvMass, adaptedMassMatrixSqrt,
-                                         currentStepSize, U);
-          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      Value adaptedStepSize = stepSize;
-
-      auto runSampleStepWithInvMass =
-          [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-              Value rng, Value currentStepSize, Value currentInvMass,
-              Value currentMassMatrixSqrt) -> MCMCKernelResult {
-        if (isHMC) {
-          auto ctx = makeHMCContext(currentInvMass, currentMassMatrixSqrt,
-                                    currentStepSize);
-          return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
-        } else {
-          auto nutsCtx = makeNUTSContext(currentInvMass, currentMassMatrixSqrt,
-                                         currentStepSize, U);
-          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      if (!adaptedInvMass) {
-        adaptedInvMass = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-        adaptedMassMatrixSqrt = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-      }
-
-      SmallVector<Value> finalAdaptationState;
-      auto packAdaptation = [&](const DualAveragingState &da,
-                                const WelfordState &w,
-                                Value widx) -> SmallVector<Value> {
-        SmallVector<Value> v;
-        for (Value x : da.toValues())
-          v.push_back(x);
-        v.push_back(w.mean);
-        v.push_back(w.m2);
-        v.push_back(w.n);
-        v.push_back(widx);
-        return v;
-      };
-
-      if (numWarmup > 0) {
-        auto c0 = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(0)));
-        auto c1 = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(1)));
-        auto numWarmupConst = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(numWarmup)));
-
-        auto schedule = buildAdaptationSchedule(totalWarmup);
-        int64_t numWindows = static_cast<int64_t>(schedule.size());
-
-        SmallVector<Value> windowEndConstants;
-        for (const auto &window : schedule) {
-          windowEndConstants.push_back(arith::ConstantOp::create(
-              rewriter, loc, i64TensorType,
-              DenseElementsAttr::get(i64TensorType,
-                                     rewriter.getI64IntegerAttr(window.end))));
+          auto baseCtx =
+              makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
+          auto initState = InitHMC(
+              rewriter, loc, chainRng, baseCtx,
+              hasLogpdfFn ? mcmcOp.getInitPosition() : Value(), debugDump);
+          currentQ = initState.q0;
+          currentGrad = initState.grad0;
+          currentU = initState.U0;
+          currentRng = initState.rng;
         }
 
-        auto numWindowsMinusOne = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(i64TensorType,
-                                   rewriter.getI64IntegerAttr(numWindows - 1)));
-        auto lastIterConst = arith::ConstantOp::create(
-            rewriter, loc, i64TensorType,
-            DenseElementsAttr::get(
-                i64TensorType, rewriter.getI64IntegerAttr(totalWarmup - 1)));
+        auto runSampleStepWithStepSize =
+            [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
+                Value rng, Value currentStepSize) -> MCMCKernelResult {
+          if (isHMC) {
+            auto ctx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
+                                      currentStepSize);
+            return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
+          } else {
+            auto nutsCtx = makeNUTSContext(
+                adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize, U);
+            return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx,
+                              debugDump);
+          }
+        };
+
+        Value adaptedStepSize = stepSize;
+
+        auto runSampleStepWithInvMass =
+            [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
+                Value rng, Value currentStepSize, Value currentInvMass,
+                Value currentMassMatrixSqrt) -> MCMCKernelResult {
+          if (isHMC) {
+            auto ctx = makeHMCContext(currentInvMass, currentMassMatrixSqrt,
+                                      currentStepSize);
+            return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
+          } else {
+            auto nutsCtx = makeNUTSContext(
+                currentInvMass, currentMassMatrixSqrt, currentStepSize, U);
+            return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx,
+                              debugDump);
+          }
+        };
 
         if (!adaptedInvMass) {
           adaptedInvMass = arith::ConstantOp::create(
@@ -1045,598 +995,729 @@ struct ExpandImpulsePass
                                      rewriter.getFloatAttr(elemType, 1.0)));
         }
 
-        Value initialStepSize = stepSize;
-        initialStepSize =
-            conditionalDump(rewriter, loc, initialStepSize,
-                            "MCMC: initial step size before warmup", debugDump);
-        DualAveragingState daState =
-            hasAdaptationIn
-                ? DualAveragingState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, initialStepSize,
-                                    /*logOfProduct=*/true);
+        SmallVector<Value> finalAdaptationState;
+        auto packAdaptation = [&](const DualAveragingState &da,
+                                  const WelfordState &w,
+                                  Value widx) -> SmallVector<Value> {
+          SmallVector<Value> v;
+          for (Value x : da.toValues())
+            v.push_back(x);
+          v.push_back(w.mean);
+          v.push_back(w.m2);
+          v.push_back(w.n);
+          v.push_back(widx);
+          return v;
+        };
 
-        WelfordState welfordState;
-        WelfordConfig welfordConfig;
-        if (adaptMassMatrix) {
-          welfordState =
+        if (numWarmup > 0) {
+          auto c0 = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(i64TensorType,
+                                     rewriter.getI64IntegerAttr(0)));
+          auto c1 = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(i64TensorType,
+                                     rewriter.getI64IntegerAttr(1)));
+          auto numWarmupConst = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(i64TensorType,
+                                     rewriter.getI64IntegerAttr(numWarmup)));
+
+          auto schedule = buildAdaptationSchedule(totalWarmup);
+          int64_t numWindows = static_cast<int64_t>(schedule.size());
+
+          SmallVector<Value> windowEndConstants;
+          for (const auto &window : schedule) {
+            windowEndConstants.push_back(arith::ConstantOp::create(
+                rewriter, loc, i64TensorType,
+                DenseElementsAttr::get(
+                    i64TensorType, rewriter.getI64IntegerAttr(window.end))));
+          }
+
+          auto numWindowsMinusOne = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(
+                  i64TensorType, rewriter.getI64IntegerAttr(numWindows - 1)));
+          auto lastIterConst = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(
+                  i64TensorType, rewriter.getI64IntegerAttr(totalWarmup - 1)));
+
+          if (!adaptedInvMass) {
+            adaptedInvMass = arith::ConstantOp::create(
+                rewriter, loc, positionType,
+                DenseElementsAttr::get(positionType,
+                                       rewriter.getFloatAttr(elemType, 1.0)));
+            adaptedMassMatrixSqrt = arith::ConstantOp::create(
+                rewriter, loc, positionType,
+                DenseElementsAttr::get(positionType,
+                                       rewriter.getFloatAttr(elemType, 1.0)));
+          }
+
+          Value initialStepSize = stepSize;
+          initialStepSize = conditionalDump(
+              rewriter, loc, initialStepSize,
+              "MCMC: initial step size before warmup", debugDump);
+          DualAveragingState daState =
+              hasAdaptationIn
+                  ? DualAveragingState::fromValues(
+                        ArrayRef<Value>(adaptationInVals).take_front(5))
+                  : initDualAveraging(rewriter, loc, initialStepSize,
+                                      /*logOfProduct=*/true);
+
+          WelfordState welfordState;
+          WelfordConfig welfordConfig;
+          if (adaptMassMatrix) {
+            welfordState =
+                hasAdaptationIn
+                    ? WelfordState::fromValues(
+                          ArrayRef<Value>(adaptationInVals).slice(5, 3))
+                    : initWelford(rewriter, loc, positionSize, diagonal);
+            welfordConfig.diagonal = diagonal;
+            welfordConfig.regularize = true;
+          }
+
+          Value windowIdx =
+              hasAdaptationIn
+                  ? adaptationInVals[8]
+                  : arith::ConstantOp::create(
+                        rewriter, loc, i64TensorType,
+                        DenseElementsAttr::get(i64TensorType,
+                                               rewriter.getI64IntegerAttr(0)));
+
+          // Warmup loop carries by default:
+          // [q, grad, U, rng, stepSize, invMass, massMatrixSqrt, daState(5),
+          // welfordState(3)?, windowIdx]
+          SmallVector<Type> warmupLoopTypes = {positionType,
+                                               positionType,
+                                               scalarType,
+                                               currentRng.getType(),
+                                               scalarType, // stepSize
+                                               adaptedInvMass.getType(),
+                                               adaptedMassMatrixSqrt.getType()};
+          for (Type t : daState.getTypes())
+            warmupLoopTypes.push_back(t);
+          if (adaptMassMatrix) {
+            for (Type t : welfordState.getTypes())
+              warmupLoopTypes.push_back(t);
+          }
+          warmupLoopTypes.push_back(i64TensorType); // windowIdx
+
+          SmallVector<Value> warmupInitArgs = {currentQ,
+                                               currentGrad,
+                                               currentU,
+                                               currentRng,
+                                               initialStepSize,
+                                               adaptedInvMass,
+                                               adaptedMassMatrixSqrt};
+          for (Value v : daState.toValues())
+            warmupInitArgs.push_back(v);
+          if (adaptMassMatrix) {
+            for (Value v : welfordState.toValues())
+              warmupInitArgs.push_back(v);
+          }
+          warmupInitArgs.push_back(windowIdx);
+
+          auto warmupLoop =
+              impulse::ForOp::create(rewriter, loc, warmupLoopTypes, c0,
+                                     numWarmupConst, c1, warmupInitArgs);
+
+          Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
+          warmupBody->addArgument(i64TensorType, loc); // iteration index t
+          for (Type t : warmupLoopTypes)
+            warmupBody->addArgument(t, loc);
+
+          rewriter.setInsertionPointToStart(warmupBody);
+
+          Value iterT = warmupBody->getArgument(0);
+          Value iterTGlobal = iterT;
+          if (Value warmupOffset =
+                  stateInSlot(mcmcOp, state_slot::kWarmupOffset))
+            iterTGlobal =
+                arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
+          Value qLoop = warmupBody->getArgument(1);
+          Value gradLoop = warmupBody->getArgument(2);
+          Value ULoop = warmupBody->getArgument(3);
+          Value rngLoop = warmupBody->getArgument(4);
+          Value stepSizeLoop = warmupBody->getArgument(5);
+          Value invMassLoop = warmupBody->getArgument(6);
+          Value massMatrixSqrtLoop = warmupBody->getArgument(7);
+
+          SmallVector<Value> daStateLoopValues;
+          for (int i = 0; i < 5; ++i)
+            daStateLoopValues.push_back(warmupBody->getArgument(8 + i));
+          auto daStateLoop = DualAveragingState::fromValues(daStateLoopValues);
+
+          WelfordState welfordStateLoop;
+          Value windowIdxLoop;
+          if (adaptMassMatrix) {
+            SmallVector<Value> welfordStateLoopValues;
+            for (int i = 0; i < 3; ++i)
+              welfordStateLoopValues.push_back(warmupBody->getArgument(13 + i));
+            welfordStateLoop = WelfordState::fromValues(welfordStateLoopValues);
+            windowIdxLoop = warmupBody->getArgument(16);
+          } else {
+            windowIdxLoop = warmupBody->getArgument(13);
+          }
+
+          auto sample = runSampleStepWithInvMass(
+              rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, stepSizeLoop,
+              invMassLoop, massMatrixSqrtLoop);
+
+          // Update dual averaging state
+          DualAveragingConfig daConfig;
+          DualAveragingState updatedDaState;
+          Value currentStepSizeFromDA;
+          Value finalStepSizeFromDA;
+
+          if (adaptStepSize) {
+            updatedDaState = updateDualAveraging(rewriter, loc, daStateLoop,
+                                                 sample.accept_prob, daConfig);
+            currentStepSizeFromDA =
+                getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
+            finalStepSizeFromDA = getStepSizeFromDualAveraging(
+                rewriter, loc, updatedDaState, true);
+          } else {
+            updatedDaState = daStateLoop;
+            currentStepSizeFromDA = stepSizeLoop;
+            finalStepSizeFromDA = stepSizeLoop;
+          }
+
+          // Use log_step_size_avg at last iteration
+          auto isLastIter =
+              arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
+                                    iterTGlobal, lastIterConst);
+          Value adaptedStepSizeInLoop = impulse::SelectOp::create(
+              rewriter, loc, scalarType, isLastIter, finalStepSizeFromDA,
+              currentStepSizeFromDA);
+
+          const auto &floatSemantics =
+              cast<FloatType>(elemType).getFloatSemantics();
+          auto tinyConst = arith::ConstantOp::create(
+              rewriter, loc, scalarType,
+              DenseElementsAttr::get(
+                  scalarType,
+                  FloatAttr::get(elemType,
+                                 llvm::APFloat::getSmallest(floatSemantics))));
+          auto maxConst = arith::ConstantOp::create(
+              rewriter, loc, scalarType,
+              DenseElementsAttr::get(
+                  scalarType,
+                  FloatAttr::get(elemType,
+                                 llvm::APFloat::getLargest(floatSemantics))));
+          adaptedStepSizeInLoop = arith::MaximumFOp::create(
+              rewriter, loc, adaptedStepSizeInLoop, tinyConst);
+          adaptedStepSizeInLoop = arith::MinimumFOp::create(
+              rewriter, loc, adaptedStepSizeInLoop, maxConst);
+
+          auto windowIdxGtZero = arith::CmpIOp::create(
+              rewriter, loc, arith::CmpIPredicate::sgt, windowIdxLoop, c0);
+          auto windowIdxLtLast =
+              arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::slt,
+                                    windowIdxLoop, numWindowsMinusOne);
+          auto isMiddleWindow = arith::AndIOp::create(
+              rewriter, loc, windowIdxGtZero, windowIdxLtLast);
+
+          // Conditionally update Welford
+          WelfordState conditionalWelford;
+          if (adaptMassMatrix) {
+            auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
+            Value sample1D = impulse::ReshapeOp::create(rewriter, loc,
+                                                        sampleType1D, sample.q);
+            WelfordState updatedWelfordAfterSample = updateWelford(
+                rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
+
+            conditionalWelford.mean = impulse::SelectOp::create(
+                rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.mean, welfordStateLoop.mean);
+            conditionalWelford.m2 = impulse::SelectOp::create(
+                rewriter, loc, welfordStateLoop.m2.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.m2, welfordStateLoop.m2);
+            conditionalWelford.n = impulse::SelectOp::create(
+                rewriter, loc, welfordStateLoop.n.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.n, welfordStateLoop.n);
+          }
+
+          Value atWindowEnd = arith::ConstantOp::create(
+              rewriter, loc, i1TensorType,
+              DenseElementsAttr::get(i1TensorType,
+                                     rewriter.getBoolAttr(false)));
+
+          for (int64_t w = 0; w < numWindows; ++w) {
+            auto windowIdxIsW = arith::CmpIOp::create(
+                rewriter, loc, arith::CmpIPredicate::eq, windowIdxLoop,
+                arith::ConstantOp::create(
+                    rewriter, loc, i64TensorType,
+                    DenseElementsAttr::get(i64TensorType,
+                                           rewriter.getI64IntegerAttr(w))));
+            auto tEqualsWindowEnd =
+                arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
+                                      iterTGlobal, windowEndConstants[w]);
+            auto matchesThisWindow = arith::AndIOp::create(
+                rewriter, loc, windowIdxIsW, tEqualsWindowEnd);
+            atWindowEnd = arith::OrIOp::create(rewriter, loc, atWindowEnd,
+                                               matchesThisWindow);
+          }
+
+          Value newWindowIdx =
+              arith::AddIOp::create(rewriter, loc, windowIdxLoop, c1);
+          Value windowIdxAfterIncrement = impulse::SelectOp::create(
+              rewriter, loc, i64TensorType, atWindowEnd, newWindowIdx,
+              windowIdxLoop);
+
+          auto atMiddleWindowEnd =
+              arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
+
+          Value finalInvMass;
+          Value finalMassMatrixSqrt;
+          WelfordState finalWelfordState;
+          Value finalStepSizeValue;
+          DualAveragingState finalDaState;
+
+          SmallVector<Type> ifResultTypes;
+          ifResultTypes.push_back(invMassLoop.getType());
+          ifResultTypes.push_back(massMatrixSqrtLoop.getType());
+          if (adaptMassMatrix) {
+            ifResultTypes.push_back(conditionalWelford.mean.getType());
+            ifResultTypes.push_back(conditionalWelford.m2.getType());
+            ifResultTypes.push_back(conditionalWelford.n.getType());
+          }
+          for (Type t : updatedDaState.getTypes())
+            ifResultTypes.push_back(t);
+
+          auto ifOp = impulse::IfOp::create(rewriter, loc, ifResultTypes,
+                                            atMiddleWindowEnd);
+
+          {
+            Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
+            rewriter.setInsertionPointToStart(trueBranch);
+
+            SmallVector<Value> trueYieldValues;
+
+            if (adaptMassMatrix) {
+              auto newInvMass = finalizeWelford(
+                  rewriter, loc, conditionalWelford, welfordConfig);
+              auto newMassMatrixSqrt = computeMassMatrixSqrt(
+                  rewriter, loc, newInvMass, positionType);
+              auto reinitWelford =
+                  initWelford(rewriter, loc, positionSize, diagonal);
+
+              trueYieldValues.push_back(newInvMass);
+              trueYieldValues.push_back(newMassMatrixSqrt);
+              trueYieldValues.push_back(reinitWelford.mean);
+              trueYieldValues.push_back(reinitWelford.m2);
+              trueYieldValues.push_back(reinitWelford.n);
+            } else {
+              trueYieldValues.push_back(invMassLoop);
+              trueYieldValues.push_back(massMatrixSqrtLoop);
+            }
+
+            if (adaptStepSize) {
+              auto reinitDaState =
+                  initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
+              for (auto v : reinitDaState.toValues())
+                trueYieldValues.push_back(v);
+            } else {
+              for (auto v : updatedDaState.toValues())
+                trueYieldValues.push_back(v);
+            }
+
+            impulse::YieldOp::create(rewriter, loc, trueYieldValues);
+          }
+
+          {
+            Block *falseBranch = rewriter.createBlock(&ifOp.getFalseBranch());
+            rewriter.setInsertionPointToStart(falseBranch);
+
+            SmallVector<Value> falseYieldValues;
+            falseYieldValues.push_back(invMassLoop);
+            falseYieldValues.push_back(massMatrixSqrtLoop);
+            if (adaptMassMatrix) {
+              falseYieldValues.push_back(conditionalWelford.mean);
+              falseYieldValues.push_back(conditionalWelford.m2);
+              falseYieldValues.push_back(conditionalWelford.n);
+            }
+            for (auto v : updatedDaState.toValues())
+              falseYieldValues.push_back(v);
+
+            impulse::YieldOp::create(rewriter, loc, falseYieldValues);
+          }
+
+          rewriter.setInsertionPointAfter(ifOp);
+
+          size_t resultIdx = 0;
+          finalInvMass = ifOp.getResult(resultIdx++);
+          finalMassMatrixSqrt = ifOp.getResult(resultIdx++);
+          if (adaptMassMatrix) {
+            finalWelfordState.mean = ifOp.getResult(resultIdx++);
+            finalWelfordState.m2 = ifOp.getResult(resultIdx++);
+            finalWelfordState.n = ifOp.getResult(resultIdx++);
+          }
+          finalDaState.log_step_size = ifOp.getResult(resultIdx++);
+          finalDaState.log_step_size_avg = ifOp.getResult(resultIdx++);
+          finalDaState.gradient_avg = ifOp.getResult(resultIdx++);
+          finalDaState.step_count = ifOp.getResult(resultIdx++);
+          finalDaState.prox_center = ifOp.getResult(resultIdx++);
+
+          finalStepSizeValue = adaptedStepSizeInLoop;
+
+          SmallVector<Value> warmupYieldValues = {
+              sample.q,           sample.grad,  sample.U,           sample.rng,
+              finalStepSizeValue, finalInvMass, finalMassMatrixSqrt};
+          for (Value v : finalDaState.toValues())
+            warmupYieldValues.push_back(v);
+          if (adaptMassMatrix) {
+            for (Value v : finalWelfordState.toValues())
+              warmupYieldValues.push_back(v);
+          }
+          warmupYieldValues.push_back(windowIdxAfterIncrement);
+
+          impulse::YieldOp::create(rewriter, loc, warmupYieldValues);
+
+          rewriter.setInsertionPointAfter(warmupLoop);
+
+          currentQ = warmupLoop.getResult(0);
+          currentGrad = warmupLoop.getResult(1);
+          currentU = warmupLoop.getResult(2);
+          currentRng = warmupLoop.getResult(3);
+          adaptedStepSize = warmupLoop.getResult(4);
+          adaptedInvMass = warmupLoop.getResult(5);
+          adaptedMassMatrixSqrt = warmupLoop.getResult(6);
+
+          adaptedStepSize = conditionalDump(
+              rewriter, loc, adaptedStepSize,
+              "MCMC: adapted step size after warmup", debugDump);
+          if (adaptMassMatrix) {
+            adaptedInvMass = conditionalDump(
+                rewriter, loc, adaptedInvMass,
+                "MCMC: adapted inverse mass matrix after warmup", debugDump);
+          }
+
+          if (exposeAdaptation) {
+            DualAveragingState finalDa = DualAveragingState::fromValues(
+                {warmupLoop.getResult(7), warmupLoop.getResult(8),
+                 warmupLoop.getResult(9), warmupLoop.getResult(10),
+                 warmupLoop.getResult(11)});
+            WelfordState finalW;
+            Value finalWidx;
+            if (adaptMassMatrix) {
+              finalW = WelfordState::fromValues({warmupLoop.getResult(12),
+                                                 warmupLoop.getResult(13),
+                                                 warmupLoop.getResult(14)});
+              finalWidx = warmupLoop.getResult(15);
+            } else {
+              finalW = initWelford(rewriter, loc, positionSize, diagonal);
+              finalWidx = warmupLoop.getResult(12);
+            }
+            finalAdaptationState = packAdaptation(finalDa, finalW, finalWidx);
+          }
+        }
+
+        if (exposeAdaptation && finalAdaptationState.empty()) {
+          DualAveragingState da =
+              hasAdaptationIn
+                  ? DualAveragingState::fromValues(
+                        ArrayRef<Value>(adaptationInVals).take_front(5))
+                  : initDualAveraging(rewriter, loc, stepSize,
+                                      /*logOfProduct=*/true);
+          WelfordState w =
               hasAdaptationIn
                   ? WelfordState::fromValues(
                         ArrayRef<Value>(adaptationInVals).slice(5, 3))
                   : initWelford(rewriter, loc, positionSize, diagonal);
-          welfordConfig.diagonal = diagonal;
-          welfordConfig.regularize = true;
+          Value widx =
+              hasAdaptationIn
+                  ? adaptationInVals[8]
+                  : arith::ConstantOp::create(
+                        rewriter, loc, i64TensorType,
+                        DenseElementsAttr::get(i64TensorType,
+                                               rewriter.getI64IntegerAttr(0)));
+          finalAdaptationState = packAdaptation(da, w, widx);
         }
 
-        Value windowIdx =
-            hasAdaptationIn
-                ? adaptationInVals[8]
-                : arith::ConstantOp::create(
-                      rewriter, loc, i64TensorType,
-                      DenseElementsAttr::get(i64TensorType,
-                                             rewriter.getI64IntegerAttr(0)));
+        int64_t collectionSize = numSamples / thinning;
+        int64_t startIdx = numSamples % thinning;
 
-        // Warmup loop carries by default:
-        // [q, grad, U, rng, stepSize, invMass, massMatrixSqrt, daState(5),
-        // welfordState(3)?, windowIdx]
-        SmallVector<Type> warmupLoopTypes = {positionType,
-                                             positionType,
-                                             scalarType,
-                                             currentRng.getType(),
-                                             scalarType, // stepSize
-                                             adaptedInvMass.getType(),
-                                             adaptedMassMatrixSqrt.getType()};
-        for (Type t : daState.getTypes())
-          warmupLoopTypes.push_back(t);
-        if (adaptMassMatrix) {
-          for (Type t : welfordState.getTypes())
-            warmupLoopTypes.push_back(t);
-        }
-        warmupLoopTypes.push_back(i64TensorType); // windowIdx
+        auto samplesBufferType =
+            RankedTensorType::get({collectionSize, positionSize}, elemType);
+        auto diagnosticsBufferType =
+            // Diagnostics buffer has two columns: [is_accepted, is_divergent]
+            RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());
+        auto logDensityBufferType =
+            RankedTensorType::get({collectionSize}, elemType);
 
-        SmallVector<Value> warmupInitArgs = {currentQ,
-                                             currentGrad,
-                                             currentU,
-                                             currentRng,
-                                             initialStepSize,
-                                             adaptedInvMass,
-                                             adaptedMassMatrixSqrt};
-        for (Value v : daState.toValues())
-          warmupInitArgs.push_back(v);
-        if (adaptMassMatrix) {
-          for (Value v : welfordState.toValues())
-            warmupInitArgs.push_back(v);
-        }
-        warmupInitArgs.push_back(windowIdx);
+        auto samplesBuffer = arith::ConstantOp::create(
+            rewriter, loc, samplesBufferType,
+            DenseElementsAttr::get(samplesBufferType,
+                                   rewriter.getFloatAttr(elemType, 0.0)));
+        auto diagnosticsBuffer = arith::ConstantOp::create(
+            rewriter, loc, diagnosticsBufferType,
+            DenseElementsAttr::get(diagnosticsBufferType,
+                                   rewriter.getBoolAttr(isNUTS)));
+        auto logDensityBuffer = arith::ConstantOp::create(
+            rewriter, loc, logDensityBufferType,
+            DenseElementsAttr::get(logDensityBufferType,
+                                   rewriter.getFloatAttr(elemType, 0.0)));
 
-        auto warmupLoop =
-            impulse::ForOp::create(rewriter, loc, warmupLoopTypes, c0,
-                                   numWarmupConst, c1, warmupInitArgs);
-
-        Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
-        warmupBody->addArgument(i64TensorType, loc); // iteration index t
-        for (Type t : warmupLoopTypes)
-          warmupBody->addArgument(t, loc);
-
-        rewriter.setInsertionPointToStart(warmupBody);
-
-        Value iterT = warmupBody->getArgument(0);
-        Value iterTGlobal = iterT;
-        if (Value warmupOffset = stateInSlot(mcmcOp, state_slot::kWarmupOffset))
-          iterTGlobal =
-              arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
-        Value qLoop = warmupBody->getArgument(1);
-        Value gradLoop = warmupBody->getArgument(2);
-        Value ULoop = warmupBody->getArgument(3);
-        Value rngLoop = warmupBody->getArgument(4);
-        Value stepSizeLoop = warmupBody->getArgument(5);
-        Value invMassLoop = warmupBody->getArgument(6);
-        Value massMatrixSqrtLoop = warmupBody->getArgument(7);
-
-        SmallVector<Value> daStateLoopValues;
-        for (int i = 0; i < 5; ++i)
-          daStateLoopValues.push_back(warmupBody->getArgument(8 + i));
-        auto daStateLoop = DualAveragingState::fromValues(daStateLoopValues);
-
-        WelfordState welfordStateLoop;
-        Value windowIdxLoop;
-        if (adaptMassMatrix) {
-          SmallVector<Value> welfordStateLoopValues;
-          for (int i = 0; i < 3; ++i)
-            welfordStateLoopValues.push_back(warmupBody->getArgument(13 + i));
-          welfordStateLoop = WelfordState::fromValues(welfordStateLoopValues);
-          windowIdxLoop = warmupBody->getArgument(16);
-        } else {
-          windowIdxLoop = warmupBody->getArgument(13);
-        }
-
-        auto sample = runSampleStepWithInvMass(rewriter, loc, qLoop, gradLoop,
-                                               ULoop, rngLoop, stepSizeLoop,
-                                               invMassLoop, massMatrixSqrtLoop);
-
-        // Update dual averaging state
-        DualAveragingConfig daConfig;
-        DualAveragingState updatedDaState;
-        Value currentStepSizeFromDA;
-        Value finalStepSizeFromDA;
-
-        if (adaptStepSize) {
-          updatedDaState = updateDualAveraging(rewriter, loc, daStateLoop,
-                                               sample.accept_prob, daConfig);
-          currentStepSizeFromDA =
-              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
-          finalStepSizeFromDA =
-              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState, true);
-        } else {
-          updatedDaState = daStateLoop;
-          currentStepSizeFromDA = stepSizeLoop;
-          finalStepSizeFromDA = stepSizeLoop;
-        }
-
-        // Use log_step_size_avg at last iteration
-        auto isLastIter =
-            arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
-                                  iterTGlobal, lastIterConst);
-        Value adaptedStepSizeInLoop = impulse::SelectOp::create(
-            rewriter, loc, scalarType, isLastIter, finalStepSizeFromDA,
-            currentStepSizeFromDA);
-
-        const auto &floatSemantics =
-            cast<FloatType>(elemType).getFloatSemantics();
-        auto tinyConst = arith::ConstantOp::create(
-            rewriter, loc, scalarType,
-            DenseElementsAttr::get(
-                scalarType, FloatAttr::get(elemType, llvm::APFloat::getSmallest(
-                                                         floatSemantics))));
-        auto maxConst = arith::ConstantOp::create(
-            rewriter, loc, scalarType,
-            DenseElementsAttr::get(
-                scalarType, FloatAttr::get(elemType, llvm::APFloat::getLargest(
-                                                         floatSemantics))));
-        adaptedStepSizeInLoop = arith::MaximumFOp::create(
-            rewriter, loc, adaptedStepSizeInLoop, tinyConst);
-        adaptedStepSizeInLoop = arith::MinimumFOp::create(
-            rewriter, loc, adaptedStepSizeInLoop, maxConst);
-
-        auto windowIdxGtZero = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::sgt, windowIdxLoop, c0);
-        auto windowIdxLtLast =
-            arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::slt,
-                                  windowIdxLoop, numWindowsMinusOne);
-        auto isMiddleWindow = arith::AndIOp::create(
-            rewriter, loc, windowIdxGtZero, windowIdxLtLast);
-
-        // Conditionally update Welford
-        WelfordState conditionalWelford;
-        if (adaptMassMatrix) {
-          auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
-          Value sample1D =
-              impulse::ReshapeOp::create(rewriter, loc, sampleType1D, sample.q);
-          WelfordState updatedWelfordAfterSample = updateWelford(
-              rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
-
-          conditionalWelford.mean = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.mean, welfordStateLoop.mean);
-          conditionalWelford.m2 = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.m2.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.m2, welfordStateLoop.m2);
-          conditionalWelford.n = impulse::SelectOp::create(
-              rewriter, loc, welfordStateLoop.n.getType(), isMiddleWindow,
-              updatedWelfordAfterSample.n, welfordStateLoop.n);
-        }
-
-        Value atWindowEnd = arith::ConstantOp::create(
-            rewriter, loc, i1TensorType,
-            DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
-
-        for (int64_t w = 0; w < numWindows; ++w) {
-          auto windowIdxIsW = arith::CmpIOp::create(
-              rewriter, loc, arith::CmpIPredicate::eq, windowIdxLoop,
-              arith::ConstantOp::create(
-                  rewriter, loc, i64TensorType,
-                  DenseElementsAttr::get(i64TensorType,
-                                         rewriter.getI64IntegerAttr(w))));
-          auto tEqualsWindowEnd =
-              arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::eq,
-                                    iterTGlobal, windowEndConstants[w]);
-          auto matchesThisWindow = arith::AndIOp::create(
-              rewriter, loc, windowIdxIsW, tEqualsWindowEnd);
-          atWindowEnd = arith::OrIOp::create(rewriter, loc, atWindowEnd,
-                                             matchesThisWindow);
-        }
-
-        Value newWindowIdx =
-            arith::AddIOp::create(rewriter, loc, windowIdxLoop, c1);
-        Value windowIdxAfterIncrement =
-            impulse::SelectOp::create(rewriter, loc, i64TensorType, atWindowEnd,
-                                      newWindowIdx, windowIdxLoop);
-
-        auto atMiddleWindowEnd =
-            arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
-
-        Value finalInvMass;
-        Value finalMassMatrixSqrt;
-        WelfordState finalWelfordState;
-        Value finalStepSizeValue;
-        DualAveragingState finalDaState;
-
-        SmallVector<Type> ifResultTypes;
-        ifResultTypes.push_back(invMassLoop.getType());
-        ifResultTypes.push_back(massMatrixSqrtLoop.getType());
-        if (adaptMassMatrix) {
-          ifResultTypes.push_back(conditionalWelford.mean.getType());
-          ifResultTypes.push_back(conditionalWelford.m2.getType());
-          ifResultTypes.push_back(conditionalWelford.n.getType());
-        }
-        for (Type t : updatedDaState.getTypes())
-          ifResultTypes.push_back(t);
-
-        auto ifOp = impulse::IfOp::create(rewriter, loc, ifResultTypes,
-                                          atMiddleWindowEnd);
-
-        {
-          Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
-          rewriter.setInsertionPointToStart(trueBranch);
-
-          SmallVector<Value> trueYieldValues;
-
-          if (adaptMassMatrix) {
-            auto newInvMass = finalizeWelford(rewriter, loc, conditionalWelford,
-                                              welfordConfig);
-            auto newMassMatrixSqrt =
-                computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
-            auto reinitWelford =
-                initWelford(rewriter, loc, positionSize, diagonal);
-
-            trueYieldValues.push_back(newInvMass);
-            trueYieldValues.push_back(newMassMatrixSqrt);
-            trueYieldValues.push_back(reinitWelford.mean);
-            trueYieldValues.push_back(reinitWelford.m2);
-            trueYieldValues.push_back(reinitWelford.n);
-          } else {
-            trueYieldValues.push_back(invMassLoop);
-            trueYieldValues.push_back(massMatrixSqrtLoop);
-          }
-
-          if (adaptStepSize) {
-            auto reinitDaState =
-                initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
-            for (auto v : reinitDaState.toValues())
-              trueYieldValues.push_back(v);
-          } else {
-            for (auto v : updatedDaState.toValues())
-              trueYieldValues.push_back(v);
-          }
-
-          impulse::YieldOp::create(rewriter, loc, trueYieldValues);
-        }
-
-        {
-          Block *falseBranch = rewriter.createBlock(&ifOp.getFalseBranch());
-          rewriter.setInsertionPointToStart(falseBranch);
-
-          SmallVector<Value> falseYieldValues;
-          falseYieldValues.push_back(invMassLoop);
-          falseYieldValues.push_back(massMatrixSqrtLoop);
-          if (adaptMassMatrix) {
-            falseYieldValues.push_back(conditionalWelford.mean);
-            falseYieldValues.push_back(conditionalWelford.m2);
-            falseYieldValues.push_back(conditionalWelford.n);
-          }
-          for (auto v : updatedDaState.toValues())
-            falseYieldValues.push_back(v);
-
-          impulse::YieldOp::create(rewriter, loc, falseYieldValues);
-        }
-
-        rewriter.setInsertionPointAfter(ifOp);
-
-        size_t resultIdx = 0;
-        finalInvMass = ifOp.getResult(resultIdx++);
-        finalMassMatrixSqrt = ifOp.getResult(resultIdx++);
-        if (adaptMassMatrix) {
-          finalWelfordState.mean = ifOp.getResult(resultIdx++);
-          finalWelfordState.m2 = ifOp.getResult(resultIdx++);
-          finalWelfordState.n = ifOp.getResult(resultIdx++);
-        }
-        finalDaState.log_step_size = ifOp.getResult(resultIdx++);
-        finalDaState.log_step_size_avg = ifOp.getResult(resultIdx++);
-        finalDaState.gradient_avg = ifOp.getResult(resultIdx++);
-        finalDaState.step_count = ifOp.getResult(resultIdx++);
-        finalDaState.prox_center = ifOp.getResult(resultIdx++);
-
-        finalStepSizeValue = adaptedStepSizeInLoop;
-
-        SmallVector<Value> warmupYieldValues = {
-            sample.q,           sample.grad,  sample.U,           sample.rng,
-            finalStepSizeValue, finalInvMass, finalMassMatrixSqrt};
-        for (Value v : finalDaState.toValues())
-          warmupYieldValues.push_back(v);
-        if (adaptMassMatrix) {
-          for (Value v : finalWelfordState.toValues())
-            warmupYieldValues.push_back(v);
-        }
-        warmupYieldValues.push_back(windowIdxAfterIncrement);
-
-        impulse::YieldOp::create(rewriter, loc, warmupYieldValues);
-
-        rewriter.setInsertionPointAfter(warmupLoop);
-
-        currentQ = warmupLoop.getResult(0);
-        currentGrad = warmupLoop.getResult(1);
-        currentU = warmupLoop.getResult(2);
-        currentRng = warmupLoop.getResult(3);
-        adaptedStepSize = warmupLoop.getResult(4);
-        adaptedInvMass = warmupLoop.getResult(5);
-        adaptedMassMatrixSqrt = warmupLoop.getResult(6);
-
-        adaptedStepSize =
-            conditionalDump(rewriter, loc, adaptedStepSize,
-                            "MCMC: adapted step size after warmup", debugDump);
-        if (adaptMassMatrix) {
-          adaptedInvMass = conditionalDump(
-              rewriter, loc, adaptedInvMass,
-              "MCMC: adapted inverse mass matrix after warmup", debugDump);
-        }
-
-        if (exposeAdaptation) {
-          DualAveragingState finalDa = DualAveragingState::fromValues(
-              {warmupLoop.getResult(7), warmupLoop.getResult(8),
-               warmupLoop.getResult(9), warmupLoop.getResult(10),
-               warmupLoop.getResult(11)});
-          WelfordState finalW;
-          Value finalWidx;
-          if (adaptMassMatrix) {
-            finalW = WelfordState::fromValues({warmupLoop.getResult(12),
-                                               warmupLoop.getResult(13),
-                                               warmupLoop.getResult(14)});
-            finalWidx = warmupLoop.getResult(15);
-          } else {
-            finalW = initWelford(rewriter, loc, positionSize, diagonal);
-            finalWidx = warmupLoop.getResult(12);
-          }
-          finalAdaptationState = packAdaptation(finalDa, finalW, finalWidx);
-        }
-      }
-
-      if (exposeAdaptation && finalAdaptationState.empty()) {
-        DualAveragingState da =
-            hasAdaptationIn
-                ? DualAveragingState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, stepSize,
-                                    /*logOfProduct=*/true);
-        WelfordState w =
-            hasAdaptationIn
-                ? WelfordState::fromValues(
-                      ArrayRef<Value>(adaptationInVals).slice(5, 3))
-                : initWelford(rewriter, loc, positionSize, diagonal);
-        Value widx =
-            hasAdaptationIn
-                ? adaptationInVals[8]
-                : arith::ConstantOp::create(
-                      rewriter, loc, i64TensorType,
-                      DenseElementsAttr::get(i64TensorType,
-                                             rewriter.getI64IntegerAttr(0)));
-        finalAdaptationState = packAdaptation(da, w, widx);
-      }
-
-      int64_t collectionSize = numSamples / thinning;
-      int64_t startIdx = numSamples % thinning;
-
-      auto samplesBufferType =
-          RankedTensorType::get({collectionSize, positionSize}, elemType);
-      auto diagnosticsBufferType =
-          // Diagnostics buffer has two columns: [is_accepted, is_divergent]
-          RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());
-      auto logDensityBufferType =
-          RankedTensorType::get({collectionSize}, elemType);
-
-      auto samplesBuffer = arith::ConstantOp::create(
-          rewriter, loc, samplesBufferType,
-          DenseElementsAttr::get(samplesBufferType,
-                                 rewriter.getFloatAttr(elemType, 0.0)));
-      auto diagnosticsBuffer = arith::ConstantOp::create(
-          rewriter, loc, diagnosticsBufferType,
-          DenseElementsAttr::get(diagnosticsBufferType,
-                                 rewriter.getBoolAttr(isNUTS)));
-      auto logDensityBuffer = arith::ConstantOp::create(
-          rewriter, loc, logDensityBufferType,
-          DenseElementsAttr::get(logDensityBufferType,
-                                 rewriter.getFloatAttr(elemType, 0.0)));
-
-      auto c0 = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
-      auto c1 = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
-      auto numSamplesConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(numSamples)));
-      auto startIdxConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(startIdx)));
-      auto thinningConst = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType,
-                                 rewriter.getI64IntegerAttr(thinning)));
-
-      Value finalQ, finalGrad, finalU, finalRng, finalSamplesBuffer,
-          finalDiagnosticsBuffer, finalLogDensityBuffer;
-      if (collectionSize == 0) {
-        finalQ = currentQ;
-        finalGrad = currentGrad;
-        finalU = currentU;
-        finalRng = currentRng;
-        finalSamplesBuffer = samplesBuffer;
-        finalDiagnosticsBuffer = diagnosticsBuffer;
-        finalLogDensityBuffer = logDensityBuffer;
-      } else {
-        // Loop carries: [q, grad, U, rng, samplesBuffer, diagnosticsBuffer,
-        // logDensityBuffer]
-        SmallVector<Type> loopResultTypes = {
-            positionType,         positionType,      scalarType,
-            currentRng.getType(), samplesBufferType, diagnosticsBufferType,
-            logDensityBufferType};
-        auto forLoopOp = impulse::ForOp::create(
-            rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
-            ValueRange{currentQ, currentGrad, currentU, currentRng,
-                       samplesBuffer, diagnosticsBuffer, logDensityBuffer});
-
-        Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
-        loopBody->addArgument(i64TensorType, loc);        // i (iteration index)
-        loopBody->addArgument(positionType, loc);         // q
-        loopBody->addArgument(positionType, loc);         // grad
-        loopBody->addArgument(scalarType, loc);           // U
-        loopBody->addArgument(currentRng.getType(), loc); // rng
-        loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
-        loopBody->addArgument(diagnosticsBufferType, loc); // diagnosticsBuffer
-        loopBody->addArgument(logDensityBufferType, loc);  // logDensityBuffer
-
-        rewriter.setInsertionPointToStart(loopBody);
-        Value iterIdx = loopBody->getArgument(0);
-        Value qLoop = loopBody->getArgument(1);
-        Value gradLoop = loopBody->getArgument(2);
-        Value ULoop = loopBody->getArgument(3);
-        Value rngLoop = loopBody->getArgument(4);
-        Value samplesBufferLoop = loopBody->getArgument(5);
-        Value diagnosticsBufferLoop = loopBody->getArgument(6);
-        Value logDensityBufferLoop = loopBody->getArgument(7);
-
-        auto sample = runSampleStepWithStepSize(
-            rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, adaptedStepSize);
-        auto q_constrained =
-            impulse::constrainPosition(rewriter, loc, sample.q, supports);
-
-        // Storage index: idx = (i - start_idx) / thinning
-        auto iMinusStart =
-            arith::SubIOp::create(rewriter, loc, iterIdx, startIdxConst);
-        auto storageIdx =
-            arith::DivSIOp::create(rewriter, loc, iMinusStart, thinningConst);
-
-        // Store condition:
-        // (i >= start_idx) && ((i - start_idx) % thinning == 0)
-        auto geStartIdx = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::sge, iterIdx, startIdxConst);
-        auto modThinning =
-            arith::RemSIOp::create(rewriter, loc, iMinusStart, thinningConst);
-        auto modIsZero = arith::CmpIOp::create(
-            rewriter, loc, arith::CmpIPredicate::eq, modThinning, c0);
-        auto shouldStore =
-            arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
-
-        auto zeroCol = arith::ConstantOp::create(
+        auto c0 = arith::ConstantOp::create(
             rewriter, loc, i64TensorType,
             DenseElementsAttr::get(i64TensorType,
                                    rewriter.getI64IntegerAttr(0)));
-        auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, samplesBufferType, samplesBufferLoop, q_constrained,
-            ValueRange{storageIdx, zeroCol});
-        auto selectedSamplesBuffer = impulse::SelectOp::create(
-            rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
-            samplesBufferLoop);
-
-        auto oneCol = arith::ConstantOp::create(
+        auto c1 = arith::ConstantOp::create(
             rewriter, loc, i64TensorType,
             DenseElementsAttr::get(i64TensorType,
                                    rewriter.getI64IntegerAttr(1)));
-        auto accepted1x1 = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
-            sample.accepted);
-        auto divergent1x1 = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
-            sample.divergent);
-        auto updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, diagnosticsBufferType, diagnosticsBufferLoop,
-            accepted1x1, ValueRange{storageIdx, zeroCol});
-        updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, diagnosticsBufferType, updatedDiagnosticsBuffer,
-            divergent1x1, ValueRange{storageIdx, oneCol});
-        auto selectedDiagnosticsBuffer = impulse::SelectOp::create(
-            rewriter, loc, diagnosticsBufferType, shouldStore,
-            updatedDiagnosticsBuffer, diagnosticsBufferLoop);
+        auto numSamplesConst = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(numSamples)));
+        auto startIdxConst = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(startIdx)));
+        auto thinningConst = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(thinning)));
 
-        auto negU = arith::NegFOp::create(rewriter, loc, sample.U);
-        auto logDensity1D = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1}, elemType), negU);
-        auto updatedLogDensityBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, logDensityBufferType, logDensityBufferLoop,
-            logDensity1D, ValueRange{storageIdx});
-        auto selectedLogDensityBuffer = impulse::SelectOp::create(
-            rewriter, loc, logDensityBufferType, shouldStore,
-            updatedLogDensityBuffer, logDensityBufferLoop);
+        Value finalQ, finalGrad, finalU, finalRng, finalSamplesBuffer,
+            finalDiagnosticsBuffer, finalLogDensityBuffer;
+        if (collectionSize == 0) {
+          finalQ = currentQ;
+          finalGrad = currentGrad;
+          finalU = currentU;
+          finalRng = currentRng;
+          finalSamplesBuffer = samplesBuffer;
+          finalDiagnosticsBuffer = diagnosticsBuffer;
+          finalLogDensityBuffer = logDensityBuffer;
+        } else {
+          // Loop carries: [q, grad, U, rng, samplesBuffer, diagnosticsBuffer,
+          // logDensityBuffer]
+          SmallVector<Type> loopResultTypes = {
+              positionType,         positionType,      scalarType,
+              currentRng.getType(), samplesBufferType, diagnosticsBufferType,
+              logDensityBufferType};
+          auto forLoopOp = impulse::ForOp::create(
+              rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
+              ValueRange{currentQ, currentGrad, currentU, currentRng,
+                         samplesBuffer, diagnosticsBuffer, logDensityBuffer});
 
-        impulse::YieldOp::create(rewriter, loc,
-                                 ValueRange{sample.q, sample.grad, sample.U,
-                                            sample.rng, selectedSamplesBuffer,
-                                            selectedDiagnosticsBuffer,
-                                            selectedLogDensityBuffer});
+          Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
+          loopBody->addArgument(i64TensorType, loc); // i (iteration index)
+          loopBody->addArgument(positionType, loc);  // q
+          loopBody->addArgument(positionType, loc);  // grad
+          loopBody->addArgument(scalarType, loc);    // U
+          loopBody->addArgument(currentRng.getType(), loc); // rng
+          loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
+          loopBody->addArgument(diagnosticsBufferType,
+                                loc);                       // diagnosticsBuffer
+          loopBody->addArgument(logDensityBufferType, loc); // logDensityBuffer
 
-        rewriter.setInsertionPointAfter(forLoopOp);
-        finalQ = forLoopOp.getResult(0);
-        finalGrad = forLoopOp.getResult(1);
-        finalU = forLoopOp.getResult(2);
-        finalRng = forLoopOp.getResult(3);
-        finalSamplesBuffer = forLoopOp.getResult(4);
-        finalDiagnosticsBuffer = forLoopOp.getResult(5);
-        finalLogDensityBuffer = forLoopOp.getResult(6);
-      }
+          rewriter.setInsertionPointToStart(loopBody);
+          Value iterIdx = loopBody->getArgument(0);
+          Value qLoop = loopBody->getArgument(1);
+          Value gradLoop = loopBody->getArgument(2);
+          Value ULoop = loopBody->getArgument(3);
+          Value rngLoop = loopBody->getArgument(4);
+          Value samplesBufferLoop = loopBody->getArgument(5);
+          Value diagnosticsBufferLoop = loopBody->getArgument(6);
+          Value logDensityBufferLoop = loopBody->getArgument(7);
 
-      finalSamplesBuffer =
-          conditionalDump(rewriter, loc, finalSamplesBuffer,
-                          "MCMC: collected samples", debugDump);
+          auto sample = runSampleStepWithStepSize(
+              rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, adaptedStepSize);
+          auto q_constrained =
+              impulse::constrainPosition(rewriter, loc, sample.q, supports);
 
-      SmallVector<Value> replacements = {finalSamplesBuffer,
-                                         finalDiagnosticsBuffer,
-                                         finalLogDensityBuffer, finalRng};
+          // Storage index: idx = (i - start_idx) / thinning
+          auto iMinusStart =
+              arith::SubIOp::create(rewriter, loc, iterIdx, startIdxConst);
+          auto storageIdx =
+              arith::DivSIOp::create(rewriter, loc, iMinusStart, thinningConst);
 
-      if (schema && !schema.empty()) {
-        Value warmupOffsetIn = stateInSlot(mcmcOp, state_slot::kWarmupOffset);
-        if (!warmupOffsetIn)
-          warmupOffsetIn = arith::ConstantOp::create(
+          // Store condition:
+          // (i >= start_idx) && ((i - start_idx) % thinning == 0)
+          auto geStartIdx = arith::CmpIOp::create(
+              rewriter, loc, arith::CmpIPredicate::sge, iterIdx, startIdxConst);
+          auto modThinning =
+              arith::RemSIOp::create(rewriter, loc, iMinusStart, thinningConst);
+          auto modIsZero = arith::CmpIOp::create(
+              rewriter, loc, arith::CmpIPredicate::eq, modThinning, c0);
+          auto shouldStore =
+              arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
+
+          auto zeroCol = arith::ConstantOp::create(
               rewriter, loc, i64TensorType,
               DenseElementsAttr::get(i64TensorType,
                                      rewriter.getI64IntegerAttr(0)));
-        Value warmupOffsetOut = arith::AddIOp::create(
-            rewriter, loc, warmupOffsetIn,
-            arith::ConstantOp::create(
+          auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
+              rewriter, loc, samplesBufferType, samplesBufferLoop,
+              q_constrained, ValueRange{storageIdx, zeroCol});
+          auto selectedSamplesBuffer = impulse::SelectOp::create(
+              rewriter, loc, samplesBufferType, shouldStore,
+              updatedSamplesBuffer, samplesBufferLoop);
+
+          auto oneCol = arith::ConstantOp::create(
+              rewriter, loc, i64TensorType,
+              DenseElementsAttr::get(i64TensorType,
+                                     rewriter.getI64IntegerAttr(1)));
+          auto accepted1x1 = impulse::ReshapeOp::create(
+              rewriter, loc,
+              RankedTensorType::get({1, 1}, rewriter.getI1Type()),
+              sample.accepted);
+          auto divergent1x1 = impulse::ReshapeOp::create(
+              rewriter, loc,
+              RankedTensorType::get({1, 1}, rewriter.getI1Type()),
+              sample.divergent);
+          auto updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
+              rewriter, loc, diagnosticsBufferType, diagnosticsBufferLoop,
+              accepted1x1, ValueRange{storageIdx, zeroCol});
+          updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
+              rewriter, loc, diagnosticsBufferType, updatedDiagnosticsBuffer,
+              divergent1x1, ValueRange{storageIdx, oneCol});
+          auto selectedDiagnosticsBuffer = impulse::SelectOp::create(
+              rewriter, loc, diagnosticsBufferType, shouldStore,
+              updatedDiagnosticsBuffer, diagnosticsBufferLoop);
+
+          auto negU = arith::NegFOp::create(rewriter, loc, sample.U);
+          auto logDensity1D = impulse::ReshapeOp::create(
+              rewriter, loc, RankedTensorType::get({1}, elemType), negU);
+          auto updatedLogDensityBuffer = impulse::DynamicUpdateSliceOp::create(
+              rewriter, loc, logDensityBufferType, logDensityBufferLoop,
+              logDensity1D, ValueRange{storageIdx});
+          auto selectedLogDensityBuffer = impulse::SelectOp::create(
+              rewriter, loc, logDensityBufferType, shouldStore,
+              updatedLogDensityBuffer, logDensityBufferLoop);
+
+          impulse::YieldOp::create(rewriter, loc,
+                                   ValueRange{sample.q, sample.grad, sample.U,
+                                              sample.rng, selectedSamplesBuffer,
+                                              selectedDiagnosticsBuffer,
+                                              selectedLogDensityBuffer});
+
+          rewriter.setInsertionPointAfter(forLoopOp);
+          finalQ = forLoopOp.getResult(0);
+          finalGrad = forLoopOp.getResult(1);
+          finalU = forLoopOp.getResult(2);
+          finalRng = forLoopOp.getResult(3);
+          finalSamplesBuffer = forLoopOp.getResult(4);
+          finalDiagnosticsBuffer = forLoopOp.getResult(5);
+          finalLogDensityBuffer = forLoopOp.getResult(6);
+        }
+
+        finalSamplesBuffer =
+            conditionalDump(rewriter, loc, finalSamplesBuffer,
+                            "MCMC: collected samples", debugDump);
+
+        SmallVector<Value> replacements = {finalSamplesBuffer,
+                                           finalDiagnosticsBuffer,
+                                           finalLogDensityBuffer, finalRng};
+
+        if (schema && !schema.empty()) {
+          Value warmupOffsetIn = stateInSlot(mcmcOp, state_slot::kWarmupOffset);
+          if (!warmupOffsetIn)
+            warmupOffsetIn = arith::ConstantOp::create(
                 rewriter, loc, i64TensorType,
                 DenseElementsAttr::get(i64TensorType,
-                                       rewriter.getI64IntegerAttr(numWarmup))));
+                                       rewriter.getI64IntegerAttr(0)));
+          Value warmupOffsetOut = arith::AddIOp::create(
+              rewriter, loc, warmupOffsetIn,
+              arith::ConstantOp::create(
+                  rewriter, loc, i64TensorType,
+                  DenseElementsAttr::get(
+                      i64TensorType, rewriter.getI64IntegerAttr(numWarmup))));
 
-        auto slotValue = [&](StringRef name) -> Value {
-          if (name == state_slot::kPosition)
-            return finalQ;
-          if (name == state_slot::kGradient)
-            return finalGrad;
-          if (name == state_slot::kPotentialEnergy)
-            return finalU;
-          if (name == state_slot::kStepSize)
-            return adaptedStepSize;
-          if (name == state_slot::kInverseMassMatrix)
-            return adaptedInvMass;
-          if (name == state_slot::kWarmupOffset)
-            return warmupOffsetOut;
-          // Remaining slots are the contiguous 9-value adaptation block.
-          unsigned base =
-              *impulse::slotIndex(schema, state_slot::kDaLogStepSize);
-          unsigned idx = *impulse::slotIndex(schema, name);
-          return finalAdaptationState[idx - base];
-        };
+          auto slotValue = [&](StringRef name) -> Value {
+            if (name == state_slot::kPosition)
+              return finalQ;
+            if (name == state_slot::kGradient)
+              return finalGrad;
+            if (name == state_slot::kPotentialEnergy)
+              return finalU;
+            if (name == state_slot::kStepSize)
+              return adaptedStepSize;
+            if (name == state_slot::kInverseMassMatrix)
+              return adaptedInvMass;
+            if (name == state_slot::kWarmupOffset)
+              return warmupOffsetOut;
+            // Remaining slots are the contiguous 9-value adaptation block.
+            unsigned base =
+                *impulse::slotIndex(schema, state_slot::kDaLogStepSize);
+            unsigned idx = *impulse::slotIndex(schema, name);
+            return finalAdaptationState[idx - base];
+          };
 
-        // The verifier guarantees the declared schema has this layout.
-        auto invMassTy = cast<RankedTensorType>(adaptedInvMass.getType());
-        for (const impulse::StateSlot &slot : impulse::buildStateSchema(
-                 exposeAdaptation, positionSize, elemType, invMassTy))
-          replacements.push_back(slotValue(slot.name));
+          // The verifier guarantees the declared schema has this layout.
+          auto invMassTy = cast<RankedTensorType>(adaptedInvMass.getType());
+          for (const impulse::StateSlot &slot : impulse::buildStateSchema(
+                   exposeAdaptation, positionSize, elemType, invMassTy))
+            replacements.push_back(slotValue(slot.name));
+        }
+
+        return replacements;
+      };
+
+      int64_t numChains = mcmcOp.getNumChains();
+      if (numChains <= 1) {
+        rewriter.replaceOp(mcmcOp, runOneChain(rngInput));
+        return success();
       }
 
-      rewriter.replaceOp(mcmcOp, replacements);
+      // Multi-chain: split the rng into per-chain keys exactly as NumPyro's
+      // MCMC.run (`random.split(rng_key, num_chains)`), run the single-chain
+      // lowering per chain sequentially, then stack every result chain-major.
+      SmallVector<Type> chainKeyTypes(numChains, rngInput.getType());
+      auto splitOp = impulse::RandomSplitOp::create(rewriter, loc,
+                                                    chainKeyTypes, rngInput);
 
+      SmallVector<SmallVector<Value>> perChain;
+      perChain.reserve(numChains);
+      for (int64_t c = 0; c < numChains; ++c)
+        perChain.push_back(runOneChain(splitOp.getResult(c)));
+
+      auto idxConst = [&](int64_t v) -> Value {
+        return arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(v)));
+      };
+      Value zeroIdx = idxConst(0);
+
+      // Needs an arith.constant-able element type; not for the ui64 rng.
+      auto stackChainMajor = [&](unsigned resultIdx) -> Value {
+        auto slotTy = cast<RankedTensorType>(perChain[0][resultIdx].getType());
+        SmallVector<int64_t> cmShape;
+        cmShape.push_back(numChains);
+        cmShape.append(slotTy.getShape().begin(), slotTy.getShape().end());
+        auto cmType = RankedTensorType::get(cmShape, slotTy.getElementType());
+        SmallVector<int64_t> oneShape;
+        oneShape.push_back(1);
+        oneShape.append(slotTy.getShape().begin(), slotTy.getShape().end());
+        auto oneType = RankedTensorType::get(oneShape, slotTy.getElementType());
+        Value buf = arith::ConstantOp::create(rewriter, loc, cmType,
+                                              rewriter.getZeroAttr(cmType));
+        for (int64_t c = 0; c < numChains; ++c) {
+          Value reshaped = impulse::ReshapeOp::create(rewriter, loc, oneType,
+                                                      perChain[c][resultIdx]);
+          SmallVector<Value> idxs;
+          idxs.push_back(idxConst(c));
+          for (int64_t d = 0; d < slotTy.getRank(); ++d)
+            idxs.push_back(zeroIdx);
+          buf = impulse::DynamicUpdateSliceOp::create(rewriter, loc, cmType,
+                                                      buf, reshaped, idxs);
+        }
+        return buf;
+      };
+
+      SmallVector<Value> stacked;
+      stacked.push_back(stackChainMajor(0));
+      stacked.push_back(stackChainMajor(1));
+      // output_rng_state (ui64): no arith.constant zero buffer is possible, so
+      // return the last chain's final rng.
+      stacked.push_back(perChain[numChains - 1][2]);
+      for (unsigned j = 3; j < perChain[0].size(); ++j)
+        stacked.push_back(stackChainMajor(j));
+
+      rewriter.replaceOp(mcmcOp, stacked);
       return success();
     }
   };

@@ -230,6 +230,9 @@ class Impulse_InferSignatureArgs {
     DefaultValuedAttr<I64Attr, "1">:$num_samples,
     DefaultValuedAttr<I64Attr, "1">:$thinning,
 
+    // Values > 1 add a leading chain dim to trace, diagnostics and state_out.
+    DefaultValuedAttr<I64Attr, "1">:$num_chains,
+
     OptionalAttr<I64Attr>:$total_warmup,
 
     OptionalAttr<HMCConfigAttr>:$hmc_config,
