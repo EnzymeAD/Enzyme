@@ -300,6 +300,133 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
 }
 
 //===----------------------------------------------------------------------===//
+// Region-form ops
+//===----------------------------------------------------------------------===//
+
+def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
+  let summary = "Sample from a distribution with inlined sampler and logpdf regions";
+  let description = [{
+    Region-form of `impulse.sample`: the sampler and logpdf function bodies are
+    inlined as nested regions, enabling sample-invariant code motion (SICM) to
+    analyze across sample sites. The `logpdf` region is cleared once its body has
+    been merged into the enclosing `infer_region`'s joint logpdf.
+
+    The `address` attribute is the site's full address as an array of symbols;
+    submodel dissolution prepends the enclosing site's address, so entries of
+    the `infer_region`'s `selection`/`all_addresses` match by attribute equality.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    OptionalAttr<AddressAttr>:$address,
+    OptionalAttr<SupportAttr>:$support,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf attr-dict
+    `:` functional-type($inputs, $outputs)
+  }];
+}
+
+def InferRegionOp : Impulse_Op<"infer_region",
+    [AutomaticAllocationScope, AttrSizedOperandSegments]> {
+  let summary = "MCMC inference region with sampler and joint logpdf";
+  let description = [{
+    Region-form of `impulse.infer`, produced by `inline-infer-regions` and
+    consumed directly by `expand-impulse`:
+
+    - `sampler`: the model computation (with `sample_region` ops), the target of
+      sampler-region SICM and the source for proposal-based algorithms.
+    - `logpdf`: the joint logpdf, constructed by the `sicm` pass (after
+      sampler-region SICM, so it is born optimized). Its block arguments are
+      the position values, one per non-RNG sample result of each selected
+      address in `selection` order; everything else it references is captured
+      from the enclosing scope and is sample-invariant by construction
+      (hoisted invariants, model inputs, and pinned trace values of unselected
+      sites). SICM runs a second time on this region; `expand-impulse` then
+      clones it as the potential-energy body inside the materialized
+      HMC/NUTS loop.
+
+    Mirrors `impulse.infer`'s operands/results/attributes (created by a
+    wholesale attribute copy) plus the two regions and the
+    `num_position_args`/`position_size` bookkeeping for the joint logpdf.
+  }];
+
+  let arguments = (ins
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
+    Variadic<AnyType>:$inputs,
+    Variadic<AnyRankedTensor>:$adaptation_state_in,
+    Optional<AnyRankedTensor>:$original_trace,
+    AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    OptionalAttr<I64Attr>:$total_warmup,
+
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    Optional<AnyRankedTensor>:$initial_position,
+
+    Optional<AnyRankedTensor>:$initial_gradient,
+    Optional<AnyRankedTensor>:$initial_potential_energy,
+
+    Optional<AnyRankedTensor>:$warmup_offset,
+
+    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
+    DefaultValuedStrAttr<StrAttr, "">:$name,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_position_args,
+    DefaultValuedAttr<I64Attr, "0">:$position_size
+  );
+
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$diagnostics,
+    AnyType:$output_rng_state,
+    AnyRankedTensor:$final_position,
+    AnyRankedTensor:$final_gradient,
+    AnyRankedTensor:$final_potential_energy,
+    AnyRankedTensor:$final_step_size,
+    AnyRankedTensor:$final_inverse_mass_matrix,
+
+    Variadic<AnyRankedTensor>:$adaptation_state_out
+  );
+
+  let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
+
+  let assemblyFormat = [{
+    ($fn^)?
+    `(` $inputs `)`
+    (`given` $original_trace^)?
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    (`logpdf_fn` `=` $logpdf_fn^)?
+    (`initial_position` `=` $initial_position^)?
+    (`initial_gradient` `=` $initial_gradient^)?
+    (`initial_potential_energy` `=` $initial_potential_energy^)?
+    (`warmup_offset` `=` $warmup_offset^)?
+    (`adaptation_state_in` `=` $adaptation_state_in^)?
+    `sampler` $sampler `logpdf` $logpdf
+    attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // RNG ops
 //===----------------------------------------------------------------------===//
 
@@ -425,7 +552,7 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
 }
 
 def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["ForOp", "WhileOp", "IfOp"]>]> {
+    ParentOneOf<["ForOp", "WhileOp", "IfOp", "InferRegionOp", "SampleRegionOp"]>]> {
   let summary = "Yield values at the end of a loop or if op";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
