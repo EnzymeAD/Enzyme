@@ -317,7 +317,11 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
   auto elemType =
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType2d = RankedTensorType::get({1, ctx.positionSize}, elemType);
+  // Constrained width, which differs from positionSize for SIMPLEX.
+  int64_t constrainedSize = 0;
+  for (const auto &info : ctx.supports)
+    constrainedSize += info.size;
+  auto positionType2d = RankedTensorType::get({1, constrainedSize}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto c0 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -2053,9 +2057,12 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
 
   auto inputType = cast<RankedTensorType>(constrained.getType());
   auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const auto &info : supports)
+    outSize += transforms::getUnconstrainedSize(info.size, info.support);
 
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
   Value constrained1D =
       impulse::ReshapeOp::create(builder, loc, positionType1D, constrained);
 
@@ -2082,7 +2089,7 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
   if (slices.size() == 1) {
     result1D = slices[0];
   } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
     result1D = arith::ConstantOp::create(
         builder, loc, resultType1D,
         DenseElementsAttr::get(resultType1D,
@@ -2123,7 +2130,7 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
     }
   }
 
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
   return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
@@ -2142,19 +2149,23 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
 
   auto inputType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const auto &info : supports)
+    outSize += info.size;
 
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
   Value unconstrained1D =
       impulse::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
 
   SmallVector<Value> slices;
   for (const auto &info : supports) {
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto sliceType = RankedTensorType::get({info.unconstrainedSize}, elemType);
     auto slice = impulse::SliceOp::create(
         builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({info.unconstrainedOffset}),
+        builder.getDenseI64ArrayAttr(
+            {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
 
     Value constrainedSlice;
@@ -2172,7 +2183,7 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
   if (slices.size() == 1) {
     result1D = slices[0];
   } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
     result1D = arith::ConstantOp::create(
         builder, loc, resultType1D,
         DenseElementsAttr::get(resultType1D,
@@ -2213,7 +2224,7 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
     }
   }
 
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
   return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
@@ -2240,11 +2251,12 @@ Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
     if (!info.support || info.support.getKind() == impulse::SupportKind::REAL)
       continue;
 
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto sliceType = RankedTensorType::get({info.unconstrainedSize}, elemType);
     auto slice = impulse::SliceOp::create(
         builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({info.unconstrainedOffset}),
+        builder.getDenseI64ArrayAttr(
+            {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
     auto jacobian =
         transforms::logAbsDetJacobian(builder, loc, slice, info.support);

@@ -26,15 +26,20 @@ namespace mlir {
 namespace impulse {
 
 struct SupportInfo {
+  // `offset`, `traceOffset` and `size` are in constrained coordinates.
   int64_t offset;
   int64_t traceOffset;
   int64_t size;
+  int64_t unconstrainedOffset;
+  int64_t unconstrainedSize;
   impulse::SupportAttr support;
 
   SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
+              int64_t unconstrainedOffset, int64_t unconstrainedSize,
               impulse::SupportAttr support)
-      : offset(offset), traceOffset(traceOffset), size(size), support(support) {
-  }
+      : offset(offset), traceOffset(traceOffset), size(size),
+        unconstrainedOffset(unconstrainedOffset),
+        unconstrainedSize(unconstrainedSize), support(support) {}
 };
 
 struct IntegrationResult {

@@ -213,6 +213,7 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
   auto sampleMap = buildSampleOpMap(fn);
   SmallVector<impulse::SupportInfo> supports;
   int64_t currentPositionOffset = 0;
+  int64_t currentUnconstrainedOffset = 0;
 
   for (auto addr : selection) {
     auto address = cast<ArrayAttr>(addr);
@@ -234,6 +235,9 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
     if (sampleSize < 0)
       continue;
 
+    int64_t unconstrainedSize =
+        transforms::getUnconstrainedSize(sampleSize, supportAttr);
+
     int64_t traceOffset = computeOffsetForSampleInSelection(
         op, fn, allAddresses, targetSymbol, symbolTable);
     if (traceOffset < 0) {
@@ -243,8 +247,10 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
     }
 
     supports.emplace_back(currentPositionOffset, traceOffset, sampleSize,
+                          currentUnconstrainedOffset, unconstrainedSize,
                           supportAttr);
     currentPositionOffset += sampleSize;
+    currentUnconstrainedOffset += unconstrainedSize;
   }
 
   return supports;
@@ -274,6 +280,7 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
   };
 
   int64_t positionOffset = 0;
+  int64_t unconstrainedOffset = 0;
   for (Attribute addr : selection) {
     auto it = siteByAddress.find(addr);
     if (it == siteByAddress.end())
@@ -295,9 +302,14 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
     if (!foundInTrace)
       return {};
 
-    supports.emplace_back(positionOffset, traceOffset, siteSize(site),
+    int64_t constrainedSize = siteSize(site);
+    int64_t unconstrainedSize = transforms::getUnconstrainedSize(
+        constrainedSize, site.getSupportAttr());
+    supports.emplace_back(positionOffset, traceOffset, constrainedSize,
+                          unconstrainedOffset, unconstrainedSize,
                           site.getSupportAttr());
-    positionOffset += siteSize(site);
+    positionOffset += constrainedSize;
+    unconstrainedOffset += unconstrainedSize;
   }
   return supports;
 }
@@ -736,7 +748,9 @@ struct ExpandImpulsePass
 
       auto rngInput = inputs[0];
 
+      // Unconstrained and constrained widths; they differ only for SIMPLEX.
       int64_t positionSize;
+      int64_t constrainedPositionSize;
       SmallVector<Value> fnInputs;
       SmallVector<Type> fnResultTypes;
       Value originalTrace;
@@ -744,12 +758,27 @@ struct ExpandImpulsePass
       SmallVector<SupportInfo> supports;
       FlatSymbolRefAttr logpdfFnAttr;
 
+      auto sizesFromSupports = [&](int64_t constrainedFallback) {
+        constrainedPositionSize = 0;
+        positionSize = 0;
+        for (const auto &info : supports) {
+          constrainedPositionSize += info.size;
+          positionSize += info.unconstrainedSize;
+        }
+        // Nested addresses get no support info; use the constrained width.
+        if (constrainedPositionSize != constrainedFallback) {
+          constrainedPositionSize = constrainedFallback;
+          positionSize = constrainedFallback;
+        }
+      };
+
       if (hasLogpdfFn) {
         logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
         fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = mcmcOp.getInitPosition();
         auto initPosType = cast<RankedTensorType>(initialPos.getType());
         positionSize = initPosType.getNumElements();
+        constrainedPositionSize = positionSize;
         selection = mcmcOp.getSelectionAttr();
         allAddresses = mcmcOp.getAllAddressesAttr();
       } else if constexpr (isRegionForm) {
@@ -764,9 +793,10 @@ struct ExpandImpulsePass
                            "from the infer_region sampler");
           return failure();
         }
-        positionSize = 0;
+        int64_t constrainedFallback = 0;
         for (const auto &info : supports)
-          positionSize += info.size;
+          constrainedFallback += info.size;
+        sizesFromSupports(constrainedFallback);
         if (positionSize <= 0)
           return failure();
       } else {
@@ -777,13 +807,14 @@ struct ExpandImpulsePass
 
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-        positionSize =
+        int64_t constrainedFallback =
             computePositionSizeForSelection(mcmcOp, fn, selection, symbolTable);
-        if (positionSize <= 0)
+        if (constrainedFallback <= 0)
           return failure();
 
         supports = collectSupportInfoForSelection(mcmcOp, fn, selection,
                                                   allAddresses, symbolTable);
+        sizesFromSupports(constrainedFallback);
 
         auto fnType = cast<FunctionType>(fn.getFunctionType());
         fnResultTypes.assign(fnType.getResults().begin(),
@@ -1438,8 +1469,8 @@ struct ExpandImpulsePass
         int64_t collectionSize = numSamples / thinning;
         int64_t startIdx = numSamples % thinning;
 
-        auto samplesBufferType =
-            RankedTensorType::get({collectionSize, positionSize}, elemType);
+        auto samplesBufferType = RankedTensorType::get(
+            {collectionSize, constrainedPositionSize}, elemType);
         auto diagnosticsBufferType =
             // Diagnostics buffer has two columns: [is_accepted, is_divergent]
             RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());

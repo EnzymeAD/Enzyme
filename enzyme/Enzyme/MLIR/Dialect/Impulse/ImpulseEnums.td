@@ -52,6 +52,7 @@ def SupportKind : I32EnumAttr<"SupportKind",
       I32EnumAttrCase<"INTERVAL", 3>,
       I32EnumAttrCase<"GREATER_THAN", 4>,
       I32EnumAttrCase<"LESS_THAN", 5>,
+      I32EnumAttrCase<"SIMPLEX", 6>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
@@ -63,13 +64,19 @@ def SupportAttr : Impulse_Attr<"Support", "support"> {
   let summary = "Distribution support specification for constraint transforms";
   let description = [{
     Distribution support specification for constraint transforms.
+
+    `event_size` is the constrained length K of one simplex block for the
+    SIMPLEX support (the stick-breaking bijector maps K constrained values to
+    K-1 unconstrained ones); a slice of length m*K is treated as m independent
+    K-blocks. It is unused (null) for the dimension-preserving supports.
   }];
   let parameters = (ins
     "SupportKind":$kind,
     OptionalParameter<"FloatAttr">:$lower_bound,
-    OptionalParameter<"FloatAttr">:$upper_bound
+    OptionalParameter<"FloatAttr">:$upper_bound,
+    OptionalParameter<"IntegerAttr">:$event_size
   );
-  let assemblyFormat = "`<` $kind (`,` `lower` `=` $lower_bound^)? (`,` `upper` `=` $upper_bound^)? `>`";
+  let assemblyFormat = "`<` $kind (`lower` `=` $lower_bound^)? (`upper` `=` $upper_bound^)? (`event_size` `=` $event_size^)? `>`";
 }
 
 def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {

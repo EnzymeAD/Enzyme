@@ -31,11 +31,13 @@ typedef enum {
   EnzymeSupportKind_Interval = 3,
   EnzymeSupportKind_GreaterThan = 4,
   EnzymeSupportKind_LessThan = 5,
+  EnzymeSupportKind_Simplex = 6,
 } EnzymeSupportKind;
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeSupportAttrGet(
-    MlirContext ctx, EnzymeSupportKind kind, bool hasLowerBound,
-    double lowerBound, bool hasUpperBound, double upperBound);
+MLIR_CAPI_EXPORTED MlirAttribute
+enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
+                     bool hasLowerBound, double lowerBound, bool hasUpperBound,
+                     double upperBound, int64_t eventSize);
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
                                                         double trajectoryLength,

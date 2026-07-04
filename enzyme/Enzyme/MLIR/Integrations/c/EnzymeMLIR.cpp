@@ -25,7 +25,8 @@ MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
 
 MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
                                    bool hasLowerBound, double lowerBound,
-                                   bool hasUpperBound, double upperBound) {
+                                   bool hasUpperBound, double upperBound,
+                                   int64_t eventSize) {
   auto *mlirCtx = unwrap(ctx);
 
   mlir::impulse::SupportKind supportKind;
@@ -48,6 +49,9 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
   case EnzymeSupportKind_LessThan:
     supportKind = mlir::impulse::SupportKind::LESS_THAN;
     break;
+  case EnzymeSupportKind_Simplex:
+    supportKind = mlir::impulse::SupportKind::SIMPLEX;
+    break;
   }
 
   mlir::FloatAttr lowerAttr;
@@ -60,8 +64,13 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
     upperAttr =
         mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), upperBound);
 
+  mlir::IntegerAttr eventSizeAttr;
+  if (eventSize > 0)
+    eventSizeAttr =
+        mlir::IntegerAttr::get(mlir::IntegerType::get(mlirCtx, 64), eventSize);
+
   return wrap(mlir::impulse::SupportAttr::get(mlirCtx, supportKind, lowerAttr,
-                                              upperAttr));
+                                              upperAttr, eventSizeAttr));
 }
 
 MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
