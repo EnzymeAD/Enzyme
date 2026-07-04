@@ -1,0 +1,89 @@
+//===- InferStateLayout.h - Canonical impulse.infer state schema ---------===//
+
+#ifndef ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H
+#define ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H
+
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+
+#include <optional>
+
+namespace mlir {
+namespace impulse {
+
+struct StateSlot {
+  llvm::StringRef name;
+  mlir::RankedTensorType type;
+};
+
+inline llvm::SmallVector<StateSlot>
+buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
+                 mlir::RankedTensorType invMassType) {
+  auto *ctx = elemType.getContext();
+  auto i64Scalar =
+      mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
+  auto f64 = mlir::Float64Type::get(ctx);
+  auto positionType = mlir::RankedTensorType::get({1, positionSize}, elemType);
+  auto scalarType = mlir::RankedTensorType::get({}, elemType);
+
+  bool diagonal =
+      !invMassType || invMassType.getRank() == 1 ||
+      (invMassType.getRank() == 2 && invMassType.getShape()[0] == 1);
+  mlir::RankedTensorType invType = invMassType ? invMassType : positionType;
+  auto welfordVec = mlir::RankedTensorType::get({positionSize}, f64);
+  mlir::RankedTensorType welfordM2 =
+      diagonal ? welfordVec
+               : mlir::RankedTensorType::get({positionSize, positionSize}, f64);
+
+  llvm::SmallVector<StateSlot> slots = {
+      {"position", positionType},       {"gradient", positionType},
+      {"potential_energy", scalarType}, {"step_size", scalarType},
+      {"inverse_mass_matrix", invType},
+  };
+  if (adaptive) {
+    slots.append({
+        {"da_log_step_size", scalarType},
+        {"da_log_step_size_avg", scalarType},
+        {"da_gradient_avg", scalarType},
+        {"da_step_count", i64Scalar},
+        {"da_prox_center", scalarType},
+        {"welford_mean", welfordVec},
+        {"welford_m2", welfordM2},
+        {"welford_n", i64Scalar},
+        {"window_idx", i64Scalar},
+        {"warmup_offset", i64Scalar},
+    });
+  }
+  return slots;
+}
+
+inline mlir::ArrayAttr schemaNamesAttr(mlir::Builder &b,
+                                       llvm::ArrayRef<StateSlot> slots) {
+  llvm::SmallVector<mlir::Attribute> names;
+  names.reserve(slots.size());
+  for (const StateSlot &s : slots)
+    names.push_back(b.getStringAttr(s.name));
+  return b.getArrayAttr(names);
+}
+
+inline std::optional<unsigned> slotIndex(mlir::ArrayAttr schema,
+                                         llvm::StringRef name) {
+  if (!schema)
+    return std::nullopt;
+  for (auto [i, attr] : llvm::enumerate(schema))
+    if (auto s = mlir::dyn_cast<mlir::StringAttr>(attr))
+      if (s.getValue() == name)
+        return static_cast<unsigned>(i);
+  return std::nullopt;
+}
+
+} // namespace impulse
+} // namespace mlir
+
+#endif // ENZYME_MLIR_PASSES_INFER_STATE_LAYOUT_H

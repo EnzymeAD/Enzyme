@@ -16,6 +16,7 @@
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
 #include "PassDetails.h"
+#include "Passes/InferStateLayout.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -55,11 +56,6 @@ static int64_t computeTensorElementCount(RankedTensorType tensorType) {
   return elemCount;
 }
 
-// State-bundle slot names shared by `impulse.infer`/`infer_region`. The
-// lowering reads warm-start slots from `state_in` and emits `state_out` in the
-// order the op's `state_schema` declares. A2 centralizes this in an
-// InferStateLayout helper; here name-based lookup over the schema attr
-// suffices.
 namespace state_slot {
 constexpr StringLiteral kPosition = "position";
 constexpr StringLiteral kGradient = "gradient";
@@ -67,40 +63,19 @@ constexpr StringLiteral kPotentialEnergy = "potential_energy";
 constexpr StringLiteral kStepSize = "step_size";
 constexpr StringLiteral kInverseMassMatrix = "inverse_mass_matrix";
 constexpr StringLiteral kDaLogStepSize = "da_log_step_size";
-constexpr StringLiteral kDaLogStepSizeAvg = "da_log_step_size_avg";
-constexpr StringLiteral kDaGradientAvg = "da_gradient_avg";
-constexpr StringLiteral kDaStepCount = "da_step_count";
-constexpr StringLiteral kDaProxCenter = "da_prox_center";
-constexpr StringLiteral kWelfordMean = "welford_mean";
-constexpr StringLiteral kWelfordM2 = "welford_m2";
-constexpr StringLiteral kWelfordN = "welford_n";
 constexpr StringLiteral kWindowIdx = "window_idx";
 constexpr StringLiteral kWarmupOffset = "warmup_offset";
 } // namespace state_slot
 
-// Index of `name` in the op's `state_schema`, or -1 if absent.
-template <typename MCMCOpT>
-static int64_t stateSlotIndex(MCMCOpT op, StringRef name) {
-  ArrayAttr schema = op.getStateSchemaAttr();
-  if (!schema)
-    return -1;
-  for (auto [i, attr] : llvm::enumerate(schema)) {
-    if (auto s = dyn_cast<StringAttr>(attr))
-      if (s.getValue() == name)
-        return static_cast<int64_t>(i);
-  }
-  return -1;
-}
-
 template <typename MCMCOpT>
 static Value stateInSlot(MCMCOpT op, StringRef name) {
-  int64_t idx = stateSlotIndex(op, name);
-  if (idx < 0)
+  auto idx = mlir::impulse::slotIndex(op.getStateSchemaAttr(), name);
+  if (!idx)
     return Value();
   auto stateIn = op.getStateIn();
-  if (idx >= static_cast<int64_t>(stateIn.size()))
+  if (*idx >= stateIn.size())
     return Value();
-  return stateIn[idx];
+  return stateIn[*idx];
 }
 
 using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
@@ -750,9 +725,8 @@ struct ExpandImpulsePass
       }
 
       auto loc = mcmcOp.getLoc();
-      auto invMass = mcmcOp.getInitInverseMassMatrix();
-      Value adaptedInvMass = invMass;
-      auto stepSize = mcmcOp.getInitStepSize();
+      Value invMass = mcmcOp.getInitInverseMassMatrix();
+      Value stepSize = mcmcOp.getInitStepSize();
 
       auto inputs = mcmcOp.getInputs();
       if (inputs.empty()) {
@@ -824,25 +798,30 @@ struct ExpandImpulsePass
       if (auto tw = mcmcOp.getTotalWarmup())
         totalWarmup = *tw;
 
+      ArrayAttr schema = mcmcOp.getStateSchemaAttr();
+      bool isResume = !mcmcOp.getStateIn().empty();
       bool exposeAdaptation =
-          stateSlotIndex(mcmcOp, state_slot::kWindowIdx) >= 0;
+          impulse::slotIndex(schema, state_slot::kWindowIdx).has_value();
 
-      // The nine dual-averaging/Welford/window-index warm-start values, pulled
-      // from the named `state_in` slots (null when cold-started). The ordering
-      // matches DualAveragingState/WelfordState::toValues so existing
-      // take_front(5)/slice(5,3)/[8] indexing is preserved.
-      SmallVector<Value> adaptationInVals = {
-          stateInSlot(mcmcOp, state_slot::kDaLogStepSize),
-          stateInSlot(mcmcOp, state_slot::kDaLogStepSizeAvg),
-          stateInSlot(mcmcOp, state_slot::kDaGradientAvg),
-          stateInSlot(mcmcOp, state_slot::kDaStepCount),
-          stateInSlot(mcmcOp, state_slot::kDaProxCenter),
-          stateInSlot(mcmcOp, state_slot::kWelfordMean),
-          stateInSlot(mcmcOp, state_slot::kWelfordM2),
-          stateInSlot(mcmcOp, state_slot::kWelfordN),
-          stateInSlot(mcmcOp, state_slot::kWindowIdx)};
-      bool hasAdaptationIn =
-          !mcmcOp.getStateIn().empty() && adaptationInVals.front() != nullptr;
+      // Schema order matches DualAveragingState/WelfordState::toValues().
+      SmallVector<Value> adaptationInVals;
+      if (auto daIdx = impulse::slotIndex(schema, state_slot::kDaLogStepSize)) {
+        auto stateIn = mcmcOp.getStateIn();
+        for (unsigned i = 0; i < 9; ++i)
+          adaptationInVals.push_back(
+              *daIdx + i < stateIn.size() ? stateIn[*daIdx + i] : Value());
+      }
+      bool hasAdaptationIn = isResume && !adaptationInVals.empty() &&
+                             adaptationInVals.front() != nullptr;
+
+      // only.
+      if (isResume) {
+        if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
+          stepSize = s;
+        if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
+          invMass = m;
+      }
+      Value adaptedInvMass = invMass;
 
       auto elemType =
           cast<RankedTensorType>(stepSize.getType()).getElementType();
@@ -885,8 +864,11 @@ struct ExpandImpulsePass
 
       bool diagonal = true;
       if (invMass) {
+        // tensor<N> and tensor<1xN> are diagonal, as in buildStateSchema.
         auto invMassType = cast<RankedTensorType>(invMass.getType());
-        diagonal = (invMassType.getRank() == 1);
+        diagonal =
+            invMassType.getRank() == 1 ||
+            (invMassType.getRank() == 2 && invMassType.getShape()[0] == 1);
       }
 
       auto adaptedMassMatrixSqrt =
@@ -940,13 +922,15 @@ struct ExpandImpulsePass
 
       Value currentQ, currentGrad, currentU, currentRng;
 
-      auto initialGrad = stateInSlot(mcmcOp, state_slot::kGradient);
-      auto initialPE = stateInSlot(mcmcOp, state_slot::kPotentialEnergy);
+      Value resumePosition = stateInSlot(mcmcOp, state_slot::kPosition);
+      Value resumeGrad = stateInSlot(mcmcOp, state_slot::kGradient);
+      Value resumePE = stateInSlot(mcmcOp, state_slot::kPotentialEnergy);
 
-      if (hasLogpdfFn && initialGrad && initialPE) {
-        currentQ = mcmcOp.getInitPosition();
-        currentGrad = initialGrad;
-        currentU = initialPE;
+      // is skipped and `rngInput` threads through unchanged.
+      if (isResume && resumePosition && resumeGrad && resumePE) {
+        currentQ = resumePosition;
+        currentGrad = resumeGrad;
+        currentU = resumePE;
         currentRng = rngInput;
       } else {
         auto baseCtx =
@@ -1610,54 +1594,45 @@ struct ExpandImpulsePass
                                          finalDiagnosticsBuffer,
                                          finalLogDensityBuffer, finalRng};
 
-      if (ArrayAttr schema = mcmcOp.getStateSchemaAttr()) {
-        Value warmupOffsetOut = stateInSlot(mcmcOp, state_slot::kWarmupOffset);
-        if (!warmupOffsetOut)
-          warmupOffsetOut = arith::ConstantOp::create(
+      if (schema && !schema.empty()) {
+        Value warmupOffsetIn = stateInSlot(mcmcOp, state_slot::kWarmupOffset);
+        if (!warmupOffsetIn)
+          warmupOffsetIn = arith::ConstantOp::create(
               rewriter, loc, i64TensorType,
               DenseElementsAttr::get(i64TensorType,
                                      rewriter.getI64IntegerAttr(0)));
+        Value warmupOffsetOut = arith::AddIOp::create(
+            rewriter, loc, warmupOffsetIn,
+            arith::ConstantOp::create(
+                rewriter, loc, i64TensorType,
+                DenseElementsAttr::get(i64TensorType,
+                                       rewriter.getI64IntegerAttr(numWarmup))));
 
-        for (Attribute a : schema) {
-          StringRef name = cast<StringAttr>(a).getValue();
-          Value v;
+        auto slotValue = [&](StringRef name) -> Value {
           if (name == state_slot::kPosition)
-            v = finalQ;
-          else if (name == state_slot::kGradient)
-            v = finalGrad;
-          else if (name == state_slot::kPotentialEnergy)
-            v = finalU;
-          else if (name == state_slot::kStepSize)
-            v = adaptedStepSize;
-          else if (name == state_slot::kInverseMassMatrix)
-            v = adaptedInvMass;
-          else if (name == state_slot::kDaLogStepSize)
-            v = finalAdaptationState[0];
-          else if (name == state_slot::kDaLogStepSizeAvg)
-            v = finalAdaptationState[1];
-          else if (name == state_slot::kDaGradientAvg)
-            v = finalAdaptationState[2];
-          else if (name == state_slot::kDaStepCount)
-            v = finalAdaptationState[3];
-          else if (name == state_slot::kDaProxCenter)
-            v = finalAdaptationState[4];
-          else if (name == state_slot::kWelfordMean)
-            v = finalAdaptationState[5];
-          else if (name == state_slot::kWelfordM2)
-            v = finalAdaptationState[6];
-          else if (name == state_slot::kWelfordN)
-            v = finalAdaptationState[7];
-          else if (name == state_slot::kWindowIdx)
-            v = finalAdaptationState[8];
-          else if (name == state_slot::kWarmupOffset)
-            v = warmupOffsetOut;
-          else {
-            mcmcOp.emitError("Impulse: unknown state_schema slot '")
-                << name << "'";
-            return failure();
-          }
-          replacements.push_back(v);
-        }
+            return finalQ;
+          if (name == state_slot::kGradient)
+            return finalGrad;
+          if (name == state_slot::kPotentialEnergy)
+            return finalU;
+          if (name == state_slot::kStepSize)
+            return adaptedStepSize;
+          if (name == state_slot::kInverseMassMatrix)
+            return adaptedInvMass;
+          if (name == state_slot::kWarmupOffset)
+            return warmupOffsetOut;
+          // Remaining slots are the contiguous 9-value adaptation block.
+          unsigned base =
+              *impulse::slotIndex(schema, state_slot::kDaLogStepSize);
+          unsigned idx = *impulse::slotIndex(schema, name);
+          return finalAdaptationState[idx - base];
+        };
+
+        // The verifier guarantees the declared schema has this layout.
+        auto invMassTy = cast<RankedTensorType>(adaptedInvMass.getType());
+        for (const impulse::StateSlot &slot : impulse::buildStateSchema(
+                 exposeAdaptation, positionSize, elemType, invMassTy))
+          replacements.push_back(slotValue(slot.name));
       }
 
       rewriter.replaceOp(mcmcOp, replacements);

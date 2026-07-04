@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Passes/InferStateLayout.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -159,6 +160,46 @@ LogicalResult InferOp::verify() {
   if (numStateIn != 0 && numStateIn != numStateOut) {
     return emitOpError("`state_in` must be empty or match `state_out` size (")
            << numStateOut << "), got " << numStateIn;
+  }
+
+  // A non-empty state bundle must match a canonical InferStateLayout schema
+  // (plain 5-slot finals or adaptive 15-slot). Derive the layout parameters
+  // from the finals carried in `state_out`, then check names and types.
+  if (numStateOut != 0) {
+    auto posIdx = impulse::slotIndex(schema, "position");
+    auto immIdx = impulse::slotIndex(schema, "inverse_mass_matrix");
+    if (!posIdx || !immIdx)
+      return emitOpError("`state_schema` must contain `position` and "
+                         "`inverse_mass_matrix` slots");
+    auto posType = dyn_cast<RankedTensorType>(getStateOut()[*posIdx].getType());
+    auto immType = dyn_cast<RankedTensorType>(getStateOut()[*immIdx].getType());
+    if (!posType || posType.getRank() != 2 || !immType)
+      return emitOpError("`position`/`inverse_mass_matrix` state slots must be "
+                         "ranked tensors of the expected rank");
+
+    bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
+    auto expected = impulse::buildStateSchema(
+        adaptive, posType.getShape()[1], posType.getElementType(), immType);
+    if (expected.size() != numStateOut)
+      return emitOpError("`state_schema` size (")
+             << numStateOut << ") does not match the canonical "
+             << (adaptive ? "adaptive" : "plain") << " layout ("
+             << expected.size() << ")";
+    for (unsigned i = 0; i < numStateOut; ++i) {
+      StringRef name = cast<StringAttr>(schema[i]).getValue();
+      if (name != expected[i].name)
+        return emitOpError("`state_schema` slot ")
+               << i << " is '" << name << "', expected '" << expected[i].name
+               << "'";
+      if (getStateOut()[i].getType() != expected[i].type)
+        return emitOpError("`state_out` slot '")
+               << name << "' has type " << getStateOut()[i].getType()
+               << ", expected " << expected[i].type;
+      if (numStateIn != 0 && getStateIn()[i].getType() != expected[i].type)
+        return emitOpError("`state_in` slot '")
+               << name << "' has type " << getStateIn()[i].getType()
+               << ", expected " << expected[i].type;
+    }
   }
 
   return success();
