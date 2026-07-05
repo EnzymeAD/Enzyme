@@ -334,6 +334,76 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
   return supports;
 }
 
+/// Declaration-order VI layout, matching NumPyro's per-site RNG draw order.
+struct RegionVILayout {
+  SmallVector<impulse::SupportInfo> supports;
+  SmallVector<std::pair<int64_t, int64_t>> argSlices; // selection order
+  int64_t positionSize = 0;
+};
+
+static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
+                                  RegionVILayout &out) {
+  ArrayAttr selection = regionOp.getSelectionAttr();
+  ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
+  if (!selection || !allAddresses || regionOp.getSampler().empty())
+    return false;
+
+  DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+  for (Operation &op : regionOp.getSampler().front())
+    if (auto site = dyn_cast<impulse::SampleRegionOp>(&op))
+      if (auto address = site.getAddressAttr())
+        siteByAddress[address] = site;
+
+  auto resultSizes = [](impulse::SampleRegionOp site,
+                        SmallVectorImpl<int64_t> &sizes) {
+    for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
+      sizes.push_back(
+          cast<RankedTensorType>(site.getResult(i).getType()).getNumElements());
+  };
+
+  DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
+
+  DenseMap<Attribute, int64_t> declPositionOffset;
+  int64_t traceOffset = 0, positionOffset = 0, unconstrainedOffset = 0;
+  for (Attribute addr : allAddresses) {
+    auto it = siteByAddress.find(addr);
+    if (it == siteByAddress.end())
+      return false;
+    impulse::SampleRegionOp site = it->second;
+    SmallVector<int64_t> sizes;
+    resultSizes(site, sizes);
+    int64_t siteSize = 0;
+    for (int64_t s : sizes)
+      siteSize += s;
+    if (selectedSet.contains(addr)) {
+      int64_t unconstrainedSize =
+          transforms::getUnconstrainedSize(siteSize, site.getSupportAttr());
+      out.supports.emplace_back(positionOffset, traceOffset, siteSize,
+                                unconstrainedOffset, unconstrainedSize,
+                                site.getSupportAttr());
+      declPositionOffset[addr] = positionOffset;
+      positionOffset += siteSize;
+      unconstrainedOffset += unconstrainedSize;
+    }
+    traceOffset += siteSize;
+  }
+  out.positionSize = positionOffset;
+
+  for (Attribute addr : selection) {
+    auto it = siteByAddress.find(addr);
+    if (it == siteByAddress.end())
+      return false;
+    SmallVector<int64_t> sizes;
+    resultSizes(it->second, sizes);
+    int64_t within = 0;
+    for (int64_t s : sizes) {
+      out.argSlices.emplace_back(declPositionOffset[addr] + within, s);
+      within += s;
+    }
+  }
+  return true;
+}
+
 static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
                                    Attribute targetSymbol) {
   SmallVector<Attribute> subAddresses;
@@ -1896,19 +1966,19 @@ struct ExpandImpulsePass
     }
   };
 
-  // Materializes `impulse.infer` in VI mode (vi_config set). Dispatch is by
-  // config attribute, mirroring LowerMCMCPattern; the learning rate is the
-  // `init_step_size` operand and the resumable optimizer state travels through
-  // the state bundle's VI schema slots.
-  struct LowerVIPattern : public mlir::OpRewritePattern<impulse::InferOp> {
+  // The VI learning rate is the `init_step_size` operand.
+  template <typename OpT>
+  struct LowerVIPattern : public mlir::OpRewritePattern<OpT> {
+    static constexpr bool isRegionForm =
+        std::is_same_v<OpT, impulse::InferRegionOp>;
+
     bool debugDump;
 
     LowerVIPattern(MLIRContext *context, bool debugDump,
                    PatternBenefit benefit = 1)
-        : mlir::OpRewritePattern<impulse::InferOp>(context, benefit),
-          debugDump(debugDump) {}
+        : mlir::OpRewritePattern<OpT>(context, benefit), debugDump(debugDump) {}
 
-    LogicalResult matchAndRewrite(impulse::InferOp op,
+    LogicalResult matchAndRewrite(OpT op,
                                   PatternRewriter &rewriter) const override {
       if (!op.getViConfig().has_value())
         return rewriter.notifyMatchFailure(op, "no vi_config; not a VI op");
@@ -1935,8 +2005,33 @@ struct ExpandImpulsePass
       ArrayAttr selection, allAddresses;
       SmallVector<SupportInfo> supports;
       FlatSymbolRefAttr logpdfFnAttr;
+      RegionVILayout regionLayout;
 
-      if (hasLogpdfFn) {
+      if constexpr (isRegionForm) {
+        if (hasLogpdfFn) {
+          op.emitError("Impulse VI: custom-logpdf mode is not supported in "
+                       "region form");
+          return failure();
+        }
+        if (op.getLogpdf().empty()) {
+          op.emitError("Impulse VI: infer_region requires a constructed logpdf "
+                       "region (run sicm first)");
+          return failure();
+        }
+        fnInputs.assign(inputs.begin() + 1, inputs.end());
+        originalTrace = op.getOriginalTrace();
+        selection = op.getSelectionAttr();
+        allAddresses = op.getAllAddressesAttr();
+        if (!collectRegionVILayout(op, regionLayout)) {
+          op.emitError("Impulse VI: failed to derive position layout from the "
+                       "infer_region sampler");
+          return failure();
+        }
+        supports = regionLayout.supports;
+        positionSize = regionLayout.positionSize;
+        if (positionSize <= 0)
+          return failure();
+      } else if (hasLogpdfFn) {
         logpdfFnAttr = op.getLogpdfFnAttr();
         fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = op.getInitPosition();
@@ -1996,6 +2091,11 @@ struct ExpandImpulsePass
       viCtx.rmspropGamma = rmspropGammaVal;
       viCtx.rmspropEps = rmspropEpsVal;
       viCtx.stableUpdate = viConfig.getStableUpdate();
+
+      if constexpr (isRegionForm) {
+        viCtx.logpdfRegion = &op.getLogpdf();
+        viCtx.logpdfArgSlices = regionLayout.argSlices;
+      }
 
       return VI::lowerVI(rewriter, op, viCtx, debugDump);
     }
@@ -2885,7 +2985,9 @@ void ExpandImpulsePass::runOnOperation() {
   patterns.add<LowerMCMCPattern<impulse::InferOp>,
                LowerMCMCPattern<impulse::InferRegionOp>>(&getContext(),
                                                          debugDump);
-  patterns.add<LowerVIPattern>(&getContext(), debugDump);
+  patterns.add<LowerVIPattern<impulse::InferOp>,
+               LowerVIPattern<impulse::InferRegionOp>>(&getContext(),
+                                                       debugDump);
 
   mlir::GreedyRewriteConfig config;
 

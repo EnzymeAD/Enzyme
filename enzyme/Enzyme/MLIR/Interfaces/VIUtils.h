@@ -53,6 +53,12 @@ struct VIContext {
   Value initStepCount;
   bool debugDump = false;
 
+  // When set, the joint density is cloned from here, not `@fn.generate`.
+  // Block argument k binds to the (offset, size) slice logpdfArgSlices[k] of z.
+  Region *logpdfRegion = nullptr;
+  SmallVector<std::pair<int64_t, int64_t>> logpdfArgSlices;
+  bool hasLogpdfRegion() const { return logpdfRegion != nullptr; }
+
   VIContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
             ArrayRef<Type> fnResultTypes, Value originalTrace,
             ArrayAttr selection, ArrayAttr allAddresses, Value stepSize,
@@ -213,10 +219,9 @@ emitSingleParticleAutoDelta(OpBuilder &builder, Location loc, Value locParam,
 SVILoopResult emitSVILoopAutoDelta(OpBuilder &builder, Location loc, Value loc0,
                                    Value rng0, const VIContext &ctx);
 
-/// of an `impulse.infer` op in VI mode. `ctx` is taken by value so the
-/// warm-restart slots (moments, step count) can be populated from the op's
-/// `state_in` bundle before the SVI loop is emitted.
-LogicalResult lowerVI(PatternRewriter &rewriter, InferOp op, VIContext ctx,
+/// `ctx` is by value: the warm-restart slots are filled from `state_in`.
+template <typename OpT>
+LogicalResult lowerVI(PatternRewriter &rewriter, OpT op, VIContext ctx,
                       bool debugDump = false);
 
 } // namespace VI

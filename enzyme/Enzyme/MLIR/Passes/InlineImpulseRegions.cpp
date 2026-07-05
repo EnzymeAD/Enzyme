@@ -217,14 +217,14 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
 
   LogicalResult matchAndRewrite(impulse::InferOp inferOp,
                                 PatternRewriter &rewriter) const override {
-    // Region form covers trace-based HMC/NUTS models only; everything else
-    // stays flat for the regular expand-impulse lowering.
+    // Region form covers trace-based HMC/NUTS/VI models: the sampler region
     if (inferOp.getLogpdfFnAttr())
       return failure();
     if (!inferOp.getOriginalTrace())
       return failure();
     if (!inferOp.getHmcConfig().has_value() &&
-        !inferOp.getNutsConfig().has_value())
+        !inferOp.getNutsConfig().has_value() &&
+        !inferOp.getViConfig().has_value())
       return failure();
     auto fnAttr = inferOp.getFnAttr();
     if (!fnAttr)

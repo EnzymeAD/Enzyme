@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/IRMapping.h"
 
 #include <cmath>
 
@@ -140,8 +141,38 @@ struct LogPResult {
   Value rng;
 };
 
+/// Values captured from above the region are referenced as-is.
+static Value cloneVILogpdfRegion(OpBuilder &builder, Location loc, Value z,
+                                 const VIContext &ctx) {
+  Block &lpBlock = ctx.logpdfRegion->front();
+  auto elemType = ctx.getElementType();
+
+  IRMapping mapping;
+  for (auto [arg, slice] :
+       llvm::zip(lpBlock.getArguments(), ctx.logpdfArgSlices)) {
+    int64_t offset = slice.first;
+    int64_t size = slice.second;
+    auto argType = cast<RankedTensorType>(arg.getType());
+    auto sliceType = RankedTensorType::get({1, size}, elemType);
+    Value s = impulse::SliceOp::create(
+        builder, loc, sliceType, z, builder.getDenseI64ArrayAttr({0, offset}),
+        builder.getDenseI64ArrayAttr({1, offset + size}),
+        builder.getDenseI64ArrayAttr({1, 1}));
+    Value component = impulse::ReshapeOp::create(builder, loc, argType, s);
+    mapping.map(arg, component);
+  }
+
+  for (Operation &op : lpBlock.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+}
+
 LogPResult callModelGenerate(OpBuilder &builder, Location loc, Value z,
                              Value modelRng, const VIContext &ctx) {
+  // The region consumes no RNG, so the model rng is returned unadvanced.
+  if (ctx.hasLogpdfRegion())
+    return {cloneVILogpdfRegion(builder, loc, z, ctx), modelRng};
+
   auto elemType = ctx.getElementType();
   auto scalarType = ctx.getScalarType();
   auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
@@ -1390,7 +1421,8 @@ mlir::impulse::VI::emitSVILoopMVN(OpBuilder &builder, Location loc, Value loc0,
   return r;
 }
 
-LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, InferOp op,
+template <typename OpT>
+LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
                                          VIContext ctx, bool debugDump) {
   auto loc = op.getLoc();
 
@@ -1595,3 +1627,9 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, InferOp op,
   rewriter.replaceOp(op, results);
   return success();
 }
+
+template LogicalResult
+mlir::impulse::VI::lowerVI<impulse::InferOp>(PatternRewriter &,
+                                             impulse::InferOp, VIContext, bool);
+template LogicalResult mlir::impulse::VI::lowerVI<impulse::InferRegionOp>(
+    PatternRewriter &, impulse::InferRegionOp, VIContext, bool);
