@@ -3980,11 +3980,19 @@ bool GradientUtils::legalRecompute(const Value *val,
     }
 
     if (phi->getNumIncomingValues() == 0) {
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *phi << "\n";
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "newFunc: " << *newFunc << "\n";
+      ss << "phi: " << *phi << "\n";
+      ss << "Invalid legalRecompute query on ficticious phi\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(str.c_str(), wrap(phi), ErrorType::InternalError,
+                           nullptr, nullptr, nullptr);
+      } else {
+        EmitFailure("InvalidLegalRecompute", phi->getDebugLoc(), phi, ss.str());
+      }
     }
-    assert(phi->getNumIncomingValues() != 0);
     auto parent = phi->getParent();
     struct {
       Function *func;
