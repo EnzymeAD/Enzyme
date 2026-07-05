@@ -4705,37 +4705,40 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     if (auto ld = dyn_cast<LoadInst>(start)) {
       auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
       if (isAllocationCall(base, TLI)) {
-        if (isa<Argument>(end))
-          return true;
-        if (auto endi = dyn_cast<Instruction>(end))
-          if (isNoAlias(end) || (notCapturedBefore(start, endi, 1))) {
-            Instruction *starti = dyn_cast<Instruction>(start);
-            if (!starti) {
-              if (!isa<Argument>(start))
-                continue;
-              starti =
-                  &cast<Argument>(start)->getParent()->getEntryBlock().front();
+        // The memory read by `ld` holds either undef or a fresh pointer
+        // installed by the allocator itself, unless something wrote to it
+        // after the allocation. Only in the former case is the loaded
+        // pointer guaranteed to differ from any previously existing
+        // pointer: if a store into the allocation happened before the
+        // load, the loaded value may be any captured pointer, including
+        // `end` (e.g. a value stored into a Core.Box and loaded back).
+        // Therefore scan for clobbers between the allocation and the
+        // load, not between the load and the compare.
+        bool overwritten = false;
+        if (auto basei = dyn_cast<Instruction>(base)) {
+          allInstructionsBetween(LI, basei, ld, [&](Instruction *I) -> bool {
+            if (!I->mayWriteToMemory())
+              return /*earlyBreak*/ false;
+
+            if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                     /*maybeReader*/ ld,
+                                     /*maybeWriter*/ I)) {
+              overwritten = true;
+              return /*earlyBreak*/ true;
             }
+            return /*earlyBreak*/ false;
+          });
+        } else {
+          overwritten = true;
+        }
 
-            bool overwritten = false;
-            allInstructionsBetween(
-                LI, starti, endi, [&](Instruction *I) -> bool {
-                  if (!I->mayWriteToMemory())
-                    return /*earlyBreak*/ false;
-
-                  if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                           /*maybeReader*/ ld,
-                                           /*maybeWriter*/ I)) {
-                    overwritten = true;
-                    return /*earlyBreak*/ true;
-                  }
-                  return /*earlyBreak*/ false;
-                });
-
-            if (!overwritten) {
+        if (!overwritten) {
+          if (isa<Argument>(end))
+            return true;
+          if (auto endi = dyn_cast<Instruction>(end))
+            if (isNoAlias(end) || (notCapturedBefore(start, endi, 1)))
               return true;
-            }
-          }
+        }
       }
     }
   }
