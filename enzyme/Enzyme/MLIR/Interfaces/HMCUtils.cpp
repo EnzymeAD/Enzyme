@@ -72,6 +72,12 @@ Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
   return value;
 }
 
+/// `tensor<1xN>` is a diagonal mass; `tensor<1x1>` stays on the dense path.
+static bool isDiagonalMass(RankedTensorType t) {
+  return t.getRank() == 1 ||
+         (t.getRank() == 2 && t.getShape()[0] == 1 && t.getShape()[1] != 1);
+}
+
 /// Creates a 2D identity matrix of the specified type.
 static Value createIdentityMatrix(OpBuilder &builder, Location loc,
                                   RankedTensorType matrixType) {
@@ -146,7 +152,7 @@ Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
 
   auto invMassType = cast<RankedTensorType>(invMass.getType());
 
-  if (invMassType.getRank() == 1) {
+  if (isDiagonalMass(invMassType)) {
     // Diagonal: element-wise
     auto diagMass =
         impulse::ReshapeOp::create(builder, loc, positionType, invMass);
@@ -198,7 +204,7 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   auto invMassType = cast<RankedTensorType>(invMass.getType());
   auto elemType = invMassType.getElementType();
 
-  if (invMassType.getRank() == 1) {
+  if (isDiagonalMass(invMassType)) {
     // Diagonal: mass_matrix_sqrt = 1/sqrt(invMass)
     auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
     auto onesVector = arith::ConstantOp::create(
@@ -263,7 +269,7 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
 
   auto massMatrixSqrtType = cast<RankedTensorType>(massMatrixSqrt.getType());
 
-  if (massMatrixSqrtType.getRank() == 1) {
+  if (isDiagonalMass(massMatrixSqrtType)) {
     // Diagonal: p = massMatrixSqrt * eps (element-wise)
     auto diagSqrt =
         impulse::ReshapeOp::create(builder, loc, positionType, massMatrixSqrt);
