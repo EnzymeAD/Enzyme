@@ -39,7 +39,7 @@ module {
       num_samples = 1 : i64,
       num_warmup = 5 : i64,
       nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1.000000e+03 : f64, adapt_step_size = true, adapt_mass_matrix = true>,
-      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1>,
+      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1, 0>,
       position_size = 8 : i64,
       selection = [],
       thinning = 1 : i64

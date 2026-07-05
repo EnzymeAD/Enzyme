@@ -73,6 +73,55 @@ buildStateSchema(bool adaptive, int64_t positionSize, mlir::Type elemType,
   return slots;
 }
 
+enum class VIGuide { None, AutoNormal, AutoDelta, AutoMVN };
+
+inline llvm::SmallVector<StateSlot>
+buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
+  auto *ctx = elemType.getContext();
+  auto i64Scalar =
+      mlir::RankedTensorType::get({}, mlir::IntegerType::get(ctx, 64));
+  auto vecType = mlir::RankedTensorType::get({1, positionSize}, elemType);
+  int64_t flat = positionSize * (positionSize + 1) / 2;
+  auto flatType = mlir::RankedTensorType::get({flat}, elemType);
+
+  llvm::SmallVector<StateSlot> slots;
+  switch (guide) {
+  case VIGuide::AutoNormal:
+    slots = {
+        {"loc", vecType},
+        {"scale_unconstrained", vecType},
+        {"opt_m_loc", vecType},
+        {"opt_v_loc", vecType},
+        {"opt_m_scale", vecType},
+        {"opt_v_scale", vecType},
+        {"opt_step_count", i64Scalar},
+    };
+    break;
+  case VIGuide::AutoDelta:
+    slots = {
+        {"loc", vecType},
+        {"opt_m_loc", vecType},
+        {"opt_v_loc", vecType},
+        {"opt_step_count", i64Scalar},
+    };
+    break;
+  case VIGuide::AutoMVN:
+    slots = {
+        {"loc", vecType},
+        {"scale_tril_unconstrained", flatType},
+        {"opt_m_loc", vecType},
+        {"opt_v_loc", vecType},
+        {"opt_m_scale_tril", flatType},
+        {"opt_v_scale_tril", flatType},
+        {"opt_step_count", i64Scalar},
+    };
+    break;
+  case VIGuide::None:
+    break;
+  }
+  return slots;
+}
+
 inline mlir::ArrayAttr schemaNamesAttr(mlir::Builder &b,
                                        llvm::ArrayRef<StateSlot> slots) {
   llvm::SmallVector<mlir::Attribute> names;

@@ -35,7 +35,7 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1>
+      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1, 0>
     } : (tensor<2xui64>, tensor<8xf64>, tensor<8xf64>, tensor<f64>, tensor<1x8xf64>)
         -> (tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>

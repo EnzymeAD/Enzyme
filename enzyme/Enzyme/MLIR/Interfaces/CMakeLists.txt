@@ -15,6 +15,7 @@ add_mlir_library(
   GradientUtils.cpp
   GradientUtilsReverse.cpp
   HMCUtils.cpp
+  VIUtils.cpp
   ImpulseUtils.cpp
   TransformUtils.cpp
   EnzymeLogic.cpp

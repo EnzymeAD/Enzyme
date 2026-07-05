@@ -15,6 +15,7 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
+#include "Interfaces/VIUtils.h"
 #include "PassDetails.h"
 #include "Passes/InferStateLayout.h"
 #include "Passes/Passes.h"
@@ -1876,6 +1877,111 @@ struct ExpandImpulsePass
     }
   };
 
+  // Materializes `impulse.infer` in VI mode (vi_config set). Dispatch is by
+  // config attribute, mirroring LowerMCMCPattern; the learning rate is the
+  // `init_step_size` operand and the resumable optimizer state travels through
+  // the state bundle's VI schema slots.
+  struct LowerVIPattern : public mlir::OpRewritePattern<impulse::InferOp> {
+    bool debugDump;
+
+    LowerVIPattern(MLIRContext *context, bool debugDump,
+                   PatternBenefit benefit = 1)
+        : mlir::OpRewritePattern<impulse::InferOp>(context, benefit),
+          debugDump(debugDump) {}
+
+    LogicalResult matchAndRewrite(impulse::InferOp op,
+                                  PatternRewriter &rewriter) const override {
+      if (!op.getViConfig().has_value())
+        return rewriter.notifyMatchFailure(op, "no vi_config; not a VI op");
+
+      SymbolTableCollection symbolTable;
+      bool hasLogpdfFn = static_cast<bool>(op.getLogpdfFnAttr());
+
+      if (!op.getInitStepSize()) {
+        op.emitError("Impulse VI: requires init_step_size (learning rate)");
+        return failure();
+      }
+      Value stepSize = op.getInitStepSize();
+
+      auto inputs = op.getInputs();
+      if (inputs.empty()) {
+        op.emitError("Impulse VI: requires at least rng_state input");
+        return failure();
+      }
+
+      int64_t positionSize;
+      SmallVector<Value> fnInputs;
+      SmallVector<Type> fnResultTypes;
+      Value originalTrace;
+      ArrayAttr selection, allAddresses;
+      SmallVector<SupportInfo> supports;
+      FlatSymbolRefAttr logpdfFnAttr;
+
+      if (hasLogpdfFn) {
+        logpdfFnAttr = op.getLogpdfFnAttr();
+        fnInputs.assign(inputs.begin() + 1, inputs.end());
+        auto initialPos = op.getInitPosition();
+        positionSize =
+            cast<RankedTensorType>(initialPos.getType()).getNumElements();
+        selection = op.getSelectionAttr();
+        allAddresses = op.getAllAddressesAttr();
+      } else {
+        fnInputs.assign(inputs.begin() + 1, inputs.end());
+        originalTrace = op.getOriginalTrace();
+        selection = op.getSelectionAttr();
+        allAddresses = op.getAllAddressesAttr();
+
+        auto fn = cast<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+        positionSize =
+            computePositionSizeForSelection(op, fn, selection, symbolTable);
+        if (positionSize <= 0)
+          return failure();
+
+        supports = collectSupportInfoForSelection(op, fn, selection,
+                                                  allAddresses, symbolTable);
+
+        auto fnType = cast<FunctionType>(fn.getFunctionType());
+        fnResultTypes.assign(fnType.getResults().begin(),
+                             fnType.getResults().end());
+      }
+
+      auto viConfig = op.getViConfig().value();
+      auto floatOr = [](FloatAttr a, double d) {
+        return a ? a.getValueAsDouble() : d;
+      };
+      double initScaleVal = floatOr(viConfig.getInitScale(), 0.1);
+      double adamB1Val = floatOr(viConfig.getAdamB1(), 0.9);
+      double adamB2Val = floatOr(viConfig.getAdamB2(), 0.999);
+      double adamEpsVal = floatOr(viConfig.getAdamEps(), 1.0e-8);
+      double clipNormVal = floatOr(viConfig.getClipNorm(), 10.0);
+      double initRadiusVal = floatOr(viConfig.getInitRadius(), 2.0);
+      double momentumMassVal = floatOr(viConfig.getMomentumMass(), 0.9);
+      double rmspropGammaVal = floatOr(viConfig.getRmspropGamma(), 0.9);
+      double rmspropEpsVal = floatOr(viConfig.getRmspropEps(), 1.0e-8);
+
+      VI::VIContext viCtx(
+          hasLogpdfFn ? FlatSymbolRefAttr() : op.getFnAttr(), fnInputs,
+          fnResultTypes, originalTrace, selection, allAddresses, stepSize,
+          positionSize, op.getNumSamples(), supports,
+          viConfig.getGuideKind().getValue(),
+          viConfig.getOptimizerKind().getValue(), viConfig.getNumParticles(),
+          initScaleVal, adamB1Val, adamB2Val, adamEpsVal);
+      if (hasLogpdfFn)
+        viCtx.logpdfFn = logpdfFnAttr;
+      viCtx.autodiffAttrs = op.getAutodiffAttrsAttr();
+      viCtx.debugDump = debugDump;
+      viCtx.clipNorm = clipNormVal;
+      viCtx.initRadius = initRadiusVal;
+      viCtx.momentumMass = momentumMassVal;
+      viCtx.rmspropGamma = rmspropGammaVal;
+      viCtx.rmspropEps = rmspropEpsVal;
+      viCtx.stableUpdate = viConfig.getStableUpdate();
+
+      return VI::lowerVI(rewriter, op, viCtx, debugDump);
+    }
+  };
+
   struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
     using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
 
@@ -2760,6 +2866,7 @@ void ExpandImpulsePass::runOnOperation() {
   patterns.add<LowerMCMCPattern<impulse::InferOp>,
                LowerMCMCPattern<impulse::InferRegionOp>>(&getContext(),
                                                          debugDump);
+  patterns.add<LowerVIPattern>(&getContext(), debugDump);
 
   mlir::GreedyRewriteConfig config;
 

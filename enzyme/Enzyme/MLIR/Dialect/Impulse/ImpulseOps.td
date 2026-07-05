@@ -239,6 +239,8 @@ class Impulse_InferSignatureArgs {
     Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
     Optional<AnyRankedTensor>:$init_step_size,
     Optional<AnyRankedTensor>:$init_position,
+    // VI guide scale in constrained (positive) space, not softplus space.
+    Optional<AnyRankedTensor>:$init_scale,
 
     AddressArrayAttr:$selection,
     AddressArrayAttr:$all_addresses,
@@ -254,6 +256,7 @@ class Impulse_InferSignatureArgs {
 
     OptionalAttr<HMCConfigAttr>:$hmc_config,
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
+    OptionalAttr<VIConfigAttr>:$vi_config,
 
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
 
@@ -310,6 +313,7 @@ def InferOp : Impulse_Op<"infer",
     (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
     (`init_position` `=` $init_position^)?
+    (`init_scale` `=` $init_scale^)?
     (`state` `=` `[` $state_in^ `]`)?
     prop-dict attr-dict `:` functional-type(operands, results)
   }];
@@ -395,6 +399,7 @@ def InferRegionOp : Impulse_Op<"infer_region",
     (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
     (`init_position` `=` $init_position^)?
+    (`init_scale` `=` $init_scale^)?
     (`state` `=` `[` $state_in^ `]`)?
     `sampler` $sampler `logpdf` $logpdf
     attr-dict `:` functional-type(operands, results)

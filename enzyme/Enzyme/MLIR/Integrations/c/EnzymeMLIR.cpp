@@ -99,6 +99,38 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
       adaptMassMatrix));
 }
 
+MlirAttribute enzymeVIConfigAttrGet(
+    MlirContext ctx, int32_t guideKind, int32_t optimizerKind,
+    int64_t numParticles, bool hasInitScale, double initScale, bool hasAdamB1,
+    double adamB1, bool hasAdamB2, double adamB2, bool hasAdamEps,
+    double adamEps, bool hasClipNorm, double clipNorm, bool hasInitRadius,
+    double initRadius, bool hasMomentumMass, double momentumMass,
+    bool hasRmspropGamma, double rmspropGamma, bool hasRmspropEps,
+    double rmspropEps, bool stableUpdate) {
+  auto *mlirCtx = unwrap(ctx);
+  auto f64Ty = mlir::Float64Type::get(mlirCtx);
+
+  auto guideAttr = mlir::impulse::GuideKindAttr::get(
+      mlirCtx, static_cast<mlir::impulse::GuideKind>(guideKind));
+  auto optimAttr = mlir::impulse::OptimizerKindAttr::get(
+      mlirCtx, static_cast<mlir::impulse::OptimizerKind>(optimizerKind));
+
+  auto maybeAttr = [&](bool has, double val) -> mlir::FloatAttr {
+    if (!has)
+      return {};
+    return mlir::FloatAttr::get(f64Ty, val);
+  };
+
+  return wrap(mlir::impulse::VIConfigAttr::get(
+      mlirCtx, guideAttr, optimAttr, numParticles,
+      maybeAttr(hasInitScale, initScale), maybeAttr(hasAdamB1, adamB1),
+      maybeAttr(hasAdamB2, adamB2), maybeAttr(hasAdamEps, adamEps),
+      maybeAttr(hasClipNorm, clipNorm), maybeAttr(hasInitRadius, initRadius),
+      maybeAttr(hasMomentumMass, momentumMass),
+      maybeAttr(hasRmspropGamma, rmspropGamma),
+      maybeAttr(hasRmspropEps, rmspropEps), stableUpdate));
+}
+
 MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
   return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
 }

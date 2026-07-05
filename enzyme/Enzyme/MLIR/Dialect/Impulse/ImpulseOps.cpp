@@ -122,10 +122,11 @@ LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 LogicalResult InferOp::verify() {
   bool hasHMC = getHmcConfig().has_value();
   bool hasNUTS = getNutsConfig().has_value();
+  bool hasVI = getViConfig().has_value();
 
-  if (hasHMC + hasNUTS > 1) {
-    return emitOpError(
-        "at most one of hmc_config or nuts_config may be specified");
+  if (hasHMC + hasNUTS + hasVI != 1) {
+    return emitOpError("exactly one of hmc_config, nuts_config, or vi_config "
+                       "must be specified");
   }
 
   int64_t numChains = getNumChains();
@@ -169,44 +170,72 @@ LogicalResult InferOp::verify() {
            << numStateOut << "), got " << numStateIn;
   }
 
-  // A non-empty state bundle must match a canonical InferStateLayout schema
-  // (plain 5-slot finals or adaptive 15-slot). Derive the layout parameters
-  // from the finals carried in `state_out`, then check names and types.
   if (numStateOut != 0) {
-    auto posIdx = impulse::slotIndex(schema, "position");
-    auto immIdx = impulse::slotIndex(schema, "inverse_mass_matrix");
-    if (!posIdx || !immIdx)
-      return emitOpError("`state_schema` must contain `position` and "
-                         "`inverse_mass_matrix` slots");
-    auto posType = dyn_cast<RankedTensorType>(getStateOut()[*posIdx].getType());
-    auto immType = dyn_cast<RankedTensorType>(getStateOut()[*immIdx].getType());
-    // Single-chain `position` is rank-2 `1xN`; chain-major (num_chains > 1) is
-    // rank-3 `Cx1xN` with the leading dim equal to num_chains. Derive the
-    // per-chain sizes by stripping the chain dim, then compare the full
-    // (chain-major) schema types.
-    int64_t expectedPosRank = numChains > 1 ? 3 : 2;
-    if (!posType || posType.getRank() != expectedPosRank || !immType)
-      return emitOpError("`position`/`inverse_mass_matrix` state slots must be "
-                         "ranked tensors of the expected rank");
-    if (numChains > 1 && posType.getShape()[0] != numChains)
-      return emitOpError("chain-major `position` slot leading dim (")
-             << posType.getShape()[0] << ") must equal num_chains ("
-             << numChains << ")";
-    int64_t positionSize = posType.getShape().back();
-    RankedTensorType singleImmType =
-        numChains > 1 ? RankedTensorType::get(immType.getShape().drop_front(),
-                                              immType.getElementType())
-                      : immType;
+    SmallVector<impulse::StateSlot> expected;
+    if (hasVI) {
+      auto locIdx = impulse::slotIndex(schema, "loc");
+      if (!locIdx)
+        return emitOpError("VI `state_schema` must contain a `loc` slot");
+      auto locType =
+          dyn_cast<RankedTensorType>(getStateOut()[*locIdx].getType());
+      if (!locType || locType.getRank() != 2)
+        return emitOpError("VI `loc` state slot must be a rank-2 `1xd` tensor");
+      int64_t positionSize = locType.getShape().back();
+      impulse::VIGuide guide;
+      switch (getViConfig()->getGuideKind().getValue()) {
+      case impulse::GuideKind::AUTO_NORMAL:
+        guide = impulse::VIGuide::AutoNormal;
+        break;
+      case impulse::GuideKind::AUTO_DELTA:
+        guide = impulse::VIGuide::AutoDelta;
+        break;
+      case impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL:
+        guide = impulse::VIGuide::AutoMVN;
+        break;
+      default:
+        return emitOpError("VI `state_schema` is unsupported for this guide "
+                           "kind");
+      }
+      expected = impulse::buildVIStateSchema(guide, positionSize,
+                                             locType.getElementType());
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical VI layout ("
+               << expected.size() << ")";
+    } else {
+      auto posIdx = impulse::slotIndex(schema, "position");
+      auto immIdx = impulse::slotIndex(schema, "inverse_mass_matrix");
+      if (!posIdx || !immIdx)
+        return emitOpError("`state_schema` must contain `position` and "
+                           "`inverse_mass_matrix` slots");
+      auto posType =
+          dyn_cast<RankedTensorType>(getStateOut()[*posIdx].getType());
+      auto immType =
+          dyn_cast<RankedTensorType>(getStateOut()[*immIdx].getType());
+      int64_t expectedPosRank = numChains > 1 ? 3 : 2;
+      if (!posType || posType.getRank() != expectedPosRank || !immType)
+        return emitOpError("`position`/`inverse_mass_matrix` state slots must "
+                           "be ranked tensors of the expected rank");
+      if (numChains > 1 && posType.getShape()[0] != numChains)
+        return emitOpError("chain-major `position` slot leading dim (")
+               << posType.getShape()[0] << ") must equal num_chains ("
+               << numChains << ")";
+      int64_t positionSize = posType.getShape().back();
+      RankedTensorType singleImmType =
+          numChains > 1 ? RankedTensorType::get(immType.getShape().drop_front(),
+                                                immType.getElementType())
+                        : immType;
 
-    bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
-    auto expected = impulse::buildStateSchema(adaptive, positionSize,
-                                              posType.getElementType(),
-                                              singleImmType, numChains);
-    if (expected.size() != numStateOut)
-      return emitOpError("`state_schema` size (")
-             << numStateOut << ") does not match the canonical "
-             << (adaptive ? "adaptive" : "plain") << " layout ("
-             << expected.size() << ")";
+      bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
+      expected = impulse::buildStateSchema(adaptive, positionSize,
+                                           posType.getElementType(),
+                                           singleImmType, numChains);
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical "
+               << (adaptive ? "adaptive" : "plain") << " layout ("
+               << expected.size() << ")";
+    }
     for (unsigned i = 0; i < numStateOut; ++i) {
       StringRef name = cast<StringAttr>(schema[i]).getValue();
       if (name != expected[i].name)
