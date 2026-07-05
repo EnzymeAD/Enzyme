@@ -216,7 +216,23 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
   int64_t currentPositionOffset = 0;
   int64_t currentUnconstrainedOffset = 0;
 
+  // Ignore the *order* of `selection` (which `ProbProg.select` canonicalises
+  // alphabetically) and lay the position vector out in model declaration order
+  // from `allAddresses`, so it matches NumPyro's declaration-order guide
+  // layout. Without this, models whose alphabetical and declaration orders
+  // disagree (e.g. `[w, sigma]` vs `[sigma, w]`) apply eps/constrain transforms
+  // at swapped offsets — see the `vi_bayesian_linreg` regression.
+  llvm::SmallDenseSet<Attribute, 4> selectedTopLevel;
   for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty())
+      continue;
+    if (address.size() != 1)
+      continue;
+    selectedTopLevel.insert(address[0]);
+  }
+
+  for (auto addr : allAddresses) {
     auto address = cast<ArrayAttr>(addr);
     if (address.empty())
       continue;
@@ -226,6 +242,9 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
       continue;
 
     auto targetSymbol = address[0];
+    if (!selectedTopLevel.contains(targetSymbol))
+      continue;
+
     auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
     if (!sampleOp)
       continue;
