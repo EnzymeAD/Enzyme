@@ -74,6 +74,8 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeVIConfigAttrGet(
     bool hasRmspropGamma, double rmspropGamma, bool hasRmspropEps,
     double rmspropEps, bool stableUpdate);
 
+MLIR_CAPI_EXPORTED MlirAttribute enzymeMHConfigAttrGet(MlirContext ctx);
+
 MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
                                                      uint64_t ptr);
 

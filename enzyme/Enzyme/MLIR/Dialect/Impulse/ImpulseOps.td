@@ -236,6 +236,12 @@ class Impulse_InferSignatureArgs {
     Variadic<AnyRankedTensor>:$state_in,
     Optional<AnyRankedTensor>:$original_trace,
 
+    // MH-only: observed values for constrained sample sites (with
+    // `constrained_addresses` describing the layout), forwarded verbatim to the
+    // internal regenerate so a branch-flipping proposal re-scores the
+    // newly-taken observation from the constraint. Null for HMC/NUTS/VI.
+    Optional<AnyRankedTensor>:$constraint,
+
     Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
     Optional<AnyRankedTensor>:$init_step_size,
     Optional<AnyRankedTensor>:$init_position,
@@ -257,6 +263,10 @@ class Impulse_InferSignatureArgs {
     OptionalAttr<HMCConfigAttr>:$hmc_config,
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
     OptionalAttr<VIConfigAttr>:$vi_config,
+    OptionalAttr<MHConfigAttr>:$mh_config,
+
+    // MH-only: layout of the `constraint` operand (see above). Null otherwise.
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
 
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
 
@@ -309,6 +319,7 @@ def InferOp : Impulse_Op<"infer",
     ($fn^)?
     `(` $inputs `)`
     (`given` $original_trace^)?
+    (`constrained_by` $constraint^)?
     (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
     (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
@@ -395,6 +406,7 @@ def InferRegionOp : Impulse_Op<"infer_region",
     ($fn^)?
     `(` $inputs `)`
     (`given` $original_trace^)?
+    (`constrained_by` $constraint^)?
     (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
     (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?

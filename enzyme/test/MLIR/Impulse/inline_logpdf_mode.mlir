@@ -24,20 +24,20 @@ module {
   // CHECK-NOT: impulse.infer(
   func.func @main(%rng : tensor<2xui64>,
                   %B : tensor<8xf64>)
-      -> (tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>) {
+      -> (tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<0.0> : tensor<1x8xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %imm = arith.constant dense<1.0> : tensor<8xf64>
-    %res:3 = "impulse.infer"(%rng, %B, %imm, %step_size, %init_pos) {
+    %res:4 = "impulse.infer"(%rng, %B, %imm, %step_size, %init_pos) {
       logpdf_fn = @model_logpdf,
       nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
       selection = [],
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1, 0>
+      operandSegmentSizes = array<i32: 2, 0, 0, 0, 1, 1, 1, 0>
     } : (tensor<2xui64>, tensor<8xf64>, tensor<8xf64>, tensor<f64>, tensor<1x8xf64>)
-        -> (tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>)
-    return %res#0, %res#1, %res#2 : tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>
+        -> (tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }

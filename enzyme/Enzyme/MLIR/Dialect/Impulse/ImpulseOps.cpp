@@ -123,11 +123,17 @@ LogicalResult InferOp::verify() {
   bool hasHMC = getHmcConfig().has_value();
   bool hasNUTS = getNutsConfig().has_value();
   bool hasVI = getViConfig().has_value();
+  bool hasMH = getMhConfig().has_value();
 
-  if (hasHMC + hasNUTS + hasVI != 1) {
-    return emitOpError("exactly one of hmc_config, nuts_config, or vi_config "
-                       "must be specified");
+  if (hasHMC + hasNUTS + hasVI + hasMH != 1) {
+    return emitOpError("exactly one of hmc_config, nuts_config, vi_config, or "
+                       "mh_config must be specified");
   }
+
+  // The constraint operand and its layout attribute are MH-only.
+  if ((getConstraint() || getConstrainedAddressesAttr()) && !hasMH)
+    return emitOpError("`constraint`/`constrained_addresses` are only valid "
+                       "with mh_config");
 
   int64_t numChains = getNumChains();
   if (numChains < 1)
@@ -172,7 +178,17 @@ LogicalResult InferOp::verify() {
 
   if (numStateOut != 0) {
     SmallVector<impulse::StateSlot> expected;
-    if (hasVI) {
+    if (hasMH) {
+      // MH carries a single scalar `weight` slot; the trace/rng are universal.
+      auto wType = dyn_cast<RankedTensorType>(getStateOut()[0].getType());
+      if (!wType || wType.getRank() != 0)
+        return emitOpError("MH `weight` state slot must be a scalar tensor");
+      expected = impulse::buildMHStateSchema(wType.getElementType());
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical MH layout ("
+               << expected.size() << ")";
+    } else if (hasVI) {
       auto locIdx = impulse::slotIndex(schema, "loc");
       if (!locIdx)
         return emitOpError("VI `state_schema` must contain a `loc` slot");

@@ -23,6 +23,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
@@ -2101,6 +2102,271 @@ struct ExpandImpulsePass
     }
   };
 
+  //           region evaluated at the proposed selected values.
+  template <typename OpT>
+  struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
+    static constexpr bool isRegionForm =
+        std::is_same_v<OpT, impulse::InferRegionOp>;
+    using mlir::OpRewritePattern<OpT>::OpRewritePattern;
+
+    // region at the proposed selected values. Returns (newTrace, newWeight,
+    // rng').
+    std::tuple<Value, Value, Value>
+    proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
+                  ArrayAttr selection, ArrayAttr allAddresses) const {
+      Region &sampler = op.getSampler();
+      Region &logpdf = op.getLogpdf();
+      Block &sBlock = sampler.front();
+      auto traceType = cast<RankedTensorType>(trace.getType());
+      auto i64S = RankedTensorType::get({}, b.getI64Type());
+
+      DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+      for (Operation &o : sBlock)
+        if (auto site = dyn_cast<impulse::SampleRegionOp>(&o))
+          if (auto addr = site.getAddressAttr())
+            siteByAddress[addr] = site;
+
+      DenseMap<Attribute, int64_t> traceOffsetOf;
+      int64_t offset = 0;
+      for (Attribute addr : allAddresses) {
+        traceOffsetOf[addr] = offset;
+        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
+        for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
+          offset += computeTensorElementCount(
+              cast<RankedTensorType>(site.getResult(i).getType()));
+      }
+
+      DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
+
+      IRMapping map;
+      map.map(sBlock.getArgument(0), rng);
+      for (unsigned i = 1, e = sBlock.getNumArguments(); i < e; ++i)
+        map.map(sBlock.getArgument(i), op.getInputs()[i]);
+
+      Value curRng = rng;
+      Value newTrace = trace;
+      DenseMap<Attribute, SmallVector<Value>> proposedSelected;
+
+      for (Operation &o : sBlock.without_terminator()) {
+        auto site = dyn_cast<impulse::SampleRegionOp>(&o);
+        if (!site) {
+          b.clone(o, map);
+          continue;
+        }
+        Attribute addr = site.getAddressAttr();
+        int64_t siteOff = traceOffsetOf.lookup(addr);
+        if (selectedSet.contains(addr)) {
+          Block &sub = site.getSampler().front();
+          IRMapping subMap;
+          subMap.map(sub.getArgument(0), curRng);
+          for (unsigned j = 1, e = site.getInputs().size(); j < e; ++j)
+            subMap.map(sub.getArgument(j),
+                       map.lookupOrDefault(site.getInputs()[j]));
+          for (Operation &subOp : sub.without_terminator())
+            b.clone(subOp, subMap);
+          Operation *y = sub.getTerminator();
+          curRng = subMap.lookupOrDefault(y->getOperand(0));
+          map.map(site.getResult(0), curRng);
+          SmallVector<Value> vals;
+          int64_t wOff = siteOff;
+          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
+            Value v = subMap.lookupOrDefault(y->getOperand(k));
+            map.map(site.getResult(k), v);
+            vals.push_back(v);
+            auto vt = cast<RankedTensorType>(v.getType());
+            int64_t n = computeTensorElementCount(vt);
+            auto flatType = RankedTensorType::get({1, n}, vt.getElementType());
+            Value flat = impulse::ReshapeOp::create(b, loc, flatType, v);
+            Value row0 = arith::ConstantOp::create(
+                b, loc, i64S,
+                DenseElementsAttr::get(i64S, b.getI64IntegerAttr(0)));
+            Value col = arith::ConstantOp::create(
+                b, loc, i64S,
+                DenseElementsAttr::get(i64S, b.getI64IntegerAttr(wOff)));
+            newTrace =
+                impulse::DynamicUpdateSliceOp::create(
+                    b, loc, traceType, newTrace, flat, ValueRange{row0, col})
+                    .getResult();
+            wOff += n;
+          }
+          proposedSelected[addr] = vals;
+        } else {
+          map.map(site.getResult(0), curRng);
+          int64_t rOff = siteOff;
+          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k) {
+            auto rt = cast<RankedTensorType>(site.getResult(k).getType());
+            int64_t n = computeTensorElementCount(rt);
+            auto sliceType = RankedTensorType::get({1, n}, rt.getElementType());
+            Value slice = impulse::SliceOp::create(
+                b, loc, sliceType, trace, b.getDenseI64ArrayAttr({0, rOff}),
+                b.getDenseI64ArrayAttr({1, rOff + n}),
+                b.getDenseI64ArrayAttr({1, 1}));
+            Value val = impulse::ReshapeOp::create(b, loc, rt, slice);
+            map.map(site.getResult(k), val);
+            rOff += n;
+          }
+        }
+      }
+
+      Block &lpBlock = logpdf.front();
+      IRMapping lpMap;
+      unsigned argIdx = 0;
+      for (Attribute addr : selection)
+        for (Value v : proposedSelected[addr])
+          lpMap.map(lpBlock.getArgument(argIdx++), v);
+      for (Operation &lo : lpBlock.without_terminator())
+        b.clone(lo, lpMap);
+      Value newWeight =
+          lpMap.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+
+      return {newTrace, newWeight, curRng};
+    }
+
+    // Flat-form proposal: delegate to `impulse.regenerate` on the model symbol.
+    std::tuple<Value, Value, Value>
+    proposeFlat(OpBuilder &b, Location loc, OpT op, FunctionOpInterface fn,
+                ArrayRef<Type> fnResultTypes, Value trace, Value rng,
+                ArrayAttr selection, ArrayAttr allAddresses) const {
+      auto weightType = RankedTensorType::get({}, b.getF64Type());
+      SmallVector<Type> regenResultTypes{trace.getType(), weightType};
+      for (Type t : fnResultTypes)
+        regenResultTypes.push_back(t);
+      SmallVector<Value> inputs(op.getInputs().begin(), op.getInputs().end());
+      inputs[0] = rng;
+      auto regen = impulse::RegenerateOp::create(
+          b, loc, regenResultTypes, op.getFnAttr(), inputs, trace,
+          op.getConstraint(), /*selection=*/allAddresses,
+          /*regenerate_addresses=*/selection, op.getConstrainedAddressesAttr(),
+          b.getStringAttr(""));
+      return {regen.getNewTrace(), regen.getWeight(), regen.getOutputs()[0]};
+    }
+
+    LogicalResult matchAndRewrite(OpT op,
+                                  PatternRewriter &rewriter) const override {
+      if (!op.getMhConfig().has_value())
+        return rewriter.notifyMatchFailure(op, "no mh_config; not an MH op");
+
+      Location loc = op.getLoc();
+      auto inputs = op.getInputs();
+      if (inputs.empty()) {
+        op.emitError("Impulse MH: requires at least the rng_state input");
+        return failure();
+      }
+      if (op.getStateIn().size() != 1) {
+        op.emitError("Impulse MH: expects a single `weight` state_in slot");
+        return failure();
+      }
+      if constexpr (isRegionForm) {
+        if (op.getSampler().empty() || op.getLogpdf().empty()) {
+          op.emitError("Impulse MH: infer_region requires sampler and "
+                       "constructed logpdf regions (run sicm first)");
+          return failure();
+        }
+      }
+
+      Value initTrace = op.getOriginalTrace();
+      Value initWeight = op.getStateIn()[0];
+      Value initRng = inputs[0];
+      auto traceType = cast<RankedTensorType>(initTrace.getType());
+      auto weightType = cast<RankedTensorType>(initWeight.getType());
+      Type rngType = initRng.getType();
+      auto i1Scalar = RankedTensorType::get({}, rewriter.getI1Type());
+
+      ArrayAttr selection = op.getSelectionAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
+
+      SymbolTableCollection symbolTable;
+      FunctionOpInterface fn;
+      SmallVector<Type> fnResultTypes;
+      if constexpr (!isRegionForm) {
+        fn = dyn_cast_or_null<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+        if (!fn || fn.getFunctionBody().empty()) {
+          op.emitError("Impulse MH: `fn` must reference a non-empty funcOp");
+          return failure();
+        }
+        for (Type t : fn.getResultTypes())
+          fnResultTypes.push_back(t);
+      }
+
+      auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
+                         Value rng) -> std::array<Value, 4> {
+        Value newTrace, newWeight, stepRng;
+        if constexpr (isRegionForm)
+          std::tie(newTrace, newWeight, stepRng) =
+              proposeRegion(b, loc, op, trace, rng, selection, allAddresses);
+        else
+          std::tie(newTrace, newWeight, stepRng) =
+              proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
+                          allAddresses);
+
+        Value logAlpha = arith::SubFOp::create(b, loc, newWeight, weight);
+        Value zero = arith::ConstantOp::create(
+            b, loc, weightType, DenseElementsAttr::get(weightType, 0.0));
+        Value one = arith::ConstantOp::create(
+            b, loc, weightType, DenseElementsAttr::get(weightType, 1.0));
+        auto rnd = impulse::RandomOp::create(
+            b, loc, TypeRange{rngType, weightType}, stepRng, zero, one,
+            impulse::RngDistributionAttr::get(
+                b.getContext(), impulse::RngDistribution::UNIFORM));
+        Value logRand = math::LogOp::create(b, loc, rnd.getResult());
+        Value finalRng = rnd.getOutputRngState();
+        Value accepted = arith::CmpFOp::create(
+            b, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
+        Value selTrace = impulse::SelectOp::create(b, loc, traceType, accepted,
+                                                   newTrace, trace);
+        Value selWeight =
+            arith::SelectOp::create(b, loc, accepted, newWeight, weight);
+        return {selTrace, selWeight, finalRng, accepted};
+      };
+
+      int64_t numSamples = op.getNumSamples();
+      Value outTrace, outWeight, outRng, outAccepted;
+
+      if (numSamples <= 1) {
+        auto r = oneStep(rewriter, initTrace, initWeight, initRng);
+        outTrace = r[0];
+        outWeight = r[1];
+        outRng = r[2];
+        outAccepted = r[3];
+      } else {
+        auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+        auto iConst = [&](int64_t v) {
+          return arith::ConstantOp::create(
+              rewriter, loc, i64S,
+              DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(v)));
+        };
+        Value c0 = iConst(0), cN = iConst(numSamples), c1 = iConst(1);
+        Value falseC = arith::ConstantOp::create(
+            rewriter, loc, i1Scalar,
+            DenseElementsAttr::get(i1Scalar, rewriter.getBoolAttr(false)));
+        SmallVector<Type> loopTypes{traceType, weightType, rngType, i1Scalar};
+        SmallVector<Value> initArgs{initTrace, initWeight, initRng, falseC};
+        auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
+                                            c1, initArgs);
+        Block *body = rewriter.createBlock(&forOp.getRegion());
+        body->addArgument(i64S, loc);
+        for (Type t : loopTypes)
+          body->addArgument(t, loc);
+        rewriter.setInsertionPointToStart(body);
+        auto r = oneStep(rewriter, body->getArgument(1), body->getArgument(2),
+                         body->getArgument(3));
+        impulse::YieldOp::create(rewriter, loc,
+                                 ValueRange{r[0], r[1], r[2], r[3]});
+        rewriter.setInsertionPointAfter(forOp);
+        outTrace = forOp.getResult(0);
+        outWeight = forOp.getResult(1);
+        outRng = forOp.getResult(2);
+        outAccepted = forOp.getResult(3);
+      }
+
+      // infer result order: trace, diagnostics(accepted), output_rng,
+      // state_out.
+      rewriter.replaceOp(op, {outTrace, outAccepted, outRng, outWeight});
+      return success();
+    }
+  };
+
   struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
     using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
 
@@ -2988,6 +3254,8 @@ void ExpandImpulsePass::runOnOperation() {
   patterns.add<LowerVIPattern<impulse::InferOp>,
                LowerVIPattern<impulse::InferRegionOp>>(&getContext(),
                                                        debugDump);
+  patterns.add<LowerMHInferPattern<impulse::InferOp>,
+               LowerMHInferPattern<impulse::InferRegionOp>>(&getContext());
 
   mlir::GreedyRewriteConfig config;
 

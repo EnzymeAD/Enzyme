@@ -26,7 +26,7 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0>
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 0, 1, 1, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -49,7 +49,7 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0>
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 0, 1, 1, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -72,7 +72,7 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0>
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 0, 1, 1, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }

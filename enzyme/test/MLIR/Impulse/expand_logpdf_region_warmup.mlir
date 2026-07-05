@@ -27,11 +27,11 @@ module {
   // CHECK-NOT: call @model_logpdf
   func.func @main(%rng : tensor<2xui64>,
                   %B : tensor<8xf64>)
-      -> (tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>) {
+      -> (tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<0.0> : tensor<1x8xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %imm = arith.constant dense<1.0> : tensor<8xf64>
-    %res:3 = "impulse.infer_region"(%rng, %B, %imm, %step_size, %init_pos) <{
+    %res:4 = "impulse.infer_region"(%rng, %B, %imm, %step_size, %init_pos) <{
       all_addresses = [],
       logpdf_fn = @model_logpdf,
       name = "",
@@ -39,7 +39,7 @@ module {
       num_samples = 1 : i64,
       num_warmup = 5 : i64,
       nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1.000000e+03 : f64, adapt_step_size = true, adapt_mass_matrix = true>,
-      operandSegmentSizes = array<i32: 2, 0, 0, 1, 1, 1, 0>,
+      operandSegmentSizes = array<i32: 2, 0, 0, 0, 1, 1, 1, 0>,
       position_size = 8 : i64,
       selection = [],
       thinning = 1 : i64
@@ -53,7 +53,7 @@ module {
       %nh = arith.constant dense<-5.000000e-01> : tensor<f64>
       %r = arith.mulf %d, %nh : tensor<f64>
       "impulse.yield"(%r) : (tensor<f64>) -> ()
-    }) : (tensor<2xui64>, tensor<8xf64>, tensor<8xf64>, tensor<f64>, tensor<1x8xf64>) -> (tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>)
-    return %res#0, %res#1, %res#2 : tensor<1x8xf64>, tensor<1xi1>, tensor<2xui64>
+    }) : (tensor<2xui64>, tensor<8xf64>, tensor<8xf64>, tensor<f64>, tensor<1x8xf64>) -> (tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x8xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }

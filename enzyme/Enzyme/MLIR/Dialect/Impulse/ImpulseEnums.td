@@ -182,4 +182,17 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
   let assemblyFormat = "`<` `guide_kind` `=` $guide_kind `,` `optimizer_kind` `=` $optimizer_kind (`,` `num_particles` `=` $num_particles^)? (`,` `init_scale` `=` $init_scale^)? (`,` `adam_b1` `=` $adam_b1^)? (`,` `adam_b2` `=` $adam_b2^)? (`,` `adam_eps` `=` $adam_eps^)? (`,` `clip_norm` `=` $clip_norm^)? (`,` `init_radius` `=` $init_radius^)? (`,` `momentum_mass` `=` $momentum_mass^)? (`,` `rmsprop_gamma` `=` $rmsprop_gamma^)? (`,` `rmsprop_eps` `=` $rmsprop_eps^)? (`,` `stable_update` `=` $stable_update^)? `>`";
 }
 
+def MHConfigAttr : Impulse_Attr<"MHConfig", "mh_config"> {
+  let summary = "Configuration for Metropolis-Hastings inference";
+  let description = [{
+    Marker config selecting the Metropolis-Hastings algorithm on `impulse.infer`
+    / `impulse.infer_region`. MH carries no algorithm parameters of its own: the
+    proposal selection lives in the shared `selection` attribute (the addresses
+    to regenerate), the full trace layout in `all_addresses`, and the internal
+    step count in `num_samples`.
+  }];
+  let parameters = (ins);
+  let assemblyFormat = "";
+}
+
 #endif // IMPULSE_ENUMS

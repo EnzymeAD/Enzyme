@@ -131,6 +131,10 @@ MlirAttribute enzymeVIConfigAttrGet(
       maybeAttr(hasRmspropEps, rmspropEps), stableUpdate));
 }
 
+MlirAttribute enzymeMHConfigAttrGet(MlirContext ctx) {
+  return wrap(mlir::impulse::MHConfigAttr::get(unwrap(ctx)));
+}
+
 MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
   return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
 }

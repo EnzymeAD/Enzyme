@@ -122,6 +122,12 @@ buildVIStateSchema(VIGuide guide, int64_t positionSize, mlir::Type elemType) {
   return slots;
 }
 
+/// Only `weight`: trace and rng travel as the op's universal results.
+inline llvm::SmallVector<StateSlot> buildMHStateSchema(mlir::Type elemType) {
+  auto scalarType = mlir::RankedTensorType::get({}, elemType);
+  return {{"weight", scalarType}};
+}
+
 inline mlir::ArrayAttr schemaNamesAttr(mlir::Builder &b,
                                        llvm::ArrayRef<StateSlot> slots) {
   llvm::SmallVector<mlir::Attribute> names;
