@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="jl-inst-simplify" -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="jl-inst-simplify" -S -opaque-pointers | FileCheck %s
 
 declare noalias nonnull align 8 dereferenceable(8) ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
 
