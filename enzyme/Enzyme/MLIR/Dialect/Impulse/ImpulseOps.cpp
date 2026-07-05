@@ -243,9 +243,11 @@ LogicalResult InferOp::verify() {
                         : immType;
 
       bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
+      // output_rng_state stays a single chain's key when num_chains > 1.
+      auto rngType = dyn_cast<RankedTensorType>(getOutputRngState().getType());
       expected = impulse::buildStateSchema(adaptive, positionSize,
                                            posType.getElementType(),
-                                           singleImmType, numChains);
+                                           singleImmType, numChains, rngType);
       if (expected.size() != numStateOut)
         return emitOpError("`state_schema` size (")
                << numStateOut << ") does not match the canonical "

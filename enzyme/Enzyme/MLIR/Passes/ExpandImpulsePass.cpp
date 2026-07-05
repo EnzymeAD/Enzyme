@@ -67,6 +67,7 @@ constexpr StringLiteral kInverseMassMatrix = "inverse_mass_matrix";
 constexpr StringLiteral kDaLogStepSize = "da_log_step_size";
 constexpr StringLiteral kWindowIdx = "window_idx";
 constexpr StringLiteral kWarmupOffset = "warmup_offset";
+constexpr StringLiteral kRng = "rng";
 } // namespace state_slot
 
 template <typename MCMCOpT>
@@ -991,7 +992,8 @@ struct ExpandImpulsePass
         fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = mcmcOp.getInitPosition();
         auto initPosType = cast<RankedTensorType>(initialPos.getType());
-        positionSize = initPosType.getNumElements();
+        // `init_position` is `1xN` or chain-major `Cx1xN`; N is per chain.
+        positionSize = initPosType.getNumElements() / mcmcOp.getNumChains();
         constrainedPositionSize = positionSize;
         selection = mcmcOp.getSelectionAttr();
         allAddresses = mcmcOp.getAllAddressesAttr();
@@ -1045,22 +1047,23 @@ struct ExpandImpulsePass
 
       ArrayAttr schema = mcmcOp.getStateSchemaAttr();
       bool isResume = !mcmcOp.getStateIn().empty();
+      int64_t numChains = mcmcOp.getNumChains();
       bool exposeAdaptation =
           impulse::slotIndex(schema, state_slot::kWindowIdx).has_value();
 
       // Schema order matches DualAveragingState/WelfordState::toValues().
-      SmallVector<Value> adaptationInVals;
+      SmallVector<Value> adaptationInValsBase;
       if (auto daIdx = impulse::slotIndex(schema, state_slot::kDaLogStepSize)) {
         auto stateIn = mcmcOp.getStateIn();
         for (unsigned i = 0; i < 9; ++i)
-          adaptationInVals.push_back(
+          adaptationInValsBase.push_back(
               *daIdx + i < stateIn.size() ? stateIn[*daIdx + i] : Value());
       }
-      bool hasAdaptationIn = isResume && !adaptationInVals.empty() &&
-                             adaptationInVals.front() != nullptr;
+      bool hasAdaptationInBase = isResume && !adaptationInValsBase.empty() &&
+                                 adaptationInValsBase.front() != nullptr;
 
-      // only.
-      if (isResume) {
+      // Multi-chain slots are chain-major; runOneChain reads them per chain.
+      if (isResume && numChains <= 1) {
         if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
           stepSize = s;
         if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
@@ -1161,23 +1164,57 @@ struct ExpandImpulsePass
         }
       };
 
-      // input for a single chain, or `randomSplit(rng, num_chains)[c]` for
-      // chain c). Returns the single-chain replacement values in op-result
-      // order: {trace, diagnostics, output_rng_state, state_out...}. Every
-      // rng-dependent computation lives here so num_chains > 1 replays it per
-      // split key; the rng-independent setup above is shared. For num_chains ==
-      // 1 this is called once with `rngInput`, byte-identical to the
-      // pre-multichain lowering.
-      auto runOneChain = [&](Value chainRng) -> SmallVector<Value> {
-        Value adaptedInvMass = invMass;
+      auto sliceChainDim = [&](Value v, int64_t c) -> Value {
+        auto ty = cast<RankedTensorType>(v.getType());
+        ArrayRef<int64_t> shape = ty.getShape();
+        SmallVector<int64_t> start(shape.size(), 0),
+            limit(shape.begin(), shape.end()), stride(shape.size(), 1);
+        start[0] = c;
+        limit[0] = c + 1;
+        SmallVector<int64_t> oneShape(shape.begin(), shape.end());
+        oneShape[0] = 1;
+        auto oneType = RankedTensorType::get(oneShape, ty.getElementType());
+        Value sl = impulse::SliceOp::create(
+            rewriter, loc, oneType, v, rewriter.getDenseI64ArrayAttr(start),
+            rewriter.getDenseI64ArrayAttr(limit),
+            rewriter.getDenseI64ArrayAttr(stride));
+        auto dropType =
+            RankedTensorType::get(shape.drop_front(), ty.getElementType());
+        return impulse::ReshapeOp::create(rewriter, loc, dropType, sl);
+      };
+
+      // All rng-dependent work lives here; it is replayed per chain.
+      auto runOneChain = [&](Value chainRng,
+                             int64_t chainIdx) -> SmallVector<Value> {
+        auto chainStateInSlot = [&](StringRef name) -> Value {
+          Value v = stateInSlot(mcmcOp, name);
+          if (v && numChains > 1)
+            v = sliceChainDim(v, chainIdx);
+          return v;
+        };
+        Value chainStepSize = stepSize;
+        Value chainInvMass = invMass;
+        SmallVector<Value> adaptationInVals = adaptationInValsBase;
+        bool hasAdaptationIn = hasAdaptationInBase;
+        if (isResume && numChains > 1) {
+          if (Value s = stateInSlot(mcmcOp, state_slot::kStepSize))
+            chainStepSize = sliceChainDim(s, chainIdx);
+          if (Value m = stateInSlot(mcmcOp, state_slot::kInverseMassMatrix))
+            chainInvMass = sliceChainDim(m, chainIdx);
+          for (Value &av : adaptationInVals)
+            if (av)
+              av = sliceChainDim(av, chainIdx);
+        }
+
+        Value adaptedInvMass = chainInvMass;
         auto adaptedMassMatrixSqrt =
             computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
         Value currentQ, currentGrad, currentU, currentRng;
 
-        Value resumePosition = stateInSlot(mcmcOp, state_slot::kPosition);
-        Value resumeGrad = stateInSlot(mcmcOp, state_slot::kGradient);
-        Value resumePE = stateInSlot(mcmcOp, state_slot::kPotentialEnergy);
+        Value resumePosition = chainStateInSlot(state_slot::kPosition);
+        Value resumeGrad = chainStateInSlot(state_slot::kGradient);
+        Value resumePE = chainStateInSlot(state_slot::kPotentialEnergy);
 
         if (isResume && resumePosition && resumeGrad && resumePE) {
           currentQ = resumePosition;
@@ -1185,11 +1222,16 @@ struct ExpandImpulsePass
           currentU = resumePE;
           currentRng = chainRng;
         } else {
-          auto baseCtx =
-              makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
-          auto initState = InitHMC(
-              rewriter, loc, chainRng, baseCtx,
-              hasLogpdfFn ? mcmcOp.getInitPosition() : Value(), debugDump);
+          auto baseCtx = makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt,
+                                        chainStepSize);
+          Value chainInitPos;
+          if (hasLogpdfFn) {
+            chainInitPos = mcmcOp.getInitPosition();
+            if (numChains > 1)
+              chainInitPos = sliceChainDim(chainInitPos, chainIdx);
+          }
+          auto initState = InitHMC(rewriter, loc, chainRng, baseCtx,
+                                   chainInitPos, debugDump);
           currentQ = initState.q0;
           currentGrad = initState.grad0;
           currentU = initState.U0;
@@ -1211,7 +1253,7 @@ struct ExpandImpulsePass
           }
         };
 
-        Value adaptedStepSize = stepSize;
+        Value adaptedStepSize = chainStepSize;
 
         auto runSampleStepWithInvMass =
             [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
@@ -1299,7 +1341,7 @@ struct ExpandImpulsePass
                                        rewriter.getFloatAttr(elemType, 1.0)));
           }
 
-          Value initialStepSize = stepSize;
+          Value initialStepSize = chainStepSize;
           initialStepSize = conditionalDump(
               rewriter, loc, initialStepSize,
               "MCMC: initial step size before warmup", debugDump);
@@ -1376,8 +1418,7 @@ struct ExpandImpulsePass
 
           Value iterT = warmupBody->getArgument(0);
           Value iterTGlobal = iterT;
-          if (Value warmupOffset =
-                  stateInSlot(mcmcOp, state_slot::kWarmupOffset))
+          if (Value warmupOffset = chainStateInSlot(state_slot::kWarmupOffset))
             iterTGlobal =
                 arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
           Value qLoop = warmupBody->getArgument(1);
@@ -1663,7 +1704,7 @@ struct ExpandImpulsePass
               hasAdaptationIn
                   ? DualAveragingState::fromValues(
                         ArrayRef<Value>(adaptationInVals).take_front(5))
-                  : initDualAveraging(rewriter, loc, stepSize,
+                  : initDualAveraging(rewriter, loc, chainStepSize,
                                       /*logOfProduct=*/true);
           WelfordState w =
               hasAdaptationIn
@@ -1858,7 +1899,7 @@ struct ExpandImpulsePass
                                            finalLogDensityBuffer, finalRng};
 
         if (schema && !schema.empty()) {
-          Value warmupOffsetIn = stateInSlot(mcmcOp, state_slot::kWarmupOffset);
+          Value warmupOffsetIn = chainStateInSlot(state_slot::kWarmupOffset);
           if (!warmupOffsetIn)
             warmupOffsetIn = arith::ConstantOp::create(
                 rewriter, loc, i64TensorType,
@@ -1901,23 +1942,28 @@ struct ExpandImpulsePass
         return replacements;
       };
 
-      int64_t numChains = mcmcOp.getNumChains();
       if (numChains <= 1) {
-        rewriter.replaceOp(mcmcOp, runOneChain(rngInput));
+        rewriter.replaceOp(mcmcOp, runOneChain(rngInput, 0));
         return success();
       }
 
-      // Multi-chain: split the rng into per-chain keys exactly as NumPyro's
-      // MCMC.run (`random.split(rng_key, num_chains)`), run the single-chain
-      // lowering per chain sequentially, then stack every result chain-major.
-      SmallVector<Type> chainKeyTypes(numChains, rngInput.getType());
-      auto splitOp = impulse::RandomSplitOp::create(rewriter, loc,
-                                                    chainKeyTypes, rngInput);
+      // As NumPyro's MCMC.run: split the key per chain, or reuse saved keys.
+      Value rngSlotIn = stateInSlot(mcmcOp, state_slot::kRng);
+      bool multiResume = isResume && rngSlotIn;
+      impulse::RandomSplitOp splitOp;
+      if (!multiResume) {
+        SmallVector<Type> chainKeyTypes(numChains, rngInput.getType());
+        splitOp = impulse::RandomSplitOp::create(rewriter, loc, chainKeyTypes,
+                                                 rngInput);
+      }
 
       SmallVector<SmallVector<Value>> perChain;
       perChain.reserve(numChains);
-      for (int64_t c = 0; c < numChains; ++c)
-        perChain.push_back(runOneChain(splitOp.getResult(c)));
+      for (int64_t c = 0; c < numChains; ++c) {
+        Value chainRng =
+            multiResume ? sliceChainDim(rngSlotIn, c) : splitOp.getResult(c);
+        perChain.push_back(runOneChain(chainRng, c));
+      }
 
       auto idxConst = [&](int64_t v) -> Value {
         return arith::ConstantOp::create(
@@ -1953,14 +1999,42 @@ struct ExpandImpulsePass
         return buf;
       };
 
+      // ui64 has no arith.constant; seed the buffer with chain 0's key.
+      auto stackRngChainMajor = [&]() -> Value {
+        auto rngTy = cast<RankedTensorType>(perChain[0][2].getType());
+        SmallVector<int64_t> cmShape;
+        cmShape.push_back(numChains);
+        cmShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
+        auto cmType = RankedTensorType::get(cmShape, rngTy.getElementType());
+        SmallVector<int64_t> oneShape;
+        oneShape.push_back(1);
+        oneShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
+        auto oneType = RankedTensorType::get(oneShape, rngTy.getElementType());
+        Value buf = enzyme::BroadcastOp::create(
+            rewriter, loc, cmType, perChain[0][2],
+            rewriter.getDenseI64ArrayAttr({numChains}));
+        for (int64_t c = 0; c < numChains; ++c) {
+          Value reshaped = impulse::ReshapeOp::create(rewriter, loc, oneType,
+                                                      perChain[c][2]);
+          SmallVector<Value> idxs;
+          idxs.push_back(idxConst(c));
+          for (int64_t d = 0; d < rngTy.getRank(); ++d)
+            idxs.push_back(zeroIdx);
+          buf = impulse::DynamicUpdateSliceOp::create(rewriter, loc, cmType,
+                                                      buf, reshaped, idxs);
+        }
+        return buf;
+      };
+
       SmallVector<Value> stacked;
       stacked.push_back(stackChainMajor(0));
       stacked.push_back(stackChainMajor(1));
-      // output_rng_state (ui64): no arith.constant zero buffer is possible, so
-      // return the last chain's final rng.
+      // output_rng_state is the last chain's key; all keys go in `rng`.
       stacked.push_back(perChain[numChains - 1][2]);
       for (unsigned j = 3; j < perChain[0].size(); ++j)
         stacked.push_back(stackChainMajor(j));
+      if (schema && !schema.empty())
+        stacked.push_back(stackRngChainMajor());
 
       rewriter.replaceOp(mcmcOp, stacked);
       return success();
