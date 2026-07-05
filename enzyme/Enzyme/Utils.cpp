@@ -2904,8 +2904,8 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
 
   if (loadPtr && storePtr)
-    if (auto alias =
-            arePointersGuaranteedNoAlias(TLI, AA, LI, loadPtr, storePtr, true))
+    if (auto alias = arePointersGuaranteedNoAlias(TLI, AA, DT, LI, loadPtr,
+                                                  storePtr, true))
       if (*alias)
         return false;
 
@@ -4544,8 +4544,10 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures) {
-  Instruction *VI = dyn_cast<Instruction>(V);
+                       size_t checkLoadCaptures, Instruction *startinst) {
+  Instruction *VI = startinst;
+  if (!VI)
+    VI = dyn_cast<Instruction>(V);
   if (!VI)
     VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   else
@@ -4659,8 +4661,9 @@ std::optional<bool>
 llvm::Optional<bool>
 #endif
 arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::LoopInfo &LI, llvm::Value *op0,
-                             llvm::Value *op1, bool offsetAllowed) {
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed) {
   auto lhs = getBaseObject(op0, offsetAllowed);
   auto rhs = getBaseObject(op1, offsetAllowed);
 
@@ -4687,57 +4690,90 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   bool noalias[2] = {noalias_lhs, noalias_rhs};
 
   for (int i = 0; i < 2; i++) {
+    int start_i = i;
     Value *start = (i == 0) ? lhs : rhs;
+    int end_i = 1 - i;
     Value *end = (i == 0) ? rhs : lhs;
-    if (noalias[i]) {
-      if (noalias[1 - i]) {
+
+    if (noalias[start_i]) {
+      if (noalias[end_i]) {
         return true;
       }
       if (isa<Argument>(end)) {
         return true;
       }
+
+      if (auto starti = dyn_cast<Instruction>(start)) {
+        // If end dominates start, then since start is noalias at its creation,
+        // it is definitionally not aliasing end
+        if (DT.dominates(end, starti)) {
+          return true;
+        }
+      }
+
       if (auto endi = dyn_cast<Instruction>(end)) {
         if (notCapturedBefore(start, endi, 0)) {
           return true;
         }
       }
     }
-    if (auto ld = dyn_cast<LoadInst>(start)) {
-      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
-      if (isAllocationCall(base, TLI)) {
-        // The memory read by `ld` holds either undef or a fresh pointer
-        // installed by the allocator itself, unless something wrote to it
-        // after the allocation. Only in the former case is the loaded
-        // pointer guaranteed to differ from any previously existing
-        // pointer: if a store into the allocation happened before the
-        // load, the loaded value may be any captured pointer, including
-        // `end` (e.g. a value stored into a Core.Box and loaded back).
-        // Therefore scan for clobbers between the allocation and the
-        // load, not between the load and the compare.
-        bool overwritten = false;
-        if (auto basei = dyn_cast<Instruction>(base)) {
-          allInstructionsBetween(LI, basei, ld, [&](Instruction *I) -> bool {
-            if (!I->mayWriteToMemory())
-              return /*earlyBreak*/ false;
 
-            if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                     /*maybeReader*/ ld,
-                                     /*maybeWriter*/ I)) {
-              overwritten = true;
-              return /*earlyBreak*/ true;
-            }
-            return /*earlyBreak*/ false;
-          });
-        } else {
-          overwritten = true;
+    if (auto ld = dyn_cast<LoadInst>(start)) {
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ true);
+      if (isAllocationCall(base, TLI) || isa<AllocaInst>(base)) {
+        auto alloc_call = cast<Instruction>(base);
+
+        if (noalias[end_i] || DT.dominates(end, alloc_call)) {
+
+          // Even if the alloc was written into:
+          // if either:
+          //    a) end preceeded the allocation
+          //    OR
+          //    b) end didn't alias any other value at time of construction
+          // AND
+          //    end was not captured prior to the load,
+          //  it cannot possibly alias.
+          //
+          //  In the (a) case, end was created prior, not captured into the
+          //  allocation prior to store. So there is no way the allocation can
+          //  contain the bits of end In the (b) case, end is a fresh (aka non
+          //  aliasing) pointer, which means no other pointers in scope could
+          //  point to, none of which were captured
+          if (notCapturedBefore(end, ld, 0, alloc_call)) {
+            return true;
+          }
+
+          bool alloc_written = false;
+          allInstructionsBetween(
+              LI, alloc_call, ld, [&](Instruction *I) -> bool {
+                if (!I->mayWriteToMemory())
+                  return /*earlyBreak*/ false;
+
+                if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                         /*maybeReader*/ ld,
+                                         /*maybeWriter*/ I)) {
+                  alloc_written = true;
+                  return /*earlyBreak*/ true;
+                }
+                return /*earlyBreak*/ false;
+              });
+
+          // If there was no store into the allocation prior to the load, the
+          // load cannot possibly alias with a value which defined prior to the
+          // the allocation. Additionally, if there is any value which is
+          // noalias upon construction, that value also cannot alias the load.
+          if (!alloc_written) {
+            return true;
+          }
         }
 
-        if (!overwritten) {
-          if (isa<Argument>(end))
+        // Look through all loads out of alloc_call, and check if any of them
+        // are captured before endi. If there are none, we can say there is no
+        // alias between endi and ld = load alloc_call.
+        if (auto endi = dyn_cast<Instruction>(end)) {
+          if (notCapturedBefore(alloc_call, endi, 1)) {
             return true;
-          if (auto endi = dyn_cast<Instruction>(end))
-            if (isNoAlias(end) || (notCapturedBefore(start, endi, 1)))
-              return true;
+          }
         }
       }
     }
