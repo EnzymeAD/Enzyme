@@ -72,6 +72,9 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
     }
     OperandTypes.push_back(
         RankedTensorType::get({1, positionSize}, builder.getF64Type()));
+    if (constraintSize >= 0)
+      OperandTypes.push_back(
+          RankedTensorType::get({1, constraintSize}, builder.getF64Type()));
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.push_back(
         RankedTensorType::get({1, positionSize}, builder.getF64Type()));
@@ -120,6 +123,10 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
     entry.insertArgument(
         0u, RankedTensorType::get({1, positionSize}, builder.getF64Type()),
         toeval.getLoc());
+    if (constraintSize >= 0)
+      entry.insertArgument(
+          1u, RankedTensorType::get({1, constraintSize}, builder.getF64Type()),
+          toeval.getLoc());
   }
 
   return new ImpulseUtils(NewF, toeval, originalToNew, originalToNewOps, mode);

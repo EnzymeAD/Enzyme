@@ -148,13 +148,22 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
   }];
 }
 
-def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+def RegenerateOp : Impulse_Op<"regenerate",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Regenerate selected addresses in a trace";
   let description = [{
     Regenerates selected addresses while keeping others fixed.
     Used internally by MH.
 
     Takes explicit old_trace and returns new trace with weight.
+
+    An optional `constraint` tensor (with `constrained_addresses` describing its
+    layout) supplies observed values for constrained sample sites. Constrained
+    sites are always scored/written from the constraint value when their branch
+    is taken, rather than reused from the old trace slot. This is what keeps MH
+    correct when a proposed value flips which `impulse.if` branch executes: a
+    site that was previously not taken (its trace slot is stale) is refreshed
+    from the constraint instead of the stale slot.
 
     Returns: (new_trace, weight, retvals...)
     - new_trace: tensor<1 x position_size x f64> - flattened samples
@@ -166,8 +175,10 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     AnyRankedTensor:$original_trace,
+    Optional<AnyRankedTensor>:$constraint,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -178,15 +189,19 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace prop-dict attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace (`constrained_by` $constraint^)? prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
-def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+def MHOp : Impulse_Op<"mh",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
     Performs one MH step: regenerates selected addresses and accepts/rejects
     based on weight ratio.
+
+    An optional `constraint` tensor (with `constrained_addresses`) supplies
+    observed values, forwarded verbatim to the internal `regenerate`.
   }];
 
   let arguments = (ins
@@ -194,8 +209,10 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
     AnyRankedTensor:$original_trace,
     AnyRankedTensor:$original_weight,
     Variadic<AnyType>:$inputs,
+    Optional<AnyRankedTensor>:$constraint,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -207,7 +224,7 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight prop-dict attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight (`constrained_by` $constraint^)? prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 

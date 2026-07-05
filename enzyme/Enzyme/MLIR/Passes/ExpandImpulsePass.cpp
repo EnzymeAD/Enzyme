@@ -1897,11 +1897,10 @@ struct ExpandImpulsePass
 
       auto loc = mhOp.getLoc();
 
-      Value oldTrace = mhOp.getOperand(0);
-      Value oldWeight = mhOp.getOperand(1);
-      SmallVector<Value> inputs;
-      for (unsigned i = 2; i < mhOp.getNumOperands(); ++i)
-        inputs.push_back(mhOp.getOperand(i));
+      Value oldTrace = mhOp.getOriginalTrace();
+      Value oldWeight = mhOp.getOriginalWeight();
+      SmallVector<Value> inputs(mhOp.getInputs().begin(),
+                                mhOp.getInputs().end());
       auto selection = mhOp.getSelectionAttr();
 
       auto traceType = oldTrace.getType();
@@ -1927,8 +1926,10 @@ struct ExpandImpulsePass
           /*fn*/ mhOp.getFnAttr(),
           /*inputs*/ inputs,
           /*original_trace*/ oldTrace,
+          /*constraint*/ mhOp.getConstraint(),
           /*selection*/ selection,
           /*regenerate_addresses*/ regenerateAddresses,
+          /*constrained_addresses*/ mhOp.getConstrainedAddressesAttr(),
           /*name*/ nameAttr);
 
       Value newTrace = regenerateOp.getNewTrace();
@@ -2377,8 +2378,23 @@ struct ExpandImpulsePass
         return failure();
       }
 
+      ArrayAttr constrainedAddresses = CI.getConstrainedAddressesAttr();
+      bool hasConstraint = static_cast<bool>(CI.getConstraint());
+      int64_t constraintSize = -1;
+      if (hasConstraint) {
+        ArrayAttr cAddrs = constrainedAddresses ? constrainedAddresses
+                                                : rewriter.getArrayAttr({});
+        constraintSize =
+            computePositionSizeForSelection(CI, fn, cAddrs, symbolTable);
+        if (constraintSize < 0) {
+          CI.emitError(
+              "Impulse: failed to compute constraint size for regenerate");
+          return failure();
+        }
+      }
+
       auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Regenerate,
-                                                  positionSize);
+                                                  positionSize, constraintSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -2399,6 +2415,7 @@ struct ExpandImpulsePass
       Value currTrace = zeroTrace;
 
       Value prevTrace = NewF.getArgument(0);
+      Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
       int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
@@ -2447,11 +2464,34 @@ struct ExpandImpulsePass
             sampledValues.append(distCall.getResults().begin(),
                                  distCall.getResults().end());
           } else {
-            // B. Generative function: extract from original trace.
+            bool isConstrained = false;
+            int64_t constrainedOffset = -1;
+            if (constraint && constrainedAddresses) {
+              for (auto addr : constrainedAddresses) {
+                auto address = cast<ArrayAttr>(addr);
+                if (!address.empty() &&
+                    address[0] == sampleOp.getSymbolAttr()) {
+                  if (address.size() != 1) {
+                    sampleOp.emitError(
+                        "Impulse: distribution function cannot have composite "
+                        "constrained address");
+                    return WalkResult::interrupt();
+                  }
+                  isConstrained = true;
+                  constrainedOffset = computeOffsetForSampleInSelection(
+                      CI, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
+                      symbolTable);
+                  break;
+                }
+              }
+            }
+
+            Value source = isConstrained ? constraint : prevTrace;
+            int64_t extractOffset =
+                isConstrained ? constrainedOffset : sampleOffset;
             sampledValues.resize(sampleOp.getNumResults());
             sampledValues[0] = sampleOp.getOperand(0); // RNG state
 
-            int64_t extractOffset = sampleOffset;
             for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
               auto resultType =
                   cast<RankedTensorType>(sampleOp.getResult(i).getType());
@@ -2465,7 +2505,7 @@ struct ExpandImpulsePass
               auto sliceType = RankedTensorType::get(
                   {1, numElements}, resultType.getElementType());
               auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, prevTrace,
+                  rewriter, sampleOp.getLoc(), sliceType, source,
                   rewriter.getDenseI64ArrayAttr({0, extractOffset}),
                   rewriter.getDenseI64ArrayAttr(
                       {1, extractOffset + numElements}),
@@ -2559,6 +2599,11 @@ struct ExpandImpulsePass
           ArrayAttr subRegenerateAddrs =
               buildSubSelection(rewriter, CI.getRegenerateAddressesAttr(),
                                 sampleOp.getSymbolAttr());
+          ArrayAttr subConstrainedAddrs =
+              (constraint && constrainedAddresses)
+                  ? buildSubSelection(rewriter, constrainedAddresses,
+                                      sampleOp.getSymbolAttr())
+                  : ArrayAttr();
 
           if (subSelection.empty()) {
             auto genCall = func::CallOp::create(
@@ -2591,6 +2636,28 @@ struct ExpandImpulsePass
                     {1, mergeOffset + subPositionSize}),
                 rewriter.getDenseI64ArrayAttr({1, 1}));
 
+            Value subConstraint;
+            ArrayAttr subConstrainedForOp;
+            if (constraint && subConstrainedAddrs &&
+                !subConstrainedAddrs.empty()) {
+              int64_t subConstraintSize = computePositionSizeForSelection(
+                  sampleOp, genFn, subConstrainedAddrs, symbolTable);
+              int64_t subConstraintOffset = computeOffsetForNestedSample(
+                  sampleOp, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
+                  symbolTable);
+              if (subConstraintSize > 0 && subConstraintOffset >= 0) {
+                auto subConstraintType = RankedTensorType::get(
+                    {1, subConstraintSize}, rewriter.getF64Type());
+                subConstraint = impulse::SliceOp::create(
+                    rewriter, sampleOp.getLoc(), subConstraintType, constraint,
+                    rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
+                    rewriter.getDenseI64ArrayAttr(
+                        {1, subConstraintOffset + subConstraintSize}),
+                    rewriter.getDenseI64ArrayAttr({1, 1}));
+                subConstrainedForOp = subConstrainedAddrs;
+              }
+            }
+
             // Build result types: (new_trace, weight, original_returns...)
             auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
             SmallVector<Type> regenResultTypes;
@@ -2602,7 +2669,8 @@ struct ExpandImpulsePass
             auto nestedRegenerate = impulse::RegenerateOp::create(
                 rewriter, sampleOp.getLoc(), regenResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
-                subSelection, subRegenerateAddrs);
+                subConstraint, subSelection, subRegenerateAddrs,
+                subConstrainedForOp, rewriter.getStringAttr(""));
 
             Value subTrace = nestedRegenerate.getNewTrace();
             Value subWeight = nestedRegenerate.getWeight();
@@ -2667,6 +2735,8 @@ struct ExpandImpulsePass
       rewriter.setInsertionPoint(CI);
       SmallVector<Value> operands;
       operands.push_back(CI.getOriginalTrace());
+      if (hasConstraint)
+        operands.push_back(CI.getConstraint());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
       auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
                                         NewF.getResultTypes(), operands);
