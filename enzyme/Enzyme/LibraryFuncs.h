@@ -135,6 +135,13 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
       return true;
     if (name == "swift_release")
       return true;
+    // Numba runtime (NRT) reference-count release / deallocation.  Recognizing
+    // NRT_decref as a deallocation lets Enzyme cache the paired
+    // NRT_MemInfo_alloc* allocation and emit a single, correctly-placed free
+    // instead of duplicating the refcount op across the augmented/reverse
+    // passes (which multi-frees and corrupts the heap).
+    if (name == "NRT_decref")
+      return true;
     return false;
   }
 
