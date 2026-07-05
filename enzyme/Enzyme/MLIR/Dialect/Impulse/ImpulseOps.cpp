@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Interfaces/DistBuilder.h"
 #include "Passes/InferStateLayout.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -14,6 +15,18 @@
 
 using namespace mlir;
 using namespace mlir::impulse;
+
+static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
+                                       SupportAttr support) {
+  if (!dist || !support)
+    return success();
+  SupportAttr derived = deriveSupportFromDist(op->getContext(), dist);
+  if (derived.getKind() != support.getKind())
+    return op->emitOpError(
+        "explicit support contradicts the support derived from its dist "
+        "attribute");
+  return success();
+}
 
 //===----------------------------------------------------------------------===//
 // SampleOp
@@ -36,6 +49,14 @@ LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   return success();
+}
+
+LogicalResult SampleOp::verify() {
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
+}
+
+LogicalResult SampleRegionOp::verify() {
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
 }
 
 //===----------------------------------------------------------------------===//

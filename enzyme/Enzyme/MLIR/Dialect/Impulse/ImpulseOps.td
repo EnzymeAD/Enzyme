@@ -54,6 +54,7 @@ def SampleOp : Impulse_Op<"sample",
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
     OptionalAttr<SupportAttr>:$support,
+    OptionalAttr<DistAttr>:$dist,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -62,6 +63,8 @@ def SampleOp : Impulse_Op<"sample",
   let assemblyFormat = [{
     $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 def UntracedCallOp : Impulse_Op<"untracedCall"> {
@@ -355,12 +358,15 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
     OptionalAttr<AddressAttr>:$address,
     OptionalAttr<SupportAttr>:$support,
+    OptionalAttr<DistAttr>:$dist,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs Variadic<AnyType>:$outputs);
 
   let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
+
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf attr-dict

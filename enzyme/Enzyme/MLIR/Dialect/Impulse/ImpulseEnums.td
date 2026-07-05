@@ -60,6 +60,72 @@ def SupportKind : I32EnumAttr<"SupportKind",
 
 def SupportKindAttr : EnumAttr<Impulse_Dialect, SupportKind, "support_kind">;
 
+def XformKind : I32EnumAttr<"XformKind",
+    "Bijector applied to a base distribution or constraint",
+    [
+      I32EnumAttrCase<"IDENTITY", 0>,
+      I32EnumAttrCase<"EXP", 1>,
+      I32EnumAttrCase<"AFFINE", 2>,
+      I32EnumAttrCase<"COMPOSE", 3>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::impulse";
+}
+
+def XformKindAttr : EnumAttr<Impulse_Dialect, XformKind, "xform_kind">;
+
+def XformAttr : Impulse_Attr<"Xform", "xform"> {
+  let summary = "A bijection (transform) in the shared bijector library";
+  let description = [{
+    One bijector: `forward` maps base/unconstrained space to the observed
+    /constrained space, `inverse` maps back, and the change of variables adds
+    `logabsdetjac`. AFFINE reads its loc/scale from the sample site's operands
+    (positional, after the RNG operand); it carries no static parameters. A
+    COMPOSE carries a `components` array applied inner-to-outer (component 0 is
+    applied first). For the F2 spike only IDENTITY, EXP, and AFFINE are emitted.
+  }];
+  let parameters = (ins
+    "XformKind":$kind,
+    OptionalParameter<"ArrayAttr">:$components
+  );
+  let assemblyFormat = "`<` $kind (`,` $components^)? `>`";
+}
+
+def DistBaseKind : I32EnumAttr<"DistBaseKind",
+    "Primitive base distribution of a DistAttr",
+    [
+      I32EnumAttrCase<"STD_NORMAL", 0>,
+      I32EnumAttrCase<"CUSTOM", 1>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::impulse";
+}
+
+def DistBaseKindAttr : EnumAttr<Impulse_Dialect, DistBaseKind, "dist_base_kind">;
+
+def DistAttr : Impulse_Attr<"Dist", "dist"> {
+  let summary = "Distribution as a primitive base plus a transform chain";
+  let description = [{
+    A distribution described as a primitive base distribution followed by a
+    (possibly empty) chain of `#impulse.xform` bijectors, applied base-first.
+    `Normal(mu, sigma)` is `#impulse.dist<std_normal, [#impulse.xform<affine>]>`;
+    `LogNormal(mu, sigma)` is
+    `#impulse.dist<std_normal, [#impulse.xform<affine>, #impulse.xform<exp>]>`.
+
+    The support of the site is DERIVED from this attribute (base support pushed
+    through each transform's codomain); the derived support is the single source
+    of truth that both the emitted logpdf's change of variables and the HMC/VI
+    reparameterization share. `event_dim` is the rank of one event (0 for a
+    scalar site); unused in the spike beyond round-tripping.
+  }];
+  let parameters = (ins
+    "DistBaseKind":$base,
+    OptionalParameter<"ArrayAttr">:$transforms,
+    DefaultValuedParameter<"int64_t", "0">:$event_dim
+  );
+  let assemblyFormat = "`<` $base (`,` $transforms^)? (`,` `event_dim` `=` $event_dim^)? `>`";
+}
+
 def SupportAttr : Impulse_Attr<"Support", "support"> {
   let summary = "Distribution support specification for constraint transforms";
   let description = [{

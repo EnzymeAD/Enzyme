@@ -13,6 +13,7 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
 #include "Interfaces/VIUtils.h"
@@ -688,6 +689,67 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues; // Values to replace uses of sample op
+
+        // shared builder emits the sampler and change-of-variables logpdf IR
+        // in place of calling the traced sampler/logpdf symbols.
+        if (auto dist = sampleOp.getDistAttr()) {
+          Value rng = sampleOp.getInputs().front();
+          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
+                                      sampleOp.getInputs().end());
+          auto sampleType =
+              cast<RankedTensorType>(sampleOp.getResult(1).getType());
+
+          sampledValues = impulse::emitDistSampler(
+              rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+
+          Value logpdf = impulse::emitDistLogpdf(
+              rewriter, sampleOp.getLoc(), dist, sampledValues[1], distArgs);
+          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    weightAccumulator, logpdf);
+
+          bool inSelection = false;
+          for (auto addr : selection) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              inSelection = true;
+              break;
+            }
+          }
+          if (inSelection) {
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto sampleValue = sampledValues[i];
+              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleTy);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "Impulse: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleTy.getElementType());
+              auto flatSample = impulse::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentOffset)));
+              currTrace = impulse::DynamicUpdateSliceOp::create(
+                              rewriter, sampleOp.getLoc(), traceType, currTrace,
+                              flatSample, ValueRange{row0, colOff})
+                              .getResult();
+              currentOffset += numElements;
+            }
+          }
+
+          sampleOp.replaceAllUsesWith(sampledValues);
+          toErase.push_back(sampleOp);
+          return WalkResult::advance();
+        }
+
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {

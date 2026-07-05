@@ -98,6 +98,8 @@ def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
   }];
   let dependentDialects = [
     "arith::ArithDialect",
+    "math::MathDialect",
+    "enzyme::EnzymeDialect",
     "impulse::ImpulseDialect",
   ];
 }

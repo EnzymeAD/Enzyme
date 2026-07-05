@@ -8,10 +8,12 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -69,7 +71,10 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
     SmallVector<Attribute> address(prefix.begin(), prefix.end());
     address.push_back(symbol);
 
-    if (sampleOp.getLogpdfAttr()) {
+    if (sampleOp.getDistAttr()) {
+      // attribute, so no traced logpdf function is required.
+      addresses.push_back(ArrayAttr::get(root->getContext(), address));
+    } else if (sampleOp.getLogpdfAttr()) {
       auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
           symbolTable.lookupNearestSymbolFrom(root, sampleOp.getLogpdfAttr()));
       if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
@@ -123,9 +128,43 @@ static void inlineFunctionIntoRegion(OpBuilder &builder, FunctionOpInterface fn,
   }
 }
 
-/// `impulse.sample_region` at the builder's insertion point, inlining the
-/// sampler and logpdf function bodies as sub-regions. The site's address is
-/// `addressPrefix ++ [symbol]`. Result mappings are registered in `mapper`.
+static void emitDistSamplerIntoRegion(OpBuilder &builder,
+                                      impulse::SampleOp sampleOp,
+                                      impulse::DistAttr dist, Region &region) {
+  OpBuilder::InsertionGuard guard(builder);
+  Block *block = builder.createBlock(&region);
+  for (Value input : sampleOp.getInputs())
+    block->addArgument(input.getType(), input.getLoc());
+  builder.setInsertionPointToStart(block);
+
+  Value rng = block->getArgument(0);
+  SmallVector<Value> distArgs(std::next(block->args_begin()),
+                              block->args_end());
+  auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
+  SmallVector<Value> out = impulse::emitDistSampler(
+      builder, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+  impulse::YieldOp::create(builder, sampleOp.getLoc(), out);
+}
+
+static void emitDistLogpdfIntoRegion(OpBuilder &builder,
+                                     impulse::SampleOp sampleOp,
+                                     impulse::DistAttr dist, Region &region) {
+  OpBuilder::InsertionGuard guard(builder);
+  Block *block = builder.createBlock(&region);
+  auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
+  block->addArgument(sampleType, sampleOp.getLoc());
+  for (Value input : llvm::drop_begin(sampleOp.getInputs()))
+    block->addArgument(input.getType(), input.getLoc());
+  builder.setInsertionPointToStart(block);
+
+  Value observed = block->getArgument(0);
+  SmallVector<Value> distArgs(std::next(block->args_begin()),
+                              block->args_end());
+  Value lp = impulse::emitDistLogpdf(builder, sampleOp.getLoc(), dist, observed,
+                                     distArgs);
+  impulse::YieldOp::create(builder, sampleOp.getLoc(), lp);
+}
+
 static void convertSampleToSampleRegion(OpBuilder &builder,
                                         impulse::SampleOp sampleOp,
                                         IRMapping &mapper,
@@ -143,23 +182,34 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
     address.assign(addressPrefix.begin(), addressPrefix.end());
   address.push_back(sampleOp.getSymbolAttr());
 
+  impulse::DistAttr dist = sampleOp.getDistAttr();
+  impulse::SupportAttr support = sampleOp.getSupportAttr();
+  if (dist && !support)
+    support = impulse::deriveSupportFromDist(ctx, dist);
+
   auto sampleRegionOp = impulse::SampleRegionOp::create(
       builder, loc, sampleOp.getResultTypes(), mappedInputs,
       sampleOp.getFnAttr(), sampleOp.getLogpdfAttr(),
-      ArrayAttr::get(ctx, address), sampleOp.getSupportAttr(),
-      sampleOp.getNameAttr());
+      ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
 
-  auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-  if (samplerFn && !samplerFn.getFunctionBody().empty())
-    inlineFunctionIntoRegion(builder, samplerFn, sampleRegionOp.getSampler());
+  if (dist) {
+    emitDistSamplerIntoRegion(builder, sampleOp, dist,
+                              sampleRegionOp.getSampler());
+    emitDistLogpdfIntoRegion(builder, sampleOp, dist,
+                             sampleRegionOp.getLogpdf());
+  } else {
+    auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+    if (samplerFn && !samplerFn.getFunctionBody().empty())
+      inlineFunctionIntoRegion(builder, samplerFn, sampleRegionOp.getSampler());
 
-  if (sampleOp.getLogpdfAttr()) {
-    auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(sampleOp,
-                                            sampleOp.getLogpdfAttr()));
-    if (logpdfFn && !logpdfFn.getFunctionBody().empty())
-      inlineFunctionIntoRegion(builder, logpdfFn, sampleRegionOp.getLogpdf());
+    if (sampleOp.getLogpdfAttr()) {
+      auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp,
+                                              sampleOp.getLogpdfAttr()));
+      if (logpdfFn && !logpdfFn.getFunctionBody().empty())
+        inlineFunctionIntoRegion(builder, logpdfFn, sampleRegionOp.getLogpdf());
+    }
   }
 
   for (auto [oldResult, newResult] :
