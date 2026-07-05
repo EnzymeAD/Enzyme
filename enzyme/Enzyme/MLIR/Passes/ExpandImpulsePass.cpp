@@ -355,6 +355,117 @@ computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+// receive disjoint trace column ranges.
+struct BranchCarry {
+  Value currTrace;
+  Value weight;
+  int64_t offset;
+};
+
+using ProcessSampleFn =
+    llvm::function_ref<WalkResult(impulse::SampleOp, BranchCarry &)>;
+
+static LogicalResult
+processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
+                    RankedTensorType traceType, ProcessSampleFn processSample,
+                    SmallVectorImpl<Operation *> &toErase);
+
+// Branches start from the pre-if snapshot; untaken slots stay zero.
+static LogicalResult processImpulseIf(impulse::IfOp ifOp,
+                                      PatternRewriter &rewriter,
+                                      BranchCarry &carry,
+                                      RankedTensorType traceType,
+                                      ProcessSampleFn processSample,
+                                      SmallVectorImpl<Operation *> &toErase) {
+  auto loc = ifOp.getLoc();
+  auto scalarType = RankedTensorType::get({}, rewriter.getF64Type());
+
+  Value snapTrace = carry.currTrace;
+  Value snapWeight = carry.weight;
+
+  Block &trueBlock = ifOp.getTrueBranch().front();
+  carry.currTrace = snapTrace;
+  carry.weight = snapWeight;
+  if (failed(processImpulseBlock(trueBlock, rewriter, carry, traceType,
+                                 processSample, toErase)))
+    return failure();
+  Value trueTrace = carry.currTrace;
+  Value trueWeight = carry.weight;
+
+  // Keep `carry.offset`: the branches get disjoint trace columns.
+  Block &falseBlock = ifOp.getFalseBranch().front();
+  carry.currTrace = snapTrace;
+  carry.weight = snapWeight;
+  if (failed(processImpulseBlock(falseBlock, rewriter, carry, traceType,
+                                 processSample, toErase)))
+    return failure();
+  Value falseTrace = carry.currTrace;
+  Value falseWeight = carry.weight;
+
+  auto extendYield = [&](Block &b, Value t, Value w) {
+    auto yield = cast<impulse::YieldOp>(b.getTerminator());
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPoint(yield);
+    SmallVector<Value> ops(yield.getOperands().begin(),
+                           yield.getOperands().end());
+    ops.push_back(t);
+    ops.push_back(w);
+    impulse::YieldOp::create(rewriter, yield.getLoc(), ops);
+    rewriter.eraseOp(yield);
+  };
+  extendYield(trueBlock, trueTrace, trueWeight);
+  extendYield(falseBlock, falseTrace, falseWeight);
+
+  SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
+                                   ifOp.getResultTypes().end());
+  unsigned oldNumResults = ifOp.getNumResults();
+  newResultTypes.push_back(traceType);
+  newResultTypes.push_back(scalarType);
+
+  rewriter.setInsertionPoint(ifOp);
+  auto newIf =
+      impulse::IfOp::create(rewriter, loc, newResultTypes, ifOp.getPredicate());
+  rewriter.inlineRegionBefore(ifOp.getTrueBranch(), newIf.getTrueBranch(),
+                              newIf.getTrueBranch().end());
+  rewriter.inlineRegionBefore(ifOp.getFalseBranch(), newIf.getFalseBranch(),
+                              newIf.getFalseBranch().end());
+
+  carry.currTrace = newIf.getResult(oldNumResults);
+  carry.weight = newIf.getResult(oldNumResults + 1);
+
+  rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
+  return success();
+}
+
+static LogicalResult
+processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
+                    RankedTensorType traceType, ProcessSampleFn processSample,
+                    SmallVectorImpl<Operation *> &toErase) {
+  SmallVector<Operation *> ops;
+  for (Operation &op : block)
+    ops.push_back(&op);
+
+  for (Operation *op : ops) {
+    if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+      if (processSample(sampleOp, carry).wasInterrupted())
+        return failure();
+    } else if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
+      bool hasSample = false;
+      ifOp->walk([&](impulse::SampleOp) { hasSample = true; });
+      if (hasSample && failed(processImpulseIf(ifOp, rewriter, carry, traceType,
+                                               processSample, toErase)))
+        return failure();
+    } else {
+      for (Region &r : op->getRegions())
+        for (Block &b : r.getBlocks())
+          if (failed(processImpulseBlock(b, rewriter, carry, traceType,
+                                         processSample, toErase)))
+            return failure();
+    }
+  }
+  return success();
+}
+
 struct ExpandImpulsePass
     : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
   using ExpandImpulsePassBase::ExpandImpulsePassBase;
@@ -475,7 +586,12 @@ struct ExpandImpulsePass
       int64_t currentOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
+      BranchCarry carry{currTrace, weightAccumulator, currentOffset};
+      auto processSample = [&](impulse::SampleOp sampleOp,
+                               BranchCarry &carry) -> WalkResult {
+        Value &currTrace = carry.currTrace;
+        Value &weightAccumulator = carry.weight;
+        int64_t &currentOffset = carry.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -645,12 +761,19 @@ struct ExpandImpulsePass
 
         toErase.push_back(sampleOp);
         return WalkResult::advance();
-      });
+      };
+
+      auto result =
+          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
+                              traceType, processSample, toErase);
+      currTrace = carry.currTrace;
+      weightAccumulator = carry.weight;
+      currentOffset = carry.offset;
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
 
-      if (result.wasInterrupted()) {
+      if (failed(result)) {
         CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
@@ -1905,7 +2028,12 @@ struct ExpandImpulsePass
       int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
+      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset};
+      auto processSample = [&](impulse::SampleOp sampleOp,
+                               BranchCarry &carry) -> WalkResult {
+        Value &currTrace = carry.currTrace;
+        Value &weightAccumulator = carry.weight;
+        int64_t &currentTraceOffset = carry.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -2174,12 +2302,19 @@ struct ExpandImpulsePass
         sampleOp.replaceAllUsesWith(sampledValues);
         toErase.push_back(sampleOp);
         return WalkResult::advance();
-      });
+      };
+
+      auto result =
+          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
+                              traceType, processSample, toErase);
+      currTrace = carry.currTrace;
+      weightAccumulator = carry.weight;
+      currentTraceOffset = carry.offset;
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
 
-      if (result.wasInterrupted()) {
+      if (failed(result)) {
         CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
@@ -2267,7 +2402,12 @@ struct ExpandImpulsePass
       int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
+      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset};
+      auto processSample = [&](impulse::SampleOp sampleOp,
+                               BranchCarry &carry) -> WalkResult {
+        Value &currTrace = carry.currTrace;
+        Value &weightAccumulator = carry.weight;
+        int64_t &currentTraceOffset = carry.offset;
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -2493,12 +2633,19 @@ struct ExpandImpulsePass
         sampleOp.replaceAllUsesWith(sampledValues);
         toErase.push_back(sampleOp);
         return WalkResult::advance();
-      });
+      };
+
+      auto result =
+          processImpulseBlock(NewF.getFunctionBody().front(), rewriter, carry,
+                              traceType, processSample, toErase);
+      currTrace = carry.currTrace;
+      weightAccumulator = carry.weight;
+      currentTraceOffset = carry.offset;
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
 
-      if (result.wasInterrupted()) {
+      if (failed(result)) {
         CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
