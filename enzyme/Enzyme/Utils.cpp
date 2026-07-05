@@ -4569,7 +4569,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   }
   SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
   for (auto U : V->users()) {
-    todo.emplace_back(cast<Instruction>(U), checkLoadCaptures, V);
+    if (auto I = dyn_cast<Instruction>(U)) {
+      todo.emplace_back(cast<Instruction>(I), checkLoadCaptures, V);
+    }
   }
   std::set<std::tuple<Value *, size_t, Value *>> seen;
   while (todo.size()) {
