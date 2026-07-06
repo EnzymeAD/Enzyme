@@ -99,7 +99,43 @@ module {
       : (tensor<2xui64>, tensor<3xf64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
     return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
   }
+
+  func.func private @gum_s(%r: tensor<2xui64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    return %r, %lc : tensor<2xui64>, tensor<f64>
+  }
+  func.func @gum_model(%r: tensor<2xui64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    %o:2 = impulse.sample @gum_s(%r, %lc, %sc) {symbol = #impulse.symbol<8>, dist = #impulse.dist<GUMBEL>}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
+  }
+  func.func @gum_top(%r: tensor<2xui64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+    %t, %w, %rng, %v = impulse.simulate @gum_model(%r, %lc, %sc) {selection = [[#impulse.symbol<8>]]}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
+  }
 }
+
+// CHECK-LABEL: func.func @gum_model.simulate
+// CHECK-DAG:   %[[GZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG:   %[[GONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
+// CHECK:       %[[GRNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[GZERO]], %[[GONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK-NEXT:  %[[L1:.+]] = math.log %[[U]] : tensor<f64>
+// CHECK-NEXT:  %[[NL1:.+]] = arith.negf %[[L1]] : tensor<f64>
+// CHECK-NEXT:  %[[L2:.+]] = math.log %[[NL1]] : tensor<f64>
+// CHECK-NEXT:  %[[G:.+]] = arith.negf %[[L2]] : tensor<f64>
+// CHECK-NEXT:  %[[SG:.+]] = arith.mulf %arg2, %[[G]] : tensor<f64>
+// CHECK-NEXT:  %[[X:.+]] = arith.addf %arg1, %[[SG]] : tensor<f64>
+// CHECK-NEXT:  %[[DIFF:.+]] = arith.subf %[[X]], %arg1 : tensor<f64>
+// CHECK-NEXT:  %[[Z:.+]] = arith.divf %[[DIFF]], %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[NZ:.+]] = arith.negf %[[Z]] : tensor<f64>
+// CHECK-NEXT:  %[[EXPNZ:.+]] = math.exp %[[NZ]] : tensor<f64>
+// CHECK-NEXT:  %[[SUM:.+]] = arith.addf %[[Z]], %[[EXPNZ]] : tensor<f64>
+// CHECK-NEXT:  %[[KER:.+]] = arith.negf %[[SUM]] : tensor<f64>
+// CHECK-NEXT:  %[[LS:.+]] = math.log %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[LN:.+]] = arith.negf %[[LS]] : tensor<f64>
+// CHECK-NEXT:  %[[KR:.+]] = impulse.reshape %[[KER]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[LNR2:.+]] = impulse.reshape %[[LN]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[LP2:.+]] = arith.addf %[[KR]], %[[LNR2]] : tensor<f64>
 
 // CHECK-LABEL: func.func @dir_model.generate
 // CHECK-NOT:   impulse.random
@@ -227,3 +263,4 @@ module {
 // CHECK-NEXT:  %[[LNR:.+]] = impulse.reshape %[[LOGLAM]] : (tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:  %[[LP:.+]] = arith.addf %[[UNR]], %[[LNR]] : tensor<f64>
 // CHECK-NEXT:  %[[W:.+]] = arith.addf %[[LP]], %[[ZERO]] : tensor<f64>
+

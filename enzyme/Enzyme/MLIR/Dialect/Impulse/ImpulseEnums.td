@@ -119,6 +119,7 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
       I32EnumAttrCase<"HALF_CAUCHY", 10>,     // scale
       I32EnumAttrCase<"DIRICHLET", 11>,       // concentration
       I32EnumAttrCase<"MVN", 12>,             // mean, covariance
+      I32EnumAttrCase<"GUMBEL", 13>,          // loc, scale
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";

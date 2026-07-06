@@ -64,6 +64,7 @@ static SupportKind baseSupport(DistBaseKind base) {
   case DistBaseKind::POISSON:
   case DistBaseKind::DISCRETE_UNIFORM:
   case DistBaseKind::MVN:
+  case DistBaseKind::GUMBEL:
   case DistBaseKind::CUSTOM:
     return SupportKind::REAL;
   }
@@ -454,6 +455,17 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
         b.getDenseI64ArrayAttr({0}));
     return arith::AddFOp::create(b, loc, mu, UTz);
   }
+  case DistBaseKind::GUMBEL: {
+    // Not bit-matched to jax.random.gumbel, which draws u on [tiny, 1).
+    Value u = emitUniformDraw(b, loc, rng, sampleType);
+    Value g = arith::NegFOp::create(
+        b, loc,
+        math::LogOp::create(
+            b, loc,
+            arith::NegFOp::create(b, loc, math::LogOp::create(b, loc, u))));
+    Value scaled = arith::MulFOp::create(b, loc, bcast(distArgs[1]), g);
+    return arith::AddFOp::create(b, loc, bcast(distArgs[0]), scaled);
+  }
   default:
     llvm::report_fatal_error(
         "emitNativeSampler: sampler not emittable for this base");
@@ -669,6 +681,19 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     Value lognorm = arith::MulFOp::create(
         b, loc, scalarConst(b, loc, elemType, -0.5), constTerms);
     return {unnormed, lognorm};
+  }
+  case DistBaseKind::GUMBEL: {
+    Value locp = bcast(distArgs[0]);
+    Value scale = bcast(distArgs[1]);
+    Value z = arith::DivFOp::create(
+        b, loc, arith::SubFOp::create(b, loc, observed, locp), scale);
+    Value negZ = arith::NegFOp::create(b, loc, z);
+    Value expNegZ = math::ExpOp::create(b, loc, negZ);
+    Value kernel = arith::NegFOp::create(
+        b, loc, arith::AddFOp::create(b, loc, z, expNegZ));
+    Value lognorm =
+        arith::NegFOp::create(b, loc, math::LogOp::create(b, loc, scale));
+    return {reduce(kernel), reduce(lognorm)};
   }
   default:
     llvm::report_fatal_error("emitNativeLogpdfSplit: unsupported base");
