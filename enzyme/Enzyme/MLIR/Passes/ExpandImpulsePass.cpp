@@ -210,44 +210,45 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+/// Position order: declaration (VI, NumPyro parity) or `selection` as given.
 static SmallVector<impulse::SupportInfo>
 collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
                                ArrayAttr selection, ArrayAttr allAddresses,
-                               SymbolTableCollection &symbolTable) {
+                               SymbolTableCollection &symbolTable,
+                               bool positionDeclarationOrder) {
   auto sampleMap = buildSampleOpMap(fn);
   SmallVector<impulse::SupportInfo> supports;
   int64_t currentPositionOffset = 0;
   int64_t currentUnconstrainedOffset = 0;
 
-  // Ignore the *order* of `selection` (which `ProbProg.select` canonicalises
-  // alphabetically) and lay the position vector out in model declaration order
-  // from `allAddresses`, so it matches NumPyro's declaration-order guide
-  // layout. Without this, models whose alphabetical and declaration orders
-  // disagree (e.g. `[w, sigma]` vs `[sigma, w]`) apply eps/constrain transforms
-  // at swapped offsets — see the `vi_bayesian_linreg` regression.
-  llvm::SmallDenseSet<Attribute, 4> selectedTopLevel;
-  for (auto addr : selection) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.empty())
-      continue;
-    if (address.size() != 1)
-      continue;
-    selectedTopLevel.insert(address[0]);
+  SmallVector<Attribute> orderedSelected;
+  if (positionDeclarationOrder) {
+    llvm::SmallDenseSet<Attribute, 4> selectedTopLevel;
+    for (auto addr : selection) {
+      auto address = cast<ArrayAttr>(addr);
+      // TODO: Handle nested cases
+      if (address.empty() || address.size() != 1)
+        continue;
+      selectedTopLevel.insert(address[0]);
+    }
+    for (auto addr : allAddresses) {
+      auto address = cast<ArrayAttr>(addr);
+      if (address.empty() || address.size() != 1)
+        continue;
+      if (!selectedTopLevel.contains(address[0]))
+        continue;
+      orderedSelected.push_back(address[0]);
+    }
+  } else {
+    for (auto addr : selection) {
+      auto address = cast<ArrayAttr>(addr);
+      if (address.empty() || address.size() != 1)
+        continue;
+      orderedSelected.push_back(address[0]);
+    }
   }
 
-  for (auto addr : allAddresses) {
-    auto address = cast<ArrayAttr>(addr);
-    if (address.empty())
-      continue;
-
-    // TODO: Handle nested cases
-    if (address.size() != 1)
-      continue;
-
-    auto targetSymbol = address[0];
-    if (!selectedTopLevel.contains(targetSymbol))
-      continue;
-
+  for (Attribute targetSymbol : orderedSelected) {
     auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
     if (!sampleOp)
       continue;
@@ -1111,8 +1112,9 @@ struct ExpandImpulsePass
         if (constrainedFallback <= 0)
           return failure();
 
-        supports = collectSupportInfoForSelection(mcmcOp, fn, selection,
-                                                  allAddresses, symbolTable);
+        supports = collectSupportInfoForSelection(
+            mcmcOp, fn, selection, allAddresses, symbolTable,
+            /*positionDeclarationOrder=*/false);
         sizesFromSupports(constrainedFallback);
 
         auto fnType = cast<FunctionType>(fn.getFunctionType());
@@ -2210,8 +2212,9 @@ struct ExpandImpulsePass
         if (positionSize <= 0)
           return failure();
 
-        supports = collectSupportInfoForSelection(op, fn, selection,
-                                                  allAddresses, symbolTable);
+        supports = collectSupportInfoForSelection(
+            op, fn, selection, allAddresses, symbolTable,
+            /*positionDeclarationOrder=*/true);
 
         auto fnType = cast<FunctionType>(fn.getFunctionType());
         fnResultTypes.assign(fnType.getResults().begin(),
