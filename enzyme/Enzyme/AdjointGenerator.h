@@ -1003,7 +1003,7 @@ public:
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
       if (constantval) {
-        for (size_t i = 0; i < storeSize; ) {
+        for (size_t i = 0; i < storeSize;) {
           if (auto flt = vd[{(int)i}].isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
@@ -1013,14 +1013,15 @@ public:
             i += DL.getPointerSizeInBits() / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Integer || vd[{(int)i}] == BaseType::Anything) {
+          if (vd[{(int)i}] == BaseType::Integer ||
+              vd[{(int)i}] == BaseType::Anything) {
             i++;
             continue;
           }
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce type of store " << I << vd.str()
-              << " size: " << storeSize << " at " << i;
+             << " size: " << storeSize << " at " << i;
           EmitNoTypeError(str, I, gutils, BuilderZ);
           return;
         }
