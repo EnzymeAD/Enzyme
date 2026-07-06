@@ -193,10 +193,18 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
       ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
 
   if (dist) {
-    emitDistSamplerIntoRegion(builder, sampleOp, dist,
-                              sampleRegionOp.getSampler());
     emitDistLogpdfIntoRegion(builder, sampleOp, dist,
                              sampleRegionOp.getLogpdf());
+    if (impulse::distSamplerEmittable(dist)) {
+      emitDistSamplerIntoRegion(builder, sampleOp, dist,
+                                sampleRegionOp.getSampler());
+    } else {
+      auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+      if (samplerFn && !samplerFn.getFunctionBody().empty())
+        inlineFunctionIntoRegion(builder, samplerFn,
+                                 sampleRegionOp.getSampler());
+    }
   } else {
     auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
         symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));

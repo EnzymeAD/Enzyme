@@ -746,6 +746,22 @@ def LogisticOp : Impulse_Op<"logistic", [Pure]> {
   }];
 }
 
+def LgammaOp : Impulse_Op<"lgamma", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Computes the log of the absolute value of the Gamma function";
+  let description = [{
+    Elementwise log|Gamma(x)|. Lowered to `chlo.lgamma` in Enzyme-JAX; emitted by
+    the distribution builder for logpdf normalizers that need it (Gamma, StudentT,
+    Poisson).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
+  }];
+}
+
 def PopcountOp : Impulse_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
   let summary = "Computes population count";
   let description = [{

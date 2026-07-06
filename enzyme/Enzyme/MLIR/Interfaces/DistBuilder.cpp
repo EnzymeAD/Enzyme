@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
 
@@ -46,13 +47,43 @@ static SupportKind applyXformToSupport(XformAttr xform, SupportKind in) {
   return in;
 }
 
+// Must agree with the frontend `support(::Type)`; the verifier compares them.
+static SupportKind baseSupport(DistBaseKind base) {
+  switch (base) {
+  case DistBaseKind::STD_UNIFORM:
+    return SupportKind::UNIT_INTERVAL;
+  case DistBaseKind::EXPONENTIAL:
+  case DistBaseKind::GAMMA:
+    return SupportKind::POSITIVE;
+  case DistBaseKind::STD_NORMAL:
+  case DistBaseKind::STUDENT_T:
+  case DistBaseKind::BERNOULLI:
+  case DistBaseKind::POISSON:
+  case DistBaseKind::DISCRETE_UNIFORM:
+  case DistBaseKind::CUSTOM:
+    return SupportKind::REAL;
+  }
+  return SupportKind::REAL;
+}
+
 SupportAttr impulse::deriveSupportFromDist(MLIRContext *ctx, DistAttr dist) {
-  SupportKind kind = SupportKind::REAL; // std_normal base support
+  SupportKind kind = baseSupport(dist.getBase());
   if (ArrayAttr transforms = dist.getTransforms())
     for (Attribute a : transforms)
       kind = applyXformToSupport(cast<XformAttr>(a), kind);
   return SupportAttr::get(ctx, kind, /*lower=*/FloatAttr(),
                           /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
+}
+
+bool impulse::distSamplerEmittable(DistAttr dist) {
+  switch (dist.getBase()) {
+  case DistBaseKind::GAMMA:
+  case DistBaseKind::STUDENT_T:
+  case DistBaseKind::POISSON:
+    return false;
+  default:
+    return true;
+  }
 }
 
 SmallVector<XformAttr> impulse::bijectorFor(MLIRContext *ctx,
@@ -261,6 +292,188 @@ Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, kernel);
 }
 
+// `lognorm` depends only on the parameters, so it can be hoisted.
+struct LogpdfSplit {
+  Value unnormed;
+  Value lognorm; // value-independent normalizer (scalar tensor)
+};
+
+Value splatSample(OpBuilder &b, Location loc, RankedTensorType sampleType,
+                  double v) {
+  return arith::ConstantOp::create(
+      b, loc, sampleType,
+      DenseElementsAttr::get(sampleType,
+                             b.getFloatAttr(sampleType.getElementType(), v)));
+}
+
+// Lowers to the same bits as Reactant's `rand`, matching the traced path.
+Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
+                      RankedTensorType sampleType) {
+  Type elemType = sampleType.getElementType();
+  Value zero = scalarConst(b, loc, elemType, 0.0);
+  Value one = scalarConst(b, loc, elemType, 1.0);
+  auto op = impulse::RandomOp::create(
+      b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
+      impulse::RngDistributionAttr::get(b.getContext(),
+                                        impulse::RngDistribution::UNIFORM));
+  rng = op.getOutputRngState();
+  return op.getResult();
+}
+
+// Op for op as Reactant's `randexp`.
+Value stdExpFromUniform(OpBuilder &b, Location loc, Value u) {
+  Value negU = arith::NegFOp::create(b, loc, u);
+  Value l1p = math::Log1pOp::create(b, loc, negU);
+  return arith::NegFOp::create(b, loc, l1p);
+}
+
+Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
+                        Value &rng, ValueRange distArgs,
+                        RankedTensorType sampleType) {
+  auto bcast = [&](Value v) {
+    return broadcastToSample(b, loc, v, sampleType);
+  };
+  switch (base) {
+  case DistBaseKind::STD_UNIFORM:
+    return emitUniformDraw(b, loc, rng, sampleType);
+  case DistBaseKind::EXPONENTIAL: {
+    Value u = emitUniformDraw(b, loc, rng, sampleType);
+    Value z = stdExpFromUniform(b, loc, u);
+    return arith::DivFOp::create(b, loc, z, bcast(distArgs[0]));
+  }
+  case DistBaseKind::BERNOULLI: {
+    Value u = emitUniformDraw(b, loc, rng, sampleType);
+    Value logits = bcast(distArgs[0]);
+    // 1 / (1 + exp(-logits)), not LogisticOp: bitwise as the traced sampler.
+    Value negLogits = arith::NegFOp::create(b, loc, logits);
+    Value e = math::ExpOp::create(b, loc, negLogits);
+    Value one = splatSample(b, loc, sampleType, 1.0);
+    Value denom = arith::AddFOp::create(b, loc, one, e);
+    Value p = arith::DivFOp::create(b, loc, one, denom);
+    Value lt = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, u, p);
+    Value zero = splatSample(b, loc, sampleType, 0.0);
+    return arith::SelectOp::create(b, loc, lt, one, zero);
+  }
+  case DistBaseKind::DISCRETE_UNIFORM: {
+    Value u = emitUniformDraw(b, loc, rng, sampleType);
+    Value low = bcast(distArgs[0]);
+    Value high = bcast(distArgs[1]);
+    Value one = splatSample(b, loc, sampleType, 1.0);
+    // (high - low) + 1 in the traced sampler's order.
+    Value n = arith::AddFOp::create(
+        b, loc, arith::SubFOp::create(b, loc, high, low), one);
+    Value scaled = arith::MulFOp::create(b, loc, u, n);
+    Value fl = math::FloorOp::create(b, loc, scaled);
+    return arith::AddFOp::create(b, loc, low, fl);
+  }
+  default:
+    llvm::report_fatal_error(
+        "emitNativeSampler: sampler not emittable for this base");
+  }
+}
+
+LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
+                                  Value observed, ValueRange distArgs) {
+  auto sampleType = cast<RankedTensorType>(observed.getType());
+  Type elemType = sampleType.getElementType();
+  auto bcast = [&](Value v) {
+    return broadcastToSample(b, loc, v, sampleType);
+  };
+  auto splat = [&](double v) { return splatSample(b, loc, sampleType, v); };
+  auto reduce = [&](Value v) { return reduceSumToScalar(b, loc, v); };
+  auto zeroScalar = [&]() { return scalarConst(b, loc, elemType, 0.0); };
+
+  switch (base) {
+  case DistBaseKind::STD_UNIFORM:
+    // Density 1 on [0, 1): both terms vanish.
+    return {zeroScalar(), zeroScalar()};
+  case DistBaseKind::EXPONENTIAL: {
+    Value lam = bcast(distArgs[0]);
+    Value unnormed = reduce(arith::NegFOp::create(
+        b, loc, arith::MulFOp::create(b, loc, lam, observed)));
+    Value lognorm = reduce(math::LogOp::create(b, loc, lam));
+    return {unnormed, lognorm};
+  }
+  case DistBaseKind::BERNOULLI: {
+    Value logits = bcast(distArgs[0]);
+    Value unnormed = reduce(arith::MulFOp::create(b, loc, observed, logits));
+    Value maxL = arith::MaximumFOp::create(b, loc, logits, splat(0.0));
+    Value negAbs =
+        arith::NegFOp::create(b, loc, math::AbsFOp::create(b, loc, logits));
+    Value sp = impulse::emitSoftplus(b, loc, negAbs);
+    Value term =
+        arith::NegFOp::create(b, loc, arith::AddFOp::create(b, loc, maxL, sp));
+    return {unnormed, reduce(term)};
+  }
+  case DistBaseKind::DISCRETE_UNIFORM: {
+    Value low = bcast(distArgs[0]);
+    Value high = bcast(distArgs[1]);
+    Value hp1 = arith::AddFOp::create(b, loc, high, splat(1.0));
+    Value range = arith::SubFOp::create(b, loc, hp1, low);
+    Value nlog =
+        arith::NegFOp::create(b, loc, math::LogOp::create(b, loc, range));
+    return {zeroScalar(), reduce(nlog)};
+  }
+  case DistBaseKind::GAMMA: {
+    Value alpha = bcast(distArgs[0]);
+    Value beta = bcast(distArgs[1]);
+    Value am1 = arith::SubFOp::create(b, loc, alpha, splat(1.0));
+    Value logx = math::LogOp::create(b, loc, observed);
+    Value am1LogX = arith::MulFOp::create(b, loc, am1, logx);
+    Value betaX = arith::MulFOp::create(b, loc, beta, observed);
+    Value kernel = arith::SubFOp::create(b, loc, am1LogX, betaX);
+    Value lgA = impulse::LgammaOp::create(b, loc, alpha.getType(), alpha);
+    Value aLogB =
+        arith::MulFOp::create(b, loc, alpha, math::LogOp::create(b, loc, beta));
+    Value normTerm = arith::SubFOp::create(b, loc, aLogB, lgA);
+    return {reduce(kernel), reduce(normTerm)};
+  }
+  case DistBaseKind::STUDENT_T: {
+    // log p = lgamma((df+1)/2) - lgamma(df/2) - 0.5*log(df*pi) - log(scale)
+    //         - (df+1)/2 * log1p(((x-loc)/scale)^2 / df)
+    Value df = bcast(distArgs[0]);
+    Value locp = bcast(distArgs[1]);
+    Value scale = bcast(distArgs[2]);
+    Value half = splat(0.5);
+    Value y = arith::DivFOp::create(
+        b, loc, arith::SubFOp::create(b, loc, observed, locp), scale);
+    Value y2df =
+        arith::DivFOp::create(b, loc, arith::MulFOp::create(b, loc, y, y), df);
+    Value l1p = math::Log1pOp::create(b, loc, y2df);
+    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
+    Value dfp1half = arith::MulFOp::create(b, loc, dfp1, half);
+    Value kernel = arith::NegFOp::create(
+        b, loc, arith::MulFOp::create(b, loc, dfp1half, l1p));
+    Value lgTop =
+        impulse::LgammaOp::create(b, loc, dfp1half.getType(), dfp1half);
+    Value dfhalf = arith::MulFOp::create(b, loc, df, half);
+    Value lgBot = impulse::LgammaOp::create(b, loc, dfhalf.getType(), dfhalf);
+    Value dfpi = arith::MulFOp::create(b, loc, df, splat(M_PI));
+    Value halfLogdfpi =
+        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, dfpi));
+    Value logscale = math::LogOp::create(b, loc, scale);
+    Value normTerm = arith::SubFOp::create(
+        b, loc,
+        arith::SubFOp::create(
+            b, loc, arith::SubFOp::create(b, loc, lgTop, lgBot), halfLogdfpi),
+        logscale);
+    return {reduce(kernel), reduce(normTerm)};
+  }
+  case DistBaseKind::POISSON: {
+    Value rate = bcast(distArgs[0]);
+    Value logRate = math::LogOp::create(b, loc, rate);
+    Value kp1 = arith::AddFOp::create(b, loc, observed, splat(1.0));
+    Value lgk = impulse::LgammaOp::create(b, loc, kp1.getType(), kp1);
+    Value kernel = arith::SubFOp::create(
+        b, loc, arith::MulFOp::create(b, loc, observed, logRate), lgk);
+    Value lognorm = reduce(arith::NegFOp::create(b, loc, rate));
+    return {reduce(kernel), lognorm};
+  }
+  default:
+    llvm::report_fatal_error("emitNativeLogpdfSplit: unsupported base");
+  }
+}
+
 } // namespace
 
 SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
@@ -270,7 +483,12 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
   Type elemType = sampleType.getElementType();
   MLIRContext *ctx = b.getContext();
 
-  // Base draw z ~ StdNormal via impulse.random NORMAL(0, 1).
+  if (dist.getBase() != DistBaseKind::STD_NORMAL) {
+    Value val =
+        emitNativeSampler(b, loc, dist.getBase(), rng, distArgs, sampleType);
+    return {rng, val};
+  }
+
   Value zero = scalarConst(b, loc, elemType, 0.0);
   Value one = scalarConst(b, loc, elemType, 1.0);
   auto randomOp = impulse::RandomOp::create(
@@ -292,6 +510,13 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
   auto sampleType = cast<RankedTensorType>(observed.getType());
   Type elemType = sampleType.getElementType();
 
+  if (dist.getBase() != DistBaseKind::STD_NORMAL) {
+    LogpdfSplit split =
+        emitNativeLogpdfSplit(b, loc, dist.getBase(), observed, distArgs);
+    return arith::AddFOp::create(b, loc, split.unnormed, split.lognorm);
+  }
+
+  // StdNormal + transform chain: base_logpdf(inverse(y)) - Sum logabsdetjac.
   Value val = observed;
   Value logdetTotal = scalarConst(b, loc, elemType, 0.0);
 

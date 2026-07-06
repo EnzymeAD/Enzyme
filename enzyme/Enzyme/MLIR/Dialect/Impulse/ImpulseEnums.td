@@ -106,6 +106,14 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
     [
       I32EnumAttrCase<"STD_NORMAL", 0>,
       I32EnumAttrCase<"CUSTOM", 1>,
+      // Parameters are read positionally from the site's non-RNG operands.
+      I32EnumAttrCase<"STD_UNIFORM", 2>,      // U[0, 1), no parameters
+      I32EnumAttrCase<"EXPONENTIAL", 3>,      // rate
+      I32EnumAttrCase<"GAMMA", 4>,            // concentration, rate
+      I32EnumAttrCase<"STUDENT_T", 5>,        // df, loc, scale
+      I32EnumAttrCase<"BERNOULLI", 6>,        // logits
+      I32EnumAttrCase<"POISSON", 7>,          // rate
+      I32EnumAttrCase<"DISCRETE_UNIFORM", 8>, // low, high
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";

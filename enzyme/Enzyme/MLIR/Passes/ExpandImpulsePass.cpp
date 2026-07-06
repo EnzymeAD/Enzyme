@@ -691,8 +691,11 @@ struct ExpandImpulsePass
         SmallVector<Value> sampledValues; // Values to replace uses of sample op
 
         // shared builder emits the sampler and change-of-variables logpdf IR
-        // in place of calling the traced sampler/logpdf symbols.
-        if (auto dist = sampleOp.getDistAttr()) {
+        // in place of calling the traced sampler/logpdf symbols. simulate
+        // always draws, so a base whose sampler is not emittable (the
+        // rejection-loop natives) falls back to the fully-traced path.
+        if (auto dist = sampleOp.getDistAttr();
+            dist && impulse::distSamplerEmittable(dist)) {
           Value rng = sampleOp.getInputs().front();
           SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
                                       sampleOp.getInputs().end());
@@ -2719,6 +2722,11 @@ struct ExpandImpulsePass
               constrainedOffset += numElements;
             }
           } else {
+            if (!impulse::distSamplerEmittable(dist)) {
+              sampleOp.emitError("Impulse: distribution sampler is not "
+                                 "emittable; the site must be constrained");
+              return WalkResult::interrupt();
+            }
             auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
                                                distArgs, distSampleType);
             for (unsigned i = 0; i < sv.size(); ++i)
@@ -3190,6 +3198,11 @@ struct ExpandImpulsePass
 
           sampledValues.resize(sampleOp.getNumResults());
           if (isSelected) {
+            if (!impulse::distSamplerEmittable(dist)) {
+              sampleOp.emitError("Impulse: distribution sampler is not "
+                                 "emittable; it cannot be a regenerate target");
+              return WalkResult::interrupt();
+            }
             auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
                                                distArgs, distSampleType);
             for (unsigned i = 0; i < sv.size(); ++i)
