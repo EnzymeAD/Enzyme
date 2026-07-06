@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes=enzyme -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes=enzyme -S -opaque-pointers | FileCheck %s
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -22,10 +22,10 @@ exit:
   ret double %val.next
 }
 
-declare double @__enzyme_autodiff(ptr, ptr, double)
+declare double @__enzyme_autodiff(ptr, ptr, ptr, double)
 
-define double @test_func(ptr %p, double %x) {
-  %res = call double @__enzyme_autodiff(ptr @tester, ptr %p, double %x)
+define double @test_func(ptr %p, ptr %dp, double %x) {
+  %res = call double @__enzyme_autodiff(ptr @tester, ptr %p, ptr %dp, double %x)
   ret double %res
 }
 
