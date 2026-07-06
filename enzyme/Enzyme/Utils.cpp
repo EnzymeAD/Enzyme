@@ -4743,79 +4743,81 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
           return true;
         }
 
-        // However if nothing was written to the alloc prior to the load, we know that 
-        // there is no way to dataflow end into start, so we now merely must prove there is no
-        // way to dataflow start into end.
+        // However if nothing was written to the alloc prior to the load, we
+        // know that there is no way to dataflow end into start, so we now
+        // merely must prove there is no way to dataflow start into end.
 
         bool alloc_written = false;
-        allInstructionsBetween(
-            LI, alloc_call, ld, [&](Instruction *I) -> bool {
-              if (!I->mayWriteToMemory())
-                return /*earlyBreak*/ false;
+        allInstructionsBetween(LI, alloc_call, ld, [&](Instruction *I) -> bool {
+          if (!I->mayWriteToMemory())
+            return /*earlyBreak*/ false;
 
-              if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                        /*maybeReader*/ ld,
-                                        /*maybeWriter*/ I)) {
-                alloc_written = true;
-                return /*earlyBreak*/ true;
+          if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                   /*maybeReader*/ ld,
+                                   /*maybeWriter*/ I)) {
+            alloc_written = true;
+            return /*earlyBreak*/ true;
+          }
+          return /*earlyBreak*/ false;
+        });
+
+        if (!alloc_written) {
+          // If end is marked noalias at the time of construction it
+          // definitionally cannot alias another potential load out of alloc. If
+          // the base of end occurs prior to alloc_call (and is distinct from
+          // alloc_call), there is no way for alloc_call to dataflow into end.
+          if (noalias[end_i] ||
+              (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
+            return true;
+          }
+
+          // If the allocation was not written into prior to ld, any pointer
+          // value loaded from it must have been created by one of the loads
+          // reading from alloc_call. If every load out of alloc_call is
+          // distinct from end, and was neither captured before end nor created
+          // after end, alloc_call's loaded values cannot dataflow into end.
+          SmallVector<Value *, 8> worklist;
+          SmallPtrSet<Value *, 8> visited;
+          SmallVector<LoadInst *, 8> alloc_loads;
+
+          worklist.push_back(alloc_call);
+          visited.insert(alloc_call);
+
+          while (!worklist.empty()) {
+            Value *V = worklist.pop_back_val();
+            for (User *U : V->users()) {
+              if (!visited.insert(U).second)
+                continue;
+              if (isPointerArithmeticInst(U, /*includephi*/ true,
+                                          /*includebin*/ true)) {
+                worklist.push_back(U);
+              } else if (auto LI = dyn_cast<LoadInst>(U)) {
+                alloc_loads.push_back(LI);
               }
-              return /*earlyBreak*/ false;
-            });
-
-          if (!alloc_written) {
-            // If end is marked noalias at the time of construction it definitionally
-            // cannot alias another potential load out of alloc.
-            // If the base of end occurs prior to alloc_call (and is distinct from
-            // alloc_call), there is no way for alloc_call to dataflow into end.
-            if (noalias[end_i] || (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
-              return true;
-            }
-
-            // If the allocation was not written into prior to ld, any pointer value
-            // loaded from it must have been created by one of the loads reading from alloc_call.
-            // If every load out of alloc_call is distinct from end, and was neither captured
-            // before end nor created after end, alloc_call's loaded values cannot dataflow into end.
-            SmallVector<Value *, 8> worklist;
-            SmallPtrSet<Value *, 8> visited;
-            SmallVector<LoadInst *, 8> alloc_loads;
-
-            worklist.push_back(alloc_call);
-            visited.insert(alloc_call);
-
-            while (!worklist.empty()) {
-              Value *V = worklist.pop_back_val();
-              for (User *U : V->users()) {
-                if (!visited.insert(U).second)
-                  continue;
-                if (isPointerArithmeticInst(U, /*includephi*/ true, /*includebin*/ true)) {
-                  worklist.push_back(U);
-                } else if (auto LI = dyn_cast<LoadInst>(U)) {
-                  alloc_loads.push_back(LI);
-                }
-              }
-            }
-
-            bool all_loads_no_alias = true;
-            for (LoadInst *alloc_load : alloc_loads) {
-              if (alloc_load == end) {
-                all_loads_no_alias = false;
-                break;
-              }
-              if (auto end_inst = dyn_cast<Instruction>(end)) {
-                if (DT.dominates(end_inst, alloc_load)) {
-                  continue;
-                }
-              }
-              if (!notCapturedBefore(alloc_load, dyn_cast<Instruction>(end), 0)) {
-                all_loads_no_alias = false;
-                break;
-              }
-            }
-
-            if (all_loads_no_alias) {
-              return true;
             }
           }
+
+          bool all_loads_no_alias = true;
+          for (LoadInst *alloc_load : alloc_loads) {
+            if (alloc_load == end) {
+              all_loads_no_alias = false;
+              break;
+            }
+            if (auto end_inst = dyn_cast<Instruction>(end)) {
+              if (DT.dominates(end_inst, alloc_load)) {
+                continue;
+              }
+            }
+            if (!notCapturedBefore(alloc_load, dyn_cast<Instruction>(end), 0)) {
+              all_loads_no_alias = false;
+              break;
+            }
+          }
+
+          if (all_loads_no_alias) {
+            return true;
+          }
+        }
       }
     }
   }
