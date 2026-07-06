@@ -4768,17 +4768,6 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
             return true;
           }
         }
-
-        // Look through all loads out of alloc_call, and check if any of them
-        // are captured before endi. If there are none, we can say there is no
-        // alias between endi and ld = load alloc_call.
-        if (auto endi = dyn_cast<Instruction>(end)) {
-          if (DT.dominates(ld, endi)) {
-            if (notCapturedBefore(alloc_call, endi, 1)) {
-              return true;
-            }
-          }
-        }
       }
     }
   }
