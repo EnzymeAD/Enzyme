@@ -1,6 +1,4 @@
 //===- DistBuilder.cpp - Emit distribution sampler/logpdf IR --------------===//
-// F2 spike: base-plus-transform distribution/bijector emitter. See
-// DistBuilder.h.
 
 #include "Interfaces/DistBuilder.h"
 #include "Dialect/Ops.h"
@@ -298,7 +296,7 @@ Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
     return reduceSumToScalar(b, loc, logScale);
   }
   case XformKind::COMPOSE: {
-    // Not exercised in the spike (chains are flattened at the dist level).
+    // Unreachable: distribution transform chains are flattened.
     return scalarConst(b, loc, elemType, 0.0);
   }
   case XformKind::INTERVAL:

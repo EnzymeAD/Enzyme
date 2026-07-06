@@ -1,6 +1,7 @@
 //===- DistBuilder.h - Emit distribution sampler/logpdf IR ----*- C++ -*-===//
 //
-// Shared bijection/distribution library (F2 spike). A distribution is a
+// Emits only impulse, arith and math ops; LowerImpulse converts the impulse
+// compute ops to the target dialect, so every frontend shares this library.
 //
 //===----------------------------------------------------------------------===//
 

@@ -139,7 +139,8 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     through each transform's codomain); the derived support is the single source
     of truth that both the emitted logpdf's change of variables and the HMC/VI
     reparameterization share. `event_dim` is the rank of one event (0 for a
-    scalar site); unused in the spike beyond round-tripping.
+    scalar site); currently carried for round-tripping only and not yet read by
+    the emitters.
   }];
   let parameters = (ins
     "DistBaseKind":$base,

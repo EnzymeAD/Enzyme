@@ -446,23 +446,33 @@ def InferRegionOp : Impulse_Op<"infer_region",
 def RandomOp : Impulse_Op<"random"> {
   let summary = "Generate random numbers using specified distribution";
   let description = [{
-  Generates random numbers using the rng_distribution algorithm and produces
-  a result tensor.
+  Draws a result tensor of random numbers from `rng_state` and returns the
+  advanced RNG state alongside the samples. Uniform bits are produced by a
+  counter-based bit generator keyed by `rng_state`; the parametric distributions
+  below are constructed deterministically from those bits, so the same input
+  state reproduces the same samples.
 
-  If rng_distribution = UNIFORM, then the random numbers are generated following
-  the uniform distribution over the interval [a, b). If a >= b, the behavior is
-  undefined.
+  If rng_distribution = UNIFORM, samples are drawn from the uniform distribution
+  over [a, b). A base draw in [0, 1) is formed from the raw bits (assembling the
+  mantissa of a float in [1, 2) and subtracting 1) and affine-mapped to
+  [a, b). If a >= b, the behavior is undefined.
 
-  If rng_distribution = NORMAL, then the random numbers are generated following
-  the normal distribution with mean = a and standard deviation = b. If b < 0,
-  the behavior is undefined.
+  If rng_distribution = NORMAL, samples follow the normal distribution with
+  mean = a and standard deviation = b, formed from a uniform draw u in [0, 1)
+  via the probit `sqrt(2) * erfinv(2u - 1)`, then scaled by b and shifted by a.
+  If b < 0, the behavior is undefined.
 
-  If rng_distribution = MULTINORMAL, then the random numbers are generated
-  following the multivariate normal distribution with mean = a (scalar or vector)
-  and covariance matrix = b. The parameter b should be a positive definite matrix.
+  If rng_distribution = MULTINORMAL, samples follow the multivariate normal with
+  mean = a (scalar or vector) and covariance matrix = b: a standard-normal vector
+  is drawn as above and mapped through the Cholesky factor of b, then shifted by
+  a. The parameter b must be positive definite.
 
   By convention, the 0th operand in inputs is the initial RNG state and the
   0th operand in results is the updated RNG state.
+
+  Note: lowered using `stablehlo.rng_bit_generator` (DEFAULT algorithm) for the
+  bits, with `chlo.erf_inv` for the probit and `stablehlo.cholesky` for
+  MULTINORMAL.
   }];
 
   let arguments = (ins
@@ -482,8 +492,14 @@ def RandomOp : Impulse_Op<"random"> {
 def RandomSplitOp : Impulse_Op<"randomSplit"> {
   let summary = "Split RNG state into multiple independent states";
   let description = [{
-    Splits an RNG state into multiple independent RNG states.
+    Derives N independent RNG states (N = number of results) from a single input
+    `rng_state` by hashing it with the Threefry2x32 counter-based PRF (five
+    rounds), matching JAX's `random.split`. Each output state is statistically
+    independent and deterministically reproducible from the input state.
     Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
+
+    Note: lowered to the inlined Threefry2x32 round sequence over StableHLO
+    integer ops (no single StableHLO op).
   }];
 
   let arguments = (ins AnyType:$rng_state);
@@ -580,7 +596,16 @@ def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
 def DotOp : Impulse_Op<"dot", [Pure]> {
   let summary = "Computes a general dot product operation";
   let description = [{
-    Computes a general dot product operation. To be lowered to `stablehlo.dot_general`.
+    Generalized tensor contraction of `lhs` and `rhs`. Contracts the paired
+    `lhs_contracting_dimensions`/`rhs_contracting_dimensions` (which must have
+    equal size in each pair) by summing the elementwise products over them, and
+    batches over the paired `lhs_batching_dimensions`/`rhs_batching_dimensions`
+    (also equal-sized per pair). The result shape is, in order: the batch
+    dimensions, the remaining (free) `lhs` dimensions, then the remaining (free)
+    `rhs` dimensions. A dimension index may appear at most once across the
+    batching and contracting lists for a given operand.
+
+    Note: lowered 1:1 to `stablehlo.dot_general` with the same dimension numbers.
   }];
 
   let arguments = (ins
@@ -601,8 +626,15 @@ def DotOp : Impulse_Op<"dot", [Pure]> {
 def CholeskyOp : Impulse_Op<"cholesky", [Pure]> {
   let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
   let description = [{
-    Computes the Cholesky decomposition of a symmetric positive definite matrix A.
-    Returns L such that A = L @ L^T (if lower=true) or A = U^T @ U (if lower=false).
+    Computes the Cholesky factorization of the symmetric positive-definite
+    matrix in the trailing two dimensions of `input` (any leading dimensions are
+    treated as a batch). If `lower` is true, returns the lower-triangular L with
+    A = L @ L^T; if false, returns the upper-triangular U with A = U^T @ U. The
+    strictly-opposite triangle of the result is zero. The input must be symmetric
+    positive definite; the result is otherwise unspecified. Result shape equals
+    the input shape.
+
+    Note: lowered 1:1 to `stablehlo.cholesky` with the same `lower` flag.
   }];
 
   let arguments = (ins
@@ -619,10 +651,16 @@ def CholeskyOp : Impulse_Op<"cholesky", [Pure]> {
 def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
   let summary = "Solve a triangular linear system";
   let description = [{
-    Solves a system of linear equations with a triangular coefficient matrix.
-    If left_side=true, solves op(A) @ X = B for X.
-    If left_side=false, solves X @ op(A) = B for X.
-    op(A) is determined by transpose_a: NO_TRANSPOSE, TRANSPOSE, or ADJOINT.
+    Solves a linear system whose coefficient matrix `a` is triangular, returning
+    X with the shape of `b`. Only the triangle of `a` selected by `lower` is
+    read (lower-triangular if `lower` is true, else upper); when `unit_diagonal`
+    is true the diagonal of `a` is taken to be all ones and its stored diagonal
+    is ignored. `op(a)` is `a`, `a^T`, or `a^H` according to `transpose_a`
+    (NO_TRANSPOSE, TRANSPOSE, ADJOINT). If `left_side` is true, solves
+    `op(a) @ X = b`; if false, solves `X @ op(a) = b`. `a` operates on the
+    trailing two dimensions; leading dimensions are batched.
+
+    Note: lowered 1:1 to `stablehlo.triangular_solve` with the same attributes.
   }];
 
   let arguments = (ins
@@ -647,9 +685,16 @@ def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
 def SelectOp : Impulse_Op<"select", [Pure]> {
   let summary = "Exteneded select operation";
   let description = [{
-    Extended select operation that supports:
-    - `tensor<i1>` conditions with differently-sized operands
-    - standard cases supported by `arith.select`
+    Elementwise selection between `true_value` and `false_value`: each result
+    element is the corresponding `true_value` element where `condition` is true,
+    otherwise the `false_value` element. As an extension over `arith.select`, a
+    rank-0 `tensor<i1>` `condition` selects between the two operands as whole
+    tensors, so the operands may have a shape that differs from a per-element
+    condition. When `condition` matches the operand shape, selection is per
+    element. `true_value` and `false_value` share the result's shape and element
+    type.
+
+    Note: lowered 1:1 to `stablehlo.select`.
   }];
 
   let arguments = (ins
@@ -667,6 +712,14 @@ def SelectOp : Impulse_Op<"select", [Pure]> {
 
 def ReshapeOp : Impulse_Op<"reshape", [Pure]> {
   let summary = "Reshape a tensor to a new static shape";
+  let description = [{
+    Reinterprets `input` as a tensor of the result type's static shape,
+    preserving the linear (row-major, last-dimension-fastest) order of elements.
+    The result shape is fully static and its total element count must equal that
+    of `input`; no elements are added, dropped, or reordered.
+
+    Note: lowered 1:1 to `stablehlo.reshape`.
+  }];
   let arguments = (ins AnyRankedTensor:$input);
   let results = (outs AnyRankedTensor:$result);
   let assemblyFormat = [{
@@ -677,7 +730,15 @@ def ReshapeOp : Impulse_Op<"reshape", [Pure]> {
 def SliceOp : Impulse_Op<"slice", [Pure]> {
   let summary = "Extract a static slice from a tensor";
   let description = [{
-    Extract a static slice from a tensor.
+    Extracts a statically-shaped sub-tensor of `operand`. In each dimension `d`
+    it takes the elements at indices `start_indices[d] + k*strides[d]` for
+    `k = 0, 1, ...` while the index stays below `limit_indices[d]`, yielding
+    `ceil((limit_indices[d] - start_indices[d]) / strides[d])` elements. All
+    three index arrays are static and have one entry per operand dimension; the
+    result shape follows from them and must be in bounds
+    (`0 <= start <= limit <= dim_size`, `strides >= 1`).
+
+    Note: lowered 1:1 to `stablehlo.slice`.
   }];
 
   let arguments = (ins
@@ -696,7 +757,15 @@ def SliceOp : Impulse_Op<"slice", [Pure]> {
 def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
   let summary = "Extract a slice from a tensor at dynamic start indices";
   let description = [{
-    Extract a slice from a tensor at dynamic start indices.
+    Extracts a sub-tensor of static shape `slice_sizes` from `operand`, starting
+    at the runtime `start_indices` (one scalar index tensor per operand
+    dimension). Before use, each start index is clamped into
+    `[0, operand_dim - slice_sizes[d]]` so the whole slice stays in bounds, so
+    out-of-range indices shift the window to the nearest fully-in-bounds position
+    rather than reading out of bounds. The result shape is `slice_sizes`.
+
+    Note: lowered 1:1 to `stablehlo.dynamic_slice`, whose clamping semantics this
+    matches.
   }];
 
   let arguments = (ins
@@ -714,7 +783,15 @@ def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
 def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
   let summary = "Update a slice in a tensor at dynamic start indices";
   let description = [{
-    Update a slice in a tensor at dynamic start indices.
+    Produces a copy of `operand` with `update` written in starting at the runtime
+    `start_indices` (one scalar index tensor per operand dimension). Before use,
+    each start index is clamped into `[0, operand_dim - update_dim[d]]` so the
+    entire `update` lands in bounds, so out-of-range indices shift the write
+    window to the nearest fully-in-bounds position rather than writing out of
+    bounds. The result has the shape of `operand`.
+
+    Note: lowered 1:1 to `stablehlo.dynamic_update_slice`, whose clamping
+    semantics this matches.
   }];
 
   let arguments = (ins
@@ -736,7 +813,13 @@ def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
 def LogAddExpOp : Impulse_Op<"log_add_exp", [Pure]> {
   let summary = "Computes log(exp(x) + exp(y))";
   let description = [{
-    Computes log(exp(x) + exp(y)).
+    Elementwise `log(exp(lhs) + exp(rhs))`, computed in a numerically stable way
+    as `max(lhs, rhs) + log1p(exp(-|lhs - rhs|))`. When the difference is not
+    finite (e.g. an infinite operand) the result falls back to `lhs + rhs`.
+    `lhs` and `rhs` share the result shape and element type.
+
+    Note: there is no single StableHLO op; this lowers to the max/log1p
+    expansion above.
   }];
 
   let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
@@ -750,7 +833,10 @@ def LogAddExpOp : Impulse_Op<"log_add_exp", [Pure]> {
 def LogisticOp : Impulse_Op<"logistic", [Pure]> {
   let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
   let description = [{
-    Computes the logistic (sigmoid) function: 1 / (1 + exp(-x)).
+    Elementwise logistic (sigmoid) function `1 / (1 + exp(-x))` over `operand`.
+    Result and operand share shape and element type.
+
+    Note: lowered 1:1 to `stablehlo.logistic`.
   }];
 
   let arguments = (ins AnyRankedTensor:$operand);
@@ -780,7 +866,11 @@ def LgammaOp : Impulse_Op<"lgamma", [Pure, SameOperandsAndResultElementType, Sam
 def PopcountOp : Impulse_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
   let summary = "Computes population count";
   let description = [{
-    Returns the number of 1-bits elementwise.
+    Elementwise population count: each result element is the number of set bits
+    (1-bits) in the corresponding integer `operand` element. Operand and result
+    are integer tensors of the same shape and element type.
+
+    Note: lowered 1:1 to `stablehlo.popcnt`.
   }];
 
   let arguments = (ins AnyRankedTensor:$operand);
