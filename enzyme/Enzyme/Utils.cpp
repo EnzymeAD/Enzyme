@@ -4765,13 +4765,15 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
           if (!alloc_written) {
             // If end is marked noalias at the time of construction it definitionally
             // cannot alias another potential load out of alloc.
-            // If the base of end occurs prior to alloc_call, there is no way for
-            // alloc_call to dataflow into end.
-            if (noalias[end_i] || DT.dominates(end_base, alloc_call)) {
+            // If the base of end occurs prior to alloc_call (and is distinct from
+            // alloc_call), there is no way for alloc_call to dataflow into end.
+            if (noalias[end_i] || (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
               return true;
             }
             if (auto end_load = dyn_cast<LoadInst>(end_base)) {
               auto end_load_base = getBaseObject(end_load->getOperand(0), /*offsetAllowed*/ false);
+              // We don't need to consider the symmetric case since the other iteration of the if will for us
+              // Thus here we only consider the case where both are loads of allocs
               if (isAllocationCall(end_load_base, TLI) || isa<AllocaInst>(end_load_base)) {
                 auto end_alloc_call = cast<Instruction>(end_load_base);
                 bool end_alloc_written = false;
