@@ -46,10 +46,25 @@ def SampleOp : Impulse_Op<"sample",
   let description = [{
   Sample from a distribution. By convention, the 0th operand in `inputs`
   or `outputs` is the initial RNG state (seed).
+
+  The sampler symbol `fn` is optional: a site that carries a `#impulse.dist`
+  attribute derives its sampler and logpdf from the shared distribution builder,
+  so it needs no traced `fn`/`logpdf` symbols and its result types are the ones
+  the frontend constructs directly from the distribution's shape. A site with a
+  traced sampler (the rejection-loop natives, generative sub-calls, or the
+  custom-logpdf escape hatch) carries `fn`; a custom-logpdf site additionally
+  carries `logpdf`. The verifier requires either `fn` or `dist` to be present.
+
+  Round-trip limitation: with `fn` absent the pretty form prints as
+  `impulse.sample(%inputs) ...`, which the generic MLIR parser cannot round-trip
+  (the leading `(` after the op name is read as the start of a type). Passes
+  operate on the in-memory op, so this affects only textual `.mlir` inputs; write
+  an fn-absent site in generic op form (`"impulse.sample"(...) {...} : ...`) when
+  a test must parse one from text.
   }];
 
   let arguments = (ins
-    FlatSymbolRefAttr:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
@@ -61,7 +76,7 @@ def SampleOp : Impulse_Op<"sample",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
+    ($fn^)? `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 
   let hasVerifier = 1;

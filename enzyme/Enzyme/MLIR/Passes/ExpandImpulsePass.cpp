@@ -602,13 +602,25 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        auto distFn =
-            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                sampleOp, sampleOp.getFnAttr()));
-        auto distCall =
-            func::CallOp::create(rewriter, sampleOp.getLoc(), distFn.getName(),
-                                 distFn.getResultTypes(), sampleOp.getInputs());
-        sampleOp.replaceAllUsesWith(distCall);
+        if (auto dist = sampleOp.getDistAttr();
+            dist && impulse::distSamplerEmittable(dist)) {
+          Value rng = sampleOp.getInputs().front();
+          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
+                                      sampleOp.getInputs().end());
+          auto sampleType =
+              cast<RankedTensorType>(sampleOp.getResult(1).getType());
+          SmallVector<Value> sampledValues = impulse::emitDistSampler(
+              rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+          sampleOp.replaceAllUsesWith(sampledValues);
+        } else {
+          auto distFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getFnAttr()));
+          auto distCall = func::CallOp::create(
+              rewriter, sampleOp.getLoc(), distFn.getName(),
+              distFn.getResultTypes(), sampleOp.getInputs());
+          sampleOp.replaceAllUsesWith(distCall);
+        }
 
         toErase.push_back(sampleOp);
       });
@@ -690,20 +702,26 @@ struct ExpandImpulsePass
 
         SmallVector<Value> sampledValues; // Values to replace uses of sample op
 
-        // shared builder emits the sampler and change-of-variables logpdf IR
-        // in place of calling the traced sampler/logpdf symbols. simulate
-        // always draws, so a base whose sampler is not emittable (the
-        // rejection-loop natives) falls back to the fully-traced path.
-        if (auto dist = sampleOp.getDistAttr();
-            dist && impulse::distSamplerEmittable(dist)) {
-          Value rng = sampleOp.getInputs().front();
+        if (auto dist = sampleOp.getDistAttr()) {
           SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
                                       sampleOp.getInputs().end());
           auto sampleType =
               cast<RankedTensorType>(sampleOp.getResult(1).getType());
 
-          sampledValues = impulse::emitDistSampler(
-              rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+          if (impulse::distSamplerEmittable(dist)) {
+            Value rng = sampleOp.getInputs().front();
+            sampledValues = impulse::emitDistSampler(
+                rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+          } else {
+            auto distFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getFnAttr()));
+            auto distCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), distFn.getName(),
+                distFn.getResultTypes(), sampleOp.getInputs());
+            sampledValues.append(distCall.getResults().begin(),
+                                 distCall.getResults().end());
+          }
 
           Value logpdf = impulse::emitDistLogpdf(
               rewriter, sampleOp.getLoc(), dist, sampledValues[1], distArgs);

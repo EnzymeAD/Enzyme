@@ -1,6 +1,7 @@
 //===- DistBuilder.h - Emit distribution sampler/logpdf IR ----*- C++ -*-===//
 //
 // Shared bijection/distribution library (F2 spike). A distribution is a
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef ENZYME_MLIR_INTERFACES_DIST_BUILDER_H
@@ -17,6 +18,9 @@ namespace impulse {
 
 /// The base support pushed through each transform's codomain.
 SupportAttr deriveSupportFromDist(MLIRContext *ctx, DistAttr dist);
+
+/// Null when the operands do not pin the sample shape (scalar-param natives).
+RankedTensorType deriveSampleValueType(DistAttr dist, TypeRange distArgTypes);
 
 /// biject_to: the transform chain mapping unconstrained space onto `support`.
 SmallVector<XformAttr> bijectorFor(MLIRContext *ctx, SupportAttr support);

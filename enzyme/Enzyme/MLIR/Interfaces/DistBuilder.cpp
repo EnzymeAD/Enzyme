@@ -65,6 +65,7 @@ static SupportKind baseSupport(DistBaseKind base) {
   case DistBaseKind::BERNOULLI:
   case DistBaseKind::POISSON:
   case DistBaseKind::DISCRETE_UNIFORM:
+  case DistBaseKind::MVN:
   case DistBaseKind::CUSTOM:
     return SupportKind::REAL;
   }
@@ -78,6 +79,18 @@ SupportAttr impulse::deriveSupportFromDist(MLIRContext *ctx, DistAttr dist) {
       kind = applyXformToSupport(cast<XformAttr>(a), kind);
   return SupportAttr::get(ctx, kind, /*lower=*/FloatAttr(),
                           /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
+}
+
+RankedTensorType impulse::deriveSampleValueType(DistAttr dist,
+                                                TypeRange distArgTypes) {
+  switch (dist.getBase()) {
+  case DistBaseKind::MVN:
+    if (distArgTypes.empty())
+      return RankedTensorType();
+    return dyn_cast<RankedTensorType>(distArgTypes.front());
+  default:
+    return RankedTensorType();
+  }
 }
 
 bool impulse::distSamplerEmittable(DistAttr dist) {
@@ -416,6 +429,33 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value at = math::AbsFOp::create(b, loc, t);
     return arith::MulFOp::create(b, loc, bcast(distArgs[0]), at);
   }
+  case DistBaseKind::MVN: {
+    // mu + U^T z with the upper factor U, op for op as the traced sampler.
+    Value mu = distArgs[0];
+    Value sigma = distArgs[1];
+    int64_t n = 1;
+    for (int64_t d : sampleType.getShape())
+      n *= d;
+    Type elemType = sampleType.getElementType();
+    Value zero = scalarConst(b, loc, elemType, 0.0);
+    Value one = scalarConst(b, loc, elemType, 1.0);
+    auto zop = impulse::RandomOp::create(
+        b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
+        impulse::RngDistributionAttr::get(b.getContext(),
+                                          impulse::RngDistribution::NORMAL));
+    rng = zop.getOutputRngState();
+    Value z = zop.getResult();
+    auto matType = cast<RankedTensorType>(sigma.getType());
+    Value U = impulse::CholeskyOp::create(b, loc, matType, sigma,
+                                          b.getBoolAttr(/*lower=*/false));
+    auto vecType = RankedTensorType::get({n}, elemType);
+    // Contract U's dim 0: a lower factor need not be bitwise U^T.
+    Value UTz = impulse::DotOp::create(
+        b, loc, vecType, U, z, b.getDenseI64ArrayAttr({}),
+        b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({0}),
+        b.getDenseI64ArrayAttr({0}));
+    return arith::AddFOp::create(b, loc, mu, UTz);
+  }
   default:
     llvm::report_fatal_error(
         "emitNativeSampler: sampler not emittable for this base");
@@ -570,6 +610,67 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     Value termB = reduce(lgSumK);
     Value lognorm = arith::SubFOp::create(b, loc, termB, termA);
     return {reduce(kernel), lognorm};
+  }
+  case DistBaseKind::MVN: {
+    // Multivariate normal quadratic form, matching the traced construction:
+    //   diff = x - mu; U = cholesky(Sigma, lower=false); alpha = Sigma^-1 diff;
+    //   log p = -0.5*( sum(diff .* alpha) + 2*sum(log diag(U)) + n*log(2*pi) ).
+    // alpha is computed with two triangular solves against U (solve U^T w =
+    // diff then U alpha = w), reproducing the traced `C \ diff`.
+    Value mu = distArgs[0];
+    Value sigma = distArgs[1];
+    int64_t n = 1;
+    for (int64_t dsz : sampleType.getShape())
+      n *= dsz;
+    auto matType = cast<RankedTensorType>(sigma.getType());
+    auto vecType = RankedTensorType::get({n}, elemType);
+    auto colType = RankedTensorType::get({n, 1}, elemType);
+
+    Value diff = arith::SubFOp::create(b, loc, observed, mu);
+    Value U = impulse::CholeskyOp::create(b, loc, matType, sigma,
+                                          b.getBoolAttr(/*lower=*/false));
+    Value diffCol = impulse::ReshapeOp::create(b, loc, colType, diff);
+    Value w = impulse::TriangularSolveOp::create(
+        b, loc, colType, U, diffCol, /*left_side=*/b.getBoolAttr(true),
+        /*lower=*/b.getBoolAttr(false), /*unit_diagonal=*/b.getBoolAttr(false),
+        impulse::TransposeAttr::get(b.getContext(),
+                                    impulse::Transpose::TRANSPOSE));
+    // alpha = U^-1 w : solve U alpha = w.
+    Value alphaCol = impulse::TriangularSolveOp::create(
+        b, loc, colType, U, w, /*left_side=*/b.getBoolAttr(true),
+        /*lower=*/b.getBoolAttr(false), /*unit_diagonal=*/b.getBoolAttr(false),
+        impulse::TransposeAttr::get(b.getContext(),
+                                    impulse::Transpose::NO_TRANSPOSE));
+    Value alpha = impulse::ReshapeOp::create(b, loc, vecType, alphaCol);
+    Value maha = reduce(arith::MulFOp::create(b, loc, diff, alpha));
+    Value unnormed = arith::MulFOp::create(
+        b, loc, scalarConst(b, loc, elemType, -0.5), maha);
+
+    SmallVector<APFloat> ident;
+    ident.reserve(n * n);
+    APFloat zeroF(cast<FloatType>(elemType).getFloatSemantics(), 0);
+    APFloat oneF(cast<FloatType>(elemType).getFloatSemantics(), 1);
+    for (int64_t i = 0; i < n; ++i)
+      for (int64_t j = 0; j < n; ++j)
+        ident.push_back(i == j ? oneF : zeroF);
+    Value I = arith::ConstantOp::create(b, loc, matType,
+                                        DenseElementsAttr::get(matType, ident));
+    Value Umasked = arith::MulFOp::create(b, loc, U, I);
+    auto onesN = arith::ConstantOp::create(
+        b, loc, vecType,
+        DenseElementsAttr::get(vecType, b.getFloatAttr(elemType, 1.0)));
+    Value diagU = impulse::DotOp::create(
+        b, loc, vecType, Umasked, onesN, b.getDenseI64ArrayAttr({}),
+        b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({0}),
+        b.getDenseI64ArrayAttr({0}));
+    Value sumLogDiag = reduce(math::LogOp::create(b, loc, diagU));
+    Value logDet = arith::MulFOp::create(
+        b, loc, scalarConst(b, loc, elemType, 2.0), sumLogDiag);
+    Value nLog2pi = scalarConst(b, loc, elemType, n * std::log(2.0 * M_PI));
+    Value constTerms = arith::AddFOp::create(b, loc, logDet, nLog2pi);
+    Value lognorm = arith::MulFOp::create(
+        b, loc, scalarConst(b, loc, elemType, -0.5), constTerms);
+    return {unnormed, lognorm};
   }
   default:
     llvm::report_fatal_error("emitNativeLogpdfSplit: unsupported base");

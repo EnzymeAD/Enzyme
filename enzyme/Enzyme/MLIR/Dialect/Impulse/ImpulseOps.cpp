@@ -33,11 +33,13 @@ static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
 //===----------------------------------------------------------------------===//
 
 LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
+  if (getFnAttr()) {
+    auto global =
+        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+    if (!global)
+      return emitOpError("'")
+             << getFn().value() << "' does not reference a valid global funcOp";
+  }
 
   if (getLogpdfAttr()) {
     auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
@@ -52,6 +54,20 @@ LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult SampleOp::verify() {
+  if (!getFnAttr() && !getDistAttr())
+    return emitOpError(
+        "requires either a sampler symbol `fn` or a `dist` attribute");
+  if (DistAttr dist = getDistAttr()) {
+    SmallVector<Type> distArgTypes;
+    for (unsigned i = 1; i < getInputs().size(); ++i)
+      distArgTypes.push_back(getInputs()[i].getType());
+    RankedTensorType derived = deriveSampleValueType(dist, distArgTypes);
+    if (derived && getNumResults() >= 2 && getResult(1).getType() != derived)
+      return emitOpError("distribution sample value type ")
+             << getResult(1).getType()
+             << " disagrees with the type derived from the dist attribute "
+             << derived;
+  }
   return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
 }
 

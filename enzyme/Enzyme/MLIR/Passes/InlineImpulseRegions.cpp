@@ -62,19 +62,22 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
     if (!symbol || sampleOp.getNumResults() < 2)
       return false;
 
+    SmallVector<Attribute> address(prefix.begin(), prefix.end());
+    address.push_back(symbol);
+
+    if (sampleOp.getDistAttr()) {
+      // Dist sites may carry no `fn` symbol.
+      addresses.push_back(ArrayAttr::get(root->getContext(), address));
+      continue;
+    }
+
     auto callee = dyn_cast_or_null<FunctionOpInterface>(
         symbolTable.lookupNearestSymbolFrom(root, sampleOp.getFnAttr()));
     if (!callee || callee.getFunctionBody().empty() ||
         !llvm::hasSingleElement(callee.getFunctionBody()))
       return false;
 
-    SmallVector<Attribute> address(prefix.begin(), prefix.end());
-    address.push_back(symbol);
-
-    if (sampleOp.getDistAttr()) {
-      // attribute, so no traced logpdf function is required.
-      addresses.push_back(ArrayAttr::get(root->getContext(), address));
-    } else if (sampleOp.getLogpdfAttr()) {
+    if (sampleOp.getLogpdfAttr()) {
       auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
           symbolTable.lookupNearestSymbolFrom(root, sampleOp.getLogpdfAttr()));
       if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
