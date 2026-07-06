@@ -2666,6 +2666,113 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
+
+        if (auto dist = sampleOp.getDistAttr()) {
+          Location loc = sampleOp.getLoc();
+          Value rng = sampleOp.getInputs().front();
+          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
+                                      sampleOp.getInputs().end());
+          auto distSampleType =
+              cast<RankedTensorType>(sampleOp.getResult(1).getType());
+
+          bool isConstrained = false;
+          int64_t constrainedOffset = -1;
+          for (auto addr : CI.getConstrainedAddressesAttr()) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              if (address.size() != 1) {
+                sampleOp.emitError("Impulse: distribution function cannot have "
+                                   "composite constrained address");
+                return WalkResult::interrupt();
+              }
+              isConstrained = true;
+              constrainedOffset = computeOffsetForSampleInSelection(
+                  CI, fn, CI.getConstrainedAddressesAttr(),
+                  sampleOp.getSymbolAttr(), symbolTable);
+              break;
+            }
+          }
+
+          sampledValues.resize(sampleOp.getNumResults());
+          if (isConstrained) {
+            sampledValues[0] = rng;
+            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+              auto resultType =
+                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
+              int64_t numElements = computeTensorElementCount(resultType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "Impulse: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = impulse::SliceOp::create(
+                  rewriter, loc, sliceType, constraint,
+                  rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
+                  rewriter.getDenseI64ArrayAttr(
+                      {1, constrainedOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              sampledValues[i] =
+                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
+                      .getResult();
+              constrainedOffset += numElements;
+            }
+          } else {
+            auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
+                                               distArgs, distSampleType);
+            for (unsigned i = 0; i < sv.size(); ++i)
+              sampledValues[i] = sv[i];
+          }
+
+          Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
+                                                 sampledValues[1], distArgs);
+          weightAccumulator =
+              arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+
+          bool inSelection = false;
+          for (auto addr : selection) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              inSelection = true;
+              break;
+            }
+          }
+          if (inSelection) {
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto sampleValue = sampledValues[i];
+              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleTy);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "Impulse: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleTy.getElementType());
+              auto flatSample = impulse::ReshapeOp::create(
+                  rewriter, loc, flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, loc, i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, loc, i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+              currTrace = impulse::DynamicUpdateSliceOp::create(
+                              rewriter, loc, traceType, currTrace, flatSample,
+                              ValueRange{row0, colOff})
+                              .getResult();
+              currentTraceOffset += numElements;
+            }
+          }
+
+          sampleOp.replaceAllUsesWith(sampledValues);
+          toErase.push_back(sampleOp);
+          return WalkResult::advance();
+        }
+
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {
@@ -3056,6 +3163,134 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
+
+        if (auto dist = sampleOp.getDistAttr()) {
+          Location loc = sampleOp.getLoc();
+          Value rng = sampleOp.getInputs().front();
+          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
+                                      sampleOp.getInputs().end());
+          auto distSampleType =
+              cast<RankedTensorType>(sampleOp.getResult(1).getType());
+
+          bool isSelected = false;
+          for (auto addr : CI.getRegenerateAddressesAttr()) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              if (address.size() != 1) {
+                sampleOp.emitError("Impulse: distribution function cannot have "
+                                   "composite selected address");
+                return WalkResult::interrupt();
+              }
+              isSelected = true;
+              break;
+            }
+          }
+          int64_t sampleOffset = computeOffsetForSampleInSelection(
+              CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+
+          sampledValues.resize(sampleOp.getNumResults());
+          if (isSelected) {
+            auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
+                                               distArgs, distSampleType);
+            for (unsigned i = 0; i < sv.size(); ++i)
+              sampledValues[i] = sv[i];
+          } else {
+            bool isConstrained = false;
+            int64_t constrainedOffset = -1;
+            if (constraint && constrainedAddresses) {
+              for (auto addr : constrainedAddresses) {
+                auto address = cast<ArrayAttr>(addr);
+                if (!address.empty() &&
+                    address[0] == sampleOp.getSymbolAttr()) {
+                  if (address.size() != 1) {
+                    sampleOp.emitError("Impulse: distribution function cannot "
+                                       "have composite constrained address");
+                    return WalkResult::interrupt();
+                  }
+                  isConstrained = true;
+                  constrainedOffset = computeOffsetForSampleInSelection(
+                      CI, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
+                      symbolTable);
+                  break;
+                }
+              }
+            }
+            Value source = isConstrained ? constraint : prevTrace;
+            int64_t extractOffset =
+                isConstrained ? constrainedOffset : sampleOffset;
+            sampledValues[0] = rng;
+            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+              auto resultType =
+                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
+              int64_t numElements = computeTensorElementCount(resultType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "Impulse: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = impulse::SliceOp::create(
+                  rewriter, loc, sliceType, source,
+                  rewriter.getDenseI64ArrayAttr({0, extractOffset}),
+                  rewriter.getDenseI64ArrayAttr(
+                      {1, extractOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              sampledValues[i] =
+                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
+                      .getResult();
+              extractOffset += numElements;
+            }
+          }
+
+          Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
+                                                 sampledValues[1], distArgs);
+          weightAccumulator =
+              arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+
+          bool inSelection = false;
+          for (auto addr : selection) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              inSelection = true;
+              break;
+            }
+          }
+          if (inSelection) {
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto sampleValue = sampledValues[i];
+              auto sampleTy = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleTy);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "Impulse: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleTy.getElementType());
+              auto flatSample = impulse::ReshapeOp::create(
+                  rewriter, loc, flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, loc, i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, loc, i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+              currTrace = impulse::DynamicUpdateSliceOp::create(
+                              rewriter, loc, traceType, currTrace, flatSample,
+                              ValueRange{row0, colOff})
+                              .getResult();
+              currentTraceOffset += numElements;
+            }
+          }
+
+          sampleOp.replaceAllUsesWith(sampledValues);
+          toErase.push_back(sampleOp);
+          return WalkResult::advance();
+        }
+
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {

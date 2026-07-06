@@ -19,8 +19,38 @@ namespace impulse {
 SupportAttr deriveSupportFromDist(MLIRContext *ctx, DistAttr dist);
 
 /// biject_to: the transform chain mapping unconstrained space onto `support`.
-/// Spike registry: REAL -> [identity], POSITIVE -> [exp].
 SmallVector<XformAttr> bijectorFor(MLIRContext *ctx, SupportAttr support);
+
+/// forward: unconstrained z -> constrained y.
+Value emitBijectorForward(OpBuilder &builder, Location loc, XformAttr xform,
+                          SupportAttr support, Value z);
+Value emitBijectorInverse(OpBuilder &builder, Location loc, XformAttr xform,
+                          SupportAttr support, Value y);
+/// log|det d(forward)/dz| summed over the event, evaluated at unconstrained z.
+Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
+                               XformAttr xform, SupportAttr support, Value z);
+
+/// SIMPLEX maps m*(K-1) -> m*K.
+int64_t bijectorForwardSize(int64_t unconstrainedSize, SupportAttr support);
+int64_t bijectorInverseSize(int64_t constrainedSize, SupportAttr support);
+
+bool isConstantJacobian(XformKind kind);
+
+Value emitLogit(OpBuilder &builder, Location loc, Value x);
+Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x);
+
+Value emitSoftplus(OpBuilder &builder, Location loc, Value x);
+Value emitSoftplusInv(OpBuilder &builder, Location loc, Value x);
+
+struct ScaledUnitLowerCholeskyResult {
+  Value scaleTril;
+  Value sumLogDiag;
+};
+
+/// NumPyro's ScaledUnitLowerCholeskyTransform; `xFlat` = [strict lower, diag].
+ScaledUnitLowerCholeskyResult
+emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
+                            int64_t d, Type elemType);
 
 /// Returns {newRng, value}.
 SmallVector<Value> emitDistSampler(OpBuilder &builder, Location loc,

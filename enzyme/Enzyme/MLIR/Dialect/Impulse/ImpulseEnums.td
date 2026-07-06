@@ -67,6 +67,13 @@ def XformKind : I32EnumAttr<"XformKind",
       I32EnumAttrCase<"EXP", 1>,
       I32EnumAttrCase<"AFFINE", 2>,
       I32EnumAttrCase<"COMPOSE", 3>,
+      I32EnumAttrCase<"SIGMOID", 4>,
+      I32EnumAttrCase<"INTERVAL", 5>,
+      I32EnumAttrCase<"GREATER_THAN", 6>,
+      I32EnumAttrCase<"LESS_THAN", 7>,
+      I32EnumAttrCase<"STICK_BREAKING", 8>,
+      I32EnumAttrCase<"SOFTPLUS", 9>,
+      I32EnumAttrCase<"SCALED_UNIT_LOWER_CHOLESKY", 10>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";
@@ -82,7 +89,10 @@ def XformAttr : Impulse_Attr<"Xform", "xform"> {
     `logabsdetjac`. AFFINE reads its loc/scale from the sample site's operands
     (positional, after the RNG operand); it carries no static parameters. A
     COMPOSE carries a `components` array applied inner-to-outer (component 0 is
-    applied first). For the F2 spike only IDENTITY, EXP, and AFFINE are emitted.
+    applied first). The constraint bijectors SIGMOID, INTERVAL, GREATER_THAN,
+    LESS_THAN, and STICK_BREAKING read their bound / event-size parameters from
+    the site's SupportAttr; SOFTPLUS and SCALED_UNIT_LOWER_CHOLESKY are the VI
+    guide transforms.
   }];
   let parameters = (ins
     "XformKind":$kind,

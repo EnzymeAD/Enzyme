@@ -4,6 +4,7 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
 #include "Passes/InferStateLayout.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -206,86 +207,9 @@ struct CholeskyTransformResult {
 CholeskyTransformResult applyScaledUnitLowerCholesky(OpBuilder &builder,
                                                      Location loc, Value xFlat,
                                                      int64_t d, Type elemType) {
-  int64_t nOff = d * (d - 1) / 2;
-  auto offDiagTy = RankedTensorType::get({nOff}, elemType);
-  auto diagTy = RankedTensorType::get({d}, elemType);
-  auto matTy = RankedTensorType::get({d, d}, elemType);
-  auto scalarTy = RankedTensorType::get({}, elemType);
-  auto i64T = RankedTensorType::get({}, builder.getI64Type());
-
-  // Slice off_diag = x[0:nOff], diag_pre = x[nOff:nOff+d].
-  Value offDiag, diagPre;
-  if (nOff > 0) {
-    offDiag = impulse::SliceOp::create(builder, loc, offDiagTy, xFlat,
-                                       builder.getDenseI64ArrayAttr({0}),
-                                       builder.getDenseI64ArrayAttr({nOff}),
-                                       builder.getDenseI64ArrayAttr({1}));
-  }
-  diagPre = impulse::SliceOp::create(builder, loc, diagTy, xFlat,
-                                     builder.getDenseI64ArrayAttr({nOff}),
-                                     builder.getDenseI64ArrayAttr({nOff + d}),
-                                     builder.getDenseI64ArrayAttr({1}));
-
-  // diag = softplus(diag_pre) = log1p(exp(diag_pre)). Shape (d,).
-  Value expDP = math::ExpOp::create(builder, loc, diagPre);
-  Value diag = math::Log1pOp::create(builder, loc, expDP);
-
-  // log_diag = log(diag); sum_log_diag = sum(log_diag) — scalar.
-  Value logDiag = math::LogOp::create(builder, loc, diag);
-  Value onesD = arith::ConstantOp::create(
-      builder, loc, diagTy,
-      DenseElementsAttr::get(diagTy, builder.getFloatAttr(elemType, 1.0)));
-  Value sumLogDiag = impulse::DotOp::create(
-      builder, loc, scalarTy, logDiag, onesD, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({0}),
-      builder.getDenseI64ArrayAttr({0}));
-
-  // Build L. Start from zeros, then scatter:
-  //   L[i, i] = diag[i]                              (d entries)
-  //   L[i, j] = off_diag[k] * diag[i] for j < i      (nOff entries)
-  Value L = arith::ConstantOp::create(
-      builder, loc, matTy,
-      DenseElementsAttr::get(matTy, builder.getFloatAttr(elemType, 0.0)));
-
-  auto sliceScalar = [&](Value vec, int64_t k) -> Value {
-    auto oneTy = RankedTensorType::get({1}, elemType);
-    Value s1 = impulse::SliceOp::create(builder, loc, oneTy, vec,
-                                        builder.getDenseI64ArrayAttr({k}),
-                                        builder.getDenseI64ArrayAttr({k + 1}),
-                                        builder.getDenseI64ArrayAttr({1}));
-    return impulse::ReshapeOp::create(builder, loc, scalarTy, s1);
-  };
-  auto reshapeTo11 = [&](Value scalar) -> Value {
-    auto t11 = RankedTensorType::get({1, 1}, elemType);
-    return impulse::ReshapeOp::create(builder, loc, t11, scalar);
-  };
-  auto i64Const = [&](int64_t v) -> Value {
-    return arith::ConstantOp::create(
-        builder, loc, i64T,
-        DenseElementsAttr::get(i64T, builder.getI64IntegerAttr(v)));
-  };
-
-  int64_t k = 0;
-  for (int64_t i = 0; i < d; ++i) {
-    Value diag_i = sliceScalar(diag, i);
-    for (int64_t j = 0; j < i; ++j) {
-      // L[i, j] = off_diag[k] * diag[i]
-      Value off_k = sliceScalar(offDiag, k);
-      Value entry = arith::MulFOp::create(builder, loc, off_k, diag_i);
-      Value entry11 = reshapeTo11(entry);
-      L = impulse::DynamicUpdateSliceOp::create(
-          builder, loc, matTy, L, entry11,
-          ValueRange{i64Const(i), i64Const(j)});
-      ++k;
-    }
-    // L[i, i] = diag[i]
-    Value diag_i_11 = reshapeTo11(diag_i);
-    L = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, matTy, L, diag_i_11,
-        ValueRange{i64Const(i), i64Const(i)});
-  }
-
-  return {L, sumLogDiag};
+  auto r =
+      impulse::emitScaledUnitLowerCholesky(builder, loc, xFlat, d, elemType);
+  return {r.scaleTril, r.sumLogDiag};
 }
 
 } // namespace
@@ -377,10 +301,8 @@ mlir::impulse::VI::emitSingleParticleELBO(OpBuilder &builder, Location loc,
     OpBuilder::InsertionGuard g(builder);
     builder.setInsertionPointToStart(adBlock);
 
-    // `scale = softplus(unconstrained_scale)`. Replicate this bijection so
-    // gradients flow through softplus automatically.
-    Value expU = math::ExpOp::create(builder, loc, scaleArg);
-    Value scale = math::Log1pOp::create(builder, loc, expU);
+    // NumPyro's AutoNormal: scale = softplus(unconstrained_scale).
+    Value scale = impulse::emitSoftplus(builder, loc, scaleArg);
 
     Value scaleDumped = conditionalDump(
         builder, loc, scale, "VI: scale=softplus(scaleArg)", ctx.debugDump);
@@ -1563,10 +1485,7 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
               ? Value(initScaleOp)
               : Value(impulse::ReshapeOp::create(rewriter, loc, positionType,
                                                  initScaleOp));
-      Value expS = math::ExpOp::create(rewriter, loc, initScaleConstrained);
-      Value oneBcast = scalarConst(rewriter, loc, positionType, 1.0);
-      Value expSMinus1 = arith::SubFOp::create(rewriter, loc, expS, oneBcast);
-      scale0 = math::LogOp::create(rewriter, loc, expSMinus1);
+      scale0 = impulse::emitSoftplusInv(rewriter, loc, initScaleConstrained);
     } else {
       double initScaleU = std::log(std::expm1(ctx.initScale));
       scale0 = scalarConst(rewriter, loc, positionType, initScaleU);
@@ -1597,7 +1516,6 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
     loopRes = emitSVILoopMVN(rewriter, loc, loc0, xScaleTril0, rng0, ctx);
   }
 
-  //   trace, diagnostics, output_rng_state, then the VI state schema slots.
   auto slotValue = [&](StringRef name) -> Value {
     if (name == "loc")
       return loopRes.locFinal;
@@ -1619,6 +1537,11 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
   SmallVector<Value> results;
   results.push_back(loopRes.traceBuf);
   results.push_back(loopRes.elboBuf); // diagnostics (per-step ELBO)
+  results.push_back(arith::ConstantOp::create(
+      rewriter, loc, op.getLogDensities().getType(),
+      DenseElementsAttr::get(
+          cast<ShapedType>(op.getLogDensities().getType()),
+          rewriter.getFloatAttr(elemType, 0.0)))); // log_densities (unused)
   results.push_back(loopRes.rngFinal);
   for (const impulse::StateSlot &slot :
        impulse::buildVIStateSchema(guide, ctx.positionSize, elemType))
