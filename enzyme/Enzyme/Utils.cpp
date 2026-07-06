@@ -4770,36 +4770,50 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
             if (noalias[end_i] || (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
               return true;
             }
-            if (auto end_load = dyn_cast<LoadInst>(end_base)) {
-              auto end_load_base = getBaseObject(end_load->getOperand(0), /*offsetAllowed*/ true);
-              // We don't need to consider the symmetric case since the other iteration of the if will for us
-              // Thus here we only consider the case where both are loads of allocs
-              if (isAllocationCall(end_load_base, TLI) || isa<AllocaInst>(end_load_base)) {
-                auto end_alloc_call = cast<Instruction>(end_load_base);
-                bool end_alloc_written = false;
-                allInstructionsBetween(
-                    LI, end_alloc_call, end_load, [&](Instruction *I) -> bool {
-                      if (!I->mayWriteToMemory())
-                        return /*earlyBreak*/ false;
 
-                      if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                                /*maybeReader*/ end_load,
-                                                /*maybeWriter*/ I)) {
-                        end_alloc_written = true;
-                        return /*earlyBreak*/ true;
-                      }
-                      return /*earlyBreak*/ false;
-                    });
-                    // If neither base allocation was written to prior to load, if the two bases are different, we can assume the undef
-                    // (or internal allocations within) are different.
-                if (!end_alloc_written) {
-                  if (auto base_noalias = arePointersGuaranteedNoAlias(TLI, AA, DT, LI, alloc_call, end_alloc_call, /*offsetAllowed*/false)) {
-                    if (*base_noalias) {
-                      return true;
-                    }
-                  }
+            // If the allocation was not written into prior to ld, any pointer value
+            // loaded from it must have been created by one of the loads reading from alloc_call.
+            // If every load out of alloc_call is distinct from end, and was neither captured
+            // before end nor created after end, alloc_call's loaded values cannot dataflow into end.
+            SmallVector<Value *, 8> worklist;
+            SmallPtrSet<Value *, 8> visited;
+            SmallVector<LoadInst *, 8> alloc_loads;
+
+            worklist.push_back(alloc_call);
+            visited.insert(alloc_call);
+
+            while (!worklist.empty()) {
+              Value *V = worklist.pop_back_val();
+              for (User *U : V->users()) {
+                if (!visited.insert(U).second)
+                  continue;
+                if (isPointerArithmeticInst(U, /*includephi*/ true, /*includebin*/ true)) {
+                  worklist.push_back(U);
+                } else if (auto LI = dyn_cast<LoadInst>(U)) {
+                  alloc_loads.push_back(LI);
                 }
               }
+            }
+
+            bool all_loads_no_alias = true;
+            for (LoadInst *alloc_load : alloc_loads) {
+              if (alloc_load == end) {
+                all_loads_no_alias = false;
+                break;
+              }
+              if (auto end_inst = dyn_cast<Instruction>(end)) {
+                if (DT.dominates(end_inst, alloc_load)) {
+                  continue;
+                }
+              }
+              if (!notCapturedBefore(alloc_load, dyn_cast<Instruction>(end), 0)) {
+                all_loads_no_alias = false;
+                break;
+              }
+            }
+
+            if (all_loads_no_alias) {
+              return true;
             }
           }
       }
