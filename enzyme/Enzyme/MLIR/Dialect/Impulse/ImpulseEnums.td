@@ -114,6 +114,10 @@ def DistBaseKind : I32EnumAttr<"DistBaseKind",
       I32EnumAttrCase<"BERNOULLI", 6>,        // logits
       I32EnumAttrCase<"POISSON", 7>,          // rate
       I32EnumAttrCase<"DISCRETE_UNIFORM", 8>, // low, high
+      // Folded natives: abs is not a bijection, so no base + bijector form.
+      I32EnumAttrCase<"HALF_NORMAL", 9>,      // scale
+      I32EnumAttrCase<"HALF_CAUCHY", 10>,     // scale
+      I32EnumAttrCase<"DIRICHLET", 11>,       // concentration
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";

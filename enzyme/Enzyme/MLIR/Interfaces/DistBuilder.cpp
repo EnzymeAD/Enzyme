@@ -12,6 +12,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::impulse;
@@ -54,7 +55,11 @@ static SupportKind baseSupport(DistBaseKind base) {
     return SupportKind::UNIT_INTERVAL;
   case DistBaseKind::EXPONENTIAL:
   case DistBaseKind::GAMMA:
+  case DistBaseKind::HALF_NORMAL:
+  case DistBaseKind::HALF_CAUCHY:
     return SupportKind::POSITIVE;
+  case DistBaseKind::DIRICHLET:
+    return SupportKind::SIMPLEX;
   case DistBaseKind::STD_NORMAL:
   case DistBaseKind::STUDENT_T:
   case DistBaseKind::BERNOULLI:
@@ -80,6 +85,7 @@ bool impulse::distSamplerEmittable(DistAttr dist) {
   case DistBaseKind::GAMMA:
   case DistBaseKind::STUDENT_T:
   case DistBaseKind::POISSON:
+  case DistBaseKind::DIRICHLET:
     return false;
   default:
     return true;
@@ -162,6 +168,20 @@ Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
   return impulse::DotOp::create(
       b, loc, scalarType, flat, ones, b.getDenseI64ArrayAttr({}),
       b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({0}),
+      b.getDenseI64ArrayAttr({0}));
+}
+
+Value reduceLastAxis(OpBuilder &b, Location loc, Value v, int64_t M,
+                     int64_t K) {
+  Type elemType = cast<RankedTensorType>(v.getType()).getElementType();
+  auto vecType = RankedTensorType::get({M}, elemType);
+  auto onesType = RankedTensorType::get({K}, elemType);
+  auto ones = arith::ConstantOp::create(
+      b, loc, onesType,
+      DenseElementsAttr::get(onesType, b.getFloatAttr(elemType, 1.0)));
+  return impulse::DotOp::create(
+      b, loc, vecType, v, ones, b.getDenseI64ArrayAttr({}),
+      b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({1}),
       b.getDenseI64ArrayAttr({0}));
 }
 
@@ -366,6 +386,36 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value fl = math::FloorOp::create(b, loc, scaled);
     return arith::AddFOp::create(b, loc, low, fl);
   }
+  case DistBaseKind::HALF_NORMAL: {
+    // Matches the traced abs.(sigma .* randn) only up to sub-ULP differences.
+    Type elemType = sampleType.getElementType();
+    Value zero = scalarConst(b, loc, elemType, 0.0);
+    Value one = scalarConst(b, loc, elemType, 1.0);
+    auto op = impulse::RandomOp::create(
+        b, loc, TypeRange{rng.getType(), sampleType}, rng, zero, one,
+        impulse::RngDistributionAttr::get(b.getContext(),
+                                          impulse::RngDistribution::NORMAL));
+    rng = op.getOutputRngState();
+    Value scaled =
+        arith::MulFOp::create(b, loc, bcast(distArgs[0]), op.getResult());
+    return math::AbsFOp::create(b, loc, scaled);
+  }
+  case DistBaseKind::HALF_CAUCHY: {
+    // u * (1 - eps) + eps, as in the traced JAX construction.
+    Value u = emitUniformDraw(b, loc, rng, sampleType);
+    double epsF64 = std::numeric_limits<double>::epsilon();
+    Value oneMinusEps = splatSample(b, loc, sampleType, 1.0 - epsF64);
+    Value epsV = splatSample(b, loc, sampleType, epsF64);
+    Value uc = arith::AddFOp::create(
+        b, loc, arith::MulFOp::create(b, loc, u, oneMinusEps), epsV);
+    Value half = splatSample(b, loc, sampleType, 0.5);
+    Value piV = splatSample(b, loc, sampleType, M_PI);
+    Value arg = arith::MulFOp::create(b, loc, piV,
+                                      arith::SubFOp::create(b, loc, uc, half));
+    Value t = math::TanOp::create(b, loc, arg);
+    Value at = math::AbsFOp::create(b, loc, t);
+    return arith::MulFOp::create(b, loc, bcast(distArgs[0]), at);
+  }
   default:
     llvm::report_fatal_error(
         "emitNativeSampler: sampler not emittable for this base");
@@ -467,6 +517,58 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     Value kernel = arith::SubFOp::create(
         b, loc, arith::MulFOp::create(b, loc, observed, logRate), lgk);
     Value lognorm = reduce(arith::NegFOp::create(b, loc, rate));
+    return {reduce(kernel), lognorm};
+  }
+  case DistBaseKind::HALF_NORMAL: {
+    Value sigma = bcast(distArgs[0]);
+    Value sig2 = arith::MulFOp::create(b, loc, sigma, sigma);
+    Value denom = arith::MulFOp::create(b, loc, splat(2.0), sig2);
+    Value x2 = arith::MulFOp::create(b, loc, observed, observed);
+    Value kernel =
+        arith::NegFOp::create(b, loc, arith::DivFOp::create(b, loc, x2, denom));
+    Value logSig = math::LogOp::create(b, loc, sigma);
+    Value norm = arith::SubFOp::create(
+        b, loc, arith::SubFOp::create(b, loc, splat(std::log(2.0)), logSig),
+        splat(0.5 * std::log(2.0 * M_PI)));
+    return {reduce(kernel), reduce(norm)};
+  }
+  case DistBaseKind::HALF_CAUCHY: {
+    Value scale = bcast(distArgs[0]);
+    Value xOverS = arith::DivFOp::create(b, loc, observed, scale);
+    Value sq = arith::MulFOp::create(b, loc, xOverS, xOverS);
+    Value kernel =
+        arith::NegFOp::create(b, loc, math::Log1pOp::create(b, loc, sq));
+    Value logS = math::LogOp::create(b, loc, scale);
+    Value norm =
+        arith::SubFOp::create(b, loc, splat(std::log(2.0 / M_PI)), logS);
+    return {reduce(kernel), reduce(norm)};
+  }
+  case DistBaseKind::DIRICHLET: {
+    // The event is the last axis; only lgamma(sum_K alpha) is summed per block.
+    int64_t K =
+        sampleType.getShape().empty() ? 1 : sampleType.getShape().back();
+    int64_t total = 1;
+    for (int64_t dsz : sampleType.getShape())
+      total *= dsz;
+    int64_t Mb = (K == 0) ? 0 : total / K;
+    auto twoDType = RankedTensorType::get({Mb, K}, elemType);
+    Value alpha = bcast(distArgs[0]);
+    Value alpha2d = impulse::ReshapeOp::create(b, loc, twoDType, alpha);
+    Value x2d = impulse::ReshapeOp::create(b, loc, twoDType, observed);
+    Value one2d = arith::ConstantOp::create(
+        b, loc, twoDType,
+        DenseElementsAttr::get(twoDType, b.getFloatAttr(elemType, 1.0)));
+    Value am1 = arith::SubFOp::create(b, loc, alpha2d, one2d);
+    Value logx = math::LogOp::create(b, loc, x2d);
+    Value kernel = arith::MulFOp::create(b, loc, logx, am1);
+    Value lgAlpha =
+        impulse::LgammaOp::create(b, loc, alpha2d.getType(), alpha2d);
+    Value termA = reduce(lgAlpha);
+    Value sumKAlpha = reduceLastAxis(b, loc, alpha2d, Mb, K);
+    Value lgSumK =
+        impulse::LgammaOp::create(b, loc, sumKAlpha.getType(), sumKAlpha);
+    Value termB = reduce(lgSumK);
+    Value lognorm = arith::SubFOp::create(b, loc, termB, termA);
     return {reduce(kernel), lognorm};
   }
   default:
