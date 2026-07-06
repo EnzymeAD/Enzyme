@@ -67,3 +67,19 @@ top:
 ; CHECK: define i1 @boxed_roundtrip_ld_dominates
 ; CHECK:   ret i1 false
 
+; Two loads from the exact same allocation load identical values; comparison must not be folded to false.
+define i1 @same_alloc_loads(ptr %task, ptr addrspace(10) %tag) {
+top:
+  %box = call noalias nonnull align 8 dereferenceable(8) ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 8, ptr addrspace(10) %tag)
+  %slot = addrspacecast ptr addrspace(10) %box to ptr addrspace(11)
+  %c1 = load ptr addrspace(10), ptr addrspace(11) %slot, align 8
+  %c2 = load ptr addrspace(10), ptr addrspace(11) %slot, align 8
+  %cmp = icmp eq ptr addrspace(10) %c1, %c2
+  ret i1 %cmp
+}
+
+; CHECK: define i1 @same_alloc_loads
+; CHECK:   %cmp = icmp eq ptr addrspace(10) %c1, %c2
+; CHECK-NEXT:   ret i1 %cmp
+
+
