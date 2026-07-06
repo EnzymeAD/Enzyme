@@ -1666,10 +1666,19 @@ struct ExpandImpulsePass
             SmallVector<Value> trueYieldValues;
 
             if (adaptMassMatrix) {
-              auto newInvMass = finalizeWelford(
+              Value newInvMass = finalizeWelford(
                   rewriter, loc, conditionalWelford, welfordConfig);
-              auto newMassMatrixSqrt = computeMassMatrixSqrt(
+              Value newMassMatrixSqrt = computeMassMatrixSqrt(
                   rewriter, loc, newInvMass, positionType);
+              // finalizeWelford returns rank-1 diagonals; match the carried
+              // type.
+              if (newInvMass.getType() != invMassLoop.getType())
+                newInvMass = impulse::ReshapeOp::create(
+                    rewriter, loc, invMassLoop.getType(), newInvMass);
+              if (newMassMatrixSqrt.getType() != massMatrixSqrtLoop.getType())
+                newMassMatrixSqrt = impulse::ReshapeOp::create(
+                    rewriter, loc, massMatrixSqrtLoop.getType(),
+                    newMassMatrixSqrt);
               auto reinitWelford =
                   initWelford(rewriter, loc, positionSize, diagonal);
 
@@ -2086,7 +2095,8 @@ struct ExpandImpulsePass
 
       // ui64 has no arith.constant; seed the buffer with chain 0's key.
       auto stackRngChainMajor = [&]() -> Value {
-        auto rngTy = cast<RankedTensorType>(perChain[0][2].getType());
+        // perChain layout: trace, diagnostics, log_densities, rng, state...
+        auto rngTy = cast<RankedTensorType>(perChain[0][3].getType());
         SmallVector<int64_t> cmShape;
         cmShape.push_back(numChains);
         cmShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
@@ -2096,11 +2106,11 @@ struct ExpandImpulsePass
         oneShape.append(rngTy.getShape().begin(), rngTy.getShape().end());
         auto oneType = RankedTensorType::get(oneShape, rngTy.getElementType());
         Value buf = enzyme::BroadcastOp::create(
-            rewriter, loc, cmType, perChain[0][2],
+            rewriter, loc, cmType, perChain[0][3],
             rewriter.getDenseI64ArrayAttr({numChains}));
         for (int64_t c = 0; c < numChains; ++c) {
           Value reshaped = impulse::ReshapeOp::create(rewriter, loc, oneType,
-                                                      perChain[c][2]);
+                                                      perChain[c][3]);
           SmallVector<Value> idxs;
           idxs.push_back(idxConst(c));
           for (int64_t d = 0; d < rngTy.getRank(); ++d)
@@ -2114,9 +2124,10 @@ struct ExpandImpulsePass
       SmallVector<Value> stacked;
       stacked.push_back(stackChainMajor(0));
       stacked.push_back(stackChainMajor(1));
+      stacked.push_back(stackChainMajor(2));
       // output_rng_state is the last chain's key; all keys go in `rng`.
-      stacked.push_back(perChain[numChains - 1][2]);
-      for (unsigned j = 3; j < perChain[0].size(); ++j)
+      stacked.push_back(perChain[numChains - 1][3]);
+      for (unsigned j = 4; j < perChain[0].size(); ++j)
         stacked.push_back(stackChainMajor(j));
       if (schema && !schema.empty())
         stacked.push_back(stackRngChainMajor());
@@ -2520,9 +2531,17 @@ struct ExpandImpulsePass
         outAccepted = forOp.getResult(3);
       }
 
-      // infer result order: trace, diagnostics(accepted), output_rng,
-      // state_out.
-      rewriter.replaceOp(op, {outTrace, outAccepted, outRng, outWeight});
+      // MH reports no per-sample log density; `log_densities` is zero.
+      Value outLogDensities = arith::ConstantOp::create(
+          rewriter, loc, op.getLogDensities().getType(),
+          DenseElementsAttr::get(
+              cast<ShapedType>(op.getLogDensities().getType()),
+              rewriter.getFloatAttr(
+                  cast<ShapedType>(op.getLogDensities().getType())
+                      .getElementType(),
+                  0.0)));
+      rewriter.replaceOp(
+          op, {outTrace, outAccepted, outLogDensities, outRng, outWeight});
       return success();
     }
   };

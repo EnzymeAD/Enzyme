@@ -218,6 +218,8 @@ module {
 // CHECK-NEXT: arith.addf
 // CHECK-NEXT: math.sqrt
 // CHECK-NEXT: arith.divf %[[ONE_1D]]
+// CHECK-NEXT: impulse.reshape %{{.+}} : (tensor<1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: impulse.reshape %{{.+}} : (tensor<1xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: math.log
 // CHECK-NEXT: arith.addf %{{.+}}, %[[LOG10]]
 // CHECK-NEXT: impulse.yield
