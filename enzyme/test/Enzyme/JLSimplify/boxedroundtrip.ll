@@ -50,9 +50,8 @@ top:
 ; CHECK:   %cmp = icmp eq ptr addrspace(10) %contents, %v
 ; CHECK-NEXT:   ret i1 %cmp
 
-; When load %contents dominates instruction %after_v, %after_v did not exist
-; at the time of %contents load, and box is not captured before %after_v,
-; so fold to false is legal.
+; When load %contents dominates instruction %after_v, %after_v loads from %other_slot which
+; could hold %v (which was stored in box), so comparison cannot be folded to false.
 define i1 @boxed_roundtrip_ld_dominates(ptr %task, ptr addrspace(10) %tag, ptr addrspace(10) %v, ptr addrspace(11) %other_slot) {
 top:
   %box = call noalias nonnull align 8 dereferenceable(8) ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 8, ptr addrspace(10) %tag)
@@ -65,7 +64,8 @@ top:
 }
 
 ; CHECK: define i1 @boxed_roundtrip_ld_dominates
-; CHECK:   ret i1 false
+; CHECK:   %cmp = icmp eq ptr addrspace(10) %contents, %after_v
+; CHECK-NEXT:   ret i1 %cmp
 
 ; Two loads from the exact same allocation load identical values; comparison must not be folded to false.
 define i1 @same_alloc_loads(ptr %task, ptr addrspace(10) %tag) {
