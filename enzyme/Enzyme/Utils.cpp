@@ -4721,53 +4721,85 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     }
 
     if (auto ld = dyn_cast<LoadInst>(start)) {
-      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ true);
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
+      auto end_base = getBaseObject(end, /*offsetAllowed*/ false);
       if (isAllocationCall(base, TLI) || isa<AllocaInst>(base)) {
         auto alloc_call = cast<Instruction>(base);
-
-        if (noalias[end_i] || DT.dominates(end, alloc_call)) {
-
-          // Even if the alloc was written into:
-          // if either:
-          //    a) end preceeded the allocation
-          //    OR
-          //    b) end didn't alias any other value at time of construction
-          // AND
-          //    end was not captured prior to the load,
-          //  it cannot possibly alias.
-          //
-          //  In the (a) case, end was created prior, not captured into the
-          //  allocation prior to store. So there is no way the allocation can
-          //  contain the bits of end In the (b) case, end is a fresh (aka non
-          //  aliasing) pointer, which means no other pointers in scope could
-          //  point to, none of which were captured
-          if (notCapturedBefore(end, ld, 0, alloc_call)) {
-            return true;
-          }
-
-          bool alloc_written = false;
-          allInstructionsBetween(
-              LI, alloc_call, ld, [&](Instruction *I) -> bool {
-                if (!I->mayWriteToMemory())
-                  return /*earlyBreak*/ false;
-
-                if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                         /*maybeReader*/ ld,
-                                         /*maybeWriter*/ I)) {
-                  alloc_written = true;
-                  return /*earlyBreak*/ true;
-                }
-                return /*earlyBreak*/ false;
-              });
-
-          // If there was no store into the allocation prior to the load, the
-          // load cannot possibly alias with a value which defined prior to the
-          // the allocation. Additionally, if there is any value which is
-          // noalias upon construction, that value also cannot alias the load.
-          if (!alloc_written) {
-            return true;
-          }
+        // Even if the alloc was written into:
+        // if either:
+        //    end didn't alias any other value at time of construction
+        // AND
+        //    end was not captured prior to the load,
+        //  it cannot possibly alias.
+        //
+        //  In this case, end is a fresh (aka non
+        //  aliasing) pointer, which means no other pointers in scope could
+        //  point to, none of which were captured.
+        //
+        //  It is not sufficient here to merely prove end dominates alloc_call and
+        //  is not captured, since there could be an aliasing pointer to end which
+        //  is captured.
+        if (noalias[end_i] && notCapturedBefore(end_base, ld, 0, alloc_call)) {
+          return true;
         }
+
+        // However if nothing was written to the alloc prior to the load, we know that 
+        // there is no way to dataflow end into start, so we now merely must prove there is no
+        // way to dataflow start into end.
+
+        bool alloc_written = false;
+        allInstructionsBetween(
+            LI, alloc_call, ld, [&](Instruction *I) -> bool {
+              if (!I->mayWriteToMemory())
+                return /*earlyBreak*/ false;
+
+              if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                        /*maybeReader*/ ld,
+                                        /*maybeWriter*/ I)) {
+                alloc_written = true;
+                return /*earlyBreak*/ true;
+              }
+              return /*earlyBreak*/ false;
+            });
+
+          if (!alloc_written) {
+            // If end is marked noalias at the time of construction it definitionally
+            // cannot alias another potential load out of alloc.
+            // If the base of end occurs prior to alloc_call, there is no way for
+            // alloc_call to dataflow into end.
+            if (noalias[end_i] || DT.dominates(end_base, alloc_call)) {
+              return true;
+            }
+            if (auto end_load = dyn_cast<LoadInst>(end_base)) {
+              auto end_load_base = getBaseObject(end_load->getOperand(0), /*offsetAllowed*/ false);
+              if (isAllocationCall(end_load_base, TLI) || isa<AllocaInst>(end_load_base)) {
+                auto end_alloc_call = cast<Instruction>(end_load_base);
+                bool end_alloc_written = false;
+                allInstructionsBetween(
+                    LI, end_alloc_call, end_load, [&](Instruction *I) -> bool {
+                      if (!I->mayWriteToMemory())
+                        return /*earlyBreak*/ false;
+
+                      if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                                /*maybeReader*/ end_load,
+                                                /*maybeWriter*/ I)) {
+                        end_alloc_written = true;
+                        return /*earlyBreak*/ true;
+                      }
+                      return /*earlyBreak*/ false;
+                    });
+                    // If neither base allocation was written to prior to load, if the two bases are different, we can assume the undef
+                    // (or internal allocations within) are different.
+                if (!end_alloc_written) {
+                  if (auto base_noalias = arePointersGuaranteedNoAlias(TLI, AA, DT, LI, alloc_call, end_alloc_call, /*offsetAllowed*/false)) {
+                    if (*base_noalias) {
+                      return true;
+                    }
+                  }
+                }
+              }
+            }
+          }
       }
     }
   }
