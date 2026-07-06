@@ -32,3 +32,38 @@ top:
 
 ; CHECK: define i1 @fresh_load
 ; CHECK:   ret i1 false
+
+; When stored value %v is an instruction that dominates the load %contents,
+; the stored value could be in the box, so comparison must not be folded.
+define i1 @boxed_roundtrip_inst(ptr %task, ptr addrspace(10) %tag, ptr addrspace(11) %src) {
+top:
+  %v = load ptr addrspace(10), ptr addrspace(11) %src, align 8
+  %box = call noalias nonnull align 8 dereferenceable(8) ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 8, ptr addrspace(10) %tag)
+  %slot = addrspacecast ptr addrspace(10) %box to ptr addrspace(11)
+  store ptr addrspace(10) %v, ptr addrspace(11) %slot, align 8
+  %contents = load ptr addrspace(10), ptr addrspace(11) %slot, align 8
+  %cmp = icmp eq ptr addrspace(10) %contents, %v
+  ret i1 %cmp
+}
+
+; CHECK: define i1 @boxed_roundtrip_inst
+; CHECK:   %cmp = icmp eq ptr addrspace(10) %contents, %v
+; CHECK-NEXT:   ret i1 %cmp
+
+; When load %contents dominates instruction %after_v, %after_v did not exist
+; at the time of %contents load, and box is not captured before %after_v,
+; so fold to false is legal.
+define i1 @boxed_roundtrip_ld_dominates(ptr %task, ptr addrspace(10) %tag, ptr addrspace(10) %v, ptr addrspace(11) %other_slot) {
+top:
+  %box = call noalias nonnull align 8 dereferenceable(8) ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 8, ptr addrspace(10) %tag)
+  %slot = addrspacecast ptr addrspace(10) %box to ptr addrspace(11)
+  store ptr addrspace(10) %v, ptr addrspace(11) %slot, align 8
+  %contents = load ptr addrspace(10), ptr addrspace(11) %slot, align 8
+  %after_v = load ptr addrspace(10), ptr addrspace(11) %other_slot, align 8
+  %cmp = icmp eq ptr addrspace(10) %contents, %after_v
+  ret i1 %cmp
+}
+
+; CHECK: define i1 @boxed_roundtrip_ld_dominates
+; CHECK:   ret i1 false
+
