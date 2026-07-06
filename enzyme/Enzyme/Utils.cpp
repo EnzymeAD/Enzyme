@@ -4721,8 +4721,8 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     }
 
     if (auto ld = dyn_cast<LoadInst>(start)) {
-      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
-      auto end_base = getBaseObject(end, /*offsetAllowed*/ false);
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ true);
+      auto end_base = getBaseObject(end, /*offsetAllowed*/ true);
       if (isAllocationCall(base, TLI) || isa<AllocaInst>(base)) {
         auto alloc_call = cast<Instruction>(base);
         // Even if the alloc was written into:
@@ -4771,7 +4771,7 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
               return true;
             }
             if (auto end_load = dyn_cast<LoadInst>(end_base)) {
-              auto end_load_base = getBaseObject(end_load->getOperand(0), /*offsetAllowed*/ false);
+              auto end_load_base = getBaseObject(end_load->getOperand(0), /*offsetAllowed*/ true);
               // We don't need to consider the symmetric case since the other iteration of the if will for us
               // Thus here we only consider the case where both are loads of allocs
               if (isAllocationCall(end_load_base, TLI) || isa<AllocaInst>(end_load_base)) {
