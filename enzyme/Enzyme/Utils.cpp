@@ -4736,9 +4736,9 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         //  aliasing) pointer, which means no other pointers in scope could
         //  point to, none of which were captured.
         //
-        //  It is not sufficient here to merely prove end dominates alloc_call and
-        //  is not captured, since there could be an aliasing pointer to end which
-        //  is captured.
+        //  It is not sufficient here to merely prove end dominates alloc_call
+        //  and is not captured, since there could be an aliasing pointer to end
+        //  which is captured.
         if (noalias[end_i] && notCapturedBefore(end_base, ld, 0, alloc_call)) {
           return true;
         }
