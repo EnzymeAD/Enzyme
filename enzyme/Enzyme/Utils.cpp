@@ -2904,8 +2904,8 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
 
   if (loadPtr && storePtr)
-    if (auto alias =
-            arePointersGuaranteedNoAlias(TLI, AA, LI, loadPtr, storePtr, true))
+    if (auto alias = arePointersGuaranteedNoAlias(TLI, AA, DT, LI, loadPtr,
+                                                  storePtr, true))
       if (*alias)
         return false;
 
@@ -4544,8 +4544,10 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures) {
-  Instruction *VI = dyn_cast<Instruction>(V);
+                       size_t checkLoadCaptures, Instruction *startinst) {
+  Instruction *VI = startinst;
+  if (!VI)
+    VI = dyn_cast<Instruction>(V);
   if (!VI)
     VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   else
@@ -4567,7 +4569,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   }
   SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
   for (auto U : V->users()) {
-    todo.emplace_back(cast<Instruction>(U), checkLoadCaptures, V);
+    if (auto I = dyn_cast<Instruction>(U)) {
+      todo.emplace_back(cast<Instruction>(I), checkLoadCaptures, V);
+    }
   }
   std::set<std::tuple<Value *, size_t, Value *>> seen;
   while (todo.size()) {
@@ -4659,8 +4663,9 @@ std::optional<bool>
 llvm::Optional<bool>
 #endif
 arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::LoopInfo &LI, llvm::Value *op0,
-                             llvm::Value *op1, bool offsetAllowed) {
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed) {
   auto lhs = getBaseObject(op0, offsetAllowed);
   auto rhs = getBaseObject(op1, offsetAllowed);
 
@@ -4687,55 +4692,132 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   bool noalias[2] = {noalias_lhs, noalias_rhs};
 
   for (int i = 0; i < 2; i++) {
+    int start_i = i;
     Value *start = (i == 0) ? lhs : rhs;
+    int end_i = 1 - i;
     Value *end = (i == 0) ? rhs : lhs;
-    if (noalias[i]) {
-      if (noalias[1 - i]) {
+
+    if (noalias[start_i]) {
+      if (noalias[end_i]) {
         return true;
       }
       if (isa<Argument>(end)) {
         return true;
       }
+
+      if (auto starti = dyn_cast<Instruction>(start)) {
+        // If end dominates start, then since start is noalias at its creation,
+        // it is definitionally not aliasing end
+        if (DT.dominates(end, starti)) {
+          return true;
+        }
+      }
+
       if (auto endi = dyn_cast<Instruction>(end)) {
         if (notCapturedBefore(start, endi, 0)) {
           return true;
         }
       }
     }
+
     if (auto ld = dyn_cast<LoadInst>(start)) {
-      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
-      if (isAllocationCall(base, TLI)) {
-        if (isa<Argument>(end))
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ true);
+      auto end_base = getBaseObject(end, /*offsetAllowed*/ true);
+      if (isAllocationCall(base, TLI) || isa<AllocaInst>(base)) {
+        auto alloc_call = cast<Instruction>(base);
+        // Even if the alloc was written into:
+        // if either:
+        //    end didn't alias any other value at time of construction
+        // AND
+        //    end was not captured prior to the load,
+        //  it cannot possibly alias.
+        //
+        //  In this case, end is a fresh (aka non
+        //  aliasing) pointer, which means no other pointers in scope could
+        //  point to, none of which were captured.
+        //
+        //  It is not sufficient here to merely prove end dominates alloc_call
+        //  and is not captured, since there could be an aliasing pointer to end
+        //  which is captured.
+        if (noalias[end_i] && notCapturedBefore(end_base, ld, 0, alloc_call)) {
           return true;
-        if (auto endi = dyn_cast<Instruction>(end))
-          if (isNoAlias(end) || (notCapturedBefore(start, endi, 1))) {
-            Instruction *starti = dyn_cast<Instruction>(start);
-            if (!starti) {
-              if (!isa<Argument>(start))
+        }
+
+        // However if nothing was written to the alloc prior to the load, we
+        // know that there is no way to dataflow end into start, so we now
+        // merely must prove there is no way to dataflow start into end.
+
+        bool alloc_written = false;
+        allInstructionsBetween(LI, alloc_call, ld, [&](Instruction *I) -> bool {
+          if (!I->mayWriteToMemory())
+            return /*earlyBreak*/ false;
+
+          if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                   /*maybeReader*/ ld,
+                                   /*maybeWriter*/ I)) {
+            alloc_written = true;
+            return /*earlyBreak*/ true;
+          }
+          return /*earlyBreak*/ false;
+        });
+
+        if (!alloc_written) {
+          // If end is marked noalias at the time of construction it
+          // definitionally cannot alias another potential load out of alloc. If
+          // the base of end occurs prior to alloc_call (and is distinct from
+          // alloc_call), there is no way for alloc_call to dataflow into end.
+          if (noalias[end_i] ||
+              (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
+            return true;
+          }
+
+          // If the allocation was not written into prior to ld, any pointer
+          // value loaded from it must have been created by one of the loads
+          // reading from alloc_call. If every load out of alloc_call is
+          // distinct from end, and was neither captured before end nor created
+          // after end, alloc_call's loaded values cannot dataflow into end.
+          SmallVector<Value *, 8> worklist;
+          SmallPtrSet<Value *, 8> visited;
+          SmallVector<LoadInst *, 8> alloc_loads;
+
+          worklist.push_back(alloc_call);
+          visited.insert(alloc_call);
+
+          while (!worklist.empty()) {
+            Value *V = worklist.pop_back_val();
+            for (User *U : V->users()) {
+              if (!visited.insert(U).second)
                 continue;
-              starti =
-                  &cast<Argument>(start)->getParent()->getEntryBlock().front();
-            }
-
-            bool overwritten = false;
-            allInstructionsBetween(
-                LI, starti, endi, [&](Instruction *I) -> bool {
-                  if (!I->mayWriteToMemory())
-                    return /*earlyBreak*/ false;
-
-                  if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                           /*maybeReader*/ ld,
-                                           /*maybeWriter*/ I)) {
-                    overwritten = true;
-                    return /*earlyBreak*/ true;
-                  }
-                  return /*earlyBreak*/ false;
-                });
-
-            if (!overwritten) {
-              return true;
+              if (isPointerArithmeticInst(U, /*includephi*/ true,
+                                          /*includebin*/ true)) {
+                worklist.push_back(U);
+              } else if (auto LI = dyn_cast<LoadInst>(U)) {
+                alloc_loads.push_back(LI);
+              }
             }
           }
+
+          bool all_loads_no_alias = true;
+          for (LoadInst *alloc_load : alloc_loads) {
+            if (alloc_load == end) {
+              all_loads_no_alias = false;
+              break;
+            }
+            if (auto end_inst = dyn_cast<Instruction>(end)) {
+              if (DT.dominates(end_inst, alloc_load)) {
+                continue;
+              }
+            }
+            if (!notCapturedBefore(alloc_load, dyn_cast<Instruction>(end), 0)) {
+              all_loads_no_alias = false;
+              break;
+            }
+          }
+
+          if (all_loads_no_alias) {
+            return true;
+          }
+        }
       }
     }
   }
