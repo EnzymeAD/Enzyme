@@ -1250,9 +1250,10 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
       exit(1);
     } else {
-      llvm::errs() << ss.str() << "\n";
+      EmitFailure("IllegalUpdateAnalysis", DiagnosticLocation(),
+                  fntypeinfo.Function, ss.str());
+      exit(1);
     }
-    report_fatal_error("Performed illegal updateAnalysis");
   }
 
   if (Changed) {
