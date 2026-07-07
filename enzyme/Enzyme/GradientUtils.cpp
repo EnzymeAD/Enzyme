@@ -3974,9 +3974,9 @@ bool GradientUtils::legalRecompute(const Value *val,
 
     auto found = fictiousPHIs.find(const_cast<llvm::PHINode *>(phi));
     if (found != fictiousPHIs.end()) {
-      auto orig = found->second;
-      if (isa<AtomicRMWInst>(orig))
-        return false;
+      if (auto orig = found->second)
+        return legalRecompute(orig, available, BuilderM, reverse,
+                              legalRecomputeCache);
     }
 
     if (phi->getNumIncomingValues() == 0) {
@@ -4250,6 +4250,16 @@ bool GradientUtils::shouldRecompute(const Value *val,
     return true;
 
   const Instruction *inst = cast<Instruction>(val);
+
+  if (auto phi = dyn_cast<PHINode>(val)) {
+    auto found = fictiousPHIs.find(const_cast<llvm::PHINode *>(phi));
+    if (found != fictiousPHIs.end()) {
+      auto orig = found->second;
+      if (!orig)
+        return false;
+      return shouldRecompute(orig, available, BuilderM);
+    }
+  }
 
   if (TapesToPreventRecomputation.count(inst))
     return false;
