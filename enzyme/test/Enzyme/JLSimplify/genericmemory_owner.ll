@@ -1,5 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -jl-inst-simplify -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="jl-inst-simplify" -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="jl-inst-simplify" -S -opaque-pointers | FileCheck %s
 
 declare noalias nonnull ptr @jl_alloc_genericmemory(ptr, i64) #0
 
