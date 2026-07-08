@@ -4766,8 +4766,8 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
           // definitionally cannot alias another potential load out of alloc. If
           // the base of end occurs prior to alloc_call (and is distinct from
           // alloc_call), there is no way for alloc_call to dataflow into end.
-          if (noalias[end_i] ||
-              (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
+          if (end_base != alloc_call &&
+              (noalias[end_i] || DT.dominates(end_base, alloc_call))) {
             return true;
           }
 
