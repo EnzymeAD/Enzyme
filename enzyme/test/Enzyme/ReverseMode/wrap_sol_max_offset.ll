@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S -opaque-pointers | FileCheck %s
 
 ; ModuleID = 'start'
 source_filename = "start"
@@ -315,7 +315,7 @@ entry:
   ret { ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), { { [1 x i8] }, ptr addrspace(10), [2 x double], ptr addrspace(10), i64 }, { { [1 x i8] }, ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), i8, { ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), [51 x double], ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10), ptr addrspace(10) }, i8 }, i8, i64, ptr addrspace(10), i32, i64 } %88, !dbg !8
 }
 
-attributes #0 = { nofree nosync nounwind willreturn memory(none) "enzyme_inactive" "enzyme_no_escaping_allocation" "enzyme_shouldrecompute" "enzymejl_world"="39005" }
+attributes #0 = { nofree nosync nounwind willreturn "enzyme_inactive" "enzyme_no_escaping_allocation" "enzyme_shouldrecompute" "enzymejl_world"="39005" }
 attributes #1 = { nofree nosync nounwind willreturn memory(argmem: readwrite, inaccessiblemem: readwrite) "enzyme_ReadOnlyOrThrow" "enzyme_inactive" "enzyme_no_escaping_allocation" "enzymejl_world"="39005" }
 attributes #2 = { nounwind memory(read, argmem: none, inaccessiblemem: none) "enzyme_ta_norecur" "enzymejl_mi"="5742555344" "enzymejl_rt"="5741130256" "enzymejl_world"="39005" }
 
