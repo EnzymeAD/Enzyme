@@ -21,7 +21,7 @@ entry:
 
 declare void @__enzyme_autodiff(ptr, ...)
 
-; CHECK: define internal void @diffe_tester(ptr %x, ptr %"x'", double %y, double %differeturn)
+; CHECK: define internal { double } @diffetester(ptr %x, ptr %"x'", double %y, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %v = load double, ptr %x, align 8
 ; CHECK-NEXT:   %0 = fmul fast double %differeturn, %y
@@ -29,5 +29,6 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK-NEXT:   %2 = load double, ptr %"x'", align 8
 ; CHECK-NEXT:   %3 = fadd fast double %2, %0
 ; CHECK-NEXT:   store double %3, ptr %"x'", align 8
-; CHECK-NEXT:   ret void
+; CHECK-NEXT:   %4 = insertvalue { double } undef, double %1, 0
+; CHECK-NEXT:   ret { double } %4
 ; CHECK-NEXT: }
