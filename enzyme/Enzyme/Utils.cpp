@@ -4714,6 +4714,12 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
       }
 
       if (auto endi = dyn_cast<Instruction>(end)) {
+        if (isAllocationCall(start, TLI)) {
+          if (auto ld = dyn_cast<LoadInst>(endi)) {
+            if (getBaseObject(ld->getOperand(0), true) == start)
+              continue;
+          }
+        }
         if (notCapturedBefore(start, endi, 0)) {
           return true;
         }
@@ -4739,7 +4745,8 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         //  It is not sufficient here to merely prove end dominates alloc_call
         //  and is not captured, since there could be an aliasing pointer to end
         //  which is captured.
-        if (noalias[end_i] && notCapturedBefore(end_base, ld, 0, alloc_call)) {
+        if (end_base != alloc_call && noalias[end_i] &&
+            notCapturedBefore(end_base, ld, 0, alloc_call)) {
           return true;
         }
 
@@ -4761,13 +4768,12 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
           return /*earlyBreak*/ false;
         });
 
-        if (!alloc_written) {
+        if (!alloc_written && end_base != alloc_call) {
           // If end is marked noalias at the time of construction it
           // definitionally cannot alias another potential load out of alloc. If
           // the base of end occurs prior to alloc_call (and is distinct from
           // alloc_call), there is no way for alloc_call to dataflow into end.
-          if (noalias[end_i] ||
-              (end_base != alloc_call && DT.dominates(end_base, alloc_call))) {
+          if (noalias[end_i] || DT.dominates(end_base, alloc_call)) {
             return true;
           }
 
