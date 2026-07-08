@@ -1,3 +1,4 @@
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Regression test: the Numba runtime's reference-count release, NRT_decref,
@@ -25,7 +26,9 @@
 ; Before recognizing NRT_decref, differentiating @sum fails outright with
 ; "Enzyme: No augmented forward pass found for NRT_decref" (the release has no
 ; known derivative and is not a deallocation); with the recognition it compiles
-; to the IR checked below.
+; to the IR checked below.  Pointer spellings are matched loosely so the test
+; passes under both the typed-pointer (LLVM <= 16) and opaque-pointer
+; (LLVM >= 17) forms of the emitted IR.
 
 declare i8* @malloc(i64)
 declare void @NRT_decref(i8*)
@@ -71,16 +74,15 @@ declare double @__enzyme_autodiff(double (double*, i64)*, ...)
 ; The recognized malloc/NRT_decref pair is dead in the forward pass, so the
 ; augmented function caches nothing and is empty -- impossible unless the
 ; NRT_decref is understood to free the malloc.
-; CHECK: define internal void @augmented_subsum(ptr nocapture readonly %x, ptr %"x'", i64 %n)
+; CHECK: define internal void @augmented_subsum(
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   ret void
+; CHECK-NEXT: ret void
 ; CHECK-NEXT: }
 
 ; The reverse pass re-allocates a shadow and frees it exactly once (via
-; malloc's canonical deallocator).  NRT_decref is never duplicated into the
-; derivative.
-; CHECK: define internal void @diffesubsum(ptr nocapture readonly %x, ptr %"x'", i64 %n, double %differeturn)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"m'mi" = call {{.*}}ptr @malloc(i64 8)
-; CHECK: call void @free(ptr nonnull %"m'mi")
+; malloc's canonical deallocator @free).  NRT_decref is never duplicated into
+; the derivative.
+; CHECK: define internal void @diffesubsum(
+; CHECK: %"m'mi" = call {{.*}}@malloc(i64 8)
+; CHECK: call void @free({{.*}}%"m'mi")
 ; CHECK-NOT: NRT_decref
