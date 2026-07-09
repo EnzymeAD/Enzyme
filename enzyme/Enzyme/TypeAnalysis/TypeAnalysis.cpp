@@ -3410,21 +3410,33 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
-          if (Args[i])
-            for (auto andval :
-                 fntypeinfo.knownIntegralValues(Args[i], DT, intseen, SE)) {
-              if (andval <= 16 && andval >= 0) {
-                Result = TypeTree(BaseType::Integer);
-              } else if (andval < 0 && andval >= -64) {
-                // If a small negative number, this just masks off the lower
-                // bits in this case we can say that this is the same as the
-                // other operand
+          bool isNegMask = false;
+          if (Args[i]) {
+            if (auto CI = dyn_cast<ConstantInt>(Args[i])) {
+              int64_t andval = CI->getSExtValue();
+              if (andval < 0 && andval >= -64) {
                 Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                isNegMask = true;
               }
             }
+            if (!isNegMask) {
+              for (auto andval :
+                   fntypeinfo.knownIntegralValues(Args[i], DT, intseen, SE)) {
+                if (andval <= 16 && andval >= 0) {
+                  Result = TypeTree(BaseType::Integer);
+                } else if (andval < 0 && andval >= -64) {
+                  // If a small negative number, this just masks off the lower
+                  // bits in this case we can say that this is the same as the
+                  // other operand
+                  Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                  isNegMask = true;
+                }
+              }
+            }
+          }
           // If we and a constant against an integer, the result remains an
           // integer
-          if (Args[i] && isa<ConstantInt>(Args[i]) &&
+          if (!isNegMask && Args[i] && isa<ConstantInt>(Args[i]) &&
               (i == 0 ? AnalysisRHS : AnalysisLHS).Inner0() ==
                   BaseType::Integer) {
             Result = TypeTree(BaseType::Integer);
