@@ -7,13 +7,12 @@
 ; This uses the actual Numba NRT functions: an array is allocated with
 ; NRT_MemInfo_alloc_aligned and released with NRT_decref (the IR Numba emits).
 ; The allocation is registered with __enzyme_allocation_like so Enzyme knows
-; how to shadow it self-contained (in Numba-Enzyme this is done downstream by a
-; C-API shadow handler); its shadow-free is registered as @free, NOT NRT_decref
-; -- so the recognition of the SOURCE NRT_decref as a deallocation depends
-; solely on isDeallocationFunction (the change under test), not on the
+; how to shadow it self-contained; its shadow-free is registered as @free, NOT
+; NRT_decref -- so the recognition of the SOURCE NRT_decref as a deallocation
+; depends solely on isDeallocationFunction (the change under test), not on the
 ; allocation/free pairing.
 ;
-; With the recognition, the malloc/NRT_decref-style pair is dead in the forward
+; With the recognition, the allocation/NRT_decref pair is dead in the forward
 ; pass, so the augmented function is empty and the reverse pass re-allocates a
 ; shadow (via NRT_MemInfo_alloc_aligned) and frees it once, with no NRT_decref
 ; duplicated into the derivative.  Before recognizing NRT_decref, differentiating
