@@ -1,41 +1,41 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="preserve-nvvm,enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Regression test: the Numba runtime's reference-count release, NRT_decref,
 ; must be recognized as a deallocation function (isDeallocationFunction),
 ; the same way swift_release / __rust_dealloc / _mlir_memref_to_llvm_free are.
 ;
-; Numba frees a heap allocation with a paired NRT_decref. Unless Enzyme knows
-; NRT_decref frees its argument, it cannot pair the release with the allocation
-; and cannot manage the allocation's lifetime across the augmented/reverse
-; split (downstream, where NRT_decref is additionally marked enzyme_inactive,
-; the unrecognized release was instead duplicated across both passes, separately
-; freeing the allocation and corrupting the heap).
+; This uses the actual Numba NRT functions: an array is allocated with
+; NRT_MemInfo_alloc_aligned and released with NRT_decref (the IR Numba emits).
+; The allocation is registered with __enzyme_allocation_like so Enzyme knows
+; how to shadow it self-contained (in Numba-Enzyme this is done downstream by a
+; C-API shadow handler); its shadow-free is registered as @free, NOT NRT_decref
+; -- so the recognition of the SOURCE NRT_decref as a deallocation depends
+; solely on isDeallocationFunction (the change under test), not on the
+; allocation/free pairing.
 ;
-; This test isolates the deallocation recognition using a built-in-recognized
-; allocation (malloc) whose only release is NRT_decref -- the malloc/free-nouse
-; pattern of alloctomallocnouse.ll, with free replaced by NRT_decref. With the
-; recognition, Enzyme treats the pair exactly as malloc/free: the value is dead
-; in the forward pass, so the augmented function is empty and the reverse pass
-; re-allocates a shadow and frees it once. (Enzyme emits malloc's canonical
-; deallocator, @free, for its own shadow allocation; NRT_decref itself is a
-; Numba allocation's deallocator and is paired downstream, so it does not
-; appear in this self-contained module -- what is tested here is that the
-; source NRT_decref is understood as a free.)
-;
-; Before recognizing NRT_decref, differentiating @sum fails outright with
-; "Enzyme: No augmented forward pass found for NRT_decref" (the release has no
-; known derivative and is not a deallocation); with the recognition it compiles
-; to the IR checked below.  Pointer spellings are matched loosely so the test
-; passes under both the typed-pointer (LLVM <= 16) and opaque-pointer
-; (LLVM >= 17) forms of the emitted IR.
+; With the recognition, the malloc/NRT_decref-style pair is dead in the forward
+; pass, so the augmented function is empty and the reverse pass re-allocates a
+; shadow (via NRT_MemInfo_alloc_aligned) and frees it once, with no NRT_decref
+; duplicated into the derivative.  Before recognizing NRT_decref, differentiating
+; @sum fails outright with "Enzyme: No augmented forward pass found for
+; NRT_decref".  Pointer spellings are matched loosely so the test passes under
+; both the typed-pointer (LLVM <= 16) and opaque-pointer (LLVM >= 17) forms.
 
-declare i8* @malloc(i64)
+@.dealloc = private unnamed_addr constant [3 x i8] c"-1\00"
+@__enzyme_allocation_like = global [4 x i8*] [
+  i8* bitcast (i8* (i64, i32)* @NRT_MemInfo_alloc_aligned to i8*),
+  i8* inttoptr (i64 0 to i8*),
+  i8* getelementptr inbounds ([3 x i8], [3 x i8]* @.dealloc, i64 0, i64 0),
+  i8* bitcast (void (i8*)* @free to i8*)
+]
+
+declare noalias i8* @NRT_MemInfo_alloc_aligned(i64, i32)
 declare void @NRT_decref(i8*)
+declare void @free(i8*)
 
 define dso_local double @subsum(double* nocapture readonly %x, i64 %n) {
 entry:
-  %m = call i8* @malloc(i64 8)
+  %m = call i8* @NRT_MemInfo_alloc_aligned(i64 8, i32 32)
   %v = bitcast i8* %m to double*
   br label %for.body
 
@@ -71,18 +71,17 @@ entry:
 
 declare double @__enzyme_autodiff(double (double*, i64)*, ...)
 
-; The recognized malloc/NRT_decref pair is dead in the forward pass, so the
+; The recognized allocation/NRT_decref pair is dead in the forward pass, so the
 ; augmented function caches nothing and is empty -- impossible unless the
-; NRT_decref is understood to free the malloc.
+; NRT_decref is understood to free the allocation.
 ; CHECK: define internal void @augmented_subsum(
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT: ret void
 ; CHECK-NEXT: }
 
-; The reverse pass re-allocates a shadow and frees it exactly once (via
-; malloc's canonical deallocator @free).  NRT_decref is never duplicated into
-; the derivative.
+; The reverse pass re-allocates a shadow with the real NRT allocator and frees
+; it exactly once.  NRT_decref is never duplicated into the derivative.
 ; CHECK: define internal void @diffesubsum(
-; CHECK: %"m'mi" = call {{.*}}@malloc(i64 8)
+; CHECK: %"m'mi" = call {{.*}}@NRT_MemInfo_alloc_aligned(i64 8, i32 32)
 ; CHECK: call void @free({{.*}}%"m'mi")
 ; CHECK-NOT: NRT_decref
