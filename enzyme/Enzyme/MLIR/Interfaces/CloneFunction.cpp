@@ -274,16 +274,15 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        mlir::Attribute dupAttr = nullptr;
         if ((size_t)i == ArgActivity.size() - 1) {
           dval = blk.addArgument(getShadowType(val.getType(), width),
                                  val.getLoc());
-          allAttrs.push_back(dupAttr);
+          allAttrs.push_back(F.getArgAttrDict(i));
         } else {
           dval = blk.insertArgument(blk.args_begin() + i + 1,
                                     getShadowType(val.getType(), width),
                                     val.getLoc());
-          allAttrs.insert(allAttrs.begin() + i + 1, dupAttr);
+          allAttrs.insert(allAttrs.begin() + i + 1, F.getArgAttrDict(i));
         }
         ptrInputs.map(oval, dval);
       }
