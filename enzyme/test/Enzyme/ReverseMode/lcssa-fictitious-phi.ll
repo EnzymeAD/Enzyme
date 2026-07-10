@@ -31,17 +31,15 @@ exit:
   ret double %z.res
 }
 
-declare double @llvm.log.f64(double) readnone
-
 define void @dtarget(double %a, double %b) {
 entry:
-  %z = call i8* @__enzyme_virtualreverse(ptr @mygamma)
+  %z = call i8* (...) @__enzyme_virtualreverse(double (double)* @mygamma)
   ret void
 }
 
-declare void @__enzyme_virtualreverse(...)
+declare i8* @__enzyme_virtualreverse(...)
 
-; CHECK: define internal { double } @diffemygamma(double %x, double %differeturn, ptr %tapeArg)
+; CHECK: define internal { double } @diffemygamma(double %x, double %differeturn, {{i8\*|ptr}} %tapeArg)
 
 ; CHECK: invertloop2:
 ; CHECK:   %[[divadj:.+]] = fdiv fast double %"z.div'de.0", %{{.+}}

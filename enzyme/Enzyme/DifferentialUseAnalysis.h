@@ -27,6 +27,7 @@
 #ifndef ENZYME_DIFFERENTIALUSEANALYSIS_H_
 #define ENZYME_DIFFERENTIALUSEANALYSIS_H_
 
+#include <deque>
 #include <map>
 #include <set>
 
@@ -34,6 +35,7 @@
 #include "llvm/IR/Instruction.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -77,6 +79,14 @@ bool is_use_directly_needed_in_reverse(
     const llvm::Instruction *user,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
     QueryType shadow, bool *recursiveUse = nullptr);
+
+bool checkLoopyReductionPHI(const GradientUtils *gutils,
+                            const llvm::PHINode *P0,
+                            const llvm::Value *incomingVal);
+
+void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
+                           llvm::SetVector<llvm::Value *> &Intermediates,
+                           std::deque<llvm::Value *> &todo);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
@@ -248,77 +258,11 @@ inline bool is_value_needed_in_reverse(
 
     assert(VT == QueryType::Primal);
 
-    auto checkLoopyReductionPHI =
-        [&](const PHINode *P0, const Value *incomingVal) -> bool {
-      if (!gutils->OrigLI)
-        return false;
-      auto L = gutils->OrigLI->getLoopFor(P0->getParent());
-      if (!L || L->getHeader() != P0->getParent())
-        return false;
-      BasicBlock *preheader = L->getLoopPreheader();
-      if (!preheader)
-        return false;
-      Value *Pstart = P0->getIncomingValueForBlock(preheader);
-      while (auto phi = dyn_cast_or_null<PHINode>(Pstart)) {
-        if (phi->getNumIncomingValues() == 1)
-          Pstart = phi->getIncomingValue(0);
-        else
-          break;
-      }
-      if (Pstart != incomingVal &&
-          P0->getIncomingValueForBlock(preheader) != incomingVal)
-        return false;
-
-      SmallVector<const Instruction *, 4> activeUses;
-      for (auto u : P0->users()) {
-        if (auto I = dyn_cast<Instruction>(u)) {
-          if (!gutils->isConstantInstruction(const_cast<Instruction *>(I))) {
-            activeUses.push_back(I);
-          }
-        }
-      }
-      if (activeUses.size() != 1)
-        return false;
-      const Instruction *userInst = activeUses[0];
-      bool isLoopyReduction = false;
-      if (auto BO = dyn_cast<BinaryOperator>(userInst)) {
-        if (BO->getOpcode() == Instruction::FDiv &&
-            BO->getOperand(0) == P0 &&
-            !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
-          isLoopyReduction = true;
-        }
-      } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-        for (int i = 0; i < 2; i++) {
-          if (SI->getOperand(i + 1) == P0 &&
-              !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
-            isLoopyReduction = true;
-            break;
-          }
-        }
-      }
-      if (!isLoopyReduction)
-        return false;
-
-      SmallVector<BasicBlock *, 1> Latches;
-      L->getLoopLatches(Latches);
-      for (auto Latch : Latches) {
-        if (userInst != P0->getIncomingValueForBlock(Latch)) {
-          return false;
-        }
-      }
-      SmallVector<BasicBlock *, 2> exitBlocks;
-      L->getExitBlocks(exitBlocks);
-      if (exitBlocks.size() != 1)
-        return false;
-
-      return true;
-    };
-
     if (auto P0 = dyn_cast<PHINode>(user)) {
-      if (checkLoopyReductionPHI(P0, inst)) {
+      if (checkLoopyReductionPHI(gutils, P0, inst)) {
         if (EnzymePrintDiffUse)
-          llvm::errs() << " Need: " << to_string(VT) << "(" << mode
-                       << ") of " << *inst
+          llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                       << *inst
                        << " in reverse as loopy reduction preheader of "
                        << *user << "\n";
         return seen[idx] = true;
@@ -326,8 +270,8 @@ inline bool is_value_needed_in_reverse(
       if (P0->getNumIncomingValues() == 1) {
         for (auto u2 : P0->users()) {
           if (auto P1 = dyn_cast<PHINode>(u2)) {
-            if (checkLoopyReductionPHI(P1, inst) ||
-                checkLoopyReductionPHI(P1, P0)) {
+            if (checkLoopyReductionPHI(gutils, P1, inst) ||
+                checkLoopyReductionPHI(gutils, P1, P0)) {
               if (EnzymePrintDiffUse)
                 llvm::errs()
                     << " Need: " << to_string(VT) << "(" << mode << ") of "

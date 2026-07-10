@@ -8662,76 +8662,10 @@ void GradientUtils::computeMinCache() {
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
 
-    auto pushLoopyPHIPreheader = [&](Value *V) {
-      if (auto P0 = dyn_cast<PHINode>(V)) {
-        if (!OrigLI)
-          return;
-        auto L = OrigLI->getLoopFor(P0->getParent());
-        if (!L || L->getHeader() != P0->getParent())
-          return;
-        BasicBlock *preheader = L->getLoopPreheader();
-        if (!preheader)
-          return;
-        Value *Pstart = P0->getIncomingValueForBlock(preheader);
-        if (!Pstart)
-          return;
-        SmallVector<Instruction *, 4> activeUses;
-        for (auto u : P0->users()) {
-          if (!isConstantInstruction(cast<Instruction>(u))) {
-            activeUses.push_back(cast<Instruction>(u));
-          }
-        }
-        if (activeUses.size() != 1)
-          return;
-        Instruction *userInst = activeUses[0];
-        bool isLoopyReduction = false;
-        if (auto BO = dyn_cast<BinaryOperator>(userInst)) {
-          if (BO->getOpcode() == Instruction::FDiv &&
-              BO->getOperand(0) == P0 &&
-              !isConstantValue(BO)) {
-            isLoopyReduction = true;
-          }
-        } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-          for (int i = 0; i < 2; i++) {
-            if (SI->getOperand(i + 1) == P0 &&
-                !isConstantValue(SI)) {
-              isLoopyReduction = true;
-              break;
-            }
-          }
-        }
-        if (!isLoopyReduction)
-          return;
-
-        SmallVector<BasicBlock *, 1> Latches;
-        L->getLoopLatches(Latches);
-        for (auto Latch : Latches) {
-          if (userInst != P0->getIncomingValueForBlock(Latch)) {
-            return;
-          }
-        }
-        SmallVector<BasicBlock *, 2> exitBlocks;
-        L->getExitBlocks(exitBlocks);
-        if (exitBlocks.size() != 1)
-          return;
-
-        while (Pstart) {
-          Intermediates.insert(Pstart);
-          todo.push_back(Pstart);
-          if (auto phi = dyn_cast<PHINode>(Pstart)) {
-            if (phi->getNumIncomingValues() == 1)
-              Pstart = phi->getIncomingValue(0);
-            else
-              break;
-          } else
-            break;
-        }
-      }
-    };
-
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
-      pushLoopyPHIPreheader(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8742,7 +8676,8 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      pushLoopyPHIPreheader(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
