@@ -3,8 +3,7 @@
 
 define internal double @mygamma(double %x) {
 top:
-  %cmp1 = fcmp ult double %x, 3.0
-  br i1 %cmp1, label %loop2.preheader, label %loop1
+  br label %loop1
 
 loop1:
   %x.phi = phi double [ %x.sub, %loop1 ], [ %x, %top ]
@@ -15,42 +14,29 @@ loop1:
   br i1 %cmp2, label %loop2.preheader, label %loop1
 
 loop2.preheader:
-  %z.lcssa = phi double [ 1.0, %top ], [ %z.mul, %loop1 ]
-  %x.lcssa = phi double [ %x, %top ], [ %x.sub, %loop1 ]
+  %z.lcssa = phi double [ %z.mul, %loop1 ]
+  %x.lcssa = phi double [ %x, %loop1 ]
   %cmp3 = fcmp uge double %x.lcssa, 2.0
-  br i1 %cmp3, label %exit, label %loop2
+  br label %loop2
 
 loop2:
-  %x2.phi = phi double [ %x.add, %loop2 ], [ %x.lcssa, %loop2.preheader ]
+  %x2.phi = phi double [ 0.0, %loop2 ], [ %x.lcssa, %loop2.preheader ]
   %z2.phi = phi double [ %z.div, %loop2 ], [ %z.lcssa, %loop2.preheader ]
   %z.div = fdiv double %z2.phi, %x2.phi
-  %x.add = fadd double %x2.phi, 1.0
-  %cmp4 = fcmp uge double %x.add, 2.0
+  %cmp4 = fcmp uge double %x2.phi, 2.0
   br i1 %cmp4, label %exit, label %loop2
 
 exit:
-  %z.res = phi double [ %z.lcssa, %loop2.preheader ], [ %z.div, %loop2 ]
-  %x.res = phi double [ %x.lcssa, %loop2.preheader ], [ %x.add, %loop2 ]
-  %plus1 = fadd double %x.res, 1.0
-  %res = fmul double %z.res, %plus1
-  ret double %res
-}
-
-define double @target(double %a, double %b) {
-entry:
-  %g1 = call double @mygamma(double %a)
-  %g2 = call double @mygamma(double %b)
-  %sub = fsub double %g1, %g2
-  %res = call double @llvm.log.f64(double %sub)
-  ret double %res
+  %z.res = phi double [ %z.div, %loop2 ]
+  ret double %z.res
 }
 
 declare double @llvm.log.f64(double) readnone
 
 define void @dtarget(double %a, double %b) {
 entry:
-  call void @__enzyme_autodiff(ptr @target, double %a, double %b)
+  %z = call i8* @__enzyme_virtualreverse(ptr @mygamma)
   ret void
 }
 
-declare void @__enzyme_autodiff(...)
+declare void @__enzyme_virtualreverse(...)
