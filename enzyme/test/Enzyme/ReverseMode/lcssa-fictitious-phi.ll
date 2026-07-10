@@ -40,3 +40,10 @@ entry:
 }
 
 declare void @__enzyme_virtualreverse(...)
+
+; CHECK: define internal { double } @diffemygamma(double %x, double %differeturn, ptr %tapeArg)
+
+; CHECK: invertloop2:
+; CHECK:   %[[divadj:.+]] = fdiv fast double %"z.div'de.0", %{{.+}}
+; CHECK-NEXT:   %[[muladj:.+]] = fmul fast double %z.mul, %[[divadj]]
+

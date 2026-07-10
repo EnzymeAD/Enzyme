@@ -248,6 +248,99 @@ inline bool is_value_needed_in_reverse(
 
     assert(VT == QueryType::Primal);
 
+    auto checkLoopyReductionPHI =
+        [&](const PHINode *P0, const Value *incomingVal) -> bool {
+      if (!gutils->OrigLI)
+        return false;
+      auto L = gutils->OrigLI->getLoopFor(P0->getParent());
+      if (!L || L->getHeader() != P0->getParent())
+        return false;
+      BasicBlock *preheader = L->getLoopPreheader();
+      if (!preheader)
+        return false;
+      Value *Pstart = P0->getIncomingValueForBlock(preheader);
+      while (auto phi = dyn_cast_or_null<PHINode>(Pstart)) {
+        if (phi->getNumIncomingValues() == 1)
+          Pstart = phi->getIncomingValue(0);
+        else
+          break;
+      }
+      if (Pstart != incomingVal &&
+          P0->getIncomingValueForBlock(preheader) != incomingVal)
+        return false;
+
+      SmallVector<const Instruction *, 4> activeUses;
+      for (auto u : P0->users()) {
+        if (auto I = dyn_cast<Instruction>(u)) {
+          if (!gutils->isConstantInstruction(const_cast<Instruction *>(I))) {
+            activeUses.push_back(I);
+          }
+        }
+      }
+      if (activeUses.size() != 1)
+        return false;
+      const Instruction *userInst = activeUses[0];
+      bool isLoopyReduction = false;
+      if (auto BO = dyn_cast<BinaryOperator>(userInst)) {
+        if (BO->getOpcode() == Instruction::FDiv &&
+            BO->getOperand(0) == P0 &&
+            !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
+          isLoopyReduction = true;
+        }
+      } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
+        for (int i = 0; i < 2; i++) {
+          if (SI->getOperand(i + 1) == P0 &&
+              !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
+            isLoopyReduction = true;
+            break;
+          }
+        }
+      }
+      if (!isLoopyReduction)
+        return false;
+
+      SmallVector<BasicBlock *, 1> Latches;
+      L->getLoopLatches(Latches);
+      for (auto Latch : Latches) {
+        if (userInst != P0->getIncomingValueForBlock(Latch)) {
+          return false;
+        }
+      }
+      SmallVector<BasicBlock *, 2> exitBlocks;
+      L->getExitBlocks(exitBlocks);
+      if (exitBlocks.size() != 1)
+        return false;
+
+      return true;
+    };
+
+    if (auto P0 = dyn_cast<PHINode>(user)) {
+      if (checkLoopyReductionPHI(P0, inst)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: " << to_string(VT) << "(" << mode
+                       << ") of " << *inst
+                       << " in reverse as loopy reduction preheader of "
+                       << *user << "\n";
+        return seen[idx] = true;
+      }
+      if (P0->getNumIncomingValues() == 1) {
+        for (auto u2 : P0->users()) {
+          if (auto P1 = dyn_cast<PHINode>(u2)) {
+            if (checkLoopyReductionPHI(P1, inst) ||
+                checkLoopyReductionPHI(P1, P0)) {
+              if (EnzymePrintDiffUse)
+                llvm::errs()
+                    << " Need: " << to_string(VT) << "(" << mode << ") of "
+                    << *inst
+                    << " in reverse via LCSSA loopy reduction preheader of "
+                    << *P1 << "\n";
+              return seen[idx] = true;
+            }
+          }
+        }
+      }
+    }
+
     // If a sub user needs, we need
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
                                                     oldUnreachable)) {
