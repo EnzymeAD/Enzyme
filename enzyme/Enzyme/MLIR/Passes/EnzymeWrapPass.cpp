@@ -144,7 +144,7 @@ struct DifferentiateWrapperPass
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
-          freeMemory, width,
+          freeMemory, /*atomicAdd=*/false, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
     }

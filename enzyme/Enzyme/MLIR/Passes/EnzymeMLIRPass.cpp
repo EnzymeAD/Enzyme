@@ -20,6 +20,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Pass/PassManager.h"
 
 #define DEBUG_TYPE "enzyme"
@@ -269,6 +270,11 @@ struct DifferentiatePass
     }
 
     bool omp = false;
+    Operation *callOp = CI.getOperation();
+    // TODO: Not exhaustive, e.g. if the autodiff op is inside a function which
+    // is called inside a parallel context
+    bool atomicAdd = callOp->getParentWithTrait<OpTrait::HasParallelRegion>();
+
     auto mode = DerivativeMode::ReverseModeCombined;
     std::vector<DIFFE_TYPE> retType;
     std::vector<bool> returnPrimals;
@@ -329,12 +335,12 @@ struct DifferentiatePass
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc =
-        Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
-                                returnShadows, mode, freeMemory, width,
-                                /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr, omp, postpasses,
-                                verifyPostPasses, CI.getStrongZero());
+    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
+        fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
+        freeMemory, atomicAdd, width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
+        CI.getStrongZero());
     if (!newFunc)
       return failure();
 

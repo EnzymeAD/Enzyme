@@ -170,9 +170,9 @@ public:
 
     auto revFn = gutils->Logic.CreateReverseDiff(
         fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
-        mode, freeMemory, width, /*addedType*/ nullptr, type_args,
-        volatile_args, /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
-        gutils->verifyPostPasses, gutils->strongZero);
+        mode, freeMemory, width, gutils->AtomicAdd, /*addedType*/ nullptr,
+        type_args, volatile_args, /*augmented*/ nullptr, gutils->omp,
+        gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero);
 
     SmallVector<Value> revArguments;
 
