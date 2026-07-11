@@ -2890,7 +2890,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (UA != UseActivity::AllStores) {
           if (ConstantValues.count(SI->getValueOperand()) ||
               isa<ConstantInt>(SI->getValueOperand()) ||
-              (SI->getParent()->getParent() == TR.getFunction() && TR.query(SI->getValueOperand())[{-1}].isIntegral()))
+              (SI->getParent()->getParent() == TR.getFunction() &&
+               TR.query(SI->getValueOperand())[{-1}].isIntegral()))
             continue;
           else
             ActiveVal = SI->getValueOperand();
