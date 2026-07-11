@@ -727,8 +727,15 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
 
     if (Limit->getType() != CanonicalIV->getType()) {
       const SCEV *Zero = SE.getZero(Limit->getType());
-      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero,
-                                loopContexts[L].preheader->getTerminator())) {
+      const Loop *outermost = L;
+      while (outermost->getParentLoop()) {
+        outermost = outermost->getParentLoop();
+      }
+      BasicBlock *outermostPreheader = outermost->getLoopPreheader();
+      Instruction *context = outermostPreheader
+                                 ? outermostPreheader->getTerminator()
+                                 : loopContexts[L].preheader->getTerminator();
+      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero, context)) {
         Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
       } else {
         Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
