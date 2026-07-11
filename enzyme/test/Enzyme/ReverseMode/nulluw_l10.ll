@@ -124,7 +124,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %[[i13:.+]] = getelementptr inbounds i32, i32* %i5_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[i14:.+]] = load i32, i32* %[[i13]], align 4, !invariant.group ![[ig6]]
 ; CHECK-NEXT:   %[[_unwrap1:.+]] = add i32 %[[i14]], -1
-; CHECK-NEXT:   %[[_unwrap2:.+]] = zext i32 %[[_unwrap1]] to i64
+; CHECK-NEXT:   %[[_unwrap2:.+]] = sext i32 %[[_unwrap1]] to i64
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: invertbb7:                                        ; preds = %bb7, %incinvertbb2
