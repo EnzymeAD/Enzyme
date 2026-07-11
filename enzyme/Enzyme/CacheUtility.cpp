@@ -725,8 +725,13 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     }
   endOMP:;
 
-    if (Limit->getType() != CanonicalIV->getType())
-      Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+    if (Limit->getType() != CanonicalIV->getType()) {
+      if (SE.isKnownNonNegative(Limit)) {
+        Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+      } else {
+        Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
+      }
+    }
 
 #if LLVM_VERSION_MAJOR >= 22
     SCEVExpander Exp(SE, "enzyme");
