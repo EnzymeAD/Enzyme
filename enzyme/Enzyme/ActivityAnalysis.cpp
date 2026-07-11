@@ -2864,6 +2864,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     Value *parent = std::get<1>(pair);
     UseActivity UA = std::get<2>(pair);
 
+    if (auto inst = dyn_cast<Instruction>(a)) {
+      if (inst->getParent()->getParent() != TR.getFunction())
+        continue;
+    }
+
     if (auto LI = dyn_cast<LoadInst>(a)) {
       if (UA == UseActivity::OnlyStores)
         continue;
