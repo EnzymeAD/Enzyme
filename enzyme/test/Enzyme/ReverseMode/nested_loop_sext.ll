@@ -48,6 +48,6 @@ entry:
   ret void
 }
 
-; CHECK: define internal void @diffe_nested
+; CHECK: define internal void @diffenested
 ; CHECK:   %[[sub:.*]] = add i32 %inner, -1
 ; CHECK:   %{{.*}} = sext i32 %[[sub]] to i64

@@ -726,7 +726,9 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   endOMP:;
 
     if (Limit->getType() != CanonicalIV->getType()) {
-      if (SE.isKnownNonNegative(Limit)) {
+      const SCEV *Zero = SE.getZero(Limit->getType());
+      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero,
+                                loopContexts[L].preheader->getTerminator())) {
         Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
       } else {
         Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
