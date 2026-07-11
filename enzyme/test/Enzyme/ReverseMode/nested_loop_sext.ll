@@ -27,12 +27,12 @@ inner.loop:
   %val2 = fmul float %val, %val
   store float %val2, float* %idx, align 4
   
-  %iv.in.next = add nuw nsw i32 %iv.in, 1
+  %iv.in.next = add i32 %iv.in, 1
   %cmp.in.loop = icmp eq i32 %iv.in, %inner
   br i1 %cmp.in.loop, label %outer.loop.latch, label %inner.loop
 
 outer.loop.latch:
-  %iv.out.next = add nuw nsw i32 %iv.out, 1
+  %iv.out.next = add i32 %iv.out, 1
   %cmp.out.loop = icmp eq i32 %iv.out, %outer
   br i1 %cmp.out.loop, label %exit, label %outer.loop
 
