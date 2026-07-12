@@ -27,6 +27,7 @@
 #ifndef ENZYME_DIFFERENTIALUSEANALYSIS_H_
 #define ENZYME_DIFFERENTIALUSEANALYSIS_H_
 
+#include <deque>
 #include <map>
 #include <set>
 
@@ -34,6 +35,7 @@
 #include "llvm/IR/Instruction.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -77,6 +79,14 @@ bool is_use_directly_needed_in_reverse(
     const llvm::Instruction *user,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
     QueryType shadow, bool *recursiveUse = nullptr);
+
+bool checkLoopyReductionPHI(const GradientUtils *gutils,
+                            const llvm::PHINode *P0,
+                            const llvm::Value *incomingVal);
+
+void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
+                           llvm::SetVector<llvm::Value *> &Intermediates,
+                           std::deque<llvm::Value *> &todo);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
@@ -247,6 +257,33 @@ inline bool is_value_needed_in_reverse(
     }
 
     assert(VT == QueryType::Primal);
+
+    if (auto P0 = dyn_cast<PHINode>(user)) {
+      if (checkLoopyReductionPHI(gutils, P0, inst)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                       << *inst
+                       << " in reverse as loopy reduction preheader of "
+                       << *user << "\n";
+        return seen[idx] = true;
+      }
+      if (P0->getNumIncomingValues() == 1) {
+        for (auto u2 : P0->users()) {
+          if (auto P1 = dyn_cast<PHINode>(u2)) {
+            if (checkLoopyReductionPHI(gutils, P1, inst) ||
+                checkLoopyReductionPHI(gutils, P1, P0)) {
+              if (EnzymePrintDiffUse)
+                llvm::errs()
+                    << " Need: " << to_string(VT) << "(" << mode << ") of "
+                    << *inst
+                    << " in reverse via LCSSA loopy reduction preheader of "
+                    << *P1 << "\n";
+              return seen[idx] = true;
+            }
+          }
+        }
+      }
+    }
 
     // If a sub user needs, we need
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,

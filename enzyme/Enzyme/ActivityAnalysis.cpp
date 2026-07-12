@@ -1231,6 +1231,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be constant: " << *Val
                        << "\n";
+        InsertConstantValue(TR, Val);
         return true;
       }
     }
@@ -1248,6 +1249,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be constant: " << *Val
                        << "\n";
+        InsertConstantValue(TR, Val);
         return true;
       }
     }
@@ -2893,7 +2895,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
         if (UA != UseActivity::AllStores) {
           if (ConstantValues.count(SI->getValueOperand()) ||
-              isa<ConstantInt>(SI->getValueOperand()))
+              isa<ConstantInt>(SI->getValueOperand()) ||
+              (SI->getParent()->getParent() == TR.getFunction() &&
+               TR.query(SI->getValueOperand())[{-1}].isIntegral()))
             continue;
           else
             ActiveVal = SI->getValueOperand();
