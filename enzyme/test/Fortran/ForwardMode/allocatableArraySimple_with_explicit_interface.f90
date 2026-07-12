@@ -1,9 +1,15 @@
-! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O0 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O0 %t -o %t1 && %t1 | FileCheck %s; fi
-! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O1 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O1 %t -o %t1 && %t1 | FileCheck %s; fi
-! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O2 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O2 %t -o %t1 && %t1 | FileCheck %s; fi
-! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O3 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O3 %t -o %t1 && %t1 | FileCheck %s; fi
+! REQUIRES: fortran
+! REQUIRES: ifx
+! RUN: %fc -flto -O0 -c %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %fc -flto -O1 -c %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %fc -flto -O2 -c %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %fc -flto -O3 -c %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O3 %t.ll -o %t1 && %t1 | FileCheck %s
 
-module AD
+! NOTE: This test is only configured to run with the ifx compiler
+!       For it to work with the flang compiler we will need to address
+!       https://github.com/EnzymeAD/Enzyme/issues/2820
+
+module selectFirstForward
     implicit none
     interface
         subroutine selectFirst__enzyme_fwddiff(fnc, x, dx, y, dy)
@@ -31,7 +37,7 @@ module AD
 end module
 
 program app
-    use AD
+    use selectFirstForward, only: selectFirst, selectFirst__enzyme_fwddiff
     implicit none
     real, allocatable :: x(:), dx(:)
     real :: y, dy

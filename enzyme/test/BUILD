@@ -26,6 +26,7 @@ expand_template(
         "@TARGET_TRIPLE@": "",
         "@TARGETS_TO_BUILD@": "ALL",
         "@LLVM_SHLIBEXT@": ".so",
+        "@Fortran_COMPILER@": "",
     },
     template = "lit.site.cfg.py.in",
     visibility = [":__subpackages__"],

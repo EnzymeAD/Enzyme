@@ -89,6 +89,7 @@ enum class ErrorType {
   GCRewrite = 11,
   NaNError = 12,
   ShowInternalError = 12,
+  NoAccumulate = 13,
 };
 
 extern "C" {
@@ -1875,6 +1876,8 @@ static inline bool isNoAlias(const llvm::Value *val) {
   if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
     arg->hasNoAliasAttr();
   }
+  if (llvm::isa<llvm::AllocaInst>(val))
+    return true;
   return false;
 }
 
@@ -2386,7 +2389,8 @@ bool isNVLoad(const llvm::Value *V);
 //! If checkLoadCaptured != 0, also consider catpures of any loads of the value
 //! as a capture (for the number of loads set).
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
-                       size_t checkLoadCaptured);
+                       size_t checkLoadCaptured,
+                       llvm::Instruction *startinst = nullptr);
 
 //! Check if value if b captured
 bool notCaptured(llvm::Value *V);
@@ -2400,8 +2404,9 @@ std::optional<bool>
 llvm::Optional<bool>
 #endif
 arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::LoopInfo &LI, llvm::Value *op0,
-                             llvm::Value *op1, bool offsetAllowed = false);
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed = false);
 
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {

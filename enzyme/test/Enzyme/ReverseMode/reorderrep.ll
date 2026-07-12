@@ -89,7 +89,7 @@ attributes #3 = { nounwind }
 ; TODO-CHECK-NEXT:   %1 = icmp sgt i64 %.020, 10
 ; TODO-CHECK-NEXT:   %smax = select i1 %1, i64 %.020, i64 10
 ; CHECK:   %[[a2:.+]] = sub i64 %smax, %.020
-; CHECK-NEXT:   %[[a3:.+]] = add nuw i64 %[[a2]], 1
+; CHECK-NEXT:   %[[a3:.+]] = add nsw i64 %[[a2]], 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[a3]], 8
 ; CHECK-NEXT:   br label %bb377
 
@@ -149,7 +149,7 @@ attributes #3 = { nounwind }
 ; CHECK: invertbb381_phimerge:  
 ; CHECK-NEXT:  %[[a13:.+]] = phi i64 [ -1, %invertbb381_phirc ], [ %tmp44_unwrap, %[[invertbb381_phirc3]] ]
 ; CHECK:   %[[_unwrap3:.+]] = sub i64 %[[smax_unwrap:.+]], %[[a13]]
-; CHECK-NEXT:   %[[a13:.+]] = add nuw i64 %[[_unwrap3]], 1
+; CHECK-NEXT:   %[[a13:.+]] = add nsw i64 %[[_unwrap3]], 1
 ; CHECK-NEXT:   %[[a14:.+]] = extractvalue { double**, i64 } %tapeArg, 0
 ; CHECK-NEXT:   %[[a15:.+]] = getelementptr inbounds double*, double** %[[a14]], i64 %[[a9]]
 ; CHECK-NEXT:   %[[a16:.+]] = load double*, double** %[[a15]], align 8, !invariant.group !

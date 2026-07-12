@@ -866,7 +866,7 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
             OperandRange operandRange =
                 termIface.getSuccessorOperands(successor);
             ValueRange targetValues =
-                successor.isParent()
+                successor.isOperation()
                     ? parentOp->getResults()
                     : regionIface.getSuccessorInputs(successor);
             assert(operandRange.size() == targetValues.size());
@@ -984,8 +984,8 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
       for (auto &successor : successors) {
         OperandRange operandRange = termIface.getSuccessorOperands(successor);
         ValueRange targetValues =
-            successor.isParent() ? parentOp->getResults()
-                                 : regionIface.getSuccessorInputs(successor);
+            successor.isOperation() ? parentOp->getResults()
+                                    : regionIface.getSuccessorInputs(successor);
         assert(operandRange.size() == targetValues.size());
         for (auto &&[prev, post] : llvm::zip(operandRange, targetValues)) {
           if (prev == parent) {
@@ -1041,7 +1041,7 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
     SmallVector<RegionSuccessor> successors;
     iface.getSuccessorRegions(RegionBranchPoint::parent(), successors);
     for (auto &succ : successors) {
-      if (!succ.isParent())
+      if (!succ.isOperation())
         continue;
       auto successorOperands =
           llvm::to_vector(iface.getEntrySuccessorOperands(succ));
@@ -1068,8 +1068,8 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
               block.getTerminator())) {
         // TODO: the interface may also tell us which regions are allowed to
         // yield parent op results, and which only branch to other regions.
-        auto successorOperands = llvm::to_vector(
-            iface.getSuccessorOperands(RegionSuccessor::parent()));
+        auto successorOperands =
+            llvm::to_vector(iface.getSuccessorOperands(RegionSuccessor(owner)));
         // TODO: understand/document the assumption of how operands flow.
 
         if (successorOperands.size() != owner->getNumResults()) {
@@ -1236,7 +1236,7 @@ static void allFollowersOf(Operation *op,
           SmallVector<RegionSuccessor> regionSuccessors;
           iface.getSuccessorRegions(regionBranchPoint, regionSuccessors);
           for (const RegionSuccessor &rs : regionSuccessors) {
-            if (!rs.isParent() && !rs.getSuccessor()->empty())
+            if (!rs.isOperation() && !rs.getSuccessor()->empty())
               todo.push_back(&rs.getSuccessor()->front());
           }
         } else {
@@ -1337,7 +1337,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     return true;
 
   // Token values are definitionally inactive
-  if (isa<LLVM::LLVMTokenType>(Val.getType()))
+  if (isa<mlir::TokenType>(Val.getType()))
     return true;
 
   /// If we've already shown this value to be inactive
@@ -3373,8 +3373,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
         if (llvm::all_of(I->getResults(), [&](Value val) {
-              return isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>(
-                         val.getType()) ||
+              return isa<LLVM::LLVMVoidType, mlir::TokenType>(val.getType()) ||
                      ConstantValues.count(val);
             })) {
           if (EnzymePrintActivity) {

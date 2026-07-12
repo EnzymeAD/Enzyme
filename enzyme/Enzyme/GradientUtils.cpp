@@ -260,20 +260,9 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots tag (for now).
-    if (bund.getTag() != "jl_roots") {
-      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
-      llvm_unreachable("unsupported tag");
-    }
-
-    // In the future we can reduce the number of roots
-    // we preserve by identifying which operands they
-    // correspond to. For now, fall back and preserve all
-    // primals and shadows
-    // assert(bund.inputs().size() == types.size());
-    for (auto inp : bund.inputs()) {
-      if (inp != val)
-        continue;
+    // Only handle jl_roots & gc-transition tags (for now).
+    StringRef tag = bund.getTag();
+    if (tag == "jl_roots") {
       bool anyPrimal = false;
       bool anyShadow = false;
       for (auto ty : types) {
@@ -283,10 +272,31 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
           anyShadow = true;
       }
 
-      if (anyPrimal && !shadow)
+      // In the future we can reduce the number of roots
+      // we preserve by identifying which operands they
+      // correspond to. For now, fall back and preserve all
+      // primals and shadows
+      // assert(bund.inputs().size() == types.size());
+      for (auto inp : bund.inputs()) {
+        if (inp != val)
+          continue;
+
+        if (anyPrimal && !shadow)
+          return true;
+        if (anyShadow && shadow)
+          return true;
+      }
+    } else if (tag == "gc-transition") {
+      if (shadow)
+        continue;
+      for (auto inp : bund.inputs()) {
+        if (inp != val)
+          continue;
         return true;
-      if (anyShadow && shadow)
-        return true;
+      }
+    } else {
+      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
+      llvm_unreachable("unsupported tag");
     }
   }
   return false;
@@ -303,18 +313,14 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots tag (for now).
-    if (bund.getTag() != "jl_roots") {
-      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
-      llvm_unreachable("unsupported tag");
-    }
-    SmallVector<Value *, 2> bunds;
-    // In the future we can reduce the number of roots
-    // we preserve by identifying which operands they
-    // correspond to. For now, fall back and preserve all
-    // primals and shadows
-    // assert(bund.inputs().size() == types.size());
-    for (auto inp : bund.inputs()) {
+    // Only handle jl_roots & gc-transition tags (for now).
+    StringRef tag = bund.getTag();
+    if (tag == "jl_roots") {
+      // In the future we can reduce the number of roots
+      // we preserve by identifying which operands they
+      // correspond to. For now, fall back and preserve all
+      // primals and shadows
+      // assert(bund.inputs().size() == types.size());
       bool anyPrimal = false;
       bool anyShadow = false;
       for (auto ty : types) {
@@ -324,20 +330,35 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
           anyShadow = true;
       }
 
-      if (anyPrimal) {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
+        if (anyPrimal) {
+          Value *newv = getNewFromOriginal(inp);
+          if (lookup)
+            newv = lookupM(newv, Builder2, available);
+          bunds.push_back(newv);
+        }
+        if (anyShadow && !isConstantValue(inp)) {
+          Value *shadow = invertPointerM(inp, Builder2);
+          if (lookup)
+            shadow = lookupM(shadow, Builder2);
+          bunds.push_back(shadow);
+        }
+      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
+    } else if (tag == "gc-transition") {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
         if (lookup)
           newv = lookupM(newv, Builder2, available);
         bunds.push_back(newv);
       }
-      if (anyShadow && !isConstantValue(inp)) {
-        Value *shadow = invertPointerM(inp, Builder2);
-        if (lookup)
-          shadow = lookupM(shadow, Builder2);
-        bunds.push_back(shadow);
-      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
+    } else {
+      errs() << "unsupported tag " << tag << " for " << *orig << "\n";
+      llvm_unreachable("unsupported tag");
     }
-    Defs.push_back(OperandBundleDef(bund.getTag().str(), bunds));
   }
   return Defs;
 }
@@ -602,7 +623,11 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
   if (!opt)
     return L;
   assert(opt);
+#if LLVM_VERSION_MAJOR >= 23
+  return DebugLoc(cast<DILocation>(*opt));
+#else
   return DebugLoc(cast<MDNode>(*opt));
+#endif
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
@@ -3434,8 +3459,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
               FT = valType->getScalarType();
             } else if (!valType->isPointerTy()) {
               if (looseTypeAnalysis) {
-                auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
-                                          /*errifnotfound*/ false,
+                auto fp = TR.firstPointer(storeSize, orig_ptr, &I, this,
+                                          /*errifnotfound*/ nullptr,
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
                   FT = fp.isFloat();
@@ -3447,15 +3472,13 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                       << "assuming type as integral for store: " << I << "\n";
                   FT = nullptr;
                 } else {
-                  TR.firstPointer(storeSize, orig_ptr, &I,
-                                  /*errifnotfound*/ true,
+                  TR.firstPointer(storeSize, orig_ptr, &I, this,
+                                  /*errifnotfound*/ &NB,
                                   /*pointerIntSame*/ true);
-                  llvm::errs() << "cannot deduce type of store " << I << "\n";
-                  assert(0 && "cannot deduce");
                 }
               } else {
-                FT = TR.firstPointer(storeSize, orig_ptr, &I,
-                                     /*errifnotfound*/ true,
+                FT = TR.firstPointer(storeSize, orig_ptr, &I, this,
+                                     /*errifnotfound*/ &NB,
                                      /*pointerIntSame*/ true)
                          .isFloat();
               }
@@ -3580,8 +3603,6 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           if (auto orig = dyn_cast<CallInst>(&I)) {
             StringRef funcName = getFuncNameFromCall(orig);
             assert(funcName.size());
-
-            auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
 
             SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14
@@ -3959,11 +3980,19 @@ bool GradientUtils::legalRecompute(const Value *val,
     }
 
     if (phi->getNumIncomingValues() == 0) {
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *phi << "\n";
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "newFunc: " << *newFunc << "\n";
+      ss << "phi: " << *phi << "\n";
+      ss << "Invalid legalRecompute query on ficticious phi\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(str.c_str(), wrap(phi), ErrorType::InternalError,
+                           nullptr, nullptr, nullptr);
+      } else {
+        EmitFailure("InvalidLegalRecompute", phi->getDebugLoc(), phi, ss.str());
+      }
     }
-    assert(phi->getNumIncomingValues() != 0);
     auto parent = phi->getParent();
     struct {
       Function *func;
@@ -5342,12 +5371,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
-      isa<ConstantInt>(oval)) {
-    if (TT.anyFloat(oval, DL))
+      isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval) ||
+      isa<PoisonValue>(oval)) {
+    if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
+        isa<PoisonValue>(oval) || isa<ConstantAggregateZero>(oval) ||
+        (isa<ConstantInt>(oval) && cast<ConstantInt>(oval)->isZero()) ||
+        TT.allFloat(oval, DL))
       return Constant::getNullValue(getShadowType(oval->getType()));
-    else
+    else if (!TT.anyFloat(oval, DL))
       return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-  } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
+  }
+  if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     auto ElTy = CD->getType()->getElementType();
     auto ObjSize = (DL.getTypeSizeInBits(ElTy) + 7) / 8;
@@ -5954,9 +5988,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     TypeTree agg_look = TR.query(arg->getAggregateOperand());
     if (TT.isKnown()) {
       agg_look = agg_look.Clear(Off, Off + ObjSize, AggSize);
-      agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
-      agg_look.CanonicalizeInPlace(AggSize, DL);
     }
+    agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
+    agg_look.CanonicalizeInPlace(AggSize, DL);
 
     auto ip = invertPointerM(arg->getOperand(0), bb, agg_look);
 
@@ -6006,7 +6040,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         if (isConstantValue(op)) {
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
+            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op) &&
+                !isa<ConstantAggregateZero>(op)) {
               std::string str;
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
@@ -6121,7 +6156,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto tval = arg->getTrueValue();
       if (!runtimeActivity && TT.anyPointer(tval, DL) &&
           !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-          isConstantValue(tval)) {
+          !isa<ConstantAggregateZero>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -6141,7 +6176,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto fval = arg->getFalseValue();
       if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
           !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-          isConstantValue(fval)) {
+          !isa<ConstantAggregateZero>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
@@ -8626,8 +8661,11 @@ void GradientUtils::computeMinCache() {
                                     *OrigLI, Recomputes, Intermediates,
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
+
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8638,6 +8676,8 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
@@ -9768,6 +9808,22 @@ int GradientUtils::getIndex(
 
 void GradientUtils::computeGuaranteedFrees() {
   SmallPtrSet<CallInst *, 2> allocsToPromote;
+
+  DenseMap<Metadata *, SmallVector<CallInst *>> cache_frees;
+  for (auto &BB : *oldFunc) {
+    for (auto &I : BB) {
+      auto CI = dyn_cast<CallInst>(&I);
+      if (!CI)
+        continue;
+      if (auto MD = CI->getMetadata("enzyme_cache_free")) {
+        if (MD->getNumOperands() > 0) {
+          Metadata *id = MD->getOperand(0);
+          cache_frees[id].push_back(CI);
+        }
+      }
+    }
+  }
+
   for (auto &BB : *oldFunc) {
     if (notForAnalysis.count(&BB))
       continue;
@@ -9796,6 +9852,19 @@ void GradientUtils::computeGuaranteedFrees() {
 
             if (hasPDFree) {
               allocationsWithGuaranteedFree[dc].insert(CI);
+            }
+          }
+        }
+      }
+      if (auto MD = CI->getMetadata("enzyme_cache_alloc")) {
+        if (MD->getNumOperands() > 0) {
+          Metadata *id = MD->getOperand(0);
+          if (cast<ConstantInt>(
+                  cast<ConstantAsMetadata>(cast<MDNode>(id)->getOperand(0))
+                      ->getValue())
+                  ->isOne()) {
+            for (auto otherCI : cache_frees[id]) {
+              allocationsWithGuaranteedFree[CI].insert(otherCI);
             }
           }
         }

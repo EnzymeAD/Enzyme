@@ -185,7 +185,9 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
                                                  OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
   auto iface = cast<AutoDiffTypeInterface>(oval.getType());
-  if (!iface.isMutable()) {
+  if (!(mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit) &&
+      !iface.isMutable()) {
     auto shadow = getDifferential(oval);
     enzyme::SetOp::create(BuilderM, oval.getLoc(), shadow, toset);
   } else {

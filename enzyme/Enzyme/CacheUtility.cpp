@@ -725,8 +725,22 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     }
   endOMP:;
 
-    if (Limit->getType() != CanonicalIV->getType())
-      Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+    if (Limit->getType() != CanonicalIV->getType()) {
+      const SCEV *Zero = SE.getZero(Limit->getType());
+      const Loop *outermost = L;
+      while (outermost->getParentLoop()) {
+        outermost = outermost->getParentLoop();
+      }
+      BasicBlock *outermostPreheader = outermost->getLoopPreheader();
+      Instruction *context = outermostPreheader
+                                 ? outermostPreheader->getTerminator()
+                                 : loopContexts[L].preheader->getTerminator();
+      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero, context)) {
+        Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+      } else {
+        Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
+      }
+    }
 
 #if LLVM_VERSION_MAJOR >= 22
     SCEVExpander Exp(SE, "enzyme");
@@ -844,11 +858,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
     alloc->setAlignment(Align(align));
   }
-  if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
-    if (!isa<UndefValue>(val))
-      scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
-  }
+  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+                                          /*forceZero*/ false);
+  if (!isa<UndefValue>(undef_v))
+    scopeInstructions[alloc].push_back(
+        entryBuilder.CreateStore(undef_v, alloc));
 
   Value *storeInto = alloc;
 
@@ -906,6 +920,16 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         Value *firstallocation = CreateAllocation(
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
             /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
+
+        if (malloccall) {
+          auto ident = MDNode::getDistinct(
+              malloccall->getContext(),
+              {ConstantAsMetadata::get(
+                  ConstantInt::getFalse(malloccall->getContext()))});
+          malloccall->setMetadata(
+              "enzyme_cache_alloc",
+              MDNode::get(malloccall->getContext(), {ident}));
+        }
 
         scopeInstructions[alloc].push_back(malloccall);
         if (firstallocation != malloccall)
@@ -1013,8 +1037,19 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           containedloops.back().first.preheader, sublimits, i, alloc, nextType,
           byteSizeOfType, storeInto,
           CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      if (freecall) {
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getFalse(
+                                    freecall->getContext()))});
+        freecall->setMetadata("enzyme_cache_free",
+                              MDNode::get(freecall->getContext(), {ident}));
+      }
       if (freecall && malloccall) {
-        auto ident = MDNode::getDistinct(malloccall->getContext(), {});
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getTrue(
+                                    freecall->getContext()))});
         malloccall->setMetadata("enzyme_cache_alloc",
                                 MDNode::get(malloccall->getContext(), {ident}));
         freecall->setMetadata("enzyme_cache_free",
@@ -1268,7 +1303,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           limits[i] = found->second;
         } else {
           limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNUWAdd(
+              allocationBuilder.CreateNSWAdd(
                   limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
         }
       } else {
@@ -1280,7 +1315,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNUWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
       }
     }
   }

@@ -1,8 +1,15 @@
+message("Building Fortran bindings")
+
 enable_language(Fortran)
 include(FortranCInterface)
 FortranCInterface_VERIFY(QUIET)
 
-add_library(EnzymeFortran enzyme.f90)
+# Initialize Fortran module build output directory for all subsequent targets
+if(NOT DEFINED CMAKE_Fortran_MODULE_DIRECTORY)
+  set(CMAKE_Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}/modules")
+endif()
+
+add_library(EnzymeFortran SHARED enzyme.f90 enzyme_function_hooks.f90)
 
 # Install library, create target file
 install(

@@ -1207,9 +1207,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     if (TR.query(Val)[{-1}] == BaseType::Integer) {
       if (EnzymePrintActivity)
         llvm::errs() << " Value const as integral " << (int)directions << " "
-                     << *Val << " "
-                     << TR.intType(1, Val, /*errIfNotFound*/ false).str()
-                     << "\n";
+                     << *Val << " " << TR.query(Val).str() << "\n";
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -1227,6 +1225,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be constant: " << *Val
                        << "\n";
+        InsertConstantValue(TR, Val);
         return true;
       }
     }
@@ -1244,6 +1243,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be constant: " << *Val
                        << "\n";
+        InsertConstantValue(TR, Val);
         return true;
       }
     }
@@ -1254,7 +1254,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // TODO use typeInfo for more aggressive activity analysis
   if (val->getType()->isPointerTy() &&
       cast<PointerType>(val->getType())->isIntOrIntVectorTy() &&
-      TR.firstPointer(1, val, /*errifnotfound*/ false).isIntegral()) {
+      TR.firstPointer(1, val, /*I*/nullptr, /*gutils*/nullptr, /*errifnotfound*/ nullptr).isIntegral()) {
     if (EnzymePrintActivity)
       llvm::errs() << " Value const as integral pointer" << (int)directions
                    << " " << *val << "\n";
@@ -2889,7 +2889,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
         if (UA != UseActivity::AllStores) {
           if (ConstantValues.count(SI->getValueOperand()) ||
-              isa<ConstantInt>(SI->getValueOperand()))
+              isa<ConstantInt>(SI->getValueOperand()) ||
+              (SI->getParent()->getParent() == TR.getFunction() &&
+               TR.query(SI->getValueOperand())[{-1}].isIntegral()))
             continue;
           else
             ActiveVal = SI->getValueOperand();

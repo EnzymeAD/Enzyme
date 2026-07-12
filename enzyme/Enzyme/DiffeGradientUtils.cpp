@@ -425,12 +425,105 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
     }
   }
 
-  llvm::errs() << " VT: " << *VT << " idxs:{";
+  auto addingSize = addingType ? (DL.getTypeSizeInBits(addingType) + 7) / 8 : 0;
+  if (size < storeSize && addingType && !mask && addingSize != 0 &&
+      size % addingSize == 0 && start % addingSize == 0) {
+    if (getWidth() == 1) {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      Value *subdif = extractMeta(BuilderM, dif, eidxs);
+      IRBuilder<> A(inversionAllocs);
+      auto Al = A.CreateAlloca(subdif->getType());
+      BuilderM.CreateStore(subdif, Al);
+      if (start > 0) {
+        Value *ptr_i8 = BuilderM.CreatePointerCast(
+            Al, getUnqual(Type::getInt8Ty(val->getContext())));
+        BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                              MaybeAlign(1));
+      }
+      if (storeSize > start + size) {
+        Value *ptr_i8 = BuilderM.CreatePointerCast(
+            Al, getUnqual(Type::getInt8Ty(val->getContext())));
+        Value *gep = BuilderM.CreateInBoundsGEP(
+            Type::getInt8Ty(val->getContext()), ptr_i8,
+            ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                             start + size));
+        BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                              storeSize - start - size, MaybeAlign(1));
+      }
+      Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
+    } else {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      Value *subdif = extractMeta(BuilderM, dif, eidxs);
+      IRBuilder<> A(inversionAllocs);
+      auto Al = A.CreateAlloca(subdif->getType());
+      BuilderM.CreateStore(subdif, Al);
+      if (start > 0) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
+          Value *ptr_i8 = BuilderM.CreatePointerCast(
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
+          BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                                MaybeAlign(1));
+        }
+      }
+      if (storeSize > start + size) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
+          Value *ptr_i8 = BuilderM.CreatePointerCast(
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
+          Value *gep = BuilderM.CreateInBoundsGEP(
+              Type::getInt8Ty(val->getContext()), ptr_i8,
+              ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                               start + size));
+          BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                                storeSize - start - size, MaybeAlign(1));
+        }
+      }
+      Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
+    }
+  }
+
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "Unhandled accumulate with partial sizes:\n";
+  ss << " val: " << *val << "\n";
+  ss << " VT: " << *VT << " idxs:{";
   for (auto idx : idxs)
-    llvm::errs() << *idx << ",";
-  llvm::errs() << "} start=" << start << " size=" << size
-               << " storeSize=" << storeSize << " val=" << *val << "\n";
-  assert(0 && "unhandled accumulate with partial sizes");
+    ss << *idx << ",";
+  ss << "} start=" << start << " size=" << size << " storeSize=" << storeSize
+     << " val=" << *val << "\n";
+  if (addingType)
+    ss << " addingType: " << *addingType << "\n";
+  else
+    ss << " addingType: null\n";
+  if (CustomErrorHandler) {
+    CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
+                       nullptr, nullptr, wrap(&BuilderM));
+  } else {
+    DebugLoc loc;
+    if (auto inst = dyn_cast<Instruction>(val))
+      EmitFailure("UnhandledAccumulate", inst->getDebugLoc(), inst, ss.str());
+    else {
+      llvm::errs() << ss.str() << "\n";
+      llvm_unreachable("UnhandledAccumulate");
+    }
+  }
   return {};
 }
 
@@ -960,15 +1053,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         Type *tys[] = {ArrayType::get(i8, start), addingType,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
-        auto Al = A.CreateAlloca(ST);
+        auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
         BuilderM.CreateStore(
             dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
-        auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs);
-        dif = BuilderM.CreateLoad(addingType, difp);
+        auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs, "gep.ptr");
+        dif = BuilderM.CreateLoad(addingType, difp, "gep.load");
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -983,10 +1076,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           dif = BuilderM.CreateBitCast(dif, addingType);
         else {
           IRBuilder<> A(inversionAllocs);
-          auto Al = A.CreateAlloca(addingType);
-          BuilderM.CreateStore(
-              dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
-          dif = BuilderM.CreateLoad(addingType, Al);
+          auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
+          BuilderM.CreateStore(dif, Al);
+          dif = BuilderM.CreateLoad(
+              addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
+              "cast.load");
         }
       }
       return dif;

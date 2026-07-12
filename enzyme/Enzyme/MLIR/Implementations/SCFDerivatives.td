@@ -51,7 +51,7 @@ def : ControlFlowOp<"scf", "ParallelOp", [{
                                     RegionBranchOpInterface& regionBranchOp,
                                     RegionSuccessor const& successor) const {
     mlir::scf::ParallelOp par_op = dyn_cast<mlir::scf::ParallelOp>(op);
-    if (successor.isParent())
+    if (successor.isOperation())
       return par_op.getInitVals();
     
     return regionBranchOp.getEntrySuccessorOperands(successor);

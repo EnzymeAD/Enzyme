@@ -919,6 +919,111 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   return;
 }
 
+static bool AllJuliaTypes(Type *T) {
+  if (auto PT = dyn_cast<PointerType>(T)) {
+    unsigned AS = PT->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      return true;
+    }
+  }
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    return AllJuliaTypes(AT->getElementType());
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto len = ST->getNumElements();
+    if (len != 0) {
+      for (size_t i = 0; i < len; i++) {
+        if (!AllJuliaTypes(ST->getElementType(i)))
+          return false;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool AnyJuliaTypes(Type *T) {
+  if (auto PT = dyn_cast<PointerType>(T)) {
+    unsigned AS = PT->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      return true;
+    }
+  }
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    return AnyJuliaTypes(AT->getElementType());
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto len = ST->getNumElements();
+    for (size_t i = 0; i < len; i++) {
+      if (AnyJuliaTypes(ST->getElementType(i)))
+        return true;
+    }
+  }
+  return false;
+}
+
+static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
+                                       const DataLayout &DL) {
+  if (AllJuliaTypes(T)) {
+    TT.remove({-1});
+    TT.remove({0});
+    TT.insert({-1}, BaseType::Pointer);
+    return;
+  }
+  if (!AnyJuliaTypes(T))
+    return;
+  auto outAll = TT[{-1}];
+  if (outAll != BaseType::Unknown)
+    return;
+
+  std::vector<std::pair<Type *, size_t>> todo;
+  todo.emplace_back(T, 0);
+  while (!todo.empty()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    T = cur.first;
+    auto offset = cur.second;
+    if (!AnyJuliaTypes(T))
+      continue;
+    if (isa<PointerType>(T)) {
+      TT.remove(std::vector<int>{(int)offset});
+      TT.insert(std::vector<int>{(int)offset}, BaseType::Pointer);
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      SmallVector<Value *, 4> vec;
+      vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
+      vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), 1));
+      auto ud = UndefValue::get(getUnqual(AT));
+      auto g2 = GetElementPtrInst::Create(T, ud, vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      delete g2;
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
+        todo.emplace_back(AT->getElementType(),
+                          offset + i * ai.getLimitedValue());
+      }
+
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      auto ud = UndefValue::get(getUnqual(ST));
+      for (size_t i = 0; i < ST->getNumElements(); i++) {
+        SmallVector<Value *, 4> vec;
+        vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
+        vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), i));
+        auto g2 = GetElementPtrInst::Create(T, ud, vec);
+        APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+        g2->accumulateConstantOffset(DL, ai);
+        delete g2;
+        todo.emplace_back(ST->getElementType(i), offset + ai.getLimitedValue());
+      }
+
+      continue;
+    }
+  }
+}
+
 TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
   // Integers with fewer than 16 bits (size of half)
   // must be integral, since it cannot possibly represent a float or pointer
@@ -927,14 +1032,10 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     return TypeTree(BaseType::Integer).Only(-1, nullptr);
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
-    if (EnzymeJuliaAddrLoad && C->getType()->isPointerTy()) {
-      unsigned AS = C->getType()->getPointerAddressSpace();
-      if (AS == 10 || AS == 11 || AS == 13) {
-        analysis[C].remove({-1});
-        analysis[C].remove({0});
-        analysis[C].insert({-1}, BaseType::Pointer);
-      }
-    }
+    if (EnzymeJuliaAddrLoad)
+      AugmentWithJuliaObjectType(
+          analysis[Val], Val->getType(),
+          fntypeinfo.Function->getParent()->getDataLayout());
     return analysis[Val];
   }
 
@@ -956,14 +1057,10 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     assert(Arg->getParent() == fntypeinfo.Function);
   }
 
-  if (EnzymeJuliaAddrLoad && Val->getType()->isPointerTy()) {
-    unsigned AS = Val->getType()->getPointerAddressSpace();
-    if (AS == 10 || AS == 11 || AS == 13) {
-      analysis[Val].remove({-1});
-      analysis[Val].remove({0});
-      analysis[Val].insert({-1}, BaseType::Pointer);
-    }
-  }
+  if (EnzymeJuliaAddrLoad)
+    AugmentWithJuliaObjectType(
+        analysis[Val], Val->getType(),
+        fntypeinfo.Function->getParent()->getDataLayout());
 
   // Return current results
   if (isa<Argument>(Val) || isa<Instruction>(Val))
@@ -1153,9 +1250,10 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
       exit(1);
     } else {
-      llvm::errs() << ss.str() << "\n";
+      EmitFailure("IllegalUpdateAnalysis", DiagnosticLocation(),
+                  fntypeinfo.Function, ss.str());
+      exit(1);
     }
-    report_fatal_error("Performed illegal updateAnalysis");
   }
 
   if (Changed) {
@@ -1292,9 +1390,8 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
-            auto RegSize = I.getType()->isVoidTy()
-                               ? 0
-                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            auto argTy = call->getArgOperand(i)->getType();
+            auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
             for (const auto &pair : TT.getMapping()) {
               if (pair.first[0] != -1) {
                 if ((size_t)pair.first[0] >= RegSize) {
@@ -3313,21 +3410,33 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
-          if (Args[i])
-            for (auto andval :
-                 fntypeinfo.knownIntegralValues(Args[i], DT, intseen, SE)) {
-              if (andval <= 16 && andval >= 0) {
-                Result = TypeTree(BaseType::Integer);
-              } else if (andval < 0 && andval >= -64) {
-                // If a small negative number, this just masks off the lower
-                // bits in this case we can say that this is the same as the
-                // other operand
+          bool isNegMask = false;
+          if (Args[i]) {
+            if (auto CI = dyn_cast<ConstantInt>(Args[i])) {
+              int64_t andval = CI->getSExtValue();
+              if (andval < 0 && andval >= -64) {
                 Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                isNegMask = true;
               }
             }
+            if (!isNegMask) {
+              for (auto andval :
+                   fntypeinfo.knownIntegralValues(Args[i], DT, intseen, SE)) {
+                if (andval <= 16 && andval >= 0) {
+                  Result = TypeTree(BaseType::Integer);
+                } else if (andval < 0 && andval >= -64) {
+                  // If a small negative number, this just masks off the lower
+                  // bits in this case we can say that this is the same as the
+                  // other operand
+                  Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                  isNegMask = true;
+                }
+              }
+            }
+          }
           // If we and a constant against an integer, the result remains an
           // integer
-          if (Args[i] && isa<ConstantInt>(Args[i]) &&
+          if (!isNegMask && Args[i] && isa<ConstantInt>(Args[i]) &&
               (i == 0 ? AnalysisRHS : AnalysisLHS).Inner0() ==
                   BaseType::Integer) {
             Result = TypeTree(BaseType::Integer);
@@ -4079,6 +4188,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
 #if LLVM_VERSION_MAJOR >= 15
   case Intrinsic::maximum:
   case Intrinsic::minimum:
+#endif
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::maximumnum:
+  case Intrinsic::minimumnum:
 #endif
   case Intrinsic::nvvm_fmax_f:
   case Intrinsic::nvvm_fmax_d:
@@ -5800,6 +5913,35 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
       }
     }
   }
+  if (fntypeinfo.Function->getAttributes().hasAttribute(
+          AttributeList::ReturnIndex, "enzyme_type")) {
+    auto attr = fntypeinfo.Function->getAttributes().getAttribute(
+        AttributeList::ReturnIndex, "enzyme_type");
+    auto TT = TypeTree::parse(attr.getValueAsString(),
+                              fntypeinfo.Function->getContext());
+
+    auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
+    for (const auto &pair : TT.getMapping()) {
+      size_t chunk = 1;
+      if (auto flt = pair.second.isFloat()) {
+        chunk = dl.getTypeSizeInBits(flt) / 8;
+      } else if (pair.second == BaseType::Pointer) {
+        chunk = dl.getPointerSizeInBits() / 8;
+      }
+
+      for (size_t i = 0; i < chunk; i++) {
+        auto v2(pair.first);
+        v2.back() += i;
+        auto found = vd.getMapping().find(v2);
+        if (found == vd.getMapping().end())
+          continue;
+        vd.remove(v2);
+      }
+
+      vd.insert(pair.first, pair.second);
+    }
+  }
+
   return vd;
 }
 
@@ -6245,7 +6387,9 @@ bool TypeResults::anyPointer(Value *val) const {
 
 void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer->dump(ss); }
 
-ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
+ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
+                                  GradientUtils *gutils,
+                                  llvm::IRBuilder<> *BuilderIfShouldErr,
                                   bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
@@ -6262,17 +6406,16 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
     dt.orIn(q[{(int)i}], pointerIntSame);
   }
 
-  if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
-      llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : analyzer->analysis) {
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << "\n";
-      }
-    }
-    llvm::errs() << "could not deduce type of integer " << *val << "\n";
-    assert(0 && "could not deduce type of integer");
+  if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
+       << "\n  num:" << num << " q:" << q.str() << " \n";
+
+    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
+    dump(ss);
+
+    EmitNoTypeError(str, *I, nullptr, *BuilderIfShouldErr);
   }
   return dt;
 }
@@ -6295,7 +6438,8 @@ Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
 }
 
 ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
-                                       bool errIfNotFound,
+                                       GradientUtils *gutils,
+                                       llvm::IRBuilder<> *BuilderIfShouldErr,
                                        bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
@@ -6325,59 +6469,16 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     }
   }
 
-  if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    auto &res = *analyzer;
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
-      llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-        if (auto in = dyn_cast<Instruction>(pair.first)) {
-          if (in->getParent()->getParent() != inst->getParent()->getParent()) {
-            llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
-            llvm::errs() << "instf: " << *inst->getParent()->getParent()
-                         << "\n";
-            llvm::errs() << "in: " << *in << "\n";
-            llvm::errs() << "inst: " << *inst << "\n";
-          }
-          assert(in->getParent()->getParent() ==
-                 inst->getParent()->getParent());
-        }
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
-                     << "\n";
-      }
-    }
-    if (auto arg = dyn_cast<Argument>(val)) {
-      llvm::errs() << *arg->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-#ifndef NDEBUG
-        if (auto in = dyn_cast<Instruction>(pair.first))
-          assert(in->getParent()->getParent() == arg->getParent());
-#endif
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
-                     << "\n";
-      }
-    }
-    llvm::errs() << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump();
-    llvm::errs() << "could not deduce type of integer " << *val
-                 << " num:" << num << " q:" << q.str() << " \n";
+  if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
+       << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    llvm::DiagnosticLocation loc =
-        analyzer->fntypeinfo.Function->getSubprogram();
-    Instruction *codeLoc =
-        &*analyzer->fntypeinfo.Function->getEntryBlock().begin();
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      loc = inst->getDebugLoc();
-      codeLoc = inst;
-    }
-    EmitFailure("CannotDeduceType", loc, codeLoc,
-                "failed to deduce type of value ", *val);
+    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
+    dump(ss);
 
-    assert(0 && "could not deduce type of integer");
+    EmitNoTypeError(str, *I, gutils, *BuilderIfShouldErr);
   }
   return dt;
 }

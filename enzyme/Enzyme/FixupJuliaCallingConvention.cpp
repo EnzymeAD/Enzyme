@@ -191,6 +191,14 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
       }
       bool foundUse = false;
       for (auto &U : sv->uses()) {
+        // If we had a constant originally, it could have been used in another
+        // function. We can/should ignore those uses.
+        if (auto I = dyn_cast<Instruction>(U.getUser())) {
+          if (I->getParent()->getParent() != arg->getParent()) {
+            continue;
+          }
+        }
+
         if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
           if (SI->getValueOperand() == sv) {
             auto base = getBaseObject(SI->getPointerOperand());
@@ -642,22 +650,45 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
               .getValueAsString());
 
       assert(count == tracked.count);
-      return;
-    }
 
-    F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
-                                      convertSRetTypeToString(SRetType)));
-    Attrs = F->getAttributes();
-    srets.clear();
-    size_t i = 0;
-    enzyme_srets.insert(i);
-    if (rerooting) {
-      reroot_enzyme_srets.insert(i);
-    } else if (anyJLStore) {
+      bool allCallersAlloca = true;
+      for (auto U : F->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (CI->getCalledFunction() == F) {
+            if (!isa<AllocaInst>(getBaseObject(CI->getArgOperand(0), false)) ||
+                !isa<AllocaInst>(getBaseObject(CI->getArgOperand(1), false))) {
+              allCallersAlloca = false;
+              break;
+            }
+          }
+        }
+      }
+      if (allCallersAlloca)
+        return;
+
+      F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
+                                        convertSRetTypeToString(SRetType)));
+      Attrs = F->getAttributes();
+      srets.clear();
+      size_t i = 0;
+      enzyme_srets.insert(i);
+      selected_roots[1] = 0;
+      reret_roots.clear();
     } else {
-      if (auto count = CountTrackedPointers(SRetType).count) {
-        srets_without_stores[i] = count;
-        noroot_enzyme_srets.insert(i);
+      F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
+                                        convertSRetTypeToString(SRetType)));
+      Attrs = F->getAttributes();
+      srets.clear();
+      size_t i = 0;
+      enzyme_srets.insert(i);
+      if (rerooting) {
+        reroot_enzyme_srets.insert(i);
+      } else if (anyJLStore) {
+      } else {
+        if (auto count = CountTrackedPointers(SRetType).count) {
+          srets_without_stores[i] = count;
+          noroot_enzyme_srets.insert(i);
+        }
       }
     }
   } else if (srets.size() == 0 && enzyme_srets.size() == 0 &&

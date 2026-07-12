@@ -1,0 +1,10 @@
+###############################################################################
+# Bazel now uses Bzlmod by default to manage external dependencies.
+# Please consider migrating your external dependencies from WORKSPACE to MODULE.bazel.
+#
+# For more details, please check https://github.com/bazelbuild/bazel/issues/18958
+###############################################################################
+
+# Use Bzlmod (BCR) to supply zlib and zstd for LLVM
+bazel_dep(name = "zlib-ng", version = "2.3.3", repo_name = "llvm_zlib")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1", repo_name = "llvm_zstd")

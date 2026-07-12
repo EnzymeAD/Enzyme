@@ -32,13 +32,13 @@ module {
 
 // CHECK: @fwddiffematvec(%[[arg0:.+]]: memref<?x?xf64>, %[[arg1:.+]]: memref<?x?xf64>, %[[arg2:.+]]: memref<?xf64>, %[[arg3:.+]]: memref<?xf64>, %[[arg4:.+]]: memref<?xf64>, %[[arg5:.+]]: memref<?xf64>) {
 // CHECK:   %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK:   %[[cst_0:.+]] = arith.constant 0.000000e+00 : f64
 // CHECK:   %[[c1:.+]] = arith.constant 1 : index
 // CHECK:   %[[c0:.+]] = arith.constant 0 : index
 // CHECK:   %[[dim:.+]] = memref.dim %[[arg0:.+]], %[[c0]] : memref<?x?xf64>
 // CHECK:   %[[dim_1:.+]] = memref.dim %[[arg0:.+]], %[[c1]] : memref<?x?xf64>
 // CHECK:   scf.parallel (%[[arg6:.+]]) = (%[[c0]]) to (%dim) step (%[[c1]]) {
-// CHECK:     %[[cst_0:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK:     %[[x0:.+]]:2 = scf.for %[[arg7:.+]] = %[[c0]] to %[[dim_1]] step %[[c1]] iter_args(%[[arg8:.+]] = %[[cst]], %[[arg9:.+]] = %[[cst_0]]) -> (f64, f64) {
+// CHECK:     %[[x0:.+]]:2 = scf.for %[[arg7:.+]] = %[[c0]] to %dim_1 step %[[c1]] iter_args(%[[arg8:.+]] = %[[cst_0]], %[[arg9:.+]] = %[[cst]]) -> (f64, f64) {
 // CHECK:       %[[x1:.+]] = memref.load %[[arg1]][%[[arg6]], %[[arg7]]] : memref<?x?xf64>
 // CHECK:       %[[x2:.+]] = memref.load %[[arg0]][%[[arg6]], %[[arg7]]] : memref<?x?xf64>
 // CHECK:       %[[x3:.+]] = memref.load %[[arg3]][%[[arg7]]] : memref<?xf64>
