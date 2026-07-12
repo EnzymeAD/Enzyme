@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -preserve-nvvm -enzyme -mem2reg -sroa -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="preserve-nvvm,enzyme,function(mem2reg,sroa,early-cse,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Metal AIR math intrinsic (air.atan2.f32): not a real LLVM intrinsic, so
