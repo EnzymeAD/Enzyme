@@ -62,6 +62,12 @@
 #include <optional>
 #endif
 
+#if LLVM_VERSION_MAJOR >= 23
+#define amd_target amdgpu
+#else
+#define amd_target amdgcn
+#endif
+
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"

@@ -4676,12 +4676,12 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     }
 
     auto Arch = llvm::Triple(arg->getParent()->getTargetTriple()).getArch();
-    int SharedAddrSpace = Arch == Triple::amdgcn
+    int SharedAddrSpace = Arch == Triple::amd_target
                               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                               : 3;
     int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
     if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-         Arch == Triple::amdgcn) &&
+         Arch == Triple::amd_target) &&
         AddrSpace == SharedAddrSpace) {
       assert(0 && "shared memory not handled in meta global");
     }
@@ -5686,12 +5686,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto Arch =
           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
       int SharedAddrSpace =
-          Arch == Triple::amdgcn
+          Arch == Triple::amd_target
               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
               : 3;
       int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
       if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-           Arch == Triple::amdgcn) &&
+           Arch == Triple::amd_target) &&
           AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         Type *type = arg->getValueType();
@@ -6746,7 +6746,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       auto Arch =
           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
       unsigned int SharedAddrSpace =
-          Arch == Triple::amdgcn
+          Arch == Triple::amd_target
               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
               : 3;
       if (cast<PointerType>(LI->getPointerOperand()->getType())
@@ -7101,7 +7101,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
         auto Arch =
             llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
         unsigned int SharedAddrSpace =
-            Arch == Triple::amdgcn
+            Arch == Triple::amd_target
                 ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                 : 3;
         if (EnzymeSharedForward && scev1 != OrigSE->getCouldNotCompute() &&
