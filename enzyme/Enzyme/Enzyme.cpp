@@ -1459,7 +1459,7 @@ public:
 
     auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                     Arch == Triple::amdgcn;
+                     Arch == Triple::amd_target;
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
@@ -2608,7 +2608,7 @@ public:
               .getArch();
 
       bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                       Arch == Triple::amdgcn;
+                       Arch == Triple::amd_target;
 
       IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(

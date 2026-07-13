@@ -1098,7 +1098,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   // upon
   if (isa<AllocaInst>(TmpOrig) &&
       (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-       Arch == Triple::amdgcn)) {
+       Arch == Triple::amd_target)) {
     Atomic = false;
   }
   // Moreover no need to do atomic on local shadows regardless since they are
@@ -1110,9 +1110,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     Atomic = false;
 
   if (Atomic) {
-    // For amdgcn constant AS is 4 and if the primal is in it we need to cast
-    // the derivative value to AS 1
-    if (Arch == Triple::amdgcn &&
+    // For amd_target constant AS is 4 and if the primal is in it we need to
+    // cast the derivative value to AS 1
+    if (Arch == Triple::amd_target &&
         cast<PointerType>(origptr->getType())->getAddressSpace() == 4) {
       auto rule = [&](Value *ptr) {
         return BuilderM.CreateAddrSpaceCast(ptr,
