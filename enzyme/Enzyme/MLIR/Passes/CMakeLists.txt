@@ -5,6 +5,7 @@ add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
 add_mlir_dialect_library(MLIREnzymeTransforms
     LowerAffineAtomicRmwPass.cpp
+    LowerBinomialProgressPass.cpp
     EnzymeMLIRPass.cpp
     EnzymeActivityOpt.cpp
     ExpandImpulsePass.cpp
