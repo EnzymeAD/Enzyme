@@ -4675,14 +4675,10 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       return gvemd->getValue();
     }
 
-    auto Arch = llvm::Triple(arg->getParent()->getTargetTriple()).getArch();
-    int SharedAddrSpace = Arch == Triple::amd_target
-                              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-                              : 3;
+    auto TT = llvm::Triple(arg->getParent()->getTargetTriple());
+    int SharedAddrSpace = getGPUSharedAddrSpace(TT);
     int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
-    if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-         Arch == Triple::amd_target) &&
-        AddrSpace == SharedAddrSpace) {
+    if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
       assert(0 && "shared memory not handled in meta global");
     }
 
@@ -5683,16 +5679,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
       }
 
-      auto Arch =
-          llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-      int SharedAddrSpace =
-          Arch == Triple::amd_target
-              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-              : 3;
+      auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+      int SharedAddrSpace = getGPUSharedAddrSpace(TT);
       int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
-      if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-           Arch == Triple::amd_target) &&
-          AddrSpace == SharedAddrSpace) {
+      if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         Type *type = arg->getValueType();
         // TODO this needs initialization by entry
@@ -6743,12 +6733,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       reduceRegister = true;
     }
     if (auto LI = dyn_cast<LoadInst>(inst)) {
-      auto Arch =
-          llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-      unsigned int SharedAddrSpace =
-          Arch == Triple::amd_target
-              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-              : 3;
+      auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+      unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
       if (cast<PointerType>(LI->getPointerOperand()->getType())
               ->getAddressSpace() == SharedAddrSpace) {
         reduceRegister |= tryLegalRecomputeCheck &&
@@ -7098,12 +7084,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
         auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
 
-        auto Arch =
-            llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-        unsigned int SharedAddrSpace =
-            Arch == Triple::amd_target
-                ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-                : 3;
+        auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+        unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
         if (EnzymeSharedForward && scev1 != OrigSE->getCouldNotCompute() &&
             cast<PointerType>(orig_liobj->getType())->getAddressSpace() ==
                 SharedAddrSpace) {

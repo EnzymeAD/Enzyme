@@ -1458,9 +1458,7 @@ public:
     auto subsequent_calls_may_write = options.subsequent_calls_may_write;
 
     auto TT = Triple(CI->getModule()->getTargetTriple());
-    auto Arch = TT.getArch();
-    bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                     Arch == Triple::amd_target || TT.getArchName() == "air64";
+    bool AtomicAdd = isGPUArch(TT);
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
@@ -2605,10 +2603,8 @@ public:
 
       auto TT = llvm::Triple(
           CI->getParent()->getParent()->getParent()->getTargetTriple());
-      auto Arch = TT.getArch();
 
-      bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                       Arch == Triple::amd_target || TT.getArchName() == "air64";
+      bool AtomicAdd = isGPUArch(TT);
 
       IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(
