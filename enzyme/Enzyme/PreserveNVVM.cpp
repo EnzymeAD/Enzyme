@@ -896,10 +896,9 @@ bool preserveNVVM(bool Begin, Module &M) {
     // companion is hardcoded to the libm name "coshf", not "air.cosh.f32" --
     // rather than through the dedicated air.tanh.f32 CallPattern that exists
     // specifically to keep the companion AIR-native.
-    for (std::string name :
-         {"sin",  "cos",   "tan",   "asin", "acos",  "atan",  "atan2",
-          "exp",  "exp2",  "log",   "log2", "log10", "log1p", "expm1",
-          "sqrt", "cbrt",  "pow",   "fma"}) {
+    for (std::string name : {"sin", "cos", "tan", "asin", "acos", "atan",
+                             "atan2", "exp", "exp2", "log", "log2", "log10",
+                             "log1p", "expm1", "sqrt", "cbrt", "pow", "fma"}) {
       std::string airname = "air." + name + (T == "f" ? ".f32" : ".f64");
       std::string llname = "llvm." + name + "." + (T == "f" ? "f32" : "f64");
       std::string mathname = name + T;
@@ -914,9 +913,9 @@ bool preserveNVVM(bool Begin, Module &M) {
     // fast_tanh/fast_cosh/fast_sinh are excluded for the same reason as
     // their non-fast forms above.
     if (T == "f") {
-      for (std::string name : {"log", "exp", "sin", "cos", "tan", "sqrt",
-                               "asin", "acos", "atan", "atan2", "acosh",
-                               "asinh"}) {
+      for (std::string name :
+           {"log", "exp", "sin", "cos", "tan", "sqrt", "asin", "acos", "atan",
+            "atan2", "acosh", "asinh"}) {
         std::string airname = "air.fast_" + name + ".f32";
         std::string llname = "llvm." + name + ".f32";
         std::string mathname = name + T;
