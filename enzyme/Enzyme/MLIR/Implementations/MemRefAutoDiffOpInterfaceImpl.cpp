@@ -59,9 +59,10 @@ struct LoadOpInterfaceReverse
                                   memrefGradient,
                                   ArrayRef<Value>(retrievedArguments));
         } else {
-          memref::AtomicRMWOp::create(
-              builder, loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
-              memrefGradient, ArrayRef<Value>(retrievedArguments));
+          enzyme::AtomicRMWOp::create(
+              builder, loadOp.getLoc(), gradient.getType(),
+              arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
+              memrefGradient, retrievedArguments);
         }
       }
     }

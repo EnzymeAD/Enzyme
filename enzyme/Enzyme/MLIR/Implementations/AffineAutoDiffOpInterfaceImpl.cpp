@@ -541,9 +541,10 @@ struct AffineLoadOpInterfaceReverse
             computeAffineIndices(builder, loadOp.getLoc(),
                                  loadOp.getAffineMap(), retrievedArguments,
                                  indices);
-            memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
-                                        arith::AtomicRMWKind::addf, gradient,
-                                        memrefGradient, indices);
+            enzyme::AtomicRMWOp::create(
+                builder, loadOp.getLoc(), gradient.getType(),
+                arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
+                memrefGradient, indices);
           } else {
             enzyme::AffineAtomicRMWOp::create(
                 builder, loadOp.getLoc(), gradient.getType(),
