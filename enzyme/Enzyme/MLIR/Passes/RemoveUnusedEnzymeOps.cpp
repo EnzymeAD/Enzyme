@@ -336,14 +336,15 @@ struct IgnoreDerivativesSimplifyPattern
   }
 };
 
-struct RemoveAtomicPattern : public OpRewritePattern<memref::AtomicRMWOp> {
+struct RemoveAtomicPattern : public OpRewritePattern<enzyme::AtomicRMWOp> {
   using OpRewritePattern::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(memref::AtomicRMWOp op,
+  LogicalResult matchAndRewrite(enzyme::AtomicRMWOp op,
                                 PatternRewriter &rewriter) const override {
     if (op.getKind() != arith::AtomicRMWKind::addf)
       return failure();
     // Potentially super unsafe!!
+    llvm::errs() << "[remove atomics] unsafely removing atomic\n";
     ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
     Value load =
         memref::LoadOp::create(builder, op.getMemref(), op.getIndices());
@@ -359,7 +360,7 @@ static void applyPatterns(Operation *op) {
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
                   InitSimplify, IgnoreDerivativesSimplifyPattern>(
       op->getContext());
-  patterns.insert<RemoveAtomicPattern>(op->getContext());
+  // patterns.insert<RemoveAtomicPattern>(op->getContext());
 
   GreedyRewriteConfig config;
   config.enableFolding();
@@ -626,6 +627,20 @@ struct RemoveUnusedEnzymeOpsPass
 
   void runOnOperation() override {
     auto op = getOperation();
+    // op->walk([](FunctionOpInterface fn) {
+    //   if (fn.getName() == "diffeCUDA_LBM_kernel_loop_to_diff0") {
+    //     for (Operation &bodyOp : fn.getFunctionBody().getOps()) {
+    //       if (auto ifOp = dyn_cast<scf::IfOp>(bodyOp)) {
+    //         for (Operation &thenOp : ifOp.getThenRegion().getOps()) {
+    //           if (auto loopOp = dyn_cast<LoopLikeOpInterface>(thenOp)) {
+    //             loopOp->setAttr("enzyme.enable_checkpointing",
+    //                             BoolAttr::get(loopOp.getContext(), true));
+    //           }
+    //         }
+    //       }
+    //     }
+    //   }
+    // });
 
     applyPatterns(op);
 
