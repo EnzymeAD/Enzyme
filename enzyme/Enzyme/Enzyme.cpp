@@ -121,6 +121,10 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
 
+llvm::cl::opt<bool>
+    EnzymeDumpModule("enzyme-dump-module", cl::init(false), cl::Hidden,
+                     cl::desc("Print the module after differentiation"));
+
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 
@@ -3011,6 +3015,10 @@ public:
     for (auto &F : M) {
       if (!F.empty())
         changed |= LowerSparsification(&F);
+    }
+
+    if (EnzymeDumpModule) {
+      M.print(llvm::outs(), nullptr);
     }
     return changed;
   }
