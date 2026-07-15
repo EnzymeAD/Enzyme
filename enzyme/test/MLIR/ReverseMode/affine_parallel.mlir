@@ -35,7 +35,7 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 // CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
 // CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
 // CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = memref.atomic_rmw addf %6, %arg1[%arg4] : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4] monotonic : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<4xf32>
 // CHECK-NEXT:    return
@@ -79,7 +79,7 @@ func.func @dnonconst(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %
 // CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
 // CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
 // CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = memref.atomic_rmw addf %6, %arg1[%arg5] : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg5] monotonic : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>
 // CHECK-NEXT:    return
@@ -125,7 +125,7 @@ func.func @dnon_1_step(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>,
 // CHECK-NEXT:      %5 = arith.addf %4, %cst : f32
 // CHECK-NEXT:      %6 = arith.mulf %3, %1 : f32
 // CHECK-NEXT:      %7 = arith.addf %5, %6 : f32
-// CHECK-NEXT:      %8 = memref.atomic_rmw addf %7, %arg1[%arg4] : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %8 = enzyme.atomic_rmw addf %7, %arg1[%arg4] monotonic : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<2xf32>
 // CHECK-NEXT:    return
@@ -168,7 +168,7 @@ func.func @dpar2d(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %y: memref<3x3xf32>
 // CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
 // CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
 // CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = memref.atomic_rmw addf %6, %arg1[%arg4, %arg5] : (f32, memref<3x3xf32>) -> f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4, %arg5] monotonic : (f32, memref<3x3xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<3x3xf32>
 // CHECK-NEXT:    return

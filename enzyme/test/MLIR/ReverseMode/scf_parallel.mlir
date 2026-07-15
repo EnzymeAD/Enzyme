@@ -42,7 +42,7 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 // CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
 // CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
 // CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = memref.atomic_rmw addf %6, %arg1[%arg4] : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4] monotonic : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:      scf.reduce
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<4xf32>
