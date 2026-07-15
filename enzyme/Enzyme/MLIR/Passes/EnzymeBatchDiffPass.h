@@ -64,8 +64,10 @@ struct BatchDiffCacheKey {
 template <typename SourceOp>
 BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   // extract in_activity, ret_activity, in_args
-  SmallVector<Activity> inActivity(uop.getActivity().template getAsValueRange<ActivityAttr>());
-  SmallVector<Activity> retActivity(uop.getRetActivity().template getAsValueRange<ActivityAttr>());
+  SmallVector<Activity> inActivity(
+      uop.getActivity().template getAsValueRange<ActivityAttr>());
+  SmallVector<Activity> retActivity(
+      uop.getRetActivity().template getAsValueRange<ActivityAttr>());
   SmallVector<Value> in_args = uop.getPrimalInputs();
   batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity,
                                     uop->getBlock()};
