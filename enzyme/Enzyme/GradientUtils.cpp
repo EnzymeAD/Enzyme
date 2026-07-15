@@ -5353,6 +5353,78 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
   llvm_unreachable("Unknown type to recursively accumulate");
 }
 
+static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
+  if (!TT.anyPointer(C, dl)) {
+    return true;
+  }
+  if (isa<UndefValue>(C) || isa<ConstantPointerNull>(C) || isa<ConstantAggregateZero>(C)) {
+    return true;
+  }
+  if (auto CF = dyn_cast<ConstantFP>(C)) {
+    if (CF->isZero()) return true;
+  }
+  if (auto CInt = dyn_cast<ConstantInt>(C)) {
+    if (CInt->isZero()) return true;
+  }
+  if (auto CS = dyn_cast<ConstantStruct>(C)) {
+    const StructLayout *Layout = dl.getStructLayout(CS->getType());
+    for (unsigned i = 0; i < CS->getNumOperands(); ++i) {
+      auto el = CS->getOperand(i);
+      auto Off = Layout->getElementOffset(i);
+      auto ObjSize = (dl.getTypeSizeInBits(el->getType()) + 7) / 8;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CA = dyn_cast<ConstantArray>(C)) {
+    auto ElTy = CA->getType()->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CA->getNumOperands(); ++i) {
+      auto el = CA->getOperand(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CV = dyn_cast<ConstantVector>(C)) {
+    auto ElTy = CV->getType()->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CV->getNumOperands(); ++i) {
+      auto el = CV->getOperand(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CDS = dyn_cast<ConstantDataSequential>(C)) {
+    auto ElTy = CDS->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CDS->getNumElements(); ++i) {
+      auto el = CDS->getElementAsConstant(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
@@ -6040,18 +6112,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         if (isConstantValue(op)) {
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op) &&
-                !isa<ConstantAggregateZero>(op)) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Mismatched activity for: " << *arg
-                 << " const val: " << *op;
-              if (CustomErrorHandler)
-                ivops[i] = unwrap(CustomErrorHandler(
-                    str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
-              else
-                EmitWarning("MixedActivityError", *arg, ss.str());
+            if (!allNullOrUndef(op, DL, subTT)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << *arg
+                   << " const val: " << *op;
+                if (CustomErrorHandler)
+                  ivops[i] = unwrap(CustomErrorHandler(
+                      str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
+                      wrap(op), wrap(&bb)));
+                else
+                  EmitWarning("MixedActivityError", *arg, ss.str());
             }
           }
         }

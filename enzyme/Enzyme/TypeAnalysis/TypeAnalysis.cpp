@@ -825,8 +825,6 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       Result |= mid.ShiftIndices(DL, /*init offset*/ 0,
                                  /*maxSize*/ ObjSize,
                                  /*addOffset*/ Off);
-
-      Result |= mid;
     }
     Result.CanonicalizeInPlace(
         (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
