@@ -1110,7 +1110,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   });
 
   SetVector<Value> newCaches;
-  constexpr bool PRUNE_CACHES = true;
+  constexpr bool PRUNE_CACHES = false;
   if (PRUNE_CACHES)
     pruneCaches(Orig, roots, initialCaches, newCaches);
   else
@@ -1379,7 +1379,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
           ->dump());
 
   // TODO: try to do lic here, move it later
-  constexpr bool enableLIC = true;
+  constexpr bool enableLIC = false;
   if (enableLIC) {
     SmallVector<CacheInfo> licCaches;
     if (auto fwdLoop = dyn_cast<LoopLikeOpInterface>(forward->getParentOp())) {
@@ -1405,6 +1405,107 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     caches0 = std::move(licCaches);
   } else {
     caches0 = std::move(newCacheInfos);
+  }
+
+  constexpr bool enableAoS = false;
+  if (enableAoS) {
+    if (caches0.size() < 2)
+      return;
+    SetVector<Operation *> pushOps;
+    for (auto &info : caches0)
+      pushOps.insert(info.pushOp);
+    pushOps = topologicalSort(pushOps);
+
+    SmallVector<Type> cachedTypes =
+        llvm::map_to_vector(pushOps, [](Operation *pushOp) {
+          return cast<enzyme::PushOp>(pushOp).getValue().getType();
+        });
+    if (!llvm::all_of(cachedTypes, [](Type cachedType) {
+          return cachedType.isIntOrFloat();
+        }))
+      return;
+
+    auto structType =
+        LLVM::LLVMStructType::getLiteral(rewriter.getContext(), cachedTypes);
+    llvm::errs() << "[aos] struct type: " << structType << "\n";
+    OpBuilder::InsertionGuard guard(rewriter);
+    CacheInfo &info = caches0.front();
+    rewriter.setInsertionPoint(info.initOp);
+    auto initOp = enzyme::InitOp::create(
+        rewriter, info.initOp.getLoc(),
+        enzyme::CacheType::get(rewriter.getContext(), structType));
+
+    // Find the outermost push op
+    // making the struct interleave through structured control flow is
+    // potentially annoying
+    rewriter.setInsertionPoint(pushOps.front());
+    Location loc = pushOps.front()->getLoc();
+    Value undefOp = LLVM::UndefOp::create(rewriter, loc, structType);
+    Value structOfVals = undefOp;
+    // may cause dominance issues, just getting it working for LBM for now
+    for (auto &&[i, op] : llvm::enumerate(pushOps)) {
+      auto pushOp = cast<enzyme::PushOp>(op);
+      rewriter.setInsertionPoint(pushOp);
+      structOfVals = LLVM::InsertValueOp::create(rewriter, loc, structOfVals,
+                                                 pushOp.getValue(), i);
+    }
+
+    // Thread the struct through the if statement
+    // TODO: can we make this less of a pain?
+    Block *parentBlock = structOfVals.getParentBlock();
+    Value pushedValue;
+    if (parentBlock != forward) {
+      auto ifOp = cast<scf::IfOp>(parentBlock->getParentOp());
+      llvm::errs() << "looking at if op\n";
+      rewriter.setInsertionPoint(ifOp);
+      SmallVector<Type> resultTypes(ifOp.getResultTypes());
+      resultTypes.push_back(structType);
+      auto newIf =
+          scf::IfOp::create(rewriter, loc, resultTypes, ifOp.getCondition(),
+                            /*withElseBlock=*/true);
+      if (parentBlock == &ifOp.getThenRegion().front()) {
+        scf::YieldOp oldYield = ifOp.thenYield();
+        rewriter.setInsertionPoint(oldYield);
+        SmallVector<Value> operands(oldYield.getOperands());
+        operands.push_back(structOfVals);
+        scf::YieldOp::create(rewriter, oldYield.getLoc(), operands);
+        rewriter.eraseOp(oldYield);
+
+        scf::YieldOp oldElseYield = ifOp.elseYield();
+        rewriter.setInsertionPoint(oldElseYield);
+        SmallVector<Value> elseOperands(oldElseYield.getOperands());
+        elseOperands.push_back(undefOp);
+        scf::YieldOp::create(rewriter, oldElseYield.getLoc(), elseOperands);
+        rewriter.eraseOp(oldElseYield);
+      } else {
+        llvm_unreachable("assumed push happens in then block");
+      }
+      newIf.getThenRegion().takeBody(ifOp.getThenRegion());
+      newIf.getElseRegion().takeBody(ifOp.getElseRegion());
+      ifOp.replaceAllUsesWith(newIf.getResults().drop_back(1));
+      pushedValue = newIf.getResults().back();
+    } else {
+      pushedValue = structOfVals;
+    }
+
+    rewriter.setInsertionPointAfterValue(pushedValue);
+    enzyme::PushOp::create(rewriter, loc, initOp.getResult(), pushedValue);
+
+    rewriter.setInsertionPointToStart(reverse);
+    auto structPop =
+        enzyme::PopOp::create(rewriter, loc, structType, initOp.getResult());
+    for (auto &&[i, op] : llvm::enumerate(pushOps)) {
+      auto pushOp = cast<enzyme::PushOp>(op);
+      CacheInfo info(pushOp.getCache());
+      rewriter.setInsertionPoint(info.popOp);
+      auto extractValue = LLVM::ExtractValueOp::create(
+          rewriter, info.popOp.getLoc(), structPop, i);
+      rewriter.replaceOp(info.popOp, extractValue);
+      rewriter.eraseOp(info.pushOp);
+      rewriter.eraseOp(info.initOp);
+    }
+
+    caches0 = {CacheInfo(initOp)};
   }
 }
 
