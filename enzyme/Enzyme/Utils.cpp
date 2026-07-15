@@ -622,7 +622,30 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   Value *res;
   auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
   auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
-  auto Align = ConstantInt::get(Count->getType(), AlignI);
+
+  // On 32-bit targets (wasm32-wasi, 32-bit ARM/x86, etc.) the C ABI's
+  // malloc takes size_t = i32; if upstream tape-cache math widened
+  // Count to i64, feeding it straight into CreateMalloc emits
+  // `call i8* @malloc(i64 ...)` against wasi-libc's `malloc(i32)` and
+  // traps at load with signature_mismatch:malloc. Truncate Count to the
+  // target IntPtrType only when Count is WIDER than IntPtrTy -- narrower
+  // Counts are already handled correctly by LLVM's usual i64-widening
+  // before the malloc call on 64-bit hosts, and altering that path would
+  // rearrange the golden IR that existing FileCheck tests record.
+  //
+  // CustomAllocator is a user-supplied callback whose type contract we
+  // preserve unchanged.
+  Type *IntPtrTy = M.getDataLayout().getIntPtrType(M.getContext(), 0);
+  Value *AllocCount = Count;
+  Type *AllocSizeTy = Count->getType();
+  if (!CustomAllocator && AllocSizeTy->isIntegerTy() &&
+      IntPtrTy->isIntegerTy() &&
+      AllocSizeTy->getIntegerBitWidth() > IntPtrTy->getIntegerBitWidth()) {
+    AllocCount = Builder.CreateZExtOrTrunc(Count, IntPtrTy, Name + ".size");
+    AllocSizeTy = IntPtrTy;
+  }
+  auto Align = ConstantInt::get(AllocSizeTy, AlignI);
+
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
@@ -647,15 +670,15 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   } else {
 #if LLVM_VERSION_MAJOR > 17
     res =
-        Builder.CreateMalloc(Count->getType(), T, Align, Count, nullptr, Name);
+        Builder.CreateMalloc(AllocSizeTy, T, Align, AllocCount, nullptr, Name);
 #else
     if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
-      res = CallInst::CreateMalloc(Builder.GetInsertBlock(), Count->getType(),
-                                   T, Align, Count, nullptr, Name);
+      res = CallInst::CreateMalloc(Builder.GetInsertBlock(), AllocSizeTy, T,
+                                   Align, AllocCount, nullptr, Name);
       Builder.SetInsertPoint(Builder.GetInsertBlock());
     } else {
-      res = CallInst::CreateMalloc(&*Builder.GetInsertPoint(), Count->getType(),
-                                   T, Align, Count, nullptr, Name);
+      res = CallInst::CreateMalloc(&*Builder.GetInsertPoint(), AllocSizeTy, T,
+                                   Align, AllocCount, nullptr, Name);
     }
     if (!cast<Instruction>(res)->getParent())
       Builder.Insert(cast<Instruction>(res));
@@ -666,11 +689,14 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       malloccall = cast<CallInst>(cast<Instruction>(res)->getOperand(0));
     }
 
-    // Assert computation of size of array doesn't wrap
+    // Assert computation of size of array doesn't wrap.  Match against the
+    // (possibly-cast) size operand `AllocCount` that CreateMalloc actually
+    // consumed -- on 64-bit hosts where no cast was needed this is still
+    // pointer-equal to `Count`, so the identity check still fires.
     if (auto BI = dyn_cast<BinaryOperator>(malloccall->getArgOperand(0))) {
       if (BI->getOpcode() == BinaryOperator::Mul) {
-        if ((BI->getOperand(0) == Align && BI->getOperand(1) == Count) ||
-            (BI->getOperand(1) == Align && BI->getOperand(0) == Count))
+        if ((BI->getOperand(0) == Align && BI->getOperand(1) == AllocCount) ||
+            (BI->getOperand(1) == Align && BI->getOperand(0) == AllocCount))
           BI->setHasNoSignedWrap(true);
         BI->setHasNoUnsignedWrap(true);
       }
@@ -727,9 +753,15 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       tozero = Builder.CreatePointerCast(
           tozero, PointerType::get(Type::getInt8Ty(PT->getContext()),
                                    PT->getAddressSpace()));
+    // Use AllocCount (the possibly-cast size operand feeding CreateMalloc),
+    // not the pre-cast Count. When we did cast (wasm32 case), Count is
+    // wider than IntPtrTy and mixing it with Align (IntPtrTy) here would
+    // emit invalid IR like `mul i32 8, i64 %n`. On 64-bit hosts where no
+    // cast was needed, AllocCount is pointer-equal to Count so behavior
+    // matches the pre-patch code.
     Value *args[] = {
         tozero, ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),
-        Builder.CreateMul(Align, Count, "", true, true),
+        Builder.CreateMul(Align, AllocCount, "", true, true),
         ConstantInt::getFalse(malloccall->getContext())};
     Type *tys[] = {args[0]->getType(), args[2]->getType()};
 
