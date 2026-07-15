@@ -51,4 +51,18 @@ def AtomicOrdering : I32EnumAttr<"Ordering",
   let cppNamespace = "::mlir::enzyme";
 }
 
+def AtomicOrdering : I32EnumAttr<"Ordering",
+    "Atomic ordering for LLVM's memory model",
+    [
+      I32EnumAttrCase<"not_atomic", 0>,
+      I32EnumAttrCase<"unordered", 1>,
+      I32EnumAttrCase<"monotonic", 2>,
+      I32EnumAttrCase<"acquire", 4>,
+      I32EnumAttrCase<"release", 5>,
+      I32EnumAttrCase<"acq_rel", 6>,
+      I32EnumAttrCase<"seq_cst", 7>,
+    ]> {
+  let cppNamespace = "::mlir::enzyme";
+}
+
 #endif // ENZYME_ENUMS
