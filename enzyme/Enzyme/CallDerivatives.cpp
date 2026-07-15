@@ -3237,8 +3237,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *tofree = lookup(anti, Builder2);
           assert(tofree);
           assert(tofree->getType());
-          for (size_t i=0; i<getWidth(); i++) {
-            Value *tofree_i = getWidth() == 1 ? tofree : GradientUtils::extractMeta(tofree, i);
+          for (size_t i=0; i<gutils->getWidth(); i++) {
+            Value *tofree_i = gutils->getWidth() == 1 ? tofree : GradientUtils::extractMeta(Builder2, tofree, i);
 
             auto CI = freeKnownAllocation(Builder2, tofree_i, funcName, dbgLoc,
                                           gutils->TLI, &call, gutils);
@@ -3251,12 +3251,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                                         {ConstantAsMetadata::get(
                                             combined ? ConstantInt::getTrue(CI->getContext())
                                                      : ConstantInt::getFalse(CI->getContext()))});
-                Value *anti_i = getWidth() == 1 ? anti : GradientUtils::extractMeta(anti, i);
-                anti_i->setMetadata("enzyme_cache_alloc",
-                                     MDNode::get(CI->getContext(), {ident}));
+                Value *anti_i = gutils->getWidth() == 1 ? anti : GradientUtils::extractMeta(Builder2, anti, i);
+                cast<Instruction>(anti_i)->setMetadata(
+                    "enzyme_cache_alloc",
+                    MDNode::get(CI->getContext(), {ident}));
                 CI->setMetadata("enzyme_cache_free",
                                 MDNode::get(CI->getContext(), {ident}));
             }
+          }
         }
       } else if (Mode == DerivativeMode::ForwardMode ||
                  Mode == DerivativeMode::ForwardModeError) {
@@ -3580,10 +3582,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (hasPDFree &&
           Mode == DerivativeMode::ReverseModePrimal) { 
         auto ident =
-            MDNode::getDistinct(freecall->getContext(),
-                                {ConstantAsMetadata::get(ConstantInt::getFalse(freecall->getContext())});
+            MDNode::getDistinct(newCall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getFalse(newCall->getContext()))});
         newCall->setMetadata("enzyme_cache_alloc",
-                              MDNode::get(freecall->getContext(), {ident}));
+                             MDNode::get(newCall->getContext(), {ident}));
       }
       Value *nop = gutils->cacheForReverse(
           BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
