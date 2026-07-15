@@ -1,10 +1,31 @@
-###############################################################################
-# Bazel now uses Bzlmod by default to manage external dependencies.
-# Please consider migrating your external dependencies from WORKSPACE to MODULE.bazel.
-#
-# For more details, please check https://github.com/bazelbuild/bazel/issues/18958
-###############################################################################
+module(name = "enzyme")
 
-# Use Bzlmod (BCR) to supply zlib and zstd for LLVM
+# LLVM's direct Bazel dependencies. Keep these versions in sync with
+# ../llvm-project/utils/bazel/MODULE.bazel.
+bazel_dep(
+    name = "apple_support",
+    version = "2.6.1",
+    repo_name = "build_bazel_apple_support",
+)
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "llvm", version = "0.8.5")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_python", version = "1.9.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "zlib-ng", version = "2.3.3", repo_name = "llvm_zlib")
 bazel_dep(name = "zstd", version = "1.5.7.bcr.1", repo_name = "llvm_zstd")
+
+rules_cc_compatibility = use_extension(
+    "@rules_cc//cc:extensions.bzl",
+    "compatibility_proxy",
+)
+use_repo(rules_cc_compatibility, "cc_compatibility_proxy")
+
+# Hedron's Compile Commands Extractor for Bazel. The module extension shares
+# its revision with WORKSPACE users through the third_party helper.
+hedron_compile_commands = use_extension(
+    "//third_party/hedron_compile_commands:extensions.bzl",
+    "hedron_compile_commands",
+)
+use_repo(hedron_compile_commands, "hedron_compile_commands")
