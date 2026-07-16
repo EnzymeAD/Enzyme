@@ -641,7 +641,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   if (!CustomAllocator && AllocSizeTy->isIntegerTy() &&
       IntPtrTy->isIntegerTy() &&
       AllocSizeTy->getIntegerBitWidth() > IntPtrTy->getIntegerBitWidth()) {
-    AllocCount = Builder.CreateZExtOrTrunc(Count, IntPtrTy, Name + ".size");
+    AllocCount = Builder.CreateTrunc(Count, IntPtrTy, Name + ".size");
     AllocSizeTy = IntPtrTy;
   }
   auto Align = ConstantInt::get(AllocSizeTy, AlignI);
