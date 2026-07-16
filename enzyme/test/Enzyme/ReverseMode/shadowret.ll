@@ -59,9 +59,9 @@ declare double* @malloc(i64) local_unnamed_addr
 ; CHECK-NEXT:   call void @free(i8* nonnull %[[a0]])
 ; CHECK-NEXT:   %[[a1:.+]] = bitcast double* %a22 to i8*
 ; CHECK-NEXT:   call void @free(i8* %[[a1]])
-; CHECK-NEXT:   %[[a2:.+]] = load double, double* %"a12'", align 8, !alias.scope !5, !noalias !8
+; CHECK-NEXT:   %[[a2:.+]] = load double, double* %"a12'", align 8, !alias.scope ![[SCOPE_5:[0-9]+]], !noalias ![[NOALIAS_8:[0-9]+]]
 ; CHECK-NEXT:   %[[a3:.+]] = fadd fast double %[[a2]], %[[a5:.+]]
-; CHECK-NEXT:   store double %[[a3]], double* %"a12'", align 8, !alias.scope !5, !noalias !8
+; CHECK-NEXT:   store double %[[a3]], double* %"a12'", align 8, !alias.scope ![[SCOPE_5]], !noalias ![[NOALIAS_8]]
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertL8:                                         ; preds = %L8, %incinvertL8
