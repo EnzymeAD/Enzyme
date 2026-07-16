@@ -5357,14 +5357,17 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
   if (!TT.anyPointer(C, dl)) {
     return true;
   }
-  if (isa<UndefValue>(C) || isa<ConstantPointerNull>(C) || isa<ConstantAggregateZero>(C)) {
+  if (isa<UndefValue>(C) || isa<ConstantPointerNull>(C) ||
+      isa<ConstantAggregateZero>(C)) {
     return true;
   }
   if (auto CF = dyn_cast<ConstantFP>(C)) {
-    if (CF->isZero()) return true;
+    if (CF->isZero())
+      return true;
   }
   if (auto CInt = dyn_cast<ConstantInt>(C)) {
-    if (CInt->isZero()) return true;
+    if (CInt->isZero())
+      return true;
   }
   if (auto CS = dyn_cast<ConstantStruct>(C)) {
     const StructLayout *Layout = dl.getStructLayout(CS->getType());
@@ -6113,16 +6116,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
             if (!allNullOrUndef(op, DL, subTT)) {
-                std::string str;
-                raw_string_ostream ss(str);
-                ss << "Mismatched activity for: " << *arg
-                   << " const val: " << *op;
-                if (CustomErrorHandler)
-                  ivops[i] = unwrap(CustomErrorHandler(
-                      str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                      wrap(op), wrap(&bb)));
-                else
-                  EmitWarning("MixedActivityError", *arg, ss.str());
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Mismatched activity for: " << *arg
+                 << " const val: " << *op;
+              if (CustomErrorHandler)
+                ivops[i] = unwrap(CustomErrorHandler(
+                    str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
+                    wrap(op), wrap(&bb)));
+              else
+                EmitWarning("MixedActivityError", *arg, ss.str());
             }
           }
         }
