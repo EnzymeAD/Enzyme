@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S -opaque-pointers | FileCheck %s
 
 define float @sub(float %this, i32 %cond) {
 entry:
