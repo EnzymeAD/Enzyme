@@ -3135,7 +3135,7 @@ AnalysisKey EnzymeNewPM::Key;
 
 static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #if LLVM_VERSION_MAJOR >= 23
-  return getInlineParams(Level.getSpeedupLevel());
+  return getInlineParamsFromOptLevel(static_cast<unsigned>(Level));
 #else
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 #endif
@@ -3271,7 +3271,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // system libraries and other oracles.
     MPM.addPass(InferFunctionAttrsPass());
 
-    if (Level.getSpeedupLevel() > 1) {
+#if LLVM_VERSION_MAJOR >= 23
+    if (Level > OptimizationLevel::O1)
+#else
+    if (Level.getSpeedupLevel() > 1)
+#endif
+    {
       MPM.addPass(createModuleToFunctionPassAdaptor(CallSiteSplittingPass(),
                                                     EagerlyInvalidateAnalyses));
 
@@ -3345,7 +3350,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // have to resolve varargs calls, etc, so let instcombine do this.
     FunctionPassManager PeepholeFPM;
     PeepholeFPM.addPass(InstCombinePass());
+#if LLVM_VERSION_MAJOR >= 23
+    if (Level > OptimizationLevel::O1)
+#else
     if (Level.getSpeedupLevel() > 1)
+#endif
       PeepholeFPM.addPass(AggressiveInstCombinePass());
 
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(PeepholeFPM),
@@ -3483,7 +3492,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MainFPM.addPass(MergedLoadStoreMotionPass());
 
     LoopPassManager LPM;
+#if LLVM_VERSION_MAJOR >= 23
+    if (EnableLoopFlatten && Level > OptimizationLevel::O1)
+#else
     if (EnableLoopFlatten && Level.getSpeedupLevel() > 1)
+#endif
       LPM.addPass(LoopFlattenPass());
     LPM.addPass(IndVarSimplifyPass());
     LPM.addPass(LoopDeletionPass());
