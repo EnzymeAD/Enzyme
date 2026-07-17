@@ -223,8 +223,8 @@ struct DifferentiatePass
     {
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op" << " CI: " << CI
-                       << "\n";
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << " CI: " << CI << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -259,8 +259,8 @@ struct DifferentiatePass
         args.push_back(res);
         if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
           if (call_idx >= CI.getInputs().size()) {
-            llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
-                         << "\n";
+            llvm::errs() << "Too few arguments to autodiff op"
+                         << "CI: " << CI << "\n";
             return failure();
           }
           res = CI.getInputs()[call_idx];
@@ -310,8 +310,8 @@ struct DifferentiatePass
       returnShadows.push_back(false);
       if (ty == DIFFE_TYPE::OUT_DIFF) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
-                       << "\n";
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << "CI: " << CI << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -385,8 +385,8 @@ struct DifferentiatePass
     {
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op" << " CI: " << CI
-                       << "\n";
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << " CI: " << CI << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
