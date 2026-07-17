@@ -491,7 +491,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
         if (act == DIFFE_TYPE::OUT_DIFF) {
           OpBuilder diffeBuilder(reverseBB, reverseBB->begin());
           auto diffe = reverseBB->addArgument(res.getType(), res.getLoc());
-          gutils->setDiffe(res, diffe, diffeBuilder);
+          if (!gutils->isConstantValue(res))
+            gutils->setDiffe(res, diffe, diffeBuilder);
         }
       }
     }

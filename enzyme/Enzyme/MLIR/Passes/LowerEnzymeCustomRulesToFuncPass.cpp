@@ -167,6 +167,9 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     PatternRewriter rewriter(primal.getContext());
     rewriter.setInsertionPointToStart(bwdBlock);
     mlir::enzyme::minCutCache(fwdBlock, bwdBlock, caches, rewriter, fwdrevmap);
+
+    cacheTypes = llvm::map_to_vector(
+        caches, [](CacheInfo info) { return info.cachedType(); });
   }
 
   primalResultTypes.append(cacheTypes.begin(), cacheTypes.end());
@@ -296,21 +299,34 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       oldRes.replaceAllUsesWith(newRes);
     }
 
+    llvm::DenseMap<Value, SmallVector<Value>> tapeToCaches;
+
     auto tape = CAP->getResult(CAP->getNumResults() - 1);
-    for (auto tapeUser : tape.getUsers()) {
+
+    {
+      SmallVector<Value> values(
+          primalCall.getResults()
+              .slice(revRule.getFunctionType().getNumResults(), caches.size())
+              .begin(),
+          primalCall.getResults()
+              .slice(revRule.getFunctionType().getNumResults(), caches.size())
+              .end());
+      tapeToCaches[tape] = values;
+    }
+
+    toDelete.insert(CAP);
+    SmallVector<Operation *> tapeUsers(tape.getUsers().begin(),
+                                       tape.getUsers().end());
+    while (!tapeUsers.empty()) {
+      Operation *tapeUser = tapeUsers.pop_back_val();
       if (auto CCR = dyn_cast<enzyme::CallCustomReverseOp>(tapeUser)) {
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPoint(CCR);
         SmallVector<Value> operands(
             CCR->getOperands().slice(0, CCR->getNumOperands() - 1).begin(),
             CCR->getOperands().slice(0, CCR->getNumOperands() - 1).end());
-        operands.append(
-            primalCall.getResults()
-                .slice(revRule.getFunctionType().getNumResults(), caches.size())
-                .begin(),
-            primalCall.getResults()
-                .slice(revRule.getFunctionType().getNumResults(), caches.size())
-                .end());
+        SmallVector<Value> &values = tapeToCaches[CCR.getTape()];
+        operands.append(values.begin(), values.end());
         auto reverseCall =
             func::CallOp::create(builder, CCR.getLoc(), reverseFunc, operands);
         for (auto [oldRes, newRes] :
@@ -318,8 +334,45 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
           oldRes.replaceAllUsesWith(newRes);
         }
 
-        toDelete.insert(CAP);
         toDelete.insert(CCR);
+      } else if (auto pushOp = dyn_cast<enzyme::PushOp>(tapeUser)) {
+        CacheInfo cInfo(pushOp.getCache());
+
+        Value poppedTape = cInfo.popOp.getResult();
+        for (auto U : poppedTape.getUsers())
+          tapeUsers.push_back(U);
+
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(cInfo.initOp);
+
+        SmallVector<Value> values = tapeToCaches[pushOp.getValue()];
+        SmallVector<Value> caches;
+        caches.reserve(values.size());
+
+        for (auto V : values) {
+          Value cache = enzyme::InitOp::create(
+              builder, cInfo.initOp->getLoc(),
+              enzyme::CacheType::get(V.getContext(), V.getType()));
+          caches.push_back(cache);
+        }
+
+        builder.setInsertionPoint(cInfo.pushOp);
+        for (auto [V, C] : llvm::zip_equal(values, caches)) {
+          enzyme::PushOp::create(builder, pushOp.getLoc(), C, V);
+        }
+
+        builder.setInsertionPoint(cInfo.popOp);
+        for (auto [i, C] : llvm::enumerate(caches)) {
+          Value V = values[i];
+          values[i] = enzyme::PopOp::create(builder, cInfo.popOp.getLoc(),
+                                            V.getType(), C);
+        }
+
+        tapeToCaches[poppedTape] = values;
+
+        toDelete.insert(cInfo.initOp);
+        toDelete.insert(cInfo.pushOp);
+        toDelete.insert(cInfo.popOp);
       } else {
         tapeUser->emitError()
             << "todo: support tape going through this operation";
