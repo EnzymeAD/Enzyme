@@ -68,6 +68,12 @@
 #define amd_target amdgcn
 #endif
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm/Support/AMDGPUMetadata.h"
 
 // Returns true if the given target triple is a GPU kernel architecture
