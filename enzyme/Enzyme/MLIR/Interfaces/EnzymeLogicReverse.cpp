@@ -519,8 +519,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     }
   }
 
-  llvm::errs() << "primalFuncType = " << primalFuncType << "\n";
-
   ruleBuilder.setInsertionPoint(reverse);
   auto augmentedPrimal = enzyme::CustomReverseRuleAugmentedPrimalOp::create(
       ruleBuilder, fn.getLoc(), primalFuncType, /*argAttrs*/ nullptr,

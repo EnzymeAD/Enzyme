@@ -25,6 +25,7 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include <bits/std_thread.h>
 #include <type_traits>
 
 #define DEBUG_TYPE "enzyme"
@@ -614,13 +615,98 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
   auto global =
       symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
+
+  auto argActivity = getActivity();
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int argIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (argIdx >= getNumOperands()) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_active) {
+      auto AT = getOperand(argIdx).getType();
+
+      if (AT != IT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    if (val == Activity::enzyme_dup) {
+      auto AT = getOperand(argIdx).getType();
+      auto AST = cast<AutoDiffTypeInterface>(AT).getShadowType(/*width=*/1);
+
+      if (AT != IT || argIdx >= getNumOperands() - 1 ||
+          getOperand(argIdx + 1).getType() != AST) {
+        anyError = true;
+        break;
+      }
+
+      argIdx += 2;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError()
+           << "invalid arguments provided for function type and activity.";
+  }
+
+  int resIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_constnoneed ||
+        val == Activity::enzyme_activenoneed)
+      continue;
+
+    if (resIdx >= getNumResults() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_active || val == Activity::enzyme_const) {
+      auto RT = getResult(resIdx).getType();
+
+      if (OT != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
 
   return success();
 }
@@ -631,13 +717,48 @@ LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
 
 LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
   auto global =
       symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
+
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int resIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_constnoneed || val == Activity::enzyme_const)
+      continue;
+
+    if (val == Activity::enzyme_active ||
+        val == Activity::enzyme_activenoneed) {
+      auto OST = cast<AutoDiffTypeInterface>(OT);
+      auto RT = getResult(resIdx).getType();
+
+      if (OST != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
 
   return success();
 }
