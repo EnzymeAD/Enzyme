@@ -723,24 +723,61 @@ LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
 
+  auto argActivity = getActivity();
   auto retActivity = getRetActivity();
 
   auto calleeFunctionType = global.getFunctionType();
 
   bool anyError = false;
 
-  int resIdx = 0;
+  int argIdx = 0;
   for (auto [OT, act] :
        llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
     auto iattr = cast<ActivityAttr>(act);
     auto val = iattr.getValue();
 
-    if (val == Activity::enzyme_constnoneed || val == Activity::enzyme_const)
+    if (argIdx >= getNumOperands() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed ||
+        val == Activity::enzyme_const || val == Activity::enzyme_constnoneed)
       continue;
 
     if (val == Activity::enzyme_active ||
         val == Activity::enzyme_activenoneed) {
-      auto OST = cast<AutoDiffTypeInterface>(OT);
+      auto OST = cast<AutoDiffTypeInterface>(OT).getShadowType(/*width=*/1);
+      auto AT = getOperand(argIdx).getType();
+
+      if (OST != AT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid operand types for retActivity.";
+  }
+
+  int resIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_dup ||
+        val == Activity::enzyme_dupnoneed)
+      continue;
+
+    if (val == Activity::enzyme_active) {
+      auto OST = cast<AutoDiffTypeInterface>(IT).getShadowType(/*width=*/1);
       auto RT = getResult(resIdx).getType();
 
       if (OST != RT) {
