@@ -134,9 +134,7 @@ newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "
           + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
 
 if len("@ENZYME_BINARY_DIR@") == 0:
-  oldPM = ((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
   newPM = (" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
-  oldPM += " -mllvm -enzyme-enable=1"
   newPM += " -mllvm -enzyme-enable=1"
 
 config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
