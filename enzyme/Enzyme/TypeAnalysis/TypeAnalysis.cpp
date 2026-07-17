@@ -1123,6 +1123,8 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
     if (hasMetadata(GV, "enzyme_ta_norecur"))
       return;
+    if (GV->getName() == "_ZN5amrex12FabArrayBase10m_BD_countE")
+      return;
   }
 
   if (auto CE = dyn_cast<ConstantExpr>(Val)) {
