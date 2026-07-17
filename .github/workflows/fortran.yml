@@ -45,7 +45,6 @@ jobs:
         build: [Release, Debug]
         os: [ubuntu-22.04]
         compiler: [flang, ifx]
-        mpi: [2021.7.1]
         include:
           - compiler: flang
             FC: flang-21
@@ -82,7 +81,7 @@ jobs:
         sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
-        sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.version }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
+        sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.version }}
         source /opt/intel/oneapi/setvars.sh
         printenv >> $GITHUB_ENV
     - uses: actions/checkout@v4

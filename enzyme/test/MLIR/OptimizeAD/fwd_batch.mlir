@@ -33,6 +33,43 @@ module {
 
 // -----
 
+// Multiple duplicated inputs followed by a constant input
+module {
+  func.func @muladd(%x : f64, %y : f64, %c : f64) -> f64 {
+    %xy = arith.mulf %x, %y : f64
+    %z = arith.addf %xy, %c : f64
+    return %z : f64
+  }
+  func.func @test3(%x : f64, %dx1 : f64, %dx2 : f64,
+                   %y : f64, %dy1 : f64, %dy2 : f64, %c : f64) -> (f64, f64) {
+    %r1 = enzyme.fwddiff @muladd(%x, %dx1, %y, %dy1, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
+    %r2 = enzyme.fwddiff @muladd(%x, %dx2, %y, %dy2, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
+    return %r1, %r2 : f64, f64
+  }
+}
+
+// CHECK-LABEL: func.func @test3
+// CHECK-SAME: (%[[X:.*]]: f64, %[[DX1:.*]]: f64, %[[DX2:.*]]: f64, %[[Y:.*]]: f64, %[[DY1:.*]]: f64, %[[DY2:.*]]: f64, %[[C:.*]]: f64)
+// CHECK:         %[[DX:.*]] = enzyme.concat(%[[DX1]], %[[DX2]]) : (f64, f64) -> tensor<2xf64>
+// CHECK:         %[[DY:.*]] = enzyme.concat(%[[DY1]], %[[DY2]]) : (f64, f64) -> tensor<2xf64>
+// CHECK:         %[[BATCHED_RES:.*]] = enzyme.fwddiff @muladd(%[[X]], %[[DX]], %[[Y]], %[[DY]], %[[C]]) {{.*}} width = 2 {{.*}} : (f64, tensor<2xf64>, f64, tensor<2xf64>, f64) -> tensor<2xf64>
+// CHECK:         %[[RES0:.*]] = enzyme.extract %[[BATCHED_RES]][0] : (tensor<2xf64>) -> f64
+// CHECK-NEXT:    %[[RES1:.*]] = enzyme.extract %[[BATCHED_RES]][1] : (tensor<2xf64>) -> f64
+// CHECK-NEXT:    return %[[RES0]], %[[RES1]]
+
+// LEGAL-LABEL: func.func @test3
+// LEGAL-SAME: (%[[X:.*]]: f64, %[[DX1:.*]]: f64, %[[DX2:.*]]: f64, %[[Y:.*]]: f64, %[[DY1:.*]]: f64, %[[DY2:.*]]: f64, %[[C:.*]]: f64)
+// LEGAL:         %[[DX:.*]] = tensor.from_elements %[[DX1]], %[[DX2]] : tensor<2xf64>
+// LEGAL:         %[[DY:.*]] = tensor.from_elements %[[DY1]], %[[DY2]] : tensor<2xf64>
+// LEGAL:         %[[BATCHED_RES:.*]] = enzyme.fwddiff @muladd(%[[X]], %[[DX]], %[[Y]], %[[DY]], %[[C]]) {{.*}} width = 2 {{.*}} : (f64, tensor<2xf64>, f64, tensor<2xf64>, f64) -> tensor<2xf64>
+// LEGAL:         %[[C0:.*]] = arith.constant 0 : index
+// LEGAL-NEXT:    %[[RES0:.*]] = tensor.extract %[[BATCHED_RES]][%[[C0]]] : tensor<2xf64>
+// LEGAL-NEXT:    %[[C1:.*]] = arith.constant 1 : index
+// LEGAL-NEXT:    %[[RES1:.*]] = tensor.extract %[[BATCHED_RES]][%[[C1]]] : tensor<2xf64>
+// LEGAL-NEXT:    return %[[RES0]], %[[RES1]]
+
+// -----
+
 // 2. Tensor test
 module {
   func.func @square(%x : tensor<10xf64>) -> tensor<10xf64>{

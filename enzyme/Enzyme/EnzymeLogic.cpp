@@ -267,7 +267,7 @@ struct CacheAnalysis {
     assert(li.getParent()->getParent() == oldFunc);
 
     auto Arch = llvm::Triple(oldFunc->getParent()->getTargetTriple()).getArch();
-    if (Arch == Triple::amdgcn &&
+    if (Arch == Triple::amd_target &&
         cast<PointerType>(li.getOperand(0)->getType())->getAddressSpace() ==
             4) {
       return false;
@@ -4545,8 +4545,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   auto Arch =
       llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
   unsigned int SharedAddrSpace =
-      Arch == Triple::amdgcn ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-                             : 3;
+      Arch == Triple::amd_target
+          ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
+          : 3;
 
   if (key.mode == DerivativeMode::ReverseModeCombined) {
     BasicBlock *sharedBlock = nullptr;
@@ -4556,7 +4557,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                  gutils->inversionAllocs->begin());
 
         if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-             Arch == Triple::amdgcn) &&
+             Arch == Triple::amd_target) &&
             g.getType()->getAddressSpace() == SharedAddrSpace) {
           if (sharedBlock == nullptr)
             sharedBlock = BasicBlock::Create(entry->getContext(), "shblock",
@@ -4582,7 +4583,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
         tz = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
-      } else if (Arch == Triple::amdgcn) {
+      } else if (Arch == Triple::amd_target) {
         tx = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_x));
         ty = ebuilder.CreateCall(getIntrinsicDeclaration(
@@ -4601,12 +4602,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
 #if LLVM_VERSION_MAJOR > 20
-      auto BarrierInst = Arch == Triple::amdgcn
+      auto BarrierInst = Arch == Triple::amd_target
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)
                                    Intrinsic::nvvm_barrier_cta_sync_aligned_all;
 #else
-      auto BarrierInst = Arch == Triple::amdgcn
+      auto BarrierInst = Arch == Triple::amd_target
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
 #endif
@@ -6598,6 +6599,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::ignore",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::get",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>::operator<<",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::__put_character_sequence",
       "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::operator<<",
       "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",

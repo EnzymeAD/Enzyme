@@ -3980,11 +3980,19 @@ bool GradientUtils::legalRecompute(const Value *val,
     }
 
     if (phi->getNumIncomingValues() == 0) {
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *phi << "\n";
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "newFunc: " << *newFunc << "\n";
+      ss << "phi: " << *phi << "\n";
+      ss << "Invalid legalRecompute query on ficticious phi\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(str.c_str(), wrap(phi), ErrorType::InternalError,
+                           nullptr, nullptr, nullptr);
+      } else {
+        EmitFailure("InvalidLegalRecompute", phi->getDebugLoc(), phi, ss.str());
+      }
     }
-    assert(phi->getNumIncomingValues() != 0);
     auto parent = phi->getParent();
     struct {
       Function *func;
@@ -4668,12 +4676,12 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     }
 
     auto Arch = llvm::Triple(arg->getParent()->getTargetTriple()).getArch();
-    int SharedAddrSpace = Arch == Triple::amdgcn
+    int SharedAddrSpace = Arch == Triple::amd_target
                               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                               : 3;
     int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
     if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-         Arch == Triple::amdgcn) &&
+         Arch == Triple::amd_target) &&
         AddrSpace == SharedAddrSpace) {
       assert(0 && "shared memory not handled in meta global");
     }
@@ -5345,6 +5353,81 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
   llvm_unreachable("Unknown type to recursively accumulate");
 }
 
+static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
+  if (!TT.anyPointer(C, dl)) {
+    return true;
+  }
+  if (isa<UndefValue>(C) || isa<ConstantPointerNull>(C) ||
+      isa<ConstantAggregateZero>(C)) {
+    return true;
+  }
+  if (auto CF = dyn_cast<ConstantFP>(C)) {
+    if (CF->isZero())
+      return true;
+  }
+  if (auto CInt = dyn_cast<ConstantInt>(C)) {
+    if (CInt->isZero())
+      return true;
+  }
+  if (auto CS = dyn_cast<ConstantStruct>(C)) {
+    const StructLayout *Layout = dl.getStructLayout(CS->getType());
+    for (unsigned i = 0; i < CS->getNumOperands(); ++i) {
+      auto el = CS->getOperand(i);
+      auto Off = Layout->getElementOffset(i);
+      auto ObjSize = (dl.getTypeSizeInBits(el->getType()) + 7) / 8;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CA = dyn_cast<ConstantArray>(C)) {
+    auto ElTy = CA->getType()->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CA->getNumOperands(); ++i) {
+      auto el = CA->getOperand(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CV = dyn_cast<ConstantVector>(C)) {
+    auto ElTy = CV->getType()->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CV->getNumOperands(); ++i) {
+      auto el = CV->getOperand(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CDS = dyn_cast<ConstantDataSequential>(C)) {
+    auto ElTy = CDS->getElementType();
+    auto ObjSize = (dl.getTypeSizeInBits(ElTy) + 7) / 8;
+    for (unsigned i = 0; i < CDS->getNumElements(); ++i) {
+      auto el = CDS->getElementAsConstant(i);
+      auto Off = i * ObjSize;
+      TypeTree subTT = TT.ShiftIndices(dl, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, dl);
+      if (!allNullOrUndef(el, dl, subTT)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
@@ -5678,12 +5761,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto Arch =
           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
       int SharedAddrSpace =
-          Arch == Triple::amdgcn
+          Arch == Triple::amd_target
               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
               : 3;
       int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
       if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-           Arch == Triple::amdgcn) &&
+           Arch == Triple::amd_target) &&
           AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         Type *type = arg->getValueType();
@@ -6032,8 +6115,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         if (isConstantValue(op)) {
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op) &&
-                !isa<ConstantAggregateZero>(op)) {
+            if (!allNullOrUndef(op, DL, subTT)) {
               std::string str;
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
@@ -6738,7 +6820,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       auto Arch =
           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
       unsigned int SharedAddrSpace =
-          Arch == Triple::amdgcn
+          Arch == Triple::amd_target
               ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
               : 3;
       if (cast<PointerType>(LI->getPointerOperand()->getType())
@@ -7093,7 +7175,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
         auto Arch =
             llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
         unsigned int SharedAddrSpace =
-            Arch == Triple::amdgcn
+            Arch == Triple::amd_target
                 ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                 : 3;
         if (EnzymeSharedForward && scev1 != OrigSE->getCouldNotCompute() &&
@@ -8653,8 +8735,11 @@ void GradientUtils::computeMinCache() {
                                     *OrigLI, Recomputes, Intermediates,
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
+
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8665,6 +8750,8 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
+                                                     todo);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;

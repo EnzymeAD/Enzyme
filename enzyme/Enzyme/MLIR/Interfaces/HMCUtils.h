@@ -386,7 +386,7 @@ struct DualAveragingConfig {
 
 /// Initialize dual averaging state from initial step size.
 DualAveragingState initDualAveraging(OpBuilder &builder, Location loc,
-                                     Value stepSize);
+                                     Value stepSize, bool logOfProduct = false);
 
 /// Update dual averaging state with observed acceptance probability.
 DualAveragingState updateDualAveraging(OpBuilder &builder, Location loc,

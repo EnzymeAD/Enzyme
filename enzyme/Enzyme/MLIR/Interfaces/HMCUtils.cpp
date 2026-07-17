@@ -1622,20 +1622,31 @@ impulse::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
 }
 
 DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
-                                              Value stepSize) {
+                                              Value stepSize,
+                                              bool logOfProduct) {
   auto stepSizeType = cast<RankedTensorType>(stepSize.getType());
   auto elemType = stepSizeType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  // prox_center = log(10) + log(step_size)
-  auto log10Const = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, std::log(10.0))));
-  Value logStepSize = math::LogOp::create(builder, loc, stepSize);
-  Value proxCenter =
-      arith::AddFOp::create(builder, loc, log10Const, logStepSize);
+  // prox_center: log(10 * step_size) at warmup start, or log(10) +
+  // log(step_size) at window-end re-inits
+  Value proxCenter;
+  if (logOfProduct) {
+    auto tenConst = arith::ConstantOp::create(
+        builder, loc, scalarType,
+        DenseElementsAttr::get(scalarType,
+                               builder.getFloatAttr(elemType, 10.0)));
+    Value scaled = arith::MulFOp::create(builder, loc, tenConst, stepSize);
+    proxCenter = math::LogOp::create(builder, loc, scaled);
+  } else {
+    auto log10Const = arith::ConstantOp::create(
+        builder, loc, scalarType,
+        DenseElementsAttr::get(scalarType,
+                               builder.getFloatAttr(elemType, std::log(10.0))));
+    Value logStepSize = math::LogOp::create(builder, loc, stepSize);
+    proxCenter = arith::AddFOp::create(builder, loc, log10Const, logStepSize);
+  }
 
   auto zeroConst = arith::ConstantOp::create(
       builder, loc, scalarType,

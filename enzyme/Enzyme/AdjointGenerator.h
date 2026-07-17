@@ -999,27 +999,38 @@ public:
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
 
-      auto dt = vd[{-1}];
+      bool anyPointer = false;
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
-      if (constantval)
-        for (size_t i = 0; i < storeSize; ++i) {
-          bool Legal = true;
-          dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-          if (!Legal) {
-            std::string str;
-            raw_string_ostream ss(str);
-            ss << "Cannot deduce single type of store " << I << vd.str()
-               << " size: " << storeSize;
-            EmitNoTypeError(str, I, gutils, BuilderZ);
-            return;
+      if (constantval) {
+        for (size_t i = 0; i < storeSize;) {
+          if (auto flt = vd[{(int)i}].isFloat()) {
+            i += DL.getTypeSizeInBits(flt) / 8;
+            continue;
           }
+          if (vd[{(int)i}] == BaseType::Pointer) {
+            anyPointer = true;
+            i += DL.getPointerSizeInBits() / 8;
+            continue;
+          }
+          if (vd[{(int)i}] == BaseType::Integer ||
+              vd[{(int)i}] == BaseType::Anything) {
+            i++;
+            continue;
+          }
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of store " << I << vd.str()
+             << " size: " << storeSize << " at " << i;
+          EmitNoTypeError(str, I, gutils, BuilderZ);
+          return;
         }
+      }
 
       Value *diff = nullptr;
       bool needs_writebarrier = false;
       if (!gutils->runtimeActivity && constantval) {
-        if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
+        if (anyPointer && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
             std::string str;
