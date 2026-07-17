@@ -1,7 +1,6 @@
 """Loads Hedron's Compile Commands Extractor for Bazel."""
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-<<<<<<< HEAD
 load("//:workspace.bzl", "HEDRON_COMPILE_COMMANDS_COMMIT", "HEDRON_COMPILE_COMMANDS_SHA256")
 
 
