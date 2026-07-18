@@ -5462,7 +5462,6 @@ public:
                                           i))[{-1, -1}] == BaseType::Pointer) ||
                gutils->isConstantInstruction(&call)) &&
               !replaceFunction) {
-            nowrite_shadows.back() = true;
             darg = getUndefinedValueForType(
                 M, gutils->getShadowType(argi->getType()));
           } else {
