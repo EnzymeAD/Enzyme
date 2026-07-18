@@ -5053,7 +5053,6 @@ public:
 
         if (replace) {
           argi = getUndefinedValueForType(M, argi->getType());
-          nowrite_shadows.back() = true;
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
