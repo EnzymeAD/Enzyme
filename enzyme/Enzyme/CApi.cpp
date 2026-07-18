@@ -736,7 +736,8 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnUsed,
     uint8_t shadowReturnUsed, CFnTypeInfo typeInfo,
     uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, uint8_t forceAnonymousTape,
+    size_t overwritten_args_size, uint8_t *_nowrite_shadows,
+    size_t nowrite_shadows_size, uint8_t forceAnonymousTape,
     uint8_t runtimeActivity, uint8_t strongZero, unsigned width,
     uint8_t AtomicAdd) {
 
@@ -748,8 +749,12 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
   }
+  std::vector<bool> nowrite_shadows;
+  assert(nowrite_shadows_size == cast<Function>(unwrap(todiff))->arg_size());
+  for (uint64_t i = 0; i < nowrite_shadows_size; i++) {
+    nowrite_shadows.push_back(_nowrite_shadows[i]);
+  }
   auto F = cast<Function>(unwrap(todiff));
-  std::vector<bool> nowrite_shadows(F->arg_size(), false);
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),

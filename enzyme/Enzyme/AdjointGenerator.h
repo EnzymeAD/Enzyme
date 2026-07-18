@@ -4306,11 +4306,14 @@ public:
     SmallVector<Value *, 4> OutTypes;
     SmallVector<Type *, 4> OutFPTypes;
 
+    std::vector<bool> nowrite_shadows = {false, false};
+
     for (unsigned i = 3; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
       pre_args.push_back(argi);
+      nowrite_shadows.push_back(false);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(&call);
@@ -4337,6 +4340,13 @@ public:
         }
         pre_args.push_back(
             gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
+
+        if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(i)))) {
+          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[arg->getArgNo()]) {
+            nowrite_shadows.back() = true;
+          }
+        }
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
@@ -4408,49 +4418,6 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
-        std::vector<bool> nowrite_shadows = {false, false};
-        for (unsigned i = 3; i < call.arg_size(); ++i) {
-          DIFFE_TYPE argTy = argsInverted[i - 3 + 2];
-          bool readNoneNoCapture = isNoCapture(&call, i);
-          bool writeOnlyNoCapture = isNoCapture(&call, i);
-          if (!isReadOnly(&call, i)) {
-            readNoneNoCapture = false;
-          }
-          if (!isWriteOnly(&call, i)) {
-            writeOnlyNoCapture = false;
-          }
-          if (!(isReadOnly(&call, i) && isWriteOnly(&call, i))) {
-            readNoneNoCapture = false;
-          }
-          if (shouldDisableNoWrite(&call)) {
-            writeOnlyNoCapture = false;
-            readNoneNoCapture = false;
-          }
-          Function *calledF = call.getCalledFunction();
-          if (!calledF)
-            calledF = dyn_cast<Function>(
-                call.getCalledOperand()->stripPointerCasts());
-          bool nowrite_shadow =
-              readNoneNoCapture || call.paramHasAttr(i, Attribute::StructRet) ||
-              call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
-              call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
-              (calledF &&
-               (calledF->hasParamAttribute(i, Attribute::StructRet) ||
-                calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
-                calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
-              (argTy == DIFFE_TYPE::DUP_NONEED &&
-               (writeOnlyNoCapture ||
-                !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
-          Value *baseObj = getBaseObject(call.getArgOperand(i));
-          for (auto pair : gutils->backwardsOnlyShadows) {
-            if (pair.first == baseObj) {
-              if (!pair.second.primalInitialize) {
-                nowrite_shadow = true;
-              }
-            }
-          }
-          nowrite_shadows.push_back(nowrite_shadow);
-        }
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer->interprocedural,
@@ -5086,6 +5053,7 @@ public:
 
         if (replace) {
           argi = getUndefinedValueForType(M, argi->getType());
+          nowrite_shadows.back() = true;
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -5374,30 +5342,7 @@ public:
       ValueType preType = ValueType::Primal;
       ValueType revType = ValueType::Primal;
 
-      Function *calledF = call.getCalledFunction();
-      if (!calledF)
-        calledF =
-            dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
-      bool nowrite_shadow =
-          readNoneNoCapture || call.paramHasAttr(i, Attribute::StructRet) ||
-          call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
-          call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
-          (calledF &&
-           (calledF->hasParamAttribute(i, Attribute::StructRet) ||
-            calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
-            calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
-          (argTy == DIFFE_TYPE::DUP_NONEED &&
-           (writeOnlyNoCapture ||
-            !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
-      Value *baseObj = getBaseObject(call.getArgOperand(i));
-      for (auto pair : gutils->backwardsOnlyShadows) {
-        if (pair.first == baseObj) {
-          if (!pair.second.primalInitialize) {
-            nowrite_shadow = true;
-          }
-        }
-      }
-      nowrite_shadows.push_back(nowrite_shadow);
+      nowrite_shadows.push_back(false);
 
       // Keep the existing passed value if coming from outside.
       if (readNoneNoCapture ||
@@ -5498,6 +5443,7 @@ public:
                                           i))[{-1, -1}] == BaseType::Pointer) ||
                gutils->isConstantInstruction(&call)) &&
               !replaceFunction) {
+            nowrite_shadows.back() = true;
             darg = getUndefinedValueForType(
                 M, gutils->getShadowType(argi->getType()));
           } else {
@@ -5507,16 +5453,20 @@ public:
           }
           args.push_back(lookup(darg, Builder2));
         }
-        Value *shadowVal = nullptr;
         if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
-          shadowVal = getUndefinedValueForType(M, argi->getType());
-        } else {
-          shadowVal = gutils->invertPointerM(call.getArgOperand(i), BuilderZ);
-        }
-        if (isa<UndefValue>(shadowVal)) {
           nowrite_shadows.back() = true;
+          pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
+        } else {
+          pre_args.push_back(
+              gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
         }
-        pre_args.push_back(shadowVal);
+
+        if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(i)))) {
+          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[arg->getArgNo()]) {
+            nowrite_shadows.back() = true;
+          }
+        }
         preType =
             (preType == ValueType::None) ? ValueType::Shadow : ValueType::Both;
 
