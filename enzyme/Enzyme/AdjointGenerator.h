@@ -1970,31 +1970,42 @@ public:
       return;
 
     bool floatingInsertion = false;
-    for (InsertValueInst *iv = &IVI;;) {
-      size_t size0 = 1;
-      if (iv->getInsertedValueOperand()->getType()->isSized() &&
-          (iv->getInsertedValueOperand()->getType()->isIntOrIntVectorTy() ||
-           iv->getInsertedValueOperand()->getType()->isFPOrFPVectorTy()))
-        size0 =
-            (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                 iv->getInsertedValueOperand()->getType()) +
-             7) /
-            8;
-      auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
-                           /*err*/ nullptr);
-      if (it.isFloat() || !it.isKnown()) {
-        floatingInsertion = true;
-        break;
+    if (auto MD = hasMetadata(&IVI, "enzyme_truetype")) {
+      auto toIterate = parseTrueType(MD, Mode, false);
+      for (auto &tuple : toIterate) {
+        Type *ty = std::get<0>(tuple);
+        if (ty && ty->isFloatingPointTy()) {
+          floatingInsertion = true;
+          break;
+        }
       }
-      Value *val = iv->getAggregateOperand();
-      if (gutils->isConstantValue(val))
-        break;
-      if (auto dc = dyn_cast<InsertValueInst>(val)) {
-        iv = dc;
-      } else {
-        // unsure where this came from, conservatively assume contains float
-        floatingInsertion = true;
-        break;
+    } else {
+      for (InsertValueInst *iv = &IVI;;) {
+        size_t size0 = 1;
+        if (iv->getInsertedValueOperand()->getType()->isSized() &&
+            (iv->getInsertedValueOperand()->getType()->isIntOrIntVectorTy() ||
+             iv->getInsertedValueOperand()->getType()->isFPOrFPVectorTy()))
+          size0 =
+              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                   iv->getInsertedValueOperand()->getType()) +
+               7) /
+              8;
+        auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
+                             /*err*/ nullptr);
+        if (it.isFloat() || !it.isKnown()) {
+          floatingInsertion = true;
+          break;
+        }
+        Value *val = iv->getAggregateOperand();
+        if (gutils->isConstantValue(val))
+          break;
+        if (auto dc = dyn_cast<InsertValueInst>(val)) {
+          iv = dc;
+        } else {
+          // unsure where this came from, conservatively assume contains float
+          floatingInsertion = true;
+          break;
+        }
       }
     }
 
@@ -2105,6 +2116,7 @@ public:
       if (!gutils->isConstantValue(orig_agg)) {
 
         auto TT = TR.query(orig_agg);
+        const MDNode *MD = hasMetadata(&IVI, "enzyme_truetype");
 
         unsigned start = 0;
 
@@ -2116,6 +2128,22 @@ public:
           auto dt = TT[{-1}];
           for (size_t i = start; i < size1; ++i) {
             auto nex = TT[{(int)i}];
+            if (MD) {
+              for (size_t j = 0; j < MD->getNumOperands(); j += 2) {
+                ConcreteType base(
+                    llvm::cast<llvm::MDString>(MD->getOperand(j))->getString(),
+                    MD->getContext());
+                auto offset = llvm::cast<llvm::ConstantInt>(
+                                  llvm::cast<llvm::ConstantAsMetadata>(
+                                      MD->getOperand(j + 1))
+                                      ->getValue())
+                                  ->getSExtValue();
+                if (offset == (int64_t)i) {
+                  nex = base;
+                  break;
+                }
+              }
+            }
             if ((nex == BaseType::Anything && dt.isFloat()) ||
                 (dt == BaseType::Anything && nex.isFloat())) {
               nextStart = i;
