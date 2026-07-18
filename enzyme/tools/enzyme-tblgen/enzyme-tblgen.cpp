@@ -618,7 +618,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         std::string ord;
         bool shadowType = false;
         if (resultRoot->getNumArgs() == 0) {
-          ord = "op->getResult(0)";
+          ord = "gutils->getShadowType(op->getResult(0)";
+          // This constant participates in a tangent expression.  In vector
+          // forward mode, the tangent has a leading width dimension even when
+          // the primal result does not.  Use the shadow type so a constant
+          // such as `1 - tanh(x)^2` composes with width-vectorized operands.
+          shadowType = true;
         } else {
           if (resultRoot->getArgName(0)) {
             auto name = resultRoot->getArgName(0)->getAsUnquotedString();
