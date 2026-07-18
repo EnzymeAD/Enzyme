@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -passes=enzyme -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes=enzyme -S -opaque-pointers | FileCheck %s
 
 %struct.res = type { double, i32 }
 
