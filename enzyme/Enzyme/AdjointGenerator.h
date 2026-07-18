@@ -4365,13 +4365,8 @@ public:
           }
         }
 
-        if (nowrite_shadows.back()) {
-          pre_args.push_back(getUndefinedValueForType(
-              *call.getModule(), gutils->getShadowType(argi->getType())));
-        } else {
-          pre_args.push_back(
-              gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
-        }
+        pre_args.push_back(
+            gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
@@ -5504,8 +5499,7 @@ public:
           }
         }
 
-        if (nowrite_shadows.back() ||
-            (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction)) {
+        if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
           nowrite_shadows.back() = true;
           pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
         } else {
