@@ -2134,9 +2134,10 @@ public:
                     llvm::cast<llvm::MDString>(MD->getOperand(j))->getString(),
                     MD->getContext());
                 auto offset = llvm::cast<llvm::ConstantInt>(
-                                llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(j + 1))
-                                    ->getValue())
-                                ->getSExtValue();
+                                  llvm::cast<llvm::ConstantAsMetadata>(
+                                      MD->getOperand(j + 1))
+                                      ->getValue())
+                                  ->getSExtValue();
                 if (offset == (int64_t)i) {
                   nex = base;
                   break;

@@ -6113,10 +6113,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ConcreteType base(
                 llvm::cast<llvm::MDString>(MD->getOperand(i))->getString(),
                 MD->getContext());
-            auto offset = llvm::cast<llvm::ConstantInt>(
-                            llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1))
-                                ->getValue())
-                            ->getSExtValue();
+            auto offset =
+                llvm::cast<llvm::ConstantInt>(
+                    llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1))
+                        ->getValue())
+                    ->getSExtValue();
             if (offset < Off) {
               continue;
             }
