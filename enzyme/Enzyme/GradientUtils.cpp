@@ -6108,6 +6108,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         subTT = TT;
       } else {
         subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+        if (auto MD = hasMetadata(arg, "enzyme_truetype")) {
+          for (size_t i = 0; i < MD->getNumOperands(); i += 2) {
+            ConcreteType base(
+                llvm::cast<llvm::MDString>(MD->getOperand(i))->getString(),
+                MD->getContext());
+            auto offset = llvm::cast<llvm::ConstantInt>(
+                            llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1))
+                                ->getValue())
+                            ->getSExtValue();
+            if (offset < Off) {
+              continue;
+            }
+            subTT.insert({(int)(offset - Off)}, base);
+          }
+        }
         subTT.CanonicalizeInPlace(ObjSize, DL);
       }
 
