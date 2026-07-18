@@ -4366,7 +4366,8 @@ public:
         }
 
         if (nowrite_shadows.back()) {
-          pre_args.push_back(getUndefinedValueForType(M, getShadowType(call.getArgOperand(i))));
+          pre_args.push_back(getUndefinedValueForType(
+              *call.getModule(), gutils->getShadowType(argi->getType())));
         } else {
           pre_args.push_back(
               gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
@@ -5504,7 +5505,7 @@ public:
         }
 
         if (nowrite_shadows.back() ||
-            Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
+            (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction)) {
           nowrite_shadows.back() = true;
           pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
         } else {
