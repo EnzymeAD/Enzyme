@@ -23,13 +23,13 @@ entry:
   ret double %val
 }
 
-define double @test(ptr %x, ptr %xp) {
+define void @test(ptr %x, ptr %xp) {
 entry:
-  %res = call double (ptr, ...) @__enzyme_autodiff(ptr @caller, ptr %x, ptr %xp)
-  ret double %res
+  call void (...) @__enzyme_augmentfwd(ptr @caller, metadata !"enzyme_dup", ptr %x, ptr %xp)
+  ret void
 }
 
-declare double @__enzyme_autodiff(ptr, ...)
+declare void @__enzyme_augmentfwd(...)
 
 ; CHECK: define internal void @augmented_callee(ptr %sret_return, ptr %sret_return', ptr %x, ptr %x')
 ; CHECK-NOT: store {{.*}} %sret_return'
