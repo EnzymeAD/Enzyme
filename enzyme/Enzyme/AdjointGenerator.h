@@ -4408,9 +4408,9 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
-        std::vector<bool> nowrite_shadows;
-        for (unsigned i = 0; i < call.arg_size(); ++i) {
-          DIFFE_TYPE argTy = argsInverted[i];
+        std::vector<bool> nowrite_shadows = {false, false};
+        for (unsigned i = 3; i < call.arg_size(); ++i) {
+          DIFFE_TYPE argTy = argsInverted[i - 3 + 2];
           bool readNoneNoCapture = isNoCapture(&call, i);
           bool writeOnlyNoCapture = isNoCapture(&call, i);
           if (!isReadOnly(&call, i)) {
