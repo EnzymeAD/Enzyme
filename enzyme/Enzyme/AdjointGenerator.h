@@ -1270,6 +1270,15 @@ public:
           }
         }
 
+        if (auto arg = dyn_cast<Argument>(getBaseObject(orig_ptr))) {
+          unsigned argNo = arg->getArgNo();
+          if (argNo < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[argNo]) {
+            forwardsShadow = false;
+            backwardsShadow = false;
+          }
+        }
+
         if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
             (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
@@ -3051,6 +3060,15 @@ public:
       }
     }
 
+    if (auto arg = dyn_cast<Argument>(getBaseObject(MS.getOperand(0)))) {
+      unsigned argNo = arg->getArgNo();
+      if (argNo < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[argNo]) {
+        forwardsShadow = false;
+        backwardsShadow = false;
+      }
+    }
+
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(MS.getOperand(2))) {
       size = ci->getLimitedValue();
@@ -3662,6 +3680,15 @@ public:
           if (!forwardsShadow && pair.second.LI &&
               pair.second.LI->contains(inst->getParent()))
             backwardsShadow = false;
+      }
+    }
+
+    if (auto arg = dyn_cast<Argument>(getBaseObject(orig_dst))) {
+      unsigned argNo = arg->getArgNo();
+      if (argNo < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[argNo]) {
+        forwardsShadow = false;
+        backwardsShadow = false;
       }
     }
 
@@ -4381,14 +4408,55 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
+        std::vector<bool> nowrite_shadows;
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
+          DIFFE_TYPE argTy = argsInverted[i];
+          bool readNoneNoCapture = isNoCapture(&call, i);
+          bool writeOnlyNoCapture = isNoCapture(&call, i);
+          if (!isReadOnly(&call, i)) {
+            readNoneNoCapture = false;
+          }
+          if (!isWriteOnly(&call, i)) {
+            writeOnlyNoCapture = false;
+          }
+          if (!(isReadOnly(&call, i) && isWriteOnly(&call, i))) {
+            readNoneNoCapture = false;
+          }
+          if (shouldDisableNoWrite(&call)) {
+            writeOnlyNoCapture = false;
+            readNoneNoCapture = false;
+          }
+          Function *calledF = call.getCalledFunction();
+          if (!calledF)
+            calledF = dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
+          bool nowrite_shadow = readNoneNoCapture ||
+                                call.paramHasAttr(i, Attribute::StructRet) ||
+                                call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
+                                call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
+                                (calledF && (calledF->hasParamAttribute(i, Attribute::StructRet) ||
+                                             calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
+                                             calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
+                                (argTy == DIFFE_TYPE::DUP_NONEED &&
+                                 (writeOnlyNoCapture ||
+                                  !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
+          Value *baseObj = getBaseObject(call.getArgOperand(i));
+          for (auto pair : gutils->backwardsOnlyShadows) {
+            if (pair.first == baseObj) {
+              if (!pair.second.primalInitialize) {
+                nowrite_shadow = true;
+              }
+            }
+          }
+          nowrite_shadows.push_back(nowrite_shadow);
+        }
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo,
-            subsequent_calls_may_write, overwritten_args, false,
-            gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
-            /*AtomicAdd*/ true,
+            subsequent_calls_may_write, overwritten_args,
+            nowrite_shadows, false, gutils->runtimeActivity,
+            gutils->strongZero, gutils->getWidth(), /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
@@ -5252,6 +5320,7 @@ public:
 
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
+    std::vector<bool> nowrite_shadows;
 
     for (unsigned i = 0; i < call.arg_size(); ++i) {
 
@@ -5302,6 +5371,29 @@ public:
 
       ValueType preType = ValueType::Primal;
       ValueType revType = ValueType::Primal;
+
+      Function *calledF = call.getCalledFunction();
+      if (!calledF)
+        calledF = dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
+      bool nowrite_shadow = readNoneNoCapture ||
+                            call.paramHasAttr(i, Attribute::StructRet) ||
+                            call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
+                            call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
+                            (calledF && (calledF->hasParamAttribute(i, Attribute::StructRet) ||
+                                         calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
+                                         calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
+                            (argTy == DIFFE_TYPE::DUP_NONEED &&
+                             (writeOnlyNoCapture ||
+                              !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
+      Value *baseObj = getBaseObject(call.getArgOperand(i));
+      for (auto pair : gutils->backwardsOnlyShadows) {
+        if (pair.first == baseObj) {
+          if (!pair.second.primalInitialize) {
+            nowrite_shadow = true;
+          }
+        }
+      }
+      nowrite_shadows.push_back(nowrite_shadow);
 
       // Keep the existing passed value if coming from outside.
       if (readNoneNoCapture ||
@@ -5411,12 +5503,16 @@ public:
           }
           args.push_back(lookup(darg, Builder2));
         }
+        Value *shadowVal = nullptr;
         if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
-          pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
+          shadowVal = getUndefinedValueForType(M, argi->getType());
         } else {
-          pre_args.push_back(
-              gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
+          shadowVal = gutils->invertPointerM(call.getArgOperand(i), BuilderZ);
         }
+        if (isa<UndefValue>(shadowVal)) {
+          nowrite_shadows.back() = true;
+        }
+        pre_args.push_back(shadowVal);
         preType =
             (preType == ValueType::None) ? ValueType::Shadow : ValueType::Both;
 
@@ -5534,9 +5630,9 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              subsequent_calls_may_write, overwritten_args, false,
-              gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
-              gutils->AtomicAdd);
+              subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+              false, gutils->runtimeActivity, gutils->strongZero,
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =

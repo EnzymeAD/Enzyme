@@ -308,6 +308,7 @@ public:
   /// memset). Boolean denotes whether the primal initializes the shadow as well
   /// (for use) as a structure which carries data.
   llvm::ValueMap<llvm::Value *, ShadowRematerializer> backwardsOnlyShadows;
+  std::vector<bool> nowrite_shadows;
 
   void computeForwardingProperties(llvm::Instruction *V);
   void computeGuaranteedFrees();

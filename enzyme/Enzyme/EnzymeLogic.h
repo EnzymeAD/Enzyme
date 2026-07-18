@@ -465,6 +465,7 @@ public:
     const std::vector<DIFFE_TYPE> constant_args;
     bool subsequent_calls_may_write;
     std::vector<bool> overwritten_args;
+    std::vector<bool> nowrite_shadows;
     bool returnUsed;
     bool shadowReturnUsed;
     const FnTypeInfo typeInfo;
@@ -507,6 +508,15 @@ public:
       if (std::lexicographical_compare(
               rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
               overwritten_args.begin(), overwritten_args.end()))
+        return false;
+
+      if (std::lexicographical_compare(
+              nowrite_shadows.begin(), nowrite_shadows.end(),
+              rhs.nowrite_shadows.begin(), rhs.nowrite_shadows.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.nowrite_shadows.begin(), rhs.nowrite_shadows.end(),
+              nowrite_shadows.begin(), nowrite_shadows.end()))
         return false;
 
       if (returnUsed < rhs.returnUsed)
@@ -586,7 +596,8 @@ public:
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       bool subsequent_calls_may_write,
-      const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+      const std::vector<bool> _overwritten_args,
+      const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
       bool omp = false);
 

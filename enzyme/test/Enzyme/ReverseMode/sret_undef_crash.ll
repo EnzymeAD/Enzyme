@@ -31,5 +31,12 @@ entry:
 
 declare void @__enzyme_augmentfwd(...)
 
-; CHECK: define internal void @augmented_callee(ptr %sret_return, ptr %sret_return', ptr %x, ptr %x')
-; CHECK-NOT: store {{.*}} %sret_return'
+; CHECK: define internal void @augmented_callee({{.*}}%sret_return, {{.*}}%"sret_return'", {{.*}}%x, {{.*}}%"x'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %gep0 = getelementptr inbounds %struct.res, ptr %sret_return, i32 0, i32 0
+; CHECK-NEXT:   %val = load double, ptr %x, align 8{{.*}}
+; CHECK-NEXT:   %mul = fmul double %val, 2.000000e+00
+; CHECK-NEXT:   store double %mul, ptr %gep0, align 8{{.*}}
+; CHECK-NEXT:   %gep1 = getelementptr inbounds %struct.res, ptr %sret_return, i32 0, i32 1
+; CHECK-NEXT:   store i32 42, ptr %gep1, align 4{{.*}}
+; CHECK-NEXT:   ret void

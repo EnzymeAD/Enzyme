@@ -2001,10 +2001,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
-    bool forceAnonymousTape, bool runtimeActivity, bool strongZero,
-    unsigned width, bool AtomicAdd, bool omp) {
+    const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
+    bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
+    bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
+
+  assert(nowrite_shadows.size() == todiff->arg_size());
 
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
@@ -2019,6 +2022,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            constant_args,
                            subsequent_calls_may_write,
                            _overwritten_args,
+                           nowrite_shadows,
                            returnUsed,
                            shadowReturnUsed,
                            oldTypeInfo,
@@ -2120,8 +2124,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       auto &aug = CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
           shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
-          _overwritten_args, forceAnonymousTape, runtimeActivity, strongZero,
-          width, AtomicAdd, omp);
+          _overwritten_args, nowrite_shadows, forceAnonymousTape,
+          runtimeActivity, strongZero, width, AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2420,6 +2424,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
+  gutils->nowrite_shadows = nowrite_shadows;
 
   if (todiff->empty()) {
     std::string s;
@@ -3787,12 +3792,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
 
+      std::vector<bool> nowrite_shadows(key.todiff->arg_size(), false);
       auto &aug = CreateAugmentedPrimal(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.subsequent_calls_may_write, key.overwritten_args,
-          /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
-          key.width, key.AtomicAdd, omp);
+          nowrite_shadows, /*forceAnonymousTape*/ false,
+          key.runtimeActivity, key.strongZero, key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
