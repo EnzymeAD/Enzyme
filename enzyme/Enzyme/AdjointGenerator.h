@@ -4428,17 +4428,19 @@ public:
           }
           Function *calledF = call.getCalledFunction();
           if (!calledF)
-            calledF = dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
-          bool nowrite_shadow = readNoneNoCapture ||
-                                call.paramHasAttr(i, Attribute::StructRet) ||
-                                call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
-                                call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
-                                (calledF && (calledF->hasParamAttribute(i, Attribute::StructRet) ||
-                                             calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
-                                             calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
-                                (argTy == DIFFE_TYPE::DUP_NONEED &&
-                                 (writeOnlyNoCapture ||
-                                  !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
+            calledF = dyn_cast<Function>(
+                call.getCalledOperand()->stripPointerCasts());
+          bool nowrite_shadow =
+              readNoneNoCapture || call.paramHasAttr(i, Attribute::StructRet) ||
+              call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
+              call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
+              (calledF &&
+               (calledF->hasParamAttribute(i, Attribute::StructRet) ||
+                calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
+                calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
+              (argTy == DIFFE_TYPE::DUP_NONEED &&
+               (writeOnlyNoCapture ||
+                !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
           Value *baseObj = getBaseObject(call.getArgOperand(i));
           for (auto pair : gutils->backwardsOnlyShadows) {
             if (pair.first == baseObj) {
@@ -4454,9 +4456,9 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo,
-            subsequent_calls_may_write, overwritten_args,
-            nowrite_shadows, false, gutils->runtimeActivity,
-            gutils->strongZero, gutils->getWidth(), /*AtomicAdd*/ true,
+            subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+            false, gutils->runtimeActivity, gutils->strongZero,
+            gutils->getWidth(), /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
@@ -5374,17 +5376,19 @@ public:
 
       Function *calledF = call.getCalledFunction();
       if (!calledF)
-        calledF = dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
-      bool nowrite_shadow = readNoneNoCapture ||
-                            call.paramHasAttr(i, Attribute::StructRet) ||
-                            call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
-                            call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
-                            (calledF && (calledF->hasParamAttribute(i, Attribute::StructRet) ||
-                                         calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
-                                         calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
-                            (argTy == DIFFE_TYPE::DUP_NONEED &&
-                             (writeOnlyNoCapture ||
-                              !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
+        calledF =
+            dyn_cast<Function>(call.getCalledOperand()->stripPointerCasts());
+      bool nowrite_shadow =
+          readNoneNoCapture || call.paramHasAttr(i, Attribute::StructRet) ||
+          call.getAttributes().hasParamAttr(i, "enzyme_sret") ||
+          call.getAttributes().hasParamAttr(i, "enzyme_sret_v") ||
+          (calledF &&
+           (calledF->hasParamAttribute(i, Attribute::StructRet) ||
+            calledF->getAttributes().hasParamAttr(i, "enzyme_sret") ||
+            calledF->getAttributes().hasParamAttr(i, "enzyme_sret_v"))) ||
+          (argTy == DIFFE_TYPE::DUP_NONEED &&
+           (writeOnlyNoCapture ||
+            !isa<Argument>(getBaseObject(call.getArgOperand(i)))));
       Value *baseObj = getBaseObject(call.getArgOperand(i));
       for (auto pair : gutils->backwardsOnlyShadows) {
         if (pair.first == baseObj) {

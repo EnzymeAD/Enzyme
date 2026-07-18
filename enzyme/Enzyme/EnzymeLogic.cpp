@@ -3796,9 +3796,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
-          key.subsequent_calls_may_write, key.overwritten_args,
-          nowrite_shadows, /*forceAnonymousTape*/ false,
-          key.runtimeActivity, key.strongZero, key.width, key.AtomicAdd, omp);
+          key.subsequent_calls_may_write, key.overwritten_args, nowrite_shadows,
+          /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
+          key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())

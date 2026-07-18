@@ -753,11 +753,10 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),
-      F, (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnUsed, shadowReturnUsed,
-      eunwrap(typeInfo, F),
-      subsequent_calls_may_write, overwritten_args, nowrite_shadows,
-      forceAnonymousTape, runtimeActivity, strongZero, width, AtomicAdd));
+      F, (DIFFE_TYPE)retType, nconstant_args, eunwrap(TA), returnUsed,
+      shadowReturnUsed, eunwrap(typeInfo, F), subsequent_calls_may_write,
+      overwritten_args, nowrite_shadows, forceAnonymousTape, runtimeActivity,
+      strongZero, width, AtomicAdd));
 }
 
 LLVMValueRef EnzymeCreateBatch(EnzymeLogicRef Logic, LLVMValueRef request_req,
