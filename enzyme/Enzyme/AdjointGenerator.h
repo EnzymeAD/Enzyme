@@ -4338,14 +4338,38 @@ public:
               lookup(gutils->invertPointerM(call.getArgOperand(i), Builder2),
                      Builder2));
         }
-        pre_args.push_back(
-            gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
 
-        if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(i)))) {
+        auto baseOp = getBaseObject(call.getArgOperand(i));
+        if (auto arg = dyn_cast<Argument>(baseOp)) {
           if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
               gutils->nowrite_shadows[arg->getArgNo()]) {
             nowrite_shadows.back() = true;
           }
+        }
+        if (isAllocationCall(baseOp, gutils->TLI)) {
+          assert(!gutils->isConstantValue(baseOp));
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ReverseModePrimal ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            bool forwardsShadow = true;
+            {
+              auto found = gutils->backwardsOnlyShadows.find(baseOp);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                forwardsShadow = found->second.primalInitialize;
+              }
+            }
+            if (!forwardsShadow) {
+              nowrite_shadows.back() = true;
+            }
+          }
+        }
+
+        if (nowrite_shadows.back()) {
+          pre_args.push_back(getUndefinedValueForType(M, getShadowType(call.getArgOperand(i))));
+        } else {
+          pre_args.push_back(
+              gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
         }
 
         // Note sometimes whattype mistakenly says something should be constant
@@ -5452,19 +5476,40 @@ public:
           }
           args.push_back(lookup(darg, Builder2));
         }
-        if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
+
+        auto baseOp = getBaseObject(call.getArgOperand(i));
+        if (auto arg = dyn_cast<Argument>(baseOp)) {
+          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[arg->getArgNo()]) {
+            nowrite_shadows.back() = true;
+          }
+        }
+        if (isAllocationCall(baseOp, gutils->TLI)) {
+          assert(!gutils->isConstantValue(baseOp));
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ReverseModePrimal ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            bool forwardsShadow = true;
+            {
+              auto found = gutils->backwardsOnlyShadows.find(baseOp);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                forwardsShadow = found->second.primalInitialize;
+              }
+            }
+            if (!forwardsShadow) {
+              nowrite_shadows.back() = true;
+            }
+          }
+        }
+
+        if (nowrite_shadows.back() ||
+            Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
           nowrite_shadows.back() = true;
           pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
         } else {
           pre_args.push_back(
               gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
-        }
-
-        if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(i)))) {
-          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
-              gutils->nowrite_shadows[arg->getArgNo()]) {
-            nowrite_shadows.back() = true;
-          }
         }
         preType =
             (preType == ValueType::None) ? ValueType::Shadow : ValueType::Both;
