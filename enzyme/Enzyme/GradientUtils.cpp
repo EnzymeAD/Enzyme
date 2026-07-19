@@ -6120,7 +6120,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                     llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1))
                         ->getValue())
                     ->getSExtValue();
-            if (offset < Off) {
+            if (offset < Off || offset >= Off + ObjSize) {
               continue;
             }
             subTT.insert({(int)(offset - Off)}, base);
