@@ -1270,6 +1270,15 @@ public:
           }
         }
 
+        if (auto arg = dyn_cast<Argument>(getBaseObject(orig_ptr))) {
+          unsigned argNo = arg->getArgNo();
+          if (argNo < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[argNo]) {
+            forwardsShadow = false;
+            backwardsShadow = false;
+          }
+        }
+
         if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
             (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
@@ -3079,6 +3088,15 @@ public:
       }
     }
 
+    if (auto arg = dyn_cast<Argument>(getBaseObject(MS.getOperand(0)))) {
+      unsigned argNo = arg->getArgNo();
+      if (argNo < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[argNo]) {
+        forwardsShadow = false;
+        backwardsShadow = false;
+      }
+    }
+
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(MS.getOperand(2))) {
       size = ci->getLimitedValue();
@@ -3690,6 +3708,15 @@ public:
           if (!forwardsShadow && pair.second.LI &&
               pair.second.LI->contains(inst->getParent()))
             backwardsShadow = false;
+      }
+    }
+
+    if (auto arg = dyn_cast<Argument>(getBaseObject(orig_dst))) {
+      unsigned argNo = arg->getArgNo();
+      if (argNo < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[argNo]) {
+        forwardsShadow = false;
+        backwardsShadow = false;
       }
     }
 
@@ -4307,11 +4334,14 @@ public:
     SmallVector<Value *, 4> OutTypes;
     SmallVector<Type *, 4> OutFPTypes;
 
+    std::vector<bool> nowrite_shadows = {false, false};
+
     for (unsigned i = 3; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
       pre_args.push_back(argi);
+      nowrite_shadows.push_back(false);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(&call);
@@ -4336,6 +4366,33 @@ public:
               lookup(gutils->invertPointerM(call.getArgOperand(i), Builder2),
                      Builder2));
         }
+
+        auto baseOp = getBaseObject(call.getArgOperand(i));
+        if (auto arg = dyn_cast<Argument>(baseOp)) {
+          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[arg->getArgNo()]) {
+            nowrite_shadows.back() = true;
+          }
+        }
+        if (isAllocationCall(baseOp, gutils->TLI)) {
+          assert(!gutils->isConstantValue(baseOp));
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ReverseModePrimal ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            bool forwardsShadow = true;
+            {
+              auto found = gutils->backwardsOnlyShadows.find(baseOp);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                forwardsShadow = found->second.primalInitialize;
+              }
+            }
+            if (!forwardsShadow) {
+              nowrite_shadows.back() = true;
+            }
+          }
+        }
+
         pre_args.push_back(
             gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
 
@@ -4414,9 +4471,9 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo,
-            subsequent_calls_may_write, overwritten_args, false,
-            gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
-            /*AtomicAdd*/ true,
+            subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+            false, gutils->runtimeActivity, gutils->strongZero,
+            gutils->getWidth(), /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
@@ -5280,6 +5337,7 @@ public:
 
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
+    std::vector<bool> nowrite_shadows;
 
     for (unsigned i = 0; i < call.arg_size(); ++i) {
 
@@ -5330,6 +5388,8 @@ public:
 
       ValueType preType = ValueType::Primal;
       ValueType revType = ValueType::Primal;
+
+      nowrite_shadows.push_back(false);
 
       // Keep the existing passed value if coming from outside.
       if (readNoneNoCapture ||
@@ -5439,7 +5499,35 @@ public:
           }
           args.push_back(lookup(darg, Builder2));
         }
+
+        auto baseOp = getBaseObject(call.getArgOperand(i));
+        if (auto arg = dyn_cast<Argument>(baseOp)) {
+          if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+              gutils->nowrite_shadows[arg->getArgNo()]) {
+            nowrite_shadows.back() = true;
+          }
+        }
+        if (isAllocationCall(baseOp, gutils->TLI)) {
+          assert(!gutils->isConstantValue(baseOp));
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ReverseModePrimal ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            bool forwardsShadow = true;
+            {
+              auto found = gutils->backwardsOnlyShadows.find(baseOp);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                forwardsShadow = found->second.primalInitialize;
+              }
+            }
+            if (!forwardsShadow) {
+              nowrite_shadows.back() = true;
+            }
+          }
+        }
+
         if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
+          nowrite_shadows.back() = true;
           pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
         } else {
           pre_args.push_back(
@@ -5562,9 +5650,9 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              subsequent_calls_may_write, overwritten_args, false,
-              gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
-              gutils->AtomicAdd);
+              subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+              false, gutils->runtimeActivity, gutils->strongZero,
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =

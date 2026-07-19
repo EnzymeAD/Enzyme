@@ -1464,6 +1464,8 @@ public:
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
 
+    std::vector<bool> nowrite_shadows(fn->arg_size(), false);
+
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
 
@@ -1493,9 +1495,9 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
-          options.runtimeActivity, options.strongZero, width,
-          /*atomicAdd*/ AtomicAdd);
+          subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+          forceAnonymousTape, options.runtimeActivity, options.strongZero,
+          width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1572,9 +1574,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
-          forceAnonymousTape, options.runtimeActivity, options.strongZero,
-          width,
-          /*atomicAdd*/ AtomicAdd);
+          nowrite_shadows, forceAnonymousTape, options.runtimeActivity,
+          options.strongZero, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);

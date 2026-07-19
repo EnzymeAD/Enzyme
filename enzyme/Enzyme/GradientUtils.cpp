@@ -4824,6 +4824,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     }
   }
 
+  std::vector<bool> nowrite_shadows(fn->arg_size(), false);
+
   switch (mode) {
   case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode: {
@@ -4860,7 +4862,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
         /*shadowReturnUsed*/ false, type_args, subsequent_calls_may_write,
-        overwritten_args,
+        overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
         AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
@@ -4905,7 +4907,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     auto &augdata = Logic.CreateAugmentedPrimal(
         context, fn, retType, /*constant_args*/ types, TA, returnUsed,
         shadowReturnUsed, type_args, subsequent_calls_may_write,
-        overwritten_args,
+        overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
         AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
