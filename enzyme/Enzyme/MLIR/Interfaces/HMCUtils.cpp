@@ -984,6 +984,11 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto acceptedTensor = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
+  // HMC doesn't collect divergence information so set to false
+  auto falseConst = arith::ConstantOp::create(
+      builder, loc, i1TensorType,
+      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+
   // 8. Select between original and proposal
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
                                           acceptedTensor, qProposal, q);
@@ -992,7 +997,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto UFinal = impulse::SelectOp::create(builder, loc, scalarType,
                                           acceptedTensor, UProposal, U);
 
-  return {qFinal, gradFinal, UFinal, acceptedTensor, accProb, rngNext};
+  return {qFinal, gradFinal, UFinal, acceptedTensor, falseConst, accProb, rngNext};
 }
 
 MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
@@ -1081,7 +1086,7 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
       builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
 
   return {finalTree.q_proposal, finalTree.grad_proposal,
-          finalTree.U_proposal, trueConst,
+          finalTree.U_proposal, trueConst, finalTree.diverging,
           meanAcceptProb,       rngNext};
 }
 

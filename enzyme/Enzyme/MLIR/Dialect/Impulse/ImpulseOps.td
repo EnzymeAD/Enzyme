@@ -228,7 +228,7 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     Returns: (trace, diagnostics, log_densities, rng, final_position, final_gradient,
               final_potential_energy, final_step_size, final_inverse_mass_matrix)
     - trace: tensor<num_samples x position_size x f64>
-    - diagnostics: tensor<num_samples x i1> - placeholder for future expansion
+    - diagnostics: tensor<num_samples x 2 x i1> - placeholder for future expansion
     - log_densities: tensor<num_samples x f64> - log densities of samples
     - rng: updated RNG state
     - final_position: tensor<1 x position_size x f64> - position after last sample

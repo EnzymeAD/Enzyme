@@ -64,6 +64,7 @@ struct MCMCKernelResult {
   Value grad;        // Gradient at new position
   Value U;           // Potential energy at new position
   Value accepted;    // Whether proposal was accepted
+  Value divergent;   // Whether step was divergent (NUTS only; currently always false for HMC) 
   Value accept_prob; // Mean acceptance probability
   Value rng;         // Updated RNG state
 };
