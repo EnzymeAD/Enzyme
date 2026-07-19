@@ -608,6 +608,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                resultTree->getAsString());
 
+      bool vectorizedConstant = false;
       if (intrinsic == MLIRDerivatives) {
         if (resultRoot->getNumArgs() > 1)
           PrintFatalError(pattern->getLoc(),
@@ -621,8 +622,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           ord = "gutils->getShadowType(op->getResult(0)";
           // This constant participates in a tangent expression.  In vector
           // forward mode, the tangent has a leading width dimension even when
-          // the primal result does not.  Use the shadow type so a constant
-          // such as `1 - tanh(x)^2` composes with width-vectorized operands.
+          // the primal result does not.  Use the shadow type to preserve the
+          // tangent shape.
           shadowType = true;
         } else {
           if (resultRoot->getArgName(0)) {
@@ -670,6 +671,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           os << ")";
         os << ", ";
         os << "\"" << value->getValue() << "\"))";
+        vectorizedConstant = shadowType;
       } else {
         if (resultRoot->getNumArgs() != 1)
           PrintFatalError(pattern->getLoc(),
@@ -700,7 +702,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                               resultTree->getAsString());
         os << ", \"" << value->getValue() << "\")";
       }
-      return false;
+      return vectorizedConstant;
     } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op Zero supported");
