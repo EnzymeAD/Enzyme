@@ -273,19 +273,13 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs
-    AnyRankedTensor:$trace,
-    AnyRankedTensor:$diagnostics,
-    AnyRankedTensor:$log_densities,
-    AnyType:$output_rng_state,
-    AnyRankedTensor:$final_position,
-    AnyRankedTensor:$final_gradient,
-    AnyRankedTensor:$final_potential_energy,
-    AnyRankedTensor:$final_step_size,
-    AnyRankedTensor:$final_inverse_mass_matrix,
+  let results = (outs AnyRankedTensor:$trace, AnyRankedTensor:$diagnostics,
+      AnyRankedTensor:$log_densities, AnyType:$output_rng_state,
+      AnyRankedTensor:$final_position, AnyRankedTensor:$final_gradient,
+      AnyRankedTensor:$final_potential_energy, AnyRankedTensor:$final_step_size,
+      AnyRankedTensor:$final_inverse_mass_matrix,
 
-    Variadic<AnyRankedTensor>:$adaptation_state_out
-  );
+      Variadic<AnyRankedTensor>:$adaptation_state_out);
 
   let assemblyFormat = [{
     ($fn^)?

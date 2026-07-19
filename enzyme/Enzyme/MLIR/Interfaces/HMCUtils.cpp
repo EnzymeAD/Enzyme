@@ -997,7 +997,8 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto UFinal = impulse::SelectOp::create(builder, loc, scalarType,
                                           acceptedTensor, UProposal, U);
 
-  return {qFinal, gradFinal, UFinal, acceptedTensor, falseConst, accProb, rngNext};
+  return {qFinal,     gradFinal, UFinal, acceptedTensor,
+          falseConst, accProb,   rngNext};
 }
 
 MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
@@ -1085,9 +1086,13 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto meanAcceptProb = arith::DivFOp::create(
       builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
 
-  return {finalTree.q_proposal, finalTree.grad_proposal,
-          finalTree.U_proposal, trueConst, finalTree.diverging,
-          meanAcceptProb,       rngNext};
+  return {finalTree.q_proposal,
+          finalTree.grad_proposal,
+          finalTree.U_proposal,
+          trueConst,
+          finalTree.diverging,
+          meanAcceptProb,
+          rngNext};
 }
 
 NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
