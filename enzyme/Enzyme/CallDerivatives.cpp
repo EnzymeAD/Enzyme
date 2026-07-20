@@ -1121,7 +1121,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         getReverseBuilder(Builder2);
       }
 
-      // Get the operations from MPI_Receive
+      // Get the operations from MPI_Reduce
       Value *orig_sendbuf = call.getOperand(0);
       Value *orig_recvbuf = call.getOperand(1);
       Value *orig_count = call.getOperand(2);
@@ -1364,7 +1364,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         getReverseBuilder(Builder2);
       }
 
-      // Get the operations from MPI_Receive
+      // Get the operations from MPI_Allreduce
       Value *orig_sendbuf = call.getOperand(0);
       Value *orig_recvbuf = call.getOperand(1);
       Value *orig_count = call.getOperand(2);
