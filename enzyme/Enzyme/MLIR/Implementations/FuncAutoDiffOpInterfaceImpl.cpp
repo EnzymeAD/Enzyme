@@ -117,6 +117,19 @@ public:
 class AutoDiffCallRev
     : public ReverseAutoDiffOpInterface::ExternalModel<AutoDiffCallRev,
                                                        func::CallOp> {
+private:
+  static Operation *getCustomRule(FunctionOpInterface func) {
+    auto attr = func->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule");
+    if (!attr) {
+      return nullptr;
+    }
+
+    SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(func);
+    auto rule = symbolTable.lookup(attr.getRootReference());
+
+    return rule;
+  }
+
 public:
   LogicalResult createReverseModeAdjoint(Operation *orig, OpBuilder &builder,
                                          MGradientUtilsReverse *gutils,
@@ -159,55 +172,126 @@ public:
       return failure();
     }
 
-    std::vector<bool> volatile_args(narg, true);
-    std::vector<bool> returnShadow(nret, false);
-    std::vector<bool> returnPrimal(nret, false);
+    CallAugmentedPrimalOp primalCall;
+    CustomReverseRuleOp cr = nullptr;
+    if (Operation *crOp = AutoDiffCallRev::getCustomRule(fn)) {
+      // replace op with an augmented primal and cache the tape
+      cr = cast<CustomReverseRuleOp>(crOp);
+      primalCall =
+          cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+    } else {
+      std::vector<bool> volatile_args(narg, true);
+      std::vector<bool> returnShadow(nret, false);
+      std::vector<bool> returnPrimal(nret, false);
 
-    auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+      auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
 
-    bool freeMemory = true;
-    size_t width = gutils->width;
+      bool freeMemory = true;
+      size_t width = gutils->width;
 
-    auto revFn = gutils->Logic.CreateReverseDiff(
-        fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
-        mode, freeMemory, width, /*addedType*/ nullptr, type_args,
-        volatile_args, /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
-        gutils->verifyPostPasses, gutils->strongZero);
+      auto myCr = gutils->Logic.CreateSplitModeDiff(
+          fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
+          mode, freeMemory, width, /*addedType*/ nullptr, type_args,
+          volatile_args, /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
+          gutils->verifyPostPasses, gutils->strongZero);
 
-    SmallVector<Value> revArguments;
+      SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
 
-    for (auto [arg, act, cache] :
-         llvm::zip_equal(callOp.getOperands(), ArgActivity, caches)) {
-      revArguments.push_back(gutils->popCache(cache, builder));
-      if (act == DIFFE_TYPE::DUP_ARG)
-        revArguments.push_back(gutils->invertPointerM(arg, builder));
+      primalCall =
+          cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+      primalCall.setFnAttr(myCr);
+
+      cr = cast<CustomReverseRuleOp>(symbolTable.lookup(myCr.getValue()));
     }
 
-    for (auto result : callOp.getResults()) {
-      if (gutils->isConstantValue(result))
-        continue;
-      revArguments.push_back(gutils->diffe(result, builder));
-    }
+    {
+      auto crArgActivity = cr.getActivity();
+      auto crRetActivity = cr.getRetActivity();
 
-    auto revCallOp = func::CallOp::create(
-        builder, orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
+      if (crArgActivity.size() != ArgActivity.size())
+        return orig->emitError()
+               << "cannot apply custom rule for func " << callOp.getCallee()
+               << " (wrong arg activity size)";
 
-    int revIndex = 0, fwdIndex = 0;
-    for (auto [arg, act] : llvm::zip_equal(callOp.getOperands(), ArgActivity)) {
-      fwdIndex++;
+      if (crRetActivity.size() != RetActivity.size())
+        return orig->emitError()
+               << "cannot apply custom rule to func " << callOp.getCallee()
+               << " (wrong ret activity size)";
 
-      if (gutils->isConstantValue(arg))
-        continue;
+      for (auto [act, crAct] : llvm::zip(ArgActivity, crArgActivity)) {
+        auto iattr = cast<ActivityAttr>(crAct);
+        auto val = iattr.getValue();
 
-      if (act == DIFFE_TYPE::DUP_ARG) {
-        cast<ClonableTypeInterface>(arg.getType())
-            .freeClonedValue(builder, revArguments[fwdIndex - 1]);
-        fwdIndex++;
-      } else {
-        auto diffe = revCallOp.getResult(revIndex);
-        gutils->addToDiffe(arg, diffe, builder);
-        revIndex++;
+        if (val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF ||
+            val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG ||
+            val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT)
+          continue;
+
+        return orig->emitError(
+            "custom rule for function does not match operand activities");
       }
+
+      for (auto [act, crAct] : llvm::zip(RetActivity, crRetActivity)) {
+        auto iattr = cast<ActivityAttr>(crAct);
+        auto val = iattr.getValue();
+
+        if (val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF ||
+            val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG ||
+            val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT)
+          continue;
+
+        return orig->emitError(
+            "custom rule for function does not match result activities");
+      }
+    }
+
+    Value tape = gutils->popCache(caches[0], builder);
+
+    SmallVector<Value> operands;
+    SmallVector<Type> resultTypes;
+
+    for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
+      if (act == DIFFE_TYPE::OUT_DIFF) {
+        operands.push_back(gutils->diffe(res, builder));
+      }
+    }
+
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(primalCall);
+
+      int operandIndex = 0;
+      for (auto [act, operand] :
+           llvm::zip_equal(ArgActivity, orig->getOperands())) {
+        if (act == DIFFE_TYPE::OUT_DIFF) {
+          resultTypes.push_back(cast<AutoDiffTypeInterface>(operand.getType())
+                                    .getShadowType(/*width=*/1));
+        }
+        if (act == DIFFE_TYPE::DUP_ARG) {
+          operandIndex++;
+          primalCall->insertOperands(operandIndex,
+                                     gutils->invertPointerM(operand, builder));
+        }
+        operandIndex++;
+      }
+    }
+
+    auto revCall = CallCustomReverseOp::create(
+        builder, orig->getLoc(), resultTypes, cr.getSymName(), operands, tape);
+
+    int didx = 0;
+    for (auto [act, operand] :
+         llvm::zip_equal(ArgActivity, orig->getOperands())) {
+      if (act == DIFFE_TYPE::OUT_DIFF) {
+        Value diffe = revCall->getResult(didx);
+        gutils->addToDiffe(operand, diffe, builder);
+        didx++;
+      }
+    }
+
+    for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
+      if (act == DIFFE_TYPE::OUT_DIFF)
+        gutils->zeroDiffe(res, builder);
     }
 
     return success();
@@ -220,14 +304,44 @@ public:
     Operation *newOp = gutils->getNewFromOriginal(orig);
     OpBuilder cacheBuilder(newOp);
 
-    for (auto arg : orig->getOperands()) {
-      Value toCache = gutils->getNewFromOriginal(arg);
-      if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
-        toCache = iface.cloneValue(cacheBuilder, toCache);
-      }
-      Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
-      cachedArguments.push_back(cache);
+    SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
+
+    auto callOp = cast<func::CallOp>(orig);
+    Operation *callee = symbolTable.lookup(callOp.getCallee());
+
+    StringAttr symName = nullptr;
+    auto fn = cast<FunctionOpInterface>(callee);
+    if (Operation *crOp = AutoDiffCallRev::getCustomRule(fn)) {
+      // replace op with an augmented primal and cache the tape
+      auto cr = cast<CustomReverseRuleOp>(crOp);
+      symName = cr.getSymNameAttr();
+    } else {
+      symName = StringAttr::get(orig->getContext(), "<placeholder>");
     }
+
+    SmallVector<Value> operands;
+    for (auto operand : newOp->getOperands())
+      operands.push_back(operand);
+
+    SmallVector<Type> resultTypes;
+
+    for (auto result : newOp->getResults())
+      resultTypes.push_back(result.getType());
+
+    resultTypes.push_back(enzyme::TapeType::get(orig->getContext()));
+
+    auto primal = CallAugmentedPrimalOp::create(cacheBuilder, orig->getLoc(),
+                                                resultTypes, symName, operands);
+
+    for (auto [oldRes, newRes] :
+         llvm::zip(newOp->getResults(), primal->getResults()))
+      oldRes.replaceAllUsesWith(newRes);
+
+    Value tape = primal->getResult(primal->getNumResults() - 1);
+    cachedArguments.push_back(gutils->initAndPushCache(tape, cacheBuilder));
+
+    gutils->erase(newOp);
+    gutils->originalToNewFnOps[orig] = primal;
 
     return cachedArguments;
   }

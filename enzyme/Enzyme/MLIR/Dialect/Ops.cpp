@@ -13,6 +13,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -24,6 +25,7 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include <bits/std_thread.h>
 #include <type_traits>
 
 #define DEBUG_TYPE "enzyme"
@@ -639,6 +641,295 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModePrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  auto argActivity = getActivity();
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int argIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (argIdx >= getNumOperands()) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_active) {
+      auto AT = getOperand(argIdx).getType();
+
+      if (AT != IT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    if (val == Activity::enzyme_dup) {
+      auto AT = getOperand(argIdx).getType();
+      auto AST = cast<AutoDiffTypeInterface>(AT).getShadowType(/*width=*/1);
+
+      if (AT != IT || argIdx >= getNumOperands() - 1 ||
+          getOperand(argIdx + 1).getType() != AST) {
+        anyError = true;
+        break;
+      }
+
+      argIdx += 2;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError()
+           << "invalid arguments provided for function type and activity.";
+  }
+
+  int resIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_constnoneed ||
+        val == Activity::enzyme_activenoneed)
+      continue;
+
+    if (resIdx >= getNumResults() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_active || val == Activity::enzyme_const) {
+      auto RT = getResult(resIdx).getType();
+
+      if (OT != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModeReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  auto argActivity = getActivity();
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int argIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (argIdx >= getNumOperands() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed ||
+        val == Activity::enzyme_const || val == Activity::enzyme_constnoneed)
+      continue;
+
+    if (val == Activity::enzyme_active ||
+        val == Activity::enzyme_activenoneed) {
+      auto OST = cast<AutoDiffTypeInterface>(OT).getShadowType(/*width=*/1);
+      auto AT = getOperand(argIdx).getType();
+
+      if (OST != AT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid operand types for retActivity.";
+  }
+
+  int resIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_dup ||
+        val == Activity::enzyme_dupnoneed)
+      continue;
+
+    if (val == Activity::enzyme_active) {
+      auto OST = cast<AutoDiffTypeInterface>(IT).getShadowType(/*width=*/1);
+      auto RT = getResult(resIdx).getType();
+
+      if (OST != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
+
+  return success();
+}
+
+static ParseResult parseAugmentedFn(OpAsmParser &parser,
+                                    OperationState &result) {
+  SmallVector<Type> argTys, resTys;
+  SmallVector<DictionaryAttr> resAttrs;
+
+  bool isVariadic = false;
+  SmallVector<OpAsmParser::Argument> arguments;
+  if (failed(function_interface_impl::parseFunctionSignatureWithArguments(
+          parser, /*allowVariadic*/ false, arguments, isVariadic, resTys,
+          resAttrs)))
+    return failure();
+
+  auto *body = result.addRegion();
+  if (failed(
+          parser.parseRegion(*body, arguments, /*enableNameShadowing*/ false)))
+    return failure();
+
+  result.addAttribute(
+      "function_type",
+      TypeAttr::get(FunctionType::get(result.getContext(), argTys, resTys)));
+
+  return success();
+}
+
+static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
+                             Region &body) {
+  p << ' ';
+
+  call_interface_impl::printFunctionSignature(
+      p, fnType.getInputs(), /*argAttrs*/ nullptr, /*isVariadic*/ false,
+      fnType.getResults(), /*resultAttrs*/ nullptr, &body,
+      /*printEmptyResult*/ false);
+
+  p << ' ';
+  p.printRegion(body, /*printEntryBlockArgs*/ false,
+                /*printBlockTerminators*/ true);
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult
+CustomReverseRuleAugmentedPrimalOp::parse(OpAsmParser &parser,
+                                          OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleAugmentedPrimalOp::print(OpAsmPrinter &p) {
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleReverseOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult CustomReverseRuleReverseOp::parse(OpAsmParser &parser,
+                                                    OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleReverseOp::print(OpAsmPrinter &p) {
+  auto rule = cast<CustomReverseRuleOp>(this->getParentOp());
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CallAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CallCustomReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CallCustomReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
 
   return success();
 }
