@@ -54,8 +54,6 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
   enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
   enzyme::CustomReverseRuleReverseOp reverse = nullptr;
 
-  SmallVector<Operation *> toCopyOnBoth;
-
   for (Operation &op : bodyDef->without_terminator()) {
     if (auto AP = dyn_cast<enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
       if (primal) {
@@ -69,10 +67,6 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         return failure();
       }
       reverse = RO;
-    } else if (isa<enzyme::InitOp>(op)) {
-      // allowed
-    } else {
-      toCopyOnBoth.push_back(&op);
     }
   }
 
@@ -80,9 +74,9 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       primal.getBody().hasOneBlock() && reverse.getBody().hasOneBlock();
   if (!singleBlock) {
     // TODO: caching with non-structured control flow;
-    revRule->emitError() << "todo: lowering to func.func is not supported for "
-                            "custom rules with more than one block.";
-    return failure();
+    return revRule->emitError()
+           << "todo: lowering to func.func is not supported for "
+              "custom rules with more than one block.";
   }
 
   auto funcType = revRule.getFunctionType();
@@ -170,6 +164,35 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
 
     cacheTypes = llvm::map_to_vector(
         caches, [](CacheInfo info) { return info.cachedType(); });
+  }
+
+  SmallVector<Operation *> toCopyOnBoth;
+
+  for (Operation &op :
+       llvm::make_early_inc_range(bodyDef->without_terminator())) {
+    if (isa<enzyme::InitOp, enzyme::CustomReverseRuleReverseOp,
+            enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
+      // allowed
+      continue;
+    }
+
+    if (auto pushOp = dyn_cast<PushOp>(&op)) {
+      CacheInfo info(pushOp.getCache());
+
+      if (info.initOp->getBlock() == bodyDef &&
+          info.pushOp->getBlock() == bodyDef &&
+          info.popOp->getBlock() == bodyDef) {
+        info.popOp.getResult().replaceAllUsesWith(info.pushedValue());
+
+        info.pushOp.erase();
+        info.popOp.erase();
+        info.initOp.erase();
+      }
+
+      continue;
+    }
+
+    toCopyOnBoth.push_back(&op);
   }
 
   primalResultTypes.append(cacheTypes.begin(), cacheTypes.end());
@@ -262,9 +285,6 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       }
     }
   }
-
-  for (auto op : toCopyOnBoth)
-    op->erase();
 
   symbolTable.insert(primalFunc);
   SymbolTable::setSymbolVisibility(primalFunc,

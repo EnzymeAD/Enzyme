@@ -172,10 +172,13 @@ public:
       return failure();
     }
 
+    CallAugmentedPrimalOp primalCall;
     CustomReverseRuleOp cr = nullptr;
     if (Operation *crOp = AutoDiffCallRev::getCustomRule(fn)) {
       // replace op with an augmented primal and cache the tape
       cr = cast<CustomReverseRuleOp>(crOp);
+      primalCall =
+          cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
     } else {
       std::vector<bool> volatile_args(narg, true);
       std::vector<bool> returnShadow(nret, false);
@@ -194,9 +197,9 @@ public:
 
       SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
 
-      auto newOp =
+      primalCall =
           cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
-      newOp.setFnAttr(myCr);
+      primalCall.setFnAttr(myCr);
 
       cr = cast<CustomReverseRuleOp>(symbolTable.lookup(myCr.getValue()));
     }
@@ -253,11 +256,23 @@ public:
       }
     }
 
-    for (auto [act, operand] :
-         llvm::zip_equal(ArgActivity, orig->getOperands())) {
-      if (act == DIFFE_TYPE::OUT_DIFF) {
-        resultTypes.push_back(cast<AutoDiffTypeInterface>(operand.getType())
-                                  .getShadowType(/*width=*/1));
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(primalCall);
+
+      int operandIndex = 0;
+      for (auto [act, operand] :
+           llvm::zip_equal(ArgActivity, orig->getOperands())) {
+        if (act == DIFFE_TYPE::OUT_DIFF) {
+          resultTypes.push_back(cast<AutoDiffTypeInterface>(operand.getType())
+                                    .getShadowType(/*width=*/1));
+        }
+        if (act == DIFFE_TYPE::DUP_ARG) {
+          operandIndex++;
+          primalCall->insertOperands(operandIndex,
+                                     gutils->invertPointerM(operand, builder));
+        }
+        operandIndex++;
       }
     }
 
