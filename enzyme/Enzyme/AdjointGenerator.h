@@ -2052,11 +2052,12 @@ public:
         unsigned start = 0;
         Value *dindex = nullptr;
 
+        auto &dl = gutils->newFunc->getParent()->getDataLayout();
         while (1) {
           unsigned nextStart = size0;
 
           auto dt = TT[{-1}];
-          for (size_t i = start; i < size0; ++i) {
+          for (size_t i = start; i < size0;) {
             auto nex = TT[{(int)i}];
             if ((nex == BaseType::Anything && dt.isFloat()) ||
                 (dt == BaseType::Anything && nex.isFloat())) {
@@ -2068,6 +2069,13 @@ public:
             if (!Legal) {
               nextStart = i;
               break;
+            }
+            if (auto fltType = dt.isFloat()) {
+              i += dl.getTypeSizeInBits(fltType) / 8;
+            } else if (dt == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+            } else {
+              i++;
             }
           }
           Type *flt = dt.isFloat();
@@ -2131,11 +2139,12 @@ public:
 
         Value *dindex = nullptr;
 
+        auto &dl = gutils->newFunc->getParent()->getDataLayout();
         while (1) {
           unsigned nextStart = size1;
 
           auto dt = TT[{-1}];
-          for (size_t i = start; i < size1; ++i) {
+          for (size_t i = start; i < size1;) {
             auto nex = TT[{(int)i}];
             if (MD) {
               for (size_t j = 0; j < MD->getNumOperands(); j += 2) {
@@ -2163,6 +2172,13 @@ public:
             if (!Legal) {
               nextStart = i;
               break;
+            }
+            if (auto fltType = dt.isFloat()) {
+              i += dl.getTypeSizeInBits(fltType) / 8;
+            } else if (dt == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+            } else {
+              i++;
             }
           }
           Type *flt = dt.isFloat();
