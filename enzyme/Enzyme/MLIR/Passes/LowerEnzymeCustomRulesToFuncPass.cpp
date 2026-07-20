@@ -305,6 +305,13 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
 
   SetVector<Operation *> toDelete;
 
+  // Tracks the func.return ops whose tape result we have already threaded
+  // through. Revisiting one means the tape flows through a cycle of function
+  // returns (mutually recursive custom rules). That is fine as long as the
+  // tape stays opaque; only an attempt to flatten it across the recursion is
+  // unrepresentable (the flattened representation would be infinitely nested).
+  DenseSet<Operation *> expandedReturns;
+
   for (auto use : *uses) {
     Operation *user = use.getUser();
     auto CAP = dyn_cast<enzyme::CallAugmentedPrimalOp>(user);
@@ -335,10 +342,13 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     }
 
     toDelete.insert(CAP);
-    SmallVector<Operation *> tapeUsers(tape.getUsers().begin(),
-                                       tape.getUsers().end());
+    SmallVector<std::pair<unsigned, Operation *>> tapeUsers;
+    for (auto &U : tape.getUses())
+      tapeUsers.push_back({U.getOperandNumber(), U.getOwner()});
+
     while (!tapeUsers.empty()) {
-      Operation *tapeUser = tapeUsers.pop_back_val();
+      auto [operandNumber, tapeUser] = tapeUsers.pop_back_val();
+      Value curTape = tapeUser->getOperand(operandNumber);
       if (auto CCR = dyn_cast<enzyme::CallCustomReverseOp>(tapeUser)) {
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPoint(CCR);
@@ -359,8 +369,8 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         CacheInfo cInfo(pushOp.getCache());
 
         Value poppedTape = cInfo.popOp.getResult();
-        for (auto U : poppedTape.getUsers())
-          tapeUsers.push_back(U);
+        for (auto &U : poppedTape.getUses())
+          tapeUsers.push_back({U.getOperandNumber(), U.getOwner()});
 
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPoint(cInfo.initOp);
@@ -393,12 +403,104 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         toDelete.insert(cInfo.initOp);
         toDelete.insert(cInfo.pushOp);
         toDelete.insert(cInfo.popOp);
+      } else if (auto retOp = dyn_cast<func::ReturnOp>(tapeUser)) {
+        auto parentFn = retOp->getParentOfType<func::FuncOp>();
+        if (!parentFn)
+          return tapeUser->emitError() << "invalid return using tape";
+
+        auto values = tapeToCaches[curTape];
+
+        SmallVector<mlir::Type> cacheResultTypes =
+            llvm::map_to_vector(values, [](Value v) { return v.getType(); });
+
+        bool signatureChanged = !(cacheResultTypes.size() == 1 &&
+                                  cacheResultTypes[0] == curTape.getType());
+
+        if (!expandedReturns.insert(retOp).second) {
+          if (signatureChanged)
+            return retOp->emitError()
+                   << "todo: lowering to func.func is not supported for "
+                      "recursive custom rules whose tape is flattened across "
+                      "the recursion.";
+          continue;
+        }
+
+        retOp->setOperands(operandNumber, 1, values);
+
+        if (signatureChanged) {
+          SmallVector<mlir::Type> newResultTypes(
+              parentFn.getResultTypes().begin(),
+              parentFn.getResultTypes().end());
+          newResultTypes.erase(newResultTypes.begin() + operandNumber);
+          newResultTypes.insert(newResultTypes.begin() + operandNumber,
+                                cacheResultTypes.begin(),
+                                cacheResultTypes.end());
+          parentFn.setType(FunctionType::get(parentFn.getContext(),
+                                             parentFn.getArgumentTypes(),
+                                             newResultTypes));
+        }
+
+        SmallVector<func::CallOp> callers;
+        if (auto fnUses = SymbolTable::getSymbolUses(parentFn.getNameAttr(),
+                                                     symbolTable.getOp())) {
+          for (auto fnUse : *fnUses)
+            if (auto call = dyn_cast<func::CallOp>(fnUse.getUser()))
+              callers.push_back(call);
+        }
+
+        unsigned n = cacheResultTypes.size();
+        for (auto call : callers) {
+          func::CallOp target = call;
+          if (signatureChanged) {
+            OpBuilder callBuilder(call);
+            target = func::CallOp::create(callBuilder, call.getLoc(), parentFn,
+                                          call.getOperands());
+
+            // Results before the tape map one-to-one.
+            for (unsigned i = 0; i < operandNumber; ++i)
+              call.getResult(i).replaceAllUsesWith(target.getResult(i));
+
+            // Results after the tape are shifted by (n - 1).
+            for (unsigned i = operandNumber + 1; i < call.getNumResults(); ++i)
+              call.getResult(i).replaceAllUsesWith(target.getResult(i - 1 + n));
+
+            toDelete.insert(call);
+          }
+
+          Value oldTapeResult = call.getResult(operandNumber);
+          SmallVector<Value> newCaches(
+              target.getResults().slice(operandNumber, n).begin(),
+              target.getResults().slice(operandNumber, n).end());
+          tapeToCaches[oldTapeResult] = newCaches;
+          for (auto &U : oldTapeResult.getUses())
+            tapeUsers.push_back({U.getOperandNumber(), U.getOwner()});
+        }
       } else {
         tapeUser->emitError()
             << "todo: support tape going through this operation";
         return failure();
       }
     }
+  }
+
+  for (auto use : *uses) {
+    auto CCR = dyn_cast<enzyme::CallCustomReverseOp>(use.getUser());
+    if (!CCR || toDelete.contains(CCR))
+      continue;
+
+    OpBuilder builder(CCR);
+    SmallVector<Value> operands(
+        CCR->getOperands().slice(0, CCR->getNumOperands() - 1).begin(),
+        CCR->getOperands().slice(0, CCR->getNumOperands() - 1).end());
+    operands.push_back(CCR.getTape());
+    auto reverseCall =
+        func::CallOp::create(builder, CCR.getLoc(), reverseFunc, operands);
+    for (auto [oldRes, newRes] :
+         llvm::zip(CCR.getResults(), reverseCall.getResults())) {
+      oldRes.replaceAllUsesWith(newRes);
+    }
+
+    toDelete.insert(CCR);
   }
 
   toDelete.insert(revRule);
