@@ -316,4 +316,12 @@ def LowerAffineAtomicRmwPass : Pass<"lower-affine-atomic-rmw"> {
   ];
 }
 
+def LowerBinomialProgressPass : Pass<"lower-enzyme-binomial-progress"> {
+  let summary = "Lower enzyme.binomial_progress to scf/arith";
+  let dependentDialects = [
+    "scf::SCFDialect",
+    "arith::ArithDialect"
+  ];
+}
+
 #endif // ENZYME_PASSES
