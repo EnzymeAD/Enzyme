@@ -64,7 +64,7 @@ jobs:
     - name: add llvm without clang and flang
       if: ${{ matrix.compiler == 'ifx' }}
       run: |
-        set -e
+        set -eo pipefail
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip
@@ -72,7 +72,7 @@ jobs:
     - name: add llvm with clang and flang
       if: ${{ matrix.compiler != 'ifx' }}
       run: |
-        set -e
+        set -eo pipefail
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.version }} flang-${{ matrix.version }}
@@ -80,7 +80,7 @@ jobs:
     - name: add intel tools
       if: ${{ matrix.compiler == 'ifx' }}
       run: |
-        set -e
+        set -eo pipefail
         wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
