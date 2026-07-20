@@ -2072,7 +2072,7 @@ public:
             }
             if (auto fltType = dt.isFloat()) {
               i += dl.getTypeSizeInBits(fltType) / 8;
-            } else if (dt.isPointer()) {
+            } else if (dt == BaseType::Pointer) {
               i += dl.getPointerSizeInBits() / 8;
             } else {
               i++;
@@ -2175,7 +2175,7 @@ public:
             }
             if (auto fltType = dt.isFloat()) {
               i += dl.getTypeSizeInBits(fltType) / 8;
-            } else if (dt.isPointer()) {
+            } else if (dt == BaseType::Pointer) {
               i += dl.getPointerSizeInBits() / 8;
             } else {
               i++;
