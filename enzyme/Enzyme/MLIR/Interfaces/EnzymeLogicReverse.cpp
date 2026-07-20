@@ -319,6 +319,16 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   SymbolTable symbolTable(SymbolTable::getNearestSymbolTable(fn));
 
+  if (StringAttr existingCustomRuleName =
+          fn->getAttrOfType<StringAttr>("enzyme.custom_rule")) {
+    auto CR =
+        symbolTable.lookup<enzyme::CustomReverseRuleOp>(existingCustomRuleName);
+
+    if (CR) {
+      return FlatSymbolRefAttr::get(existingCustomRuleName);
+    }
+  }
+
   IRMapping originalToNew;
   std::map<Operation *, Operation *> originalToNewOps;
 
@@ -373,6 +383,9 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   auto customRule = enzyme::CustomReverseRuleOp::create(
       builder, fn.getLoc(), ruleNameAttr, TypeAttr::get(fn.getFunctionType()),
       argActivityAttr, retActivityAttr);
+  ruleNameAttr = symbolTable.insert(customRule);
+
+  fn->setAttr("enzyme.custom_rule", ruleNameAttr);
 
   auto ip = builder.saveInsertionPoint();
   Block *ruleBody = builder.createBlock(&customRule.getBody());
