@@ -909,7 +909,8 @@ struct ExpandImpulsePass
             hasAdaptationIn
                 ? DualAveragingState::fromValues(
                       ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, initialStepSize);
+                : initDualAveraging(rewriter, loc, initialStepSize,
+                                    /*logOfProduct=*/true);
 
         WelfordState welfordState;
         WelfordConfig welfordConfig;
@@ -1260,7 +1261,8 @@ struct ExpandImpulsePass
             hasAdaptationIn
                 ? DualAveragingState::fromValues(
                       ArrayRef<Value>(adaptationInVals).take_front(5))
-                : initDualAveraging(rewriter, loc, stepSize);
+                : initDualAveraging(rewriter, loc, stepSize,
+                                    /*logOfProduct=*/true);
         WelfordState w =
             hasAdaptationIn
                 ? WelfordState::fromValues(

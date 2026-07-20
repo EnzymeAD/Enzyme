@@ -81,6 +81,29 @@ def BatchDiffPass : Pass<"enzyme-diff-batch">{
   ];
 }
 
+def EnzymeActivityOpt : Pass<"enzyme-activity-opt">{
+  let summary = "Optimize activity for differentiation";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect",
+  ];
+  let options = [
+    Option<
+      /*C++ variable name=*/"dataflow",
+      /*CLI argument=*/"dataflow",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether to use the new Dataflow activity analysis"
+    >,
+    Option<
+      /*C++ variable name=*/"printActivityAnalysis",
+      /*CLI argument=*/"print",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Print the dataflow activity analysis results used by the optimizer"
+    >,
+  ];
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
@@ -290,6 +313,14 @@ def LowerAffineAtomicRmwPass : Pass<"lower-affine-atomic-rmw"> {
   let summary = "Lower AffineRmw to MemrefRmw";
   let dependentDialects = [
     "memref::MemRefDialect"
+  ];
+}
+
+def LowerBinomialProgressPass : Pass<"lower-enzyme-binomial-progress"> {
+  let summary = "Lower enzyme.binomial_progress to scf/arith";
+  let dependentDialects = [
+    "scf::SCFDialect",
+    "arith::ArithDialect"
   ];
 }
 

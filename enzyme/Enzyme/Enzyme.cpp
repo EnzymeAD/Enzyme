@@ -1459,10 +1459,12 @@ public:
 
     auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                     Arch == Triple::amdgcn;
+                     Arch == Triple::amd_target;
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
+
+    std::vector<bool> nowrite_shadows(fn->arg_size(), false);
 
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
@@ -1493,9 +1495,9 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
-          options.runtimeActivity, options.strongZero, width,
-          /*atomicAdd*/ AtomicAdd);
+          subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+          forceAnonymousTape, options.runtimeActivity, options.strongZero,
+          width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1572,9 +1574,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
-          forceAnonymousTape, options.runtimeActivity, options.strongZero,
-          width,
-          /*atomicAdd*/ AtomicAdd);
+          nowrite_shadows, forceAnonymousTape, options.runtimeActivity,
+          options.strongZero, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -2608,7 +2609,7 @@ public:
               .getArch();
 
       bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                       Arch == Triple::amdgcn;
+                       Arch == Triple::amd_target;
 
       IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(
@@ -3135,7 +3136,7 @@ AnalysisKey EnzymeNewPM::Key;
 
 static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #if LLVM_VERSION_MAJOR >= 23
-  return getInlineParams(Level.getSpeedupLevel());
+  return getInlineParamsFromOptLevel(static_cast<unsigned>(Level));
 #else
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 #endif
@@ -3271,7 +3272,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // system libraries and other oracles.
     MPM.addPass(InferFunctionAttrsPass());
 
-    if (Level.getSpeedupLevel() > 1) {
+#if LLVM_VERSION_MAJOR >= 23
+    if (Level > OptimizationLevel::O1)
+#else
+    if (Level.getSpeedupLevel() > 1)
+#endif
+    {
       MPM.addPass(createModuleToFunctionPassAdaptor(CallSiteSplittingPass(),
                                                     EagerlyInvalidateAnalyses));
 
@@ -3345,7 +3351,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // have to resolve varargs calls, etc, so let instcombine do this.
     FunctionPassManager PeepholeFPM;
     PeepholeFPM.addPass(InstCombinePass());
+#if LLVM_VERSION_MAJOR >= 23
+    if (Level > OptimizationLevel::O1)
+#else
     if (Level.getSpeedupLevel() > 1)
+#endif
       PeepholeFPM.addPass(AggressiveInstCombinePass());
 
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(PeepholeFPM),
@@ -3483,7 +3493,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MainFPM.addPass(MergedLoadStoreMotionPass());
 
     LoopPassManager LPM;
+#if LLVM_VERSION_MAJOR >= 23
+    if (EnableLoopFlatten && Level > OptimizationLevel::O1)
+#else
     if (EnableLoopFlatten && Level.getSpeedupLevel() > 1)
+#endif
       LPM.addPass(LoopFlattenPass());
     LPM.addPass(IndVarSimplifyPass());
     LPM.addPass(LoopDeletionPass());
