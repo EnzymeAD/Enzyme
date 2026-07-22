@@ -56,10 +56,12 @@ jobs:
         ref: ${{ matrix.commit }}
         path: rust
     - name: Cache ccache
-      uses: actions/cache@v4
+      uses: wsmoses/gcp-cache@main
       with:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-rust-${{ matrix.os }}-${{ matrix.commit }}
+        gcp-bucket: enzyme-ci-transient
+        gcp-prefix: enzymerust/
     - name: ccache --show-stats
       run: |
         ccache --show-stats --verbose

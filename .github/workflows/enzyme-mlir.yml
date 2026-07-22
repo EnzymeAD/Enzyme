@@ -71,7 +71,7 @@ jobs:
         path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
         gcp-bucket: enzyme-ci-transient
-        gcp-prefix: enzymemlir-
+        gcp-prefix: enzymemlir/
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
