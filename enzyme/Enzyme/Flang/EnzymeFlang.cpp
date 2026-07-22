@@ -74,9 +74,9 @@ namespace {
 /// compare case-insensitively. Matching on the `enzyme_autodiff` /
 /// `enzyme_fwddiff` substrings intentionally covers every spelling Enzyme
 /// recognizes at the IR level: the `enzyme` module bindings
-/// (`enzyme_autodiff`), the raw implicit-interface hooks (`f__enzyme_autodiff`),
-/// and the C-style names (`__enzyme_autodiff`). See Enzyme/Fortran/enzyme.f90
-/// and Enzyme/Fortran/enzyme_function_hooks.f90.
+/// (`enzyme_autodiff`), the raw implicit-interface hooks
+/// (`f__enzyme_autodiff`), and the C-style names (`__enzyme_autodiff`). See
+/// Enzyme/Fortran/enzyme.f90 and Enzyme/Fortran/enzyme_function_hooks.f90.
 bool isEnzymeHook(llvm::StringRef name) {
   return name.contains_insensitive("enzyme_autodiff") ||
          name.contains_insensitive("enzyme_fwddiff");
@@ -117,10 +117,10 @@ class EnzymeFlangAction final : public PluginParseTreeAction {
     llvm::outs() << "enzyme: " << visitor.count
                  << " Enzyme differentiation call(s) found\n";
 
-    // TODO(enzyme): recognize Enzyme activity annotations at the frontend level,
-    // analogous to the `enzyme_inactive` / `enzyme_function_like` / ...
-    // ParsedAttrInfo registrations in Enzyme/Clang/EnzymeClang.cpp. Flang has no
-    // custom-attribute plugin surface, so this would likely be driven off
+    // TODO(enzyme): recognize Enzyme activity annotations at the frontend
+    // level, analogous to the `enzyme_inactive` / `enzyme_function_like` / ...
+    // ParsedAttrInfo registrations in Enzyme/Clang/EnzymeClang.cpp. Flang has
+    // no custom-attribute plugin surface, so this would likely be driven off
     // directives/comments or naming conventions in the parse tree.
 
     // TODO(enzyme): once Flang exposes a code-generation / PassBuilder plugin
