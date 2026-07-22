@@ -498,8 +498,8 @@ public:
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
           assert(allocOp && "expected MultidimensionalAllocInterface op");
-          initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
-                                       newType, dynamicDims);
+          initValue = allocOp.allocate(rewriter, info.initOp->getLoc(), newType,
+                                       dynamicDims);
           newPushValues.push_back(initValue);
         }
 

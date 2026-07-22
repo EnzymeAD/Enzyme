@@ -318,4 +318,3 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
   });
 }
-
