@@ -4896,7 +4896,8 @@ public:
         auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
             *Builder2.GetInsertBlock()->getParent()->getParent(), secretty,
             /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr,
-            cast<IntegerType>(length->getType())->getBitWidth());
+            cast<IntegerType>(length->getType())->getBitWidth(),
+            /*runtimeActivity*/ false, gutils->AtomicAdd);
 
         Builder2.CreateCall(dmemcpy, args, ReverseDefs);
       }

@@ -9184,7 +9184,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
               srcalign, dstaddr, srcaddr,
               cast<IntegerType>(length->getType())->getBitWidth(),
-              gutils->runtimeActivity);
+              gutils->runtimeActivity, gutils->AtomicAdd);
           Builder2.CreateCall(dmemcpy, args);
         }
       }

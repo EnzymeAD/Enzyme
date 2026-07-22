@@ -768,7 +768,7 @@ parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
-    bool runtimeActivity = false);
+    bool runtimeActivity, bool atomic);
 
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
@@ -819,7 +819,7 @@ llvm::Function *getOrInsertDifferentialFloatMemcpyMat(
 llvm::Function *getOrInsertDifferentialFloatMemmove(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
-    bool runtimeActivity = false);
+    bool runtimeActivity, bool atomic);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
                                        llvm::Type *Type, unsigned width);

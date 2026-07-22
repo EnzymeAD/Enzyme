@@ -1011,7 +1011,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned srcalign,
                                              unsigned dstaddr, unsigned srcaddr,
                                              unsigned bitwidth,
-                                             bool runtimeActivity) {
+                                             bool runtimeActivity,
+                                             bool atomic) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
@@ -1024,6 +1025,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     name += "sadd" + std::to_string(srcaddr);
   if (runtimeActivity)
     name += "_runtime_activity";
+  if (atomic)
+    name += "_atomic";
   std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
                                 PointerType::get(elementType, srcaddr),
                                 IntegerType::get(M.getContext(), bitwidth)};
@@ -1153,11 +1156,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     }
 
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-    StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
-    if (srcalign) {
-      srcl->setAlignment(Align(srcalign));
-      srcs->setAlignment(Align(srcalign));
+    if (atomic) {
+      B.CreateAtomicRMW(AtomicRMWInst::BinOp::FAdd, srci, dstl,
+                        MaybeAlign(srcalign), AtomicOrdering::Monotonic,
+                        SyncScope::System);
+    } else {
+      LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+      StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
+      if (srcalign) {
+        srcl->setAlignment(Align(srcalign));
+        srcs->setAlignment(Align(srcalign));
+      }
     }
 
     Value *next =
@@ -2112,13 +2121,14 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 // TODO implement differential memmove
 Function *getOrInsertDifferentialFloatMemmove(
     Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
-    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity) {
+    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity, bool atomic) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
            "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth, runtimeActivity);
+                                            srcaddr, bitwidth, runtimeActivity,
+                                            atomic);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
