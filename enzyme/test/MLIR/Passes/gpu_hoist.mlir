@@ -33,7 +33,8 @@ func.func @test_gpu_hoist(%ub_outer: index, %ub_inner: index, %val: f32) {
 // CHECK-NEXT:  scf.for %[[IV_REV:.+]] = %[[C0]] to %[[ARG0]] step %[[C1]] {
 // CHECK-NEXT:    %[[REV_IV:.+]] = arith.subi %[[ARG0]], %[[C1]] : index
 // CHECK-NEXT:    %[[IDX:.+]] = arith.subi %[[REV_IV]], %[[IV_REV]] : index
-// CHECK-NEXT:    %[[SUBVIEW2:.+]] = memref.subview %[[ALLOC]][%[[IDX]], 0] [1, %[[ARG1]]] [1, 1] : memref<?x?xf32, 1> to memref<?xf32, strided<[1], offset: ?>, 1>
+// CHECK-NEXT:    %[[DIM:.+]] = memref.dim %[[ALLOC]], %[[C1]] : memref<?x?xf32, 1>
+// CHECK-NEXT:    %[[SUBVIEW2:.+]] = memref.subview %[[ALLOC]][%[[IDX]], 0] [1, %[[DIM]]] [1, 1] : memref<?x?xf32, 1> to memref<?xf32, strided<[1], offset: ?>, 1>
 // CHECK-NEXT:    %[[LD:.+]] = memref.load %[[SUBVIEW2]][%[[C0]]] : memref<?xf32, strided<[1], offset: ?>, 1>
 // CHECK-NEXT:    "test.use"(%[[LD]]) : (f32) -> ()
 // CHECK-NEXT:  }
