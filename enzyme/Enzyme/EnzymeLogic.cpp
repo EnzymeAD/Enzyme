@@ -4553,12 +4553,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         IRBuilder<> entryBuilder(gutils->inversionAllocs,
                                  gutils->inversionAllocs->begin());
 
-        // Note: intentionally not using isGPUArch(TT) here since the
-        // thread-id/barrier codegen below only knows how to handle
-        // NVPTX and AMDGPU (it is unreachable for any other arch, e.g.
-        // Metal air64).
-        if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-             Arch == Triple::amd_target) &&
+        if (isGPUArch(TT) &&
             g.getType()->getAddressSpace() == SharedAddrSpace) {
           if (sharedBlock == nullptr)
             sharedBlock = BasicBlock::Create(entry->getContext(), "shblock",
