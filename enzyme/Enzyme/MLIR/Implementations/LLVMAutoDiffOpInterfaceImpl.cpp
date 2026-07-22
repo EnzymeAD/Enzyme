@@ -51,7 +51,7 @@ struct SelectActivityInterface
 
 class ArrayTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<ArrayTypeInterface,
-                                                   LLVM::LLVMArrayType> {
+                                                  LLVM::LLVMArrayType> {
 public:
   int64_t getApproxSize(Type self) const {
     auto arrayType = cast<LLVM::LLVMArrayType>(self);
@@ -67,7 +67,7 @@ public:
 
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
-                                                   LLVM::LLVMPointerType> {
+                                                  LLVM::LLVMPointerType> {
 public:
   mlir::Attribute createNullAttr(mlir::Type self) const {
     llvm::errs() << " unsupported: createNullAttribute of pointertype\n";
@@ -114,7 +114,6 @@ public:
     }
     return failure();
   }
-
 
   bool isZero(Type self, Value val) const { return false; }
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
