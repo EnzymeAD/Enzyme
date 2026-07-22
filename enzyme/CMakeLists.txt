@@ -221,6 +221,22 @@ else()
 endif()
 message("found Clang ${Clang_FOUND}")
 
+# Flang is discovered the same way as Clang. Modern Flang installs a
+# FlangConfig.cmake (generated from flang/cmake/modules/FlangConfig.cmake.in),
+# which exports the `flangFrontend` target and sets FLANG_INCLUDE_DIRS. This is
+# only needed to build the real FlangEnzyme frontend plugin; when Flang is not
+# found we fall back to the FlangEnzyme symlink further below.
+if (DEFINED Flang_DIR)
+    find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
+if (${Flang_FOUND})
+    include_directories(${FLANG_INCLUDE_DIRS})
+    message("flang inc dir ${FLANG_INCLUDE_DIRS}")
+endif()
+else()
+    set(Flang_FOUND 0)
+endif()
+message("found Flang ${Flang_FOUND}")
+
 if (DEFINED MLIR_DIR)
     find_package(MLIR REQUIRED CONFIG PATHS ${MLIR_DIR} NO_DEFAULT_PATH)
     if (${MLIR_FOUND})
@@ -354,14 +370,27 @@ add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
 add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
 target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
 endif()
+
+if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+export(TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 endif()
 
-if (${ENZYME_FLANG} AND ${Clang_FOUND})
-	add_custom_target(link_target ALL
-  COMMAND ${CMAKE_COMMAND} -E create_symlink
-	  ClangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
-	  ${PROJECT_BINARY_DIR}/Enzyme/FlangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
-  )
+if (ENZYME_FLANG)
+    if (Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+        # A real FlangEnzyme frontend plugin is built by Enzyme/CMakeLists.txt
+        # (target FlangEnzyme-${LLVM_VERSION_MAJOR}); nothing to do here.
+    elseif (${Clang_FOUND})
+        # Fallback for older LLVM or installs without Flang development files:
+        # keep the historical behaviour of symlinking FlangEnzyme -> ClangEnzyme
+        # so the shared object is still usable as a `-fpass-plugin`.
+        add_custom_target(link_target ALL
+          COMMAND ${CMAKE_COMMAND} -E create_symlink
+              ClangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
+              ${PROJECT_BINARY_DIR}/Enzyme/FlangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
+          )
+    endif()
 endif()
 
 if (ENZYME_ENABLE_PLUGINS)

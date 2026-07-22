@@ -75,6 +75,23 @@ if (ENZYME_ENABLE_PLUGINS)
                 )
                     target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
             endif()
+            if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+                add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
+                    ${ENZYME_SRC} Flang/EnzymeFlang.cpp
+                    PARTIAL_SOURCES_INTENDED
+                    MODULE
+                    DEPENDS
+                    intrinsics_gen
+            	LINK_COMPONENTS
+            	LLVM
+                )
+                    target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+                    # flangFrontend is the umbrella Flang frontend library; it
+                    # transitively pulls in the FortranParser/Semantics/Evaluate/
+                    # Support libraries the plugin needs. This mirrors the upstream
+                    # example flang/examples/PrintFlangFunctionNames.
+                    target_link_libraries(FlangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE flangFrontend)
+            endif()
                     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                     ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
                     PARTIAL_SOURCES_INTENDED
@@ -107,6 +124,23 @@ if (ENZYME_ENABLE_PLUGINS)
                      clang
                  )
              target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+             endif()
+             if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+                 add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
+                     ${ENZYME_SRC} Flang/EnzymeFlang.cpp
+                     PARTIAL_SOURCES_INTENDED
+                     MODULE
+                     DEPENDS
+                     intrinsics_gen
+                     PLUGIN_TOOL
+                     flang
+                 )
+             target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+             # flangFrontend is the umbrella Flang frontend library; it
+             # transitively pulls in the FortranParser/Semantics/Evaluate/Support
+             # libraries the plugin needs. This mirrors the upstream example
+             # flang/examples/PrintFlangFunctionNames.
+             target_link_libraries(FlangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE flangFrontend)
              endif()
                  add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                      ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
@@ -264,6 +298,12 @@ install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     LIBRARY DESTINATION lib COMPONENT shlib
     COMPONENT dev)
     install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
+endif()
+if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+install(TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    COMPONENT dev)
 endif()
 install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets

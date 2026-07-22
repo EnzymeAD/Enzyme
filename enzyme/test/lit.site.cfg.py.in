@@ -127,6 +127,17 @@ if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
 
+# FlangEnzyme frontend plugin. The `flang` feature gates tests that load the
+# frontend plugin (`flang -fc1 -load ... -plugin enzyme`). It requires a Flang
+# frontend new enough to support plugins (LLVM >= 20) AND that the FlangEnzyme
+# plugin was actually built (ENZYME_FLANG=ON). `%loadFlangEnzyme` is the path to
+# the built FlangEnzyme shared object.
+enzyme_flang_built = "@ENZYME_FLANG@" in ("ON", "1", "TRUE", "YES")
+if enzyme_flang_built and "flang" in config.fc and int(config.llvm_ver) >= 20:
+    config.available_features.add('flang')
+config.substitutions.append(('%loadFlangEnzyme',
+    '@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext))
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:

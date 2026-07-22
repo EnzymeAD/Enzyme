@@ -80,3 +80,38 @@ then you can make use of activity descriptors like so:
   call enzyme_autodiff(my_subroutine, enzyme_const, n, &
                        enzyme_dup, x, dx, enzyme_dup, y, dy
 ```
+
+## Flang compiler plugin (experimental sketch)
+
+`Enzyme/Flang/EnzymeFlang.cpp` is a *sketch* of a Flang frontend plugin, built
+as `FlangEnzyme-<LLVM major>` when Enzyme is configured with `-DENZYME_FLANG=ON`
+against a Flang installation new enough to expose the plugin API
+(LLVM ≥ 20; point CMake at it with `-DFlang_DIR=<flang>/lib/cmake/flang`). When
+those are unavailable, `FlangEnzyme-<LLVM major>` falls back to a symlink to the
+Clang plugin, as before.
+
+> [!NOTE]
+> This is a starting point, not a full frontend integration. Flang's plugin API
+> (`PluginParseTreeAction`) is a *replacement* frontend action limited to
+> `flang -fc1` (and, per the Flang docs, Linux only). Unlike the Clang plugin it
+> has **no** hook to inject the Enzyme code-generation pass, so the frontend
+> plugin currently only *inspects* the parse tree and reports the Enzyme
+> differentiation calls it finds. Actual differentiation is still performed by
+> the LLVM pass plugin.
+
+The same `FlangEnzyme-<LLVM major>` shared object therefore serves two roles:
+
+```bash
+# 1. Inspect Enzyme usage at the Flang frontend (this plugin):
+flang -fc1 -load ./FlangEnzyme-<ver>.so -plugin enzyme input.f90
+
+# 2. Actually differentiate, using the LLVM-pass-plugin role of the *same*
+#    shared object (see flang/docs/FlangDriver.md, `-fpass-plugin`):
+flang -O2 -fpass-plugin=./FlangEnzyme-<ver>.so input.f90 -o input
+```
+
+The `TODO(enzyme)` markers in `EnzymeFlang.cpp` outline the natural next steps:
+recognizing Enzyme activity annotations at the frontend level (analogous to the
+`enzyme_inactive` / `enzyme_function_like` attributes handled by the Clang
+plugin), and injecting the Enzyme pass directly once Flang grows a
+code-generation plugin hook.
