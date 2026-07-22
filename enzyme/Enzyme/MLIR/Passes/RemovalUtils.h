@@ -667,8 +667,12 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      Attribute memorySpace = nullptr;
       MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
+        if (auto MT = dyn_cast<MemRefType>(ST))
+          memorySpace = MT.getMemorySpace();
+
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
         if (svOp) {
           allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
@@ -693,6 +697,10 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
