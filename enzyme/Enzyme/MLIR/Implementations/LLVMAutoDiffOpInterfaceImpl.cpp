@@ -51,7 +51,7 @@ struct SelectActivityInterface
 
 class ArrayTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<ArrayTypeInterface,
-                                                   LLVM::LLVMArrayType> {
+                                                  LLVM::LLVMArrayType> {
 public:
   mlir::Attribute createNullAttr(mlir::Type self) const {
     llvm::errs() << " unsupported: createNullAttribute of LLVMArrayType\n";
