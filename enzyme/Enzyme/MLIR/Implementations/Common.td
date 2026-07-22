@@ -159,6 +159,8 @@ def DivF : ArithInst<"DivFOp">;
 def RemF : ArithInst<"RemFOp">;
 def CmpF : ArithInst<"CmpFOp">;
 def Arith_Select : ArithInst<"SelectOp">;
+def Llvm_Select : LlvmInst<"SelectOp">;
+
 
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;

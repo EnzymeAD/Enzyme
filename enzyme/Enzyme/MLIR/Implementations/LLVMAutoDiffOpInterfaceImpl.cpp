@@ -49,20 +49,25 @@ struct SelectActivityInterface
   }
 };
 
-static unsigned getSizeInBytes(Type typ) {
-  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(typ)) {
-    return arrayType.getNumElements() *
-           getSizeInBytes(arrayType.getElementType());
+class ArrayTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<ArrayTypeInterface,
+                                                   LLVM::LLVMArrayType> {
+public:
+  int64_t getApproxSize(Type self) const {
+    auto arrayType = cast<LLVM::LLVMArrayType>(self);
+    if (auto elemType =
+            dyn_cast<AutoDiffTypeInterface>(arrayType.getElementType())) {
+      int64_t elSize = elemType.getApproxSize();
+      if (elSize != INT64_MAX)
+        return arrayType.getNumElements() * elSize;
+    }
+    return INT64_MAX;
   }
-  if (typ.isIntOrFloat()) {
-    return typ.getIntOrFloatBitWidth() / 8;
-  }
-  return 0;
-}
+};
 
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
-                                                  LLVM::LLVMPointerType> {
+                                                   LLVM::LLVMPointerType> {
 public:
   mlir::Attribute createNullAttr(mlir::Type self) const {
     llvm::errs() << " unsupported: createNullAttribute of pointertype\n";
@@ -96,7 +101,8 @@ public:
     if (auto allocaOp = val.getDefiningOp<LLVM::AllocaOp>()) {
       Value zero =
           LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
-      unsigned byteSize = getSizeInBytes(allocaOp.getElemType());
+      auto elemType = cast<AutoDiffTypeInterface>(allocaOp.getElemType());
+      unsigned byteSize = elemType.getApproxSize() / 8;
       Value byteValue = LLVM::ConstantOp::create(
           builder, loc, builder.getI64IntegerAttr(byteSize));
       Value arraySize = LLVM::SExtOp::create(builder, loc, byteValue.getType(),
@@ -108,6 +114,7 @@ public:
     }
     return failure();
   }
+
 
   bool isZero(Type self, Value val) const { return false; }
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
@@ -494,6 +501,8 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
     LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
+    LLVM::LLVMArrayType::attachInterface<ArrayTypeInterface>(*context);
+
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
