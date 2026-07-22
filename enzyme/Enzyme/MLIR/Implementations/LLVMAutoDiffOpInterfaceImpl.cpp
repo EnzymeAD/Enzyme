@@ -51,8 +51,69 @@ struct SelectActivityInterface
 
 class ArrayTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<ArrayTypeInterface,
-                                                  LLVM::LLVMArrayType> {
+                                                   LLVM::LLVMArrayType> {
 public:
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    llvm::errs() << " unsupported: createNullAttribute of LLVMArrayType\n";
+    return nullptr;
+  }
+
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
+    auto arrayTy = cast<LLVM::LLVMArrayType>(self);
+    Type elemTy = arrayTy.getElementType();
+    auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    if (!elemIface)
+      return LLVM::ZeroOp::create(builder, loc, arrayTy);
+
+    Value nullElem = elemIface.createNullValue(builder, loc);
+    Value result = LLVM::PoisonOp::create(builder, loc, arrayTy);
+    for (uint64_t i = 0; i < arrayTy.getNumElements(); ++i) {
+      result = LLVM::InsertValueOp::create(builder, loc, result, nullElem, i);
+    }
+    return result;
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto arrayTy = cast<LLVM::LLVMArrayType>(self);
+    Type elemTy = arrayTy.getElementType();
+    Value result = LLVM::PoisonOp::create(builder, loc, arrayTy);
+    auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    for (uint64_t i = 0; i < arrayTy.getNumElements(); ++i) {
+      Value aElem = LLVM::ExtractValueOp::create(builder, loc, a, i);
+      Value bElem = LLVM::ExtractValueOp::create(builder, loc, b, i);
+      Value sum;
+      if (elemIface) {
+        sum = elemIface.createAddOp(builder, loc, aElem, bElem);
+      } else {
+        sum = aElem;
+      }
+      result = LLVM::InsertValueOp::create(builder, loc, result, sum, i);
+    }
+    return result;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
+
   int64_t getApproxSize(Type self) const {
     auto arrayType = cast<LLVM::LLVMArrayType>(self);
     if (auto elemType =
