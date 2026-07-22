@@ -471,6 +471,38 @@ def DumpOp : Enzyme_Op<"dump"> {
   }];
 }
 
+def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
+      AllTypesMatch<["value", "result"]>,
+      TypesMatchWith<"value type matches element type of memref",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+    ]> {
+  let summary = "atomic rmw operation with ordering";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AtomicOrdering:$ordering,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `[` $indices `]` $ordering attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+
+  let extraClassDeclaration = [{
+    MemRefType getMemRefType() {
+      return ::llvm::cast<MemRefType>(getMemref().getType());
+    }
+  }];
+}
+
 def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
   let summary = "affine atomic rmw operation";
   let description = [{
@@ -483,7 +515,8 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
-      AffineMapAttr:$map);
+      AffineMapAttr:$map,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
 
   let assemblyFormat = [{
     $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`

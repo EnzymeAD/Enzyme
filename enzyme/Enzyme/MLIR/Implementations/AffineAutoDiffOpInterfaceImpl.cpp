@@ -474,20 +474,22 @@ struct AffineLoadOpInterfaceReverse
           }
         } else {
           bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+          auto alignAttr = loadOp->getAttrOfType<IntegerAttr>("alignment");
           // if index had to be cached, the pop is not necessarily a valid index
           if (hasIndex) {
             SmallVector<Value> indices;
             computeAffineIndices(builder, loadOp.getLoc(),
                                  loadOp.getAffineMap(), retrievedArguments,
                                  indices);
-            memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
-                                        arith::AtomicRMWKind::addf, gradient,
-                                        memrefGradient, indices);
+            enzyme::AtomicRMWOp::create(
+                builder, loadOp.getLoc(), gradient.getType(),
+                arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
+                memrefGradient, indices, alignAttr);
           } else {
             enzyme::AffineAtomicRMWOp::create(
                 builder, loadOp.getLoc(), gradient.getType(),
                 arith::AtomicRMWKind::addf, gradient, memrefGradient,
-                retrievedArguments, loadOp.getAffineMap());
+                retrievedArguments, loadOp.getAffineMap(), alignAttr);
           }
         }
       }
