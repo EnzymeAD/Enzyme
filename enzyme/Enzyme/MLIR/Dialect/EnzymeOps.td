@@ -22,6 +22,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -272,6 +273,32 @@ def PopOp : Enzyme_Op<"pop", [
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
+}
+
+def BinomialProgressScalarOrUnrankedTensor : AnyTypeOf<[
+    AnySignlessIntegerOrIndex,
+    UnrankedTensorOf<[AnySignlessInteger, Index]>],
+    "signless integer, index, or unranked tensor thereof">;
+
+def BinomialProgressOp : Enzyme_Op<"binomial_progress",
+    [Pure, SameOperandsAndResultType]> {
+  let summary = "Revolve binomial checkpointing split";
+  let description = [{
+    Given `num_steps` remaining iterations and a `budget` of available
+    checkpoints, returns how many steps to advance before placing the next
+    checkpoint: the largest `j` such that `C(j + budget - 1, j) <= num_steps`
+    (returning 1 when `num_steps == 1` or `budget == 1`). This is the classic
+    Revolve "split" function used for binomial checkpointing of loops.
+
+    `num_steps` and `budget` may be an index, a signless integer of any
+    width, or an unranked tensor thereof (with the result taking the same
+    type).
+  }];
+  let arguments = (ins BinomialProgressScalarOrUnrankedTensor:$num_steps,
+                       BinomialProgressScalarOrUnrankedTensor:$budget);
+  let results = (outs BinomialProgressScalarOrUnrankedTensor:$result);
+  let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
+  let hasFolder = 1;
 }
 
 def InitOp : Enzyme_Op<"init",

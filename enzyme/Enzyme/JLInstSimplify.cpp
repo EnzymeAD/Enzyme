@@ -61,7 +61,8 @@ using namespace llvm;
 namespace {
 
 bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
-                    llvm::AAResults &AA, llvm::LoopInfo &LI) {
+                    llvm::AAResults &AA, llvm::LoopInfo &LI,
+                    DominatorTree &DT) {
   bool changed = false;
 
   for (auto &BB : F)
@@ -107,7 +108,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
       if (legal) {
         if (auto alias = arePointersGuaranteedNoAlias(
-                TLI, AA, LI, I.getOperand(0), I.getOperand(1), false)) {
+                TLI, AA, DT, LI, I.getOperand(0), I.getOperand(1), false)) {
 
           bool val = *alias;
           auto repval = ICmpInst::isTrueWhenEqual(pred)
@@ -132,13 +133,15 @@ public:
     AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<DominatorTreeWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override {
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
     auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
     auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-    return jlInstSimplify(F, TLI, AA, LI);
+    auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    return jlInstSimplify(F, TLI, AA, LI, DT);
   }
 };
 
@@ -159,9 +162,9 @@ JLInstSimplifyNewPM::Result
 JLInstSimplifyNewPM::run(llvm::Function &F,
                          llvm::FunctionAnalysisManager &FAM) {
   bool changed = false;
-  changed = jlInstSimplify(F, FAM.getResult<TargetLibraryAnalysis>(F),
-                           FAM.getResult<AAManager>(F),
-                           FAM.getResult<LoopAnalysis>(F));
+  changed = jlInstSimplify(
+      F, FAM.getResult<TargetLibraryAnalysis>(F), FAM.getResult<AAManager>(F),
+      FAM.getResult<LoopAnalysis>(F), FAM.getResult<DominatorTreeAnalysis>(F));
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey JLInstSimplifyNewPM::Key;

@@ -725,8 +725,22 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     }
   endOMP:;
 
-    if (Limit->getType() != CanonicalIV->getType())
-      Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+    if (Limit->getType() != CanonicalIV->getType()) {
+      const SCEV *Zero = SE.getZero(Limit->getType());
+      const Loop *outermost = L;
+      while (outermost->getParentLoop()) {
+        outermost = outermost->getParentLoop();
+      }
+      BasicBlock *outermostPreheader = outermost->getLoopPreheader();
+      Instruction *context = outermostPreheader
+                                 ? outermostPreheader->getTerminator()
+                                 : loopContexts[L].preheader->getTerminator();
+      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero, context)) {
+        Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+      } else {
+        Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
+      }
+    }
 
 #if LLVM_VERSION_MAJOR >= 22
     SCEVExpander Exp(SE, "enzyme");
@@ -1289,7 +1303,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           limits[i] = found->second;
         } else {
           limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNUWAdd(
+              allocationBuilder.CreateNSWAdd(
                   limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
         }
       } else {
@@ -1301,7 +1315,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNUWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
       }
     }
   }
