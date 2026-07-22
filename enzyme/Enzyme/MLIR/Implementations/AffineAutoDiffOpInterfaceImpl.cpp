@@ -488,6 +488,14 @@ struct AffineParallelRegionBranchOpInterface
   }
 };
 
+// TODO(jacob): find a good place to put this
+static void copyAlignment(Operation *source, Operation *dest) {
+  auto alignAttrName = "alignment";
+  if (source->hasAttr(alignAttrName)) {
+    dest->setAttr(alignAttrName, source->getAttr(alignAttrName));
+  }
+}
+
 struct AffineLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
@@ -518,21 +526,26 @@ struct AffineLoadOpInterfaceReverse
                                  loadOp.getAffineMap(), retrievedArguments,
                                  indices);
 
-            Value loadedGradient = memref::LoadOp::create(
+            auto loadedGradient = memref::LoadOp::create(
                 builder, loadOp.getLoc(), memrefGradient, indices);
+            copyAlignment(loadOp, loadedGradient);
             Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                     loadedGradient, gradient);
-            memref::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
-                                    memrefGradient, indices);
+            auto storeGradientOp =
+                memref::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
+                                        memrefGradient, indices);
+            copyAlignment(loadOp, storeGradientOp);
           } else {
-            Value loadedGradient = affine::AffineLoadOp::create(
+            auto loadedGradient = affine::AffineLoadOp::create(
                 builder, loadOp.getLoc(), memrefGradient, loadOp.getAffineMap(),
                 ArrayRef<Value>(retrievedArguments));
+            copyAlignment(loadOp, loadedGradient);
             Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                     loadedGradient, gradient);
-            affine::AffineStoreOp::create(
+            auto storeOp = affine::AffineStoreOp::create(
                 builder, loadOp.getLoc(), addedGradient, memrefGradient,
                 loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
+            copyAlignment(loadOp, storeOp);
           }
         } else {
           bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
@@ -624,12 +637,16 @@ struct AffineStoreOpInterfaceReverse
             computeAffineIndices(builder, storeOp.getLoc(),
                                  storeOp.getAffineMap(), retrievedArguments,
                                  indices);
-            loadedGradient = memref::LoadOp::create(builder, storeOp.getLoc(),
-                                                    memrefGradient, indices);
+            auto loadGradientOp = memref::LoadOp::create(
+                builder, storeOp.getLoc(), memrefGradient, indices);
+            copyAlignment(storeOp, loadGradientOp);
+            loadedGradient = loadGradientOp;
           } else {
-            loadedGradient = affine::AffineLoadOp::create(
+            auto loadGradientOp = affine::AffineLoadOp::create(
                 builder, storeOp.getLoc(), memrefGradient,
                 storeOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
+            copyAlignment(storeOp, loadGradientOp);
+            loadedGradient = loadGradientOp;
           }
           gutils->addToDiffe(val, loadedGradient, builder);
         }
@@ -644,12 +661,14 @@ struct AffineStoreOpInterfaceReverse
           computeAffineIndices(builder, storeOp.getLoc(),
                                storeOp.getAffineMap(), retrievedArguments,
                                indices);
-          memref::StoreOp::create(builder, storeOp.getLoc(), zero,
-                                  memrefGradient, indices);
+          auto zeroedStore = memref::StoreOp::create(
+              builder, storeOp.getLoc(), zero, memrefGradient, indices);
+          copyAlignment(storeOp, zeroedStore);
         } else {
-          affine::AffineStoreOp::create(builder, storeOp.getLoc(), zero,
-                                        memrefGradient, storeOp.getAffineMap(),
-                                        ArrayRef<Value>(retrievedArguments));
+          auto zeroedStore = affine::AffineStoreOp::create(
+              builder, storeOp.getLoc(), zero, memrefGradient,
+              storeOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
+          copyAlignment(storeOp, zeroedStore);
         }
       }
     }
