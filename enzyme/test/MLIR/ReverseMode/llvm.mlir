@@ -149,3 +149,66 @@ func.func @f_iter_autodiff(%a: !llvm.ptr, %da: !llvm.ptr, %dres: f32) {
 // CHECK-NEXT:    memref.dealloc %alloc : memref<9xf32>
 // CHECK-NEXT:    llvm.return
 // CHECK-NEXT:  }
+
+// -----
+
+module {
+llvm.func @select_op(%cond: i1, %x: f64, %y: f64) -> f64 {
+  %res = llvm.select %cond, %x, %y : i1, f64
+  llvm.return %res : f64
+}
+
+func.func @dselect_op(%cond: i1, %x: f64, %y: f64, %dr: f64) -> (f64, f64) {
+  %res = enzyme.autodiff @select_op(%cond, %x, %y, %dr)
+    {
+      activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
+      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    } : (i1, f64, f64, f64) -> !llvm.struct<(f64, f64)>
+  %fst = llvm.extractvalue %res[0] : !llvm.struct<(f64, f64)>
+  %snd = llvm.extractvalue %res[1] : !llvm.struct<(f64, f64)>
+  return %fst, %snd : f64, f64
+}
+}
+
+// CHECK:  llvm.func @diffeselect_op(%[[cond:.+]]: i1, %[[x:.+]]: f64, %[[y:.+]]: f64, %[[dr:.+]]: f64) -> !llvm.struct<(f64, f64)> attributes {sym_visibility = "private"} {
+// CHECK-NEXT:    %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[poison:.+]] = llvm.mlir.poison : !llvm.struct<(f64, f64)>
+// CHECK-NEXT:    %[[dx:.+]] = llvm.select %[[cond]], %[[dr]], %[[cst]] : i1, f64
+// CHECK-NEXT:    %[[dy:.+]] = llvm.select %[[cond]], %[[cst]], %[[dr]] : i1, f64
+// CHECK-NEXT:    %[[res0:.+]] = llvm.insertvalue %[[dx]], %[[poison]][0] : !llvm.struct<(f64, f64)>
+// CHECK-NEXT:    %[[res1:.+]] = llvm.insertvalue %[[dy]], %[[res0]][1] : !llvm.struct<(f64, f64)>
+// CHECK-NEXT:    llvm.return %[[res1]] : !llvm.struct<(f64, f64)>
+// CHECK-NEXT:  }
+
+// -----
+
+module {
+llvm.func @alloca_zero(%x: f64) -> f64 {
+  %c1 = arith.constant 1 : i64
+  %ptr = llvm.alloca %c1 x f64 : (i64) -> !llvm.ptr
+  llvm.store %x, %ptr : f64, !llvm.ptr
+  %v = llvm.load %ptr : !llvm.ptr -> f64
+  %res = arith.mulf %v, %v : f64
+  llvm.return %res : f64
+}
+
+func.func @dalloca_zero(%x: f64, %dr: f64) -> f64 {
+  %dx = enzyme.autodiff @alloca_zero(%x, %dr)
+    {
+      activity=[#enzyme<activity enzyme_active>],
+      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    } : (f64, f64) -> f64
+  return %dx : f64
+}
+}
+
+// CHECK:  llvm.func @diffealloca_zero(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 attributes {sym_visibility = "private"} {
+// CHECK-NEXT:    %[[c1:.+]] = arith.constant 1 : i64
+// CHECK-NEXT:    %[[c0_i8:.+]] = llvm.mlir.constant(0 : i8) : i8
+// CHECK-NEXT:    %[[c8_i64:.+]] = llvm.mlir.constant(8 : i64) : i64
+// CHECK-NEXT:    %[[ptr:.+]] = llvm.alloca %[[c1]] x f64 : (i64) -> !llvm.ptr
+// CHECK-NEXT:    %[[dptr:.+]] = llvm.alloca %[[c1]] x f64 : (i64) -> !llvm.ptr
+// CHECK-NEXT:    %[[ext:.+]] = llvm.sext %[[c1]] : i64 to i64
+// CHECK-NEXT:    %[[size:.+]] = llvm.mul %[[ext]], %[[c8_i64]] : i64
+// CHECK-NEXT:    llvm.memset %[[dptr]], %[[c0_i8]], %[[size]], %false
+
