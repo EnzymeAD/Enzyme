@@ -781,7 +781,7 @@ public:
           // Infer the type using the pushed value so it will have the correct
           // memory space for GPU allocations
           auto RT = memref::SubViewOp::inferRankReducedResultType(
-              MT.getShape(), cast<MemRefType>(info.pushOp.getValue().getType()),
+              MT.getShape(), cast<MemRefType>(popNewValue.getType()),
               offsets, sizes, strides);
 
           popValue = memref::SubViewOp::create(
