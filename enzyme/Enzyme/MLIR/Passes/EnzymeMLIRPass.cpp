@@ -330,12 +330,12 @@ struct DifferentiatePass
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc =
-        Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
-                                returnShadows, mode, freeMemory, width,
-                                /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr, omp, postpasses,
-                                verifyPostPasses, CI.getStrongZero());
+    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
+        fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
+        freeMemory, CI.getAtomicAdd(), width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
+        CI.getStrongZero());
     if (!newFunc)
       return failure();
 
