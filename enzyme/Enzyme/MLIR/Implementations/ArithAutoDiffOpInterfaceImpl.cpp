@@ -184,8 +184,7 @@ struct SelectActivityInterface
   bool isArgInactive(Operation *op, size_t idx) const {
     // arith.select is not inactive in general, but the condition is always
     // inactive.
-    auto selectOp = cast<arith::SelectOp>(op);
-    return selectOp.getCondition() == selectOp.getOperand(idx);
+    return idx == 0;
   }
 };
 
