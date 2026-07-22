@@ -225,8 +225,20 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   }
   assert(!isConstantValue(val));
 
+  // Reverse mode also uses invertedPointers for mutable values. For allocation
+  // results, forceAugmentedReturns() installs a placeholder shadow; the
+  // allocation derivative later calls setDiffe with the real shadow, so replace
+  // it here.
+  bool isMutable = cast<AutoDiffTypeInterface>(val.getType()).isMutable();
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
+      mode == DerivativeMode::ForwardModeSplit || isMutable) {
+    if (isMutable) {
+      // Mutable arguments may already be mapped to a real user-provided shadow
+      // rather than a placeholder. Only replace placeholders here.
+      auto existing = invertedPointers.lookupOrNull(val);
+      if (existing && !existing.getDefiningOp<enzyme::PlaceholderOp>())
+        return;
+    }
     setInvertedPointer(val, toset);
   }
   /*
