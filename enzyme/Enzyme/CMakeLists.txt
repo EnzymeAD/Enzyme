@@ -86,11 +86,13 @@ if (ENZYME_ENABLE_PLUGINS)
             	LLVM
                 )
                     target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-                    # flangFrontend is the umbrella Flang frontend library; it
-                    # transitively pulls in the FortranParser/Semantics/Evaluate/
-                    # Support libraries the plugin needs. This mirrors the upstream
-                    # example flang/examples/PrintFlangFunctionNames.
-                    target_link_libraries(FlangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE flangFrontend)
+                    # Do NOT link flangFrontend: the Flang frontend is already
+                    # statically linked into the `flang` host, and re-linking it
+                    # into the plugin duplicates its cl::opt registrations, which
+                    # aborts at dlopen ("registered more than once"). Like the
+                    # ClangEnzyme plugin (and flang's own example plugins), the
+                    # frontend symbols are resolved from the host `flang -fc1` at
+                    # load time; we only need the Flang headers to compile.
             endif()
                     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                     ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
@@ -136,11 +138,12 @@ if (ENZYME_ENABLE_PLUGINS)
                      flang
                  )
              target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-             # flangFrontend is the umbrella Flang frontend library; it
-             # transitively pulls in the FortranParser/Semantics/Evaluate/Support
-             # libraries the plugin needs. This mirrors the upstream example
-             # flang/examples/PrintFlangFunctionNames.
-             target_link_libraries(FlangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE flangFrontend)
+             # Do NOT link flangFrontend: the Flang frontend is already statically
+             # linked into the `flang` host, and re-linking it into the plugin
+             # duplicates its cl::opt registrations, which aborts at dlopen
+             # ("registered more than once"). The PLUGIN_TOOL flang above resolves
+             # the frontend symbols from the host at link time; we only need the
+             # Flang headers to compile.
              endif()
                  add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                      ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
