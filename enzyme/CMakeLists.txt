@@ -236,6 +236,26 @@ else()
     set(MLIR_FOUND 0)
 endif()
 message("found MLIR ${MLIR_FOUND}")
+
+# Flang is discovered the same way as Clang. Modern Flang installs a
+# FlangConfig.cmake (generated from flang/cmake/modules/FlangConfig.cmake.in),
+# which exports the FIR/HLFIR dialect targets and sets FLANG_INCLUDE_DIRS. This
+# is needed by the flang-dependent FIR/HLFIR autodiff layer under Enzyme/MLIR
+# (ENZYME_FIR_TOOL). When ENZYME_FLANG is set but Flang is not found, the
+# FlangEnzyme -> ClangEnzyme symlink fallback further below still applies.
+#
+# NOTE: FlangConfig.cmake references MLIR imported targets, so this must come
+# *after* the MLIR find_package above, otherwise Flang_FOUND is set to FALSE.
+if (DEFINED Flang_DIR)
+    find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
+if (${Flang_FOUND})
+    include_directories(${FLANG_INCLUDE_DIRS})
+    message("flang inc dir ${FLANG_INCLUDE_DIRS}")
+endif()
+else()
+    set(Flang_FOUND 0)
+endif()
+message("found Flang ${Flang_FOUND}")
 # include(AddClang)
 
 add_definitions(${LLVM_DEFINITIONS})
@@ -354,6 +374,7 @@ add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
 add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
 target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
 endif()
+
 endif()
 
 if (${ENZYME_FLANG} AND ${Clang_FOUND})

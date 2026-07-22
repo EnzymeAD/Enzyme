@@ -66,6 +66,33 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# FIREnzyme: the Enzyme dialect+pass plugin for Flang's stock fir-opt. %firenzyme
+# runs fir-opt with the plugin loaded (both the dialect and pass plugin roles);
+# the firenzyme_plugin feature gates tests that need it. NB: MlirOptMain only
+# exposes plugin-registered passes via --pass-pipeline=..., not as bare --enzyme*
+# flags, so tests spell the pass out as --pass-pipeline='builtin.module(...)'.
+fir_opt = config.llvm_tools_dir + "/fir-opt"
+firenzyme_plugin = config.enzyme_obj_root + "/Enzyme/MLIR/FIREnzyme-" + config.llvm_ver + config.llvm_shlib_ext
+if len("@ENZYME_BINARY_DIR@") == 0:
+  firenzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../FIREnzyme-" + config.llvm_ver + config.llvm_shlib_ext
+config.substitutions.append(('%firenzyme',
+  fir_opt + " --load-dialect-plugin=" + firenzyme_plugin +
+  " --load-pass-plugin=" + firenzyme_plugin))
+if os.path.exists(fir_opt) and os.path.exists(firenzyme_plugin):
+  config.available_features.add('firenzyme_plugin')
+
+# flang -fc1, for compiling Fortran to HLFIR in end-to-end tests. The driver was
+# renamed flang-new -> flang in LLVM 20; fall back to the old name for older
+# toolchains. Registers the flang_new feature so those tests are skipped when
+# flang is unavailable.
+flang_new = config.llvm_tools_dir + "/flang"
+if not os.path.exists(flang_new):
+  flang_new = config.llvm_tools_dir + "/flang-new"
+config.substitutions.append(('%flang_fc1', flang_new + " -fc1"))
+if os.path.exists(flang_new):
+  config.available_features.add('flang_new')
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
@@ -126,6 +153,20 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+
+# FlangEnzymeMLIR: the -load'able plugin whose static initializer registers the
+# Enzyme HLFIR passes (enzyme-lower-fortran-calls + differentiate) into flang's
+# own codegen pipeline. %loadFlangEnzymeMLIR expands to the plugin path (use it
+# as `%flang_fc1 -load %loadFlangEnzymeMLIR ...`). The flang_enzyme_mlir feature
+# gates the end-to-end flang tests: it needs a Flang new enough to support -load
+# (LLVM >= 20) and that the plugin was actually built.
+flang_enzyme_plugin = '@ENZYME_BINARY_DIR@/Enzyme/MLIR/Implementations/FlangEnzymeMLIR-' + config.llvm_ver + config.llvm_shlib_ext
+if len("@ENZYME_BINARY_DIR@") == 0:
+  flang_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../Enzyme/MLIR/Implementations/FlangEnzymeMLIR-" + config.llvm_ver + config.llvm_shlib_ext
+config.substitutions.append(('%loadFlangEnzymeMLIR', flang_enzyme_plugin))
+if ("flang" in config.fc and int(config.llvm_ver) >= 20
+        and os.path.exists(flang_enzyme_plugin)):
+    config.available_features.add('flang_enzyme_mlir')
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
