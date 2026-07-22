@@ -62,7 +62,7 @@ struct LoadOpInterfaceReverse
           enzyme::AtomicRMWOp::create(
               builder, loadOp.getLoc(), gradient.getType(),
               arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
-              memrefGradient, retrievedArguments);
+              memrefGradient, retrievedArguments, loadOp.getAlignmentAttr());
         }
       }
     }

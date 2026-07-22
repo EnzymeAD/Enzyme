@@ -482,7 +482,8 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
       AtomicOrdering:$ordering,
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
-      Variadic<Index>:$indices);
+      Variadic<Index>:$indices,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
 
   let assemblyFormat = [{
     $kind $value `,` $memref `[` $indices `]` $ordering attr-dict `:` `(` type($value) `,`
@@ -508,7 +509,8 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
-      AffineMapAttr:$map);
+      AffineMapAttr:$map,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
 
   let assemblyFormat = [{
     $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`

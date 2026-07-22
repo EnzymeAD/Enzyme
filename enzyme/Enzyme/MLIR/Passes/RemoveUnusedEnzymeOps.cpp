@@ -346,10 +346,14 @@ struct RemoveAtomicPattern : public OpRewritePattern<enzyme::AtomicRMWOp> {
     // Potentially super unsafe!!
     llvm::errs() << "[remove atomics] unsafely removing atomic\n";
     ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
-    Value load =
-        memref::LoadOp::create(builder, op.getMemref(), op.getIndices());
+    // TODO: Alignment interface for enzyme.atomic_rmw
+    Value load = memref::LoadOp::create(
+        builder, op.getMemref(), op.getIndices(),
+        /*nontemporal=*/false, llvm::MaybeAlign(op.getAlignment().value_or(0)));
     Value added = arith::AddFOp::create(builder, load, op.getValue());
-    memref::StoreOp::create(builder, added, op.getMemref(), op.getIndices());
+    memref::StoreOp::create(builder, added, op.getMemref(), op.getIndices(),
+                            /*nontemporal=*/false,
+                            llvm::MaybeAlign(op.getAlignment().value_or(0)));
     rewriter.replaceOp(op, added);
     return success();
   }
@@ -653,7 +657,7 @@ struct RemoveUnusedEnzymeOpsPass
         return;
       }
       annotateRegionOpsInLoops(func);
-      annotateReadOnlyLoads(func);
+      // annotateReadOnlyLoads(func);
       // annotateStackAllocations(func);
       PostOrderWalkDriver driver(func);
       driver.initializeWorklist();
