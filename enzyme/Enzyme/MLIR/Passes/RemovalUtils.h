@@ -655,11 +655,9 @@ public:
       }
 
       SmallVector<int64_t> newShape;
-      SmallVector<Value> dynamicDims;
       for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
-          dynamicDims.push_back(dim.vval);
         } else {
           newShape.push_back(dim.ival);
         }
