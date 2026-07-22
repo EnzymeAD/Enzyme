@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -413,8 +414,11 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      bool gpuAlloc = false;
+      Attribute memorySpace = nullptr;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
+        auto gpuAllocOp = pushedValue.getDefiningOp<gpu::AllocOp>();
         if (cacheType == LoopCacheType::MEMREF && allocOp &&
             allocOp.getSymbolOperands().empty() &&
             llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
@@ -424,7 +428,18 @@ public:
 
           dynamicDims.append(allocOp.getDynamicSizes().begin(),
                              allocOp.getDynamicSizes().end());
-
+        } else if (cacheType == LoopCacheType::MEMREF && gpuAllocOp &&
+                   gpuAllocOp.getSymbolOperands().empty() &&
+                   llvm::all_of(gpuAllocOp.getDynamicSizes(),
+                                [&](Value dynSize) {
+                                  return !forOp.getRegion().isAncestor(
+                                      dynSize.getParentRegion());
+                                })) {
+          multiDim = true;
+          gpuAlloc = true;
+          memorySpace = gpuAllocOp.getMemref().getType().getMemorySpace();
+          dynamicDims.append(gpuAllocOp.getDynamicSizes().begin(),
+                             gpuAllocOp.getDynamicSizes().end());
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -440,6 +455,10 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
 
       if (cacheType == LoopCacheType::TENSOR) {
         {
@@ -493,9 +512,18 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          initValue =
-              memref::AllocOp::create(rewriter, info.initOp->getLoc(),
-                                      cast<MemRefType>(newType), dynamicDims);
+          if (gpuAlloc) {
+            initValue = gpu::AllocOp::create(rewriter, info.initOp.getLoc(),
+                                             cast<MemRefType>(newType),
+                                             /*asyncDependencies=*/ValueRange{},
+                                             dynamicDims,
+                                             /*symbolOperands=*/ValueRange{})
+                            .getMemref();
+          } else {
+            initValue =
+                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
+                                        cast<MemRefType>(newType), dynamicDims);
+          }
           newPushValues.push_back(initValue);
         }
 
@@ -646,9 +674,11 @@ public:
       }
 
       SmallVector<int64_t> newShape;
+      SmallVector<Value> dynamicDims;
       for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
+          dynamicDims.push_back(dim.vval);
         } else {
           newShape.push_back(dim.ival);
         }
@@ -658,10 +688,13 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      bool gpuAlloc = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
         if (cacheType == LoopCacheType::MEMREF && svOp) {
           multiDim = true;
+          if (svOp.getSourceType().getMemorySpaceAsInt() == 1)
+            gpuAlloc = true;
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -761,9 +794,11 @@ public:
 
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
+          // Infer the type using the pushed value so it will have the correct
+          // memory space for GPU allocations
           auto RT = memref::SubViewOp::inferRankReducedResultType(
-              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
-              sizes, strides);
+              MT.getShape(), cast<MemRefType>(info.pushOp.getValue().getType()),
+              offsets, sizes, strides);
 
           popValue = memref::SubViewOp::create(
               rewriter, info.popOp->getLoc(), RT, popNewValue,
@@ -776,7 +811,7 @@ public:
 
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (isa<memref::DeallocOp>(user))
+            if (isa<memref::DeallocOp, gpu::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
         } else {
@@ -786,7 +821,14 @@ public:
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        memref::DeallocOp::create(rewriter, info.initOp->getLoc(), popNewValue);
+        if (gpuAlloc) {
+          gpu::DeallocOp::create(
+              rewriter, info.initOp.getLoc(), /*resultTypes=*/TypeRange(),
+              /*asyncDependencies=*/ValueRange(), popNewValue);
+        } else {
+          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
+                                    popNewValue);
+        }
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
