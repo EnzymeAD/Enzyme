@@ -2454,21 +2454,13 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         if (EnzymePrintActivity)
           llvm::errs() << "potential active store: " << *op << " Val=" << Val
                        << "\n";
-        if (auto SI = dyn_cast<LLVM::StoreOp>(op)) {
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValue());
+        if (auto SI = dyn_cast<enzyme::ActiveStoreOpInterface>(op)) {
+          // Any store-like op (llvm.store, memref.store, and out-of-tree ops
+          // that attach the interface).
+          bool cop = !Hypothesis->isConstantValue(TR, SI.getStoredValue());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << Val << "\n";
-          potentialStore = true;
-          if (cop)
-            potentiallyActiveStore = true;
-        } else if (auto SI = dyn_cast<memref::StoreOp>(op)) {
-          // FIXME: this is a copy-pasta form above to work with MLIR memrefs.
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValueToStore());
-          if (EnzymePrintActivity)
-            llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
+                         << " - " << *op << " of "
                          << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
