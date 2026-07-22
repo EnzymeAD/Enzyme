@@ -38,6 +38,28 @@ struct InlineAsmActivityInterface
   bool isArgInactive(Operation *op, size_t) const { return isInactive(op); }
 };
 
+struct SelectActivityInterface
+    : public ActivityOpInterface::ExternalModel<SelectActivityInterface,
+                                                LLVM::SelectOp> {
+  bool isInactive(Operation *op) const { return false; }
+  bool isArgInactive(Operation *op, size_t idx) const {
+    // llvm.select is not inactive in general, but the condition is always
+    // inactive.
+    return idx == 0;
+  }
+};
+
+static unsigned getSizeInBytes(Type typ) {
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(typ)) {
+    return arrayType.getNumElements() *
+           getSizeInBytes(arrayType.getElementType());
+  }
+  if (typ.isIntOrFloat()) {
+    return typ.getIntOrFloatBitWidth() / 8;
+  }
+  return 0;
+}
+
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
@@ -71,7 +93,19 @@ public:
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
-    // TODO inspect val and memset corresponding size
+    if (auto allocaOp = val.getDefiningOp<LLVM::AllocaOp>()) {
+      Value zero =
+          LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
+      unsigned byteSize = getSizeInBytes(allocaOp.getElemType());
+      Value byteValue = LLVM::ConstantOp::create(
+          builder, loc, builder.getI64IntegerAttr(byteSize));
+      Value arraySize = LLVM::SExtOp::create(builder, loc, byteValue.getType(),
+                                             allocaOp.getArraySize());
+      Value size = LLVM::MulOp::create(builder, loc, arraySize, byteValue);
+      LLVM::MemsetOp::create(builder, loc, val, zero, size,
+                             /*isVolatile=*/false);
+      return success();
+    }
     return failure();
   }
 
@@ -460,6 +494,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
     LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
+    LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
