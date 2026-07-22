@@ -204,6 +204,8 @@ std::optional<Value> getStored(Operation *op) {
     return storeOp.getValue();
   } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return storeOp.getValue();
+  } else if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
+    return pushOp.getValue();
   }
   return std::nullopt;
 }
