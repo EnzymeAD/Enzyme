@@ -90,4 +90,4 @@ series = {SC '22}
 }
 ```
 
-Both [Julia bindings](https://github.com/EnzymeAD/Enzyme.jl#readme) and [Rust bindings](https://github.com/EnzymeAD/rust#readme) are available for Enzyme.
+Both [Julia bindings](https://github.com/EnzymeAD/Enzyme.jl#readme), [Rust bindings](https://github.com/EnzymeAD/rust#readme), and [Fortran bindings](https://github.com/EnzymeAD/Enzyme/tree/main/enzyme/Fortran) are available for Enzyme.
