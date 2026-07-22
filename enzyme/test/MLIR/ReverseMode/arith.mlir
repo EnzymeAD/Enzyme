@@ -38,10 +38,11 @@ func.func @dmaxnumf(%a: f64, %b: f64, %dr: f64) -> (f64, f64) {
 }
 
 // CHECK: func.func private @diffemaxnumf(%[[a:.+]]: f64, %[[b:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64) {
-// CHECK-NEXT:    %[[cmp:.+]] = arith.cmpf olt, %[[a]], %[[b]] : f64
 // CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK-NEXT:    %[[da:.+]] = arith.select %[[cmp]], %[[zero]], %[[dr]] : f64
-// CHECK-NEXT:    %[[db:.+]] = arith.select %[[cmp]], %[[dr]], %[[zero]] : f64
+// CHECK-NEXT:    %[[cmp1:.+]] = arith.cmpf olt, %[[a]], %[[b]] : f64
+// CHECK-NEXT:    %[[da:.+]] = arith.select %[[cmp1]], %[[zero]], %[[dr]] : f64
+// CHECK-NEXT:    %[[cmp2:.+]] = arith.cmpf olt, %[[a]], %[[b]] : f64
+// CHECK-NEXT:    %[[db:.+]] = arith.select %[[cmp2]], %[[dr]], %[[zero]] : f64
 // CHECK-NEXT:    return %[[da]], %[[db]] : f64, f64
 // CHECK-NEXT:  }
 
