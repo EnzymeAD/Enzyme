@@ -120,9 +120,12 @@ struct SelectOpInterfaceReverse
       }
 
       Value condition = gutils->popCache(caches.front(), builder);
-      Value zero = arith::ConstantOp::create(
-          builder, selectOp.getLoc(), FloatAttr::get(selectOp.getType(), 0.0));
+
+      auto siface =
+          cast<AutoDiffTypeInterface>(getShadowType(selectOp.getType()));
+      Value zero = siface.createNullValue(builder, selectOp.getLoc());
       Value dret = gutils->diffe(selectOp.getResult(), builder);
+      gutils->zeroDiffe(selectOp.getResult(), builder);
       if (!gutils->isConstantValue(selectOp.getTrueValue())) {
         Value trueSelect = arith::SelectOp::create(builder, selectOp.getLoc(),
                                                    condition, dret, zero);
