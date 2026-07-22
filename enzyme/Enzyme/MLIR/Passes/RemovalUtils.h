@@ -670,19 +670,18 @@ public:
       MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
-        if (svOp)
+        if (svOp) {
           allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
               svOp.getSource().getDefiningOp());
-        if (!allocOp)
+          if (cacheType == LoopCacheType::MEMREF)
+            multiDim = true;
+        } else {
           allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
               info.pushedValue().getDefiningOp());
-
-        if (cacheType == LoopCacheType::MEMREF && (svOp || allocOp)) {
-          multiDim = true;
-        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                     return dim != ShapedType::kDynamic;
-                   })) {
-          multiDim = true;
+          if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+                return dim != ShapedType::kDynamic;
+              }))
+            multiDim = true;
         }
 
         if (multiDim) {
