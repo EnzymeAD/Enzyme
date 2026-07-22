@@ -223,7 +223,8 @@ template <> struct EnzymeOpCreator<AutoDiffOp> {
 
     return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
                               in_args, newInActivity, newRetActivity,
-                              uop.getWidthAttr(), uop.getStrongZeroAttr());
+                              uop.getWidthAttr(), uop.getStrongZeroAttr(),
+                              uop.getAtomicAddAttr());
   }
 };
 
