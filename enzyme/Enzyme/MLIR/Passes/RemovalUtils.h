@@ -414,32 +414,17 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
-      bool gpuAlloc = false;
       Attribute memorySpace = nullptr;
+      MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
-        auto gpuAllocOp = pushedValue.getDefiningOp<gpu::AllocOp>();
+        allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+            pushedValue.getDefiningOp());
         if (cacheType == LoopCacheType::MEMREF && allocOp &&
-            allocOp.getSymbolOperands().empty() &&
-            llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
-              return !forOp.getRegion().isAncestor(dynSize.getParentRegion());
-            })) {
+            allocOp.hoistable(forOp)) {
           multiDim = true;
-
-          dynamicDims.append(allocOp.getDynamicSizes().begin(),
-                             allocOp.getDynamicSizes().end());
-        } else if (cacheType == LoopCacheType::MEMREF && gpuAllocOp &&
-                   gpuAllocOp.getSymbolOperands().empty() &&
-                   llvm::all_of(gpuAllocOp.getDynamicSizes(),
-                                [&](Value dynSize) {
-                                  return !forOp.getRegion().isAncestor(
-                                      dynSize.getParentRegion());
-                                })) {
-          multiDim = true;
-          gpuAlloc = true;
-          memorySpace = gpuAllocOp.getMemref().getType().getMemorySpace();
-          dynamicDims.append(gpuAllocOp.getDynamicSizes().begin(),
-                             gpuAllocOp.getDynamicSizes().end());
+          if (auto MT = dyn_cast<MemRefType>(pushedValue.getType()))
+            memorySpace = MT.getMemorySpace();
+          allocOp.appendDynamicDims(dynamicDims);
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -512,18 +497,9 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          if (gpuAlloc) {
-            initValue = gpu::AllocOp::create(rewriter, info.initOp.getLoc(),
-                                             cast<MemRefType>(newType),
-                                             /*asyncDependencies=*/ValueRange{},
-                                             dynamicDims,
-                                             /*symbolOperands=*/ValueRange{})
-                            .getMemref();
-          } else {
-            initValue =
-                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
-                                        cast<MemRefType>(newType), dynamicDims);
-          }
+          assert(allocOp && "expected MultidimensionalAllocInterface op");
+          initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
+                                       newType, dynamicDims);
           newPushValues.push_back(initValue);
         }
 
@@ -688,13 +664,18 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
-      bool gpuAlloc = false;
+      MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
-        if (cacheType == LoopCacheType::MEMREF && svOp) {
+        if (svOp)
+          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+              svOp.getSource().getDefiningOp());
+        if (!allocOp)
+          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+              info.pushedValue().getDefiningOp());
+
+        if (cacheType == LoopCacheType::MEMREF && (svOp || allocOp)) {
           multiDim = true;
-          if (svOp.getSourceType().getMemorySpaceAsInt() == 1)
-            gpuAlloc = true;
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -809,9 +790,10 @@ public:
               /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
               /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
 
+          assert(allocOp && "expected MultidimensionalAllocInterface op");
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (isa<memref::DeallocOp, gpu::DeallocOp>(user))
+            if (allocOp.isDeallocation(user))
               rewriter.eraseOp(user);
           }
         } else {
@@ -821,14 +803,8 @@ public:
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        if (gpuAlloc) {
-          gpu::DeallocOp::create(
-              rewriter, info.initOp.getLoc(), /*resultTypes=*/TypeRange(),
-              /*asyncDependencies=*/ValueRange(), popNewValue);
-        } else {
-          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
-                                    popNewValue);
-        }
+        assert(allocOp && "expected MultidimensionalAllocInterface op");
+        allocOp.deallocate(rewriter, info.initOp->getLoc(), popNewValue);
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
