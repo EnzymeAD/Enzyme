@@ -497,9 +497,14 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          assert(allocOp && "expected MultidimensionalAllocInterface op");
-          initValue = allocOp.allocate(rewriter, info.initOp->getLoc(), newType,
-                                       dynamicDims);
+          if (allocOp) {
+            initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
+                                         newType, dynamicDims);
+          } else {
+            initValue =
+                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
+                                        cast<MemRefType>(newType), dynamicDims);
+          }
           newPushValues.push_back(initValue);
         }
 
@@ -790,10 +795,10 @@ public:
               /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
               /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
 
-          assert(allocOp && "expected MultidimensionalAllocInterface op");
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (allocOp.isDeallocation(user))
+            if (allocOp ? allocOp.isDeallocation(user)
+                        : isa<memref::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
         } else {
@@ -803,8 +808,12 @@ public:
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        assert(allocOp && "expected MultidimensionalAllocInterface op");
-        allocOp.deallocate(rewriter, info.initOp->getLoc(), popNewValue);
+        if (allocOp) {
+          allocOp.deallocate(rewriter, info.initOp->getLoc(), popNewValue);
+        } else {
+          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
+                                    popNewValue);
+        }
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);

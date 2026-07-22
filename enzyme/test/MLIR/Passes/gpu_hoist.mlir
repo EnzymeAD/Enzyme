@@ -20,9 +20,9 @@ func.func @test_gpu_hoist(%ub_outer: index, %ub_inner: index) {
 }
 
 // CHECK: func.func @test_gpu_hoist(%[[ARG0:.+]]: index, %[[ARG1:.+]]: index) {
+// CHECK-NEXT:  %[[ALLOC:.+]] = gpu.alloc(%[[ARG0]], %[[ARG1]]) : memref<?x?xf32, 1>
 // CHECK-DAG:   %[[C0:.+]] = arith.constant 0 : index
 // CHECK-DAG:   %[[C1:.+]] = arith.constant 1 : index
-// CHECK-NEXT:  %[[ALLOC:.+]] = gpu.alloc(%[[ARG0]], %[[ARG1]]) : memref<?x?xf32, 1>
 // CHECK-NEXT:  scf.for %[[IV2:.+]] = %[[C0]] to %[[ARG0]] step %[[C1]] {
 // CHECK-NEXT:    %[[SUBVIEW1:.+]] = memref.subview %[[ALLOC]][%[[IV2]], 0] [1, %[[ARG1]]] [1, 1] : memref<?x?xf32, 1> to memref<?xf32, strided<[1], offset: ?>, 1>
 // CHECK-NEXT:  }
