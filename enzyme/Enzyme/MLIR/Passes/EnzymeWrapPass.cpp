@@ -65,8 +65,7 @@ struct DifferentiateWrapperPass
   using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
-    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-    MEnzymeLogic Logic(dataflowActivity ? &solver : nullptr);
+    MEnzymeLogic Logic(dataflowActivity);
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(getOperation());
 

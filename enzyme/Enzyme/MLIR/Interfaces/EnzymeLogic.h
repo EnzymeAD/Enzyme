@@ -218,8 +218,8 @@ public:
 
   // solver may be null, in which case the older inductive hypothesis activity
   // analysis will be used.
-  DataFlowSolver *solver;
-  MEnzymeLogic(DataFlowSolver *solver) : solver(solver) {}
+  std::unique_ptr<DataFlowSolver> solver;
+  MEnzymeLogic(bool dataflowActivity);
 
   FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
