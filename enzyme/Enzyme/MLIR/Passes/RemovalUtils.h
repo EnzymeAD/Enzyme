@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -413,18 +414,17 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      Attribute memorySpace = nullptr;
+      MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
+        allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+            pushedValue.getDefiningOp());
         if (cacheType == LoopCacheType::MEMREF && allocOp &&
-            allocOp.getSymbolOperands().empty() &&
-            llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
-              return !forOp.getRegion().isAncestor(dynSize.getParentRegion());
-            })) {
+            allocOp.hoistable(forOp)) {
           multiDim = true;
-
-          dynamicDims.append(allocOp.getDynamicSizes().begin(),
-                             allocOp.getDynamicSizes().end());
-
+          if (auto MT = dyn_cast<MemRefType>(pushedValue.getType()))
+            memorySpace = MT.getMemorySpace();
+          allocOp.appendDynamicDims(dynamicDims);
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -440,6 +440,10 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
 
       if (cacheType == LoopCacheType::TENSOR) {
         {
@@ -493,9 +497,14 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          initValue =
-              memref::AllocOp::create(rewriter, info.initOp->getLoc(),
-                                      cast<MemRefType>(newType), dynamicDims);
+          if (allocOp) {
+            initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
+                                         newType, dynamicDims);
+          } else {
+            initValue =
+                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
+                                        cast<MemRefType>(newType), dynamicDims);
+          }
           newPushValues.push_back(initValue);
         }
 
@@ -658,14 +667,25 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      Attribute memorySpace = nullptr;
+      MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
+        if (auto MT = dyn_cast<MemRefType>(ST))
+          memorySpace = MT.getMemorySpace();
+
         auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
-        if (cacheType == LoopCacheType::MEMREF && svOp) {
-          multiDim = true;
-        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                     return dim != ShapedType::kDynamic;
-                   })) {
-          multiDim = true;
+        if (svOp) {
+          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+              svOp.getSource().getDefiningOp());
+          if (cacheType == LoopCacheType::MEMREF)
+            multiDim = true;
+        } else {
+          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
+              info.pushedValue().getDefiningOp());
+          if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+                return dim != ShapedType::kDynamic;
+              }))
+            multiDim = true;
         }
 
         if (multiDim) {
@@ -677,6 +697,10 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
@@ -776,7 +800,8 @@ public:
 
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (isa<memref::DeallocOp>(user))
+            if (allocOp ? allocOp.isDeallocation(user)
+                        : isa<memref::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
         } else {
@@ -786,7 +811,12 @@ public:
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        memref::DeallocOp::create(rewriter, info.initOp->getLoc(), popNewValue);
+        if (allocOp) {
+          allocOp.deallocate(rewriter, info.initOp->getLoc(), popNewValue);
+        } else {
+          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
+                                    popNewValue);
+        }
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);

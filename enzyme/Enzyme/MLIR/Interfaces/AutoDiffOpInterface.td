@@ -291,4 +291,67 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
   ];
 }
 
+def MultidimensionalAllocInterface : OpInterface<"MultidimensionalAllocInterface"> {
+  let description = [{
+    An operation interface for allocation operations that support multi-dimensional allocations.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{
+        Returns whether the allocation operation can be hoisted out of the loop.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"hoistable",
+      /*args=*/(ins "::mlir::Operation *":$forOp),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return $_op.getSymbolOperands().empty() &&
+               ::llvm::all_of($_op.getDynamicSizes(), [&](::mlir::Value dynSize) {
+                 return !forOp->getRegion(0).isAncestor(dynSize.getParentRegion());
+               });
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Appends dynamic sizes of this allocation to dynamicDims.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"appendDynamicDims",
+      /*args=*/(ins "::llvm::SmallVectorImpl<::mlir::Value> &":$dynamicDims),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        dynamicDims.append($_op.getDynamicSizes().begin(),
+                           $_op.getDynamicSizes().end());
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Creates a new allocation of the same operation type.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"allocate",
+      /*args=*/(ins "::mlir::OpBuilder &":$rewriter, "::mlir::Location":$loc, "::mlir::Type":$newType, "::mlir::ValueRange":$dynamicDims)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Deallocates the given allocated memory.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"deallocate",
+      /*args=*/(ins "::mlir::OpBuilder &":$rewriter, "::mlir::Location":$loc, "::mlir::Value":$val)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Returns whether the given operation is a deallocation operation for this allocation type.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isDeallocation",
+      /*args=*/(ins "::mlir::Operation *":$op)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES
+

@@ -283,6 +283,26 @@ public:
   bool isZero(Type self, Value val) const { return false; }
   bool isZeroAttr(Type self, Attribute val) const { return false; }
 };
+
+struct MemRefAllocOpInterface
+    : public MultidimensionalAllocInterface::ExternalModel<
+          MemRefAllocOpInterface, memref::AllocOp> {
+  Value allocate(Operation *op, OpBuilder &rewriter, Location loc, Type newType,
+                 ValueRange dynamicDims) const {
+    return memref::AllocOp::create(rewriter, loc, cast<MemRefType>(newType),
+                                   dynamicDims);
+  }
+
+  void deallocate(Operation *op, OpBuilder &rewriter, Location loc,
+                  Value val) const {
+    memref::DeallocOp::create(rewriter, loc, val);
+  }
+
+  bool isDeallocation(Operation *op, Operation *user) const {
+    return isa<memref::DeallocOp>(user);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
@@ -295,5 +315,6 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
+    memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
   });
 }
