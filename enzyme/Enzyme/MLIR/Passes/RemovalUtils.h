@@ -779,8 +779,8 @@ public:
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
           auto RT = memref::SubViewOp::inferRankReducedResultType(
-              MT.getShape(), cast<MemRefType>(popNewValue.getType()),
-              offsets, sizes, strides);
+              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
+              sizes, strides);
 
           popValue = memref::SubViewOp::create(
               rewriter, info.popOp->getLoc(), RT, popNewValue,
