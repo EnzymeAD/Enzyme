@@ -34,3 +34,12 @@ def : MLIRDerivative<"LLVM", "ExpOp", (Op $x),
                       (LlvmCheckedMulF (DiffeRet), (LlvmExpF $x))
                     ]
                   >;
+
+def : MLIRDerivative<"LLVM", "SelectOp", (Op $pred, $x, $y),
+                    [
+                      (AssertingInactiveArg),
+                      (Llvm_Select $pred, (DiffeRet), (ConstantFP<"0","arith","ConstantOp"> $x)),
+                      (Llvm_Select $pred, (ConstantFP<"0","arith","ConstantOp"> $x), (DiffeRet)),
+                    ]
+                  >;
+
