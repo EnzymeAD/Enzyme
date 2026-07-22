@@ -82,12 +82,14 @@ jobs:
         llvm: [20, 21, 22]
     timeout-minutes: 60
     steps:
-    - name: add llvm with clang and flang
+    - name: add llvm with clang, flang and mlir
       run: |
         set -eo pipefail
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
-        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
+        # libmlir-N-dev is required: FlangConfig.cmake references MLIR imported
+        # targets, so find_package(Flang) needs MLIR to be found first.
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }} libmlir-${{ matrix.llvm }}-dev
         sudo python3 -m pip install --upgrade pip lit
     - uses: actions/checkout@v4
     - name: generate build system
@@ -95,6 +97,7 @@ jobs:
         rm -rf build && mkdir build && cd build
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
           -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm \
+          -DMLIR_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/mlir \
           -DFlang_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/flang \
           -DLLVM_EXTERNAL_LIT=`which lit` \
           -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON \
