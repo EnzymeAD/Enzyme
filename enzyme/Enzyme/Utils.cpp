@@ -1060,13 +1060,10 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
 
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
-Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
-                                             unsigned dstalign,
-                                             unsigned srcalign,
-                                             unsigned dstaddr, unsigned srcaddr,
-                                             unsigned bitwidth,
-                                             bool runtimeActivity,
-                                             bool atomic) {
+Function *getOrInsertDifferentialFloatMemcpy(
+    Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
