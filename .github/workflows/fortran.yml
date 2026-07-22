@@ -71,7 +71,7 @@ jobs:
     # Builds the FlangEnzyme frontend plugin (Enzyme/Flang/EnzymeFlang.cpp) and
     # runs its lit test. The plugin requires the Flang development files
     # (FlangConfig.cmake + flangFrontend), and its CMake support is gated on
-    # LLVM >= 20, so the matrix runs from that floor up to the current release.
+    # LLVM >= 20, so the matrix runs from that floor up to the current release (22).
     name: Flang plugin ${{matrix.build}} ${{matrix.os}} llvm ${{matrix.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
@@ -79,7 +79,7 @@ jobs:
       matrix:
         build: [Release, Debug]
         os: [ubuntu-22.04]
-        llvm: [20, 21]
+        llvm: [20, 21, 22]
     timeout-minutes: 60
     steps:
     - name: add llvm with clang and flang
