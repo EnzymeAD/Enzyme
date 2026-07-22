@@ -1,4 +1,4 @@
-// RUN: %eopt --remove-unnecessary-enzyme-ops %s | FileCheck %s
+// RUN: %eopt --allow-unregistered-dialect --remove-unnecessary-enzyme-ops %s | FileCheck %s
 
 func.func @test_gpu_hoist(%ub_outer: index, %ub_inner: index, %val: f32) {
   %c0 = arith.constant 0 : index
