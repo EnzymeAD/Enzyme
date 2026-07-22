@@ -30,6 +30,7 @@
 #include <llvm/Config/llvm-config.h>
 #include <memory>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -47,6 +48,10 @@
 
 #include "llvm/IR/InstIterator.h"
 
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -96,6 +101,11 @@ cl::opt<bool>
 cl::opt<bool> EnzymeEnableRecursiveHypotheses(
     "enzyme-enable-recursive-activity", cl::init(true), cl::Hidden,
     cl::desc("Enable re-evaluation of activity analysis from updated results"));
+
+cl::list<std::string> EnzymeLoadInactiveFiles(
+    "enzyme-load-inactive-file", llvm::cl::ZeroOrMore, llvm::cl::Hidden,
+    llvm::cl::desc("Load additional inactive functions from file"),
+    llvm::cl::value_desc("File Name"));
 }
 
 #include "llvm/IR/InstIterator.h"
@@ -161,6 +171,55 @@ const llvm::StringMap<size_t> MPIInactiveCommAllocators = {
     {"MPI_Comm_join", 1},
 };
 // clang-format on
+
+/// Cache if a file is loaded with inactive demangled function names.
+struct {
+  bool cached = false;
+
+  SmallVector<StringRef, 128> functionNames;
+  SmallVector<std::unique_ptr<MemoryBuffer>, 8> contents;
+
+  ArrayRef<StringRef> CreateOrUse(ArrayRef<std::string> files) {
+    if (cached)
+      return functionNames;
+
+    for (StringRef s : files) {
+      if (s.empty())
+        continue;
+
+      SmallString<512> p;
+      if (std::error_code EC = sys::fs::real_path(s, p)) {
+        report_fatal_error(
+            "Can't find file provided for inactive function names: " + s);
+      }
+
+      auto bufferOrErr = MemoryBuffer::getFile(p);
+      if (!bufferOrErr) {
+        report_fatal_error("Failed to open " + p + ": " +
+                           bufferOrErr.getError().message());
+      }
+
+      std::unique_ptr<MemoryBuffer> content = std::move(*bufferOrErr);
+      StringRef text = content->getBuffer();
+
+      SmallVector<StringRef, 128> lines;
+      text.split(lines, '\n', -1, false);
+
+      for (StringRef line : lines) {
+        line = line.trim();
+        if (!line.empty())
+          functionNames.push_back(line);
+      }
+
+      // Keep the buffer alive because functionNames contains StringRefs
+      // pointing into this buffer.
+      contents.push_back(std::move(content));
+    }
+
+    cached = true;
+    return functionNames;
+  }
+} InactiveFileCache;
 
 /// Return whether the call is always inactive by definition.
 bool isInactiveCall(CallBase &CI) {
@@ -503,6 +562,19 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
     if (startsWith(dName, FuncName)) {
       return true;
+    }
+  }
+
+  if (!EnzymeLoadInactiveFiles.empty()) {
+    for (llvm::StringRef FuncName :
+         InactiveFileCache.CreateOrUse(EnzymeLoadInactiveFiles)) {
+      if (startsWith(dName, FuncName)) {
+        if (EnzymePrintActivity)
+          llvm::errs()
+              << "[activity] loaded file forced instruction to be inactive: "
+              << FuncName << "\n";
+        return true;
+      }
     }
   }
 

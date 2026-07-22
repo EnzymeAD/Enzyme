@@ -1091,10 +1091,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto TmpOrig = getBaseObject(origptr);
 
   // atomics
-  bool Atomic = AtomicAdd;
-  auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
-  auto Arch = TT.getArch();
-
+  bool Atomic = isAtomic(origptr);
+  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
   // No need to do atomic on local memory for CUDA since it can't be raced
   // upon
   if (isa<AllocaInst>(TmpOrig) && isGPUArch(TT)) {

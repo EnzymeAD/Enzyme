@@ -3237,14 +3237,33 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *tofree = lookup(anti, Builder2);
           assert(tofree);
           assert(tofree->getType());
-          auto rule = [&](Value *tofree) {
-            auto CI = freeKnownAllocation(Builder2, tofree, funcName, dbgLoc,
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *tofree_i =
+                gutils->getWidth() == 1
+                    ? tofree
+                    : GradientUtils::extractMeta(Builder2, tofree, i);
+
+            auto CI = freeKnownAllocation(Builder2, tofree_i, funcName, dbgLoc,
                                           gutils->TLI, &call, gutils);
-            if (CI)
+            if (CI) {
               CI->addAttributeAtIndex(AttributeList::FirstArgIndex,
                                       Attribute::NonNull);
-          };
-          applyChainRule(Builder2, rule, tofree);
+              bool combined = Mode == DerivativeMode::ReverseModeCombined;
+              auto ident = MDNode::getDistinct(
+                  CI->getContext(),
+                  {ConstantAsMetadata::get(
+                      combined ? ConstantInt::getTrue(CI->getContext())
+                               : ConstantInt::getFalse(CI->getContext()))});
+              Value *anti_i =
+                  gutils->getWidth() == 1
+                      ? anti
+                      : GradientUtils::extractMeta(Builder2, anti, i);
+              cast<Instruction>(anti_i)->setMetadata(
+                  "enzyme_cache_alloc", MDNode::get(CI->getContext(), {ident}));
+              CI->setMetadata("enzyme_cache_free",
+                              MDNode::get(CI->getContext(), {ident}));
+            }
+          }
         }
       } else if (Mode == DerivativeMode::ForwardMode ||
                  Mode == DerivativeMode::ForwardModeError) {
@@ -3473,8 +3492,21 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             IRBuilder<> Builder2(&call);
             getReverseBuilder(Builder2);
             auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
-            freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
-                                dbgLoc, gutils->TLI, &call, gutils);
+            auto freecall = freeKnownAllocation(
+                Builder2, lookup(newCall, Builder2), funcName, dbgLoc,
+                gutils->TLI, &call, gutils);
+            if (freecall) {
+              auto ident = MDNode::getDistinct(
+                  freecall->getContext(),
+                  {ConstantAsMetadata::get(
+                      ConstantInt::getTrue(freecall->getContext()))});
+              newCall->setMetadata(
+                  "enzyme_cache_alloc",
+                  MDNode::get(freecall->getContext(), {ident}));
+              freecall->setMetadata(
+                  "enzyme_cache_free",
+                  MDNode::get(freecall->getContext(), {ident}));
+            }
             if (Mode == DerivativeMode::ReverseModeGradient && AllocationLoop)
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   newCall);
@@ -3555,6 +3587,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     if ((primalNeededInReverse &&
          !gutils->unnecessaryIntermediates.count(&call)) ||
         hasPDFree) {
+      if (hasPDFree && Mode == DerivativeMode::ReverseModePrimal) {
+        auto ident =
+            MDNode::getDistinct(newCall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getFalse(
+                                    newCall->getContext()))});
+        newCall->setMetadata("enzyme_cache_alloc",
+                             MDNode::get(newCall->getContext(), {ident}));
+      }
       Value *nop = gutils->cacheForReverse(
           BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
       if (hasPDFree &&
@@ -3564,8 +3604,22 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
-        freeKnownAllocation(Builder2, lookup(nop, Builder2), funcName, dbgLoc,
-                            gutils->TLI, &call, gutils);
+        auto freecall =
+            freeKnownAllocation(Builder2, lookup(nop, Builder2), funcName,
+                                dbgLoc, gutils->TLI, &call, gutils);
+        if (freecall) {
+          bool combined = Mode == DerivativeMode::ReverseModeCombined;
+          auto ident = MDNode::getDistinct(
+              freecall->getContext(),
+              {ConstantAsMetadata::get(
+                  combined ? ConstantInt::getTrue(freecall->getContext())
+                           : ConstantInt::getFalse(freecall->getContext()))});
+          if (combined)
+            newCall->setMetadata("enzyme_cache_alloc",
+                                 MDNode::get(freecall->getContext(), {ident}));
+          freecall->setMetadata("enzyme_cache_free",
+                                MDNode::get(freecall->getContext(), {ident}));
+        }
       }
     } else if (Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ReverseModeCombined ||

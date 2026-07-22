@@ -308,6 +308,7 @@ public:
   /// memset). Boolean denotes whether the primal initializes the shadow as well
   /// (for use) as a structure which carries data.
   llvm::ValueMap<llvm::Value *, ShadowRematerializer> backwardsOnlyShadows;
+  std::vector<bool> nowrite_shadows;
 
   void computeForwardingProperties(llvm::Instruction *V);
   void computeGuaranteedFrees();
@@ -536,6 +537,8 @@ public:
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM);
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
                               TypeTree look);
+
+  bool isAtomic(llvm::Value *origptr) const;
 
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
