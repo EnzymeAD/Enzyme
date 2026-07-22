@@ -170,6 +170,20 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*default=*/"false",
       /*description=*/"Whether or not to use the dataflow activity analysis"
     >,
+    Option<
+      /*C++ variable name=*/"strongZero",
+      /*CLI argument=*/"strongZero",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use a strong zero"
+    >,
+    Option<
+      /*C++ variable name=*/"atomicAdd",
+      /*CLI argument=*/"atomicAdd",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use atomics by default (e.g. if within a parallel context)"
+    >,
   ];
 }
 

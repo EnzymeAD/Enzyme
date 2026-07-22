@@ -223,7 +223,8 @@ template <> struct EnzymeOpCreator<AutoDiffOp> {
 
     return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
                               in_args, newInActivity, newRetActivity,
-                              uop.getWidthAttr(), uop.getStrongZeroAttr());
+                              uop.getWidthAttr(), uop.getStrongZeroAttr(),
+                              uop.getAtomicAddAttr());
   }
 };
 
@@ -234,7 +235,8 @@ template <> struct EnzymeOpCreator<AutoDiffRegionOp> {
                                  ArrayAttr newRetActivity) {
     auto newOp = AutoDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
-        uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
+        uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getAtomicAddAttr(),
+        uop.getFnAttr());
 
     rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
                                 newOp.getBody().begin());

@@ -371,7 +371,7 @@ LogicalResult outlineEnzymeAutoDiffRegion(enzyme::AutoDiffRegionOp op,
   auto newOp = enzyme::AutoDiffOp::create(
       builder, op.getLoc(), op.getResultTypes(), outlinedFunc->getName(),
       allInputs, argActivityAttr, op.getRetActivity(), op.getWidth(),
-      op.getStrongZero());
+      op.getStrongZero(), op.getAtomicAdd());
   op.replaceAllUsesWith(newOp.getResults());
   op.erase();
   return success();
@@ -482,7 +482,8 @@ bool mlir::enzyme::inlineAutodiffOp(enzyme::AutoDiffOp &op,
   auto fnAttr = StringAttr::get(op.getContext(), op.getFn());
   auto regionOp = rewriter.replaceOpWithNewOp<enzyme::AutoDiffRegionOp>(
       op, op.getResultTypes(), op.getInputs(), op.getActivity(),
-      op.getRetActivity(), op.getWidth(), op.getStrongZero(), fnAttr);
+      op.getRetActivity(), op.getWidth(), op.getStrongZero(), op.getAtomicAdd(),
+      fnAttr);
   serializeFunctionAttributes(fn, regionOp);
   rewriter.cloneRegionBefore(targetRegion, regionOp.getBody(),
                              regionOp.getBody().begin());
