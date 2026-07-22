@@ -9,7 +9,6 @@ func.func @test_gpu_hoist(%ub_outer: index, %ub_inner: index) {
   scf.for %iv2 = %c0 to %ub_outer step %c1 {
     %mem = gpu.alloc (%ub_inner) : memref<?xf32, 1>
     "enzyme.push"(%cache, %mem) : (!enzyme.Cache<memref<?xf32, 1>>, memref<?xf32, 1>) -> ()
-    gpu.dealloc %mem : memref<?xf32, 1>
   }
 
   scf.for %iv_rev = %c0 to %ub_outer step %c1 {
