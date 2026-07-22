@@ -1052,7 +1052,7 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
   // upon
   if (isa<AllocaInst>(TmpOrig) &&
       (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-       Arch == Triple::amdgcn)) {
+       Arch == Triple::amd_target)) {
     Atomic = false;
   }
   return Atomic;
