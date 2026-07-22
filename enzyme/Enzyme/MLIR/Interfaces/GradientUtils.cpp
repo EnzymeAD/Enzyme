@@ -49,7 +49,13 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
       postpasses(postpasses), strongZero(strongZero),
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
-      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {}
+      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {
+  if (Logic.solver) {
+    dataflowActivityAnalyzer =
+        std::make_unique<enzyme::DataFlowActivityAnalyzer>(
+            *Logic.solver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
+  }
+}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {
@@ -108,9 +114,13 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantInstruction(Operation *op) const {
+  if (dataflowActivityAnalyzer)
+    return dataflowActivityAnalyzer->isInactiveOperation(op);
   return activityAnalyzer->isConstantOperation(TR, op);
 }
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
+  if (dataflowActivityAnalyzer)
+    return dataflowActivityAnalyzer->isInactiveValue(v);
   return activityAnalyzer->isConstantValue(TR, v);
 }
 

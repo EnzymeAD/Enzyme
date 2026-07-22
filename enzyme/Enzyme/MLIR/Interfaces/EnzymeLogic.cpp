@@ -24,6 +24,11 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+mlir::enzyme::MEnzymeLogic::MEnzymeLogic(bool dataflowActivity)
+    : solver(dataflowActivity ? new DataFlowSolver(
+                                    DataFlowConfig().setInterprocedural(false))
+                              : nullptr) {}
+
 void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
                       const ArrayRef<bool> returnPrimals,
                       const ArrayRef<bool> returnShadows) {

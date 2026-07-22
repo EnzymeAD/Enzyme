@@ -33,6 +33,7 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 
 // TODO: Don't depend on specific dialects
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -202,8 +203,14 @@ void enzyme::SparseBackwardActivityAnalysis::visitExternalCall(
 std::optional<Value> getStored(Operation *op) {
   if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
     return storeOp.getValue();
+  } else if (auto memsetOp = dyn_cast<LLVM::MemsetOp>(op)) {
+    return memsetOp.getVal();
   } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return storeOp.getValue();
+  } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+    return storeOp.getValue();
+  } else if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
+    return pushOp.getValue();
   }
   return std::nullopt;
 }
