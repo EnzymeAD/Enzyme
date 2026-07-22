@@ -538,6 +538,8 @@ public:
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
                               TypeTree look);
 
+  bool isAtomic(llvm::Value *origptr) const;
+
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Constant *F, DerivativeMode mode,

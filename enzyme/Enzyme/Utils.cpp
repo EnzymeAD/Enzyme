@@ -1036,14 +1036,34 @@ IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
     return IntegerType::get(ctx, 32);
 }
 
+bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
+  if (!AtomicAdd)
+    return false;
+  if (!origptr || !newFunc)
+    return AtomicAdd;
+
+  auto TmpOrig = getBaseObject(origptr);
+
+  // atomics
+  bool Atomic = AtomicAdd;
+  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
+
+  // No need to do atomic on local memory for CUDA since it can't be raced
+  // upon
+  if (isa<AllocaInst>(TmpOrig) &&
+      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+       Arch == Triple::amd_target)) {
+    Atomic = false;
+  }
+  return Atomic;
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
-Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
-                                             unsigned dstalign,
-                                             unsigned srcalign,
-                                             unsigned dstaddr, unsigned srcaddr,
-                                             unsigned bitwidth,
-                                             bool runtimeActivity) {
+Function *getOrInsertDifferentialFloatMemcpy(
+    Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
@@ -1056,6 +1076,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     name += "sadd" + std::to_string(srcaddr);
   if (runtimeActivity)
     name += "_runtime_activity";
+  if (atomic)
+    name += "_atomic";
   std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
                                 PointerType::get(elementType, srcaddr),
                                 IntegerType::get(M.getContext(), bitwidth)};
@@ -1185,11 +1207,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     }
 
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-    StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
-    if (srcalign) {
-      srcl->setAlignment(Align(srcalign));
-      srcs->setAlignment(Align(srcalign));
+    if (atomic) {
+      B.CreateAtomicRMW(AtomicRMWInst::BinOp::FAdd, srci, dstl,
+                        MaybeAlign(srcalign), AtomicOrdering::Monotonic,
+                        SyncScope::System);
+    } else {
+      LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+      StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
+      if (srcalign) {
+        srcl->setAlignment(Align(srcalign));
+        srcs->setAlignment(Align(srcalign));
+      }
     }
 
     Value *next =
@@ -2144,13 +2172,14 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 // TODO implement differential memmove
 Function *getOrInsertDifferentialFloatMemmove(
     Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
-    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity) {
+    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity, bool atomic) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
            "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth, runtimeActivity);
+                                            srcaddr, bitwidth, runtimeActivity,
+                                            atomic);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,

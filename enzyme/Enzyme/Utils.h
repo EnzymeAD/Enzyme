@@ -769,12 +769,14 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 
+bool isAtomic(llvm::Value *origptr, bool AtomicAdd, llvm::Function *newFunc);
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
-    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
-    bool runtimeActivity = false);
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic);
 
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
@@ -824,8 +826,8 @@ llvm::Function *getOrInsertDifferentialFloatMemcpyMat(
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemmove(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
-    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
-    bool runtimeActivity = false);
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
                                        llvm::Type *Type, unsigned width);

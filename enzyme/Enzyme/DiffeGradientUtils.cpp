@@ -1091,16 +1091,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto TmpOrig = getBaseObject(origptr);
 
   // atomics
-  bool Atomic = AtomicAdd;
+  bool Atomic = isAtomic(origptr);
   auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-
-  // No need to do atomic on local memory for CUDA since it can't be raced
-  // upon
-  if (isa<AllocaInst>(TmpOrig) &&
-      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-       Arch == Triple::amd_target)) {
-    Atomic = false;
-  }
   // Moreover no need to do atomic on local shadows regardless since they are
   // not captured/escaping and created in this function. This assumes that
   // all additional parallelism in this function is outlined.
