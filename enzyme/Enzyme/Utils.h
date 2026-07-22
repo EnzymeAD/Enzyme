@@ -763,6 +763,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 
+bool isAtomic(llvm::Value *origptr, bool AtomicAdd, llvm::Function *newFunc);
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(

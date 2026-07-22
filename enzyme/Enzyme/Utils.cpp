@@ -1004,6 +1004,28 @@ IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
     return IntegerType::get(ctx, 32);
 }
 
+bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
+  if (!AtomicAdd)
+    return false;
+  if (!origptr || !newFunc)
+    return AtomicAdd;
+
+  auto TmpOrig = getBaseObject(origptr);
+
+  // atomics
+  bool Atomic = AtomicAdd;
+  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
+
+  // No need to do atomic on local memory for CUDA since it can't be raced
+  // upon
+  if (isa<AllocaInst>(TmpOrig) &&
+      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+       Arch == Triple::amdgcn)) {
+    Atomic = false;
+  }
+  return Atomic;
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
 Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,

@@ -5347,6 +5347,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
 
+bool GradientUtils::isAtomic(Value *origptr) const {
+  return ::isAtomic(origptr, AtomicAdd, newFunc);
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                      TypeTree TT) {
   assert(oval);
@@ -9184,7 +9188,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
               srcalign, dstaddr, srcaddr,
               cast<IntegerType>(length->getType())->getBitWidth(),
-              gutils->runtimeActivity, gutils->AtomicAdd);
+              gutils->runtimeActivity, gutils->isAtomic(primal_src));
           Builder2.CreateCall(dmemcpy, args);
         }
       }

@@ -4897,7 +4897,7 @@ public:
             *Builder2.GetInsertBlock()->getParent()->getParent(), secretty,
             /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr,
             cast<IntegerType>(length->getType())->getBitWidth(),
-            /*runtimeActivity*/ false, gutils->AtomicAdd);
+            /*runtimeActivity*/ false, gutils->isAtomic(srco));
 
         Builder2.CreateCall(dmemcpy, args, ReverseDefs);
       }
