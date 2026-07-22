@@ -129,14 +129,16 @@ config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
 
 # FlangEnzyme frontend plugin. The `flang` feature gates tests that load the
 # frontend plugin (`flang -fc1 -load ... -plugin enzyme`). It requires a Flang
-# frontend new enough to support plugins (LLVM >= 20) AND that the FlangEnzyme
-# plugin was actually built (ENZYME_FLANG=ON). `%loadFlangEnzyme` is the path to
-# the built FlangEnzyme shared object.
+# frontend new enough to support plugins (LLVM >= 20) AND that a *real*
+# FlangEnzyme plugin was built (ENZYME_FLANG=ON with Flang found). We check that
+# the shared object exists and is not a symlink: the symlink-to-ClangEnzyme
+# fallback is not a Flang frontend plugin and must not enable the feature.
+flang_plugin_path = '@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
 enzyme_flang_built = "@ENZYME_FLANG@" in ("ON", "1", "TRUE", "YES")
-if enzyme_flang_built and "flang" in config.fc and int(config.llvm_ver) >= 20:
+if (enzyme_flang_built and "flang" in config.fc and int(config.llvm_ver) >= 20
+        and os.path.exists(flang_plugin_path) and not os.path.islink(flang_plugin_path)):
     config.available_features.add('flang')
-config.substitutions.append(('%loadFlangEnzyme',
-    '@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext))
+config.substitutions.append(('%loadFlangEnzyme', flang_plugin_path))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
