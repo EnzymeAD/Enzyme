@@ -1457,9 +1457,8 @@ public:
     auto primalReturn = options.primalReturn;
     auto subsequent_calls_may_write = options.subsequent_calls_may_write;
 
-    auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
-    bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                     Arch == Triple::amd_target;
+    auto TT = Triple(CI->getModule()->getTargetTriple());
+    bool AtomicAdd = isGPUArch(TT);
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
@@ -2603,13 +2602,10 @@ public:
       }
       TypeAnalysis TA(Logic);
 
-      auto Arch =
-          llvm::Triple(
-              CI->getParent()->getParent()->getParent()->getTargetTriple())
-              .getArch();
+      auto TT = llvm::Triple(
+          CI->getParent()->getParent()->getParent()->getTargetTriple());
 
-      bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                       Arch == Triple::amd_target;
+      bool AtomicAdd = isGPUArch(TT);
 
       IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(

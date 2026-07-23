@@ -79,6 +79,16 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
     str = str.substr(5, str.size() - 5);
   } else if (startsWith(str, "__ocml_")) {
     str = str.substr(7, str.size() - 7);
+  } else if (startsWith(str, "air.")) {
+    // Metal AIR math intrinsics, e.g. air.cos.f32, air.fast_tanh.f32.
+    // Defense-in-depth alongside PreserveNVVM.cpp's Implements map: this
+    // raw-name check works even in pipelines that don't run preserve-nvvm,
+    // exactly as __nv_/__ocml_ above already do for CUDA/ROCm.
+    str = str.substr(4, str.size() - 4);
+    if (endsWith(str, ".f16") || endsWith(str, ".f32") || endsWith(str, ".f64"))
+      str = str.substr(0, str.size() - 4);
+    if (startsWith(str, "fast_"))
+      str = str.substr(5, str.size() - 5);
   }
   if (LIBM_FUNCTIONS.find(str.str()) != LIBM_FUNCTIONS.end()) {
     if (ID)
