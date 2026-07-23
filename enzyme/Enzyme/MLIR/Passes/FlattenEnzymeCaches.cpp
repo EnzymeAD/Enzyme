@@ -48,18 +48,26 @@ Value createFlatAlloc(MemRefType oldType,
   auto newType = cast<MemRefType>(flattenType(oldType, builder));
   // Compute the size of the flattened allocation
   unsigned opidx = 0;
-  auto materializeDimSize = [&](unsigned dim) -> Value {
-    if (oldType.getDimSize(dim) == ShapedType::kDynamic) {
-      Value operand = allocOp->getOperand(opidx);
-      opidx++;
-      return operand;
-    }
-    return arith::ConstantIndexOp::create(builder, oldType.getDimSize(dim));
-  };
 
-  Value size = materializeDimSize(0);
-  for (unsigned dim = 1; dim < oldType.getRank(); dim++)
-    size = arith::MulIOp::create(builder, size, materializeDimSize(dim));
+  Value size = nullptr;
+  for (unsigned dim = 0; dim < oldType.getRank(); dim++) {
+    Value bound;
+    if (oldType.getDimSize(dim) == ShapedType::kDynamic) {
+      bound = allocOp->getOperand(opidx);
+      opidx++;
+    } else {
+      bound = arith::ConstantIndexOp::create(builder, oldType.getDimSize(dim));
+    }
+    if (size == nullptr) {
+      size = bound;
+    } else {
+      size = arith::MulIOp::create(builder, size, bound);
+    }
+  }
+
+  if (size == nullptr) {
+    size = arith::ConstantIndexOp::create(builder, 0);
+  }
 
   return allocOp.allocate(builder, builder.getLoc(), newType, size);
 }
@@ -67,25 +75,31 @@ Value createFlatAlloc(MemRefType oldType,
 Value computeFlatIndex(ValueRange indices, ValueRange dynamicSizes,
                        ArrayRef<int64_t> oldShape,
                        ImplicitLocOpBuilder &builder) {
+  if (oldShape.size() == 0) {
+    return arith::ConstantIndexOp::create(builder, 0);
+  }
+
   // Compute the flat index by iterating over indices in reverse
   // We assume the caches have identity layouts, so strides can be
   // computed from sizes.
-  Value flatIndex = arith::ConstantIndexOp::create(builder, 0);
-  int64_t dynamicIndex = dynamicSizes.size();
-  Value runningStride = arith::ConstantIndexOp::create(builder, 1);
-  for (int64_t dim = oldShape.size(); dim-- > 0;) {
-    Value mul = arith::MulIOp::create(builder, indices[dim], runningStride);
-    flatIndex = arith::AddIOp::create(builder, mul, flatIndex);
+  Value flatIndex = indices[oldShape.size() - 1];
+  int64_t dynamicIndex = dynamicSizes.size() - 1;
+  if (oldShape.back() == ShapedType::kDynamic) {
+    dynamicIndex--;
+  }
 
-    // Update the stride
+  for (int64_t dim = oldShape.size() - 1; dim > 0; dim--) {
+    Value bound;
     if (oldShape[dim] == ShapedType::kDynamic) {
-      runningStride = arith::MulIOp::create(builder, runningStride,
-                                            dynamicSizes[--dynamicIndex]);
+      bound = dynamicSizes[dynamicIndex];
+      dynamicIndex--;
     } else {
-      runningStride = arith::MulIOp::create(
-          builder, runningStride,
-          arith::ConstantIndexOp::create(builder, oldShape[dim]));
+      bound = arith::ConstantIndexOp::create(builder, oldShape[dim]);
     }
+
+    flatIndex = arith::MulIOp::create(builder, flatIndex, bound);
+
+    flatIndex = arith::AddIOp::create(builder, flatIndex, indices[dim]);
   }
 
   return flatIndex;
@@ -126,8 +140,10 @@ struct FlattenEnzymeCaches
                            storeOp.getStaticSizes(), sbuilder);
       memref::StoreOp::create(sbuilder, storeOp.getValue(), storeOp.getMemref(),
                               flatIndex);
+      // TODO add alignment
       storeOp.erase();
     });
+
     getOperation()->walk([](enzyme::LoadOp loadOp) {
       ImplicitLocOpBuilder lbuilder(loadOp.getLoc(), loadOp);
       Value flatIndex = computeFlatIndex(loadOp.getIndices(), loadOp.getSizes(),
@@ -135,6 +151,7 @@ struct FlattenEnzymeCaches
       auto flatLoad =
           memref::LoadOp::create(lbuilder, loadOp.getMemref(), flatIndex);
       loadOp.replaceAllUsesWith(flatLoad.getResult());
+      // TODO add alignment
       loadOp.erase();
     });
   }
