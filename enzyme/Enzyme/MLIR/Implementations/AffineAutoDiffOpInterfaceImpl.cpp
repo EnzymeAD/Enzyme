@@ -427,8 +427,8 @@ struct AffineParallelOpEnzymeOpsRemover
 };
 
 struct AffineParallelRegionBranchOpInterface
-    : public mlir::RegionBranchOpInterface::FallbackModel<
-          AffineParallelRegionBranchOpInterface> {
+    : public mlir::RegionBranchOpInterface::ExternalModel<
+          AffineParallelRegionBranchOpInterface, affine::AffineParallelOp> {
   OperandRange getEntrySuccessorOperands(Operation *op,
                                          RegionSuccessor successor) const {
     return cast<AffineParallelOp>(op).getInits();
@@ -446,20 +446,10 @@ struct AffineParallelRegionBranchOpInterface
     // Both the operation itself and the region may be branching into the body
     // or back into the operation itself. It is possible for the loop to not
     // enter the body.
-
-    // This is not entirely correct: the lack of initial reduction arguments
-    // makes modelling the zero iteration case tricky.
-    if (point.isParent()) {
-      regions.push_back(
-          RegionSuccessor(&cast<AffineParallelOp>(op).getRegion()));
-    } else {
-      regions.push_back(RegionSuccessor(op));
-    }
+    regions.push_back(
+        RegionSuccessor(&cast<AffineParallelOp>(op).getRegion()));
+    regions.push_back(RegionSuccessor(op));
   }
-
-  void getSuccessorRegions_3(
-      Operation *op, ::mlir::Region &region,
-      ::llvm::SmallVectorImpl<::mlir::RegionSuccessor> &regions) const {}
 
   void getRegionInvocationBounds(
       Operation *op, ArrayRef<Attribute> operands,
