@@ -1,4 +1,4 @@
-// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" | FileCheck %s
+// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" --split-input-file | FileCheck %s
 
 // From the perspective of minimizing values, the optimal mincut stores 2 values
 func.func private @reproducer(%cond: i1, %srcGrid: memref<?xf32>, %dstGrid: memref<?xf32>) {
@@ -116,5 +116,80 @@ func.func @dreproducer(%cond: i1, %src: memref<?xf32>, %dsrc: memref<?xf32>, %ds
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_1]] : memref<100xf32>
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<100xf32>
+// CHECK:           return
+// CHECK:         }
+
+// -----
+
+// mincut should avoid caching intermediate values that can be re-computed from sources
+func.func @redundant(%x: memref<?xf32>, %y: memref<?xf32>, %len: index) {
+  affine.parallel (%iv) = (0) to (%len) {
+    // ld0, ld1 are sources
+    %ld0 = affine.load %x[%iv] : memref<?xf32>
+    %ld1 = affine.load %x[%iv + 1] : memref<?xf32>
+
+    // addf is an intermediate that can be re-computed, so we should not store it
+    %addf = arith.addf %ld0, %ld1 : f32
+
+    // these sins introduce sinks
+    %sin0 = math.sin %ld0 : f32
+    %sin1 = math.sin %ld1 : f32
+    %sin2 = math.sin %addf : f32
+    %acc0 = arith.addf %sin0, %sin1 : f32    
+    %acc1 = arith.addf %acc0, %sin2 : f32
+    affine.store %acc1, %y[%iv] : memref<?xf32>
+  }
+  return
+}
+
+func.func @dredundant(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
+  %c4 = arith.constant 4 : index
+  enzyme.autodiff @redundant(%x, %dx, %y, %dy, %c4) {
+    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
+    ret_activity = []
+  } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
+  return
+}
+
+// CHECK: #[[$ATTR_0:.+]] = affine_map<(d0) -> (d0 + 1)
+// CHECK-LABEL:   func.func private @differedundant(
+// CHECK-SAME:      %[[ARG0:.*]]: memref<?xf32>, %[[ARG1:.*]]: memref<?xf32>, %[[ARG2:.*]]: memref<?xf32>, %[[ARG3:.*]]: memref<?xf32>,
+// CHECK-SAME:      %[[ARG4:.*]]: index) {
+// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[ALLOC_0:.*]] = memref.alloc(%[[ARG4]]) : memref<?xf32>
+// CHECK:           %[[ALLOC_1:.*]] = memref.alloc(%[[ARG4]]) : memref<?xf32>
+// CHECK:           affine.parallel (%[[VAL_0:.*]]) = (0) to (symbol(%[[ARG4]])) {
+// CHECK:             %[[LOAD_0:.*]] = affine.load %[[ARG0]]{{\[}}%[[VAL_0]]] : memref<?xf32>
+// CHECK:             memref.store %[[LOAD_0]], %[[ALLOC_0]]{{\[}}%[[VAL_0]]] : memref<?xf32>
+// CHECK:             %[[LOAD_1:.*]] = affine.load %[[ARG0]]{{\[}}%[[VAL_0]] + 1] : memref<?xf32>
+// CHECK:             memref.store %[[LOAD_1]], %[[ALLOC_1]]{{\[}}%[[VAL_0]]] : memref<?xf32>
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[LOAD_0]], %[[LOAD_1]] : f32
+// CHECK:             %[[SIN_0:.*]] = math.sin %[[LOAD_0]] : f32
+// CHECK:             %[[SIN_1:.*]] = math.sin %[[LOAD_1]] : f32
+// CHECK:             %[[SIN_2:.*]] = math.sin %[[ADDF_0]] : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[SIN_0]], %[[SIN_1]] : f32
+// CHECK:             %[[ADDF_2:.*]] = arith.addf %[[ADDF_1]], %[[SIN_2]] : f32
+// CHECK:             affine.store %[[ADDF_2]], %[[ARG2]]{{\[}}%[[VAL_0]]] : memref<?xf32>
+// CHECK:           }
+// CHECK:           affine.parallel (%[[VAL_1:.*]]) = (0) to (symbol(%[[ARG4]])) {
+// CHECK:             %[[LOAD_2:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[VAL_1]]] : memref<?xf32>
+// CHECK:             %[[LOAD_3:.*]] = memref.load %[[ALLOC_1]]{{\[}}%[[VAL_1]]] : memref<?xf32>
+// CHECK:             %[[ADDF_3:.*]] = arith.addf %[[LOAD_2]], %[[LOAD_3]] : f32
+// CHECK:             %[[LOAD_4:.*]] = memref.load %[[ARG3]]{{\[}}%[[VAL_1]]] : memref<?xf32>
+// CHECK:             memref.store %[[CONSTANT_0]], %[[ARG3]]{{\[}}%[[VAL_1]]] : memref<?xf32>
+// CHECK:             %[[COS_0:.*]] = math.cos %[[ADDF_3]] : f32
+// CHECK:             %[[MULF_0:.*]] = arith.mulf %[[LOAD_4]], %[[COS_0]] : f32
+// CHECK:             %[[COS_1:.*]] = math.cos %[[LOAD_3]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[LOAD_4]], %[[COS_1]] : f32
+// CHECK:             %[[COS_2:.*]] = math.cos %[[LOAD_2]] : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[LOAD_4]], %[[COS_2]] : f32
+// CHECK:             %[[ADDF_4:.*]] = arith.addf %[[MULF_2]], %[[MULF_0]] : f32
+// CHECK:             %[[ADDF_5:.*]] = arith.addf %[[MULF_1]], %[[MULF_0]] : f32
+// CHECK:             %[[APPLY_0:.*]] = affine.apply #[[$ATTR_0]](%[[VAL_1]])
+// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_5]], %[[ARG1]]{{\[}}%[[APPLY_0]]] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_1:.*]] = enzyme.atomic_rmw addf %[[ADDF_4]], %[[ARG1]]{{\[}}%[[VAL_1]]] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK:           }
+// CHECK:           memref.dealloc %[[ALLOC_1]] : memref<?xf32>
+// CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>
 // CHECK:           return
 // CHECK:         }
