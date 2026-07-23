@@ -2454,7 +2454,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         if (EnzymePrintActivity)
           llvm::errs() << "potential active store: " << *op << " Val=" << Val
                        << "\n";
-        if (auto SI = dyn_cast<enzyme::ActiveStoreOpInterface>(op)) {
+        if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(op)) {
           // Any store-like op (llvm.store, memref.store, and out-of-tree ops
           // that attach the interface).
           bool cop = !Hypothesis->isConstantValue(TR, SI.getStoredValue());

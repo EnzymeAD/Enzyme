@@ -28,10 +28,9 @@ namespace {
 #include "Implementations/LLVMDerivatives.inc"
 
 // Exposes llvm.store's (value, addr) so activity analysis can treat it
-// generically via ActiveStoreOpInterface rather than a hard-coded dyn_cast.
-struct LLVMStoreActiveStore
-    : public ActiveStoreOpInterface::ExternalModel<LLVMStoreActiveStore,
-                                                   LLVM::StoreOp> {
+// generically via StoreLikeInterface rather than a hard-coded dyn_cast.
+struct LLVMStoreLike
+    : public StoreLikeInterface::ExternalModel<LLVMStoreLike, LLVM::StoreOp> {
   Value getStoredValue(Operation *op) const {
     return cast<LLVM::StoreOp>(op).getValue();
   }
@@ -577,7 +576,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMArrayType::attachInterface<ArrayTypeInterface>(*context);
 
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
-    LLVM::StoreOp::attachInterface<LLVMStoreActiveStore>(*context);
+    LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
