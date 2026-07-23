@@ -135,6 +135,8 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
       return true;
     if (name == "swift_release")
       return true;
+    if (name == "NRT_decref")
+      return true;
     return false;
   }
 
