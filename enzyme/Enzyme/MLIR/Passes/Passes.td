@@ -170,6 +170,27 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*default=*/"false",
       /*description=*/"Whether or not to use the dataflow activity analysis"
     >,
+    Option<
+      /*C++ variable name=*/"strongZero",
+      /*CLI argument=*/"strongZero",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use a strong zero"
+    >,
+    Option<
+      /*C++ variable name=*/"atomicAdd",
+      /*CLI argument=*/"atomicAdd",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether or not to use atomics by default (e.g. if within a parallel context)"
+    >,
+  ];
+}
+
+def SplitMultiResultsPass : Pass<"split-multi-results"> {
+  let summary = "Split region ops that yield multiple results into separate ops";
+  let dependentDialects = [
+    "scf::SCFDialect"
   ];
 }
 
@@ -256,6 +277,14 @@ def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
   let summary = "Hoist independent primal ops out of autodiff_region.";
   let dependentDialects = [ 
   "enzyme::EnzymeDialect",
+  ];
+}
+
+def FlattenEnzymeCachesPass : Pass<"flatten-enzyme-caches"> {
+  let summary = "Flatten multi-dimensional enzyme memory ops to 1-D memrefs.";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "memref::MemRefDialect",
   ];
 }
 

@@ -500,5 +500,6 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
   enzyme::registerFuncDialectAutoDiffInterface(registry);
   enzyme::registerTensorDialectAutoDiffInterface(registry);
+  enzyme::registerGPUDialectAutoDiffInterface(registry);
   enzyme::registerEnzymeDialectAutoDiffInterface(registry);
 }

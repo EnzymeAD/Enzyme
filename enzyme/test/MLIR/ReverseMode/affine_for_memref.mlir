@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme-wrap="infn=square_ip outfn= argTys=enzyme_dup,enzyme_const retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --canonicalize --cse | FileCheck %s
+// RUN: %eopt %s --enzyme-wrap="infn=square_ip outfn= argTys=enzyme_dup,enzyme_const retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --flatten-enzyme-caches --canonicalize --enzyme-simplify-math --canonicalize --cse | FileCheck %s
 
 func.func @square_ip(%arg0: memref<?xf32>, %ub: index) {
   affine.for %iv = 0 to %ub {

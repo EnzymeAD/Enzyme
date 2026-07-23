@@ -129,7 +129,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -174,7 +174,7 @@ def JacobianOp : Enzyme_Op<"jacobian",
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
-  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add, OptionalAttr<StrAttr>:$fn);
   let regions = (region AnyRegion:$body);
   let results = (outs Variadic<AnyType>:$outputs);
 
@@ -263,7 +263,7 @@ def PushOp : Enzyme_Op<"push", [
                    "cache", "value",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Push value to cache";
-  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let arguments = (ins Arg<AnyType, "the cache to push to", [MemWrite]>:$cache, AnyType:$value);
 }
 
 def PopOp : Enzyme_Op<"pop", [
@@ -271,7 +271,7 @@ def PopOp : Enzyme_Op<"pop", [
                    "cache", "output",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
-  let arguments = (ins AnyType : $cache);
+  let arguments = (ins Arg<AnyType, "the cache to pop from", [MemRead, MemWrite]>:$cache);
   let results = (outs AnyType:$output);
 }
 
@@ -305,7 +305,7 @@ def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "Create enzyme.gradient and enzyme.cache";
   let arguments = (ins );
-  let results = (outs AnyType);
+  let results = (outs Res<AnyType, "", [MemAlloc<DefaultResource, 0, FullEffect>]>);
 }
 
 def Cache : Enzyme_Type<"Cache"> {
@@ -329,23 +329,36 @@ def Gradient : Enzyme_Type<"Gradient"> {
 }
 
 def LoadOp : Enzyme_Op<"load",
-    [TypesMatchWith<"type of 'result' matches element type of 'cache'",
-                    "cache", "result",
-                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Load a value from a cache at the specified indices";
-  let arguments = (ins Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'result' matches element type of 'memref'",
+                    "memref", "result",
+                    "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Load from a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
+                           [MemRead]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$cache `[` $indices `]` attr-dict `:` type($cache)";
+  let assemblyFormat = [{
+    $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
 }
 
 def StoreOp : Enzyme_Op<"store",
-    [TypesMatchWith<"type of 'value' matches element type of 'cache'",
-                     "cache", "value",
-                     "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Store a value to a cache at the specific indices";
-  let arguments = (ins AnyType:$value, Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Store to a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "the reference to store to",
+                           [MemWrite]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let assemblyFormat = [{
-    $value `,` $cache `[` $indices `]` attr-dict `:` type($cache)
+    $value `,` $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
   }];
 }
 

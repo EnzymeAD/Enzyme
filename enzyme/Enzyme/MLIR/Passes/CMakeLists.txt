@@ -13,6 +13,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeBatchDiffPass.cpp
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
+    FlattenEnzymeCaches.cpp
     InlineEnzymeRegions.cpp
     HoistEnzymeRegions.cpp
     LowerLLVMExtPass.cpp
@@ -20,6 +21,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp
     SimplifyMath.cpp
+    SplitMultiResults.cpp
     AddToOpToIndexAndLoad.cpp
     AddToOpToSplit.cpp
     RaiseLLVMExtPass.cpp

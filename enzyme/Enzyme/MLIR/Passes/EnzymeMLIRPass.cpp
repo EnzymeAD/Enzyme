@@ -17,7 +17,6 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
@@ -51,8 +50,7 @@ struct DifferentiatePass
 
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
-                    mlir::memref::MemRefDialect, mlir::linalg::LinalgDialect,
-                    mlir::enzyme::EnzymeDialect>();
+                    mlir::memref::MemRefDialect, mlir::enzyme::EnzymeDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
@@ -330,12 +328,12 @@ struct DifferentiatePass
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc =
-        Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
-                                returnShadows, mode, freeMemory, width,
-                                /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr, omp, postpasses,
-                                verifyPostPasses, CI.getStrongZero());
+    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
+        fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
+        freeMemory, CI.getAtomicAdd(), width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
+        CI.getStrongZero());
     if (!newFunc)
       return failure();
 

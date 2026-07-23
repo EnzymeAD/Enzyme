@@ -66,10 +66,12 @@ jobs:
 
     - name: Cache MLIR
       id: cache-mlir
-      uses: actions/cache@v4
+      uses: wsmoses/gcp-cache@main
       with:
         path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
+        gcp-bucket: enzyme-ci-transient
+        gcp-prefix: enzyme-mlir/
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
