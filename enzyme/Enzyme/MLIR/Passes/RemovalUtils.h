@@ -68,7 +68,7 @@ struct CacheInfo {
 // All pushes must go after `lastFwd`, if non null
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
                  PatternRewriter &rewriter, const IRMapping &fwdrevmap,
-                 Operation *lastFwd = nullptr);
+                 Operation *lastFwd = nullptr, bool prune = false);
 
 enum class LoopCacheType { TENSOR, MEMREF };
 
