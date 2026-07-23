@@ -114,6 +114,7 @@ if (ENZYME_FLANG_MLIR)
     HLFIREnzymeCallLowering.cpp
     EnzymeFortranAutoDiffRegistration.cpp
     FIRAutoDiffOpInterfaceImpl.cpp
+    HLFIRAutoDiffOpInterfaceImpl.cpp
     PARTIAL_SOURCES_INTENDED
 
     DEPENDS
