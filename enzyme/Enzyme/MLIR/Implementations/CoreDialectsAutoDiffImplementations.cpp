@@ -482,12 +482,3 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
   return success();
 }
-
-// NOTE: registerCoreDialectAutodiffInterfaces (the aggregate that pulls in every
-// core-dialect autodiff model, including Linalg/NVVM) intentionally lives in its
-// own translation unit, CoreDialectsAutoDiffRegistration.cpp. Keeping it out of
-// this TU -- which also defines the memory-identity handler that the FIR/HLFIR
-// models depend on -- lets a consumer that only wants a subset of dialects (the
-// lean `flang -fc1` plugin, which must not drag in Linalg symbols flang does not
-// export) link the individual register*DialectAutoDiffInterface entry points
-// without force-linking the whole aggregate.
