@@ -28,10 +28,10 @@ namespace {
 #include "Implementations/MemRefDerivatives.inc"
 
 // Exposes memref.store's (value, memref) so activity analysis can treat it
-// generically via ActiveStoreOpInterface rather than a hard-coded dyn_cast.
-struct MemRefStoreActiveStore
-    : public ActiveStoreOpInterface::ExternalModel<MemRefStoreActiveStore,
-                                                   memref::StoreOp> {
+// generically via StoreLikeInterface rather than a hard-coded dyn_cast.
+struct MemRefStoreLike
+    : public StoreLikeInterface::ExternalModel<MemRefStoreLike,
+                                               memref::StoreOp> {
   Value getStoredValue(Operation *op) const {
     return cast<memref::StoreOp>(op).getValueToStore();
   }
@@ -325,7 +325,7 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     MemRefType::attachInterface<MemRefAutoDiffTypeInterface>(*context);
     MemRefType::attachInterface<MemRefClonableTypeInterface>(*context);
 
-    memref::StoreOp::attachInterface<MemRefStoreActiveStore>(*context);
+    memref::StoreOp::attachInterface<MemRefStoreLike>(*context);
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
