@@ -446,8 +446,7 @@ struct AffineParallelRegionBranchOpInterface
     // Both the operation itself and the region may be branching into the body
     // or back into the operation itself. It is possible for the loop to not
     // enter the body.
-    regions.push_back(
-        RegionSuccessor(&cast<AffineParallelOp>(op).getRegion()));
+    regions.push_back(RegionSuccessor(&cast<AffineParallelOp>(op).getRegion()));
     regions.push_back(RegionSuccessor(op));
   }
 
