@@ -61,7 +61,7 @@ jobs:
         path: ${{ env.CCACHE_DIR }}
         key: ccache-rust-${{ matrix.os }}-${{ matrix.commit }}
         gcp-bucket: enzyme-ci-transient
-        gcp-prefix: enzymerust/
+        gcp-prefix: enzyme-rust/
     - name: ccache --show-stats
       run: |
         ccache --show-stats --verbose
