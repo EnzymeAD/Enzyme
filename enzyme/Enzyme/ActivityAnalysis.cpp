@@ -257,6 +257,7 @@ const StringSet<> KnownInactiveFunctions = {
     "cuStreamDestroy",
     "cuStreamQuery",
     "cuCtxGetCurrent",
+    "cuStreamGetCaptureInfo",
     "enzyme_zerotype",
     "abort",
     "time",
