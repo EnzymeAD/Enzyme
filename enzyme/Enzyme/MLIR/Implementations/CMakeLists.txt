@@ -68,6 +68,7 @@ add_mlir_library(MLIREnzymeImplementations
   MathAutoDiffOpInterfaceImpl.cpp
   GPUAutoDiffOpInterfaceImpl.cpp
   EnzymeAutoDiffOpInterfaceImpl.cpp
+  PARTIAL_SOURCES_INTENDED
 
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
@@ -98,3 +99,29 @@ add_mlir_library(MLIREnzymeImplementations
   MLIRSCFDialect
   MLIRLinalgDialect
 )
+
+# Flang-dependent Enzyme plumbing for Fortran. Kept in a separate library (and
+# behind ENZYME_FIR_TOOL, which resolves Flang) so the core Enzyme-MLIR build
+# never gains a Flang dependency. This layer holds only the dialect-agnostic
+# plumbing -- the `enzyme-lower-fortran-calls` pass that rewrites the Fortran
+# f__enzyme_* hook calls into enzyme.* ops. The Tier-1 hlfir.*/fir.* autodiff
+# models are added to this same library by the FIR autodiff layer. Linked into
+# fir-enzyme-opt. See HLFIREnzymeCallLowering.cpp.
+if (ENZYME_FIR_TOOL)
+  add_mlir_library(MLIREnzymeHLFIRImplementations
+    HLFIREnzymeCallLowering.cpp
+    PARTIAL_SOURCES_INTENDED
+
+    DEPENDS
+    MLIRAutoDiffOpInterfaceIncGen
+    MLIREnzymeEnumsIncGen
+
+    LINK_LIBS PUBLIC
+    MLIREnzymeImplementations
+    MLIREnzymeAutoDiffInterface
+    HLFIRDialect
+    FIRBuilder
+    MLIRIR
+  )
+  target_include_directories(MLIREnzymeHLFIRImplementations PRIVATE ${FLANG_INCLUDE_DIRS})
+endif()

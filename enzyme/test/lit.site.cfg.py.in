@@ -66,6 +66,24 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# fir-enzyme-opt: the standalone fir-opt+Enzyme binary (the delivery vehicle for
+# a fully-static LLVM build). %fireopt runs it; the fir_enzyme_opt feature gates
+# tests that need it.
+fireopt = config.enzyme_obj_root + "/Enzyme/MLIR/fir-enzyme-opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  fireopt = os.path.dirname(os.path.abspath(__file__)) + "/../fir-enzyme-opt"
+config.substitutions.append(('%fireopt', fireopt))
+if os.path.exists(fireopt):
+  config.available_features.add('fir_enzyme_opt')
+
+# flang-new -fc1, for compiling Fortran to HLFIR in end-to-end tests. Registers
+# the flang_new feature so those tests are skipped when flang is unavailable.
+flang_new = config.llvm_tools_dir + "/flang-new"
+config.substitutions.append(('%flang_fc1', flang_new + " -fc1"))
+if os.path.exists(flang_new):
+  config.available_features.add('flang_new')
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
