@@ -140,3 +140,57 @@ func.func @dreverse_index(%lb: index, %ub: index, %x: memref<?xf32>, %dx: memref
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>
 // CHECK:           return
 // CHECK:         }
+
+// -----
+
+func.func @reduce_i32(%x: f32, %ub: i32) -> (f32) {
+  %lb = arith.constant 0 : i32
+  %step = arith.constant 1 : i32
+  %ub_inner = arith.constant 4 : index
+
+  %sum_0 = arith.constant 1.0 : f32
+  %sum = scf.for %iv2 = %lb to %ub step %step
+      iter_args(%sum_iter = %sum_0) -> (f32) : i32 {
+    %sum_next = arith.mulf %sum_iter, %x : f32
+    scf.yield %sum_next : f32
+  }
+  return %sum : f32
+}
+
+func.func @dreduce(%x: f32, %ub: i32, %dres: f32) -> (f32) {
+  %res = enzyme.autodiff @reduce_i32(%x, %ub, %dres) {
+    activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
+    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+  } : (f32, i32, f32) -> f32
+  return %res : f32
+}
+
+// CHECK-LABEL:   func.func private @differeduce_i32(
+// CHECK-SAME:      %[[ARG0:.*]]: f32,
+// CHECK-SAME:      %[[ARG1:.*]]: i32,
+// CHECK-SAME:      %[[ARG2:.*]]: f32) -> f32 {
+// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK:           %[[CONSTANT_1:.*]] = arith.constant 1 : i32
+// CHECK:           %[[CONSTANT_2:.*]] = arith.constant 0 : i32
+// CHECK:           %[[CONSTANT_3:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[INDEX_CAST_0:.*]] = arith.index_cast %[[ARG1]] : i32 to index
+// CHECK:           %[[ALLOC_0:.*]] = memref.alloc(%[[INDEX_CAST_0]]) : memref<?xf32>
+// CHECK:           %[[FOR_0:.*]] = scf.for %[[VAL_0:.*]] = %[[CONSTANT_2]] to %[[ARG1]] step %[[CONSTANT_1]] iter_args(%[[VAL_1:.*]] = %[[CONSTANT_0]]) -> (f32)  : i32 {
+// CHECK:             %[[INDEX_CAST_1:.*]] = arith.index_cast %[[VAL_0]] : i32 to index
+// CHECK:             memref.store %[[VAL_1]], %[[ALLOC_0]]{{\[}}%[[INDEX_CAST_1]]] : memref<?xf32>
+// CHECK:             %[[MULF_0:.*]] = arith.mulf %[[VAL_1]], %[[ARG0]] : f32
+// CHECK:             scf.yield %[[MULF_0]] : f32
+// CHECK:           }
+// CHECK:           %[[FOR_1:.*]]:2 = scf.for %[[VAL_2:.*]] = %[[CONSTANT_2]] to %[[ARG1]] step %[[CONSTANT_1]] iter_args(%[[VAL_3:.*]] = %[[ARG2]], %[[VAL_4:.*]] = %[[CONSTANT_3]]) -> (f32, f32)  : i32 {
+// CHECK:             %[[SUBI_0:.*]] = arith.subi %[[ARG1]], %[[CONSTANT_1]] : i32
+// CHECK:             %[[SUBI_1:.*]] = arith.subi %[[SUBI_0]], %[[VAL_2]] : i32
+// CHECK:             %[[INDEX_CAST_2:.*]] = arith.index_cast %[[SUBI_1]] : i32 to index
+// CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[INDEX_CAST_2]]] : memref<?xf32>
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_3]], %[[ARG0]] : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_3]], %[[LOAD_0]] : f32
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[VAL_4]], %[[MULF_2]] : f32
+// CHECK:             scf.yield %[[MULF_1]], %[[ADDF_0]] : f32, f32
+// CHECK:           }
+// CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>
+// CHECK:           return %[[VAL_5:.*]]#1 : f32
+// CHECK:         }
