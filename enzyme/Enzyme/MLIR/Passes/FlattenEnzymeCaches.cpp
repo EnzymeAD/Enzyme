@@ -85,17 +85,17 @@ Value computeFlatIndex(ValueRange indices, ValueRange dynamicSizes,
   // Compute the flat index by iterating over indices in reverse
   // We assume the caches have identity layouts, so strides can be
   // computed from sizes.
-  Value flatIndex = indices[oldShape.size() - 1];
-  int64_t dynamicIndex = dynamicSizes.size() - 1;
-  if (oldShape.back() == ShapedType::kDynamic) {
-    dynamicIndex--;
+  Value flatIndex = indices[0];
+  int64_t dynamicIndex = 0;
+  if (oldShape[0] == ShapedType::kDynamic) {
+    dynamicIndex++;
   }
 
-  for (int64_t dim = oldShape.size() - 1; dim > 0; dim--) {
+  for (int64_t dim = 1; dim < oldShape.size(); dim++) {
     Value bound;
     if (oldShape[dim] == ShapedType::kDynamic) {
       bound = dynamicSizes[dynamicIndex];
-      dynamicIndex--;
+      dynamicIndex++;
     } else {
       bound = arith::ConstantIndexOp::create(builder, oldShape[dim]);
     }
