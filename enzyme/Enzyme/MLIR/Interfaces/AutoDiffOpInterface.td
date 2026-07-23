@@ -126,12 +126,14 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
   ];
 }
 
-// A store-like operation that writes one operand (the value) through another
-// (the pointer/reference). Lets activity analysis reason about stored-value and
-// pointer activity without hard-coding specific dialects (memref.store,
-// LLVM.store, ...), which keeps the analysis dialect-agnostic and lets
-// out-of-tree dialects participate by attaching this interface.
 def StoreLikeInterface : OpInterface<"StoreLikeInterface"> {
+  let description = [{
+    A store-like operation that writes one operand (the value) through another
+    (the pointer/reference). Lets activity analysis reason about stored-value and
+    pointer activity without hard-coding specific dialects (memref.store,
+    LLVM.store, ...), which keeps the analysis dialect-agnostic and lets
+    out-of-tree dialects participate by attaching this interface.
+  }];
   let cppNamespace = "::mlir::enzyme";
 
   let methods = [InterfaceMethod<
