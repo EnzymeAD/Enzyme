@@ -49,11 +49,14 @@ Value createFlatAlloc(MemRefType oldType,
   // Compute the size of the flattened allocation
   unsigned opidx = 0;
 
+  SmallVector<Value> dynamicDims;
+  allocOp.appendDynamicDims(dynamicDims);
+
   Value size = nullptr;
   for (unsigned dim = 0; dim < oldType.getRank(); dim++) {
     Value bound;
     if (oldType.getDimSize(dim) == ShapedType::kDynamic) {
-      bound = allocOp->getOperand(opidx);
+      bound = dynamicDims[opidx];
       opidx++;
     } else {
       bound = arith::ConstantIndexOp::create(builder, oldType.getDimSize(dim));
