@@ -131,8 +131,8 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
 // pointer activity without hard-coding specific dialects (memref.store,
 // LLVM.store, ...), which keeps the analysis dialect-agnostic and lets
 // out-of-tree dialects participate by attaching this interface.
-def ActiveStoreOpInterface
-    : OpInterface<"ActiveStoreOpInterface"> {
+def StoreLikeInterface
+    : OpInterface<"StoreLikeInterface"> {
   let cppNamespace = "::mlir::enzyme";
 
   let methods = [
@@ -142,7 +142,7 @@ def ActiveStoreOpInterface
     /*methodName=*/"getStoredValue"
     >,
     InterfaceMethod<
-    /*desc=*/"Returns the pointer/reference this store writes through.",
+    /*desc=*/"Returns the base pointer/reference this store writes through (before any potential offsets within the op are applied).",
     /*retTy=*/"::mlir::Value",
     /*methodName=*/"getStoredPointer"
     >
