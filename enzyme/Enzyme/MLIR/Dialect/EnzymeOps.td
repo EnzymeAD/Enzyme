@@ -22,6 +22,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -128,7 +129,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -173,7 +174,7 @@ def JacobianOp : Enzyme_Op<"jacobian",
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
-  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add, OptionalAttr<StrAttr>:$fn);
   let regions = (region AnyRegion:$body);
   let results = (outs Variadic<AnyType>:$outputs);
 
@@ -262,7 +263,7 @@ def PushOp : Enzyme_Op<"push", [
                    "cache", "value",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Push value to cache";
-  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let arguments = (ins Arg<AnyType, "the cache to push to", [MemWrite]>:$cache, AnyType:$value);
 }
 
 def PopOp : Enzyme_Op<"pop", [
@@ -270,15 +271,41 @@ def PopOp : Enzyme_Op<"pop", [
                    "cache", "output",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
-  let arguments = (ins AnyType : $cache);
+  let arguments = (ins Arg<AnyType, "the cache to pop from", [MemRead, MemWrite]>:$cache);
   let results = (outs AnyType:$output);
+}
+
+def BinomialProgressScalarOrUnrankedTensor : AnyTypeOf<[
+    AnySignlessIntegerOrIndex,
+    UnrankedTensorOf<[AnySignlessInteger, Index]>],
+    "signless integer, index, or unranked tensor thereof">;
+
+def BinomialProgressOp : Enzyme_Op<"binomial_progress",
+    [Pure, SameOperandsAndResultType]> {
+  let summary = "Revolve binomial checkpointing split";
+  let description = [{
+    Given `num_steps` remaining iterations and a `budget` of available
+    checkpoints, returns how many steps to advance before placing the next
+    checkpoint: the largest `j` such that `C(j + budget - 1, j) <= num_steps`
+    (returning 1 when `num_steps == 1` or `budget == 1`). This is the classic
+    Revolve "split" function used for binomial checkpointing of loops.
+
+    `num_steps` and `budget` may be an index, a signless integer of any
+    width, or an unranked tensor thereof (with the result taking the same
+    type).
+  }];
+  let arguments = (ins BinomialProgressScalarOrUnrankedTensor:$num_steps,
+                       BinomialProgressScalarOrUnrankedTensor:$budget);
+  let results = (outs BinomialProgressScalarOrUnrankedTensor:$result);
+  let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
+  let hasFolder = 1;
 }
 
 def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "Create enzyme.gradient and enzyme.cache";
   let arguments = (ins );
-  let results = (outs AnyType);
+  let results = (outs Res<AnyType, "", [MemAlloc<DefaultResource, 0, FullEffect>]>);
 }
 
 def Cache : Enzyme_Type<"Cache"> {
@@ -302,23 +329,44 @@ def Gradient : Enzyme_Type<"Gradient"> {
 }
 
 def LoadOp : Enzyme_Op<"load",
-    [TypesMatchWith<"type of 'result' matches element type of 'cache'",
-                    "cache", "result",
-                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Load a value from a cache at the specified indices";
-  let arguments = (ins Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'result' matches element type of 'memref'",
+                    "memref", "result",
+                    "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Load from a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
+                           [MemRead]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$cache `[` $indices `]` attr-dict `:` type($cache)";
+  let assemblyFormat = [{
+    $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
 }
 
 def StoreOp : Enzyme_Op<"store",
-    [TypesMatchWith<"type of 'value' matches element type of 'cache'",
-                     "cache", "value",
-                     "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Store a value to a cache at the specific indices";
-  let arguments = (ins AnyType:$value, Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Store to a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "the reference to store to",
+                           [MemWrite]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let assemblyFormat = [{
-    $value `,` $cache `[` $indices `]` attr-dict `:` type($cache)
+    $value `,` $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
+}
+
+def FillZeroOp : Enzyme_Op<"fill_zero", []> {
+  let summary = "Fill memory with zero values";
+  let arguments = (ins Arg<AnyMemRef, "the argument to fill", [MemWrite]>:$memref);
+  let assemblyFormat = [{
+    $memref attr-dict `:` type($memref)
   }];
 }
 
@@ -444,6 +492,38 @@ def DumpOp : Enzyme_Op<"dump"> {
   }];
 }
 
+def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
+      AllTypesMatch<["value", "result"]>,
+      TypesMatchWith<"value type matches element type of memref",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+    ]> {
+  let summary = "atomic rmw operation with ordering";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AtomicOrdering:$ordering,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `[` $indices `]` $ordering attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+
+  let extraClassDeclaration = [{
+    MemRefType getMemRefType() {
+      return ::llvm::cast<MemRefType>(getMemref().getType());
+    }
+  }];
+}
+
 def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
   let summary = "affine atomic rmw operation";
   let description = [{
@@ -456,7 +536,8 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
-      AffineMapAttr:$map);
+      AffineMapAttr:$map,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
 
   let assemblyFormat = [{
     $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`

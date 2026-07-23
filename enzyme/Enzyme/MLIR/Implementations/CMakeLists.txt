@@ -65,6 +65,7 @@ add_mlir_library(MLIREnzymeImplementations
   SCFAutoDiffOpInterfaceImpl.cpp
   CFAutoDiffOpInterfaceImpl.cpp
   MathAutoDiffOpInterfaceImpl.cpp
+  GPUAutoDiffOpInterfaceImpl.cpp
   EnzymeAutoDiffOpInterfaceImpl.cpp
 
   DEPENDS
@@ -90,6 +91,7 @@ add_mlir_library(MLIREnzymeImplementations
   MLIRComplexDialect
   MLIRLLVMDialect
   MLIRMemRefDialect
+  MLIRGPUDialect
   MLIREnzymeAutoDiffInterface
   MLIRIR
   MLIRSCFDialect

@@ -65,7 +65,7 @@ struct DifferentiateWrapperPass
   using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
-    MEnzymeLogic Logic;
+    MEnzymeLogic Logic(dataflowActivity);
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(getOperation());
 
@@ -92,7 +92,6 @@ struct DifferentiateWrapperPass
     bool omp = false;
     std::string postpasses = "";
     bool verifyPostPasses = true;
-    bool strongZero = false;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
@@ -142,7 +141,7 @@ struct DifferentiateWrapperPass
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
-          freeMemory, width,
+          freeMemory, atomicAdd, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
     }
@@ -160,6 +159,8 @@ struct DifferentiateWrapperPass
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)outfn);
     }
+
+    getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
   }
 };
 

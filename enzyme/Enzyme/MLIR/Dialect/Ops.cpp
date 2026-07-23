@@ -69,6 +69,42 @@ InitOp::handlePromotionComplete(const MemorySlot &slot, Value defaultValue,
 }
 
 //===----------------------------------------------------------------------===//
+// BinomialProgressOp
+//===----------------------------------------------------------------------===//
+
+// Revolve "split" function: given `n` remaining steps and a `budget` of `s`
+// available checkpoints, return the number of steps to advance before placing
+// the next checkpoint (the largest `j` with `C(j + s - 1, j) <= n`).
+static int64_t binomialProgress(int64_t n, int64_t s) {
+  assert(s > 0 && "no checkpoints available");
+  if (s == 1 || n == 1)
+    return 1;
+
+  int64_t j = 1;
+  int64_t binom = s; // C(s, s-1) = s
+
+  while (binom < n) {
+    ++j;
+    binom = binom * (j + s - 1) / j;
+  }
+
+  return binom == n ? j : j - 1;
+}
+
+OpFoldResult BinomialProgressOp::fold(FoldAdaptor adaptor) {
+  auto numSteps = dyn_cast_or_null<IntegerAttr>(adaptor.getNumSteps());
+  auto budget = dyn_cast_or_null<IntegerAttr>(adaptor.getBudget());
+  if (!numSteps || !budget)
+    return {};
+
+  int64_t n = numSteps.getInt(), s = budget.getInt();
+  if (n <= 0 || s <= 0)
+    return {};
+
+  return IntegerAttr::get(getType(), binomialProgress(n, s));
+}
+
+//===----------------------------------------------------------------------===//
 // GetOp
 //===----------------------------------------------------------------------===//
 
@@ -187,7 +223,8 @@ template <> struct EnzymeOpCreator<AutoDiffOp> {
 
     return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
                               in_args, newInActivity, newRetActivity,
-                              uop.getWidthAttr(), uop.getStrongZeroAttr());
+                              uop.getWidthAttr(), uop.getStrongZeroAttr(),
+                              uop.getAtomicAddAttr());
   }
 };
 
@@ -198,7 +235,8 @@ template <> struct EnzymeOpCreator<AutoDiffRegionOp> {
                                  ArrayAttr newRetActivity) {
     auto newOp = AutoDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
-        uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
+        uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getAtomicAddAttr(),
+        uop.getFnAttr());
 
     rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
                                 newOp.getBody().begin());

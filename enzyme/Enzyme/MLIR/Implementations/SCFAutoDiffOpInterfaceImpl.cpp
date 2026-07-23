@@ -155,17 +155,544 @@ private:
   static void preserveAttributesButCheckpointing(Operation *newOp,
                                                  Operation *oldOp) {
     for (auto attr : oldOp->getDiscardableAttrs()) {
-      if (attr.getName() != "enzyme.enable_checkpointing")
-        newOp->setAttr(attr.getName(), attr.getValue());
+      auto name = attr.getName();
+      if (name != "enzyme.enable_checkpointing" &&
+          name != "enzyme.binomial_checkpointing" &&
+          name != "enzyme.checkpoint_period")
+        newOp->setAttr(name, attr.getValue());
     }
+  }
+
+  static bool hasBinomialAttr(scf::ForOp forOp) {
+    return forOp->hasAttr("enzyme.binomial_checkpointing");
   }
 
   static bool needsCheckpointing(scf::ForOp forOp) {
     return forOp->hasAttrOfType<BoolAttr>("enzyme.enable_checkpointing") &&
            forOp->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing")
                .getValue() &&
+           !hasBinomialAttr(forOp) &&
            ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp)
                .has_value();
+  }
+
+  static bool needsBinomialCheckpointing(scf::ForOp forOp) {
+    return forOp->hasAttrOfType<BoolAttr>("enzyme.enable_checkpointing") &&
+           forOp->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing")
+               .getValue() &&
+           hasBinomialAttr(forOp);
+  }
+
+  static Value getNumIterationsValue(OpBuilder &builder, Location loc,
+                                     scf::ForOp forOp,
+                                     MGradientUtilsReverse *gutils) {
+    Value lb = gutils->getNewFromOriginal(forOp.getLowerBound());
+    Value ub = gutils->getNewFromOriginal(forOp.getUpperBound());
+    Value step = gutils->getNewFromOriginal(forOp.getStep());
+    Value diff = arith::SubIOp::create(builder, loc, ub, lb);
+    return arith::DivUIOp::create(builder, loc, diff, step);
+  }
+
+  static std::optional<int64_t> getCheckpointBudget(scf::ForOp forOp) {
+    if (auto a = forOp->getAttrOfType<IntegerAttr>("enzyme.checkpoint_period"))
+      return a.getInt();
+    return std::nullopt;
+  }
+
+  static MemRefType checkpointBufferType(int64_t budget, Type t) {
+    if (auto mt = dyn_cast<MemRefType>(t)) {
+      SmallVector<int64_t> shape;
+      shape.push_back(budget);
+      shape.append(mt.getShape().begin(), mt.getShape().end());
+      return MemRefType::get(shape, mt.getElementType());
+    }
+    return MemRefType::get({budget}, t);
+  }
+
+  static Value checkpointRow(OpBuilder &b, Location loc, Value buf, Value slot,
+                             MemRefType rowTy) {
+    auto bufTy = cast<MemRefType>(buf.getType());
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+    offsets.push_back(slot);
+    sizes.push_back(b.getIndexAttr(1));
+    strides.push_back(b.getIndexAttr(1));
+    for (int64_t i = 0, e = rowTy.getRank(); i < e; ++i) {
+      offsets.push_back(b.getIndexAttr(0));
+      sizes.push_back(b.getIndexAttr(rowTy.getDimSize(i)));
+      strides.push_back(b.getIndexAttr(1));
+    }
+    auto resTy = memref::SubViewOp::inferRankReducedResultType(
+        rowTy.getShape(), bufTy, offsets, sizes, strides);
+    return memref::SubViewOp::create(b, loc, cast<MemRefType>(resTy), buf,
+                                     offsets, sizes, strides);
+  }
+
+  static void storeCheckpoint(OpBuilder &b, Location loc, Value buf, Value slot,
+                              Value val) {
+    if (auto mt = dyn_cast<MemRefType>(val.getType())) {
+      Value row = checkpointRow(b, loc, buf, slot, mt);
+      memref::CopyOp::create(b, loc, val, row);
+    } else {
+      memref::StoreOp::create(b, loc, val, buf, ValueRange{slot});
+    }
+  }
+
+  // Read a snapshot from checkpoint buffer slot `slot`. For scalars returns the
+  // loaded value; for memrefs returns a fresh alloc initialized from the row
+  // (the caller is responsible for deallocating it).
+  static Value loadCheckpoint(OpBuilder &b, Location loc, Value buf, Value slot,
+                              Type valTy) {
+    if (auto mt = dyn_cast<MemRefType>(valTy)) {
+      Value row = checkpointRow(b, loc, buf, slot, mt);
+      Value fresh = memref::AllocOp::create(b, loc, mt);
+      memref::CopyOp::create(b, loc, row, fresh);
+      return fresh;
+    }
+    return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
+  }
+
+  // Forward augmentation for binomial (Revolve) checkpointing. Builds an outer
+  // loop of `budget` iterations that snapshots the loop state into memref
+  // checkpoint buffers at Revolve-scheduled positions, advancing the primal in
+  // an inner recompute loop between snapshots. Returns the caches (buffer
+  // handles + index buffer + outside refs) transported to the reverse pass.
+  //
+  // Cache layout:
+  //   [ ckptBufs (numIterArgs), idxBuf (1), mutableRefs..., immutableRefs... ]
+  static SmallVector<Value> cacheBinomial(scf::ForOp forOp, int64_t budget,
+                                          MGradientUtilsReverse *gutils) {
+    Location loc = forOp.getLoc();
+    bool isDynamic =
+        !ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp)
+             .has_value();
+
+    auto newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(forOp));
+    OpBuilder builder(newForOp);
+    Type idxTy = builder.getIndexType();
+
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+
+    // Loop trip count / lower bound / step as index values (constant-folded
+    // when the bounds are constant).
+    Value numItersV, startV, stepV;
+    if (isDynamic) {
+      startV = gutils->getNewFromOriginal(forOp.getLowerBound());
+      stepV = gutils->getNewFromOriginal(forOp.getStep());
+      numItersV = getNumIterationsValue(builder, loc, forOp, gutils);
+    } else {
+      int64_t numIters =
+          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
+      llvm::APInt startI, stepI;
+      (void)matchPattern(forOp.getLowerBound(), m_ConstantInt(&startI));
+      (void)matchPattern(forOp.getStep(), m_ConstantInt(&stepI));
+      numItersV = arith::ConstantIndexOp::create(builder, loc, numIters);
+      startV =
+          arith::ConstantIndexOp::create(builder, loc, startI.getSExtValue());
+      stepV =
+          arith::ConstantIndexOp::create(builder, loc, stepI.getSExtValue());
+    }
+
+    // Effective budget = min(requested budget, trip count): never keep more
+    // checkpoints than there are iterations. Buffers are sized by the (static)
+    // requested budget; the effective budget bounds the loops at runtime.
+    Value budgetV = arith::MinUIOp::create(
+        builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
+        numItersV);
+
+    SetVector<Value> outsideRefs;
+    getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
+    SmallVector<Value> immutableRefs, mutableRefs;
+    for (auto ref : outsideRefs) {
+      if (isa<ClonableTypeInterface>(ref.getType()))
+        mutableRefs.push_back(ref);
+      else
+        immutableRefs.push_back(ref);
+    }
+
+    IRMapping &mapping = gutils->originalToNewFn;
+    SmallVector<Value> caches;
+
+    // Allocate one checkpoint buffer per iter arg + the step-index buffer.
+    SmallVector<Value> ckptBufs;
+    for (auto arg : newForOp.getInitArgs()) {
+      auto bufTy = checkpointBufferType(budget, arg.getType());
+      ckptBufs.push_back(memref::AllocOp::create(builder, loc, bufTy));
+    }
+    Value idxBuf =
+        memref::AllocOp::create(builder, loc, MemRefType::get({budget}, idxTy));
+
+    // Outer checkpoint-placement loop: for %k = 0 to budgetV carrying
+    // (stepCtr, state...).
+    SmallVector<Value> outerInit;
+    outerInit.push_back(c0);
+    outerInit.append(newForOp.getInitArgs().begin(),
+                     newForOp.getInitArgs().end());
+    auto outerFwd =
+        scf::ForOp::create(builder, loc, c0, budgetV, c1, outerInit);
+    preserveAttributesButCheckpointing(outerFwd, forOp);
+
+    builder.setInsertionPointToStart(outerFwd.getBody());
+    Value k = outerFwd.getInductionVar();
+    Value stepCtr = outerFwd.getBody()->getArgument(1);
+    auto state = outerFwd.getBody()->getArguments().drop_front(2);
+
+    for (auto &&[buf, val] : llvm::zip_equal(ckptBufs, state))
+      storeCheckpoint(builder, loc, buf, k, val);
+    memref::StoreOp::create(builder, loc, stepCtr, idxBuf, ValueRange{k});
+
+    Value numStepsRem = arith::SubIOp::create(builder, loc, numItersV, stepCtr);
+    Value budgetRem = arith::SubIOp::create(builder, loc, budgetV, k);
+    // Never use more checkpoints than remaining steps (binomial_progress is
+    // degenerate for budget > steps).
+    budgetRem = arith::MinUIOp::create(builder, loc, budgetRem, numStepsRem);
+    Value split = enzyme::BinomialProgressOp::create(builder, loc, idxTy,
+                                                     numStepsRem, budgetRem);
+
+    // Inner recompute loop: advance the primal `split` steps.
+    auto innerFwd =
+        scf::ForOp::create(builder, loc, c0, split, c1,
+                           SmallVector<Value>(state.begin(), state.end()));
+    preserveAttributesButCheckpointing(innerFwd, forOp);
+
+    builder.setInsertionPointToStart(innerFwd.getBody());
+    Value i = innerFwd.getInductionVar();
+    Value globalStep = arith::AddIOp::create(builder, loc, stepCtr, i);
+    Value iv = arith::AddIOp::create(
+        builder, loc, startV,
+        arith::MulIOp::create(builder, loc, stepV, globalStep));
+
+    for (auto &&[oldArg, newArg] :
+         llvm::zip_equal(forOp.getBody()->getArguments().drop_front(),
+                         innerFwd.getBody()->getArguments().drop_front()))
+      mapping.map(oldArg, newArg);
+    mapping.map(forOp.getInductionVar(), iv);
+
+    for (auto &it : forOp.getBody()->without_terminator())
+      builder.clone(it, mapping);
+
+    SmallVector<Value> innerYields;
+    for (auto operand : forOp.getBody()->getTerminator()->getOperands())
+      innerYields.push_back(mapping.lookupOrDefault(operand));
+    scf::YieldOp::create(builder, loc, innerYields);
+
+    builder.setInsertionPointToEnd(outerFwd.getBody());
+    SmallVector<Value> outerYields;
+    outerYields.push_back(arith::AddIOp::create(builder, loc, stepCtr, split));
+    outerYields.append(innerFwd.getResults().begin(),
+                       innerFwd.getResults().end());
+    scf::YieldOp::create(builder, loc, outerYields);
+
+    builder.setInsertionPointAfter(outerFwd);
+
+    // Cache buffer handles + index buffer + outside refs (single push each).
+    for (auto buf : ckptBufs)
+      caches.push_back(gutils->initAndPushCache(buf, builder));
+    caches.push_back(gutils->initAndPushCache(idxBuf, builder));
+
+    for (auto ref : mutableRefs) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      Value clone = iface.cloneValue(builder, mapping.lookupOrDefault(ref));
+      caches.push_back(gutils->initAndPushCache(clone, builder));
+    }
+    for (auto ref : immutableRefs)
+      caches.push_back(
+          gutils->initAndPushCache(mapping.lookupOrDefault(ref), builder));
+
+    // For dynamic bounds the reverse pass cannot recover the trip count / lower
+    // bound / step from constants, so cache them (as the trailing entries).
+    if (isDynamic) {
+      caches.push_back(gutils->initAndPushCache(numItersV, builder));
+      caches.push_back(gutils->initAndPushCache(startV, builder));
+      caches.push_back(gutils->initAndPushCache(stepV, builder));
+    }
+
+    // The primal result of the loop is the final state.
+    gutils->replaceOrigOpWith(forOp, outerFwd.getResults().drop_front());
+    gutils->erase(newForOp);
+    gutils->originalToNewFnOps[forOp] = outerFwd;
+
+    return caches;
+  }
+
+  // Reverse pass for binomial (Revolve) checkpointing. Iterates all N steps in
+  // reverse; for each step it reconstructs the state just before that step from
+  // the top checkpoint (recursively re-placing finer checkpoints during the
+  // remat), then emits the adjoint of a single body step.
+  static LogicalResult reverseBinomial(scf::ForOp forOp, int64_t budget,
+                                       OpBuilder &builder,
+                                       MGradientUtilsReverse *gutils,
+                                       SmallVector<Value> caches,
+                                       ArrayRef<bool> operandsActive,
+                                       ArrayRef<Value> incomingGradients) {
+    Location loc = forOp.getLoc();
+    bool isDynamic =
+        !ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp)
+             .has_value();
+    auto numIterArgs = forOp.getNumRegionIterArgs();
+
+    SetVector<Value> outsideRefs;
+    getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
+    SmallVector<Value> immutableRefs, mutableRefs;
+    for (auto ref : outsideRefs) {
+      if (isa<ClonableTypeInterface>(ref.getType()))
+        mutableRefs.push_back(ref);
+      else
+        immutableRefs.push_back(ref);
+    }
+
+    IRMapping &mapping = gutils->originalToNewFn;
+
+    // Pop cached handles (order matches cacheBinomial).
+    SmallVector<Value> ckptBufs;
+    for (size_t j = 0; j < numIterArgs; ++j)
+      ckptBufs.push_back(gutils->popCache(caches[j], builder));
+    Value idxBuf = gutils->popCache(caches[numIterArgs], builder);
+
+    size_t cacheIdx = numIterArgs + 1;
+    SmallVector<Value> cachedMutableRefs;
+    for (auto ref : mutableRefs) {
+      Value v = gutils->popCache(caches[cacheIdx++], builder);
+      cachedMutableRefs.push_back(v);
+      mapping.map(ref, v);
+    }
+    for (auto ref : immutableRefs)
+      mapping.map(ref, gutils->popCache(caches[cacheIdx++], builder));
+
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+
+    // Loop trip count / lower bound / step as index values. For dynamic bounds
+    // these were cached by cacheBinomial (trailing entries, same order).
+    Value numItersV, startV, stepV;
+    if (isDynamic) {
+      numItersV = gutils->popCache(caches[cacheIdx++], builder);
+      startV = gutils->popCache(caches[cacheIdx++], builder);
+      stepV = gutils->popCache(caches[cacheIdx++], builder);
+    } else {
+      int64_t numIters =
+          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
+      llvm::APInt startI, stepI;
+      (void)matchPattern(forOp.getLowerBound(), m_ConstantInt(&startI));
+      (void)matchPattern(forOp.getStep(), m_ConstantInt(&stepI));
+      numItersV = arith::ConstantIndexOp::create(builder, loc, numIters);
+      startV =
+          arith::ConstantIndexOp::create(builder, loc, startI.getSExtValue());
+      stepV =
+          arith::ConstantIndexOp::create(builder, loc, stepI.getSExtValue());
+    }
+
+    // Effective budget = min(requested budget, trip count); must match
+    // cacheBinomial.
+    Value budgetV = arith::MinUIOp::create(
+        builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
+        numItersV);
+
+    // Outer reverse loop over all N steps; carries (sp, adjoints...).
+    SmallVector<Value> outerInit;
+    outerInit.push_back(budgetV); // live checkpoint count
+    outerInit.append(incomingGradients.begin(), incomingGradients.end());
+
+    auto revOuter =
+        scf::ForOp::create(builder, loc, c0, numItersV, c1, outerInit);
+    preserveAttributesButCheckpointing(revOuter, forOp);
+
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(revOuter.getBody());
+
+    Value ivO = revOuter.getInductionVar();
+    Value sp = revOuter.getBody()->getArgument(1);
+    auto adjArgs = revOuter.getBody()->getArguments().drop_front(2);
+
+    Value capo = arith::SubIOp::create(builder, loc, sp, c1);
+    Value currentRevStep = arith::SubIOp::create(builder, loc, numItersV, ivO);
+
+    // Load the top checkpoint state + its forward step.
+    SmallVector<Value> ckptState;
+    for (auto &&[buf, arg] : llvm::zip_equal(
+             ckptBufs, forOp.getBody()->getArguments().drop_front()))
+      ckptState.push_back(
+          loadCheckpoint(builder, loc, buf, capo, arg.getType()));
+    Value ckptStep =
+        memref::LoadOp::create(builder, loc, idxBuf, ValueRange{capo});
+
+    // Inner remat scf.while: reconstruct state at (currentRevStep - 1),
+    // carrying (pos, capo, state...).
+    SmallVector<Value> whileInit;
+    whileInit.push_back(ckptStep);
+    whileInit.push_back(capo);
+    whileInit.append(ckptState.begin(), ckptState.end());
+    SmallVector<Type> whileTypes =
+        llvm::to_vector(ValueRange(whileInit).getTypes());
+    SmallVector<Location> whileLocs(whileInit.size(), loc);
+
+    auto revWhile = scf::WhileOp::create(builder, loc, whileTypes, whileInit);
+    {
+      Block *before =
+          builder.createBlock(&revWhile.getBefore(), {}, whileTypes, whileLocs);
+      builder.setInsertionPointToEnd(before);
+      Value pos = before->getArgument(0);
+      Value posPlus1 = arith::AddIOp::create(builder, loc, pos, c1);
+      Value cond = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::slt, posPlus1, currentRevStep);
+      scf::ConditionOp::create(builder, loc, cond, before->getArguments());
+    }
+    {
+      Block *after =
+          builder.createBlock(&revWhile.getAfter(), {}, whileTypes, whileLocs);
+      builder.setInsertionPointToEnd(after);
+      Value pos = after->getArgument(0);
+      Value acapo = after->getArgument(1);
+      auto astate = after->getArguments().drop_front(2);
+
+      Value remaining =
+          arith::SubIOp::create(builder, loc, currentRevStep, pos);
+      Value budgetRem = arith::SubIOp::create(builder, loc, budgetV, acapo);
+      // Never use more checkpoints than remaining steps (binomial_progress is
+      // degenerate for budget > steps).
+      budgetRem = arith::MinUIOp::create(builder, loc, budgetRem, remaining);
+      Value split = enzyme::BinomialProgressOp::create(
+          builder, loc, builder.getIndexType(), remaining, budgetRem);
+
+      // Place a checkpoint at slot `acapo`.
+      for (auto &&[buf, val] : llvm::zip_equal(ckptBufs, astate))
+        storeCheckpoint(builder, loc, buf, acapo, val);
+      memref::StoreOp::create(builder, loc, pos, idxBuf, ValueRange{acapo});
+
+      Value posPlusSplit = arith::AddIOp::create(builder, loc, pos, split);
+      Value isLast = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::eq, posPlusSplit, currentRevStep);
+      Value rematUB = arith::SelectOp::create(
+          builder, loc, isLast,
+          arith::SubIOp::create(builder, loc, posPlusSplit, c1), posPlusSplit);
+
+      // Recompute the primal from `pos` to `rematUB`.
+      auto innerRemat =
+          scf::ForOp::create(builder, loc, pos, rematUB, c1,
+                             SmallVector<Value>(astate.begin(), astate.end()));
+      preserveAttributesButCheckpointing(innerRemat, forOp);
+      {
+        OpBuilder::InsertionGuard g2(builder);
+        builder.setInsertionPointToStart(innerRemat.getBody());
+        Value idx = innerRemat.getInductionVar();
+        Value iv = arith::AddIOp::create(
+            builder, loc, startV,
+            arith::MulIOp::create(builder, loc, stepV, idx));
+        IRMapping m2 = mapping; // keep outside-ref mappings
+        for (auto &&[oldArg, newArg] :
+             llvm::zip_equal(forOp.getBody()->getArguments().drop_front(),
+                             innerRemat.getBody()->getArguments().drop_front()))
+          m2.map(oldArg, newArg);
+        m2.map(forOp.getInductionVar(), iv);
+        for (auto &it : forOp.getBody()->without_terminator())
+          builder.clone(it, m2);
+        SmallVector<Value> yields;
+        for (auto operand : forOp.getBody()->getTerminator()->getOperands())
+          yields.push_back(m2.lookupOrDefault(operand));
+        scf::YieldOp::create(builder, loc, yields);
+      }
+
+      Value newCapo = arith::AddIOp::create(builder, loc, acapo, c1);
+      SmallVector<Value> afterYields;
+      afterYields.push_back(posPlusSplit);
+      afterYields.push_back(newCapo);
+      afterYields.append(innerRemat.getResults().begin(),
+                         innerRemat.getResults().end());
+      scf::YieldOp::create(builder, loc, afterYields);
+    }
+
+    builder.setInsertionPointToEnd(revOuter.getBody());
+    Value newSp = revWhile.getResult(1);
+    auto reconState = revWhile.getResults().drop_front(2);
+
+    // Adjoint of a single body step at (currentRevStep - 1).
+    Value stepAdj = arith::SubIOp::create(builder, loc, currentRevStep, c1);
+    Value ivAdj = arith::AddIOp::create(
+        builder, loc, startV,
+        arith::MulIOp::create(builder, loc, stepV, stepAdj));
+
+    for (auto &&[oldArg, newArg] : llvm::zip_equal(
+             forOp.getBody()->getArguments().drop_front(), reconState))
+      mapping.map(oldArg, newArg);
+    mapping.map(forOp.getInductionVar(), ivAdj);
+
+    // Re-materialize primal ops of this step for the reverse visitor.
+    for (auto &it : forOp.getBody()->without_terminator()) {
+      Operation *cloned = builder.clone(it, mapping);
+      gutils->originalToNewFnOps[&it] = cloned;
+    }
+
+    // Reset every (non-mutable) intermediate gradient slot to zero at the start
+    // of each reverse step and zero the diffe of the yielded operands; the
+    // loop-carried gradient is supplied via the outer carried adjoints. Without
+    // this, scalar gradient slots (e.g. the diffe of a value loaded from an
+    // enzyme_dup'ed memref) leak across reverse iterations and over-accumulate
+    // into the external shadow. Mirrors the non-checkpointed reverse path.
+    auto term = forOp.getBody()->getTerminator();
+    {
+      OpBuilder::InsertionGuard g3(builder);
+      builder.setInsertionPointToStart(revOuter.getBody());
+      mlir::enzyme::localizeGradients(builder, gutils, forOp.getBody());
+    }
+    for (auto &&[active, operand] :
+         llvm::zip_equal(operandsActive, term->getOperands())) {
+      if (active)
+        gutils->zeroDiffe(operand, builder);
+    }
+
+    // Seed adjoints of the yielded operands from the outer carried gradients.
+    unsigned revIdx = 0;
+    for (auto &&[active, operand] :
+         llvm::zip_equal(operandsActive, term->getOperands())) {
+      if (active) {
+        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    bool valid = true;
+    auto first = forOp.getBody()->rbegin();
+    first++; // skip terminator
+    auto last = forOp.getBody()->rend();
+    for (auto it = first; it != last; ++it)
+      valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+
+    SmallVector<Value> newAdjoints;
+    for (auto &&[active, arg] : llvm::zip_equal(
+             operandsActive, forOp.getBody()->getArguments().drop_front())) {
+      if (active) {
+        newAdjoints.push_back(gutils->diffe(arg, builder));
+        if (!gutils->isConstantValue(arg))
+          gutils->zeroDiffe(arg, builder);
+      }
+    }
+
+    SmallVector<Value> outerYields;
+    outerYields.push_back(newSp);
+    outerYields.append(newAdjoints.begin(), newAdjoints.end());
+    scf::YieldOp::create(builder, loc, outerYields);
+
+    builder.setInsertionPointAfter(revOuter);
+
+    revIdx = 0;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, forOp.getInitArgs())) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, revOuter.getResult(revIdx + 1), builder);
+        revIdx++;
+      }
+    }
+
+    // Free checkpoint buffers, index buffer, and cloned mutable refs.
+    for (auto buf : ckptBufs)
+      memref::DeallocOp::create(builder, loc, buf);
+    memref::DeallocOp::create(builder, loc, idxBuf);
+    for (auto ref : cachedMutableRefs)
+      if (auto iface = dyn_cast<ClonableTypeInterface>(ref.getType()))
+        iface.freeClonedValue(builder, ref);
+
+    return success(valid);
   }
 
 public:
@@ -194,6 +721,17 @@ public:
         if (!gutils->isConstantValue(res))
           gutils->zeroDiffe(res, builder);
       }
+    }
+
+    if (needsBinomialCheckpointing(forOp)) {
+      auto budget = getCheckpointBudget(forOp);
+      if (!budget || *budget <= 1) {
+        op->emitError() << "binomial checkpointing requires a "
+                           "enzyme.checkpoint_period attribute greater than 1";
+        return failure();
+      }
+      return reverseBinomial(forOp, *budget, builder, gutils, caches,
+                             operandsActive, incomingGradients);
     }
 
     if (needsCheckpointing(forOp)) {
@@ -336,20 +874,34 @@ public:
       preserveAttributesButCheckpointing(revLoop, forOp);
 
       Block *revLoopBody = revLoop.getBody();
+      Block *origBody = forOp.getBody();
+
+      // Reset every (non-mutable) intermediate gradient slot to zero at the
+      // start of each reverse iteration and zero the diffe of the yielded
+      // operands: the loop-carried gradient is supplied via the iter_arg. This
+      // mirrors the non-checkpointed reverse path below. Without it, scalar
+      // gradient slots such as the diffe of a value loaded from an
+      // enzyme_dup'ed memref leak across reverse iterations, get promoted to
+      // loop-carried iter_args, and over-accumulate into the external shadow.
+      builder.setInsertionPointToStart(revLoopBody);
+      mlir::enzyme::localizeGradients(builder, gutils, origBody);
+
       builder.setInsertionPointToEnd(revLoopBody);
+      for (auto &&[active, operand] : llvm::zip_equal(
+               operandsActive, origBody->getTerminator()->getOperands())) {
+        if (active)
+          gutils->zeroDiffe(operand, builder);
+      }
 
       int revIdx = 1;
-      for (auto &&[active, operand] :
-           llvm::zip_equal(operandsActive,
-                           forOp.getBody()->getTerminator()->getOperands())) {
+      for (auto &&[active, operand] : llvm::zip_equal(
+               operandsActive, origBody->getTerminator()->getOperands())) {
         if (active) {
           gutils->addToDiffe(operand, revLoopBody->getArgument(revIdx),
                              builder);
           revIdx++;
         }
       }
-
-      Block *origBody = forOp.getBody();
 
       bool valid = true;
 
@@ -492,6 +1044,23 @@ public:
     auto forOp = cast<scf::ForOp>(op);
     Operation *newOp = gutils->getNewFromOriginal(op);
     OpBuilder cacheBuilder(newOp);
+
+    if (needsBinomialCheckpointing(forOp)) {
+      auto budget = getCheckpointBudget(forOp);
+      if (!budget || *budget <= 1) {
+        // Error is reported in createReverseModeAdjoint; fall back to caching
+        // the bounds so the reverse pass can proceed to emit the diagnostic.
+        SmallVector<Value> caches;
+        caches.push_back(gutils->initAndPushCache(
+            gutils->getNewFromOriginal(forOp.getLowerBound()), cacheBuilder));
+        caches.push_back(gutils->initAndPushCache(
+            gutils->getNewFromOriginal(forOp.getUpperBound()), cacheBuilder));
+        caches.push_back(gutils->initAndPushCache(
+            gutils->getNewFromOriginal(forOp.getStep()), cacheBuilder));
+        return caches;
+      }
+      return cacheBinomial(forOp, *budget, gutils);
+    }
 
     if (needsCheckpointing(forOp)) {
       int64_t numIters =

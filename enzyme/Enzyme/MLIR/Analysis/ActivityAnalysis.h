@@ -2,7 +2,9 @@
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANALYSIS_H
 
 #include "../../Utils.h"
+#include "Analysis/ActivityAnnotations.h"
 #include "mlir/IR/Block.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir {
 
@@ -14,6 +16,35 @@ namespace enzyme {
 // class TypeResults {};
 
 class MTypeResults;
+
+class DataFlowActivityAnalyzer {
+public:
+  DataFlowActivityAnalyzer(DataFlowSolver &solver, FunctionOpInterface funcOp,
+                           ArrayRef<DIFFE_TYPE> argActivity,
+                           ArrayRef<DIFFE_TYPE> returnActivity);
+
+  bool isInactiveOperation(Operation *op);
+  bool isInactiveValue(Value value);
+
+private:
+  FunctionOpInterface funcOp;
+  DataFlowSolver &solver;
+  enzyme::PointsToSets p2sets;
+  enzyme::ForwardOriginsMap forwardOriginsMap;
+  enzyme::BackwardOriginsMap backwardOriginsMap;
+
+  const ArrayRef<DIFFE_TYPE> argActivity;
+  const ArrayRef<DIFFE_TYPE> returnActivity;
+
+  bool isOriginActive(OriginAttr origin);
+  void joinActiveDataState(Value v, ForwardOriginsLattice &sources,
+                           BackwardOriginsLattice &sinks);
+  void joinActivePointerState(const AliasClassSet &aliasClasses,
+                              ForwardOriginsLattice &sources,
+                              BackwardOriginsLattice &sinks);
+  void joinActiveValueState(Value v, ForwardOriginsLattice &sources,
+                            BackwardOriginsLattice &sinks);
+};
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {

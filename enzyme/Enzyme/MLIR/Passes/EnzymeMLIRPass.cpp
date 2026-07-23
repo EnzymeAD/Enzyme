@@ -17,7 +17,6 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
@@ -40,8 +39,6 @@ struct DifferentiatePass
     : public enzyme::impl::DifferentiatePassBase<DifferentiatePass> {
   using DifferentiatePassBase::DifferentiatePassBase;
 
-  MEnzymeLogic Logic;
-
   void runOnOperation() override;
 
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -53,8 +50,7 @@ struct DifferentiatePass
 
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
-                    mlir::memref::MemRefDialect, mlir::linalg::LinalgDialect,
-                    mlir::enzyme::EnzymeDialect>();
+                    mlir::memref::MemRefDialect, mlir::enzyme::EnzymeDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
@@ -75,7 +71,8 @@ struct DifferentiatePass
   }
 
   template <typename T>
-  LogicalResult HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiff(MEnzymeLogic &Logic,
+                               SymbolTableCollection &symbolTable, T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -196,7 +193,8 @@ struct DifferentiatePass
   }
 
   template <typename T>
-  LogicalResult HandleAutoDiffReverse(SymbolTableCollection &symbolTable,
+  LogicalResult HandleAutoDiffReverse(MEnzymeLogic &Logic,
+                                      SymbolTableCollection &symbolTable,
                                       T CI) {
 
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
@@ -330,12 +328,12 @@ struct DifferentiatePass
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc =
-        Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
-                                returnShadows, mode, freeMemory, width,
-                                /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr, omp, postpasses,
-                                verifyPostPasses, CI.getStrongZero());
+    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
+        fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
+        freeMemory, CI.getAtomicAdd(), width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
+        CI.getStrongZero());
     if (!newFunc)
       return failure();
 
@@ -354,7 +352,7 @@ struct DifferentiatePass
     return success();
   }
 
-  void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
+  void lowerEnzymeCalls(MEnzymeLogic &Logic, SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
     {
       SmallVector<Operation *> toLower;
@@ -363,13 +361,13 @@ struct DifferentiatePass
             symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
         auto callableOp = cast<FunctionOpInterface>(symbolOp);
 
-        lowerEnzymeCalls(symbolTable, callableOp);
+        lowerEnzymeCalls(Logic, symbolTable, callableOp);
         toLower.push_back(dop);
       });
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
-          auto res = HandleAutoDiff(symbolTable, F);
+          auto res = HandleAutoDiff(Logic, symbolTable, F);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
@@ -387,13 +385,13 @@ struct DifferentiatePass
             symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
         auto callableOp = cast<FunctionOpInterface>(symbolOp);
 
-        lowerEnzymeCalls(symbolTable, callableOp);
+        lowerEnzymeCalls(Logic, symbolTable, callableOp);
         toLower.push_back(dop);
       });
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
-          auto res = HandleAutoDiffReverse(symbolTable, F);
+          auto res = HandleAutoDiffReverse(Logic, symbolTable, F);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
@@ -409,8 +407,11 @@ struct DifferentiatePass
 } // end anonymous namespace
 
 void DifferentiatePass::runOnOperation() {
+  MEnzymeLogic Logic(dataflowActivity);
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
-  getOperation()->walk(
-      [&](FunctionOpInterface op) { lowerEnzymeCalls(symbolTable, op); });
+  getOperation()->walk([&](FunctionOpInterface op) {
+    lowerEnzymeCalls(Logic, symbolTable, op);
+  });
+  getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
 }

@@ -270,8 +270,6 @@ struct ExpandImpulsePass
     : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
   using ExpandImpulsePassBase::ExpandImpulsePassBase;
 
-  MEnzymeLogic Logic;
-
   void runOnOperation() override;
 
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -1283,17 +1281,24 @@ struct ExpandImpulsePass
 
       auto samplesBufferType =
           RankedTensorType::get({collectionSize, positionSize}, elemType);
-      auto acceptedBufferType =
-          RankedTensorType::get({collectionSize}, rewriter.getI1Type());
+      auto diagnosticsBufferType =
+          // Diagnostics buffer has two columns: [is_accepted, is_divergent]
+          RankedTensorType::get({collectionSize, 2}, rewriter.getI1Type());
+      auto logDensityBufferType =
+          RankedTensorType::get({collectionSize}, elemType);
 
       auto samplesBuffer = arith::ConstantOp::create(
           rewriter, loc, samplesBufferType,
           DenseElementsAttr::get(samplesBufferType,
                                  rewriter.getFloatAttr(elemType, 0.0)));
-      auto acceptedBuffer = arith::ConstantOp::create(
-          rewriter, loc, acceptedBufferType,
-          DenseElementsAttr::get(acceptedBufferType,
+      auto diagnosticsBuffer = arith::ConstantOp::create(
+          rewriter, loc, diagnosticsBufferType,
+          DenseElementsAttr::get(diagnosticsBufferType,
                                  rewriter.getBoolAttr(isNUTS)));
+      auto logDensityBuffer = arith::ConstantOp::create(
+          rewriter, loc, logDensityBufferType,
+          DenseElementsAttr::get(logDensityBufferType,
+                                 rewriter.getFloatAttr(elemType, 0.0)));
 
       auto c0 = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
@@ -1315,23 +1320,26 @@ struct ExpandImpulsePass
                                  rewriter.getI64IntegerAttr(thinning)));
 
       Value finalQ, finalGrad, finalU, finalRng, finalSamplesBuffer,
-          finalAcceptedBuffer;
+          finalDiagnosticsBuffer, finalLogDensityBuffer;
       if (collectionSize == 0) {
         finalQ = currentQ;
         finalGrad = currentGrad;
         finalU = currentU;
         finalRng = currentRng;
         finalSamplesBuffer = samplesBuffer;
-        finalAcceptedBuffer = acceptedBuffer;
+        finalDiagnosticsBuffer = diagnosticsBuffer;
+        finalLogDensityBuffer = logDensityBuffer;
       } else {
-        // Loop carries: [q, grad, U, rng, samplesBuffer, acceptedBuffer]
+        // Loop carries: [q, grad, U, rng, samplesBuffer, diagnosticsBuffer,
+        // logDensityBuffer]
         SmallVector<Type> loopResultTypes = {
             positionType,         positionType,      scalarType,
-            currentRng.getType(), samplesBufferType, acceptedBufferType};
+            currentRng.getType(), samplesBufferType, diagnosticsBufferType,
+            logDensityBufferType};
         auto forLoopOp = impulse::ForOp::create(
             rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
             ValueRange{currentQ, currentGrad, currentU, currentRng,
-                       samplesBuffer, acceptedBuffer});
+                       samplesBuffer, diagnosticsBuffer, logDensityBuffer});
 
         Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
         loopBody->addArgument(i64TensorType, loc);        // i (iteration index)
@@ -1340,7 +1348,8 @@ struct ExpandImpulsePass
         loopBody->addArgument(scalarType, loc);           // U
         loopBody->addArgument(currentRng.getType(), loc); // rng
         loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
-        loopBody->addArgument(acceptedBufferType, loc);   // acceptedBuffer
+        loopBody->addArgument(diagnosticsBufferType, loc); // diagnosticsBuffer
+        loopBody->addArgument(logDensityBufferType, loc);  // logDensityBuffer
 
         rewriter.setInsertionPointToStart(loopBody);
         Value iterIdx = loopBody->getArgument(0);
@@ -1349,7 +1358,8 @@ struct ExpandImpulsePass
         Value ULoop = loopBody->getArgument(3);
         Value rngLoop = loopBody->getArgument(4);
         Value samplesBufferLoop = loopBody->getArgument(5);
-        Value acceptedBufferLoop = loopBody->getArgument(6);
+        Value diagnosticsBufferLoop = loopBody->getArgument(6);
+        Value logDensityBufferLoop = loopBody->getArgument(7);
 
         auto sample = runSampleStepWithStepSize(
             rewriter, loc, qLoop, gradLoop, ULoop, rngLoop, adaptedStepSize);
@@ -1384,20 +1394,41 @@ struct ExpandImpulsePass
             rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
             samplesBufferLoop);
 
-        auto accepted1D = impulse::ReshapeOp::create(
-            rewriter, loc, RankedTensorType::get({1}, rewriter.getI1Type()),
+        auto oneCol = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(1)));
+        auto accepted1x1 = impulse::ReshapeOp::create(
+            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
             sample.accepted);
-        auto updatedAcceptedBuffer = impulse::DynamicUpdateSliceOp::create(
-            rewriter, loc, acceptedBufferType, acceptedBufferLoop, accepted1D,
-            ValueRange{storageIdx});
-        auto selectedAcceptedBuffer = impulse::SelectOp::create(
-            rewriter, loc, acceptedBufferType, shouldStore,
-            updatedAcceptedBuffer, acceptedBufferLoop);
+        auto divergent1x1 = impulse::ReshapeOp::create(
+            rewriter, loc, RankedTensorType::get({1, 1}, rewriter.getI1Type()),
+            sample.divergent);
+        auto updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
+            rewriter, loc, diagnosticsBufferType, diagnosticsBufferLoop,
+            accepted1x1, ValueRange{storageIdx, zeroCol});
+        updatedDiagnosticsBuffer = impulse::DynamicUpdateSliceOp::create(
+            rewriter, loc, diagnosticsBufferType, updatedDiagnosticsBuffer,
+            divergent1x1, ValueRange{storageIdx, oneCol});
+        auto selectedDiagnosticsBuffer = impulse::SelectOp::create(
+            rewriter, loc, diagnosticsBufferType, shouldStore,
+            updatedDiagnosticsBuffer, diagnosticsBufferLoop);
+
+        auto negU = arith::NegFOp::create(rewriter, loc, sample.U);
+        auto logDensity1D = impulse::ReshapeOp::create(
+            rewriter, loc, RankedTensorType::get({1}, elemType), negU);
+        auto updatedLogDensityBuffer = impulse::DynamicUpdateSliceOp::create(
+            rewriter, loc, logDensityBufferType, logDensityBufferLoop,
+            logDensity1D, ValueRange{storageIdx});
+        auto selectedLogDensityBuffer = impulse::SelectOp::create(
+            rewriter, loc, logDensityBufferType, shouldStore,
+            updatedLogDensityBuffer, logDensityBufferLoop);
 
         impulse::YieldOp::create(rewriter, loc,
                                  ValueRange{sample.q, sample.grad, sample.U,
                                             sample.rng, selectedSamplesBuffer,
-                                            selectedAcceptedBuffer});
+                                            selectedDiagnosticsBuffer,
+                                            selectedLogDensityBuffer});
 
         rewriter.setInsertionPointAfter(forLoopOp);
         finalQ = forLoopOp.getResult(0);
@@ -1405,18 +1436,23 @@ struct ExpandImpulsePass
         finalU = forLoopOp.getResult(2);
         finalRng = forLoopOp.getResult(3);
         finalSamplesBuffer = forLoopOp.getResult(4);
-        finalAcceptedBuffer = forLoopOp.getResult(5);
+        finalDiagnosticsBuffer = forLoopOp.getResult(5);
+        finalLogDensityBuffer = forLoopOp.getResult(6);
       }
 
       finalSamplesBuffer =
           conditionalDump(rewriter, loc, finalSamplesBuffer,
                           "MCMC: collected samples", debugDump);
 
-      SmallVector<Value> replacements = {
-          finalSamplesBuffer, finalAcceptedBuffer,
-          finalRng,           finalQ,
-          finalGrad,          finalU,
-          adaptedStepSize,    adaptedInvMass};
+      SmallVector<Value> replacements = {finalSamplesBuffer,
+                                         finalDiagnosticsBuffer,
+                                         finalLogDensityBuffer,
+                                         finalRng,
+                                         finalQ,
+                                         finalGrad,
+                                         finalU,
+                                         adaptedStepSize,
+                                         adaptedInvMass};
       if (exposeAdaptation)
         replacements.append(finalAdaptationState.begin(),
                             finalAdaptationState.end());

@@ -9,20 +9,21 @@ module {
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
-  func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>) {
+  func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
       { hmc_config = #impulse.hmc_config<trajectory_length = 1.0>,
         name = "hmc", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
-    return %res#0, %res#1, %res#2 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
 }
 
 // CHECK-LABEL: func.func @hmc
-// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>)
+// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
+// CHECK-DAG: %[[FALSE:.+]] = arith.constant dense<false> : tensor<i1>
 // CHECK-DAG: %[[NEG_EPS:.+]] = arith.constant dense<-1.000000e-01> : tensor<f64>
 // CHECK-DAG: %[[TRUE:.+]] = arith.constant dense<true> : tensor<i1>
 // CHECK-DAG: %[[HALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
@@ -30,7 +31,8 @@ module {
 // CHECK-DAG: %[[EPS:.+]] = arith.constant dense<1.000000e-01> : tensor<f64>
 // CHECK-DAG: %[[C10:.+]] = arith.constant dense<10> : tensor<i64>
 // CHECK-DAG: %[[C1:.+]] = arith.constant dense<1> : tensor<i64>
-// CHECK-DAG: %[[ACC_INIT:.+]] = arith.constant dense<false> : tensor<10xi1>
+// CHECK-DAG: %[[LD_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<10xf64>
+// CHECK-DAG: %[[DIAG_INIT:.+]] = arith.constant dense<false> : tensor<10x2xi1>
 // CHECK-DAG: %[[SAMPLES_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<10x1xf64>
 // CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[C0:.+]] = arith.constant dense<0> : tensor<i64>
@@ -61,8 +63,8 @@ module {
 // CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
 //
 // --- Main sampling loop ---
-// CHECK: %[[LOOP:.+]]:6 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q0]], %[[AD_INIT]]#2, %[[U0]], %[[SPLIT2]]#0, %[[SAMPLES_INIT]], %[[ACC_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1> {
-// CHECK-NEXT: ^bb0(%[[ITER:.+]]: tensor<i64>, %[[Q:.+]]: tensor<1x1xf64>, %[[GRAD:.+]]: tensor<1x1xf64>, %[[U:.+]]: tensor<f64>, %[[RNG_I:.+]]: tensor<2xui64>, %[[SAMP_BUF:.+]]: tensor<10x1xf64>, %[[ACC_BUF:.+]]: tensor<10xi1>):
+// CHECK: %[[LOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q0]], %[[AD_INIT]]#2, %[[U0]], %[[SPLIT2]]#0, %[[SAMPLES_INIT]], %[[DIAG_INIT]], %[[LD_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64> {
+// CHECK-NEXT: ^bb0(%[[ITER:.+]]: tensor<i64>, %[[Q:.+]]: tensor<1x1xf64>, %[[GRAD:.+]]: tensor<1x1xf64>, %[[U:.+]]: tensor<f64>, %[[RNG_I:.+]]: tensor<2xui64>, %[[SAMP_BUF:.+]]: tensor<10x1xf64>, %[[DIAG_BUF:.+]]: tensor<10x2xi1>, %[[LD_BUF:.+]]: tensor<10xf64>):
 //
 // --- Sample momentum p ~ N(0, I) ---
 // CHECK-NEXT: %[[RNG_S:.+]]:3 = impulse.randomSplit %[[RNG_I]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
@@ -145,14 +147,24 @@ module {
 // CHECK-NEXT: %[[STORE_COND:.+]] = arith.cmpi sge, %[[ITER]], %[[C0]] : tensor<i64>
 // CHECK-NEXT: %[[SAMP_UPD:.+]] = impulse.dynamic_update_slice %[[SAMP_BUF]], %[[Q_SEL]], %[[ITER]], %[[C0]] : (tensor<10x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<10x1xf64>
 // CHECK-NEXT: %[[SAMP_SEL:.+]] = impulse.select %[[STORE_COND]], %[[SAMP_UPD]], %[[SAMP_BUF]] : (tensor<i1>, tensor<10x1xf64>, tensor<10x1xf64>) -> tensor<10x1xf64>
-// CHECK-NEXT: %[[ACC_1D:.+]] = impulse.reshape %[[ACCEPTED]] : (tensor<i1>) -> tensor<1xi1>
-// CHECK-NEXT: %[[ACC_UPD:.+]] = impulse.dynamic_update_slice %[[ACC_BUF]], %[[ACC_1D]], %[[ITER]] : (tensor<10xi1>, tensor<1xi1>, tensor<i64>) -> tensor<10xi1>
-// CHECK-NEXT: %[[ACC_SEL:.+]] = impulse.select %[[STORE_COND]], %[[ACC_UPD]], %[[ACC_BUF]] : (tensor<i1>, tensor<10xi1>, tensor<10xi1>) -> tensor<10xi1>
+//
+// --- Store diagnostics: [accepted, divergent] ---
+// CHECK-NEXT: %[[ACC_1x1:.+]] = impulse.reshape %[[ACCEPTED]] : (tensor<i1>) -> tensor<1x1xi1>
+// CHECK-NEXT: %[[DIV_1x1:.+]] = impulse.reshape %[[FALSE]] : (tensor<i1>) -> tensor<1x1xi1>
+// CHECK-NEXT: %[[DIAG_UPD1:.+]] = impulse.dynamic_update_slice %[[DIAG_BUF]], %[[ACC_1x1]], %[[ITER]], %[[C0]] : (tensor<10x2xi1>, tensor<1x1xi1>, tensor<i64>, tensor<i64>) -> tensor<10x2xi1>
+// CHECK-NEXT: %[[DIAG_UPD2:.+]] = impulse.dynamic_update_slice %[[DIAG_UPD1]], %[[DIV_1x1]], %[[ITER]], %[[C1]] : (tensor<10x2xi1>, tensor<1x1xi1>, tensor<i64>, tensor<i64>) -> tensor<10x2xi1>
+// CHECK-NEXT: %[[DIAG_SEL:.+]] = impulse.select %[[STORE_COND]], %[[DIAG_UPD2]], %[[DIAG_BUF]] : (tensor<i1>, tensor<10x2xi1>, tensor<10x2xi1>) -> tensor<10x2xi1>
+//
+// --- Store log-density: -U ---
+// CHECK-NEXT: %[[NEG_U:.+]] = arith.negf %[[U_SEL]] : tensor<f64>
+// CHECK-NEXT: %[[LD_1D:.+]] = impulse.reshape %[[NEG_U]] : (tensor<f64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[LD_UPD:.+]] = impulse.dynamic_update_slice %[[LD_BUF]], %[[LD_1D]], %[[ITER]] : (tensor<10xf64>, tensor<1xf64>, tensor<i64>) -> tensor<10xf64>
+// CHECK-NEXT: %[[LD_SEL:.+]] = impulse.select %[[STORE_COND]], %[[LD_UPD]], %[[LD_BUF]] : (tensor<i1>, tensor<10xf64>, tensor<10xf64>) -> tensor<10xf64>
 //
 // --- Yield from sampling loop ---
-// CHECK-NEXT: impulse.yield %[[Q_SEL]], %[[GRAD_SEL]], %[[U_SEL]], %[[RNG_S]]#0, %[[SAMP_SEL]], %[[ACC_SEL]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>
+// CHECK-NEXT: impulse.yield %[[Q_SEL]], %[[GRAD_SEL]], %[[U_SEL]], %[[RNG_S]]#0, %[[SAMP_SEL]], %[[DIAG_SEL]], %[[LD_SEL]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>
 // CHECK-NEXT: }
-// CHECK-NEXT: return %[[LOOP]]#4, %[[LOOP]]#5, %[[LOOP]]#3 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
+// CHECK-NEXT: return %[[LOOP]]#4, %[[LOOP]]#5, %[[LOOP]]#6, %[[LOOP]]#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
 // CHECK-NEXT: }
 //
 // --- Generated function: test.generate ---

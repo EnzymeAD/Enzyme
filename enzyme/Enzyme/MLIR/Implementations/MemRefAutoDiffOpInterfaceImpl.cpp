@@ -21,10 +21,6 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
-// TODO: We need a way to zero out a memref (which linalg.fill does), but
-// ideally we wouldn't depend on the linalg dialect.
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -62,9 +58,10 @@ struct LoadOpInterfaceReverse
                                   memrefGradient,
                                   ArrayRef<Value>(retrievedArguments));
         } else {
-          memref::AtomicRMWOp::create(
-              builder, loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
-              memrefGradient, ArrayRef<Value>(retrievedArguments));
+          enzyme::AtomicRMWOp::create(
+              builder, loadOp.getLoc(), gradient.getType(),
+              arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
+              memrefGradient, retrievedArguments, loadOp.getAlignmentAttr());
         }
       }
     }
@@ -275,8 +272,7 @@ public:
     auto MT = cast<MemRefType>(self);
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
       if (!iface.isMutable()) {
-        Value zero = iface.createNullValue(builder, loc);
-        linalg::FillOp::create(builder, loc, zero, val);
+        enzyme::FillZeroOp::create(builder, loc, val);
       }
     } else {
       return failure();
@@ -287,6 +283,26 @@ public:
   bool isZero(Type self, Value val) const { return false; }
   bool isZeroAttr(Type self, Attribute val) const { return false; }
 };
+
+struct MemRefAllocOpInterface
+    : public MultidimensionalAllocInterface::ExternalModel<
+          MemRefAllocOpInterface, memref::AllocOp> {
+  Value allocate(Operation *op, OpBuilder &rewriter, Location loc, Type newType,
+                 ValueRange dynamicDims) const {
+    return memref::AllocOp::create(rewriter, loc, cast<MemRefType>(newType),
+                                   dynamicDims);
+  }
+
+  void deallocate(Operation *op, OpBuilder &rewriter, Location loc,
+                  Value val) const {
+    memref::DeallocOp::create(rewriter, loc, val);
+  }
+
+  bool isDeallocation(Operation *op, Operation *user) const {
+    return isa<memref::DeallocOp>(user);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
@@ -299,5 +315,6 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
+    memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
   });
 }

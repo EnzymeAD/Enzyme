@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -126,6 +127,7 @@ public:
     const std::vector<bool> returnShadows;
     DerivativeMode mode;
     bool freeMemory;
+    bool atomicAdd;
     unsigned width;
     mlir::Type additionalType;
     const MFnTypeInfo typeInfo;
@@ -215,6 +217,11 @@ public:
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
   std::map<MReverseCacheKey, FunctionOpInterface> ReverseCachedFunctions;
 
+  // solver may be null, in which case the older inductive hypothesis activity
+  // analysis will be used.
+  std::unique_ptr<DataFlowSolver> solver;
+  MEnzymeLogic(bool dataflowActivity);
+
   FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
@@ -224,15 +231,14 @@ public:
                     void *augmented, bool omp, llvm::StringRef postpasses,
                     bool verifyPostPasses, bool strongZero);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    std::vector<bool> returnPrimals,
-                    std::vector<bool> returnShadows, DerivativeMode mode,
-                    bool freeMemory, size_t width, mlir::Type addedType,
-                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses,
-                    bool verifyPostPasses, bool strongZero);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
+      mlir::Type addedType, MFnTypeInfo type_args,
+      std::vector<bool> volatile_args, void *augmented, bool omp,
+      llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,

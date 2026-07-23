@@ -1,4 +1,4 @@
-// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" --split-input-file | FileCheck %s
+// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math,flatten-enzyme-caches,canonicalize)" --split-input-file | FileCheck %s
 
 func.func private @some_res_inactive(%x: f32, %ub: index) -> (f32) {
   %lb = arith.constant 0 : index

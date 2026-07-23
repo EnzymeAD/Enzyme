@@ -1,11 +1,9 @@
 // RUN: %eopt --print-activity-analysis='relative verbose' --split-input-file %s | FileCheck %s
 
-// XFAIL: *
-
 // CHECK-LABEL: processing function @sparse_callee
 // CHECK: "fadd"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@sparse_callee(0)>]
-// CHECK:   sinks:   [#enzyme.retorigin<@sparse_callee(1)>]
+// CHECK:   sources: [arg0]
+// CHECK:   sinks:   [ret1]
 func.func @sparse_callee(%arg0: f64) -> (f64, f64) {
   %zero = llvm.mlir.constant (0.0) : f64
   %0 = llvm.fadd %arg0, %arg0 {tag = "fadd"} : f64
@@ -14,8 +12,8 @@ func.func @sparse_callee(%arg0: f64) -> (f64, f64) {
 
 // CHECK-LABEL: processing function @sparse_caller
 // CHECK: "fmul"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@sparse_caller(1)>]
-// CHECK:   sinks:   [#enzyme.retorigin<@sparse_caller(0)>]
+// CHECK:   sources: [arg1]
+// CHECK:   sinks:   [ret0]
 func.func @sparse_caller(%unused: i64, %arg0: f64) -> f64 {
   %0 = llvm.fmul %arg0, %arg0 {tag = "fmul"} : f64
   %zero, %1 = call @sparse_callee(%0) : (f64) -> (f64, f64)
@@ -33,8 +31,8 @@ func.func @aliased_callee(%arg0: !llvm.ptr) -> !llvm.ptr {
 // Test propagation of aliasing through function calls
 // CHECK-LABEL: processing function @loadstore
 // CHECK: "alloca"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@loadstore(0)>]
-// CHECK:   sinks:   [#enzyme.retorigin<@loadstore(0)>]
+// CHECK:   sources: [arg0]
+// CHECK:   sinks:   [ret0]
 func.func @loadstore(%arg0: f64) -> f64 {
   %c1 = llvm.mlir.constant (1) : i64
   %ptr = llvm.alloca %c1 x f64 {tag = "alloca"} : (i64) -> !llvm.ptr
@@ -57,8 +55,8 @@ func.func @returnptr(%arg0: f64) -> !llvm.ptr {
 
 // CHECK-LABEL: processing function @loadstore
 // CHECK: "loaded"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@loadstore(0)>]
-// CHECK:   sinks:   [#enzyme.retorigin<@loadstore(0)>]
+// CHECK:   sources: [arg0]
+// CHECK:   sinks:   [ret0]
 func.func @loadstore(%arg0: f64) -> f64 {
   %ptr = call @returnptr(%arg0) : (f64) -> !llvm.ptr
   %val = llvm.load %ptr {tag = "loaded"} : !llvm.ptr -> f64
@@ -69,7 +67,7 @@ func.func @loadstore(%arg0: f64) -> f64 {
 
 // CHECK-LABEL: processing function @load_nested
 // CHECK: forward value origins:
-// CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [#enzyme.argorigin<@load_nested(0)>, #enzyme.argorigin<@load_nested(1)>]
+// CHECK:      pclass<(1, 0)> originates from [arg0, arg1]
 func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
   %data = llvm.load %arg0 : !llvm.ptr -> !llvm.ptr
   %val = llvm.load %data : !llvm.ptr -> f64
@@ -82,11 +80,11 @@ func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 // (%inner in this case)
 // CHECK-LABEL: processing function @pass_pointer_to
 // CHECK: "val"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@pass_pointer_to(0)>]
-// CHECK:   sinks:   [#enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
+// CHECK:   sources: [arg0]
+// CHECK:   sinks:   [arg1, arg2]
 // CHECK: "inner"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@pass_pointer_to(0)>, #enzyme.argorigin<@pass_pointer_to(1)>]
-// CHECK:   sinks:   [#enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
+// CHECK:   sources: [arg0, arg1]
+// CHECK:   sinks:   [arg1, arg2]
 func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
   %one = llvm.mlir.constant (1) : i64
   %val = llvm.fmul %arg0, %arg0 {tag = "val"} : f64
@@ -105,8 +103,8 @@ func.func @callee(%val: f64, %out: !llvm.ptr) {
 
 // CHECK-LABEL: processing function @caller
 // CHECK: "square"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@caller(1)>]
-// CHECK:   sinks:   [#enzyme.argorigin<@caller(2)>]
+// CHECK:   sources: [arg1]
+// CHECK:   sinks:   [arg2]
 func.func @caller(%unused: i32, %val: f64, %out: !llvm.ptr) {
   %square = llvm.fmul %val, %val {tag = "square"} : f64
   call @callee(%square, %out) : (f64, !llvm.ptr) -> ()
@@ -120,8 +118,8 @@ func.func @caller(%unused: i32, %val: f64, %out: !llvm.ptr) {
 // Make sure that known inactive operations don't cause worst-case pessimistic results
 // CHECK-LABEL: processing function @with_noop
 // CHECK: "alloca"(#0)
-// CHECK:   sources: [#enzyme.argorigin<@with_noop(0)>]
-// CHECK:   sinks:   [#enzyme.retorigin<@with_noop(0)>]
+// CHECK:   sources: [arg0]
+// CHECK:   sinks:   [ret0]
 func.func @with_noop(%arg0: f64) -> f64 {
   %c1 = llvm.mlir.constant (1) : i64
   %ptr = llvm.alloca %c1 x f64 {tag = "alloca"} : (i64) -> !llvm.ptr
