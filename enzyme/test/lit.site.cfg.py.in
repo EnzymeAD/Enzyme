@@ -77,9 +77,13 @@ config.substitutions.append(('%fireopt', fireopt))
 if os.path.exists(fireopt):
   config.available_features.add('fir_enzyme_opt')
 
-# flang-new -fc1, for compiling Fortran to HLFIR in end-to-end tests. Registers
-# the flang_new feature so those tests are skipped when flang is unavailable.
-flang_new = config.llvm_tools_dir + "/flang-new"
+# flang -fc1, for compiling Fortran to HLFIR in end-to-end tests. The driver was
+# renamed flang-new -> flang in LLVM 20; fall back to the old name for older
+# toolchains. Registers the flang_new feature so those tests are skipped when
+# flang is unavailable.
+flang_new = config.llvm_tools_dir + "/flang"
+if not os.path.exists(flang_new):
+  flang_new = config.llvm_tools_dir + "/flang-new"
 config.substitutions.append(('%flang_fc1', flang_new + " -fc1"))
 if os.path.exists(flang_new):
   config.available_features.add('flang_new')

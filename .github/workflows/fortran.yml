@@ -142,17 +142,23 @@ jobs:
           -DClang_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/clang \
           -DFlang_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/flang \
           -DLLVM_EXTERNAL_LIT=`which lit` \
-          -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON \
+          -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DENZYME_MLIR=ON -DENZYME_FIR_TOOL=ON \
           -DCMAKE_Fortran_COMPILER=${{ env.BASE_DIR }}/llvm-project/flang-build/bin/flang
-    - name: build FlangEnzyme plugin
+    - name: build FlangEnzyme plugin and fir-enzyme-opt
       working-directory: 'Enzyme/build'
-      run: ninja FlangEnzyme-${{ matrix.llvm }}
+      run: ninja FlangEnzyme-${{ matrix.llvm }} fir-enzyme-opt
     - name: check the plugin is a real shared object (not the symlink fallback)
       working-directory: 'Enzyme/build'
       run: test -f Enzyme/FlangEnzyme-${{ matrix.llvm }}.so && ! test -L Enzyme/FlangEnzyme-${{ matrix.llvm }}.so
-    - name: run Fortran tests (incl. Flang plugin)
+    - name: run Fortran tests (incl. Flang frontend plugin)
       working-directory: 'Enzyme/build'
       run: ninja check-enzyme-fortran
+    - name: run HLFIR call-lowering test (fir-enzyme-opt)
+      # Only the FIR subdirectory: the rest of check-enzymemlir has unrelated
+      # pre-existing failures on LLVM trunk, and this job's purpose is the
+      # Fortran/Flang path (enzyme-lower-fortran-calls via fir-enzyme-opt).
+      working-directory: 'Enzyme/build'
+      run: lit -v test/MLIR/FIR
   build-and-test-fortran-ifx:
     name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
     runs-on: ${{matrix.os}}
