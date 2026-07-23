@@ -68,48 +68,90 @@ jobs:
       working-directory: 'build'
       run: ninja check-enzyme-fortran
   build-and-test-flang-plugin:
-    # Builds the FlangEnzyme frontend plugin (Enzyme/Flang/EnzymeFlang.cpp) and
-    # runs its lit test. The plugin requires the Flang development files
-    # (FlangConfig.cmake + flangFrontend), and its CMake support is gated on
-    # LLVM >= 20, so the matrix runs from that floor up to the current release (22).
+    # Builds the FlangEnzyme frontend plugin (Enzyme/Flang/EnzymeFlang.cpp) and runs
+    # its lit test. The plugin registers a pass into flang's HLFIR->FIR pipeline via
+    # the pass-pipeline-config extension points that only live on
+    # vchuravy/llvm-project @ flang-hlfir-pass-pipeline-ep. Those hooks are not in any
+    # released LLVM, so we build LLVM/Clang/MLIR/Flang from that branch and only enable
+    # the flang plugin on LLVM 24 (trunk).
     name: Flang plugin ${{matrix.build}} ${{matrix.os}} llvm ${{matrix.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
       matrix:
         build: [Release, Debug]
-        os: [ubuntu-22.04]
-        llvm: [20, 21, 22]
-    timeout-minutes: 60
+        llbuild: [Release]
+        os: [linux-x86-n2-32]
+        llvm: [24]
+    timeout-minutes: 500
+    container:
+      image: ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674
     steps:
-    - name: add llvm with clang, flang and mlir
+    - name: Install dependencies
       run: |
-        set -eo pipefail
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
-        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
-        # libmlir-N-dev is required: FlangConfig.cmake references MLIR imported
-        # targets, so find_package(Flang) needs MLIR to be found first.
-        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }} libmlir-${{ matrix.llvm }}-dev
-        sudo python3 -m pip install --upgrade pip lit
+        apt-get update
+        apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev python3-pip
+        python3 -m pip install --upgrade --break-system-packages pip lit
     - uses: actions/checkout@v4
+      with:
+        path: 'Enzyme'
+    - uses: actions/checkout@v4
+      with:
+        repository: 'vchuravy/llvm-project'
+        ref: 'flang-hlfir-pass-pipeline-ep'
+        path: 'llvm-project'
+    - name: Set BASE_DIR
+      # We have to use `${GITHUB_WORKSPACE}` instead of `github.workspace` because GitHub
+      # is terrible and the two don't match inside containers:
+      # https://github.com/actions/runner/issues/2058
+      run: |
+        BASE_DIR=${GITHUB_WORKSPACE}
+        ls -lhrt "${BASE_DIR}"/Enzyme
+        ls -lhrt "${BASE_DIR}"/llvm-project
+        echo "BASE_DIR=${BASE_DIR}" >> ${GITHUB_ENV}
+    - name: Get LLVM/Flang commit hash
+      id: llvm-commit
+      working-directory: 'llvm-project'
+      run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+    - name: Cache LLVM/Flang
+      id: cache-llvm
+      uses: wsmoses/gcp-cache@main
+      with:
+        path: ${{ env.BASE_DIR }}/llvm-project/flang-build
+        key: ${{ matrix.llbuild }}-${{ matrix.os }}-flang-${{ steps.llvm-commit.outputs.sha_short }}
+        gcp-bucket: enzyme-ci-transient
+        gcp-prefix: enzyme-flang/
+    - name: LLVM/Flang build
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      working-directory: ${{ env.BASE_DIR }}/llvm-project
+      run: |
+        mkdir flang-build && cd flang-build && cmake ../llvm -GNinja \
+          -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;flang" \
+          -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
+          -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
+          -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 \
+          -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
+          -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
     - name: generate build system
+      working-directory: ${{ env.BASE_DIR }}/Enzyme
       run: |
         rm -rf build && mkdir build && cd build
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
-          -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm \
-          -DMLIR_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/mlir \
-          -DFlang_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/flang \
+          -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/llvm \
+          -DMLIR_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/mlir \
+          -DClang_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/clang \
+          -DFlang_DIR=${{ env.BASE_DIR }}/llvm-project/flang-build/lib/cmake/flang \
           -DLLVM_EXTERNAL_LIT=`which lit` \
           -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON \
-          -DCMAKE_Fortran_COMPILER=flang-${{ matrix.llvm }}
+          -DCMAKE_Fortran_COMPILER=${{ env.BASE_DIR }}/llvm-project/flang-build/bin/flang
     - name: build FlangEnzyme plugin
-      working-directory: 'build'
+      working-directory: 'Enzyme/build'
       run: ninja FlangEnzyme-${{ matrix.llvm }}
     - name: check the plugin is a real shared object (not the symlink fallback)
-      working-directory: 'build'
+      working-directory: 'Enzyme/build'
       run: test -f Enzyme/FlangEnzyme-${{ matrix.llvm }}.so && ! test -L Enzyme/FlangEnzyme-${{ matrix.llvm }}.so
     - name: run Fortran tests (incl. Flang plugin)
-      working-directory: 'build'
+      working-directory: 'Enzyme/build'
       run: ninja check-enzyme-fortran
   build-and-test-fortran-ifx:
     name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
