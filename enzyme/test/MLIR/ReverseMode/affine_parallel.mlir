@@ -1,4 +1,4 @@
-// RUN: %eopt %s --split-input-file --pass-pipeline="builtin.module(enzyme{dataflow},canonicalize,remove-unnecessary-enzyme-ops)" | FileCheck %s
+// RUN: %eopt %s --split-input-file --pass-pipeline="builtin.module(enzyme{dataflow},canonicalize,remove-unnecessary-enzyme-ops,flatten-enzyme-caches,canonicalize)" | FileCheck %s
 
 func.func @foo(%x: memref<?xf32>, %y: memref<?xf32>) {
   affine.parallel (%arg9) = (0) to (4) {
