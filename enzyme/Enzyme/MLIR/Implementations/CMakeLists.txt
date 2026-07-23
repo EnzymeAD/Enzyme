@@ -54,6 +54,7 @@ add_mlir_library(MLIREnzymeImplementations
   AffineAutoDiffOpInterfaceImpl.cpp
   ArithAutoDiffOpInterfaceImpl.cpp
   CoreDialectsAutoDiffImplementations.cpp
+  CoreDialectsAutoDiffRegistration.cpp
   LLVMAutoDiffOpInterfaceImpl.cpp
   LLVMExtAutoDiffOpInterfaceImpl.cpp
   NVVMAutoDiffOpInterfaceImpl.cpp
