@@ -1816,7 +1816,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
   auto typeIface = dyn_cast<AutoDiffTypeInterface>(Val.getType());
   if (!typeIface || !typeIface.isMutable()) {
-      containsPointer = false;
+    containsPointer = false;
   }
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
