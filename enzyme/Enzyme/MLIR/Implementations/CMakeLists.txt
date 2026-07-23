@@ -109,14 +109,20 @@ add_mlir_library(MLIREnzymeImplementations
 # this same library by the FIR autodiff layer. Bundled into the FIREnzyme and
 # FlangEnzymeMLIR plugins. See HLFIREnzymeCallLowering.cpp.
 if (ENZYME_FIR_TOOL)
+  set(LLVM_TARGET_DEFINITIONS FIRDerivatives.td)
+  enzyme_tablegen(FIRDerivatives.inc -gen-mlir-derivatives)
+  add_public_tablegen_target(FIRDerivativesIncGen)
+
   add_mlir_library(MLIREnzymeHLFIRImplementations
     HLFIREnzymeCallLowering.cpp
     EnzymeFortranAutoDiffRegistration.cpp
+    FIRAutoDiffOpInterfaceImpl.cpp
     PARTIAL_SOURCES_INTENDED
 
     DEPENDS
     MLIRAutoDiffOpInterfaceIncGen
     MLIREnzymeEnumsIncGen
+    FIRDerivativesIncGen
 
     LINK_LIBS PUBLIC
     MLIREnzymeImplementations
