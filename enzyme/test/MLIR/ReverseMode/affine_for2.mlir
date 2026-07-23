@@ -1,4 +1,4 @@
-// RUN: %eopt %s  --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math | FileCheck %s
+// RUN: %eopt %s  --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math --flatten-enzyme-caches --canonicalize | FileCheck %s
 
 module {
   func.func @reduce(%x: f32, %n : index) -> (f32) {

@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --cse | FileCheck %s
+// RUN: %eopt %s --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --flatten-enzyme-caches --canonicalize --cse | FileCheck %s
 
 module {
   func.func @scale(%arg0: memref<?xf64>, %arg1: memref<?xf64>, %arg2: memref<?xf64>) {
