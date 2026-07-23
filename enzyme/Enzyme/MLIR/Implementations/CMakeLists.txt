@@ -114,6 +114,7 @@ if (ENZYME_FIR_TOOL)
   add_mlir_library(MLIREnzymeHLFIRImplementations
     HLFIREnzymeCallLowering.cpp
     FIRAutoDiffOpInterfaceImpl.cpp
+    HLFIRAutoDiffOpInterfaceImpl.cpp
     PARTIAL_SOURCES_INTENDED
 
     DEPENDS

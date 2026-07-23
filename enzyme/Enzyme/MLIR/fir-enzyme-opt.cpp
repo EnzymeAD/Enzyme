@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::enzyme::EnzymeDialect>();
   enzyme::registerCoreDialectAutodiffInterfaces(registry);
   enzyme::registerFIRDialectAutoDiffInterface(registry);
+  enzyme::registerHLFIRDialectAutoDiffInterface(registry);
 
   return failed(MlirOptMain(
       argc, argv, "FIR + Enzyme modular optimizer driver\n", registry));
