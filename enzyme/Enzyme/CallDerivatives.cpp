@@ -1121,7 +1121,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         getReverseBuilder(Builder2);
       }
 
-      // Get the operations from MPI_Receive
+      // Get the operations from MPI_Reduce
       Value *orig_sendbuf = call.getOperand(0);
       Value *orig_recvbuf = call.getOperand(1);
       Value *orig_count = call.getOperand(2);
@@ -1364,7 +1364,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         getReverseBuilder(Builder2);
       }
 
-      // Get the operations from MPI_Receive
+      // Get the operations from MPI_Allreduce
       Value *orig_sendbuf = call.getOperand(0);
       Value *orig_recvbuf = call.getOperand(1);
       Value *orig_count = call.getOperand(2);
@@ -2211,6 +2211,89 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
+void AdjointGenerator::handleFortran(llvm::CallInst &call,
+                                     llvm::Function *called,
+                                     llvm::StringRef funcName) {
+  using namespace llvm;
+
+  assert(called);
+
+  // float _FortranASum(ptr array, ptr file, i32 lineno, i32 dim, ptr mask)
+  // TODO: Account for other versions. Can we do startsWith?
+  if (funcName == "_FortranASumReal4") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
+
+      IRBuilder<> Builder2 =
+          forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
+      if (forwardMode) {
+        getForwardBuilder(Builder2);
+      } else {
+        getReverseBuilder(Builder2);
+      }
+
+      // Get the operations from _FortranASum
+      Value *orig_array = call.getOperand(0);
+      Value *orig_file = call.getOperand(1);
+      Value *orig_lineno = call.getOperand(2);
+      Value *orig_dim = call.getOperand(3);
+      Value *orig_mask = call.getOperand(4);
+
+      Value *shadow_array = gutils->invertPointerM(orig_array, Builder2);
+      if (!forwardMode)
+        shadow_array = lookup(shadow_array, Builder2);
+
+      Value *shadow_file = gutils->invertPointerM(orig_file, Builder2);
+      if (!forwardMode)
+        shadow_file = lookup(shadow_file, Builder2);
+
+      Value *lineno = gutils->getNewFromOriginal(orig_lineno);
+      if (!forwardMode)
+        lineno = lookup(lineno, Builder2);
+
+      Value *dim = gutils->getNewFromOriginal(orig_dim);
+      if (!forwardMode)
+        dim = lookup(dim, Builder2);
+
+      Value *shadow_mask = gutils->invertPointerM(orig_mask, Builder2);
+      if (!forwardMode)
+        shadow_mask = lookup(shadow_mask, Builder2);
+
+      // TODO: Account for forward mode
+      //       Given y = sum(x) and seed xdot, the forward mode derivative is
+      //       dot_product(x, xdot),
+      //       where dot_product is the sum over products of array entries.
+
+      // TODO: Account for reverse mode
+      //       Given y = sum(x) and seed ybar, the reverse mode derivative is
+      //       y * e,
+      //       where e is an array of ones of the same shape as x.
+
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+      llvm::errs() << *gutils->oldFunc << "\n";
+      llvm::errs() << call << "\n";
+      llvm::errs() << called << "\n";
+      llvm_unreachable("TODO: Reverse mode for _FortranASum");
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // TODO: Handle other Fortran intrinsics
+
+  llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+  llvm::errs() << *gutils->oldFunc << "\n";
+  llvm::errs() << call << "\n";
+  llvm::errs() << called << "\n";
+  llvm_unreachable("Unhandled Fortran FUNCTION");
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -2253,6 +2336,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   if (auto blas = extractBLAS(funcName)) {
     if (handleBLAS(call, called, *blas, overwritten_args))
       return true;
+  }
+
+  if ((startsWith(funcName, "_Fortran"))) {
+    handleFortran(call, called, funcName);
+    return true;
   }
 
   if (funcName == "printf" || funcName == "puts" ||

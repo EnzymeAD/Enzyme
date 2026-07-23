@@ -5333,6 +5333,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     /// END MPI
 
+    /// Fortran
+    /// TODO: Do we want to add any special cases?
+    /// END Fortran
+
     // Prob Prog
     if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
       return;
