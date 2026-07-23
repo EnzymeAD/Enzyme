@@ -1815,8 +1815,16 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
 
   // TODO: this should be an MLIR type interface connected to type analysis.
-  if (!isa<LLVM::LLVMPointerType, MemRefType>(Val.getType()))
-    containsPointer = false;
+  // Besides the builtin pointer-like types, any type whose AutoDiffTypeInterface
+  // reports it as mutable-in-place (e.g. `!fir.ref`) is a reference through
+  // which active memory can flow, so it must participate in the memory-based
+  // activity analysis below. Keeping this behind the interface keeps the
+  // analysis dialect-agnostic.
+  if (!isa<LLVM::LLVMPointerType, MemRefType>(Val.getType())) {
+    auto typeIface = dyn_cast<AutoDiffTypeInterface>(Val.getType());
+    if (!typeIface || !typeIface.isMutable())
+      containsPointer = false;
+  }
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
     containsPointer = false;
@@ -2797,6 +2805,23 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     return false;
   }
 
+  // Dialect-agnostic stores (fir.store, hlfir.assign, ...): inactive iff either
+  // the stored value or the pointer is constant.
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+    if (isConstantValue(TR, store.getStoredValue()) ||
+        isConstantValue(TR, store.getStoredPointer())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as store operand is inactive"
+                     << *op << "\n";
+      return true;
+    }
+    if (inactArg) {
+      inactArg->insert(store.getStoredValue());
+      inactArg->insert(store.getStoredPointer());
+    }
+    return false;
+  }
+
   if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp>(op)) {
     // if either src or dst is inactive, there cannot be a transfer of active
     // values and thus the store is inactive
@@ -3752,6 +3777,28 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
                          << " ignoreStoresInto=" << ignoreStoresInto
                          << " active from-store>" << val << " store=" << *SI
                          << "\n";
+          return true;
+        }
+        continue;
+      }
+    }
+
+    // Dialect-agnostic stores (fir.store, hlfir.assign, ...), mirroring the
+    // LLVM::StoreOp case above.
+    if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(a)) {
+      if (SI.getStoredValue() != val) {
+        if (!ignoreStoresInto) {
+          // Active value stored into `val` (the pointer): `val` is active.
+          if (!isConstantValue(TR, SI.getStoredValue())) {
+            StoredOrReturnedCache[key] = true;
+            return true;
+          }
+        }
+        continue;
+      } else {
+        // `val` is stored into active memory: active.
+        if (!isConstantValue(TR, SI.getStoredPointer())) {
+          StoredOrReturnedCache[key] = true;
           return true;
         }
         continue;
