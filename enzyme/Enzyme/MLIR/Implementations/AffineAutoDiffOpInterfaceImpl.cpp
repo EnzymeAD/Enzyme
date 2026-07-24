@@ -590,6 +590,20 @@ struct AffineLoadOpInterfaceReverse
   }
 };
 
+// Lets activity analysis treat affine.store generically via StoreLikeInterface.
+// getStoredPointer returns the base memref; the affine map indices apply within
+// the op.
+struct AffineStoreLike
+    : public StoreLikeInterface::ExternalModel<AffineStoreLike,
+                                               affine::AffineStoreOp> {
+  Value getStoredValue(Operation *op) const {
+    return cast<affine::AffineStoreOp>(op).getValueToStore();
+  }
+  Value getStoredPointer(Operation *op) const {
+    return cast<affine::AffineStoreOp>(op).getMemRef();
+  }
+};
+
 struct AffineStoreOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineStoreOpInterfaceReverse, affine::AffineStoreOp> {
@@ -844,6 +858,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     registerInterfaces(context);
     affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(
         *context);
+    affine::AffineStoreOp::attachInterface<AffineStoreLike>(*context);
     affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(
         *context);
     affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
