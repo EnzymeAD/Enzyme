@@ -65,8 +65,10 @@ void appendEnzymeFortranInterfaces(MLIRContext &context) {
   mlir::enzyme::registerFuncDialectAutoDiffInterface(registry);
   mlir::enzyme::registerTensorDialectAutoDiffInterface(registry);
   mlir::enzyme::registerEnzymeDialectAutoDiffInterface(registry);
-  // !fir.ref active-memory models (by-reference Fortran scalars).
+  // !fir.ref active-memory models (by-reference Fortran scalars) and the HLFIR
+  // intrinsics (hlfir.matmul, ...).
   mlir::enzyme::registerFIRDialectAutoDiffInterface(registry);
+  mlir::enzyme::registerHLFIRDialectAutoDiffInterface(registry);
 
   // flang has already created and loaded the FIR/HLFIR/func/... dialects into
   // this context; appending applies the external-model extensions to them
