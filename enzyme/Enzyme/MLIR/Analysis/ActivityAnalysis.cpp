@@ -2787,7 +2787,8 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
     if (isConstantValue(TR, store.getStoredPointer())) {
       if (EnzymePrintActivity)
-        llvm::errs() << " store into inactive memory is inactive" << *op << "\n";
+        llvm::errs() << " store into inactive memory is inactive" << *op
+                     << "\n";
       return true;
     }
     if (inactArg) {
