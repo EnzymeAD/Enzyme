@@ -2,13 +2,24 @@
 
 import os
 
+def bazel_runfile_path(path):
+  """Resolve package_path() output in both legacy and Bazel 8 runfiles."""
+  main_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+  legacy_path = os.path.join(main_repo_root, path)
+  if os.path.exists(legacy_path) or not path.startswith("external/"):
+    return legacy_path
+  return os.path.join(main_repo_root, "..", path[len("external/"):])
+
 #config.llvm_src_root = "@LLVM_SOURCE_DIR@"
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_obj_root = "@LLVM_BINARY_DIR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
 if len("@ENZYME_BINARY_DIR@") == 0:
-  config.llvm_tools_dir = os.getcwd() + "/" + config.llvm_tools_dir
+  config.llvm_obj_root = bazel_runfile_path(config.llvm_obj_root)
+  config.llvm_tools_dir = bazel_runfile_path(config.llvm_tools_dir)
 config.llvm_libs_dir = "@LLVM_LIBS_DIR@"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  config.llvm_libs_dir = bazel_runfile_path(config.llvm_libs_dir)
 config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
 config.target_triple = "@TARGET_TRIPLE@"
 
@@ -59,15 +70,28 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   emopt = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-opt"
 
 eclang = config.llvm_tools_dir + "/clang"
+eclangxx = config.llvm_tools_dir + "/clang++"
 if len("@ENZYME_BINARY_DIR@") == 0:
-  eclang = os.path.dirname(os.path.abspath(__file__)) + "/../enzyme-clang"
+  driver_dir = os.path.dirname(os.path.abspath(__file__))
+  eclang = driver_dir + "/../enzyme-clang"
+  eclangxx = driver_dir + "/../enzyme-clang++"
   resource = config.llvm_tools_dir + "/../clang/staging"
-  eclang += " -resource-dir " + resource + " "
-  eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
+  driver_args = " -resource-dir " + resource
+  driver_args += " -I " + driver_dir + "/Integration"
+  # The Bazel driver has Enzyme statically registered. Keep ordinary %clang
+  # invocations equivalent to CMake's plain Clang; tests using the Clang
+  # integration explicitly re-enable the pass through %loadClangEnzyme.
+  driver_args += " -mllvm -enzyme-enable=0"
+  eclang += driver_args
+  eclangxx += driver_args
 
 config.substitutions.append(('%eopt', emopt))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
+# Lit treats substitution keys as regular expressions. Register the escaped,
+# longer spelling first so %clang++ is not interpreted as %clang followed by a
+# literal "++".
+config.substitutions.append(('%clang\\+\\+', eclangxx))
 config.substitutions.append(('%clang', eclang))
 config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
 
@@ -110,8 +134,8 @@ newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "
           + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
 
 if len("@ENZYME_BINARY_DIR@") == 0:
-  oldPM = ((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
   newPM = (" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
+  newPM += " -mllvm -enzyme-enable=1"
 
 config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
