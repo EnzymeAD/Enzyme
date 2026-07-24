@@ -6,16 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The aggregate registration entry point that attaches Enzyme's autodiff
-// external models for every core upstream dialect. It is deliberately isolated
-// in its own translation unit: because it references every per-dialect
-// registration (Linalg and NVVM included), linking it forces those models --
-// and their dialect symbols -- into the consumer. Tools that want them all
-// (enzymemlir-opt, fir-enzyme-opt, ...) call this; a consumer that only needs a
-// subset (the lean `flang -fc1` plugin, which must not pull in Linalg symbols
-// flang does not export) instead links the individual
-// register*DialectAutoDiffInterface functions it wants and never references
-// this TU, so the Linalg/NVVM models are not linked at all.
+// Aggregate entry point registering autodiff external models for every core
+// upstream dialect. Isolated in its own TU so that linking it pulls in all the
+// per-dialect models (Linalg, NVVM, ...); consumers needing only a subset (e.g.
+// the flang -fc1 plugin, which must not pull in Linalg) link the individual
+// register*DialectAutoDiffInterface functions instead and skip this TU.
 //
 //===----------------------------------------------------------------------===//
 

@@ -27,8 +27,7 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/LLVMDerivatives.inc"
 
-// Exposes llvm.store's (value, addr) so activity analysis can treat it
-// generically via StoreLikeInterface rather than a hard-coded dyn_cast.
+// Lets activity analysis treat llvm.store generically via StoreLikeInterface.
 struct LLVMStoreLike
     : public StoreLikeInterface::ExternalModel<LLVMStoreLike, LLVM::StoreOp> {
   Value getStoredValue(Operation *op) const {
