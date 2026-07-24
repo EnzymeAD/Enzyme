@@ -590,10 +590,9 @@ struct AffineLoadOpInterfaceReverse
   }
 };
 
-// Exposes affine.store's (value, memref) so activity analysis can treat it
-// generically via StoreLikeInterface rather than a hard-coded dyn_cast. The
-// affine map's indices are applied within the op, so getStoredPointer returns
-// the base memref before any offsets.
+// Lets activity analysis treat affine.store generically via StoreLikeInterface.
+// getStoredPointer returns the base memref; the affine map indices apply within
+// the op.
 struct AffineStoreLike
     : public StoreLikeInterface::ExternalModel<AffineStoreLike,
                                                affine::AffineStoreOp> {

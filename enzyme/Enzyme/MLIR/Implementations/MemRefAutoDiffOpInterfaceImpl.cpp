@@ -27,8 +27,7 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
 
-// Exposes memref.store's (value, memref) so activity analysis can treat it
-// generically via StoreLikeInterface rather than a hard-coded dyn_cast.
+// Lets activity analysis treat memref.store generically via StoreLikeInterface.
 struct MemRefStoreLike
     : public StoreLikeInterface::ExternalModel<MemRefStoreLike,
                                                memref::StoreOp> {

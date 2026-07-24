@@ -7,12 +7,6 @@
 // tangent is garbage instead of 0.
 //
 // This is the memref analogue of the affine.store `@if_then` test.
-//
-// XFAIL: *
-// FIXME: forward-mode differentiation of memref.store does not currently emit
-// the shadow zero-initialization (`memref.store %cst0, %[[alloc]]`) before the
-// conditional store, so the not-taken path reads an uninitialized shadow. When
-// this is fixed the test will XPASS; remove the XFAIL line above.
 
 module {
   func.func @if_then(%x : f64, %c : i1) -> f64 {
