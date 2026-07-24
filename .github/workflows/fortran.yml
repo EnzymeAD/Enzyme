@@ -84,6 +84,8 @@ jobs:
             ifx: 2023.1.0
           - llvm: 17
             ifx: 2023.2.4
+          - llvm: 21
+            version: 2023.5
     timeout-minutes: 60
     steps:
     - name: add llvm without clang and flang
