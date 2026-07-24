@@ -93,6 +93,29 @@ config.substitutions.append(('%flang_fc1', flang_new + " -fc1"))
 if os.path.exists(flang_new):
   config.available_features.add('flang_new')
 
+# FlangEnzymeMLIR: the -load'able plugin that registers the Enzyme HLFIR passes
+# into flang's own codegen pipeline. %flang_enzyme is `flang-new -fc1 -load
+# <plugin>`. The fir_enzyme_flang_plugin feature also requires a flang built with
+# the pass-pipeline-config-callback bridge (fir::registerPassPipelineConfigCallback).
+flangenzyme_plugin = (config.enzyme_obj_root
+                      + "/Enzyme/MLIR/Implementations/FlangEnzymeMLIR-"
+                      + config.llvm_ver + config.llvm_shlib_ext)
+if len("@ENZYME_BINARY_DIR@") == 0:
+  flangenzyme_plugin = (os.path.dirname(os.path.abspath(__file__))
+                        + "/../FlangEnzymeMLIR-" + config.llvm_ver
+                        + config.llvm_shlib_ext)
+# NB: register the longer %flang_enzyme_driver *before* %flang_enzyme -- lit
+# applies substitutions in order, so the shorter name must not consume the prefix
+# of the longer one (which would leave a stray "_driver").
+# Driver form (compiles + links an executable), loading the plugin into the -fc1
+# frontend via -Xflang.
+config.substitutions.append(
+    ('%flang_enzyme_driver',
+     flang_new + " -Xflang -load -Xflang " + flangenzyme_plugin))
+config.substitutions.append(
+    ('%flang_enzyme', flang_new + " -fc1 -load " + flangenzyme_plugin))
+if os.path.exists(flang_new) and os.path.exists(flangenzyme_plugin):
+  config.available_features.add('fir_enzyme_flang_plugin')
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))

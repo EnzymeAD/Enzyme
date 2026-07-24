@@ -182,11 +182,15 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
             }
           }
         }
-        orig->emitError()
-            << "Unsupported constant arg to memory identity forward "
-               "handler(opidx="
-            << operand.getOperandNumber() << ", op=" << operand.get() << ")\n";
-        return failure();
+        // The op is being differentiated (some result is active), but this
+        // particular operand is an inactive reference/pointer -- e.g. an
+        // hlfir.declare of a constant Fortran argument that is caught up in the
+        // conservative, alias-free activity analysis. There is no active
+        // pointer to invert, so hand the shadow a null/zero reference (a fresh
+        // zeroed buffer for mutable types, or the primal otherwise). This is
+        // exactly what invertPointerM produces for a constant value.
+        newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+        continue;
       }
       inverted[newOperands.size()] = true;
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
@@ -217,6 +221,10 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     }
   }
   for (auto &&[i, oval] : llvm::enumerate(orig->getResults())) {
+    // Inactive results (e.g. one of hlfir.declare's two handles) have no
+    // shadow; only propagate the tangent for active ones.
+    if (gutils->isConstantValue(oval))
+      continue;
     Value sval;
     if (gutils->width == 1) {
       sval = shadows[0]->getResult(i);
