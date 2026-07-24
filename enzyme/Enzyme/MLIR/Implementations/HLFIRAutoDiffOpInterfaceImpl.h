@@ -25,6 +25,12 @@ namespace mlir {
 class DialectRegistry;
 class Pass;
 namespace enzyme {
+// Attaches the Enzyme AutoDiffTypeInterface to !fir.ref (active memory) and the
+// active-memory-identity autodiff models to the FIR/HLFIR memory ops
+// (fir.load/store/alloca, hlfir.declare/assign), so whole by-reference Fortran
+// functions can be differentiated.
+void registerFIRDialectAutoDiffInterface(DialectRegistry &registry);
+
 // A pass that rewrites Fortran differentiation-hook calls
 // (fir.call @...f__enzyme_fwddiff / f__enzyme_autodiff) into enzyme.fwddiff /
 // enzyme.autodiff ops, parsing enzyme_{const,dup,dupnoneed,out} activity

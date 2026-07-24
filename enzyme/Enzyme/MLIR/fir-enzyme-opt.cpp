@@ -54,12 +54,10 @@ int main(int argc, char **argv) {
   fir::support::addFIRExtensions(registry);
 
   // Enzyme dialect + autodiff interface external models for the upstream
-  // dialects Enzyme differentiates through. The FIR/HLFIR autodiff models are
-  // attached separately (see registerFIRDialectAutoDiffInterface /
-  // registerHLFIRDialectAutoDiffInterface) once those flang-dependent
-  // implementations are linked in.
+  // dialects Enzyme differentiates through.
   registry.insert<mlir::enzyme::EnzymeDialect>();
   enzyme::registerCoreDialectAutodiffInterfaces(registry);
+  enzyme::registerFIRDialectAutoDiffInterface(registry);
 
   return failed(MlirOptMain(
       argc, argv, "FIR + Enzyme modular optimizer driver\n", registry));
