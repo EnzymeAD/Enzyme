@@ -75,6 +75,25 @@ if (ENZYME_ENABLE_PLUGINS)
                 )
                     target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
             endif()
+            if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+                add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
+                    ${ENZYME_SRC} Flang/EnzymeFlang.cpp
+                    PARTIAL_SOURCES_INTENDED
+                    MODULE
+                    DEPENDS
+                    intrinsics_gen
+            	LINK_COMPONENTS
+            	LLVM
+                )
+                    target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+                    # Do NOT link flangFrontend: the Flang frontend is already
+                    # statically linked into the `flang` host, and re-linking it
+                    # into the plugin duplicates its cl::opt registrations, which
+                    # aborts at dlopen ("registered more than once"). Like the
+                    # ClangEnzyme plugin (and flang's own example plugins), the
+                    # frontend symbols are resolved from the host `flang -fc1` at
+                    # load time; we only need the Flang headers to compile.
+            endif()
                     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                     ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
                     PARTIAL_SOURCES_INTENDED
@@ -107,6 +126,24 @@ if (ENZYME_ENABLE_PLUGINS)
                      clang
                  )
              target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+             endif()
+             if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+                 add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
+                     ${ENZYME_SRC} Flang/EnzymeFlang.cpp
+                     PARTIAL_SOURCES_INTENDED
+                     MODULE
+                     DEPENDS
+                     intrinsics_gen
+                     PLUGIN_TOOL
+                     flang
+                 )
+             target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+             # Do NOT link flangFrontend: the Flang frontend is already statically
+             # linked into the `flang` host, and re-linking it into the plugin
+             # duplicates its cl::opt registrations, which aborts at dlopen
+             # ("registered more than once"). The PLUGIN_TOOL flang above resolves
+             # the frontend symbols from the host at link time; we only need the
+             # Flang headers to compile.
              endif()
                  add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
                      ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
@@ -264,6 +301,12 @@ install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     LIBRARY DESTINATION lib COMPONENT shlib
     COMPONENT dev)
     install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
+endif()
+if (ENZYME_FLANG AND Flang_FOUND AND LLVM_VERSION_MAJOR GREATER_EQUAL 20)
+install(TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    COMPONENT dev)
 endif()
 install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets

@@ -66,6 +66,28 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# fir-enzyme-opt: the standalone fir-opt+Enzyme binary (the delivery vehicle for
+# a fully-static LLVM build). %fireopt runs it; the fir_enzyme_opt feature gates
+# tests that need it.
+fireopt = config.enzyme_obj_root + "/Enzyme/MLIR/fir-enzyme-opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  fireopt = os.path.dirname(os.path.abspath(__file__)) + "/../fir-enzyme-opt"
+config.substitutions.append(('%fireopt', fireopt))
+if os.path.exists(fireopt):
+  config.available_features.add('fir_enzyme_opt')
+
+# flang -fc1, for compiling Fortran to HLFIR in end-to-end tests. The driver was
+# renamed flang-new -> flang in LLVM 20; fall back to the old name for older
+# toolchains. Registers the flang_new feature so those tests are skipped when
+# flang is unavailable.
+flang_new = config.llvm_tools_dir + "/flang"
+if not os.path.exists(flang_new):
+  flang_new = config.llvm_tools_dir + "/flang-new"
+config.substitutions.append(('%flang_fc1', flang_new + " -fc1"))
+if os.path.exists(flang_new):
+  config.available_features.add('flang_new')
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
@@ -126,6 +148,19 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+
+# FlangEnzyme frontend plugin. The `flang` feature gates tests that load the
+# frontend plugin (`flang -fc1 -load ... -plugin enzyme`). It requires a Flang
+# frontend new enough to support plugins (LLVM >= 20) AND that a *real*
+# FlangEnzyme plugin was built (ENZYME_FLANG=ON with Flang found). We check that
+# the shared object exists and is not a symlink: the symlink-to-ClangEnzyme
+# fallback is not a Flang frontend plugin and must not enable the feature.
+flang_plugin_path = '@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
+enzyme_flang_built = "@ENZYME_FLANG@" in ("ON", "1", "TRUE", "YES")
+if (enzyme_flang_built and "flang" in config.fc and int(config.llvm_ver) >= 20
+        and os.path.exists(flang_plugin_path) and not os.path.islink(flang_plugin_path)):
+    config.available_features.add('flang')
+config.substitutions.append(('%loadFlangEnzyme', flang_plugin_path))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
