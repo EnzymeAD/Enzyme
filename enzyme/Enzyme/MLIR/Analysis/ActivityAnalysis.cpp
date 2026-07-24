@@ -1814,9 +1814,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     containsPointer = false;
   // if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
 
-  // TODO: this should be an MLIR type interface connected to type analysis.
-  if (!isa<LLVM::LLVMPointerType, MemRefType>(Val.getType()))
+  auto typeIface = dyn_cast<AutoDiffTypeInterface>(Val.getType());
+  if (!typeIface || !typeIface.isMutable()) {
     containsPointer = false;
+  }
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
     containsPointer = false;
@@ -2454,21 +2455,13 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         if (EnzymePrintActivity)
           llvm::errs() << "potential active store: " << *op << " Val=" << Val
                        << "\n";
-        if (auto SI = dyn_cast<LLVM::StoreOp>(op)) {
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValue());
+        if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+          // Any store-like op (llvm.store, memref.store, and out-of-tree ops
+          // that attach the interface).
+          bool cop = !Hypothesis->isConstantValue(TR, SI.getStoredValue());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << Val << "\n";
-          potentialStore = true;
-          if (cop)
-            potentiallyActiveStore = true;
-        } else if (auto SI = dyn_cast<memref::StoreOp>(op)) {
-          // FIXME: this is a copy-pasta form above to work with MLIR memrefs.
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValueToStore());
-          if (EnzymePrintActivity)
-            llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
+                         << " - " << *op << " of "
                          << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
@@ -2790,17 +2783,19 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   if (EnzymePrintActivity)
     llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *op << "\n";
 
-  if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
-    if (isConstantValue(TR, store.getValue()) ||
-        isConstantValue(TR, store.getAddr())) {
+  // Dialect-agnostic stores (fir.store, hlfir.assign, ...): inactive iff either
+  // the stored value or the pointer is constant.
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+    if (isConstantValue(TR, store.getStoredValue()) ||
+        isConstantValue(TR, store.getStoredPointer())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as store operand is inactive"
                      << *op << "\n";
       return true;
     }
     if (inactArg) {
-      inactArg->insert(store.getValue());
-      inactArg->insert(store.getAddr());
+      inactArg->insert(store.getStoredValue());
+      inactArg->insert(store.getStoredPointer());
     }
     return false;
   }
@@ -3734,13 +3729,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
       }
     }
 
-    if (auto SI = dyn_cast<LLVM::StoreOp>(a)) {
-      // If we are being stored into, not storing this value
-      // this case can be skipped
-      if (SI.getValue() != val) {
+    if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(a)) {
+      if (SI.getStoredValue() != val) {
         if (!ignoreStoresInto) {
-          // Storing into active value, return true
-          if (!isConstantValue(TR, SI.getValue())) {
+          // Active value stored into `val` (the pointer): `val` is active.
+          if (!isConstantValue(TR, SI.getStoredValue())) {
             StoredOrReturnedCache[key] = true;
             if (EnzymePrintActivity)
               llvm::errs() << " </ASOR" << (int)directions
@@ -3752,8 +3745,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
         }
         continue;
       } else {
-        // Storing into active memory, return true
-        if (!isConstantValue(TR, SI.getAddr())) {
+        // `val` is stored into active memory: active.
+        if (!isConstantValue(TR, SI.getStoredPointer())) {
           StoredOrReturnedCache[key] = true;
           if (EnzymePrintActivity)
             llvm::errs() << " </ASOR" << (int)directions
