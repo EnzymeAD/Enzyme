@@ -872,6 +872,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (auto MD = GV->getMetadata("enzyme_type")) {
+      analysis[Val] |= TypeTree::fromMD(MD);
+      return;
+    }
 
     if (GV->getName() == "__cxa_thread_atexit_impl") {
       analysis[Val] = TypeTree(BaseType::Pointer).Only(-1, nullptr);
@@ -887,15 +891,18 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
-    TypeTree &Result = analysis[Val];
-    Result.insert({-1}, ConcreteType(BaseType::Pointer));
-
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       getConstantAnalysis(GV->getInitializer(), TA, analysis);
-      Result |= analysis[GV->getInitializer()].Only(-1, nullptr);
+      TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
+      constTT.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", constTT.toMD(GV->getContext()));
+      analysis[Val] |= constTT;
       return;
     }
+
+    TypeTree &Result = analysis[Val];
+
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
       auto globalSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
