@@ -128,7 +128,11 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"atanh", Intrinsic::not_intrinsic},
     {"exp", Intrinsic::exp},
     {"exp2", Intrinsic::exp2},
+#if LLVM_VERSION_MAJOR >= 18
+    {"exp10", Intrinsic::exp10},
+#else
     {"exp10", Intrinsic::not_intrinsic},
+#endif
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
     {"expm1", Intrinsic::not_intrinsic},
@@ -4098,6 +4102,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 18
+  case Intrinsic::exp10:
+#endif
 #if LLVM_VERSION_MAJOR >= 19
   case Intrinsic::sinh:
   case Intrinsic::cosh:
