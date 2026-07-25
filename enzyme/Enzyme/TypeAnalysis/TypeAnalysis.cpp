@@ -1211,6 +1211,24 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
+
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (!isa<StructType>(GV->getValueType()) ||
+        !cast<StructType>(GV->getValueType())->isOpaque()) {
+      auto allocSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
+      if (EnzymePrintType) {
+        llvm::errs() << " pre global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+      Data = Data.Lookup(allocSize, DL)
+                 .Only(-1, dyn_cast_or_null<Instruction>(Origin));
+      if (EnzymePrintType) {
+        llvm::errs() << " post global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+    }
+  }
+
   bool Changed =
       analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 
