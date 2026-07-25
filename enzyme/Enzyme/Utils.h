@@ -68,6 +68,29 @@
 #define amd_target amdgcn
 #endif
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
+#include "llvm/Support/AMDGPUMetadata.h"
+
+// Returns true if the given target triple is a GPU kernel architecture
+// (NVPTX, AMDGPU, or Apple Metal AIR).
+static inline bool isGPUArch(const llvm::Triple &TT) {
+  auto Arch = TT.getArch();
+  return Arch == llvm::Triple::nvptx || Arch == llvm::Triple::nvptx64 ||
+         Arch == llvm::Triple::amd_target || TT.getArchName() == "air64";
+}
+
+// Returns the address space used for GPU shared/threadgroup memory.
+static inline unsigned getGPUSharedAddrSpace(const llvm::Triple &TT) {
+  return TT.getArch() == llvm::Triple::amd_target
+             ? (unsigned)llvm::AMDGPU::HSAMD::AddressSpaceQualifier::Local
+             : 3;
+}
+
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"

@@ -4548,12 +4548,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   BasicBlock *entry = &gutils->newFunc->getEntryBlock();
 
-  auto Arch =
-      llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
-  unsigned int SharedAddrSpace =
-      Arch == Triple::amd_target
-          ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-          : 3;
+  auto TT = llvm::Triple(gutils->newFunc->getParent()->getTargetTriple());
+  auto Arch = TT.getArch();
+  unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
 
   if (key.mode == DerivativeMode::ReverseModeCombined) {
     BasicBlock *sharedBlock = nullptr;
@@ -4562,8 +4559,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         IRBuilder<> entryBuilder(gutils->inversionAllocs,
                                  gutils->inversionAllocs->begin());
 
-        if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-             Arch == Triple::amd_target) &&
+        if (isGPUArch(TT) &&
             g.getType()->getAddressSpace() == SharedAddrSpace) {
           if (sharedBlock == nullptr)
             sharedBlock = BasicBlock::Create(entry->getContext(), "shblock",
