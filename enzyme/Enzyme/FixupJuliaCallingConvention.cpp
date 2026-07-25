@@ -1589,7 +1589,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
 }
 
 class FixupJuliaCallingConventionNewPM
-    : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
+    : public OptionalPassInfoMixin<FixupJuliaCallingConventionNewPM> {
   bool sret_jlvalue;
 
 public:
@@ -1613,7 +1613,7 @@ public:
 };
 
 class FixupBatchedJuliaCallingConventionNewPM
-    : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
+    : public OptionalPassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
