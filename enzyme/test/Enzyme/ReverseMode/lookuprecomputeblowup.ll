@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -enzyme-lookup-recompute-budget=10 -S | FileCheck %s
 
 ; A loop whose body is a chain of diamonds. The reverse pass cannot reuse the
 ; body's values in place -- they change every iteration and their blocks do not
@@ -7,8 +8,11 @@
 ; Rebuilding a phi unwraps it into fresh blocks, one per predecessor, and those
 ; siblings do not share lookup results, so every diamond multiplies the work.
 ;
-; This is a compile time test: what matters is that it finishes at all. Without
-; a bound on the recompute attempts the chain below takes many hours.
+; This is a compile time test: what matters is that it finishes at all. With
+; the recompute bound this file differentiates in well under a second; with
+; the bound removed from the source it was still running after five minutes,
+; growing about 3x per diamond. The last RUN exercises the exhausted-budget
+; fallback, where nearly every lookup takes the always-legal caching path.
 
 declare double @__enzyme_autodiff(i8*, ...)
 
