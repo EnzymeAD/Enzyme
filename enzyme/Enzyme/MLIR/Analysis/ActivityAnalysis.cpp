@@ -3728,6 +3728,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     }
 
     if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(a)) {
+      // If we are being stored into, not storing this value
+      // this case can be skipped
       if (SI.getStoredValue() != val) {
         if (!ignoreStoresInto) {
           // Active value stored into `val` (the pointer): `val` is active.
