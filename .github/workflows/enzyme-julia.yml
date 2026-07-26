@@ -48,7 +48,7 @@ jobs:
       with:
         version: ${{ matrix.version }}
         arch: ${{ matrix.arch }}
-    - uses: julia-actions/cache@3.2
+    - uses: julia-actions/cache@v3.2.0
       with:
         gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
         key-prefix: enzyme-julia-int/
