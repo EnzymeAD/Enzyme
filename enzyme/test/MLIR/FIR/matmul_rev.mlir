@@ -3,8 +3,8 @@
 //   B̄ += matmul_transpose(A, G)   ( == Aᵀ·G )
 // The primal A and B are cached in the forward sweep and popped in reverse.
 //
-// REQUIRES: fir_enzyme_opt
-// RUN: %fireopt %s --enzyme-wrap="infn=mm outfn= argTys=enzyme_dup,enzyme_dup retTys=enzyme_dup mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize | FileCheck %s
+// REQUIRES: fir_enzyme_plugin
+// RUN: %fir_enzyme %s --pass-pipeline='builtin.module(enzyme-wrap{infn=mm outfn= argTys=enzyme_dup,enzyme_dup retTys=enzyme_dup mode=ReverseModeCombined},canonicalize,remove-unnecessary-enzyme-ops,canonicalize)' | FileCheck %s
 
 module {
   func.func @mm(%a: !hlfir.expr<2x2xf32>, %b: !hlfir.expr<2x2xf32>)

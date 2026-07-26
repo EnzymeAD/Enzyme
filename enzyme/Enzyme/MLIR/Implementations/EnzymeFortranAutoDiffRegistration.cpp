@@ -42,4 +42,6 @@ void mlir::enzyme::registerEnzymeFortranInterfaces(DialectRegistry &registry) {
   // The by-reference model: without it nothing can differentiate a Fortran
   // function, whose arguments and locals are all !fir.ref<T>.
   registerFIRDialectAutoDiffInterface(registry);
+  // The Tier-1 hlfir.* array intrinsics (hlfir.matmul, ...) and !hlfir.expr.
+  registerHLFIRDialectAutoDiffInterface(registry);
 }

@@ -2,8 +2,8 @@
 // The two products are hlfir.matmul; the sum is an elementwise hlfir.elemental
 // built by the !hlfir.expr AutoDiffTypeInterface.
 //
-// REQUIRES: fir_enzyme_opt
-// RUN: %fireopt --enzyme %s | FileCheck %s
+// REQUIRES: fir_enzyme_plugin
+// RUN: %fir_enzyme --pass-pipeline='builtin.module(enzyme)' %s | FileCheck %s
 
 module {
   func.func @mm(%a: !hlfir.expr<2x2xf32>, %b: !hlfir.expr<2x2xf32>)

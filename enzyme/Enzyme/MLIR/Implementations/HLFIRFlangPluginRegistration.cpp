@@ -42,8 +42,6 @@ namespace {
 void appendEnzymeFortranInterfaces(MLIRContext &context) {
   DialectRegistry registry;
   mlir::enzyme::registerEnzymeFortranInterfaces(registry);
-  mlir::enzyme::registerFIRDialectAutoDiffInterface(registry);
-  mlir::enzyme::registerHLFIRDialectAutoDiffInterface(registry);
   context.appendDialectRegistry(registry);
   context.loadDialect<mlir::enzyme::EnzymeDialect>();
 }
