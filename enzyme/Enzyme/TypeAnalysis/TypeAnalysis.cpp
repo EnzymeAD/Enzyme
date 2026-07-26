@@ -39,6 +39,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
+#include "llvm/ProfileData/InstrProf.h"
+
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -891,6 +893,13 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       getConstantAnalysis(GV->getInitializer(), TA, analysis);
@@ -902,6 +911,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     TypeTree &Result = analysis[Val];
+    Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
