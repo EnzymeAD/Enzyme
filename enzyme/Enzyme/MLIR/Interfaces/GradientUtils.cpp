@@ -315,11 +315,22 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   });
 }
 
+/// A store of an inactive value is a constant operation, but forward mode must
+/// still zero the shadow memory or a later load reads a stale tangent. Keep
+/// visiting such stores so memoryIdentityForwardHandler emits that null, like
+/// LLVM's visitCommonStore, which only bails out on a constant pointer.
+static bool storesThroughActivePointer(const MGradientUtils *gutils,
+                                       Operation *op) {
+  auto store = dyn_cast<enzyme::StoreLikeInterface>(op);
+  return store && !gutils->isConstantValue(store.getStoredPointer());
+}
+
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
     if ((op->getBlock()->getTerminator() != op) &&
         llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
+        !storesThroughActivePointer(this, op) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
       return success();
     }
