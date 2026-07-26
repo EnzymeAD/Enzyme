@@ -50,7 +50,7 @@ jobs:
         arch: ${{ matrix.arch }}
     - uses: julia-actions/cache@v3.2
       gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
-      gcp-prefix: enzyme-julia-int/
+      key-prefix: enzyme-julia-int/
 
     - name: Set environment variable to build libEnzyme
       if: ${{ runner.os == 'macOS' }}
