@@ -72,7 +72,7 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast %"class.std::__cxx11::basic_string"* %s to i8*: icv:1 ici:1
 ; CHECK-NEXT:   %a1 = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 2: icv:1 ici:1
 ; CHECK-NEXT:   %a2 = bitcast %"class.std::__cxx11::basic_string"* %s to %union.anon**: icv:1 ici:1
-; CHECK-NEXT:   store %union.anon* %a1, %union.anon** %a2, align 8, !tbaa ![[TBAA:[0-9]+]]: icv:1 ici:1
+; CHECK-NEXT:   store %union.anon* %a1, %union.anon** %a2, align 8, !tbaa !{{[0-9]+}}: icv:1 ici:1
 ; CHECK-NEXT:   %a3 = bitcast %union.anon* %a1 to i8*: icv:1 ici:1
 ; CHECK-NEXT:   call void @llvm.memcpy.p0i8.p0i8.i64(i8* nonnull align 8 dereferenceable(11) %a3, i8* nonnull align 1 dereferenceable(11) getelementptr inbounds ([12 x i8], [12 x i8]* @.str, i64 0, i64 0), i64 11, i1 false) #2: icv:1 ici:1
 ; CHECK-NEXT:   %_M_p.i.i.i.i.i = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 0, i32 0: icv:1 ici:1
