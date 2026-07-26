@@ -317,10 +317,18 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
+    // An op with side effects may still need to touch shadow memory even when
+    // it is constant: a store of an inactive value into active memory has to
+    // zero the shadow, or a later load reads a stale tangent. Only skip it if
+    // it is pure, or if every operand is constant and there is no shadow to
+    // write through.
     if ((op->getBlock()->getTerminator() != op) &&
         llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
-        /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
+        (isPure(op) ||
+         llvm::all_of(op->getOperands(),
+                      [this](Value v) { return isConstantValue(v); })) &&
+        activityAnalyzer->isConstantOperation(TR, op)) {
       return success();
     }
     // }
