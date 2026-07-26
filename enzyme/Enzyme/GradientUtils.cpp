@@ -108,6 +108,13 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool>
     EnzymeSpeculatePHIs("enzyme-speculate-phis", cl::init(false), cl::Hidden,
                         cl::desc("Speculatively execute phi computations"));
+llvm::cl::opt<int> EnzymeLookupRecomputeBudget(
+    "enzyme-lookup-recompute-budget", cl::init(100000), cl::Hidden,
+    cl::desc("Maximum number of recompute attempts lookupM may make while "
+             "differentiating one function before it stops attempting to "
+             "recompute values and always caches them instead. Bounds a "
+             "combinatorial lookupM/unwrapM recursion; a negative value "
+             "disables the bound."));
 llvm::cl::opt<bool> EnzymeFreeInternalAllocations(
     "enzyme-free-internal-allocations", cl::init(true), cl::Hidden,
     cl::desc("Always free internal allocations (disable if allocation needs "
@@ -7056,6 +7063,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       return result;
     }
   }
+
+  // The recompute attempt below recurses through lookupM/unwrapM chains whose
+  // cost can grow combinatorially (e.g. deep phi/binop webs re-explored per
+  // predecessor). Once too many attempts have been made for this function,
+  // stop trying to recompute and fall through to caching, which is legal for
+  // any value, so the worst case stays bounded.
+  if (EnzymeLookupRecomputeBudget >= 0 &&
+      ++lookupRecomputeCount > EnzymeLookupRecomputeBudget)
+    tryLegalRecomputeCheck = false;
 
   // TODO consider call as part of
   bool lrc = false, src = false;
