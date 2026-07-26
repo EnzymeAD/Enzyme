@@ -72,16 +72,16 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast %"class.std::__cxx11::basic_string"* %s to i8*: icv:1 ici:1
 ; CHECK-NEXT:   %a1 = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 2: icv:1 ici:1
 ; CHECK-NEXT:   %a2 = bitcast %"class.std::__cxx11::basic_string"* %s to %union.anon**: icv:1 ici:1
-; CHECK-NEXT:   store %union.anon* %a1, %union.anon** %a2, align 8, !tbaa !2: icv:1 ici:1
+; CHECK-NEXT:   store %union.anon* %a1, %union.anon** %a2, align 8, !tbaa ![[TBAA:[0-9]+]]: icv:1 ici:1
 ; CHECK-NEXT:   %a3 = bitcast %union.anon* %a1 to i8*: icv:1 ici:1
 ; CHECK-NEXT:   call void @llvm.memcpy.p0i8.p0i8.i64(i8* nonnull align 8 dereferenceable(11) %a3, i8* nonnull align 1 dereferenceable(11) getelementptr inbounds ([12 x i8], [12 x i8]* @.str, i64 0, i64 0), i64 11, i1 false) #2: icv:1 ici:1
 ; CHECK-NEXT:   %_M_p.i.i.i.i.i = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 0, i32 0: icv:1 ici:1
 ; CHECK-NEXT:   %_M_string_length.i.i.i.i.i.i = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 1: icv:1 ici:1
-; CHECK-NEXT:   store i64 11, i64* %_M_string_length.i.i.i.i.i.i, align 8, !tbaa !7: icv:1 ici:1
+; CHECK-NEXT:   store i64 11, i64* %_M_string_length.i.i.i.i.i.i, align 8, !tbaa !{{[0-9]+}}: icv:1 ici:1
 ; CHECK-NEXT:   %a4 = getelementptr inbounds %"class.std::__cxx11::basic_string", %"class.std::__cxx11::basic_string"* %s, i64 0, i32 2, i32 1, i64 3: icv:1 ici:1
-; CHECK-NEXT:   store i8 0, i8* %a4, align 1, !tbaa !10: icv:1 ici:1
+; CHECK-NEXT:   store i8 0, i8* %a4, align 1, !tbaa !{{[0-9]+}}: icv:1 ici:1
 ; CHECK-NEXT:   %call1 = call i32 (i8*, ...) @printf(i8* nonnull dereferenceable(1) %a3): icv:1 ici:1
-; CHECK-NEXT:   %a5 = load i8*, i8** %_M_p.i.i.i.i.i, align 8, !tbaa !11: icv:1 ici:1
+; CHECK-NEXT:   %a5 = load i8*, i8** %_M_p.i.i.i.i.i, align 8, !tbaa !{{[0-9]+}}: icv:1 ici:1
 ; CHECK-NEXT:   %cmp.i.i.i = icmp eq i8* %a5, %a3: icv:1 ici:1
 ; CHECK-NEXT:   br i1 %cmp.i.i.i, label %_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED2Ev.exit, label %if.then.i.i: icv:1 ici:1
 ; CHECK-NEXT: if.then.i.i
