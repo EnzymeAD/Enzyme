@@ -1171,11 +1171,8 @@ public:
       Location loc = forOp.getInductionVar().getLoc();
       auto currentIV = arith::MulIOp::create(
           cacheBuilder, loc,
-          arith::AddIOp::create(
-              cacheBuilder, loc,
-              arith::MulIOp::create(cacheBuilder, loc,
-                                    outerFwd.getInductionVar(), nInnerCst),
-              innerFwd.getInductionVar()),
+          arith::AddIOp::create(cacheBuilder, loc, outerFwd.getInductionVar(),
+                                innerFwd.getInductionVar()),
           newForOp.getStep());
 
       for (auto [oldArg, newArg] :

@@ -34,16 +34,15 @@ func.func @reduce_sum(%buf: memref<10xf64>) -> f64 {
 // CHECK-NEXT:      %5 = arith.select %4, %c1, %c3 : index
 // CHECK-NEXT:      %subview = memref.subview %alloc[%3, 0] [1, 10] [1, 1] : memref<4x10xf64> to memref<10xf64, strided<[1], offset: ?>>
 // CHECK-NEXT:      memref.copy %arg0, %subview : memref<10xf64> to memref<10xf64, strided<[1], offset: ?>>
-// CHECK-NEXT:      %6 = arith.muli %arg3, %c3 : index
-// CHECK-NEXT:      %7 = scf.for %arg5 = %c0 to %5 step %c1 iter_args(%arg6 = %arg4) -> (f64) {
-// CHECK-NEXT:        %8 = arith.addi %6, %arg5 : index
-// CHECK-NEXT:        %9 = memref.load %arg0[%8] : memref<10xf64>
-// CHECK-NEXT:        %10 = arith.addf %arg6, %9 : f64
-// CHECK-NEXT:        memref.store %10, %arg0[%c0] : memref<10xf64>
-// CHECK-NEXT:        scf.yield %10 : f64
+// CHECK-NEXT:      %6 = scf.for %arg5 = %c0 to %5 step %c1 iter_args(%arg6 = %arg4) -> (f64) {
+// CHECK-NEXT:        %7 = arith.addi %arg3, %arg5 : index
+// CHECK-NEXT:        %8 = memref.load %arg0[%7] : memref<10xf64>
+// CHECK-NEXT:        %9 = arith.addf %arg6, %8 : f64
+// CHECK-NEXT:        memref.store %9, %arg0[%c0] : memref<10xf64>
+// CHECK-NEXT:        scf.yield %9 : f64
 // CHECK-NEXT:      } {enzyme.disable_mincut = true}
 // CHECK-NEXT:      memref.store %arg4, %alloc_0[%3] : memref<4xf64>
-// CHECK-NEXT:      scf.yield %7 : f64
+// CHECK-NEXT:      scf.yield %6 : f64
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1 = arith.addf %arg2, %cst : f64
 // CHECK-NEXT:    %2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %1) -> (f64) {
