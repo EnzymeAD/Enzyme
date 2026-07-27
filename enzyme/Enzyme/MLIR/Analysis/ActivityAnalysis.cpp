@@ -2464,6 +2464,12 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
+        } else if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+          // fir.store, hlfir.assign, ...
+          bool cop = !Hypothesis->isConstantValue(TR, SI.getStoredValue());
+          potentialStore = true;
+          if (cop)
+            potentiallyActiveStore = true;
         } else if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp, LLVM::MemcpyInlineOp>(
                        op)) {
           bool cop = !Hypothesis->isConstantValue(TR, op->getOperand(1));
@@ -2783,6 +2789,23 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
 
   // if either src or dst is inactive, there cannot be a transfer of active
   // values and thus the store is inactive
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+    if (isConstantValue(TR, store.getStoredValue()) ||
+        isConstantValue(TR, store.getStoredPointer())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as store operand is inactive"
+                     << *op << "\n";
+      return true;
+    }
+    if (inactArg) {
+      inactArg->insert(store.getStoredValue());
+      inactArg->insert(store.getStoredPointer());
+    }
+    return false;
+  }
+
+  // A store (fir.store, hlfir.assign, ...) is inactive if either the stored
+  // value or the pointer is constant.
   if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
     if (isConstantValue(TR, store.getStoredValue()) ||
         isConstantValue(TR, store.getStoredPointer())) {
@@ -3753,6 +3776,27 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
                          << " ignoreStoresInto=" << ignoreStoresInto
                          << " active from-store>" << val << " store=" << *SI
                          << "\n";
+          return true;
+        }
+        continue;
+      }
+    }
+
+    // fir.store, hlfir.assign, ..., mirroring the LLVM::StoreOp case above.
+    if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(a)) {
+      if (SI.getStoredValue() != val) {
+        if (!ignoreStoresInto) {
+          // An active value is stored into `val`, the pointer.
+          if (!isConstantValue(TR, SI.getStoredValue())) {
+            StoredOrReturnedCache[key] = true;
+            return true;
+          }
+        }
+        continue;
+      } else {
+        // `val` is stored into active memory.
+        if (!isConstantValue(TR, SI.getStoredPointer())) {
+          StoredOrReturnedCache[key] = true;
           return true;
         }
         continue;

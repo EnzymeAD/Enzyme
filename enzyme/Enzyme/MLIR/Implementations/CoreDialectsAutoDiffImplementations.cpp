@@ -203,11 +203,11 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
             }
           }
         }
-        orig->emitError()
-            << "Unsupported constant arg to memory identity forward "
-               "handler(opidx="
-            << operand.getOperandNumber() << ", op=" << operand.get() << ")\n";
-        return failure();
+        // A result is active but this operand is an inactive pointer, so there
+        // is nothing to invert. invertPointerM gives the shadow a zeroed buffer
+        // for a mutable type and the primal otherwise.
+        newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+        continue;
       }
       inverted[newOperands.size()] = true;
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
@@ -238,6 +238,10 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     }
   }
   for (auto &&[i, oval] : llvm::enumerate(orig->getResults())) {
+    // Inactive results (e.g. one of hlfir.declare's two handles) have no
+    // shadow.
+    if (gutils->isConstantValue(oval))
+      continue;
     Value sval;
     if (gutils->width == 1) {
       sval = shadows[0]->getResult(i);
