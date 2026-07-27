@@ -7,23 +7,9 @@ package(
 
 load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 
-exclude_tests = [
-    "**/*omp*.c",
-]
-
-stdlib_tests = [
-    "**/gh_issue_1904.cpp",
-    "**/CppSugar/sret.cpp",
-    "**/ReverseMode/fbuff.cpp",
-    "**/*blas*.cpp",
-    "**/*ForwardMode/rosenbrock.cpp",
-    "**/*ReverseMode/map.cpp",
-    "**/*ReverseMode/multivecmax.cpp",
-    "**/*ReverseMode/vecmax.cpp",
-    "**/*Sparse/*",
-    "**/*eigen*.cpp",
-    "**/*integrate*.cpp",
-]
+# LLVM's Bazel overlay does not build or package the OpenMP runtime, so these
+# tests cannot link libomp in Bazel's hermetic test environment.
+exclude_tests = ["**/*omp*.c"]
 
 [
     lit_test(
