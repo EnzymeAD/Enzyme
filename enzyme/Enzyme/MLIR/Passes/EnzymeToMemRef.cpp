@@ -338,6 +338,34 @@ struct SetOpConversion : public OpConversionPattern<enzyme::SetOp> {
   }
 };
 
+// `enzyme.load`/`enzyme.store` are `memref.load`/`memref.store` annotated
+// with the (possibly dynamic) dimension sizes of the memref, for use by
+// passes that need that information (e.g. mincut). The sizes are not needed
+// to actually perform the load/store, so lowering simply drops them.
+struct LoadOpConversion : public OpConversionPattern<enzyme::LoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::LoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<memref::LoadOp>(op, adaptor.getMemref(),
+                                                adaptor.getIndices());
+    return success();
+  }
+};
+
+struct StoreOpConversion : public OpConversionPattern<enzyme::StoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::StoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<memref::StoreOp>(
+        op, adaptor.getValue(), adaptor.getMemref(), adaptor.getIndices());
+    return success();
+  }
+};
+
 struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
   using OpConversionPattern<enzyme::GetOp>::OpConversionPattern;
 
@@ -403,6 +431,8 @@ struct EnzymeToMemRefPass
     patterns.add<PopOpConversion>(typeConverter, context);
     patterns.add<SetOpConversion>(typeConverter, context);
     patterns.add<GetOpConversion>(typeConverter, context);
+    patterns.add<LoadOpConversion>(typeConverter, context);
+    patterns.add<StoreOpConversion>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<memref::MemRefDialect>();
