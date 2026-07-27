@@ -98,6 +98,35 @@ static Value ensureIndexType(Value value, OpBuilder &builder) {
                                     builder.getIndexType(), value);
 }
 
+static Value traceToNonBlockArgSource(Value value) {
+  while (!isa<BlockArgument>(value)) {
+    if (auto svOp = value.getDefiningOp<memref::SubViewOp>())
+      value = svOp.getSource();
+    else if (auto castOp = value.getDefiningOp<memref::CastOp>())
+      value = castOp.getSource();
+    else if (auto rcOp = value.getDefiningOp<memref::ReinterpretCastOp>())
+      value = rcOp.getSource();
+    else
+      break;
+  }
+  return isa<BlockArgument>(value) ? nullptr : value;
+}
+
+static MultidimensionalAllocInterface
+getMultiDimCacheAllocOp(Value pushedValue, LoopCacheType cacheType,
+                        ShapedType shapeTy, Operation *forOp) {
+  if (cacheType != LoopCacheType::MEMREF)
+    return nullptr;
+  Value source = traceToNonBlockArgSource(pushedValue);
+  if (!source)
+    return nullptr;
+  auto allocOp =
+      dyn_cast_or_null<MultidimensionalAllocInterface>(source.getDefiningOp());
+  if (!allocOp || !allocOp.hoistable(forOp))
+    return nullptr;
+  return allocOp;
+}
+
 template <typename FinalClass, typename OpName>
 struct ForLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
@@ -429,24 +458,27 @@ public:
       Attribute memorySpace = nullptr;
       MultidimensionalAllocInterface allocOp;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
-            pushedValue.getDefiningOp());
-        if (cacheType == LoopCacheType::MEMREF && allocOp &&
-            allocOp.hoistable(forOp)) {
-          multiDim = true;
+        allocOp = getMultiDimCacheAllocOp(pushedValue, cacheType, ST, forOp);
+        bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
+          return dim != ShapedType::kDynamic;
+        });
+        multiDim =
+            allocOp || (fullyStatic && cacheType == LoopCacheType::TENSOR);
+        if (allocOp) {
           if (auto MT = dyn_cast<MemRefType>(pushedValue.getType()))
             memorySpace = MT.getMemorySpace();
           allocOp.appendDynamicDims(dynamicDims);
-        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                     return dim != ShapedType::kDynamic;
-                   })) {
-          multiDim = true;
         }
 
         if (multiDim) {
           newShape.append(ST.getShape().begin(), ST.getShape().end());
           ET = ST.getElementType();
         }
+      }
+
+      if (!memorySpace) {
+        if (auto innerMT = dyn_cast<MemRefType>(ET))
+          memorySpace = innerMT.getMemorySpace();
       }
 
       auto newType = cacheType == LoopCacheType::TENSOR
@@ -551,16 +583,21 @@ public:
                 MT.getShape(), cast<MemRefType>(initValue.getType()), offsets,
                 sizes, strides);
 
-            rewriter.setInsertionPoint(memref.getDefiningOp());
-            rewriter.replaceOpWithNewOp<memref::SubViewOp>(
-                memref.getDefiningOp(), RT, initValue,
-                /*offsets*/ inductionVariable,
-                /*sizes*/ dynSizes,
-                /*strides*/ ValueRange(),
-                /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
-                /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
-                /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+            rewriter.setInsertionPointAfterValue(memref);
+            rewriter.replaceAllUsesWith(
+                memref,
+                memref::SubViewOp::create(
+                    rewriter, memref.getLoc(), RT, initValue,
+                    /*offsets*/ inductionVariable,
+                    /*sizes*/ dynSizes,
+                    /*strides*/ ValueRange(),
+                    /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+                    /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+                    /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides))
+                    .getResult());
 
+            if (auto defOp = memref.getDefiningOp())
+              rewriter.eraseOp(defOp);
           } else {
             if (dynamicDims.empty()) {
               memref::StoreOp::create(rewriter, info.pushOp->getLoc(),
@@ -699,26 +736,23 @@ public:
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         if (auto MT = dyn_cast<MemRefType>(ST))
           memorySpace = MT.getMemorySpace();
-
-        auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
-        if (svOp) {
-          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
-              svOp.getSource().getDefiningOp());
-          if (cacheType == LoopCacheType::MEMREF)
-            multiDim = true;
-        } else {
-          allocOp = dyn_cast_or_null<MultidimensionalAllocInterface>(
-              info.pushedValue().getDefiningOp());
-          if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                return dim != ShapedType::kDynamic;
-              }))
-            multiDim = true;
-        }
+        allocOp =
+            getMultiDimCacheAllocOp(info.pushedValue(), cacheType, ST, forOp);
+        bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
+          return dim != ShapedType::kDynamic;
+        });
+        multiDim =
+            allocOp || (fullyStatic && cacheType == LoopCacheType::TENSOR);
 
         if (multiDim) {
           newShape.append(ST.getShape().begin(), ST.getShape().end());
           ET = ST.getElementType();
         }
+      }
+
+      if (!memorySpace) {
+        if (auto innerMT = dyn_cast<MemRefType>(ET))
+          memorySpace = innerMT.getMemorySpace();
       }
 
       auto newType = cacheType == LoopCacheType::TENSOR
