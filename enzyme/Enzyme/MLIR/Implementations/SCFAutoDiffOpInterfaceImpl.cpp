@@ -227,7 +227,10 @@ private:
     strides.push_back(b.getIndexAttr(1));
     for (int64_t i = 0, e = rowTy.getRank(); i < e; ++i) {
       offsets.push_back(b.getIndexAttr(0));
-      sizes.push_back(b.getIndexAttr(rowTy.getDimSize(i)));
+      if (rowTy.isDynamicDim(i))
+        sizes.push_back(memref::DimOp::create(b, loc, buf, i + 1).getResult());
+      else
+        sizes.push_back(b.getIndexAttr(rowTy.getDimSize(i)));
       strides.push_back(b.getIndexAttr(1));
     }
     auto resTy = memref::SubViewOp::inferRankReducedResultType(
@@ -254,7 +257,10 @@ private:
     if (auto mt = dyn_cast<MemRefType>(valTy)) {
       Value row = checkpointRow(b, loc, buf, slot, mt);
       SmallVector<Value> dynSizes;
-      Value fresh = memref::AllocOp::create(b, loc, mt);
+      for (int64_t i = 0, e = mt.getRank(); i < e; ++i)
+        if (mt.isDynamicDim(i))
+          dynSizes.push_back(memref::DimOp::create(b, loc, row, i));
+      Value fresh = memref::AllocOp::create(b, loc, mt, dynSizes);
       memref::CopyOp::create(b, loc, row, fresh);
       return fresh;
     }
