@@ -193,6 +193,14 @@ private:
     return arith::DivUIOp::create(builder, loc, diff, step);
   }
 
+  static Value castToType(OpBuilder &builder, Location loc, Value v,
+                          Type targetType) {
+    if (v.getType() == targetType)
+      return v;
+    assert(targetType.isIndex());
+    return arith::IndexCastOp::create(builder, loc, targetType, v);
+  }
+
   static std::optional<int64_t> getCheckpointBudget(scf::ForOp forOp) {
     if (auto a = forOp->getAttrOfType<IntegerAttr>("enzyme.checkpoint_period"))
       return a.getInt();
@@ -204,7 +212,8 @@ private:
       SmallVector<int64_t> shape;
       shape.push_back(budget);
       shape.append(mt.getShape().begin(), mt.getShape().end());
-      return MemRefType::get(shape, mt.getElementType());
+      return MemRefType::get(shape, mt.getElementType(),
+                             MemRefLayoutAttrInterface{}, mt.getMemorySpace());
     }
     return MemRefType::get({budget}, t);
   }
@@ -218,7 +227,10 @@ private:
     strides.push_back(b.getIndexAttr(1));
     for (int64_t i = 0, e = rowTy.getRank(); i < e; ++i) {
       offsets.push_back(b.getIndexAttr(0));
-      sizes.push_back(b.getIndexAttr(rowTy.getDimSize(i)));
+      if (rowTy.isDynamicDim(i))
+        sizes.push_back(memref::DimOp::create(b, loc, buf, i + 1).getResult());
+      else
+        sizes.push_back(b.getIndexAttr(rowTy.getDimSize(i)));
       strides.push_back(b.getIndexAttr(1));
     }
     auto resTy = memref::SubViewOp::inferRankReducedResultType(
@@ -244,7 +256,11 @@ private:
                               Type valTy) {
     if (auto mt = dyn_cast<MemRefType>(valTy)) {
       Value row = checkpointRow(b, loc, buf, slot, mt);
-      Value fresh = memref::AllocOp::create(b, loc, mt);
+      SmallVector<Value> dynSizes;
+      for (int64_t i = 0, e = mt.getRank(); i < e; ++i)
+        if (mt.isDynamicDim(i))
+          dynSizes.push_back(memref::DimOp::create(b, loc, row, i));
+      Value fresh = memref::AllocOp::create(b, loc, mt, dynSizes);
       memref::CopyOp::create(b, loc, row, fresh);
       return fresh;
     }
@@ -280,6 +296,7 @@ private:
       startV = gutils->getNewFromOriginal(forOp.getLowerBound());
       stepV = gutils->getNewFromOriginal(forOp.getStep());
       numItersV = getNumIterationsValue(builder, loc, forOp, gutils);
+      numItersV = castToType(builder, loc, numItersV, idxTy);
     } else {
       int64_t numIters =
           ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
@@ -302,7 +319,7 @@ private:
 
     SetVector<Value> outsideRefs;
     getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
-    SmallVector<Value> immutableRefs, mutableRefs;
+    SmallVector<Value> immutableRefs, mutableRefs, mutableRefsCaches;
     for (auto ref : outsideRefs) {
       if (isa<ClonableTypeInterface>(ref.getType()))
         mutableRefs.push_back(ref);
@@ -349,15 +366,26 @@ private:
     Value split = enzyme::BinomialProgressOp::create(builder, loc, idxTy,
                                                      numStepsRem, budgetRem);
 
+    for (auto ref : mutableRefs) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      Value clone = iface.cloneValue(builder, mapping.lookupOrDefault(ref));
+      mutableRefsCaches.push_back(gutils->initAndPushCache(clone, builder));
+    }
+
     // Inner recompute loop: advance the primal `split` steps.
     auto innerFwd =
         scf::ForOp::create(builder, loc, c0, split, c1,
                            SmallVector<Value>(state.begin(), state.end()));
     preserveAttributesButCheckpointing(innerFwd, forOp);
 
+    // Remove scf.yield automatically added when there are no carried values
+    if (!innerFwd.getBody()->empty())
+      innerFwd.getBody()->front().erase();
+
     builder.setInsertionPointToStart(innerFwd.getBody());
     Value i = innerFwd.getInductionVar();
     Value globalStep = arith::AddIOp::create(builder, loc, stepCtr, i);
+    globalStep = castToType(builder, loc, globalStep, stepV.getType());
     Value iv = arith::AddIOp::create(
         builder, loc, startV,
         arith::MulIOp::create(builder, loc, stepV, globalStep));
@@ -390,11 +418,8 @@ private:
       caches.push_back(gutils->initAndPushCache(buf, builder));
     caches.push_back(gutils->initAndPushCache(idxBuf, builder));
 
-    for (auto ref : mutableRefs) {
-      auto iface = cast<ClonableTypeInterface>(ref.getType());
-      Value clone = iface.cloneValue(builder, mapping.lookupOrDefault(ref));
-      caches.push_back(gutils->initAndPushCache(clone, builder));
-    }
+    caches.append(mutableRefsCaches);
+
     for (auto ref : immutableRefs)
       caches.push_back(
           gutils->initAndPushCache(mapping.lookupOrDefault(ref), builder));
@@ -449,13 +474,8 @@ private:
       ckptBufs.push_back(gutils->popCache(caches[j], builder));
     Value idxBuf = gutils->popCache(caches[numIterArgs], builder);
 
-    size_t cacheIdx = numIterArgs + 1;
-    SmallVector<Value> cachedMutableRefs;
-    for (auto ref : mutableRefs) {
-      Value v = gutils->popCache(caches[cacheIdx++], builder);
-      cachedMutableRefs.push_back(v);
-      mapping.map(ref, v);
-    }
+    size_t cacheIdx = numIterArgs + mutableRefs.size() + 1;
+
     for (auto ref : immutableRefs)
       mapping.map(ref, gutils->popCache(caches[cacheIdx++], builder));
 
@@ -499,6 +519,14 @@ private:
 
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(revOuter.getBody());
+
+    SmallVector<Value> cachedMutableRefs;
+    cacheIdx = numIterArgs + 1;
+    for (auto ref : mutableRefs) {
+      Value v = gutils->popCache(caches[cacheIdx++], builder);
+      cachedMutableRefs.push_back(v);
+      mapping.map(ref, v);
+    }
 
     Value ivO = revOuter.getInductionVar();
     Value sp = revOuter.getBody()->getArgument(1);
@@ -571,6 +599,9 @@ private:
           scf::ForOp::create(builder, loc, pos, rematUB, c1,
                              SmallVector<Value>(astate.begin(), astate.end()));
       preserveAttributesButCheckpointing(innerRemat, forOp);
+      if (!innerRemat.getBody()->empty())
+        innerRemat.getBody()->front().erase();
+
       {
         OpBuilder::InsertionGuard g2(builder);
         builder.setInsertionPointToStart(innerRemat.getBody());
@@ -607,9 +638,10 @@ private:
 
     // Adjoint of a single body step at (currentRevStep - 1).
     Value stepAdj = arith::SubIOp::create(builder, loc, currentRevStep, c1);
+    Value stepAdjC = castToType(builder, loc, stepAdj, stepV.getType());
     Value ivAdj = arith::AddIOp::create(
         builder, loc, startV,
-        arith::MulIOp::create(builder, loc, stepV, stepAdj));
+        arith::MulIOp::create(builder, loc, stepV, stepAdjC));
 
     for (auto &&[oldArg, newArg] : llvm::zip_equal(
              forOp.getBody()->getArguments().drop_front(), reconState))
@@ -667,6 +699,10 @@ private:
       }
     }
 
+    for (auto ref : cachedMutableRefs)
+      if (auto iface = dyn_cast<ClonableTypeInterface>(ref.getType()))
+        iface.freeClonedValue(builder, ref);
+
     SmallVector<Value> outerYields;
     outerYields.push_back(newSp);
     outerYields.append(newAdjoints.begin(), newAdjoints.end());
@@ -688,9 +724,6 @@ private:
     for (auto buf : ckptBufs)
       memref::DeallocOp::create(builder, loc, buf);
     memref::DeallocOp::create(builder, loc, idxBuf);
-    for (auto ref : cachedMutableRefs)
-      if (auto iface = dyn_cast<ClonableTypeInterface>(ref.getType()))
-        iface.freeClonedValue(builder, ref);
 
     return success(valid);
   }

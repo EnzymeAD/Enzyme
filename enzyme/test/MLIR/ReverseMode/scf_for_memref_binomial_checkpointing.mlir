@@ -26,6 +26,7 @@ module {
 // CHECK-LABEL: func.func @main(
 // CHECK-DAG:     %[[STATE:.+]] = memref.alloc() : memref<3xf32>
 // CHECK-DAG:     %[[IDX:.+]] = memref.alloc() : memref<3xindex>
+// CHECK-NEXT:    %[[CLONE_ARG0:.+]] = memref.alloc() : memref<3xf32>
 
 // Forward checkpoint-placement loop (budget = 3).
 // CHECK:         scf.for {{.*}} = %c0 to %c3 step %c1
@@ -33,15 +34,16 @@ module {
 // CHECK:           memref.store {{.*}}, %[[IDX]]
 
 // The mutable outside reference is snapshotted (cloned) for the reverse pass.
-// CHECK:         %[[CLONE:.+]] = memref.alloc() : memref<f32>
-// CHECK:         memref.copy %arg0, %[[CLONE]]
+// CHECK:      %[[SUBVIEW:.+]] = memref.subview %[[CLONE_ARG0]][%{{.+}}] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
+// CHECK-NEXT:      memref.copy %arg0, %[[SUBVIEW]] : memref<f32> to memref<f32, strided<[], offset: ?>>
 
 // Reverse loop over all 9 steps, with the remat scf.while.
 // CHECK:         scf.for {{.*}} = %c0 to %c9 step %c1
+// CHECK:           %[[SUBVIEWREV:.+]] = memref.subview %[[CLONE_ARG0]][%2] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
 // CHECK:           scf.while
-
+// CHECK:             %[[VAL:.+]] = memref.load %[[SUBVIEWREV]][] : memref<f32, strided<[], offset: ?>>
 // All allocations are freed.
-// CHECK-DAG:     memref.dealloc %[[STATE]]
-// CHECK-DAG:     memref.dealloc %[[IDX]]
-// CHECK-DAG:     memref.dealloc %[[CLONE]]
+// CHECK-DAG:     memref.dealloc %[[STATE]] : memref<3xf32>
+// CHECK-DAG:     memref.dealloc %[[IDX]] : memref<3xindex>
+// CHECK-DAG:     memref.dealloc %[[CLONE_ARG0]] : memref<3xf32>
 // CHECK:         return
