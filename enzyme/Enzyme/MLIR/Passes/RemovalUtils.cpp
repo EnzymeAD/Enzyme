@@ -499,21 +499,22 @@ static SetVector<Value> minCutValues(const Graph &Orig,
   FlowGraph G;
   // Build the node-split graph. Each original edge is either operation->value
   // (a definition) or value->operation (a use). Values are split so that the
-  // single internal edge (V_in -> V_out) carries all of V's flow.
-  // Adds the internal split edge V_in -> V_out for a value node (no-op for ops).
-  auto addSplitEdge = [&](Node n) {
-    if (auto v = dyn_cast<Value>(n))
-      G[makeFlowNode(v, /*outgoing=*/false)].insert(
-          makeFlowNode(v, /*outgoing=*/true));
-  };
+  // single internal edge (V_in -> V_out) carries all of V's flow; operations
+  // are not split.
   for (const auto &pair : Orig) {
     Node A = pair.first;
-    addSplitEdge(A);
+    // Internal split edge for the tail value (no-op for an operation).
+    if (auto va = dyn_cast<Value>(A))
+      G[makeFlowNode(va, /*outgoing=*/false)].insert(
+          makeFlowNode(va, /*outgoing=*/true));
     for (Node B : pair.second) {
       // An edge leaves a value from its outgoing endpoint and enters a value at
       // its incoming endpoint; an operation uses its single node on either end.
       G[flowOut(A)].insert(flowIn(B));
-      addSplitEdge(B);
+      // Internal split edge for the head value (no-op for an operation).
+      if (auto vb = dyn_cast<Value>(B))
+        G[makeFlowNode(vb, /*outgoing=*/false)].insert(
+            makeFlowNode(vb, /*outgoing=*/true));
     }
   }
 
