@@ -17,6 +17,8 @@
 #include <deque>
 
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PointerIntPair.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -418,6 +420,146 @@ static void annotate_ops(Block *forward, Block *reverse) {
   });
 }
 
+namespace {
+// A node in the min-cut flow graph. It packs a compute-graph `Node` together
+// with a one-bit "outgoing" side selector into a single pointer-like value, so
+// it can be used in SmallPtrSet/DenseMap/MapVector exactly like `Node` (which
+// is itself pointer-like). Every VALUE is split into an incoming endpoint
+// (outgoing=false) and an outgoing endpoint (outgoing=true) joined by a single
+// unit-capacity internal edge: producers feed the incoming endpoint and
+// consumers are fed from the outgoing endpoint. OPERATION nodes are not split
+// (outgoing is always false).
+//
+// This is the standard node-splitting reduction for min-cut. Because all of a
+// value's flow must pass through its single internal edge, the cost of caching
+// a value is exactly one, independent of how many operations consume it.
+using FlowNode = llvm::PointerIntPair<Node, 1, bool>;
+
+static FlowNode flowIn(Node n) { return FlowNode(n, false); }
+static FlowNode flowOut(Node n) {
+  // Only values are split; an operation is always its (single) incoming node.
+  return FlowNode(n, isa<Value>(n));
+}
+
+using FlowGraph = llvm::MapVector<FlowNode, SmallPtrSet<FlowNode, 2>>;
+
+// Breadth-first search over the (residual) flow graph, recording, for each
+// reachable node, the predecessor along the discovered path.
+static void flowBFS(const FlowGraph &G, const SetVector<FlowNode> &sources,
+                    DenseMap<FlowNode, FlowNode> &parent) {
+  std::deque<FlowNode> q;
+  for (const auto &S : sources) {
+    parent.try_emplace(S, FlowNode());
+    q.push_back(S);
+  }
+  SmallPtrSet<FlowNode, 2> done;
+  while (!q.empty()) {
+    FlowNode u = q.front();
+    q.pop_front();
+    auto found = G.find(u);
+    if (found == G.end())
+      continue;
+    if (!done.insert(u).second)
+      continue;
+    for (const auto &v : found->second) {
+      if (parent.try_emplace(v, u).second)
+        q.push_back(v);
+    }
+  }
+}
+
+// Given the compute graph `Orig` (with `roots` the non-recomputable sources and
+// `Required` the operations that force a value to be live in reverse), return
+// the minimal set of values to cache. The cut is computed on the node-split
+// graph so that caching any value -- including a high-fan-out input reused by
+// many operations -- costs exactly one.
+static SetVector<Value> minCutValues(const Graph &Orig,
+                                     const SetVector<Value> &roots,
+                                     const SetVector<Operation *> &Required) {
+  FlowGraph G;
+  // Build the node-split graph. Each original edge is either operation->value
+  // (a definition) or value->operation (a use). Values are split so that the
+  // single internal edge (V_in -> V_out) carries all of V's flow.
+  for (const auto &pair : Orig) {
+    Node A = pair.first;
+    // An edge leaves a value from its outgoing endpoint, an op from itself.
+    if (isa<Value>(A))
+      G[flowIn(A)].insert(flowOut(A)); // internal split edge
+    for (Node B : pair.second) {
+      // An edge enters a value at its incoming endpoint, an op at itself.
+      G[flowOut(A)].insert(flowIn(B));
+      if (isa<Value>(B))
+        G[flowIn(B)].insert(flowOut(B)); // internal split edge
+    }
+  }
+
+  // Sources are the incoming endpoints of the roots.
+  SetVector<FlowNode> sources;
+  for (Value r : roots)
+    sources.insert(flowIn(Node(r)));
+
+  FlowGraph OrigFlow = G;
+
+  // Edmonds-Karp: repeatedly augment along a shortest source->sink path in the
+  // residual graph until no augmenting path remains. All edges have unit
+  // capacity, represented by set membership.
+  while (true) {
+    DenseMap<FlowNode, FlowNode> parent;
+    flowBFS(G, sources, parent);
+    FlowNode end;
+    for (Operation *req : Required) {
+      FlowNode sink = flowIn(Node(req));
+      if (parent.count(sink)) {
+        end = sink;
+        break;
+      }
+    }
+    if (end.getPointer().isNull())
+      break;
+    // Flip the residual edges along the found path.
+    FlowNode v = end;
+    while (true) {
+      assert(parent.count(v));
+      FlowNode u = parent.find(v)->second;
+      assert(!u.getPointer().isNull());
+      G[u].erase(v);
+      G[v].insert(u);
+      if (sources.count(u))
+        break;
+      v = u;
+    }
+  }
+
+  // The min cut is the set of edges from a reachable node to a non-reachable
+  // node in the original graph. Each such edge names exactly one value to
+  // cache: the value being transported across it. Because values are split,
+  // this edge is one of
+  //   - the internal split edge V_in -> V_out  (=> cache V), or
+  //   - a use edge V_out -> op                 (=> cache V), or
+  //   - a def edge op -> V_in                  (=> cache the produced value).
+  // Operations are never split, so at least one endpoint of the cut edge is a
+  // value, and that value is the one to cache.
+  DenseMap<FlowNode, FlowNode> parent;
+  flowBFS(G, sources, parent);
+
+  SetVector<Value> newCaches;
+  for (const auto &pair : OrigFlow) {
+    if (!parent.count(pair.first))
+      continue;
+    for (const auto &N : pair.second) {
+      if (parent.count(N))
+        continue;
+      Node from = pair.first.getPointer(), to = N.getPointer();
+      assert((isa<Value>(from) || isa<Value>(to)) &&
+             "min-cut edge must transport a value");
+      Value cache = isa<Value>(from) ? cast<Value>(from) : cast<Value>(to);
+      newCaches.insert(cache);
+    }
+  }
+  return newCaches;
+}
+} // namespace
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
@@ -623,77 +765,20 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   Graph Orig = G;
 
-  // Augment the flow while there is a path from source to sink
-  while (1) {
-    DenseMap<Node, Node> parent;
-    bfs(G, roots, parent);
-    Node end;
-    for (auto req : Required) {
-      if (parent.find(Node(req)) != parent.end()) {
-        end = Node(req);
-        break;
-      }
-    }
-    if (end.isNull())
-      break;
-    // update residual capacities of the edges and reverse edges
-    // along the path
-    Node v = end;
-    while (1) {
-      assert(parent.find(v) != parent.end());
-      Node u = parent.find(v)->second;
-      assert(!u.isNull());
-      assert(G[u].count(v) == 1);
-      assert(G[v].count(u) == 0);
-      G[u].erase(v);
-      G[v].insert(u);
-      if (isa<Value>(u) && roots.contains(cast<Value>(u)))
-        break;
-      v = u;
-    }
-  }
+  // Compute the values to cache via a minimum cut. The cut is computed on a
+  // node-split version of the graph (see minCutValues), so that caching a value
+  // costs exactly one regardless of how many operations consume it. Without the
+  // split, a value used by N operations is charged N (one per outgoing edge),
+  // which causes the mincut to prefer caching several downstream values over a
+  // single cheaper upstream one (e.g. an input reused many times). This mirrors
+  // the node-splitting done by the LLVM Enzyme mincut in
+  // DifferentialUseAnalysis.cpp.
+  SetVector<Value> newCaches = minCutValues(Orig, roots, Required);
+
   assert(rewriter.getInsertionPoint()->getBlock() == reverse);
-  // Flow is maximum now, find vertices reachable from s
-
-  DenseMap<Node, Node> parent;
-  bfs(G, roots, parent);
-
-  LLVM_DEBUG(llvm::dbgs() << "residual graph: \n";);
-  LLVM_DEBUG(dump(G));
-
-  // Those are the new values to cache
-  SetVector<Value> newCaches;
-
-  // All edges that are from a reachable vertex to non-reachable vertex in
-  // the original graph are edges for the minimum cut. The set of values to
-  // cache are the values transported along those edges (either. Value ->
-  // Operation or Operation -> Value).
-  //
-  // Note: we could use more heuristics here to select the actual cached
-  // value
-  //       based on sizes, existing caches, number of users in the fwd as to
-  //       not duplicate work, etc...
-  for (auto &pair : Orig) {
-    if (parent.find(pair.first) != parent.end()) {
-      for (auto N : pair.second) {
-        if (parent.find(N) == parent.end()) {
-          Value newCache;
-          if (isa<Value>(pair.first)) {
-            assert(isa<Operation *>(N));
-            newCache = cast<Value>(pair.first);
-          } else {
-            assert(isa<Operation *>(pair.first));
-            assert(isa<Value>(N));
-            newCache = cast<Value>(N);
-          }
-          newCaches.insert(newCache);
-        }
-      }
-    }
-  }
 
   // compute path from new caches to required
-  parent.clear();
+  DenseMap<Node, Node> parent;
   bfs(Orig, newCaches, parent);
 
   LLVM_DEBUG({

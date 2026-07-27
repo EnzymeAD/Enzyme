@@ -1,7 +1,7 @@
 // RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" | FileCheck %s
 
-// This test documents a suboptimality (logic error) in the EnzymeMLIR mincut
-// (Enzyme/MLIR/Passes/RemovalUtils.cpp, minCutCache).
+// Regression test for the EnzymeMLIR mincut node-splitting fix
+// (Enzyme/MLIR/Passes/RemovalUtils.cpp, minCutValues).
 //
 // A single non-recomputable value `a` (a memref load) is used by four pure
 // multiplies o1..o4. Those are combined linearly into two values p = o1 + o2
@@ -12,16 +12,16 @@
 // SINGLE value `a` per iteration and recomputes o1..o4, p, q in the reverse
 // pass.
 //
-// The mincut graph, however, uses one node per value with an edge per *use*:
-// `a` has four outgoing edges (a->o1..o4), so cutting "at a" costs 4 edges even
-// though it represents caching just one value. The downstream cut {p, q} costs
-// only 2 edges, so the minimum-edge-cut picks {p, q} and caches TWO values per
-// iteration instead of one.
+// The mincut must therefore recognize that caching `a` -- which is used by four
+// operations -- costs one, not four. This is achieved by node-splitting the
+// mincut graph: each value V is split into V_in -> V_out joined by a single
+// unit-capacity edge, so all of V's flow funnels through it and V costs one to
+// cache regardless of fan-out (mirroring the LLVM Enzyme mincut in
+// Enzyme/DifferentialUseAnalysis.cpp). Without the split, `a` was charged four
+// (one per use) and the mincut instead cached the two downstream values p, q.
 //
-// The LLVM Enzyme mincut (Enzyme/DifferentialUseAnalysis.cpp) avoids this by
-// node-splitting: each value V becomes V_in->V_out with a single capacity-1
-// edge, so a value used N times still costs 1 to cache. The MLIR version has no
-// such split, hence the miscount reproduced below (two memref.alloc's).
+// Below we check that exactly ONE value (`a`) is cached and that o1..o4/p/q are
+// recomputed in the reverse pass.
 
 func.func private @reduce(%x: memref<?xf32>, %ub: index) -> f32 {
   %lb = arith.constant 0 : index
@@ -60,25 +60,25 @@ func.func @dreduce(%x: memref<?xf32>, %dx: memref<?xf32>, %ub: index, %dseed: f3
   return
 }
 
-// The optimal result would allocate ONE cache and recompute p,q in reverse.
-// The current mincut allocates TWO caches (for p and q) -- this is the bug.
-
+// Exactly one cache is allocated (for `a`); there is no second alloc.
 // CHECK-LABEL:   func.func private @differeduce(
 // CHECK:           %[[ALLOC:.*]] = memref.alloc(%arg2) : memref<?xf32>
-// CHECK:           %[[ALLOC2:.*]] = memref.alloc(%arg2) : memref<?xf32>
+// CHECK-NOT:       memref.alloc
 // CHECK:           scf.for
+// The single cached value is `a` itself (the load), stored once per iteration.
 // CHECK:             %[[A:.*]] = memref.load %arg0[%arg4] : memref<?xf32>
-// CHECK:             %[[O1:.*]] = arith.mulf %[[A]], %cst_2 : f32
-// CHECK:             %[[O2:.*]] = arith.mulf %[[A]], %cst_1 : f32
-// CHECK:             %[[O3:.*]] = arith.mulf %[[A]], %cst_0 : f32
-// CHECK:             %[[O4:.*]] = arith.mulf %[[A]], %cst : f32
-// CHECK:             %[[P:.*]] = arith.addf %[[O1]], %[[O2]] : f32
-// CHECK:             enzyme.store %[[P]], %[[ALLOC]]
-// CHECK:             %[[Q:.*]] = arith.addf %[[O3]], %[[O4]] : f32
-// CHECK:             enzyme.store %[[Q]], %[[ALLOC2]]
+// CHECK:             enzyme.store %[[A]], %[[ALLOC]]
+// CHECK-NOT:         enzyme.store
 // CHECK:           }
-// The post-loop clobber prevents recovering the loads by re-reading %arg0.
+// The post-loop clobber prevents recovering the load by re-reading %arg0.
 // CHECK:           memref.store %{{.*}}, %arg0
 // CHECK:           scf.for
-// CHECK:             %[[LP:.*]] = enzyme.load %[[ALLOC]]
-// CHECK:             %[[LQ:.*]] = enzyme.load %[[ALLOC2]]
+// The reverse pass loads `a` once and recomputes o1..o4, p, q from it.
+// CHECK:             %[[LA:.*]] = enzyme.load %[[ALLOC]]
+// CHECK-NOT:         enzyme.load
+// CHECK:             arith.mulf %[[LA]], %cst_2 : f32
+// CHECK:             arith.mulf %[[LA]], %cst_1 : f32
+// CHECK:             arith.mulf %[[LA]], %cst_0 : f32
+// CHECK:             arith.mulf %[[LA]], %cst : f32
+// CHECK:           }
+// CHECK:           memref.dealloc %[[ALLOC]]
