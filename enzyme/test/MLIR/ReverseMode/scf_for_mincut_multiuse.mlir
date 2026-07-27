@@ -45,6 +45,10 @@ func.func private @reduce(%x: memref<?xf32>, %ub: index) -> f32 {
     %acc_next = arith.addf %acc, %s : f32
     scf.yield %acc_next : f32
   }
+  // Clobber %x after the loop so its loaded values cannot be recovered by
+  // re-reading the memref in the reverse pass. This forces the mincut to
+  // actually cache values, isolating the miscount we want to test.
+  memref.store %sum_0, %x[%lb] : memref<?xf32>
   return %sum : f32
 }
 
@@ -73,6 +77,8 @@ func.func @dreduce(%x: memref<?xf32>, %dx: memref<?xf32>, %ub: index, %dseed: f3
 // CHECK:             %[[Q:.*]] = arith.addf %[[O3]], %[[O4]] : f32
 // CHECK:             enzyme.store %[[Q]], %[[ALLOC2]]
 // CHECK:           }
+// The post-loop clobber prevents recovering the loads by re-reading %arg0.
+// CHECK:           memref.store %{{.*}}, %arg0
 // CHECK:           scf.for
 // CHECK:             %[[LP:.*]] = enzyme.load %[[ALLOC]]
 // CHECK:             %[[LQ:.*]] = enzyme.load %[[ALLOC2]]
