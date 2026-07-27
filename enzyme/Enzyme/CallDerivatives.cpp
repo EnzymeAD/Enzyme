@@ -33,6 +33,30 @@ void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
                                  LLVMValueRef, uint8_t) = nullptr;
 }
 
+/// Return the unique llvm.julia.gc_preserve_end closing the preserve region
+/// opened by \p Begin, or nullptr if there is not exactly one.
+///
+/// The reverse pass turns a preserve region inside out: it is opened at the
+/// reverse of the gc_preserve_end and closed at the reverse of the
+/// gc_preserve_begin. That is only expressible if a single end exists. A region
+/// may well have several ends -- LICM readily creates those by hoisting the
+/// preserve of a loop-invariant value out of a loop while duplicating the end
+/// onto every loop exit -- and each of them is a separate entry of the reversed
+/// region, so the re-created gc_preserve_end would have to consume a phi of the
+/// tokens produced at each of those entries. Tokens cannot be phi'd.
+static CallInst *getUniqueGCPreserveEnd(CallInst *Begin) {
+  CallInst *End = nullptr;
+  for (auto U : Begin->users()) {
+    auto CI = dyn_cast<CallInst>(U);
+    if (!CI || getFuncNameFromCall(CI) != "llvm.julia.gc_preserve_end")
+      continue;
+    if (End)
+      return nullptr;
+    End = CI;
+  }
+  return End;
+}
+
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  llvm::StringRef funcName) {
   using namespace llvm;
@@ -2364,6 +2388,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         auto begin_call = cast<CallInst>(call.getOperand(0));
 
+        // A region closed by several ends cannot be reversed by opening it
+        // here, and is instead conservatively handled at the reverse of the
+        // corresponding gc_preserve_begin.
+        if (getUniqueGCPreserveEnd(begin_call) != &call)
+          return true;
+
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         SmallVector<Value *, 1> args;
@@ -2438,11 +2468,52 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto ifound = gutils->invertedPointers.find(&call);
         assert(ifound != gutils->invertedPointers.end());
         auto placeholder = cast<CallInst>(&*ifound->second);
-        Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction(
-                "llvm.julia.gc_preserve_end",
-                FunctionType::get(Builder2.getVoidTy(), call.getType(), false)),
-            placeholder);
+
+        auto end_fn = called->getParent()->getOrInsertFunction(
+            "llvm.julia.gc_preserve_end",
+            FunctionType::get(Builder2.getVoidTy(), call.getType(), false));
+
+        if (getUniqueGCPreserveEnd(&call)) {
+          // The region is opened at the reverse of that single end, which is
+          // the sole entry of the reversed region and thus dominates here.
+          Builder2.CreateCall(end_fn, placeholder);
+          return true;
+        }
+
+        // Without a single reverse entry to open the region at (see
+        // getUniqueGCPreserveEnd) emit an empty preserve region of the
+        // preserved values here instead. This is the last point of the
+        // reversed region, so needing the values here keeps them live -- and
+        // therefore rooted -- across all of the reverse code they guarded.
+        SmallVector<Value *, 1> reverse_args;
+        for (auto &arg : call.args()) {
+          bool primalUsed = false;
+          bool shadowUsed = false;
+          gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+
+          if (primalUsed)
+            reverse_args.push_back(
+                gutils->lookupM(gutils->getNewFromOriginal(arg), Builder2));
+
+          if (!gutils->isConstantValue(arg) && shadowUsed) {
+            Value *ptrshadow = gutils->lookupM(
+                gutils->invertPointerM(arg, BuilderZ), Builder2);
+            if (gutils->getWidth() == 1)
+              reverse_args.push_back(ptrshadow);
+            else
+              for (size_t i = 0; i < gutils->getWidth(); ++i)
+                reverse_args.push_back(
+                    gutils->extractMeta(Builder2, ptrshadow, i));
+          }
+        }
+
+        auto revp = Builder2.CreateCall(called, reverse_args);
+        Builder2.CreateCall(end_fn, revp);
+
+        // The placeholder is unused: nothing opens the region at the reverse
+        // of an end anymore.
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
       }
       return true;
     }
