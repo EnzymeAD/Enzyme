@@ -142,15 +142,93 @@ void mlir::enzyme::removalBlockExplore(
   }
 }
 
-typedef llvm::PointerUnion<Operation *, Value> Node;
+// A node in the compute/flow graph. It identifies either an operation or a
+// value, plus a one-bit "outgoing" side selector used by the node-split min-cut
+// (see minCutValues): a value is split into an incoming endpoint
+// (outgoing=false) and an outgoing endpoint (outgoing=true); an operation is
+// never split (outgoing is always false).
+//
+// The op-or-value pointer and the bit are packed into a PointerIntPair so that
+// Node stays pointer-sized and pointer-like -- usable directly in
+// SmallPtrSet/DenseMap/MapVector via the trait specializations below. Use the
+// isValue()/isOperation()/getValue()/getOperation() accessors to inspect it.
+struct Node {
+  using Base = llvm::PointerUnion<Operation *, Value>;
+  llvm::PointerIntPair<Base, 1, bool> pair;
+
+  Node() : pair(Base(), false) {}
+  Node(Operation *op) : pair(Base(op), false) {}
+  Node(Value v, bool outgoing = false) : pair(Base(v), outgoing) {}
+  Node(Base base, bool outgoing) : pair(base, outgoing) {
+    assert((base.isNull() || isa<Value>(base) || !outgoing) &&
+           "operations are never split: they have a single endpoint");
+  }
+
+  Base getBase() const { return pair.getPointer(); }
+  bool outgoing() const { return pair.getInt(); }
+  bool isNull() const { return getBase().isNull(); }
+
+  bool isValue() const {
+    Base b = getBase();
+    return isa<Value>(b);
+  }
+  bool isOperation() const {
+    Base b = getBase();
+    return isa<Operation *>(b);
+  }
+  Value getValue() const {
+    Base b = getBase();
+    return cast<Value>(b);
+  }
+  Operation *getOperation() const {
+    Base b = getBase();
+    return cast<Operation *>(b);
+  }
+  // The value if this node is one, otherwise a null Value.
+  Value dynValue() const {
+    Base b = getBase();
+    return dyn_cast_if_present<Value>(b);
+  }
+
+  bool operator==(const Node &o) const { return pair == o.pair; }
+  bool operator!=(const Node &o) const { return pair != o.pair; }
+
+  void *getOpaqueValue() const { return pair.getOpaqueValue(); }
+  static Node getFromOpaqueValue(void *p) {
+    Node n;
+    n.pair = llvm::PointerIntPair<Base, 1, bool>::getFromOpaqueValue(p);
+    return n;
+  }
+};
+
+// Make Node usable as a pointer-like key/element (SmallPtrSet, DenseMap, ...) by
+// delegating to the packed PointerIntPair. DenseMap tracks empty/tombstone
+// buckets out-of-band, so only getHashValue/isEqual are required (matching the
+// DenseMapInfo LLVM provides for raw pointers and PointerIntPair).
+template <> struct llvm::PointerLikeTypeTraits<Node> {
+  using Inner = llvm::PointerIntPair<Node::Base, 1, bool>;
+  static inline void *getAsVoidPointer(Node n) { return n.getOpaqueValue(); }
+  static inline Node getFromVoidPointer(void *p) {
+    return Node::getFromOpaqueValue(p);
+  }
+  static constexpr int NumLowBitsAvailable =
+      llvm::PointerLikeTypeTraits<Inner>::NumLowBitsAvailable;
+};
+
+template <> struct llvm::DenseMapInfo<Node> {
+  using Inner = llvm::PointerIntPair<Node::Base, 1, bool>;
+  static unsigned getHashValue(const Node &n) {
+    return llvm::DenseMapInfo<Inner>::getHashValue(n.pair);
+  }
+  static bool isEqual(const Node &a, const Node &b) { return a.pair == b.pair; }
+};
 
 void dump(const Node &n) {
-  if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", "
-                 << "Value"
-                 << "]\n";
-  else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
+  if (n.isValue())
+    llvm::errs() << "[" << n.getValue() << ", "
+                 << (n.outgoing() ? "Value(out)" : "Value(in)") << "]\n";
+  else if (n.isOperation())
+    llvm::errs() << "[" << *n.getOperation() << ", "
                  << "Operation"
                  << "]\n";
   else
@@ -173,11 +251,12 @@ static void dumpGraphviz(Graph &G) {
   auto serialize = [&](Node n) -> std::string {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    if (isa<Value>(n)) {
-      auto v = cast<Value>(n);
+    if (n.isValue()) {
+      auto v = n.getValue();
+      const char *side = n.outgoing() ? "[val:out]" : "[val:in]";
       if (isa<OpResult>(v)) {
         auto res = cast<OpResult>(v);
-        ss << "[val](" << res.getResultNumber() << ")";
+        ss << side << "(" << res.getResultNumber() << ")";
         if (res.getOwner()->hasAttr("dbg")) {
           auto dbg = res.getOwner()->getAttrOfType<StringAttr>("dbg");
           ss << dbg.getValue();
@@ -185,10 +264,10 @@ static void dumpGraphviz(Graph &G) {
           ss << res.getOwner()->getName().getStringRef();
         }
       } else {
-        ss << "[val]" << v;
+        ss << side << v;
       }
-    } else if (isa<Operation *>(n)) {
-      auto op = cast<Operation *>(n);
+    } else if (n.isOperation()) {
+      auto op = n.getOperation();
       ss << "[op]";
       if (op->hasAttr("dbg")) {
         auto dbg = op->getAttrOfType<StringAttr>("dbg");
@@ -421,139 +500,97 @@ static void annotate_ops(Block *forward, Block *reverse) {
 }
 
 namespace {
-// A node in the min-cut flow graph. It packs a compute-graph `Node` together
-// with a one-bit "outgoing" side selector into a single pointer-like value, so
-// it can be used in SmallPtrSet/DenseMap/MapVector exactly like `Node` (which
-// is itself pointer-like). Every VALUE is split into an incoming endpoint
-// (outgoing=false) and an outgoing endpoint (outgoing=true) joined by a single
-// unit-capacity internal edge: producers feed the incoming endpoint and
-// consumers are fed from the outgoing endpoint. OPERATION nodes are not split
-// (outgoing is always false).
-//
-// This is the standard node-splitting reduction for min-cut. Because all of a
-// value's flow must pass through its single internal edge, the cost of caching
-// a value is exactly one, independent of how many operations consume it.
-using FlowNode = llvm::PointerIntPair<Node, 1, bool>;
-
-// An operation is never split: it always maps to its single flow node. Making
-// this a distinct overload (with no `outgoing` parameter) means an operation
-// node can never be constructed with two endpoints.
-static FlowNode makeFlowNode(Operation *op) {
-  return FlowNode(Node(op), /*outgoing=*/false);
+// The node used when a graph node is the outgoing (tail) endpoint of an edge: a
+// value uses its outgoing endpoint (outgoing=true), an operation uses its single
+// node.
+static Node edgeTail(Node n) {
+  if (Value v = n.dynValue())
+    return Node(v, /*outgoing=*/true);
+  return n;
 }
-// A value is always split into an incoming (outgoing=false) and an outgoing
-// (outgoing=true) endpoint; the caller must specify which.
-static FlowNode makeFlowNode(Value v, bool outgoing) {
-  return FlowNode(Node(v), outgoing);
-}
-
-// The flow node used when a graph node is, respectively, the head (incoming
-// side) or tail (outgoing side) of an edge. A value uses its incoming/outgoing
-// endpoint; an operation always uses its single node.
-static FlowNode flowIn(Node n) {
-  if (auto v = dyn_cast<Value>(n))
-    return makeFlowNode(v, /*outgoing=*/false);
-  return makeFlowNode(cast<Operation *>(n));
-}
-static FlowNode flowOut(Node n) {
-  if (auto v = dyn_cast<Value>(n))
-    return makeFlowNode(v, /*outgoing=*/true);
-  return makeFlowNode(cast<Operation *>(n));
-}
-
-using FlowGraph = llvm::MapVector<FlowNode, SmallPtrSet<FlowNode, 2>>;
-
-// Breadth-first search over the (residual) flow graph, recording, for each
-// reachable node, the predecessor along the discovered path.
-static void flowBFS(const FlowGraph &G, const SetVector<FlowNode> &sources,
-                    DenseMap<FlowNode, FlowNode> &parent) {
-  std::deque<FlowNode> q;
-  for (const auto &S : sources) {
-    parent.try_emplace(S, FlowNode());
-    q.push_back(S);
-  }
-  SmallPtrSet<FlowNode, 2> done;
-  while (!q.empty()) {
-    FlowNode u = q.front();
-    q.pop_front();
-    auto found = G.find(u);
-    if (found == G.end())
-      continue;
-    if (!done.insert(u).second)
-      continue;
-    for (const auto &v : found->second) {
-      if (parent.try_emplace(v, u).second)
-        q.push_back(v);
-    }
-  }
+// The node used when a graph node is the incoming (head) endpoint of an edge: a
+// value uses its incoming endpoint (outgoing=false), an operation uses its
+// single node.
+static Node edgeHead(Node n) {
+  if (Value v = n.dynValue())
+    return Node(v, /*outgoing=*/false);
+  return n;
 }
 
 // Given the compute graph `Orig` (with `roots` the non-recomputable sources and
 // `Required` the operations that force a value to be live in reverse), return
-// the minimal set of values to cache. The cut is computed on the node-split
-// graph so that caching any value -- including a high-fan-out input reused by
-// many operations -- costs exactly one.
+// the minimal set of values to cache.
+//
+// The cut is computed on a node-split version of the graph: every value V is
+// split into an incoming node (outgoing=false) and an outgoing node
+// (outgoing=true) joined by a single unit-capacity edge, so that all of V's flow
+// funnels through it and caching V costs exactly one regardless of how many
+// operations consume it. Operations are not split. Since the split graph is a
+// plain `Graph` over the same `Node` type, the existing bfs/dump utilities apply
+// to it directly.
 static SetVector<Value> minCutValues(const Graph &Orig,
                                      const SetVector<Value> &roots,
                                      const SetVector<Operation *> &Required) {
-  FlowGraph G;
+  Graph G;
   // Build the node-split graph. Each original edge is either operation->value
-  // (a definition) or value->operation (a use). Values are split so that the
-  // single internal edge (V_in -> V_out) carries all of V's flow; operations
-  // are not split.
+  // (a definition) or value->operation (a use).
   for (const auto &pair : Orig) {
     Node A = pair.first;
     // Internal split edge for the tail value (no-op for an operation).
-    if (auto va = dyn_cast<Value>(A))
-      G[makeFlowNode(va, /*outgoing=*/false)].insert(
-          makeFlowNode(va, /*outgoing=*/true));
+    if (Value va = A.dynValue())
+      G[Node(va, /*outgoing=*/false)].insert(Node(va, /*outgoing=*/true));
     for (Node B : pair.second) {
-      // An edge leaves a value from its outgoing endpoint and enters a value at
-      // its incoming endpoint; an operation uses its single node on either end.
-      G[flowOut(A)].insert(flowIn(B));
+      G[edgeTail(A)].insert(edgeHead(B));
       // Internal split edge for the head value (no-op for an operation).
-      if (auto vb = dyn_cast<Value>(B))
-        G[makeFlowNode(vb, /*outgoing=*/false)].insert(
-            makeFlowNode(vb, /*outgoing=*/true));
+      if (Value vb = B.dynValue())
+        G[Node(vb, /*outgoing=*/false)].insert(Node(vb, /*outgoing=*/true));
     }
   }
 
-  // Sources are the incoming endpoints of the roots.
-  SetVector<FlowNode> sources;
-  for (Value r : roots)
-    sources.insert(makeFlowNode(r, /*outgoing=*/false));
+  LLVM_DEBUG(llvm::dbgs() << "node-split flow graph: \n";);
+  LLVM_DEBUG(dump(G));
 
-  FlowGraph OrigFlow = G;
+  // Save the original edges for cut extraction; the max-flow below mutates G
+  // into its residual graph. The flow sources are the incoming endpoints of the
+  // roots, which is exactly what bfs() seeds from a set of root values.
+  Graph Split = G;
 
   // Edmonds-Karp: repeatedly augment along a shortest source->sink path in the
   // residual graph until no augmenting path remains. All edges have unit
   // capacity, represented by set membership.
   while (true) {
-    DenseMap<FlowNode, FlowNode> parent;
-    flowBFS(G, sources, parent);
-    FlowNode end;
+    DenseMap<Node, Node> parent;
+    bfs(G, roots, parent);
+    Node end;
     for (Operation *req : Required) {
-      FlowNode sink = makeFlowNode(req);
-      if (parent.count(sink)) {
-        end = sink;
+      if (parent.count(Node(req))) {
+        end = Node(req);
         break;
       }
     }
-    if (end.getPointer().isNull())
+    if (end.isNull())
       break;
-    // Flip the residual edges along the found path.
-    FlowNode v = end;
+    // Flip the residual edges along the found path, stopping at the source (a
+    // root's incoming endpoint).
+    Node v = end;
     while (true) {
       assert(parent.count(v));
-      FlowNode u = parent.find(v)->second;
-      assert(!u.getPointer().isNull());
+      Node u = parent.find(v)->second;
+      assert(!u.isNull());
       G[u].erase(v);
       G[v].insert(u);
-      if (sources.count(u))
+      if (u.isValue() && !u.outgoing() && roots.contains(u.getValue()))
         break;
       v = u;
     }
   }
+
+  // Reachable set from the sources in the residual graph.
+  DenseMap<Node, Node> parent;
+  bfs(G, roots, parent);
+
+  LLVM_DEBUG(llvm::dbgs() << "residual flow graph: \n";);
+  LLVM_DEBUG(dump(G));
 
   // The min cut is the set of edges from a reachable node to a non-reachable
   // node in the original graph. Each such edge names exactly one value to
@@ -564,20 +601,16 @@ static SetVector<Value> minCutValues(const Graph &Orig,
   //   - a def edge op -> V_in                  (=> cache the produced value).
   // Operations are never split, so at least one endpoint of the cut edge is a
   // value, and that value is the one to cache.
-  DenseMap<FlowNode, FlowNode> parent;
-  flowBFS(G, sources, parent);
-
   SetVector<Value> newCaches;
-  for (const auto &pair : OrigFlow) {
+  for (const auto &pair : Split) {
     if (!parent.count(pair.first))
       continue;
-    for (const auto &N : pair.second) {
+    for (const Node &N : pair.second) {
       if (parent.count(N))
         continue;
-      Node from = pair.first.getPointer(), to = N.getPointer();
-      assert((isa<Value>(from) || isa<Value>(to)) &&
+      assert((pair.first.isValue() || N.isValue()) &&
              "min-cut edge must transport a value");
-      Value cache = isa<Value>(from) ? cast<Value>(from) : cast<Value>(to);
+      Value cache = pair.first.isValue() ? pair.first.getValue() : N.getValue();
       newCaches.insert(cache);
     }
   }
@@ -757,9 +790,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
 
     for (auto N : G) {
-      if (!isa<Operation *>(N.first))
+      if (!N.first.isOperation())
         continue;
-      auto op = cast<Operation *>(N.first);
+      auto op = N.first.getOperation();
       if (op->getBlock() != reverse)
         continue;
       for (auto v : op->getOperands()) {
@@ -842,8 +875,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue;
 
       auto nextF = *next.begin();
-      assert(isa<Operation *>(nextF));
-      auto opNext = cast<Operation *>(nextF);
+      assert(nextF.isOperation());
+      auto opNext = nextF.getOperation();
 
       if (Required.count(opNext))
         continue;
