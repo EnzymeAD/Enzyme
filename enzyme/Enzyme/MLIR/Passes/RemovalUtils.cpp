@@ -435,10 +435,19 @@ namespace {
 // a value is exactly one, independent of how many operations consume it.
 using FlowNode = llvm::PointerIntPair<Node, 1, bool>;
 
-static FlowNode flowIn(Node n) { return FlowNode(n, false); }
+// Construct a flow node, enforcing the core invariant of the reduction: only
+// values are split. An operation is never split -- it always has a single
+// endpoint (outgoing=false) -- so it must never appear with outgoing=true.
+static FlowNode makeFlowNode(Node n, bool outgoing) {
+  assert((isa<Value>(n) || !outgoing) &&
+         "operations must not be split: they have a single endpoint");
+  return FlowNode(n, outgoing);
+}
+
+static FlowNode flowIn(Node n) { return makeFlowNode(n, false); }
 static FlowNode flowOut(Node n) {
   // Only values are split; an operation is always its (single) incoming node.
-  return FlowNode(n, isa<Value>(n));
+  return makeFlowNode(n, isa<Value>(n));
 }
 
 using FlowGraph = llvm::MapVector<FlowNode, SmallPtrSet<FlowNode, 2>>;
