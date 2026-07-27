@@ -66,6 +66,23 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# %fir_enzyme runs Flang's stock fir-opt with the FIREnzyme plugin loaded in both
+# its dialect and pass roles.
+fir_opt = config.llvm_tools_dir + "/fir-opt"
+fir_enzyme_plugin = config.enzyme_obj_root + "/Enzyme/MLIR/FIREnzyme-" + config.llvm_ver + config.llvm_shlib_ext
+if len("@ENZYME_BINARY_DIR@") == 0:
+  fir_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../FIREnzyme-" + config.llvm_ver + config.llvm_shlib_ext
+config.substitutions.append(('%fir_enzyme',
+  fir_opt + " --load-dialect-plugin=" + fir_enzyme_plugin +
+  " --load-pass-plugin=" + fir_enzyme_plugin))
+if os.path.exists(fir_opt) and os.path.exists(fir_enzyme_plugin):
+  config.available_features.add('fir_enzyme_plugin')
+
+# flang -fc1, for compiling Fortran to HLFIR.
+flang = config.llvm_tools_dir + "/flang"
+config.substitutions.append(('%flang_fc1', flang + " -fc1"))
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
@@ -126,6 +143,31 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+
+# The FlangEnzymeMLIR plugin registers the Enzyme HLFIR passes into flang's own
+# codegen pipeline when loaded. %flang_enzyme is the frontend form
+# (`flang -fc1 -load`), %flang_enzyme_driver the driver form, which compiles and
+# links a whole executable. The flang_enzyme_mlir feature needs a flang carrying
+# the HLFIR-to-FIR pipeline extension points, which are in no released LLVM
+# (24+ only).
+# NB: %flang_enzyme_driver must be registered first -- lit substitutes in order,
+# and the shorter name would otherwise leave a stray "_driver" behind.
+flang_enzyme_plugin = '@ENZYME_BINARY_DIR@/Enzyme/MLIR/Implementations/FlangEnzymeMLIR-' + config.llvm_ver + config.llvm_shlib_ext
+if len("@ENZYME_BINARY_DIR@") == 0:
+  flang_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../Enzyme/MLIR/Implementations/FlangEnzymeMLIR-" + config.llvm_ver + config.llvm_shlib_ext
+config.substitutions.append(('%flang_enzyme_driver',
+  flang + " -Xflang -load -Xflang " + flang_enzyme_plugin))
+config.substitutions.append(('%flang_enzyme',
+  flang + " -fc1 -load " + flang_enzyme_plugin))
+if (int(config.llvm_ver) >= 24 and os.path.exists(flang)
+        and os.path.exists(flang_enzyme_plugin)):
+    config.available_features.add('flang_enzyme_mlir')
+
+# The Fortran interface (Fortran/enzyme.f90) is compiled by ENZYME_FORTRAN into
+# the module directory %loadFortran points at; enzyme_module gates the tests that
+# `use enzyme`.
+if os.path.exists('@ENZYME_BINARY_DIR@/modules/enzyme.mod'):
+    config.available_features.add('enzyme_module')
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
