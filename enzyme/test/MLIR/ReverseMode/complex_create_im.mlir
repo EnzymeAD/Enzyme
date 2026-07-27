@@ -20,4 +20,4 @@ module {
 // incoming cotangent; without it the returned cotangent traces to -seed.
 // CHECK-LABEL: func.func @main(%arg0: f32, %arg1: f32) -> f32
 // CHECK: %[[IM:.+]] = complex.im
-// CHECK: arith.negf %[[IM]]
+// CHECK: arith.subf %{{.*}}, %[[IM]]
