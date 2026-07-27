@@ -201,8 +201,8 @@ struct Node {
   }
 };
 
-// Make Node usable as a pointer-like key/element (SmallPtrSet, DenseMap, ...) by
-// delegating to the packed PointerIntPair. DenseMap tracks empty/tombstone
+// Make Node usable as a pointer-like key/element (SmallPtrSet, DenseMap, ...)
+// by delegating to the packed PointerIntPair. DenseMap tracks empty/tombstone
 // buckets out-of-band, so only getHashValue/isEqual are required (matching the
 // DenseMapInfo LLVM provides for raw pointers and PointerIntPair).
 template <> struct llvm::PointerLikeTypeTraits<Node> {
@@ -501,8 +501,8 @@ static void annotate_ops(Block *forward, Block *reverse) {
 
 namespace {
 // The node used when a graph node is the outgoing (tail) endpoint of an edge: a
-// value uses its outgoing endpoint (outgoing=true), an operation uses its single
-// node.
+// value uses its outgoing endpoint (outgoing=true), an operation uses its
+// single node.
 static Node edgeTail(Node n) {
   if (Value v = n.dynValue())
     return Node(v, /*outgoing=*/true);
@@ -523,11 +523,11 @@ static Node edgeHead(Node n) {
 //
 // The cut is computed on a node-split version of the graph: every value V is
 // split into an incoming node (outgoing=false) and an outgoing node
-// (outgoing=true) joined by a single unit-capacity edge, so that all of V's flow
-// funnels through it and caching V costs exactly one regardless of how many
-// operations consume it. Operations are not split. Since the split graph is a
-// plain `Graph` over the same `Node` type, the existing bfs/dump utilities apply
-// to it directly.
+// (outgoing=true) joined by a single unit-capacity edge, so that all of V's
+// flow funnels through it and caching V costs exactly one regardless of how
+// many operations consume it. Operations are not split. Since the split graph
+// is a plain `Graph` over the same `Node` type, the existing bfs/dump utilities
+// apply to it directly.
 static SetVector<Value> minCutValues(const Graph &Orig,
                                      const SetVector<Value> &roots,
                                      const SetVector<Operation *> &Required) {
