@@ -435,19 +435,30 @@ namespace {
 // a value is exactly one, independent of how many operations consume it.
 using FlowNode = llvm::PointerIntPair<Node, 1, bool>;
 
-// Construct a flow node, enforcing the core invariant of the reduction: only
-// values are split. An operation is never split -- it always has a single
-// endpoint (outgoing=false) -- so it must never appear with outgoing=true.
-static FlowNode makeFlowNode(Node n, bool outgoing) {
-  assert((isa<Value>(n) || !outgoing) &&
-         "operations must not be split: they have a single endpoint");
-  return FlowNode(n, outgoing);
+// An operation is never split: it always maps to its single flow node. Making
+// this a distinct overload (with no `outgoing` parameter) means an operation
+// node can never be constructed with two endpoints.
+static FlowNode makeFlowNode(Operation *op) {
+  return FlowNode(Node(op), /*outgoing=*/false);
+}
+// A value is always split into an incoming (outgoing=false) and an outgoing
+// (outgoing=true) endpoint; the caller must specify which.
+static FlowNode makeFlowNode(Value v, bool outgoing) {
+  return FlowNode(Node(v), outgoing);
 }
 
-static FlowNode flowIn(Node n) { return makeFlowNode(n, false); }
+// The flow node used when a graph node is, respectively, the head (incoming
+// side) or tail (outgoing side) of an edge. A value uses its incoming/outgoing
+// endpoint; an operation always uses its single node.
+static FlowNode flowIn(Node n) {
+  if (auto v = dyn_cast<Value>(n))
+    return makeFlowNode(v, /*outgoing=*/false);
+  return makeFlowNode(cast<Operation *>(n));
+}
 static FlowNode flowOut(Node n) {
-  // Only values are split; an operation is always its (single) incoming node.
-  return makeFlowNode(n, isa<Value>(n));
+  if (auto v = dyn_cast<Value>(n))
+    return makeFlowNode(v, /*outgoing=*/true);
+  return makeFlowNode(cast<Operation *>(n));
 }
 
 using FlowGraph = llvm::MapVector<FlowNode, SmallPtrSet<FlowNode, 2>>;
@@ -489,23 +500,27 @@ static SetVector<Value> minCutValues(const Graph &Orig,
   // Build the node-split graph. Each original edge is either operation->value
   // (a definition) or value->operation (a use). Values are split so that the
   // single internal edge (V_in -> V_out) carries all of V's flow.
+  // Adds the internal split edge V_in -> V_out for a value node (no-op for ops).
+  auto addSplitEdge = [&](Node n) {
+    if (auto v = dyn_cast<Value>(n))
+      G[makeFlowNode(v, /*outgoing=*/false)].insert(
+          makeFlowNode(v, /*outgoing=*/true));
+  };
   for (const auto &pair : Orig) {
     Node A = pair.first;
-    // An edge leaves a value from its outgoing endpoint, an op from itself.
-    if (isa<Value>(A))
-      G[flowIn(A)].insert(flowOut(A)); // internal split edge
+    addSplitEdge(A);
     for (Node B : pair.second) {
-      // An edge enters a value at its incoming endpoint, an op at itself.
+      // An edge leaves a value from its outgoing endpoint and enters a value at
+      // its incoming endpoint; an operation uses its single node on either end.
       G[flowOut(A)].insert(flowIn(B));
-      if (isa<Value>(B))
-        G[flowIn(B)].insert(flowOut(B)); // internal split edge
+      addSplitEdge(B);
     }
   }
 
   // Sources are the incoming endpoints of the roots.
   SetVector<FlowNode> sources;
   for (Value r : roots)
-    sources.insert(flowIn(Node(r)));
+    sources.insert(makeFlowNode(r, /*outgoing=*/false));
 
   FlowGraph OrigFlow = G;
 
@@ -517,7 +532,7 @@ static SetVector<Value> minCutValues(const Graph &Orig,
     flowBFS(G, sources, parent);
     FlowNode end;
     for (Operation *req : Required) {
-      FlowNode sink = flowIn(Node(req));
+      FlowNode sink = makeFlowNode(req);
       if (parent.count(sink)) {
         end = sink;
         break;
