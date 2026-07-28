@@ -354,11 +354,18 @@ static inline void bfs(const Graph &G, const llvm::SetVector<Value> &Sources,
   }
 }
 
+static inline bool isLoadMovable(Operation *op) {
+  if (!hasSingleEffect<MemoryEffects::Read>(op)) {
+    return false;
+  }
+  return op->hasAttr("enzyme.readonly");
+}
+
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(Operation *op) {
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
-         mlir::isPure(op);
+         (mlir::isPure(op) || isLoadMovable(op));
 }
 
 // Given a graph `G`, construct a new graph `G2`, where all paths must terminate

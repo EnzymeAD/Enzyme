@@ -333,7 +333,7 @@ struct DifferentiatePass
         freeMemory, CI.getAtomicAdd(), width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
-        CI.getStrongZero());
+        CI.getStrongZero(), markReadonly);
     if (!newFunc)
       return failure();
 

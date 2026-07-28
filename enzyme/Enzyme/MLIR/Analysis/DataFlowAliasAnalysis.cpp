@@ -30,6 +30,7 @@
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -1193,4 +1194,65 @@ void enzyme::AliasAnalysis::visitExternalCall(
       propagateIfChanged(resultLattice, resultLattice->markUnknown());
     }
   }
+}
+
+void mlir::enzyme::markReadOnlyLoads(
+    CallableOpInterface funcOp, function_ref<void(Operation *op)> annotate) {
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  dataflow::loadBaselineAnalyses(solver);
+  solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
+  solver.load<enzyme::PointsToPointerAnalysis>();
+  if (failed(solver.initializeAndRun(funcOp))) {
+    assert(false && "dataflow analysis failed");
+    return;
+  }
+
+  // Determine all alias classes that were modified
+  AliasClassLattice modified(nullptr);
+  funcOp.walk([&](Operation *op) {
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    // If we can't reason about memory effects, conservatively assume that any
+    // pointer could be modified.
+    if (!memory) {
+      if (isMemoryEffectFree(op) ||
+          isa<FunctionOpInterface, RegionBranchOpInterface>(op)) {
+        return WalkResult::advance();
+      }
+      (void)modified.markUnknown();
+      return WalkResult::interrupt();
+    }
+
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    for (const auto &effect : effects) {
+      if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        Value val = effect.getValue();
+        if (val) {
+          (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+        } else {
+          (void)modified.markUnknown();
+          return WalkResult::interrupt();
+        }
+      }
+    }
+    return WalkResult::advance();
+  });
+
+  funcOp.walk([&](MemoryEffectOpInterface memory) {
+    if (!hasSingleEffect<MemoryEffects::Read>(memory)) {
+      return;
+    }
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    assert(effects.size() == 1 &&
+           isa<MemoryEffects::Read>(effects.front().getEffect()));
+    Value ptr = effects.front().getValue();
+    auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
+    // TODO: in split mode, this check will no longer be sufficient because the
+    // caller may modify memory between function invocations even if the memory
+    // is not modified within the function body.
+    if (ptrClass->alias(modified).isNo()) {
+      annotate(memory);
+    }
+  });
 }
