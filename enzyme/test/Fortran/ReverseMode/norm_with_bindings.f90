@@ -7,32 +7,8 @@
 !       For it to work with the ifx compiler we will need to figure out how to
 !       handle the indirection involved in the enzyme_autodiff binding
 
-module math
-contains
-  subroutine norm(n, x, y)
-    integer, intent(in) :: n
-    real, dimension(n), intent(in) :: x
-    real, dimension(n), intent(out) :: y
-    real :: s
-    integer :: i
-    ! TODO: Use the `sum` intrinsic. Requires accounting for `_FortranASumReal4`
-    !       for this to work at -O0
-    ! TODO: Use an array assignment. Requires accounting for `_FortranAAssign`
-    !       for this to work at -O0
-    ! y(:) = x / sum(x)
-    s = 0.0
-    do i = 1, n
-      s = s + x(i)
-    end do
-    do i = 1, n
-      y(i) = x(i) / s
-    end do
-  end subroutine norm
-end module math
-
-program app
+program main
   use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
-  use math, only: norm
   implicit none
   integer, parameter :: n = 1000000
   integer, parameter :: initial_value = 20
@@ -52,7 +28,30 @@ program app
   call enzyme_autodiff(norm, enzyme_const, n, &
                        enzyme_dup, x, dx, enzyme_dup, y, dy)
   write(*,"(f6.4)") dy(n)
-end program app
+
+contains
+
+  subroutine norm(n, x, y)
+    integer, intent(in) :: n
+    real, dimension(n), intent(in) :: x
+    real, dimension(n), intent(out) :: y
+    real :: s
+    integer :: i
+    ! TODO: Use the `sum` intrinsic. Requires accounting for `_FortranASumReal4`
+    !       for this to work at -O0
+    ! TODO: Use an array assignment. Requires accounting for `_FortranAAssign`
+    !       for this to work at -O0
+    ! y(:) = x / sum(x)
+    s = 0.0
+    do i = 1, n
+      s = s + x(i)
+    end do
+    do i = 1, n
+      y(i) = x(i) / s
+    end do
+  end subroutine norm
+
+end program main
 
 ! CHECK: 1.0000
 ! CHECK-NEXT: 0.0000

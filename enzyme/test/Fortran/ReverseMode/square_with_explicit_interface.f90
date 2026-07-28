@@ -6,39 +6,39 @@
 ! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
-module squareForward
+module squareReverse
+  interface
+    subroutine square__enzyme_autodiff(fn, x, dx)
     interface
-        subroutine square__enzyme_autodiff(fn, x, dx)
-        interface
-            real function fn_decal(a)
-                real, intent(in) :: a
-            end function
-        end interface
-        procedure(fn_decal) :: fn
-        real, intent(in) :: x
-        real, intent(inout) :: dx
-        end subroutine
+      real function fn_decal(a)
+        real, intent(in) :: a
+      end function fn_decal
     end interface
+    procedure(fn_decal) :: fn
+    real, intent(in) :: x
+    real, intent(inout) :: dx
+    end subroutine square__enzyme_autodiff
+  end interface
 contains
-    real function square( x )
-        real, intent(in) :: x
-        square = x**2
-    end function
-end module
+  real function square(x)
+    real, intent(in) :: x
+    square = x**2
+  end function square
+end module squareReverse
 
-program app
-    use squareForward, only: square, square__enzyme_autodiff
-    implicit none
-    real :: x, dx
+program main
+  use squareReverse, only: square, square__enzyme_autodiff
+  implicit none
+  real :: x, dx
 
-    x = 3
-    print *, square(x)
+  x = 3
+  print *, square(x)
 
-    dx = 0
-    call square__enzyme_autodiff(square, x, dx)
+  dx = 0
+  call square__enzyme_autodiff(square, x, dx)
 
-    print *, dx
-end program app
+  print *, dx
+end program main
 
 ! CHECK: 9
 ! CHECK-NEXT: 6

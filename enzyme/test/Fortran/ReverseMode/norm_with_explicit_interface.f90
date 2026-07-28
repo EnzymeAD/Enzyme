@@ -8,14 +8,14 @@
 !       https://github.com/EnzymeAD/Enzyme/issues/2820
 !       https://github.com/EnzymeAD/Enzyme/issues/2822
 
-module math
+module normReverse
   interface
     subroutine norm__enzyme_autodiff(sr, x_desc, x, dx, y_desc, y, dy)
       interface
         subroutine sr_decal(a, b)
           real, dimension(:), intent(in) :: a
           real, dimension(:), intent(out) :: b
-        end subroutine
+        end subroutine sr_decal
       end interface
       procedure(sr_decal) :: sr
       integer, intent(in) :: x_desc
@@ -24,7 +24,7 @@ module math
       integer, intent(in) :: y_desc
       real, dimension(:), intent(inout) :: y
       real, dimension(:), intent(inout) :: dy
-    end subroutine
+    end subroutine norm__enzyme_autodiff
   end interface
 contains
   subroutine norm(x, y)
@@ -32,10 +32,10 @@ contains
     real, dimension(:), intent(out) :: y
     y(:) = x / sum(x)
   end subroutine norm
-end module math
+end module normReverse
 
-program app
-  use math, only: norm, norm__enzyme_autodiff
+program main
+  use normReverse, only: norm, norm__enzyme_autodiff
   use enzyme, only: enzyme_dup
   implicit none
   integer, parameter :: n = 1000000
@@ -55,7 +55,7 @@ program app
   dx(:) = 0.0
   call norm__enzyme_autodiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
   write(*,"(f6.4)") dy(n)
-end program app
+end program main
 
 ! CHECK: 1.0000
 ! CHECK-NEXT: 0.0000

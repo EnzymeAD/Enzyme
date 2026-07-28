@@ -8,7 +8,7 @@
 !       For it to work with the ifx compiler we will need to figure out how to
 !       handle the indirection involved in the enzyme_autodiff binding
 
-program dot
+program main
   use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
   implicit none
 
@@ -79,7 +79,7 @@ contains
     end do
   end function dot
 
-end program dot
+end program main
 
 ! CHECK: 20.0
 ! CHECK-NEXT: 20.0
