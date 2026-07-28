@@ -874,6 +874,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (auto MD = GV->getMetadata("enzyme_type")) {
+      analysis[Val] |= TypeTree::fromMD(MD);
+      return;
+    }
 
     if (GV->getName() == "__cxa_thread_atexit_impl") {
       analysis[Val] = TypeTree(BaseType::Pointer).Only(-1, nullptr);
@@ -896,16 +900,19 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
+    // A fixed constant global is a pointer to its initializer
+    if (GV->isConstant() && GV->hasInitializer()) {
+      getConstantAnalysis(GV->getInitializer(), TA, analysis);
+      TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
+      constTT.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", constTT.toMD(GV->getContext()));
+      analysis[Val] |= constTT;
+      return;
+    }
 
     TypeTree &Result = analysis[Val];
     Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
-    // A fixed constant global is a pointer to its initializer
-    if (GV->isConstant() && GV->hasInitializer()) {
-      getConstantAnalysis(GV->getInitializer(), TA, analysis);
-      Result |= analysis[GV->getInitializer()].Only(-1, nullptr);
-      return;
-    }
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
       auto globalSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
@@ -1214,6 +1221,24 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
+
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (!isa<StructType>(GV->getValueType()) ||
+        !cast<StructType>(GV->getValueType())->isOpaque()) {
+      auto allocSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
+      if (EnzymePrintType) {
+        llvm::errs() << " pre global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+      Data = Data.Lookup(allocSize, DL)
+                 .Only(-1, dyn_cast_or_null<Instruction>(Origin));
+      if (EnzymePrintType) {
+        llvm::errs() << " post global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+    }
+  }
+
   bool Changed =
       analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 

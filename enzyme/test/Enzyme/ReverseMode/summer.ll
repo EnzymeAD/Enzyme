@@ -168,7 +168,7 @@ attributes #6 = { noreturn nounwind }
 ; POST-NEXT:   %cmp1 = icmp eq i64 %n, 1
 ; POST-NEXT:   %1 = xor i1 %cmp1, true
 ; POST-NEXT:   call void @llvm.assume(i1 %1)
-; POST-NEXT:   %[[i0:.+]] = load double, double* %x, align 8, !tbaa !2
+; POST-NEXT:   %[[i0:.+]] = load double, double* %x, align 8, !tbaa ![[TBAA_DOUBLE:[0-9]+]]
 ; POST-NEXT:   %[[nm2:.+]] = add i64 %n, -2
 ; POST-NEXT:   br label %for.body.for.body_crit_edge
 
@@ -178,7 +178,7 @@ attributes #6 = { noreturn nounwind }
 ; POST-NEXT:   %cond.i28 = phi double [ %[[i0]], %entry ], [ %cond.i, %for.body.for.body_crit_edge ]
 ; POST-NEXT:   %[[idxadd:.+]] = add nuw nsw i64 %[[iv]], 1
 ; POST-NEXT:   %arrayidx9.phi.trans.insert = getelementptr inbounds double, double* %x, i64 %[[idxadd]]
-; POST-NEXT:   %.pre = load double, double* %arrayidx9.phi.trans.insert, align 8, !tbaa !2
+; POST-NEXT:   %.pre = load double, double* %arrayidx9.phi.trans.insert, align 8, !tbaa ![[TBAA_DOUBLE]]
 ; POST-NEXT:   %cmp.i = fcmp fast ogt double %cond.i28, %.pre
 ; POST-NEXT:   %[[idx2]] = select i1 %cmp.i, i64 %[[idx]], i64 %iv.next
 ; POST-NEXT:   %cond.i = select{{( fast)?}} i1 %cmp.i, double %cond.i28, double %.pre
