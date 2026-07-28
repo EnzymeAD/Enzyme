@@ -24,13 +24,37 @@ program dot
     y(i) = s + i - 1 ! NOTE: Minus one to account for 1-indexing
   end do
 
-  ! Time gradient computation with respect to all variables (A, B, and C)
+  ! Compute gradient computation with respect to all variables (x, y, and z)
   dx(:) = 0.0
   dy(:) = 0.0
   dz = 0.0
   call enzyme_autodiff(dot, enzyme_const, n, &
                        enzyme_dup, x, dx, &
                        enzyme_dup, y, dy, &
+                       enzyme_dup, z, dz)
+  write(*, "(f4.1)") dx(1)
+  write(*, "(f4.1)") dy(1)
+  write(*, "(f4.1)") dz
+
+  ! Compute gradient computation with respect to just y and z
+  dx(:) = 0.0
+  dy(:) = 0.0
+  dz = 0.0
+  call enzyme_autodiff(dot, enzyme_const, n, &
+                       enzyme_const, x, &
+                       enzyme_dup, y, dy, &
+                       enzyme_dup, z, dz)
+  write(*, "(f4.1)") dx(1)
+  write(*, "(f4.1)") dy(1)
+  write(*, "(f4.1)") dz
+
+  ! Compute gradient computation with respect to just z
+  dx(:) = 0.0
+  dy(:) = 0.0
+  dz = 0.0
+  call enzyme_autodiff(dot, enzyme_const, n, &
+                       enzyme_const, x, &
+                       enzyme_const, y, &
                        enzyme_dup, z, dz)
   write(*, "(f4.1)") dx(1)
   write(*, "(f4.1)") dy(1)
@@ -59,4 +83,10 @@ end program dot
 
 ! CHECK: 20.0
 ! CHECK-NEXT: 20.0
+! CHECK-NEXT: 1.0
+! CHECK-NEXT: 0.0
+! CHECK-NEXT: 20.0
+! CHECK-NEXT: 1.0
+! CHECK-NEXT: 0.0
+! CHECK-NEXT: 0.0
 ! CHECK-NEXT: 1.0
