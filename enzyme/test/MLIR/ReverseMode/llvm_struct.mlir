@@ -31,7 +31,7 @@ llvm.func @kernel(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f64, %arg3: f64) {
 // CHECK-NEXT:   llvm.return
 // CHECK-NEXT: }
 
-// CHECK:      func.func @kernel_to_diff0(%arg0: !llvm.ptr, %arg1: f64) -> f64 {
+// CHECK:      func.func private @kernel_to_diff0(%arg0: !llvm.ptr, %arg1: f64) -> f64 {
 // CHECK-NEXT:   %[[V0:.+]] = llvm.load %arg0 : !llvm.ptr -> !llvm.struct<(i64, i64)>
 // CHECK-NEXT:   %[[V1:.+]] = llvm.extractvalue %[[V0]][0] : !llvm.struct<(i64, i64)>
 // CHECK-NEXT:   %[[V2:.+]] = llvm.inttoptr %[[V1]] : i64 to !llvm.ptr

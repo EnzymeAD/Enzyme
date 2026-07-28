@@ -39,6 +39,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
+#include "llvm/ProfileData/InstrProf.h"
+
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -887,6 +889,14 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Pointer);
+      analysis[Val] = T;
+      return;
+    }
+
+    if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
       analysis[Val] = T;
       return;
     }

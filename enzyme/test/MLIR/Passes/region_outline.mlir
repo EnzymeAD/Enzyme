@@ -31,7 +31,7 @@ func.func @to_outline(%26: !llvm.ptr, %27: !llvm.ptr, %28: !llvm.ptr, %29: !llvm
   return
 }
 
-// CHECK-LABEL:   func.func @to_outline_to_diff0(
+// CHECK-LABEL:   func.func private @to_outline_to_diff0(
 // CHECK-SAME:      %[[ARG0:.*]]: !llvm.ptr, %[[ARG1:.*]]: !llvm.ptr,
 // CHECK-SAME:      %[[ARG2:.*]]: index) {
 // CHECK:           %[[CONSTANT_0:.*]] = arith.constant 5.600000e+00 : f64
@@ -92,12 +92,12 @@ func.func @outline_multi(%x: f64, %dr: f64) -> (f64, f64) {
 // CHECK-NEXT:    return %0, %1 : f64, f64
 // CHECK-NEXT:  }
 
-// CHECK: func.func @outline_multi_to_diff1(%arg0: f64) -> f64 {
+// CHECK: func.func private @outline_multi_to_diff1(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %0 = arith.addf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 
-// CHECK: func.func @outline_multi_to_diff0(%arg0: f64) -> f64 {
+// CHECK: func.func private @outline_multi_to_diff0(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
@@ -127,7 +127,7 @@ func.func @free_var_ordering(%x: f64) -> f64 {
 // CHECK-NEXT:    return %[[GRAD]] : f64
 // CHECK-NEXT:  }
 
-// CHECK: func.func @free_var_ordering_to_diff0(%arg0: f64) -> f64 {
+// CHECK: func.func private @free_var_ordering_to_diff0(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %[[CONST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %arg0, %[[CONST]] : f64
 // CHECK-NEXT:    return %[[MUL]] : f64
@@ -159,7 +159,7 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }
 
-// CHECK:  func.func @free_var_with_dup_to_diff0(%arg0: memref<f64>) -> f64 {
+// CHECK:  func.func private @free_var_with_dup_to_diff0(%arg0: memref<f64>) -> f64 {
 // CHECK-NEXT:    %[[CST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[LOAD:.*]] = memref.load %arg0[] : memref<f64>
 // CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %[[LOAD]], %[[CST]] : f64
@@ -182,7 +182,7 @@ func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
 // CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
-// CHECK:  func.func @dsquare_to_diff0(%arg0: f64) -> f64 {
+// CHECK:  func.func private @dsquare_to_diff0(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
@@ -203,7 +203,7 @@ func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
 // CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %0 : f64
 // CHECK-NEXT: }
-// CHECK: func.func @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {
+// CHECK: func.func private @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {
 // CHECK-NEXT:   %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:   return %0 : f64
 // CHECK-NEXT: }

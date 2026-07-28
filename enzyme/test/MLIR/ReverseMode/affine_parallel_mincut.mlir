@@ -102,8 +102,7 @@ func.func @dreproducer(%cond: i1, %src: memref<?xf32>, %dsrc: memref<?xf32>, %ds
 // CHECK:               %[[DIVF_3:.*]] = arith.divf %[[MULF_6]], %[[LOAD_5]] : f32
 // CHECK:               %[[DIVF_4:.*]] = arith.divf %[[LOAD_4]], %[[LOAD_5]] : f32
 // CHECK:               %[[MULF_9:.*]] = arith.mulf %[[DIVF_3]], %[[DIVF_4]] : f32
-// CHECK:               %[[NEGF_0:.*]] = arith.negf %[[MULF_9]] : f32
-// CHECK:               %[[ADDF_5:.*]] = arith.addf %[[MULF_8]], %[[NEGF_0]] : f32
+// CHECK:               %[[ADDF_5:.*]] = arith.subf %[[MULF_8]], %[[MULF_9]] : f32
 // CHECK:               %[[ADDF_6:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_5]] : f32
 // CHECK:               %[[ADDF_7:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_6]] : f32
 // CHECK:               %[[ADDF_8:.*]] = arith.addf %[[LOAD_3]], %[[ADDF_7]] : f32

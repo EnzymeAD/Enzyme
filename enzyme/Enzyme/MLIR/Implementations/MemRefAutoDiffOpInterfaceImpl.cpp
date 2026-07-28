@@ -27,6 +27,18 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
 
+// Lets activity analysis treat memref.store generically via StoreLikeInterface.
+struct MemRefStoreLike
+    : public StoreLikeInterface::ExternalModel<MemRefStoreLike,
+                                               memref::StoreOp> {
+  Value getStoredValue(Operation *op) const {
+    return cast<memref::StoreOp>(op).getValueToStore();
+  }
+  Value getStoredPointer(Operation *op) const {
+    return cast<memref::StoreOp>(op).getMemRef();
+  }
+};
+
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        memref::LoadOp> {
@@ -312,6 +324,7 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     MemRefType::attachInterface<MemRefAutoDiffTypeInterface>(*context);
     MemRefType::attachInterface<MemRefClonableTypeInterface>(*context);
 
+    memref::StoreOp::attachInterface<MemRefStoreLike>(*context);
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
