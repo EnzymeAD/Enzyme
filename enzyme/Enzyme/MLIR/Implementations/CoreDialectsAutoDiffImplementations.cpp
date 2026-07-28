@@ -512,7 +512,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
         // to the invertPointers map since `operand` is const (the shadow will
         // be unused)
         for (const RegionSuccessor &successor : entrySuccessors) {
-          if (successor.isParent())
+          if (!successor.isRegion())
             continue;
           auto &newOpRegion =
               newOp->getRegion(successor.getSuccessor()->getRegionNumber());
