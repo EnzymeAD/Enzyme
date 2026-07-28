@@ -13,6 +13,7 @@
 #include "Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include <cassert>
 #include <deque>
 
@@ -361,9 +362,37 @@ static inline bool isLoadMovable(Operation *op) {
   return op->hasAttr("enzyme.readonly");
 }
 
+static inline bool isMovable(Operation *op);
+static inline bool isRegionBranchMovable(RegionBranchOpInterface regionBranch) {
+  // We can move region ops that only contain pure operations. As a heuristic,
+  // we only consider non-looping ops.
+  if (regionBranch.hasLoop())
+    return false;
+  for (auto &region : regionBranch->getRegions()) {
+    // Regions with multiple blocks potentially contain loops
+    if (!region.hasOneBlock())
+      return false;
+
+    for (auto &bodyOp : region.front()) {
+      if (auto bodyRegionBranch = dyn_cast<RegionBranchOpInterface>(&bodyOp)) {
+        if (!isRegionBranchMovable(bodyRegionBranch))
+          return false;
+        // Terminators are considered not movable, but do not impact our ability
+        // to move their enclosing region op.
+      } else if (&bodyOp != region.front().getTerminator() &&
+                 !isMovable(&bodyOp)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(Operation *op) {
+  if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(op))
+    return isRegionBranchMovable(regionBranch);
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
          (mlir::isPure(op) || isLoadMovable(op));
 }
@@ -815,6 +844,15 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       for (Value operand : owner->getOperands()) {
         G[Node(operand)].insert(Node(owner));
         worklist.push_back(operand);
+      }
+    }
+    if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner)) {
+      SetVector<Value> valuesDefinedAbove;
+      mlir::getUsedValuesDefinedAbove(regionBranch->getRegions(),
+                                      valuesDefinedAbove);
+      for (Value val : valuesDefinedAbove) {
+        G[Node(val)].insert(Node(regionBranch));
+        worklist.push_back(val);
       }
     }
   }
