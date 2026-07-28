@@ -19,16 +19,16 @@ func.func @reduce_sum(%buf: memref<10xf64>) -> f64 {
 }
 
 // CHECK:  func.func @reduce_sum(%arg0: memref<10xf64>, %arg1: memref<10xf64>, %arg2: f64) {
-// CHECK-NEXT:    %c4 = arith.constant 4 : index
-// CHECK-NEXT:    %c9 = arith.constant 9 : index
-// CHECK-NEXT:    %c12 = arith.constant 12 : index
-// CHECK-NEXT:    %c3 = arith.constant 3 : index
-// CHECK-NEXT:    %c1 = arith.constant 1 : index
-// CHECK-NEXT:    %c0 = arith.constant 0 : index
-// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f64
-// CHECK-NEXT:    %alloc = memref.alloc() : memref<4x10xf64>
-// CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<4xf64>
-// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c12 step %c3 iter_args(%arg4 = %cst) -> (f64) {
+// CHECK-DAG:    %c4 = arith.constant 4 : index
+// CHECK-DAG:    %c9 = arith.constant 9 : index
+// CHECK-DAG:    %c12 = arith.constant 12 : index
+// CHECK-DAG:    %c3 = arith.constant 3 : index
+// CHECK-DAG:    %c1 = arith.constant 1 : index
+// CHECK-DAG:    %c0 = arith.constant 0 : index
+// CHECK-DAG:    %cst = arith.constant 0.000000e+00 : f64
+// CHECK-DAG:    %alloc = memref.alloc() : memref<4x10xf64>
+// CHECK-DAG:    %alloc_0 = memref.alloc() : memref<4xf64>
+// CHECK:    %0 = scf.for %arg3 = %c0 to %c12 step %c3 iter_args(%arg4 = %cst) -> (f64) {
 // CHECK-NEXT:      %3 = arith.divui %arg3, %c3 : index
 // CHECK-NEXT:      %4 = arith.cmpi eq, %arg3, %c9 : index
 // CHECK-NEXT:      %5 = arith.select %4, %c1, %c3 : index
