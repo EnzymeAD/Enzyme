@@ -142,6 +142,8 @@ void mlir::enzyme::removalBlockExplore(
   }
 }
 
+namespace {
+
 // A node in the compute/flow graph. It identifies either an operation or a
 // value, plus a one-bit "outgoing" side selector used by the node-split min-cut
 // (see minCutValues): a value is split into an incoming endpoint
@@ -201,10 +203,16 @@ struct Node {
   }
 };
 
+} // namespace
+
 // Make Node usable as a pointer-like key/element (SmallPtrSet, DenseMap, ...)
 // by delegating to the packed PointerIntPair. DenseMap tracks empty/tombstone
 // buckets out-of-band, so only getHashValue/isEqual are required (matching the
 // DenseMapInfo LLVM provides for raw pointers and PointerIntPair).
+//
+// These name templates in namespace llvm, so they cannot sit inside the
+// anonymous namespace above; specializing on an internal-linkage type from
+// here is fine, and keeps the specializations internal too.
 template <> struct llvm::PointerLikeTypeTraits<Node> {
   using Inner = llvm::PointerIntPair<Node::Base, 1, bool>;
   static inline void *getAsVoidPointer(Node n) { return n.getOpaqueValue(); }
@@ -222,6 +230,8 @@ template <> struct llvm::DenseMapInfo<Node> {
   }
   static bool isEqual(const Node &a, const Node &b) { return a.pair == b.pair; }
 };
+
+namespace {
 
 void dump(const Node &n) {
   if (n.isValue())
@@ -499,7 +509,6 @@ static void annotate_ops(Block *forward, Block *reverse) {
   });
 }
 
-namespace {
 // The node used when a graph node is the outgoing (tail) endpoint of an edge: a
 // value uses its outgoing endpoint (outgoing=true), an operation uses its
 // single node.
@@ -615,6 +624,77 @@ static SetVector<Value> minCutValues(const Graph &Orig,
     }
   }
   return newCaches;
+}
+
+// When the min cut is ambiguous, prefer caching the LAST value in a computation
+// chain.
+//
+// Max flow fixes the *capacity* of the cut but not which of the equal-capacity
+// cuts is returned, and `minCutValues` extracts the one reachable from the
+// sources -- i.e. the cut nearest the roots, which caches the earliest value in
+// every chain and leaves the longest possible tail to recompute in reverse.
+// Sliding a cut edge downstream past an operation that has a single graph user
+// and a single result yields another cut of the same capacity (the slid edge is
+// the only way from that value to a required op), so this never costs an extra
+// cache; it just shrinks what the reverse pass rebuilds.
+//
+// The size guard keeps the slide from trading a small buffer for a larger one:
+// capacities here are unit, so the flow minimizes the NUMBER of cached values,
+// not their bytes, and two equal-capacity cuts can differ in size.
+//
+// This mirrors the "push to cache the last value in a computation chain"
+// heuristic in the LLVM Enzyme mincut (Enzyme/DifferentialUseAnalysis.cpp).
+static void pushCachesDownstream(const Graph &Orig,
+                                 const SetVector<Operation *> &Required,
+                                 SetVector<Value> &newCaches) {
+  SmallVector<Value> todo(newCaches.begin(), newCaches.end());
+
+  while (!todo.empty()) {
+    Value cur = todo.pop_back_val();
+    // May have been slid away already by an earlier iteration.
+    if (!newCaches.contains(cur))
+      continue;
+
+    // `cur` must feed exactly one operation; otherwise moving the cut past it
+    // would mean caching several values in place of one.
+    auto users = Orig.find(Node(cur));
+    if (users == Orig.end() || users->second.size() != 1)
+      continue;
+    Node userNode = *users->second.begin();
+    if (!userNode.isOperation())
+      continue;
+    Operation *user = userNode.getOperation();
+
+    // A required operation consumes `cur` itself in the reverse pass, so there
+    // is nothing downstream of it to slide to.
+    if (Required.contains(user))
+      continue;
+
+    // ... and that operation must produce exactly one value.
+    auto results = Orig.find(userNode);
+    if (results == Orig.end() || results->second.size() != 1)
+      continue;
+    Node resNode = *results->second.begin();
+    if (!resNode.isValue())
+      continue;
+    Value next = resNode.getValue();
+
+    // Never slide into a deeper region: a value defined inside a nested block
+    // is live more often than the one it would replace. (The LLVM mincut makes
+    // the same check by loop nest, and additionally slides *outwards*; here we
+    // only ever move within one block.)
+    if (next.getParentBlock() != cur.getParentBlock())
+      continue;
+
+    // Never trade a cached buffer for a larger one.
+    if (computeSizeOfType(cur) < computeSizeOfType(next))
+      continue;
+
+    newCaches.remove(cur);
+    newCaches.insert(next);
+    // Keep sliding down the chain.
+    todo.push_back(next);
+  }
 }
 } // namespace
 
@@ -832,6 +912,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // the node-splitting done by the LLVM Enzyme mincut in
   // DifferentialUseAnalysis.cpp.
   SetVector<Value> newCaches = minCutValues(Orig, roots, Required);
+
+  // The cut above is only one of several equal-capacity min cuts; slide it as
+  // far downstream as is free so the reverse pass recomputes as little as
+  // possible.
+  pushCachesDownstream(Orig, Required, newCaches);
 
   assert(rewriter.getInsertionPoint()->getBlock() == reverse);
 
