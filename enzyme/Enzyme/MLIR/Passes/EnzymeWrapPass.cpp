@@ -143,7 +143,8 @@ struct DifferentiateWrapperPass
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, atomicAdd, width,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
+          markReadonly);
     }
     if (!newFunc) {
       signalPassFailure();

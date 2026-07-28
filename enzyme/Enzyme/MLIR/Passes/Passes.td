@@ -43,6 +43,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"false",
       /*description=*/"Whether or not to use the dataflow activity analysis"
     >,
+    Option<
+      /*C++ variable name=*/"markReadonly",
+      /*CLI argument=*/"markReadonly",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
+    >,
   ];
 }
 
@@ -181,6 +188,13 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*type=*/"bool",
       /*default=*/"false",
       /*description=*/"Whether or not to use atomics by default (e.g. if within a parallel context)"
+    >,
+    Option<
+      /*C++ variable name=*/"markReadonly",
+      /*CLI argument=*/"markReadonly",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
   ];
 }

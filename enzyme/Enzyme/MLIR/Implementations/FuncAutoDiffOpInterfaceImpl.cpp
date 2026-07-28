@@ -172,7 +172,8 @@ public:
         fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
         mode, freeMemory, gutils->AtomicAdd, width, /*addedType*/ nullptr,
         type_args, volatile_args, /*augmented*/ nullptr, gutils->omp,
-        gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero);
+        gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
+        /*markReadonly=*/false);
 
     SmallVector<Value> revArguments;
 
