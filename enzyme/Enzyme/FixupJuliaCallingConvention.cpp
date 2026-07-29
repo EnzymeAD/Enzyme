@@ -1617,7 +1617,7 @@ public:
 };
 
 class FixupBatchedJuliaCallingConventionNewPM
-#ifdef LLVM_VERSION_MAJOR >= 23
+#if LLVM_VERSION_MAJOR >= 23
     : public OptionalPassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
 #else
     : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
