@@ -70,6 +70,41 @@ void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
                  PatternRewriter &rewriter, const IRMapping &fwdrevmap,
                  Operation *lastFwd = nullptr);
 
+// Perform a modified version of the loop invariant cache algorithm described in
+// Fig. 5 of https://dl.acm.org/doi/pdf/10.1145/3458817.3476165
+//
+// array = alloca
+// for i = 0 to N {
+//   idx = some_computation(%i)
+//   val = load array[idx]
+//   push(cache, val)
+// }
+// for ri = N to 0 {
+//   val = pop(cache)
+//   use(val)
+// }
+//
+// Becomes:
+// array = alloca
+// copy(cache, array)
+// for i = 0 to N {
+//   %idx = some_computation(%i)
+//   ...
+// }
+// for ri = N to 0 {
+//   idx = some_computation(i)
+//   val = cache[idx]
+//   use(val)
+// }
+//
+// The size of the cache goes from O(N) to O(sizeof(array)). This heuristically
+// only stores stack allocations with a statically-known number of elements
+// <= 'threshold'.
+void loopInvariantCache(SmallVectorImpl<CacheInfo> &caches,
+                        LoopLikeOpInterface fwdLoop,
+                        LoopLikeOpInterface revLoop, const IRMapping &mapping,
+                        int64_t threshold = 16);
+
 enum class LoopCacheType { TENSOR, MEMREF };
 
 static LoopCacheType getCacheType(Operation *op) {
@@ -392,6 +427,7 @@ public:
       mincut = true;
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter, fwdrevmap, lastFwd);
+      mlir::enzyme::loopInvariantCache(caches, forOp, otherForOp, fwdrevmap);
     }
     for (auto v : inductionVariable) {
       if (auto op = v.getDefiningOp()) {
