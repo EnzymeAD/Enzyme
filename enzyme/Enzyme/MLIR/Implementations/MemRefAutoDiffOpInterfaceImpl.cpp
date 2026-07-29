@@ -230,8 +230,12 @@ public:
       }
     }
 
+    // Pass the MemRefType, not `self`: with a plain Type the generic
+    // (TypeRange, ValueRange) builder is selected, which appends the dynamic
+    // sizes as operands without setting operandSegmentSizes -- producing an
+    // invalid memref.alloc as soon as the type has a dynamic dimension.
     auto clone =
-        memref::AllocOp::create(builder, value.getLoc(), self, dynamicSizes);
+        memref::AllocOp::create(builder, value.getLoc(), MT, dynamicSizes);
     memref::CopyOp::create(builder, value.getLoc(), value, clone);
 
     return clone;

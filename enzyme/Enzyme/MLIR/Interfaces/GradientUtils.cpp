@@ -127,8 +127,12 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
 mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
                                                          OpBuilder &Builder2) {
   // TODO
-  if (invertedPointers.contains(v))
+  if (invertedPointers.contains(v)) {
+    if (getenv("ENZYME_DEBUG_REVERSE_BINOMIAL"))
+      llvm::errs() << "[invertPointerM] READ v=" << v.getAsOpaquePointer()
+                   << "\n";
     return invertedPointers.lookupOrNull(v);
+  }
 
   if (isConstantValue(v)) {
     if (auto iface =
@@ -141,6 +145,10 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
         Builder2.setInsertionPointToStart(getNewFromOriginal(ba.getOwner()));
       }
       Value dv = iface.createNullValue(Builder2, v.getLoc());
+      if (getenv("ENZYME_DEBUG_REVERSE_BINOMIAL"))
+        llvm::errs() << "[invertPointerM] WRITE(const) v="
+                     << v.getAsOpaquePointer()
+                     << " dv=" << dv.getAsOpaquePointer() << "\n";
       invertedPointers.map(v, dv);
       return dv;
     }
@@ -254,6 +262,17 @@ void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
   assert(getShadowType(val.getType()) == toset.getType());
   auto found = invertedPointers.lookupOrNull(val);
   assert(found != nullptr);
+  if (getenv("ENZYME_DEBUG_REVERSE_BINOMIAL")) {
+    llvm::errs() << "[setInvertedPointer] val=" << val.getAsOpaquePointer()
+                 << " toset=" << toset.getAsOpaquePointer()
+                 << " found=" << found.getAsOpaquePointer();
+    auto *defOp = found.getDefiningOp();
+    llvm::errs() << " found.definingOp=" << defOp;
+    if (defOp)
+      llvm::errs() << " isPlaceholderOp=" << isa<enzyme::PlaceholderOp>(defOp);
+    llvm::errs() << "\n";
+    llvm::errs().flush();
+  }
   auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
   placeholder.replaceAllUsesWith(toset);
   erase(placeholder);

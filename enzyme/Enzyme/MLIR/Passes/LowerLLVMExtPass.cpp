@@ -14,10 +14,15 @@
 #include "Dialect/LLVMExt/LLVMExt.h"
 #include "Passes/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 namespace mlir {
 namespace enzyme {
@@ -123,6 +128,57 @@ void lowerFree(llvm_ext::FreeOp free) {
   free.erase();
 }
 
+/// `llvm_ext.ptr_size_hint` is the only record of how large a raw pointer's
+/// allocation is, and this pass drops it. Reverse-mode AD recovers the extent of
+/// a pointer-derived memref with `memref.dim` (see
+/// MemRefClonableTypeInterface::cloneValue) -- e.g. to size the checkpoint
+/// buffer for a cached grid -- but a `memref.dim` of a value that is really just
+/// a bare pointer has no lowering at all: the size is nowhere in the IR once the
+/// hint is gone. Resolve those dims from the hint while it is still around.
+static void resolveDimsFromHint(llvm_ext::PtrSizeHintOp psh,
+                                DominanceInfo &dom) {
+  Value ptr = psh.getPtr();
+  Value byteSize = psh.getSize();
+
+  for (Operation *user : llvm::make_early_inc_range(ptr.getUsers())) {
+    // A side-effect-free view of the pointer as a rank-1 dynamic memref is a
+    // reinterpret cast, so the pointee's byte size fixes the memref's extent.
+    auto view = dyn_cast<ViewLikeOpInterface>(user);
+    if (!view || view.getViewSource() != ptr || !isMemoryEffectFree(user))
+      continue;
+    auto MT = dyn_cast<MemRefType>(user->getResult(0).getType());
+    if (!MT || MT.getRank() != 1 || !MT.isDynamicDim(0))
+      continue;
+    if (!MT.getElementType().isIntOrFloat())
+      continue;
+    unsigned bits = MT.getElementTypeBitWidth();
+    if (bits == 0 || bits % 8 != 0)
+      continue;
+
+    for (Operation *dimUser :
+         llvm::make_early_inc_range(user->getResult(0).getUsers())) {
+      auto dim = dyn_cast<memref::DimOp>(dimUser);
+      if (!dim || dim.getConstantIndex() != 0)
+        continue;
+      // The hint's size operand has to be available where the dim was.
+      if (!dom.properlyDominates(byteSize, dim))
+        continue;
+
+      OpBuilder builder(dim);
+      Value extent = arith::IndexCastOp::create(
+          builder, dim.getLoc(), builder.getIndexType(), byteSize);
+      if (unsigned bytes = bits / 8; bytes != 1) {
+        Value elemSize =
+            arith::ConstantIndexOp::create(builder, dim.getLoc(), bytes);
+        extent =
+            arith::DivUIOp::create(builder, dim.getLoc(), extent, elemSize);
+      }
+      dim.getResult().replaceAllUsesWith(extent);
+      dim.erase();
+    }
+  }
+}
+
 struct LowerLLVMExtPass
     : public enzyme::impl::LowerLLVMExtPassBase<LowerLLVMExtPass> {
   using LowerLLVMExtPassBase::LowerLLVMExtPassBase;
@@ -130,7 +186,11 @@ struct LowerLLVMExtPass
   void runOnOperation() override {
     Operation *op = getOperation();
 
-    op->walk([](llvm_ext::PtrSizeHintOp psh) { psh.erase(); });
+    DominanceInfo dom(op);
+    op->walk([&](llvm_ext::PtrSizeHintOp psh) {
+      resolveDimsFromHint(psh, dom);
+      psh.erase();
+    });
 
     SmallVector<llvm_ext::AllocOp> allocs;
     op->walk([&](llvm_ext::AllocOp alloc) { allocs.push_back(alloc); });

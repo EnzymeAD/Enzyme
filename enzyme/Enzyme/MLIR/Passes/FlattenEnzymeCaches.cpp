@@ -16,6 +16,8 @@
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 
@@ -108,6 +110,91 @@ Value computeFlatIndex(ValueRange indices, ValueRange dynamicSizes,
   return flatIndex;
 }
 
+/// Is `sv` a "row slice" of `buf`, i.e. `buf[i, 0][1, n][1, 1]`, rank-reduced
+/// to 1-D? Returns the slice's size as an OpFoldResult, or nullopt.
+static std::optional<OpFoldResult> matchRowSlice(memref::SubViewOp sv,
+                                                 MemRefType bufTy) {
+  if (cast<MemRefType>(sv.getType()).getRank() != 1)
+    return std::nullopt;
+  auto offsets = sv.getMixedOffsets();
+  auto sizes = sv.getMixedSizes();
+  auto strides = sv.getMixedStrides();
+  if (offsets.size() != 2 || sizes.size() != 2 || strides.size() != 2)
+    return std::nullopt;
+  if (!isConstantIntValue(offsets[1], 0) || !isConstantIntValue(sizes[0], 1) ||
+      !isConstantIntValue(strides[0], 1) || !isConstantIntValue(strides[1], 1))
+    return std::nullopt;
+  return sizes[1];
+}
+
+/// A rank-2 cache buffer whose *inner* dimension is dynamic cannot be lowered
+/// under the bare-pointer calling convention used for GPU kernel arguments:
+/// there is nowhere to put the (dynamic) inner stride. Such a buffer -- the
+/// checkpoint/cache storage `memref<Nx?xT>` produced when caching a
+/// dynamically-sized memref across a loop -- is only ever accessed as a row
+/// slice `buf[slot, 0][1, n][1, 1]`, so flatten the allocation to 1-D and
+/// rewrite each slice as an offset slice `flat[slot * inner][n][1]`. The result
+/// type is unchanged (`memref<?xT, strided<[1], offset: ?>>`), which the
+/// bare-pointer conversion *does* accept, so no user needs updating.
+///
+/// Restricted to rank 2: for higher ranks the row slice would itself be
+/// multi-dimensional and could not keep its type across the rewrite.
+static void flattenRowSlicedCaches(Operation *root) {
+  SmallVector<memref::AllocOp> allocs;
+  root->walk([&](memref::AllocOp alloc) {
+    MemRefType MT = alloc.getType();
+    if (MT.getRank() != 2 || !MT.getLayout().isIdentity())
+      return;
+    if (!MT.isDynamicDim(1) || MT.isDynamicDim(0))
+      return;
+    for (Operation *user : alloc->getUsers()) {
+      if (isa<memref::DeallocOp>(user))
+        continue;
+      auto sv = dyn_cast<memref::SubViewOp>(user);
+      if (!sv || !matchRowSlice(sv, MT))
+        return;
+    }
+    allocs.push_back(alloc);
+  });
+
+  for (memref::AllocOp alloc : allocs) {
+    MemRefType MT = alloc.getType();
+    // The single dynamic size operand is the inner extent, which doubles as
+    // the row stride of the flattened buffer.
+    Value inner = alloc.getDynamicSizes().front();
+
+    ImplicitLocOpBuilder b(alloc.getLoc(), alloc);
+    Value rows = arith::ConstantIndexOp::create(b, MT.getDimSize(0));
+    Value flatSize = arith::MulIOp::create(b, rows, inner);
+    auto flatTy = MemRefType::get({ShapedType::kDynamic}, MT.getElementType(),
+                                  MemRefLayoutAttrInterface{},
+                                  MT.getMemorySpace());
+    Value flat = memref::AllocOp::create(b, flatTy, ValueRange{flatSize},
+                                         alloc.getAlignmentAttr());
+
+    for (Operation *user : llvm::make_early_inc_range(alloc->getUsers())) {
+      auto sv = dyn_cast<memref::SubViewOp>(user);
+      if (!sv) {
+        // memref.dealloc -- retype in place.
+        user->setOperand(0, flat);
+        continue;
+      }
+      OpFoldResult size = *matchRowSlice(sv, MT);
+      ImplicitLocOpBuilder sb(sv.getLoc(), sv);
+      Value slot = getValueOrCreateConstantIndexOp(sb, sv.getLoc(),
+                                                   sv.getMixedOffsets()[0]);
+      Value offset = arith::MulIOp::create(sb, slot, inner);
+      Value newSv = memref::SubViewOp::create(
+          sb, cast<MemRefType>(sv.getType()), flat, ArrayRef<OpFoldResult>{offset},
+          ArrayRef<OpFoldResult>{size},
+          ArrayRef<OpFoldResult>{sb.getIndexAttr(1)});
+      sv.getResult().replaceAllUsesWith(newSv);
+      sv.erase();
+    }
+    alloc.erase();
+  }
+}
+
 struct FlattenEnzymeCaches
     : public enzyme::impl::FlattenEnzymeCachesPassBase<FlattenEnzymeCaches> {
   void runOnOperation() override {
@@ -157,6 +244,8 @@ struct FlattenEnzymeCaches
       // TODO add alignment
       loadOp.erase();
     });
+
+    flattenRowSlicedCaches(getOperation());
   }
 };
 } // namespace

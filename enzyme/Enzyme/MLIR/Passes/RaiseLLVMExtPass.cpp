@@ -47,7 +47,14 @@ struct RaiseLLVMExtPass
           auto name = StringAttr::get(&getContext(), "__enzyme_ptr_size_hint");
           auto uses = SymbolTable::getSymbolUses(name, st);
 
-          if (!uses)
+          // getSymbolUses returns an empty (not nullopt) range when the
+          // symbol simply isn't referenced anywhere in this module, which is
+          // the common case (most translation units never call
+          // __enzyme_ptr_size_hint); only bail out on the lookup+cast below
+          // if there's actually a use to process, since symtable.lookup(name)
+          // returns null when the symbol isn't declared in this module at
+          // all, and casting that to FunctionOpInterface crashes.
+          if (!uses || uses->empty())
             return;
 
           auto fn = cast<FunctionOpInterface>(symtable.lookup(name));

@@ -112,6 +112,29 @@ static Value traceToNonBlockArgSource(Value value) {
   return isa<BlockArgument>(value) ? nullptr : value;
 }
 
+/// The pushed value may reach its allocation through casts that erase static
+/// extents: canonicalization rewrites `memref.alloc(%c) : memref<?xT>` into
+/// `memref.alloc() : memref<CxT>` + `memref.cast`. When the allocation itself
+/// becomes the multi-dimensional cache storage, its type is the accurate one --
+/// sizing the cache from the cast's dynamic type instead leaves dynamic
+/// dimensions that `appendDynamicDims` has no operand for, yielding an invalid
+/// cache allocation and row slices whose sizes don't match their operands.
+static ShapedType
+refineCacheShapeFromAlloc(ShapedType ST,
+                          MultidimensionalAllocInterface allocOp) {
+  if (!allocOp || allocOp->getNumResults() != 1)
+    return ST;
+  auto allocTy = dyn_cast<ShapedType>(allocOp->getResult(0).getType());
+  if (!allocTy || allocTy.getElementType() != ST.getElementType() ||
+      allocTy.getRank() != ST.getRank())
+    return ST;
+  // Only take the allocation's type when it strictly adds static information.
+  for (auto [a, s] : llvm::zip_equal(allocTy.getShape(), ST.getShape()))
+    if (!ShapedType::isDynamic(s) && a != s)
+      return ST;
+  return allocTy;
+}
+
 static MultidimensionalAllocInterface
 getMultiDimCacheAllocOp(Value pushedValue, LoopCacheType cacheType,
                         ShapedType shapeTy, Operation *forOp) {
@@ -451,14 +474,26 @@ public:
         }
       }
 
+      // Number of entries in `dynamicDims` describing the loop-iteration
+      // dimensions. Only *dynamic* iteration counts contribute an entry, so
+      // this is <= inductionVariable.size(); anything appended past this point
+      // (by appendDynamicDims below) describes the cached value's own shape.
+      size_t numLoopDynamicDims = dynamicDims.size();
+
       auto ET = info.cachedType();
       ShapedType NT;
 
       bool multiDim = false;
       Attribute memorySpace = nullptr;
       MultidimensionalAllocInterface allocOp;
+      // The cached value's shaped type, refined with whatever static extents
+      // its allocation knows about. Used in place of `info.cachedType()` below
+      // so the cache allocation and the row slices into it agree.
+      ShapedType cachedShapedTy;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         allocOp = getMultiDimCacheAllocOp(pushedValue, cacheType, ST, forOp);
+        ST = refineCacheShapeFromAlloc(ST, allocOp);
+        cachedShapedTy = ST;
         bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
           return dim != ShapedType::kDynamic;
         });
@@ -557,7 +592,7 @@ public:
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(info.pushOp);
 
-          auto MT = dyn_cast<MemRefType>(info.cachedType());
+          auto MT = dyn_cast_or_null<MemRefType>(cachedShapedTy);
           if (multiDim && MT) {
             auto memref = info.pushOp.getValue();
             auto shape = MT.getShape();
@@ -570,8 +605,7 @@ public:
             }
 
             SmallVector<Value> dynSizes;
-            for (size_t i = inductionVariable.size(); i < dynamicDims.size();
-                 ++i) {
+            for (size_t i = numLoopDynamicDims; i < dynamicDims.size(); ++i) {
               dynSizes.push_back(dynamicDims[i]);
             }
 
@@ -733,11 +767,16 @@ public:
       bool multiDim = false;
       Attribute memorySpace = nullptr;
       MultidimensionalAllocInterface allocOp;
+      // See the forward pass: kept in sync with the shape the cache allocation
+      // was actually built with.
+      ShapedType cachedShapedTy;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         if (auto MT = dyn_cast<MemRefType>(ST))
           memorySpace = MT.getMemorySpace();
         allocOp =
             getMultiDimCacheAllocOp(info.pushedValue(), cacheType, ST, forOp);
+        ST = refineCacheShapeFromAlloc(ST, allocOp);
+        cachedShapedTy = ST;
         bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
           return dim != ShapedType::kDynamic;
         });
@@ -819,7 +858,7 @@ public:
         }
       } else if (cacheType == LoopCacheType::MEMREF) {
 
-        auto MT = dyn_cast<MemRefType>(info.cachedType());
+        auto MT = dyn_cast_or_null<MemRefType>(cachedShapedTy);
         if (multiDim && MT) {
           auto shape = MT.getShape();
 
@@ -844,7 +883,7 @@ public:
                                                  i)));
           }
 
-          SmallVector<int64_t> strides(shape.size() + 1, 1);
+          SmallVector<int64_t> strides(newShape.size(), 1);
 
           auto RT = memref::SubViewOp::inferRankReducedResultType(
               MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,

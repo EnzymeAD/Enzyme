@@ -432,10 +432,29 @@ struct PointerClonableTypeInterface
       return nullptr;
     }
 
+    // llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc requires an
+    // i64 size, so a narrower (or wider) hint has to be converted rather than
+    // forwarded -- otherwise we build invalid IR that only fails later, in the
+    // verifier.
+    Value size = *ptrSize;
+    auto i64Ty = builder.getIntegerType(64);
+    if (size.getType() != i64Ty) {
+      auto srcTy = dyn_cast<IntegerType>(size.getType());
+      if (!srcTy) {
+        llvm::errs() << "ptr size hint is not an integer: " << size << "\n";
+        return nullptr;
+      }
+      // Sizes are non-negative, so zero-extend when widening.
+      if (srcTy.getWidth() < 64)
+        size = LLVM::ZExtOp::create(builder, value.getLoc(), i64Ty, size);
+      else
+        size = LLVM::TruncOp::create(builder, value.getLoc(), i64Ty, size);
+    }
+
     auto clone = llvm_ext::AllocOp::create(
         builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
-        *ptrSize);
-    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, *ptrSize,
+        size);
+    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, size,
                            /*isVolatile*/ false);
 
     return clone;
