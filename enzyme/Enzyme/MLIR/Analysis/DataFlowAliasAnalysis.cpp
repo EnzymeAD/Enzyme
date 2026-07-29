@@ -1208,7 +1208,8 @@ void mlir::enzyme::markReadOnlyLoads(
   }
 
   // Determine all alias classes that were modified
-  AliasClassLattice modified(nullptr);
+  AliasClassLattice modified(
+      nullptr, DistinctAttr::create(UnitAttr::get(funcOp.getContext())));
   funcOp.walk([&](Operation *op) {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about memory effects, conservatively assume that any
