@@ -1,13 +1,18 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s
 
-// A budget larger than the trip count. With enzyme.use_safe_budgeting the
-// *effective* budget is min(budget, numIters) = 3, so only slots [0, 3) are ever
-// written, but the buffers are still sized by the static budget (8). Clone slots
-// are allocated eagerly for all 8 and the teardown loop frees all 8 -- slots
-// [3, 8) are allocated and freed without ever holding a snapshot.
+// A budget larger than the trip count. The *effective* budget is
+// min(budget, numIters) = 3, so only slots [0, 3) are ever written, but the
+// buffers are still sized by the static budget (8): clone slots are allocated
+// eagerly for all 8 and the teardown loop frees all 8, so slots [3, 8) are
+// allocated and freed without ever holding a snapshot.
 //
-// This pins the eager-allocation choice: a lazily-filled buffer would need a
-// null sentinel per slot, which does not exist for a memref element type.
+// The clamp is unconditional. Without it the placement loop would run 8 times
+// over 3 steps, and the slots past the end would be recorded at a step beyond
+// the last one -- holding the final state rather than a checkpoint, which the
+// reverse pass then replays from, silently corrupting the gradient.
+//
+// This also pins the eager-allocation choice: a lazily-filled buffer would need
+// a null sentinel per slot, which does not exist for a memref element type.
 
 module {
   func.func @main(%m: memref<f32>) -> f32 {
@@ -22,8 +27,7 @@ module {
       scf.yield %mul : f32
     } {enzyme.enable_checkpointing = true,
        enzyme.binomial_checkpointing,
-       enzyme.checkpoint_period = 8 : i64,
-       enzyme.use_safe_budgeting}
+       enzyme.checkpoint_period = 8 : i64}
 
     return %0 : f32
   }

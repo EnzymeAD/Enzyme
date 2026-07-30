@@ -456,12 +456,17 @@ private:
     }
 
     // Effective budget = min(requested budget, trip count): never keep more
-    // checkpoints than there are iterations. Buffers are sized by the (static)
+    // checkpoints than there are iterations. Buffers stay sized by the (static)
     // requested budget; the effective budget bounds the loops at runtime.
-    Value budgetV = arith::ConstantIndexOp::create(builder, loc, budget);
-
-    if (forOp->hasAttr("enzyme.use_safe_budgeting"))
-      budgetV = arith::MinUIOp::create(builder, loc, budgetV, numItersV);
+    //
+    // Unconditional: with a budget above the trip count this loop would run more
+    // iterations than there are steps, and the slots past the end get recorded
+    // at a step beyond the last one -- holding the final state instead of a
+    // checkpoint, which the reverse pass then replays from. This used to be
+    // gated behind enzyme.use_safe_budgeting, an attribute nothing ever sets.
+    Value budgetV = arith::MinUIOp::create(
+        builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
+        numItersV);
 
     SmallVector<Value> immutableRefs, mutableRefs;
     splitOutsideRefs(forOp, mutableRefs, immutableRefs);
@@ -801,11 +806,10 @@ private:
     }
 
     // Effective budget = min(requested budget, trip count); must match
-    // cacheBinomial.
-    Value budgetV = arith::ConstantIndexOp::create(builder, loc, budget);
-
-    if (forOp->hasAttr("enzyme.use_safe_budgeting"))
-      budgetV = arith::MinUIOp::create(builder, loc, budgetV, numItersV);
+    // cacheBinomial, including being unconditional.
+    Value budgetV = arith::MinUIOp::create(
+        builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
+        numItersV);
 
     // Clone buffers and shadows are single-entry caches, so they are popped
     // once, here, outside the loop. Each ref also gets a working clone the
