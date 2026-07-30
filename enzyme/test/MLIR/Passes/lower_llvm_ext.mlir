@@ -26,6 +26,14 @@ module {
     llvm.return
   }
 
+  // A host clone: alloc/memcpy/free all in memory space 0.
+  llvm.func @clone_host(%src: !llvm.ptr, %n: i64) {
+    %0 = llvm_ext.alloc %n : (i64) -> !llvm.ptr
+    llvm_ext.memcpy %0, %src, %n : !llvm.ptr, !llvm.ptr, i64
+    llvm_ext.free %0 : !llvm.ptr
+    llvm.return
+  }
+
 }
 
 // CHECK:  llvm.func @free(!llvm.ptr)
@@ -50,6 +58,13 @@ module {
 // CHECK:  llvm.func @noop() {
 // CHECK-NEXT:    %[[SIZE:.+]] = arith.constant 8 : i64
 // CHECK-NEXT:    %[[PTR:.+]] = llvm.call @malloc(%[[SIZE]]) : (i64) -> !llvm.ptr
+// CHECK-NEXT:    llvm.call @free(%[[PTR]]) : (!llvm.ptr) -> ()
+// CHECK-NEXT:    llvm.return
+// CHECK-NEXT:  }
+
+// CHECK:  llvm.func @clone_host(%[[SRC:.+]]: !llvm.ptr, %[[N:.+]]: i64) {
+// CHECK-NEXT:    %[[PTR:.+]] = llvm.call @malloc(%[[N]]) : (i64) -> !llvm.ptr
+// CHECK-NEXT:    "llvm.intr.memcpy"(%[[PTR]], %[[SRC]], %[[N]]) <{isVolatile = false}>
 // CHECK-NEXT:    llvm.call @free(%[[PTR]]) : (!llvm.ptr) -> ()
 // CHECK-NEXT:    llvm.return
 // CHECK-NEXT:  }

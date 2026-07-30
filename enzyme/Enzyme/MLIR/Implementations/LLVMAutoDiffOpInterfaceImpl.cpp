@@ -431,6 +431,26 @@ std::optional<PtrExtent> findPtrExtent(Value ptr) {
   return std::nullopt;
 }
 
+// llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc and
+// llvm_ext.memcpy require an i64 size, so a narrower (or wider) hint has to be
+// converted rather than forwarded -- otherwise we build invalid IR that only
+// fails later, in the verifier. Returns null if the size is not an integer.
+static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size) {
+  auto i64Ty = builder.getIntegerType(64);
+  if (size.getType() == i64Ty)
+    return size;
+
+  auto srcTy = dyn_cast<IntegerType>(size.getType());
+  if (!srcTy) {
+    llvm::errs() << "ptr size hint is not an integer: " << size << "\n";
+    return nullptr;
+  }
+  // Sizes are non-negative, so zero-extend when widening.
+  if (srcTy.getWidth() < 64)
+    return LLVM::ZExtOp::create(builder, loc, i64Ty, size);
+  return LLVM::TruncOp::create(builder, loc, i64Ty, size);
+}
+
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
@@ -441,24 +461,9 @@ struct PointerClonableTypeInterface
       return nullptr;
     }
 
-    // llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc requires an
-    // i64 size, so a narrower (or wider) hint has to be converted rather than
-    // forwarded -- otherwise we build invalid IR that only fails later, in the
-    // verifier.
-    Value size = extent->size;
-    auto i64Ty = builder.getIntegerType(64);
-    if (size.getType() != i64Ty) {
-      auto srcTy = dyn_cast<IntegerType>(size.getType());
-      if (!srcTy) {
-        llvm::errs() << "ptr size hint is not an integer: " << size << "\n";
-        return nullptr;
-      }
-      // Sizes are non-negative, so zero-extend when widening.
-      if (srcTy.getWidth() < 64)
-        size = LLVM::ZExtOp::create(builder, value.getLoc(), i64Ty, size);
-      else
-        size = LLVM::TruncOp::create(builder, value.getLoc(), i64Ty, size);
-    }
+    Value size = normalizeSizeToI64(builder, value.getLoc(), extent->size);
+    if (!size)
+      return nullptr;
 
     // Tag the clone with the space it lives in and leave picking the allocator
     // and the copy to lower-llvm-ext: emitting host malloc/memcpy here would
@@ -472,6 +477,28 @@ struct PointerClonableTypeInterface
                                extent->memorySpace);
 
     return clone;
+  }
+
+  void copyValue(Type self, OpBuilder &builder, Value dst, Value src) const {
+    // Prefer `src`: taking a checkpoint copies from the live ref, whose alloc
+    // (or size hint) is visible. Restoring one copies *out of* a clone buffer,
+    // where only `dst` -- a direct clone -- is traceable. Both sides are
+    // allocations in the same space by construction, since the clone was made
+    // with the space recovered from the ref.
+    auto extent = findPtrExtent(src);
+    if (!extent)
+      extent = findPtrExtent(dst);
+    if (!extent) {
+      llvm::errs() << "cannot find size of ptr to copy: " << src << "\n";
+      return;
+    }
+
+    Value size = normalizeSizeToI64(builder, src.getLoc(), extent->size);
+    if (!size)
+      return;
+
+    llvm_ext::MemcpyOp::create(builder, src.getLoc(), dst, src, size,
+                               extent->memorySpace);
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {

@@ -118,14 +118,44 @@ static LogicalResult lowerAllocDevice(llvm_ext::AllocOp alloc,
   return success();
 }
 
+/// Strips away view-like and cache indirections to get at the op that really
+/// produced a buffer: `enzyme.pop` back to the matching `enzyme.push`, and
+/// side-effect-free views (casts, subviews) back to their source.
+static Value traceBufferSource(Value buf) {
+  while (buf) {
+    if (auto pop = buf.getDefiningOp<enzyme::PopOp>()) {
+      // A buffer handle is pushed exactly once, so the single push is the
+      // definition; bail if that is not the shape we are looking at.
+      Value pushed;
+      for (Operation *user : pop.getCache().getUsers()) {
+        if (auto push = dyn_cast<enzyme::PushOp>(user)) {
+          if (pushed)
+            return nullptr;
+          pushed = push.getValue();
+        }
+      }
+      buf = pushed;
+      continue;
+    }
+    if (auto view = buf.getDefiningOp<ViewLikeOpInterface>()) {
+      if (!isMemoryEffectFree(view))
+        return buf;
+      buf = view.getViewSource();
+      continue;
+    }
+    return buf;
+  }
+  return nullptr;
+}
+
 /// Memory space of the allocation `ptr` refers to, or nullopt if it can't be
 /// established.
 ///
-/// A free rarely sits next to its alloc: reverse-mode AD stashes a checkpoint
-/// buffer in a cache during the forward pass and frees whatever comes back out
-/// of that cache later, so `ptr` is typically an `enzyme.pop`. Pops and pushes
-/// name the same cache value, which is what makes the two sides pairable at
-/// all, so follow that edge back to the value that was pushed.
+/// A free rarely sits next to its alloc. Reverse-mode AD stores its checkpoint
+/// clones in a buffer during the forward pass and frees whatever it reads back
+/// out later, so `ptr` is typically an `enzyme.pop` or a `memref.load`. Both of
+/// those have a definite producer -- the matching `enzyme.push`, or the stores
+/// into the same buffer -- so follow those edges back to an alloc.
 static std::optional<int64_t> inferMemorySpace(Value ptr,
                                                SmallPtrSetImpl<Value> &seen) {
   if (!ptr || !seen.insert(ptr).second)
@@ -148,6 +178,27 @@ static std::optional<int64_t> inferMemorySpace(Value ptr,
       if (space && *space != *pushed)
         return std::nullopt;
       space = pushed;
+    }
+    return space;
+  }
+
+  if (auto load = ptr.getDefiningOp<memref::LoadOp>()) {
+    // A clone handle read back out of a buffer of clones. Every store into that
+    // buffer has to agree on the space, for the same reason as pushes above.
+    Value buf = traceBufferSource(load.getMemRef());
+    if (!buf)
+      return std::nullopt;
+    std::optional<int64_t> space;
+    for (Operation *user : buf.getUsers()) {
+      auto store = dyn_cast<memref::StoreOp>(user);
+      if (!store)
+        continue;
+      auto stored = inferMemorySpace(store.getValueToStore(), seen);
+      if (!stored)
+        return std::nullopt;
+      if (space && *space != *stored)
+        return std::nullopt;
+      space = stored;
     }
     return space;
   }
@@ -236,6 +287,13 @@ LogicalResult tryLoweringToAlloca(llvm_ext::AllocOp alloc,
     if (!alloc->isBeforeInBlock(free))
       return failure();
   }
+
+  // No visible free means the pointer escapes -- e.g. it was stored into a
+  // buffer of clone handles and is freed via a load of that buffer. Stack
+  // memory would not survive the escape, and an alloc in a loop would make
+  // every slot the same address.
+  if (!free)
+    return failure();
 
   OpBuilder builder(alloc);
   auto alloca = LLVM::AllocaOp::create(builder, alloc.getLoc(),

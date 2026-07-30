@@ -241,6 +241,13 @@ public:
     return clone;
   }
 
+  void copyValue(mlir::Type self, OpBuilder &builder, Value dst,
+                 Value src) const {
+    // memref.copy carries the extents in its operand types, so there is no
+    // extent to recover here and dynamic shapes work unchanged.
+    memref::CopyOp::create(builder, src.getLoc(), src, dst);
+  }
+
   void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {
     memref::DeallocOp::create(builder, value.getLoc(), value);
   };
