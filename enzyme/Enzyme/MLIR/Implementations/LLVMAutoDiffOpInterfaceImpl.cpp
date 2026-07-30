@@ -409,13 +409,22 @@ struct InsertValueOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
-std::optional<Value> findPtrSize(Value ptr) {
+// Extent of the allocation a pointer refers to, plus the memory space that
+// allocation lives in. The space is what decides whether a clone can be made
+// with plain host malloc/memcpy or needs to go through the device runtime, so
+// the two always have to be discovered together.
+struct PtrExtent {
+  Value size;
+  int64_t memorySpace;
+};
+
+std::optional<PtrExtent> findPtrExtent(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
-    return allocOp.getSize();
+    return PtrExtent{allocOp.getSize(), allocOp.getMemorySpace()};
 
   for (auto user : ptr.getUsers()) {
     if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
-      return psh.getSize();
+      return PtrExtent{psh.getSize(), psh.getMemorySpace()};
     }
   }
 
@@ -426,8 +435,8 @@ struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
-    auto ptrSize = findPtrSize(value);
-    if (!ptrSize) {
+    auto extent = findPtrExtent(value);
+    if (!extent) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;
     }
@@ -436,7 +445,7 @@ struct PointerClonableTypeInterface
     // i64 size, so a narrower (or wider) hint has to be converted rather than
     // forwarded -- otherwise we build invalid IR that only fails later, in the
     // verifier.
-    Value size = *ptrSize;
+    Value size = extent->size;
     auto i64Ty = builder.getIntegerType(64);
     if (size.getType() != i64Ty) {
       auto srcTy = dyn_cast<IntegerType>(size.getType());
@@ -451,17 +460,26 @@ struct PointerClonableTypeInterface
         size = LLVM::TruncOp::create(builder, value.getLoc(), i64Ty, size);
     }
 
-    auto clone = llvm_ext::AllocOp::create(
-        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
-        size);
-    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, size,
-                           /*isVolatile*/ false);
+    // Tag the clone with the space it lives in and leave picking the allocator
+    // and the copy to lower-llvm-ext: emitting host malloc/memcpy here would
+    // silently produce a host read of device memory (a segfault at runtime)
+    // whenever the value being checkpointed is a device pointer.
+    Value clone = llvm_ext::AllocOp::create(
+        builder, value.getLoc(),
+        LLVM::LLVMPointerType::get(value.getContext()), size,
+        extent->memorySpace);
+    llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, value, size,
+                               extent->memorySpace);
 
     return clone;
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
-    llvm_ext::FreeOp::create(builder, value.getLoc(), value);
+    // No memory space: by the time a clone is freed it has usually been round
+    // tripped through a cache, so the space isn't recoverable from `value`
+    // here. lower-llvm-ext pairs the free back up with its alloc.
+    llvm_ext::FreeOp::create(builder, value.getLoc(), value,
+                             /*memory_space=*/nullptr);
   }
 };
 

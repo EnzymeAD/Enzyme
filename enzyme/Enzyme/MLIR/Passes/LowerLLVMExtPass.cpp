@@ -12,9 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/LLVMExt/LLVMExt.h"
+#include "Dialect/Ops.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 
@@ -36,8 +38,180 @@ namespace {
 using namespace mlir;
 using namespace enzyme;
 
+/// Device memory is only reachable through the accelerator runtime, so the
+/// host-side ops (`malloc`, `llvm.memcpy`, `free`) can't be used for it. The
+/// lowerings below route non-zero memory spaces through the GPU dialect
+/// instead: `gpu.alloc`/`gpu.dealloc` become the runtime's allocator calls, and
+/// `enzymexla.memcpy` becomes a device-to-device copy, both further down the
+/// pipeline (convert-polygeist-to-llvm).
+///
+/// Those ops work on memrefs rather than raw pointers, so getting in and out of
+/// them needs the enzymexla view casts. They live outside this repository, so
+/// they are built by name; the dialect is guaranteed to be loaded because
+/// nothing else in the pipeline can lower a non-zero-space allocation anyway.
+static constexpr StringLiteral kEnzymeXLADialect = "enzymexla";
+static constexpr StringLiteral kPointer2Memref = "enzymexla.pointer2memref";
+static constexpr StringLiteral kMemref2Pointer = "enzymexla.memref2pointer";
+static constexpr StringLiteral kEnzymeXLAMemcpy = "enzymexla.memcpy";
+
+/// Rank-1 byte buffer in `memorySpace`, the shape the enzymexla view casts and
+/// the GPU runtime lowerings expect for an untyped allocation.
+static MemRefType deviceBufferType(OpBuilder &builder, int64_t memorySpace) {
+  return MemRefType::get({ShapedType::kDynamic}, builder.getI8Type(),
+                         MemRefLayoutAttrInterface{},
+                         builder.getI64IntegerAttr(memorySpace));
+}
+
+static Operation *createByName(OpBuilder &builder, Location loc, StringRef name,
+                               ValueRange operands, TypeRange results) {
+  return builder.create(loc, StringAttr::get(builder.getContext(), name),
+                        operands, results);
+}
+
+static Value pointerToMemref(OpBuilder &builder, Location loc, Value ptr,
+                             int64_t memorySpace) {
+  return createByName(builder, loc, kPointer2Memref, ValueRange{ptr},
+                      TypeRange{deviceBufferType(builder, memorySpace)})
+      ->getResult(0);
+}
+
+static Value memrefToPointer(OpBuilder &builder, Location loc, Value memref) {
+  return createByName(
+             builder, loc, kMemref2Pointer, ValueRange{memref},
+             TypeRange{LLVM::LLVMPointerType::get(builder.getContext())})
+      ->getResult(0);
+}
+
+/// Emits the error on `op` and returns failure if the enzymexla dialect isn't
+/// available, since without the view casts a device allocation can't be
+/// expressed at all and silently leaving the op behind would fail much later
+/// with no indication of why.
+static LogicalResult checkEnzymeXLAAvailable(Operation *op) {
+  if (!op->getContext()->getLoadedDialect(kEnzymeXLADialect)) {
+    op->emitError() << "lowering device memory requires the '"
+                    << kEnzymeXLADialect << "' dialect to be loaded";
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult lowerAllocDevice(llvm_ext::AllocOp alloc,
+                                      int64_t memorySpace) {
+  if (failed(checkEnzymeXLAAvailable(alloc)))
+    return failure();
+
+  OpBuilder builder(alloc);
+  Location loc = alloc.getLoc();
+
+  Value size = arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
+                                          alloc.getSize());
+  Value buffer =
+      gpu::AllocOp::create(builder, loc, deviceBufferType(builder, memorySpace),
+                           /*asyncToken=*/(mlir::Type) nullptr,
+                           /*asyncDependencies=*/ValueRange{},
+                           /*dynamicSizes=*/ValueRange{size},
+                           /*symbolOperands=*/ValueRange{})
+          .getMemref();
+
+  alloc.getResult().replaceAllUsesWith(memrefToPointer(builder, loc, buffer));
+  alloc.erase();
+  return success();
+}
+
+/// Memory space of the allocation `ptr` refers to, or nullopt if it can't be
+/// established.
+///
+/// A free rarely sits next to its alloc: reverse-mode AD stashes a checkpoint
+/// buffer in a cache during the forward pass and frees whatever comes back out
+/// of that cache later, so `ptr` is typically an `enzyme.pop`. Pops and pushes
+/// name the same cache value, which is what makes the two sides pairable at
+/// all, so follow that edge back to the value that was pushed.
+static std::optional<int64_t> inferMemorySpace(Value ptr,
+                                               SmallPtrSetImpl<Value> &seen) {
+  if (!ptr || !seen.insert(ptr).second)
+    return std::nullopt;
+
+  if (auto alloc = ptr.getDefiningOp<llvm_ext::AllocOp>())
+    return alloc.getMemorySpace();
+
+  if (auto pop = ptr.getDefiningOp<enzyme::PopOp>()) {
+    // Every push into this cache has to agree, otherwise a single free would
+    // need to dispatch on which one ran.
+    std::optional<int64_t> space;
+    for (Operation *user : pop.getCache().getUsers()) {
+      auto push = dyn_cast<enzyme::PushOp>(user);
+      if (!push)
+        continue;
+      auto pushed = inferMemorySpace(push.getValue(), seen);
+      if (!pushed)
+        return std::nullopt;
+      if (space && *space != *pushed)
+        return std::nullopt;
+      space = pushed;
+    }
+    return space;
+  }
+
+  return std::nullopt;
+}
+
+static std::optional<int64_t> freeMemorySpace(llvm_ext::FreeOp free) {
+  if (auto space = free.getMemorySpace())
+    return *space;
+  SmallPtrSet<Value, 8> seen;
+  return inferMemorySpace(free.getPtr(), seen);
+}
+
+static LogicalResult lowerFreeDevice(llvm_ext::FreeOp free,
+                                     int64_t memorySpace) {
+  if (failed(checkEnzymeXLAAvailable(free)))
+    return failure();
+
+  OpBuilder builder(free);
+  Location loc = free.getLoc();
+
+  Value buffer = pointerToMemref(builder, loc, free.getPtr(), memorySpace);
+  gpu::DeallocOp::create(builder, loc, /*asyncToken=*/(mlir::Type) nullptr,
+                         /*asyncDependencies=*/ValueRange{}, buffer);
+  free.erase();
+  return success();
+}
+
+static LogicalResult lowerMemcpyDevice(llvm_ext::MemcpyOp memcpy,
+                                       int64_t memorySpace) {
+  if (failed(checkEnzymeXLAAvailable(memcpy)))
+    return failure();
+
+  OpBuilder builder(memcpy);
+  Location loc = memcpy.getLoc();
+
+  // enzymexla.memcpy takes the byte count explicitly, so the (dynamic) extents
+  // of the two views don't have to be recoverable from the IR.
+  Value size = arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
+                                          memcpy.getSize());
+  Value dst = pointerToMemref(builder, loc, memcpy.getDst(), memorySpace);
+  Value src = pointerToMemref(builder, loc, memcpy.getSrc(), memorySpace);
+  createByName(builder, loc, kEnzymeXLAMemcpy, ValueRange{dst, src, size},
+               TypeRange{});
+  memcpy.erase();
+  return success();
+}
+
+void lowerMemcpy(llvm_ext::MemcpyOp memcpy) {
+  OpBuilder builder(memcpy);
+  LLVM::MemcpyOp::create(builder, memcpy.getLoc(), memcpy.getDst(),
+                         memcpy.getSrc(), memcpy.getSize(),
+                         /*isVolatile=*/false);
+  memcpy.erase();
+}
+
 LogicalResult tryLoweringToAlloca(llvm_ext::AllocOp alloc,
                                   uint64_t staticThreshold) {
+  // An alloca is host stack memory; promoting a device allocation to one would
+  // hand back a pointer the device can't touch.
+  if (alloc.getMemorySpace() != 0)
+    return failure();
+
   llvm::APInt size;
   if (!matchPattern(alloc.getSize(), m_ConstantInt(&size)))
     return failure();
@@ -80,9 +254,12 @@ LogicalResult tryLoweringToAlloca(llvm_ext::AllocOp alloc,
   return success();
 }
 
-void lowerAlloc(llvm_ext::AllocOp alloc, uint64_t staticThreshold) {
+LogicalResult lowerAlloc(llvm_ext::AllocOp alloc, uint64_t staticThreshold) {
   if (tryLoweringToAlloca(alloc, staticThreshold).succeeded())
-    return;
+    return success();
+
+  if (int64_t space = alloc.getMemorySpace(); space != 0)
+    return lowerAllocDevice(alloc, space);
 
   SymbolTable symtable(SymbolTable::getNearestSymbolTable(alloc));
 
@@ -104,9 +281,13 @@ void lowerAlloc(llvm_ext::AllocOp alloc, uint64_t staticThreshold) {
                                          alloc->getOperands());
   alloc.getResult().replaceAllUsesWith(mallocCall.getResult());
   alloc.erase();
+  return success();
 }
 
-void lowerFree(llvm_ext::FreeOp free) {
+LogicalResult lowerFree(llvm_ext::FreeOp free, int64_t space) {
+  if (space != 0)
+    return lowerFreeDevice(free, space);
+
   SymbolTable symtable(SymbolTable::getNearestSymbolTable(free));
 
   auto freeFn = symtable.lookup<LLVM::LLVMFuncOp>("free");
@@ -126,6 +307,7 @@ void lowerFree(llvm_ext::FreeOp free) {
   LLVM::CallOp::create(builder, free.getLoc(), freeFn, free->getOperands());
 
   free.erase();
+  return success();
 }
 
 /// `llvm_ext.ptr_size_hint` is the only record of how large a raw pointer's
@@ -192,17 +374,51 @@ struct LowerLLVMExtPass
       psh.erase();
     });
 
+    // Resolve every free's memory space up front: an unannotated free finds it
+    // by tracing back to the llvm_ext.alloc it pairs with, which lowering the
+    // allocs below replaces.
+    DenseMap<Operation *, int64_t> freeSpaces;
+    bool ok = true;
+    op->walk([&](llvm_ext::FreeOp free) {
+      if (auto space = freeMemorySpace(free)) {
+        freeSpaces[free] = *space;
+        return;
+      }
+      ok = false;
+      free.emitError() << "cannot tell which memory space this pointer was "
+                          "allocated in, so it cannot be freed; set "
+                          "memory_space on the op to say explicitly";
+    });
+    if (!ok)
+      return signalPassFailure();
+
     SmallVector<llvm_ext::AllocOp> allocs;
     op->walk([&](llvm_ext::AllocOp alloc) { allocs.push_back(alloc); });
 
     for (auto alloc : allocs)
-      lowerAlloc(alloc, lowerToAllocaThreshold);
+      if (failed(lowerAlloc(alloc, lowerToAllocaThreshold)))
+        return signalPassFailure();
+
+    // After the allocs, so a memcpy whose alloca-promoted destination went away
+    // still sees a valid pointer.
+    SmallVector<llvm_ext::MemcpyOp> memcpys;
+    op->walk([&](llvm_ext::MemcpyOp memcpy) { memcpys.push_back(memcpy); });
+
+    for (auto memcpy : memcpys) {
+      if (int64_t space = memcpy.getMemorySpace(); space != 0) {
+        if (failed(lowerMemcpyDevice(memcpy, space)))
+          return signalPassFailure();
+      } else {
+        lowerMemcpy(memcpy);
+      }
+    }
 
     SmallVector<llvm_ext::FreeOp> frees;
     op->walk([&](llvm_ext::FreeOp free) { frees.push_back(free); });
 
     for (auto free : frees)
-      lowerFree(free);
+      if (failed(lowerFree(free, freeSpaces.lookup(free))))
+        return signalPassFailure();
   }
 };
 

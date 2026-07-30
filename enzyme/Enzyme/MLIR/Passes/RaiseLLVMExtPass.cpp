@@ -73,9 +73,33 @@ struct RaiseLLVMExtPass
               return;
             }
 
+            auto args = call.getArgOperands();
+            if (args.size() < 2 || args.size() > 3) {
+              failed = true;
+              call.emitError() << "__enzyme_ptr_size_hint expects (ptr, size) "
+                                  "or (ptr, size, addrspace), got "
+                               << args.size() << " arguments";
+              return;
+            }
+
+            // The address space selects which allocator/copy the clone of this
+            // pointer has to use, so it has to be known at compile time rather
+            // than being an arbitrary runtime value.
+            int64_t memorySpace = 0;
+            if (args.size() == 3) {
+              APInt space;
+              if (!matchPattern(args[2], m_ConstantInt(&space))) {
+                failed = true;
+                call.emitError() << "address space argument of "
+                                    "__enzyme_ptr_size_hint is not a constant";
+                return;
+              }
+              memorySpace = space.getSExtValue();
+            }
+
             OpBuilder builder(call);
-            llvm_ext::PtrSizeHintOp::create(
-                builder, call.getLoc(), call.getOperand(0), call.getOperand(1));
+            llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), args[0],
+                                            args[1], memorySpace);
 
             call.erase();
           }
