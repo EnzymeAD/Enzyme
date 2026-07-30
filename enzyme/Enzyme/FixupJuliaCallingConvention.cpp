@@ -1589,7 +1589,11 @@ void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
 }
 
 class FixupJuliaCallingConventionNewPM
+#if LLVM_VERSION_MAJOR >= 23
+    : public OptionalPassInfoMixin<FixupJuliaCallingConventionNewPM> {
+#else
     : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
+#endif
   bool sret_jlvalue;
 
 public:
@@ -1613,7 +1617,11 @@ public:
 };
 
 class FixupBatchedJuliaCallingConventionNewPM
+#if LLVM_VERSION_MAJOR >= 23
+    : public OptionalPassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
+#else
     : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
+#endif
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
