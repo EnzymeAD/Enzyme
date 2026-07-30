@@ -174,7 +174,11 @@ LogicalResult MEnzymeLogic::differentiate(
     llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
   gutils->registerCacheCreatorHook(cacheCreator);
+#if LLVM_VERSION_MAJOR >= 23
+  auto scope = llvm::scope_exit(
+#else
   auto scope = llvm::make_scope_exit(
+#endif
       [&]() { gutils->deregisterCacheCreatorHook(cacheCreator); });
 
   gutils->createReverseModeBlocks(oldRegion, newRegion);
