@@ -331,7 +331,7 @@ void RecursivelyReplaceAddressSpace(
       Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
       if (CI->getContext().supportsTypedPointers()) {
-        resTy = PointerType::get(
+        resTy = getPointerType(
             CI->getType()->getPointerElementType(),
             cast<PointerType>(rep->getType())->getAddressSpace());
       } else {
@@ -360,7 +360,7 @@ void RecursivelyReplaceAddressSpace(
         Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
         if (GEP->getContext().supportsTypedPointers()) {
-          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+          resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
         } else {
           resTy = PointerType::get(rep->getContext(), 11);
         }
@@ -471,7 +471,7 @@ void RecursivelyReplaceAddressSpace(
         Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
         if (LI->getContext().supportsTypedPointers()) {
-          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+          resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
         } else {
           resTy = PointerType::get(rep->getContext(), 11);
         }
@@ -491,8 +491,7 @@ void RecursivelyReplaceAddressSpace(
           Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
           if (SI->getContext().supportsTypedPointers()) {
-            resTy =
-                PointerType::get(rep->getType()->getPointerElementType(), 11);
+            resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
           } else {
             resTy = PointerType::get(rep->getContext(), 11);
           }
@@ -510,7 +509,7 @@ void RecursivelyReplaceAddressSpace(
           auto subvals = getJuliaObjects(SI->getValueOperand(), B);
           if (subvals.size()) {
             auto JLT =
-                PointerType::get(StructType::get(SI->getContext(), {}), 10);
+                getPointerType(StructType::get(SI->getContext(), {}), 10);
             auto FT = FunctionType::get(Type::getVoidTy(rep->getContext()),
                                         {JLT}, true);
             auto wb = B.GetInsertBlock()
@@ -1124,9 +1123,9 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
             T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
       AIV = B.CreateBitCast(
-          AIV, PointerType::get(
-                   T->getType()->getPointerElementType(),
-                   cast<PointerType>(AI->getType())->getAddressSpace()));
+          AIV,
+          getPointerType(T->getType()->getPointerElementType(),
+                         cast<PointerType>(AI->getType())->getAddressSpace()));
     }
 #endif
     for (auto U : T->users()) {
@@ -1405,7 +1404,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
         if (PT->getPointerElementType() != res->getType())
           storePointer = B.CreateBitCast(
               storePointer,
-              PointerType::get(res->getType(), PT->getAddressSpace()));
+              getPointerType(res->getType(), PT->getAddressSpace()));
       }
 #endif
     } else {

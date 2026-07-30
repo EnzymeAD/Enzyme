@@ -3185,7 +3185,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                     llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 17
                     if (call.getContext().supportsTypedPointers()) {
-                      PT = PointerType::get(
+                      PT = getPointerType(
                           anti->getType()->getPointerElementType(), AS);
 #endif
 #if LLVM_VERSION_MAJOR < 17
@@ -3427,7 +3427,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 17
         if (call.getContext().supportsTypedPointers()) {
-          PT = PointerType::get(call.getType()->getPointerElementType(), AS);
+          PT = getPointerType(call.getType()->getPointerElementType(), AS);
 #endif
 #if LLVM_VERSION_MAJOR < 17
         } else {

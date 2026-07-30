@@ -541,8 +541,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     gVal = CreateAllocation(B, RT, elSize, "", nullptr, &SubZero);
 
     Type *bTy =
-        PointerType::get(Type::getInt8Ty(gVal->getContext()),
-                         cast<PointerType>(gVal->getType())->getAddressSpace());
+        getPointerType(Type::getInt8Ty(gVal->getContext()),
+                       cast<PointerType>(gVal->getType())->getAddressSpace());
     gVal = B.CreatePointerCast(gVal, bTy);
     auto pVal = B.CreatePointerCast(ptr, gVal->getType());
 
@@ -751,8 +751,8 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
 #endif
     if (needsCast)
       tozero = Builder.CreatePointerCast(
-          tozero, PointerType::get(Type::getInt8Ty(PT->getContext()),
-                                   PT->getAddressSpace()));
+          tozero, getPointerType(Type::getInt8Ty(PT->getContext()),
+                                 PT->getAddressSpace()));
     // Use AllocCount (the possibly-cast size operand feeding CreateMalloc),
     // not the pre-cast Count. When we did cast (wasm32 case), Count is
     // wider than IntPtrTy and mixing it with Align (IntPtrTy) here would
@@ -1078,8 +1078,8 @@ Function *getOrInsertDifferentialFloatMemcpy(
     name += "_runtime_activity";
   if (atomic)
     name += "_atomic";
-  std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
-                                PointerType::get(elementType, srcaddr),
+  std::vector<Type *> argTys = {getPointerType(elementType, dstaddr),
+                                getPointerType(elementType, srcaddr),
                                 IntegerType::get(M.getContext(), bitwidth)};
   if (runtimeActivity) {
     argTys.push_back(Type::getInt1Ty(M.getContext())); // dst_inactive
@@ -1144,7 +1144,7 @@ Function *getOrInsertDifferentialFloatMemcpy(
       B.SetInsertPoint(memsetDst);
       auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
       Value *dst_i8 = B.CreatePointerCast(
-          dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
+          dst, getPointerType(Type::getInt8Ty(M.getContext()), dstaddr));
       B.CreateMemSet(dst_i8, B.getInt8(0),
                      B.CreateMul(num, ConstantInt::get(num->getType(), elSize),
                                  "", /*HasNUW*/ true, /*HasNSW*/ true),
@@ -1265,8 +1265,8 @@ Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
     if (fpType != ptr->getType()->getPointerElementType()) {
       ptr = B.CreatePointerCast(
           ptr,
-          PointerType::get(
-              fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
+          getPointerType(fpType,
+                         cast<PointerType>(ptr->getType())->getAddressSpace()));
     }
 #if LLVM_VERSION_MAJOR >= 15
   }
@@ -1548,7 +1548,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
     if (byRef) {
       auto VP = B1.CreatePointerCast(
           blasalpha,
-          PointerType::get(
+          getPointerType(
               fpTy,
               cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
@@ -1559,15 +1559,15 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
     IRBuilder<> B2(init);
     Value *xfloat = B2.CreatePointerCast(
         blasx,
-        PointerType::get(
-            fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
+        getPointerType(fpTy,
+                       cast<PointerType>(blasx->getType())->getAddressSpace()));
     Value *dyfloat = B2.CreatePointerCast(
         blasdy,
-        PointerType::get(
+        getPointerType(
             fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
     Value *dAPfloat = B2.CreatePointerCast(
         blasdAP,
-        PointerType::get(
+        getPointerType(
             fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
     B2.CreateCondBr(is_l, lower_code, uper_code);
 
@@ -1727,10 +1727,10 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B2.setFastMathFlags(getFast());
     Value *lda = load_if_ref(B2, IT, blaslda, byRef);
     Value *Afloat = B2.CreatePointerCast(
-        matA, PointerType::get(
+        matA, getPointerType(
                   fpTy, cast<PointerType>(matA->getType())->getAddressSpace()));
     Value *Bfloat = B2.CreatePointerCast(
-        matB, PointerType::get(
+        matB, getPointerType(
                   fpTy, cast<PointerType>(matB->getType())->getAddressSpace()));
     B2.CreateCondBr(B2.CreateICmpEQ(m, lda), fastPath, body);
 
@@ -3851,12 +3851,12 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(
-        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+        arg, getPointerType(ty, PT->getAddressSpace()), "pcld." + name);
 #else
-  auto PT2 = PointerType::get(ty, PT->getAddressSpace());
+  auto PT2 = getPointerType(ty, PT->getAddressSpace());
   if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
     arg = BuilderZ.CreatePointerCast(
-        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+        arg, getPointerType(ty, PT->getAddressSpace()), "pcld." + name);
 #endif
 #endif
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
@@ -4182,8 +4182,8 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
     V = B.CreateIntToPtr(V, getUnqual(intType));
   else
     V = B.CreatePointerCast(
-        V, PointerType::get(
-               intType, cast<PointerType>(V->getType())->getAddressSpace()));
+        V, getPointerType(intType,
+                          cast<PointerType>(V->getType())->getAddressSpace()));
   return B.CreateLoad(intType, V);
 }
 
@@ -4943,8 +4943,8 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       case SRetRootMovement::SRetValueToRootPointer: {
         Value *outloc = GradientUtils::extractMeta(B, sret, path);
         outloc = B.CreatePointerCast(
-            outloc, PointerType::get(StructType::get(outloc->getContext(), {}),
-                                     Tracked));
+            outloc,
+            getPointerType(StructType::get(outloc->getContext(), {}), Tracked));
         B.CreateStore(outloc, loc);
         break;
       }
@@ -5010,7 +5010,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
     assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
     if (PT->getAddressSpace() == 10 && extracted.size()) {
       extracted.insert(extracted.begin(), obj);
-      auto JLT = PointerType::get(StructType::get(PT->getContext(), {}), 10);
+      auto JLT = getPointerType(StructType::get(PT->getContext(), {}), 10);
       auto FT = FunctionType::get(JLT, {}, true);
       auto wb =
           B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
