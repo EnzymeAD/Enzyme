@@ -3820,7 +3820,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (aug.tapeType) {
         assert(tape);
         auto tapep = bb.CreatePointerCast(
-            tape, PointerType::get(
+            tape, getPointerType(
                       aug.tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
         auto truetape = bb.CreateLoad(aug.tapeType, tapep, "tapeld");
@@ -4356,9 +4356,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (!augmenteddata->tapeType->isEmptyTy()) {
         auto tapep = BuilderZ.CreatePointerCast(
             additionalValue,
-            PointerType::get(augmenteddata->tapeType,
-                             cast<PointerType>(additionalValue->getType())
-                                 ->getAddressSpace()));
+            getPointerType(augmenteddata->tapeType,
+                           cast<PointerType>(additionalValue->getType())
+                               ->getAddressSpace()));
         LoadInst *truetape =
             BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
         truetape->setMetadata("enzyme_mustcache",

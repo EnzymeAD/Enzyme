@@ -137,8 +137,8 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
 #if LLVM_VERSION_MAJOR < 17
         if (CI->getContext().supportsTypedPointers()) {
           res = Builder.CreateAddrSpaceCast(
-              res, PointerType::get(ptr->getPointerElementType(),
-                                    PT->getAddressSpace()));
+              res, getPointerType(ptr->getPointerElementType(),
+                                  PT->getAddressSpace()));
         } else {
           res = Builder.CreateAddrSpaceCast(res, PT);
         }
@@ -614,7 +614,7 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         PointerType *pty = cast<PointerType>(sretPt->getType());
         primal = Builder.CreatePointerCast(
-            sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+            sretPt, getPointerType(Ty, pty->getAddressSpace()));
       } else {
         AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
                                              nullptr, DL.getPrefTypeAlign(Ty));
@@ -631,14 +631,14 @@ public:
           Value *sretPt = CI->getArgOperand(0);
           PointerType *pty = cast<PointerType>(sretPt->getType());
           auto shadowPtr = Builder.CreatePointerCast(
-              sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+              sretPt, getPointerType(Ty, pty->getAddressSpace()));
           if (width == 1) {
             if (primalReturn)
               shadowPtr = Builder.CreateConstGEP1_64(Ty, shadowPtr, 1);
             shadow = shadowPtr;
           } else {
             Value *acc = UndefValue::get(ArrayType::get(
-                PointerType::get(Ty, pty->getAddressSpace()), width));
+                getPointerType(Ty, pty->getAddressSpace()), width));
             for (size_t i = 0; i < width; ++i) {
               Value *elem =
                   Builder.CreateConstGEP1_64(Ty, shadowPtr, i + primalReturn);
@@ -903,7 +903,7 @@ public:
         }
         res = Builder.CreateBitCast(
             res,
-            PointerType::get(
+            getPointerType(
                 subTy, cast<PointerType>(res->getType())->getAddressSpace()));
         res = Builder.CreateLoad(subTy, res);
         byRefSize = 0;
@@ -977,8 +977,8 @@ public:
 #if LLVM_VERSION_MAJOR < 17
               if (CI->getContext().supportsTypedPointers()) {
                 res = Builder.CreateAddrSpaceCast(
-                    res, PointerType::get(ptr->getPointerElementType(),
-                                          PT->getAddressSpace()));
+                    res, getPointerType(ptr->getPointerElementType(),
+                                        PT->getAddressSpace()));
               } else {
                 res = Builder.CreateAddrSpaceCast(res, PT);
               }
@@ -1051,8 +1051,8 @@ public:
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
-                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
-                                            elementPtrTy->getAddressSpace()));
+                  element, getPointerType(Type::getInt8Ty(CI->getContext()),
+                                          elementPtrTy->getAddressSpace()));
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
@@ -1371,8 +1371,8 @@ public:
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
-                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
-                                            elementPtrTy->getAddressSpace()));
+                  element, getPointerType(Type::getInt8Ty(CI->getContext()),
+                                          elementPtrTy->getAddressSpace()));
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
@@ -1678,7 +1678,7 @@ public:
       auto &DL = fn->getParent()->getDataLayout();
       if (tapeIsPointer) {
         tape = Builder.CreateBitCast(
-            tape, PointerType::get(
+            tape, getPointerType(
                       tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
         tape = Builder.CreateLoad(tapeType, tape);
@@ -1751,12 +1751,10 @@ public:
                              ? diffret
                              : Builder.CreateExtractValue(diffret, idxs);
         Builder.CreateStore(
-            tapeRes,
-            Builder.CreateBitCast(
-                tape,
-                PointerType::get(
-                    tapeRes->getType(),
-                    cast<PointerType>(tape->getType())->getAddressSpace())));
+            tapeRes, Builder.CreateBitCast(
+                         tape, getPointerType(tapeRes->getType(),
+                                              cast<PointerType>(tape->getType())
+                                                  ->getAddressSpace())));
         if (tapeIdx != -1) {
           auto ST = cast<StructType>(diffret->getType());
           SmallVector<Type *, 2> tys(ST->elements().begin(),

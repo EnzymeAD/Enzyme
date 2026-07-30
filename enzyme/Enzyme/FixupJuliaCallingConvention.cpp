@@ -82,10 +82,10 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         for (auto v : path)
           IdxList.push_back(
               ConstantInt::get(Type::getInt32Ty(PT->getContext()), v));
-        auto nullp = ConstantPointerNull::get(PointerType::getUnqual(SRetType));
+        auto nullp = ConstantPointerNull::get(getUnqual(SRetType));
         auto gep = ConstantExpr::getGetElementPtr(SRetType, nullp, IdxList);
 
-        if (gep == ConstantPointerNull::get(PointerType::getUnqual(PT))) {
+        if (gep == ConstantPointerNull::get(getUnqual(PT))) {
           sret_offsets.push_back(0);
           continue;
         }
@@ -713,7 +713,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   }
 
   auto T_jlvalue = StructType::get(F->getContext(), {});
-  auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
+  auto T_prjlvalue = getPointerType(T_jlvalue, AddressSpace::Tracked);
 
   size_t numRooting = RT->isVoidTy() ? 0 : CountTrackedPointers(RT).count;
 
