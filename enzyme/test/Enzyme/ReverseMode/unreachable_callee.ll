@@ -13,11 +13,11 @@ define double @caller(double %x) {
 }
 
 define double @caller_vjp(double %x) {
-  %dx = call double @__enzyme_autodiff(ptr @caller, double %x)
+  %dx = call double @__enzyme_autodiff(double (double)* @caller, double %x)
   ret double %dx
 }
 
-declare double @__enzyme_autodiff(ptr, double)
+declare double @__enzyme_autodiff(double (double)*, double)
 declare double @llvm.sin.f64(double)
 
 ; CHECK: define internal { double } @diffecaller(
