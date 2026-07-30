@@ -498,9 +498,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     if (operandPositionsToShadow.contains(operand.getOperandNumber())) {
       Value shadowValue = nullptr;
-      if (!gutils->isConstantValue(operand.get()))
+      if (!gutils->isConstantValue(operand.get())) {
         shadowValue = gutils->invertPointerM(operand.get(), builder);
-      else if (regionBranchOp) {
+      } else if (regionBranchOp) {
         auto Ty = operand.get().getType();
         auto shadowType =
             cast<AutoDiffTypeInterface>(Ty).getShadowType(gutils->width);
@@ -545,9 +545,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
           }
         }
       } else {
-        // TODO: a const operand, but it also has to be shadowed (but the op
-        // doesn't implement the RegionBranchOpInterface). Unimplemented for
-        // now.
+        // Preserve older behaviour non-RegionBranchOpInterface operations (e.g
+        // `stablehlo.reduce`)
+        shadowValue = gutils->invertPointerM(operand.get(), builder);
       }
       newOperands.push_back(shadowValue);
     }
