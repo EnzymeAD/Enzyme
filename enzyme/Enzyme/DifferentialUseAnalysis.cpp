@@ -1343,6 +1343,11 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       return;
 
     while (Pstart) {
+      // Constants and arguments are always available in the reverse pass, and
+      // thus need not be added to the recompute graph (which only contains
+      // instructions).
+      if (!isa<Instruction>(Pstart))
+        break;
       Intermediates.insert(Pstart);
       todo.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {
