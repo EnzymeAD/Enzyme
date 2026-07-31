@@ -4507,7 +4507,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       if (key.mode != DerivativeMode::ReverseModeCombined) {
-        if (newBB->getTerminator())
+        if (hasTerminator(newBB))
           gutils->erase(newBB->getTerminator());
         IRBuilder<> builder(newBB);
         builder.CreateUnreachable();
