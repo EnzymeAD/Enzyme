@@ -13,8 +13,12 @@
 #include "Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include <cassert>
 #include <deque>
+
+// loop-invariant cache requires a copy, which is implemented using an scf.for
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PointerIntPair.h"
@@ -361,9 +365,37 @@ static inline bool isLoadMovable(Operation *op) {
   return op->hasAttr("enzyme.readonly");
 }
 
+static inline bool isMovable(Operation *op);
+static inline bool isRegionBranchMovable(RegionBranchOpInterface regionBranch) {
+  // We can move region ops that only contain pure operations. As a heuristic,
+  // we only consider non-looping ops.
+  if (regionBranch.hasLoop())
+    return false;
+  for (auto &region : regionBranch->getRegions()) {
+    // Regions with multiple blocks potentially contain loops
+    if (!region.hasOneBlock())
+      return false;
+
+    for (auto &bodyOp : region.front()) {
+      if (auto bodyRegionBranch = dyn_cast<RegionBranchOpInterface>(&bodyOp)) {
+        if (!isRegionBranchMovable(bodyRegionBranch))
+          return false;
+        // Terminators are considered not movable, but do not impact our ability
+        // to move their enclosing region op.
+      } else if (&bodyOp != region.front().getTerminator() &&
+                 !isMovable(&bodyOp)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(Operation *op) {
+  if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(op))
+    return isRegionBranchMovable(regionBranch);
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
          (mlir::isPure(op) || isLoadMovable(op));
 }
@@ -703,6 +735,7 @@ static void pushCachesDownstream(const Graph &Orig,
     todo.push_back(next);
   }
 }
+
 } // namespace
 
 // Given the full forward/backward compute graph, the push/pop can be seen
@@ -815,6 +848,15 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       for (Value operand : owner->getOperands()) {
         G[Node(operand)].insert(Node(owner));
         worklist.push_back(operand);
+      }
+    }
+    if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner)) {
+      SetVector<Value> valuesDefinedAbove;
+      mlir::getUsedValuesDefinedAbove(regionBranch->getRegions(),
+                                      valuesDefinedAbove);
+      for (Value val : valuesDefinedAbove) {
+        G[Node(val)].insert(Node(regionBranch));
+        worklist.push_back(val);
       }
     }
   }
@@ -1187,8 +1229,172 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
           ->dump());
 
-  // Set new caches
   caches0 = std::move(newCacheInfos);
+}
+
+static LogicalResult loopInvariantCacheImpl(CacheInfo info,
+                                            LoopLikeOpInterface fwdLoop,
+                                            LoopLikeOpInterface revLoop,
+                                            IRMapping &mapping,
+                                            int64_t threshold) {
+  Operation *definingOp = info.pushedValue().getDefiningOp();
+  if (!definingOp)
+    return failure();
+  auto loadOp = dyn_cast<memref::LoadOp>(definingOp);
+  if (!loadOp)
+    return failure();
+  auto alloc = loadOp.getMemRef();
+  auto allocaOp = dyn_cast_if_present<memref::AllocaOp>(alloc.getDefiningOp());
+  if (!allocaOp)
+    return failure();
+  // This transformation will store the entire allocation, so only store when
+  // it has a known "small" size.
+  if (!(allocaOp.getType().hasStaticShape() &&
+        allocaOp.getType().getNumElements() <= threshold)) {
+    return failure();
+  }
+
+  // Check if the allocation is written to inside the loop body
+  // TODO: need alias analysis for full correctness
+  auto walkResult = fwdLoop->walk([&alloc](Operation *op) {
+    if (hasEffect<MemoryEffects::Write>(op, alloc) || hasUnknownEffects(op))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  if (walkResult.wasInterrupted())
+    return failure();
+
+  ImplicitLocOpBuilder builder(alloc.getLoc(), info.initOp);
+  // Find the values that are necessary to re-compute the indices
+  SmallVector<Value> pushedValues;
+  SmallVector<Operation *> toCopy;
+  std::queue<Value> worklist;
+  DenseSet<Value> visited;
+  for (Value idx : loadOp.getIndices()) {
+    worklist.push(idx);
+    visited.insert(idx);
+  }
+  while (!worklist.empty()) {
+    Value curr = worklist.front();
+    worklist.pop();
+
+    if (mapping.contains(curr))
+      continue;
+    DominanceInfo dom;
+    // Check if we can just re-use the same value in forward and reverse
+    if (dom.dominates(curr, revLoop))
+      continue;
+
+    if (Operation *definingOp = curr.getDefiningOp()) {
+      // Push values that are defined outside the fwd loop while copying ops
+      // defined inside
+      if (fwdLoop->isProperAncestor(definingOp)) {
+        toCopy.push_back(definingOp);
+        for (Value operand : definingOp->getOperands()) {
+          if (!visited.contains(operand)) {
+            visited.insert(operand);
+            worklist.push(operand);
+          }
+        }
+      } else {
+        pushedValues.push_back(curr);
+      }
+    } else {
+      return failure();
+    }
+  }
+
+  // Make new caches for the values needed to store the indices
+  builder.setInsertionPoint(info.initOp);
+  SmallVector<Value> newInits =
+      llvm::map_to_vector(pushedValues, [&](Value val) -> Value {
+        return enzyme::InitOp::create(
+            builder, CacheType::get(val.getContext(), val.getType()));
+      });
+  builder.setInsertionPoint(fwdLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    enzyme::PushOp::create(builder, cache, val);
+  }
+
+  builder.setInsertionPoint(revLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    Value popped = enzyme::PopOp::create(builder, val.getType(), cache);
+    mapping.map(val, popped);
+  }
+
+  // Clone the ops necessary to re-compute the load indices
+  builder.setInsertionPoint(info.popOp);
+  for (Operation *op : llvm::reverse(toCopy)) {
+    builder.clone(*op, mapping);
+  }
+
+  Value cachedMemRef;
+  if (mapping.contains(alloc)) {
+    cachedMemRef = mapping.lookup(alloc);
+  } else {
+    builder.setInsertionPoint(info.initOp);
+    Value newCache = enzyme::InitOp::create(
+        builder, enzyme::CacheType::get(builder.getContext(), alloc.getType()));
+
+    builder.setInsertionPoint(fwdLoop);
+    Value copyAlloc = memref::AllocOp::create(
+        builder, allocaOp.getType(), allocaOp.getDynamicSizes(),
+        allocaOp.getSymbolOperands(), allocaOp.getAlignmentAttr());
+    // Copy over the contents in a loop nest so any resulting subviews may be
+    // folded
+    Value zero = arith::ConstantIndexOp::create(builder, 0);
+    Value one = arith::ConstantIndexOp::create(builder, 1);
+
+    int64_t rank = loadOp.getMemRefType().getRank();
+    SmallVector<Value> lbs(rank, zero);
+    SmallVector<Value> steps(rank, one);
+    SmallVector<Value> ubs(rank);
+    for (int64_t i = 0; i < rank; i++)
+      ubs[i] = memref::DimOp::create(builder, alloc, i);
+
+    scf::buildLoopNest(
+        builder, builder.getLoc(), lbs, ubs, steps,
+        [&](OpBuilder &bodyBuilder, Location loc, ValueRange ivs) {
+          Value loaded = memref::LoadOp::create(bodyBuilder, loc, alloc, ivs);
+          memref::StoreOp::create(bodyBuilder, loc, loaded, copyAlloc, ivs);
+        });
+
+    enzyme::PushOp::create(builder, newCache, copyAlloc);
+
+    builder.setInsertionPoint(revLoop);
+    cachedMemRef = enzyme::PopOp::create(builder, alloc.getType(), newCache);
+    mapping.map(alloc, cachedMemRef);
+  }
+
+  builder.setInsertionPoint(info.popOp);
+  SmallVector<Value> revIndices =
+      llvm::map_to_vector(loadOp.getIndices(), [&](Value idx) -> Value {
+        return mapping.lookupOrDefault(idx);
+      });
+
+  Value newLoad = memref::LoadOp::create(builder, cachedMemRef, revIndices);
+  info.popOp.replaceAllUsesWith(newLoad);
+  return success();
+}
+
+void mlir::enzyme::loopInvariantCache(SmallVectorImpl<CacheInfo> &caches,
+                                      LoopLikeOpInterface fwdLoop,
+                                      LoopLikeOpInterface revLoop,
+                                      const IRMapping &fwdrevmap,
+                                      int64_t threshold) {
+  SmallVector<CacheInfo> newCaches;
+  IRMapping mapping = fwdrevmap;
+  for (auto info : caches) {
+    if (succeeded(loopInvariantCacheImpl(info, fwdLoop, revLoop, mapping,
+                                         threshold))) {
+      info.pushOp->erase();
+      info.popOp->erase();
+      info.initOp->erase();
+    } else {
+      newCaches.push_back(info);
+    }
+  }
+  caches = std::move(newCaches);
 }
 
 mlir::enzyme::CacheInfo

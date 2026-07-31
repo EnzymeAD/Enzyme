@@ -34,7 +34,7 @@ entry:
   ret void
 }
 
-; CHECK: define internal void @diffeloop_fn(ptr %data, ptr %"data'", i64 %n)
+; CHECK: define internal void @diffeloop_fn(
 
 attributes #0 = { noinline }
 

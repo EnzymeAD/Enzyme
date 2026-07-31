@@ -5072,7 +5072,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         if (start != 0) {
           ptr = BuilderM.CreatePointerCast(
               ptr,
-              PointerType::get(
+              getPointerType(
                   i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
           auto off =
               ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
@@ -5080,7 +5080,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
           valptr = BuilderM.CreatePointerCast(
               valptr,
-              PointerType::get(
+              getPointerType(
                   i8, cast<PointerType>(valptr->getType())->getAddressSpace()));
           valptr = BuilderM.CreateInBoundsGEP(i8, valptr, off);
         }
@@ -5099,11 +5099,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
           ty = ArrayType::get(i8, size);
 
         ptr = BuilderM.CreatePointerCast(
-            ptr, PointerType::get(
+            ptr, getPointerType(
                      ty, cast<PointerType>(ptr->getType())->getAddressSpace()));
         valptr = BuilderM.CreatePointerCast(
             valptr,
-            PointerType::get(
+            getPointerType(
                 ty, cast<PointerType>(valptr->getType())->getAddressSpace()));
         newval = BuilderM.CreateLoad(ty, valptr);
       }
@@ -5114,7 +5114,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
       if (invertedBarrier) {
         auto T_jlvalue = StructType::get(ptr->getContext(), {});
-        auto T_prjlvalue = PointerType::get(T_jlvalue, 10);
+        auto T_prjlvalue = getPointerType(T_jlvalue, 10);
 
         if (invertedBarrier->getType() != T_prjlvalue) {
           invertedBarrier =
@@ -9222,8 +9222,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           }
         }
         if (mode != DerivativeMode::ForwardModeSplit)
-          dsto = Builder2.CreatePointerCast(
-              dsto, PointerType::get(secretty, dstaddr));
+          dsto = Builder2.CreatePointerCast(dsto,
+                                            getPointerType(secretty, dstaddr));
         if (srco->getType()->isIntegerTy())
           srco =
               Builder2.CreateIntToPtr(srco, getInt8PtrTy(srco->getContext()));
@@ -9234,8 +9234,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               Type::getInt8Ty(srco->getContext()), srco, offset);
         }
         if (mode != DerivativeMode::ForwardModeSplit)
-          srco = Builder2.CreatePointerCast(
-              srco, PointerType::get(secretty, srcaddr));
+          srco = Builder2.CreatePointerCast(srco,
+                                            getPointerType(secretty, srcaddr));
 
         if (mode == DerivativeMode::ForwardModeSplit) {
           MaybeAlign dalign;
@@ -9253,9 +9253,9 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         } else {
           SmallVector<Value *, 5> args = {
               Builder2.CreatePointerCast(dsto,
-                                         PointerType::get(secretty, dstaddr)),
+                                         getPointerType(secretty, dstaddr)),
               Builder2.CreatePointerCast(srco,
-                                         PointerType::get(secretty, srcaddr)),
+                                         getPointerType(secretty, srcaddr)),
               Builder2.CreateUDiv(
                   gutils->lookupM(length, Builder2),
                   ConstantInt::get(length->getType(),

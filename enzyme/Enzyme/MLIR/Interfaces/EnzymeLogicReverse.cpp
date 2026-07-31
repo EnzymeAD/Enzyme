@@ -174,8 +174,6 @@ LogicalResult MEnzymeLogic::differentiate(
     llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
   gutils->registerCacheCreatorHook(cacheCreator);
-  auto scope = llvm::make_scope_exit(
-      [&]() { gutils->deregisterCacheCreatorHook(cacheCreator); });
 
   gutils->createReverseModeBlocks(oldRegion, newRegion);
 
@@ -187,6 +185,8 @@ LogicalResult MEnzymeLogic::differentiate(
     valid &= visitChildren(&oBB, reverseBB, gutils).succeeded();
     handlePredecessors(&oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
   }
+
+  gutils->deregisterCacheCreatorHook(cacheCreator);
   return success(valid);
 }
 

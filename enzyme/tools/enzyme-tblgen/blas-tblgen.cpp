@@ -1659,7 +1659,7 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
     os << "    if (needsCast)\n";
     os << "      tozero = " << builder << ".CreatePointerCast(\n";
     os << "          tozero, "
-          "PointerType::get(Type::getInt8Ty(PT->getContext()),\n";
+          "getPointerType(Type::getInt8Ty(PT->getContext()),\n";
     os << "                                   PT->getAddressSpace()));\n";
     os << "    Value *args[] = {\n";
     os << "        tozero, "
