@@ -369,12 +369,13 @@ LogicalResult lowerFree(llvm_ext::FreeOp free, int64_t space) {
 }
 
 /// `llvm_ext.ptr_size_hint` is the only record of how large a raw pointer's
-/// allocation is, and this pass drops it. Reverse-mode AD recovers the extent of
-/// a pointer-derived memref with `memref.dim` (see
+/// allocation is, and this pass drops it. Reverse-mode AD recovers the extent
+/// of a pointer-derived memref with `memref.dim` (see
 /// MemRefClonableTypeInterface::cloneValue) -- e.g. to size the checkpoint
-/// buffer for a cached grid -- but a `memref.dim` of a value that is really just
-/// a bare pointer has no lowering at all: the size is nowhere in the IR once the
-/// hint is gone. Resolve those dims from the hint while it is still around.
+/// buffer for a cached grid -- but a `memref.dim` of a value that is really
+/// just a bare pointer has no lowering at all: the size is nowhere in the IR
+/// once the hint is gone. Resolve those dims from the hint while it is still
+/// around.
 static void resolveDimsFromHint(llvm_ext::PtrSizeHintOp psh,
                                 DominanceInfo &dom) {
   Value ptr = psh.getPtr();

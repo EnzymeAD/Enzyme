@@ -459,11 +459,12 @@ private:
     // checkpoints than there are iterations. Buffers stay sized by the (static)
     // requested budget; the effective budget bounds the loops at runtime.
     //
-    // Unconditional: with a budget above the trip count this loop would run more
-    // iterations than there are steps, and the slots past the end get recorded
-    // at a step beyond the last one -- holding the final state instead of a
-    // checkpoint, which the reverse pass then replays from. This used to be
-    // gated behind enzyme.use_safe_budgeting, an attribute nothing ever sets.
+    // Unconditional: with a budget above the trip count this loop would run
+    // more iterations than there are steps, and the slots past the end get
+    // recorded at a step beyond the last one -- holding the final state instead
+    // of a checkpoint, which the reverse pass then replays from. This used to
+    // be gated behind enzyme.use_safe_budgeting, an attribute nothing ever
+    // sets.
     Value budgetV = arith::MinUIOp::create(
         builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
         numItersV);
@@ -495,8 +496,8 @@ private:
       auto iface = cast<ClonableTypeInterface>(ref.getType());
       Value buf = memref::AllocOp::create(
           builder, loc, cloneBufferType(budget, ref.getType()));
-      fillCloneSlots(builder, loc, budget, buf,
-                     gutils->getNewFromOriginal(ref), iface);
+      fillCloneSlots(builder, loc, budget, buf, gutils->getNewFromOriginal(ref),
+                     iface);
       mutBufs.push_back(buf);
     }
 
@@ -607,8 +608,8 @@ private:
     gutils->replaceOrigOpWith(forOp, outerFwd.getResults().drop_front());
     // NB: hoisting placeholders to function scope here has not been revalidated
     // since the mutableRef shadows moved out of revOuter's body (they are now
-    // popped before the loop, so the old dominance objection no longer applies).
-    // hoistPlaceholdersBefore(newForOp, newForOp);
+    // popped before the loop, so the old dominance objection no longer
+    // applies). hoistPlaceholdersBefore(newForOp, newForOp);
     gutils->erase(newForOp);
     gutils->originalToNewFnOps[forOp] = outerFwd;
 

@@ -87,11 +87,11 @@ InitOp::handlePromotionComplete(const MemorySlot &slot, Value defaultValue,
 // checkpoint on nothing), while the midpoint stays within ~2% of the minimal
 // *total* recomputation across the sizes measured.
 //
-// With a single checkpoint left there is nothing better than replaying the whole
-// remaining stretch from it, so advance all of it. Together with every other
-// advance landing in [1, n-1], that is what makes the per-slot advances sum to
-// exactly `n` across `budget` slots -- which is what the callers' outer loop
-// relies on to reach the end of the primal.
+// With a single checkpoint left there is nothing better than replaying the
+// whole remaining stretch from it, so advance all of it. Together with every
+// other advance landing in [1, n-1], that is what makes the per-slot advances
+// sum to exactly `n` across `budget` slots -- which is what the callers' outer
+// loop relies on to reach the end of the primal.
 static int64_t binomialProgress(int64_t n, int64_t s) {
   if (n <= 0)
     return 0;

@@ -470,9 +470,8 @@ struct PointerClonableTypeInterface
     // silently produce a host read of device memory (a segfault at runtime)
     // whenever the value being checkpointed is a device pointer.
     Value clone = llvm_ext::AllocOp::create(
-        builder, value.getLoc(),
-        LLVM::LLVMPointerType::get(value.getContext()), size,
-        extent->memorySpace);
+        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
+        size, extent->memorySpace);
     llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, value, size,
                                extent->memorySpace);
 
