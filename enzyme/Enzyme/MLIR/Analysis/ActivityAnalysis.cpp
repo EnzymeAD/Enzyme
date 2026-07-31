@@ -1,5 +1,4 @@
 #include "ActivityAnalysis.h"
-#include "llvm/ADT/ScopeExit.h"
 #include "Dialect/Dialect.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/Utils.h"
@@ -1533,19 +1532,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   if (ActiveValues.find(Val) != ActiveValues.end()) {
     return false;
   }
-
-  // The two sets above only memoize values whose activity is already decided.
-  // Following incoming values can lead back to Val while we are still deciding
-  // it -- loop-carried block arguments are inherently cyclic, and the nested
-  // checkpoint loops built for binomial checkpointing add further
-  // parent/region edges -- which recurses until the stack is exhausted.
-  // Treat the re-entrant query as inactive, matching the UpHypothesis
-  // discipline used below: if Val is genuinely active that is established via
-  // one of its non-cyclic incoming edges, which the outer query still walks.
-  if (!VisitingValues.insert(Val).second)
-    return true;
-  auto popVisiting =
-      llvm::make_scope_exit([&]() { VisitingValues.erase(Val); });
 
   // TODO: LLVM global initializers with regions?
   if (matchPattern(Val, m_Constant()))

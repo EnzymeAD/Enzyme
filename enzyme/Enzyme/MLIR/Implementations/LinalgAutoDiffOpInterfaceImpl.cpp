@@ -227,9 +227,6 @@ struct GenericOpInterfaceReverse
 
       Type ct = cacheArg.getType();
       Type type = MemRefType::get(shapes, ct);
-      if (getenv("ENZYME_DEBUG_CACHE_TYPES"))
-        llvm::errs() << "DEBUG Linalg cache: ct=" << ct << " type=" << type
-                     << "\n";
       auto alloc = memref::AllocOp::create(cacheBuilder, op->getLoc(), type,
                                            ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);

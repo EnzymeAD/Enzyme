@@ -93,14 +93,6 @@ std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
 // We assume that caches will only be written to at one location. The returned
 // cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  if (getenv("ENZYME_DEBUG_CACHE_TYPES")) {
-    llvm::errs() << "DEBUG initAndPushCache: v.getType()=" << v.getType()
-                 << "\n  defined by: ";
-    if (auto defOp = v.getDefiningOp())
-      llvm::errs() << *defOp << "\n";
-    else
-      llvm::errs() << "<block argument>\n";
-  }
   auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
   enzyme::PushOp::create(builder, v.getLoc(), pushCache, v);
   return popCache;

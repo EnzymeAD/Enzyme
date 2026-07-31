@@ -94,13 +94,6 @@ private:
   /// activity.
   llvm::SmallPtrSet<Value, 1> DeducingPointers;
 
-  /// Values whose activity is currently being computed. ConstantValues and
-  /// ActiveValues only memoize values already *decided*, so without this an
-  /// in-progress query that cycles back to its own value (loop-carried block
-  /// arguments, or the nested checkpoint loops binomial checkpointing builds)
-  /// recurses forever.
-  llvm::SmallPtrSet<Value, 8> VisitingValues;
-
 public:
   /// Construct the analyzer from the a previous set of constant and active
   /// values and whether returns are active. The all arguments of the functions
