@@ -1,8 +1,12 @@
 // RUN: %eopt %s --pass-pipeline="builtin.module(enzyme{dataflow markReadonly},canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" | FileCheck %s
+
+#alias_scope_domain1 = #llvm.alias_scope_domain<id = distinct[0]<>, description = "foo">
+#alias_scope1 = #llvm.alias_scope<id = distinct[1]<>, domain = #alias_scope_domain1, description = "foo: %x">
 func.func @foo(%x: memref<?xf32> {llvm.noalias}, %y: memref<?xf32> {llvm.noalias}) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c4 = arith.constant 4 : index
+  llvm.intr.experimental.noalias.scope.decl #alias_scope1
   scf.parallel (%arg9) = (%c0) to (%c4) step (%c1) {
     %0 = memref.load %x[%arg9] : memref<?xf32>
     %1 = arith.mulf %0, %0 : f32

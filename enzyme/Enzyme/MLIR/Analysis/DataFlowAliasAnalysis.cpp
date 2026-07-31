@@ -1216,7 +1216,7 @@ void mlir::enzyme::markReadOnlyLoads(
     // pointer could be modified.
     if (!memory) {
       if (isMemoryEffectFree(op) ||
-          isa<FunctionOpInterface, RegionBranchOpInterface>(op)) {
+          isa<FunctionOpInterface, RegionBranchOpInterface>(op) || isNoOp(op)) {
         return WalkResult::advance();
       }
       (void)modified.markUnknown();
