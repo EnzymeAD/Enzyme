@@ -670,6 +670,38 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   return intseen[val];
 }
 
+/// Return whether the initializer of the constant global GV transitively
+/// refers back to GV itself, either directly or through the initializer of
+/// another constant global. Analyzing such an initializer would recurse
+/// forever, as the analysis of a global is only memoized once its initializer
+/// has been fully analyzed. This arises in practice for relative-pointer jump
+/// tables, whose entries look like `sub (i64 0, i64 ptrtoint (ptr @tab
+/// to i64))`.
+static bool isCyclicConstantGlobal(GlobalVariable *GV) {
+  SmallPtrSet<Constant *, 8> Seen;
+  SmallVector<Constant *, 8> Todo = {GV->getInitializer()};
+  while (!Todo.empty()) {
+    Constant *C = Todo.pop_back_val();
+    if (C == GV)
+      return true;
+    if (!Seen.insert(C).second)
+      continue;
+    if (auto SubGV = dyn_cast<GlobalVariable>(C)) {
+      // Mirror the recursion below, which only descends into the initializer
+      // of a fixed constant global.
+      if (SubGV->isConstant() && SubGV->hasInitializer())
+        Todo.push_back(SubGV->getInitializer());
+      continue;
+    }
+    if (isa<GlobalValue>(C))
+      continue;
+    for (auto &Op : C->operands())
+      if (auto COp = dyn_cast<Constant>(Op.get()))
+        Todo.push_back(COp);
+  }
+  return false;
+}
+
 /// Given a constant value, deduce any type information applicable
 void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                          std::map<llvm::Value *, TypeTree> &analysis) {
@@ -900,8 +932,12 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
-    // A fixed constant global is a pointer to its initializer
-    if (GV->isConstant() && GV->hasInitializer()) {
+    // A fixed constant global is a pointer to its initializer. A global whose
+    // initializer refers back to itself is instead handled below as an
+    // ordinary pointer of unknown pointee, as its initializer cannot be
+    // analyzed without recursing infinitely.
+    if (GV->isConstant() && GV->hasInitializer() &&
+        !isCyclicConstantGlobal(GV)) {
       getConstantAnalysis(GV->getInitializer(), TA, analysis);
       TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
       constTT.insert({-1}, ConcreteType(BaseType::Pointer));
