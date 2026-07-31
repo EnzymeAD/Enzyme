@@ -902,6 +902,17 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
+      // Record that this global is a pointer before analyzing its initializer.
+      // An initializer which refers back to its own global (such as a relative
+      // pointer jump table) would otherwise recurse forever, as the type of a
+      // global is only recorded once its initializer has been fully analyzed.
+      // Seeding with the fact that a global is a pointer is always correct, so
+      // any type deduced from it remains sound, and the seed is refined into
+      // the full type below once the initializer has been analyzed.
+      TypeTree seed;
+      seed.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", seed.toMD(GV->getContext()));
+
       getConstantAnalysis(GV->getInitializer(), TA, analysis);
       TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
       constTT.insert({-1}, ConcreteType(BaseType::Pointer));
