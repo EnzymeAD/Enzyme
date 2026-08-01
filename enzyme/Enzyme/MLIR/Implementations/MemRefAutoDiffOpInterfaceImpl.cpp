@@ -230,11 +230,22 @@ public:
       }
     }
 
+    // Pass the MemRefType, not `self`: with a plain Type the generic
+    // (TypeRange, ValueRange) builder is selected, which appends the dynamic
+    // sizes as operands without setting operandSegmentSizes -- producing an
+    // invalid memref.alloc as soon as the type has a dynamic dimension.
     auto clone =
-        memref::AllocOp::create(builder, value.getLoc(), self, dynamicSizes);
+        memref::AllocOp::create(builder, value.getLoc(), MT, dynamicSizes);
     memref::CopyOp::create(builder, value.getLoc(), value, clone);
 
     return clone;
+  }
+
+  void copyValue(mlir::Type self, OpBuilder &builder, Value dst,
+                 Value src) const {
+    // memref.copy carries the extents in its operand types, so there is no
+    // extent to recover here and dynamic shapes work unchanged.
+    memref::CopyOp::create(builder, src.getLoc(), src, dst);
   }
 
   void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {

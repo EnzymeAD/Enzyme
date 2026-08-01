@@ -275,10 +275,10 @@ def PopOp : Enzyme_Op<"pop", [
   let results = (outs AnyType:$output);
 }
 
-def BinomialProgressScalarOrUnrankedTensor : AnyTypeOf<[
+def BinomialProgressScalarOrTensor : AnyTypeOf<[
     AnySignlessIntegerOrIndex,
-    UnrankedTensorOf<[AnySignlessInteger, Index]>],
-    "signless integer, index, or unranked tensor thereof">;
+    TensorOf<[AnySignlessInteger, Index]>],
+    "signless integer, index, or tensor thereof">;
 
 def BinomialProgressOp : Enzyme_Op<"binomial_progress",
     [Pure, SameOperandsAndResultType]> {
@@ -286,17 +286,38 @@ def BinomialProgressOp : Enzyme_Op<"binomial_progress",
   let description = [{
     Given `num_steps` remaining iterations and a `budget` of available
     checkpoints, returns how many steps to advance before placing the next
-    checkpoint: the largest `j` such that `C(j + budget - 1, j) <= num_steps`
-    (returning 1 when `num_steps == 1` or `budget == 1`). This is the classic
-    Revolve "split" function used for binomial checkpointing of loops.
+    checkpoint. This is the classic Revolve "split" function used for binomial
+    checkpointing of loops.
+
+    Writing `beta(s, t) = C(s + t, t)` for the longest chain reversible with `s`
+    checkpoints and at most `t` recomputations of each step, and taking `t`
+    minimal with `beta(budget, t) >= num_steps`, every advance in
+
+        [ num_steps - beta(budget-1, t) , beta(budget, t-1) ]
+
+    attains that optimal `t`, and the interval is non-empty by Pascal's rule
+    `beta(s,t) = beta(s-1,t) + beta(s,t-1)`. This op returns the lower edge,
+    clamped to `[1, num_steps-1]`, which also lands within a few percent of the
+    minimal *total* recomputation.
+
+    Two boundary cases matter to callers. `num_steps <= 1` returns `num_steps`
+    (so 0 or 1). `budget <= 1` returns `num_steps`: with one checkpoint left the
+    entire remaining stretch is replayed from it, so the advance covers all of
+    it. That is also what makes the advances chosen for successive slots sum to
+    exactly the trip count across `budget` slots, which lets a driver that
+    iterates once per checkpoint still reach the end of the primal.
+
+    The result is an advance *distance*, not a repetition count: it grows like
+    `num_steps`, not like `num_steps^(1/budget)`.
 
     `num_steps` and `budget` may be an index, a signless integer of any
-    width, or an unranked tensor thereof (with the result taking the same
-    type).
+    width, or a tensor thereof (with the result taking the same type). The
+    tensor forms carry the scalar computation for dialects whose scalars are
+    tensors: stablehlo callers use `tensor<i64>`, a rank-0 ranked tensor.
   }];
-  let arguments = (ins BinomialProgressScalarOrUnrankedTensor:$num_steps,
-                       BinomialProgressScalarOrUnrankedTensor:$budget);
-  let results = (outs BinomialProgressScalarOrUnrankedTensor:$result);
+  let arguments = (ins BinomialProgressScalarOrTensor:$num_steps,
+                       BinomialProgressScalarOrTensor:$budget);
+  let results = (outs BinomialProgressScalarOrTensor:$result);
   let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
   let hasFolder = 1;
 }

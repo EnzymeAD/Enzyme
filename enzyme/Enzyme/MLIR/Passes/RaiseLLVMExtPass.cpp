@@ -47,7 +47,14 @@ struct RaiseLLVMExtPass
           auto name = StringAttr::get(&getContext(), "__enzyme_ptr_size_hint");
           auto uses = SymbolTable::getSymbolUses(name, st);
 
-          if (!uses)
+          // getSymbolUses returns an empty (not nullopt) range when the
+          // symbol simply isn't referenced anywhere in this module, which is
+          // the common case (most translation units never call
+          // __enzyme_ptr_size_hint); only bail out on the lookup+cast below
+          // if there's actually a use to process, since symtable.lookup(name)
+          // returns null when the symbol isn't declared in this module at
+          // all, and casting that to FunctionOpInterface crashes.
+          if (!uses || uses->empty())
             return;
 
           auto fn = cast<FunctionOpInterface>(symtable.lookup(name));
@@ -66,9 +73,52 @@ struct RaiseLLVMExtPass
               return;
             }
 
+            auto args = call.getArgOperands();
+            if (args.size() < 2 || args.size() > 3) {
+              failed = true;
+              call.emitError() << "__enzyme_ptr_size_hint expects (ptr, size) "
+                                  "or (ptr, size, addrspace), got "
+                               << args.size() << " arguments";
+              return;
+            }
+
+            // The address space the clone of this pointer has to be allocated
+            // and copied in is the one in the pointer's own type; the optional
+            // third argument is only accepted so existing callers keep
+            // building, and has to agree with it. A pointer that is typed as
+            // host memory but really holds a device address needs an
+            // llvm.addrspacecast, not a differing annotation here -- otherwise
+            // every user of the pointer disagrees with the hint.
+            auto ptrTy = dyn_cast<LLVM::LLVMPointerType>(args[0].getType());
+            if (!ptrTy) {
+              failed = true;
+              call.emitError()
+                  << "first argument of __enzyme_ptr_size_hint is not a "
+                     "pointer";
+              return;
+            }
+            if (args.size() == 3) {
+              APInt space;
+              if (!matchPattern(args[2], m_ConstantInt(&space))) {
+                failed = true;
+                call.emitError() << "address space argument of "
+                                    "__enzyme_ptr_size_hint is not a constant";
+                return;
+              }
+              if (space.getSExtValue() != (int64_t)ptrTy.getAddressSpace()) {
+                failed = true;
+                call.emitError()
+                    << "address space argument of __enzyme_ptr_size_hint is "
+                    << space.getSExtValue() << " but the pointer is in address "
+                    << "space " << ptrTy.getAddressSpace()
+                    << "; the memory space is taken from the pointer type";
+                return;
+              }
+            }
+
             OpBuilder builder(call);
-            llvm_ext::PtrSizeHintOp::create(
-                builder, call.getLoc(), call.getOperand(0), call.getOperand(1));
+            llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), args[0],
+                                            args[1]);
 
             call.erase();
           }

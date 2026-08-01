@@ -1,8 +1,13 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --lower-enzyme-binomial-progress --canonicalize --enzyme-simplify-math | FileCheck %s
 
 // Binomial checkpointing with a mutable (memref) value referenced from outside
-// the loop: the reference is cloned once via the ClonableTypeInterface and freed
-// after the reverse loop, alongside the checkpoint-state and step-index buffers.
+// the loop. The reference gets a budget-sized buffer of clone handles, filled up
+// front so a checkpoint is a plain copy into an existing allocation, plus one
+// working clone the reverse pass replays into. Slot j pairs with the state and
+// step-index buffers' slot j, so all three are indexed by the checkpoint stack
+// pointer -- never by the reverse induction variable, which is what regressed
+// here (the reverse read used to be `numIters-1 - iv` into a budget-sized
+// buffer, i.e. out of bounds for every iteration past the budget).
 
 module {
 
@@ -26,24 +31,56 @@ module {
 // CHECK-LABEL: func.func @main(
 // CHECK-DAG:     %[[STATE:.+]] = memref.alloc() : memref<3xf32>
 // CHECK-DAG:     %[[IDX:.+]] = memref.alloc() : memref<3xindex>
-// CHECK-NEXT:    %[[CLONE_ARG0:.+]] = memref.alloc() : memref<3xf32>
+// CHECK-DAG:     %[[SLOTS:.+]] = memref.alloc() : memref<3xmemref<f32>>
 
-// Forward checkpoint-placement loop (budget = 3).
-// CHECK:         scf.for {{.*}} = %c0 to %c3 step %c1
-// CHECK:           memref.store {{.*}}, %[[STATE]]
-// CHECK:           memref.store {{.*}}, %[[IDX]]
+// One clone per slot, allocated up front and stored into the handle buffer.
+// CHECK:         %[[C0:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    memref.copy %arg0, %[[C0]]
+// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0]
+// CHECK:         %[[C1:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    memref.copy %arg0, %[[C1]]
+// CHECK-NEXT:    memref.store %[[C1]], %[[SLOTS]][%c1]
+// CHECK:         %[[C2:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    memref.copy %arg0, %[[C2]]
+// CHECK-NEXT:    memref.store %[[C2]], %[[SLOTS]][%c2]
 
-// The mutable outside reference is snapshotted (cloned) for the reverse pass.
-// CHECK:      %[[SUBVIEW:.+]] = memref.subview %[[CLONE_ARG0]][%{{.+}}] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      memref.copy %arg0, %[[SUBVIEW]] : memref<f32> to memref<f32, strided<[], offset: ?>>
+// Forward checkpoint-placement loop (budget = 3): slot index is the loop IV.
+// CHECK:         scf.for %[[K:.+]] = %c0 to %c3 step %c1
+// CHECK:           memref.store {{.*}}, %[[STATE]][%[[K]]]
+// CHECK:           memref.store {{.*}}, %[[IDX]][%[[K]]]
+// CHECK:           %[[FWDSLOT:.+]] = memref.load %[[SLOTS]][%[[K]]] : memref<3xmemref<f32>>
+// CHECK-NEXT:      memref.copy %arg0, %[[FWDSLOT]] : memref<f32> to memref<f32>
 
-// Reverse loop over all 9 steps, with the remat scf.while.
-// CHECK:         scf.for {{.*}} = %c0 to %c9 step %c1
-// CHECK:           %[[SUBVIEWREV:.+]] = memref.subview %[[CLONE_ARG0]][%2] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK:           scf.while
-// CHECK:             %[[VAL:.+]] = memref.load %[[SUBVIEWREV]][] : memref<f32, strided<[], offset: ?>>
-// All allocations are freed.
-// CHECK-DAG:     memref.dealloc %[[STATE]] : memref<3xf32>
-// CHECK-DAG:     memref.dealloc %[[IDX]] : memref<3xindex>
-// CHECK-DAG:     memref.dealloc %[[CLONE_ARG0]] : memref<3xf32>
+// The working clone the reverse pass replays into, outside the reverse loop.
+// CHECK:         %[[WORK:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    memref.copy %arg0, %[[WORK]]
+
+// Reverse loop over all 9 steps, carrying the stack pointer as an iter arg.
+// CHECK:         scf.for %{{.+}} = %c0 to %c9 step %c1 iter_args(%[[SP:.+]] = %c3
+// The slot index is the stack pointer minus one -- NOT a function of the
+// reverse induction variable. That is the regression this test guards.
+// CHECK-NEXT:      %[[CAPO:.+]] = arith.subi %[[SP]], %c1 : index
+// CHECK:           memref.load %[[STATE]][%[[CAPO]]]
+// CHECK:           memref.load %[[IDX]][%[[CAPO]]]
+// CHECK:           %[[REVSLOT:.+]] = memref.load %[[SLOTS]][%[[CAPO]]] : memref<3xmemref<f32>>
+// CHECK-NEXT:      memref.copy %[[REVSLOT]], %[[WORK]] : memref<f32> to memref<f32>
+
+// The remat re-places a checkpoint at slot `acapo`; the snapshot moves with it.
+// CHECK:           scf.while ({{.*}}%[[ACAPO:.+]] = %[[CAPO]]
+// CHECK:             memref.store {{.*}}, %[[IDX]][%[[ACAPO]]]
+// CHECK:             %[[ACSLOT:.+]] = memref.load %[[SLOTS]][%[[ACAPO]]] : memref<3xmemref<f32>>
+// CHECK-NEXT:        memref.copy %[[WORK]], %[[ACSLOT]] : memref<f32> to memref<f32>
+// The replay reads the working clone, never a checkpoint slot.
+// CHECK:             memref.load %[[WORK]][] : memref<f32>
+
+// Everything is freed: the state/index buffers, the working clone, then each
+// slot's clone followed by the handle buffer.
+// CHECK:         memref.dealloc %[[STATE]] : memref<3xf32>
+// CHECK:         memref.dealloc %[[IDX]] : memref<3xindex>
+// CHECK:         memref.dealloc %[[WORK]] : memref<f32>
+// CHECK:         scf.for %[[J:.+]] = %c0 to %c3 step %c1 {
+// CHECK-NEXT:      %[[FREESLOT:.+]] = memref.load %[[SLOTS]][%[[J]]] : memref<3xmemref<f32>>
+// CHECK-NEXT:      memref.dealloc %[[FREESLOT]] : memref<f32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    memref.dealloc %[[SLOTS]] : memref<3xmemref<f32>>
 // CHECK:         return

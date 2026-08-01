@@ -28,36 +28,56 @@ using namespace mlir;
 
 namespace {
 
-// Lower enzyme.binomial_progress(n, s) into:
+// Lower enzyme.binomial_progress(n, s) to the Revolve advance distance; see
+// BinomialProgressOp's description for the derivation.
 //
-//   %one = arith.constant 1 : index
-//   %c = (n == 1) or (s == 1)
-//   %r = scf.if %c -> index {
-//     scf.yield %one
+//   %one = arith.constant 1
+//   %c = (n <= %one) or (s <= %one)
+//   %r = scf.if %c {
+//     // n <= 1 yields n (0 or 1); otherwise s <= 1 yields n. Both are n.
+//     scf.yield n
 //   } else {
-//     %w:2 = scf.while (%j = %one, %binom = s) {
-//       %lt = arith.cmpi slt, %binom, n
-//       scf.condition(%lt) %j, %binom
+//     // smallest t with beta = C(s+t, t) >= n
+//     %w:2 = scf.while (%t = %zero, %beta = %one) {
+//       %lt = arith.cmpi slt, %beta, n
+//       scf.condition(%lt) %t, %beta
 //     } do {
-//     ^bb0(%j: index, %binom: index):
-//       %j2 = %j + %one
-//       %binom2 = %binom * (%j2 + s - %one) / %j2
-//       scf.yield %j2, %binom2
+//     ^bb0(%t: index, %beta: index):
+//       %t2 = %t + %one
+//       %beta2 = %beta * (s + %t2) / %t2
+//       scf.yield %t2, %beta2
 //     }
-//     %eq = arith.cmpi eq, %w#1, n
-//     %jm1 = %w#0 - %one
-//     %sel = arith.select %eq, %w#0, %jm1
-//     scf.yield %sel
+//     // window [n - beta(s-1,t), beta(s,t-1)], clamped; take the midpoint
+//     %lo = maxsi(n - (%beta * s) / (s + %t), %one)
+//     %hi = minsi((%beta * %t) / (s + %t), n - %one)
+//     scf.yield (%lo + %hi) / 2
 //   }
+//
+// The guard must be a branch, not a select: for s <= 1 the update leaves %beta
+// at 1 and the loop would spin forever.
 static int64_t binomialProgress(int64_t n, int64_t s) {
-  if (s == 1 || n == 1)
+  if (n <= 0)
+    return 0;
+  if (n == 1)
     return 1;
-  int64_t j = 1, binom = s;
-  while (binom < n) {
-    ++j;
-    binom = binom * (j + s - 1) / j;
+  if (s <= 1)
+    return n;
+  int64_t t = 0, beta = 1; // beta == C(s + t, t)
+  while (beta < n) {
+    ++t;
+    beta = beta * (s + t) / t;
   }
-  return binom == n ? j : j - 1;
+  int64_t lo = n - beta * s / (s + t);
+  int64_t hi = beta * t / (s + t);
+  if (lo < 1)
+    lo = 1;
+  if (hi > n - 1)
+    hi = n - 1;
+  int64_t m = (lo + hi) / 2;
+  int64_t cap = n - (s - 1); // leave a step for each slot still to be placed
+  if (m > cap)
+    m = cap;
+  return m < 1 ? 1 : m;
 }
 
 static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
@@ -88,13 +108,16 @@ static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
     return;
   }
 
+  Value zero = constOfType(0);
   Value one = constOfType(1);
 
-  Value nIsOne =
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, n, one);
-  Value sIsOne =
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, s, one);
-  Value cond = arith::OrIOp::create(builder, loc, nIsOne, sIsOne);
+  // Guard both degenerate cases. It has to be a branch: with s <= 1 the loop
+  // body below leaves beta at 1 and would never terminate.
+  Value nSmall =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sle, n, one);
+  Value sSmall =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sle, s, one);
+  Value cond = arith::OrIOp::create(builder, loc, nSmall, sSmall);
 
   auto ifOp = scf::IfOp::create(builder, loc, TypeRange{idxTy}, cond,
                                 /*withElseRegion=*/true);
@@ -102,50 +125,78 @@ static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
   {
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(ifOp.thenBlock());
-    scf::YieldOp::create(builder, loc, ValueRange{one});
+    // n <= 1 yields n itself (0 or 1); s <= 1 advances the whole remainder,
+    // which is also n. So both degenerate cases are just n.
+    scf::YieldOp::create(builder, loc, ValueRange{n});
   }
 
   {
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(ifOp.elseBlock());
 
+    // Smallest t with beta = C(s + t, t) >= n, carrying (t, beta).
     auto whileOp = scf::WhileOp::create(builder, loc, TypeRange{idxTy, idxTy},
-                                        ValueRange{one, s});
+                                        ValueRange{zero, one});
 
-    // Before region: continue while binom < n.
+    // Before region: continue while beta < n.
     {
       Block *before = builder.createBlock(&whileOp.getBefore(), {},
                                           TypeRange{idxTy, idxTy}, {loc, loc});
       builder.setInsertionPointToEnd(before);
-      Value binom = before->getArgument(1);
+      Value beta = before->getArgument(1);
       Value lt = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                                       binom, n);
+                                       beta, n);
       scf::ConditionOp::create(builder, loc, lt, before->getArguments());
     }
 
-    // After region: j' = j + 1; binom' = binom * (j' + s - 1) / j'.
+    // After region: t' = t + 1; beta' = beta * (s + t') / t'. That steps
+    // C(s+t-1, t-1) to C(s+t, t), so the division is exact.
     {
       Block *after = builder.createBlock(&whileOp.getAfter(), {},
                                          TypeRange{idxTy, idxTy}, {loc, loc});
       builder.setInsertionPointToEnd(after);
-      Value j = after->getArgument(0);
-      Value binom = after->getArgument(1);
-      Value j2 = arith::AddIOp::create(builder, loc, j, one);
-      Value t = arith::AddIOp::create(builder, loc, j2, s);
-      t = arith::SubIOp::create(builder, loc, t, one);
-      Value num = arith::MulIOp::create(builder, loc, binom, t);
-      Value binom2 = arith::DivUIOp::create(builder, loc, num, j2);
-      scf::YieldOp::create(builder, loc, ValueRange{j2, binom2});
+      Value t = after->getArgument(0);
+      Value beta = after->getArgument(1);
+      Value t2 = arith::AddIOp::create(builder, loc, t, one);
+      Value sPlusT = arith::AddIOp::create(builder, loc, s, t2);
+      Value num = arith::MulIOp::create(builder, loc, beta, sPlusT);
+      Value beta2 = arith::DivUIOp::create(builder, loc, num, t2);
+      scf::YieldOp::create(builder, loc, ValueRange{t2, beta2});
     }
 
     builder.setInsertionPointAfter(whileOp);
-    Value j = whileOp.getResult(0);
-    Value binom = whileOp.getResult(1);
-    Value eq =
-        arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, binom, n);
-    Value jm1 = arith::SubIOp::create(builder, loc, j, one);
-    Value sel = arith::SelectOp::create(builder, loc, eq, j, jm1);
-    scf::YieldOp::create(builder, loc, ValueRange{sel});
+    Value t = whileOp.getResult(0);
+    Value beta = whileOp.getResult(1);
+
+    // beta(s-1, t) = beta * s / (s + t) and beta(s, t-1) = beta * t / (s + t),
+    // both exact in integers. Every advance between n - beta(s-1,t) and
+    // beta(s, t-1) attains the optimal repetition count; clamp that window to
+    // [1, n-1] -- so the caller always progresses and always leaves a tail --
+    // and take its midpoint, since either edge can collapse onto the clamp and
+    // waste a checkpoint on a one-step advance.
+    Value sPlusT = arith::AddIOp::create(builder, loc, s, t);
+    Value loNum = arith::MulIOp::create(builder, loc, beta, s);
+    Value loRaw = arith::SubIOp::create(
+        builder, loc, n, arith::DivUIOp::create(builder, loc, loNum, sPlusT));
+    Value hiNum = arith::MulIOp::create(builder, loc, beta, t);
+    Value hiRaw = arith::DivUIOp::create(builder, loc, hiNum, sPlusT);
+
+    Value nm1 = arith::SubIOp::create(builder, loc, n, one);
+    Value lo = arith::MaxSIOp::create(builder, loc, loRaw, one);
+    Value hi = arith::MinSIOp::create(builder, loc, hiRaw, nm1);
+    Value two = constOfType(2);
+    Value sum = arith::AddIOp::create(builder, loc, lo, hi);
+    Value mid = arith::DivUIOp::create(builder, loc, sum, two);
+
+    // Leave a step for each of the s-1 checkpoints still to be placed. Without
+    // this the advances can exhaust the interval before the slots run out, and
+    // a caller walking one slot per iteration then records slots at a step past
+    // the end, holding the final state rather than a checkpoint.
+    Value sm1 = arith::SubIOp::create(builder, loc, s, one);
+    Value cap = arith::SubIOp::create(builder, loc, n, sm1);
+    Value capped = arith::MinSIOp::create(builder, loc, mid, cap);
+    Value res = arith::MaxSIOp::create(builder, loc, capped, one);
+    scf::YieldOp::create(builder, loc, ValueRange{res});
   }
 
   op.getResult().replaceAllUsesWith(ifOp.getResult(0));

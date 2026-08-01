@@ -143,6 +143,25 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Copy the contents of `src` into the already-allocated `dst`.
+
+        Allocates nothing, so one clone can be reused across several
+        checkpoints instead of being reallocated each time. `dst` and `src`
+        must have this type and must not alias.
+
+        At least one of `dst`/`src` must be a value whose allocation extent
+        this type can recover -- for pointer types, one that traces to an
+        `llvm_ext.alloc` or carries an `llvm_ext.ptr_size_hint`. A handle
+        freshly loaded out of a buffer of clones has no recoverable extent, so
+        the other side has to be a direct clone.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"copyValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$dst,
+                    "::mlir::Value":$src)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Free the clone.
       }],
       /*retTy=*/"void",

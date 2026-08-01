@@ -197,7 +197,7 @@ private:
                           Type targetType) {
     if (v.getType() == targetType)
       return v;
-    assert(targetType.isIndex());
+    assert(targetType.isIndex() || v.getType().isIndex());
     return arith::IndexCastOp::create(builder, loc, targetType, v);
   }
 
@@ -267,14 +267,159 @@ private:
     return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
   }
 
+  static void copyBlockWithoutTerminator(OpBuilder &builder, Block *b,
+                                         MGradientUtilsReverse *gutils,
+                                         IRMapping &mapping) {
+    for (auto &it : b->without_terminator()) {
+      OpBuilder::InsertionGuard g(builder);
+      builder.clone(it, mapping);
+    }
+
+    for (auto [oldVal, newVal] : mapping.getValueMap())
+      gutils->originalToNewFn.map(oldVal, newVal);
+
+    for (auto [oldBlock, newBlock] : mapping.getBlockMap()) {
+      gutils->originalToNewFn.map(oldBlock, newBlock);
+      for (auto [oldArg, newArg] :
+           llvm::zip(oldBlock->getArguments(), newBlock->getArguments()))
+        gutils->originalToNewFn.map(oldArg, newArg);
+    }
+
+    for (auto [oldOp, newOp] : mapping.getOperationMap())
+      gutils->originalToNewFnOps[oldOp] = newOp;
+  }
+
+  // Splits the values `forOp` reads from above into the ones holding mutable
+  // memory, which has to be snapshotted for a replay, and the ones that can
+  // just be forwarded. cacheBinomial and reverseBinomial must produce the same
+  // order, which they do: getUsedValuesDefinedAbove is deterministic for a
+  // fixed IR and both walk the *original* forOp.
+  static void splitOutsideRefs(scf::ForOp forOp,
+                               SmallVectorImpl<Value> &mutableRefs,
+                               SmallVectorImpl<Value> &immutableRefs) {
+    SetVector<Value> outsideRefs;
+    getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
+    for (auto ref : outsideRefs) {
+      if (isa<ClonableTypeInterface>(ref.getType()))
+        mutableRefs.push_back(ref);
+      else
+        immutableRefs.push_back(ref);
+    }
+  }
+
+  // Index layout of the `caches` vector handed from cacheBinomial to
+  // reverseBinomial:
+  //
+  //   [ ckptBufs (one per iter arg) | idxBuf
+  //   | per mutable ref: clone buffer, + shadow if the ref is active
+  //   | immutableRefs
+  //   | numIters, start, step -- only when the loop bounds are dynamic ]
+  //
+  // The per-ref region has variable width. That used to be re-derived by hand
+  // at each use, with one site testing the predicate on the wrong value;
+  // computing it once here is what keeps the two sides from drifting.
+  struct BinomialCacheLayout {
+    size_t numIterArgs = 0;
+    SmallVector<bool> mutableActive;
+    size_t numImmutable = 0;
+    bool isDynamic = false;
+
+    static BinomialCacheLayout get(scf::ForOp forOp,
+                                   ArrayRef<Value> mutableRefs,
+                                   ArrayRef<Value> immutableRefs,
+                                   bool isDynamic,
+                                   MGradientUtilsReverse *gutils) {
+      BinomialCacheLayout l;
+      l.numIterArgs = forOp.getNumRegionIterArgs();
+      for (auto ref : mutableRefs)
+        l.mutableActive.push_back(!gutils->isConstantValue(ref));
+      l.numImmutable = immutableRefs.size();
+      l.isDynamic = isDynamic;
+      return l;
+    }
+
+    size_t ckptBuf(size_t i) const { return i; }
+    size_t idxBuf() const { return numIterArgs; }
+
+    size_t mutableBegin() const { return numIterArgs + 1; }
+    size_t mutableWidth() const {
+      size_t w = 0;
+      for (bool active : mutableActive)
+        w += 1 + active;
+      return w;
+    }
+    size_t cloneBuf(size_t r) const {
+      size_t idx = mutableBegin();
+      for (size_t i = 0; i < r; ++i)
+        idx += 1 + mutableActive[i];
+      return idx;
+    }
+    size_t shadow(size_t r) const {
+      assert(mutableActive[r] && "inactive ref has no shadow cache");
+      return cloneBuf(r) + 1;
+    }
+    size_t immutable(size_t i) const {
+      return mutableBegin() + mutableWidth() + i;
+    }
+    size_t numIters() const {
+      assert(isDynamic && "bounds are static; not cached");
+      return immutable(numImmutable);
+    }
+    size_t start() const { return numIters() + 1; }
+    size_t step() const { return numIters() + 2; }
+    size_t size() const {
+      return immutable(numImmutable) + (isDynamic ? 3 : 0);
+    }
+  };
+
+  // A `budget`-slot buffer of clone *handles* for one mutable ref. Not
+  // checkpointBufferType: what lives here is the identity of a snapshot
+  // allocation (slot j pairs with ckptBufs slot j), not its contents -- for a
+  // bare pointer the extent of the contents is not in the type at all.
+  static MemRefType cloneBufferType(int64_t budget, Type refTy) {
+    return MemRefType::get({budget}, refTy);
+  }
+
+  static Value cloneSlot(OpBuilder &b, Location loc, Value buf, Value slot) {
+    return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
+  }
+
+  // Give every slot of `buf` its own clone of `proto`. Deliberately unrolled:
+  // `budget` is static, and an allocation sitting in a loop body is both a
+  // hoisting candidate and (for pointers, under a raised alloca threshold) an
+  // alloca-promotion candidate -- either would silently make all slots alias.
+  static void fillCloneSlots(OpBuilder &b, Location loc, int64_t budget,
+                             Value buf, Value proto,
+                             ClonableTypeInterface iface) {
+    for (int64_t j = 0; j < budget; ++j) {
+      Value slot = arith::ConstantIndexOp::create(b, loc, j);
+      Value clone = iface.cloneValue(b, proto);
+      memref::StoreOp::create(b, loc, clone, buf, ValueRange{slot});
+    }
+  }
+
+  // Free each slot's clone, then the handle buffer itself. A loop is fine here:
+  // a free has side effects so it cannot be hoisted, and nothing can alias.
+  static void freeCloneSlots(OpBuilder &b, Location loc, int64_t budget,
+                             Value buf, ClonableTypeInterface iface) {
+    Value lb = arith::ConstantIndexOp::create(b, loc, 0);
+    Value ub = arith::ConstantIndexOp::create(b, loc, budget);
+    Value step = arith::ConstantIndexOp::create(b, loc, 1);
+    auto loop = scf::ForOp::create(b, loc, lb, ub, step);
+    {
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(loop.getBody());
+      iface.freeClonedValue(b, cloneSlot(b, loc, buf, loop.getInductionVar()));
+    }
+    memref::DeallocOp::create(b, loc, buf);
+  }
+
   // Forward augmentation for binomial (Revolve) checkpointing. Builds an outer
   // loop of `budget` iterations that snapshots the loop state into memref
   // checkpoint buffers at Revolve-scheduled positions, advancing the primal in
   // an inner recompute loop between snapshots. Returns the caches (buffer
-  // handles + index buffer + outside refs) transported to the reverse pass.
-  //
-  // Cache layout:
-  //   [ ckptBufs (numIterArgs), idxBuf (1), mutableRefs..., immutableRefs... ]
+  // handles + index buffer + outside refs) transported to the reverse pass;
+  // see BinomialCacheLayout for their order.
   static SmallVector<Value> cacheBinomial(scf::ForOp forOp, int64_t budget,
                                           MGradientUtilsReverse *gutils) {
     Location loc = forOp.getLoc();
@@ -311,23 +456,25 @@ private:
     }
 
     // Effective budget = min(requested budget, trip count): never keep more
-    // checkpoints than there are iterations. Buffers are sized by the (static)
+    // checkpoints than there are iterations. Buffers stay sized by the (static)
     // requested budget; the effective budget bounds the loops at runtime.
+    //
+    // Unconditional: with a budget above the trip count this loop would run
+    // more iterations than there are steps, and the slots past the end get
+    // recorded at a step beyond the last one -- holding the final state instead
+    // of a checkpoint, which the reverse pass then replays from. This used to
+    // be gated behind enzyme.use_safe_budgeting, an attribute nothing ever
+    // sets.
     Value budgetV = arith::MinUIOp::create(
         builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
         numItersV);
 
-    SetVector<Value> outsideRefs;
-    getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
-    SmallVector<Value> immutableRefs, mutableRefs, mutableRefsCaches;
-    for (auto ref : outsideRefs) {
-      if (isa<ClonableTypeInterface>(ref.getType()))
-        mutableRefs.push_back(ref);
-      else
-        immutableRefs.push_back(ref);
-    }
+    SmallVector<Value> immutableRefs, mutableRefs;
+    splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
+                                           isDynamic, gutils);
 
-    IRMapping &mapping = gutils->originalToNewFn;
+    IRMapping mapping;
     SmallVector<Value> caches;
 
     // Allocate one checkpoint buffer per iter arg + the step-index buffer.
@@ -338,6 +485,21 @@ private:
     }
     Value idxBuf =
         memref::AllocOp::create(builder, loc, MemRefType::get({budget}, idxTy));
+
+    // One clone buffer per mutable ref, filled up front so that taking a
+    // checkpoint is a pure copy into an existing allocation. Slot j of these
+    // buffers holds the ref's content at forward step idxBuf[j] -- the same
+    // instant as ckptBufs[*][j]; the reverse pass indexes all three by the
+    // checkpoint stack pointer.
+    SmallVector<Value> mutBufs;
+    for (auto ref : mutableRefs) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      Value buf = memref::AllocOp::create(
+          builder, loc, cloneBufferType(budget, ref.getType()));
+      fillCloneSlots(builder, loc, budget, buf, gutils->getNewFromOriginal(ref),
+                     iface);
+      mutBufs.push_back(buf);
+    }
 
     // Outer checkpoint-placement loop: for %k = 0 to budgetV carrying
     // (stepCtr, state...).
@@ -366,10 +528,12 @@ private:
     Value split = enzyme::BinomialProgressOp::create(builder, loc, idxTy,
                                                      numStepsRem, budgetRem);
 
-    for (auto ref : mutableRefs) {
+    // Snapshot each mutable ref into slot `k`, reusing the clone already there.
+    // Stays here, before innerFwd, so the snapshot precedes the advance.
+    for (auto &&[ref, buf] : llvm::zip_equal(mutableRefs, mutBufs)) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
-      Value clone = iface.cloneValue(builder, mapping.lookupOrDefault(ref));
-      mutableRefsCaches.push_back(gutils->initAndPushCache(clone, builder));
+      iface.copyValue(builder, cloneSlot(builder, loc, buf, k),
+                      gutils->getNewFromOriginal(ref));
     }
 
     // Inner recompute loop: advance the primal `split` steps.
@@ -391,16 +555,15 @@ private:
         arith::MulIOp::create(builder, loc, stepV, globalStep));
 
     for (auto &&[oldArg, newArg] :
-         llvm::zip_equal(forOp.getBody()->getArguments().drop_front(),
+         llvm::zip_equal(newForOp.getBody()->getArguments().drop_front(),
                          innerFwd.getBody()->getArguments().drop_front()))
       mapping.map(oldArg, newArg);
-    mapping.map(forOp.getInductionVar(), iv);
+    mapping.map(newForOp.getInductionVar(), iv);
 
-    for (auto &it : forOp.getBody()->without_terminator())
-      builder.clone(it, mapping);
+    copyBlockWithoutTerminator(builder, newForOp.getBody(), gutils, mapping);
 
     SmallVector<Value> innerYields;
-    for (auto operand : forOp.getBody()->getTerminator()->getOperands())
+    for (auto operand : newForOp.getBody()->getTerminator()->getOperands())
       innerYields.push_back(mapping.lookupOrDefault(operand));
     scf::YieldOp::create(builder, loc, innerYields);
 
@@ -418,11 +581,19 @@ private:
       caches.push_back(gutils->initAndPushCache(buf, builder));
     caches.push_back(gutils->initAndPushCache(idxBuf, builder));
 
-    caches.append(mutableRefsCaches);
+    // One push per mutable ref: the clone buffer, plus the shadow, which is
+    // loop-invariant (it is the accumulating gradient buffer, not a snapshot)
+    // and so does not belong in a per-checkpoint slot.
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      caches.push_back(gutils->initAndPushCache(mutBufs[r], builder));
+      if (layout.mutableActive[r])
+        caches.push_back(gutils->initAndPushCache(
+            gutils->invertPointerM(ref, builder), builder));
+    }
 
     for (auto ref : immutableRefs)
       caches.push_back(
-          gutils->initAndPushCache(mapping.lookupOrDefault(ref), builder));
+          gutils->initAndPushCache(gutils->getNewFromOriginal(ref), builder));
 
     // For dynamic bounds the reverse pass cannot recover the trip count / lower
     // bound / step from constants, so cache them (as the trailing entries).
@@ -431,13 +602,131 @@ private:
       caches.push_back(gutils->initAndPushCache(startV, builder));
       caches.push_back(gutils->initAndPushCache(stepV, builder));
     }
+    assert(caches.size() == layout.size() && "binomial cache layout mismatch");
 
     // The primal result of the loop is the final state.
     gutils->replaceOrigOpWith(forOp, outerFwd.getResults().drop_front());
+    // NB: hoisting placeholders to function scope here has not been revalidated
+    // since the mutableRef shadows moved out of revOuter's body (they are now
+    // popped before the loop, so the old dominance objection no longer
+    // applies). hoistPlaceholdersBefore(newForOp, newForOp);
     gutils->erase(newForOp);
     gutils->originalToNewFnOps[forOp] = outerFwd;
 
     return caches;
+  }
+
+  // Every checkpointing scheme re-clones forOp's body one or more times (to
+  // replay a segment of the primal, or to re-materialize a single step for the
+  // reverse visitor). Such a clone needs exactly two things mapped up front:
+  // the values the body reads from above -- to their counterparts in the new
+  // function -- and the body's own block arguments, to this clone's induction
+  // variable and iter args. Everything else the cloner discovers as it goes,
+  // mapping each op result and each nested block argument to the fresh copy it
+  // just made.
+  //
+  // Seeding from gutils->originalToNewFn instead (whether by reference or as a
+  // copy) drags in an entry for every value inside forOp left over from the
+  // whole-function forward-augmentation clone -- crucially including block
+  // arguments of nested regions, e.g. an affine.parallel's induction variable.
+  // Region::cloneInto only creates a fresh block argument when
+  // `!mapper.contains(arg)`, so each of those inherited entries silently wires
+  // the new clone back to the augmented-forward copy, which checkpointing
+  // erases as redundant. A copy also leaks the reverse: the clone writes its
+  // own nested block arguments into the copy, and (for the long-lived
+  // originalToNewFn) a later Value allocated at a since-freed address collides
+  // with the stale entry, corrupting an unrelated clone's use-def chain.
+  //
+  // Starting from an empty mapping sidesteps both directions, and is cheaper
+  // than copying a whole-function map per clone.
+  static IRMapping bodyCloneMapping(scf::ForOp forOp, ValueRange iterArgs,
+                                    Value iv, const IRMapping &outer) {
+    IRMapping mapping;
+
+    SetVector<Value> refs;
+    getUsedValuesDefinedAbove(forOp->getRegions(), refs);
+    for (Value ref : refs)
+      mapping.map(ref, outer.lookupOrDefault(ref));
+
+    mapping.map(forOp.getInductionVar(), iv);
+    for (auto &&[oldArg, newArg] : llvm::zip_equal(
+             forOp.getBody()->getArguments().drop_front(), iterArgs))
+      mapping.map(oldArg, newArg);
+
+    return mapping;
+  }
+
+  // Clone one primal step of forOp -- its body minus the terminator -- at
+  // `builder`'s insertion point, ending the new body with the corresponding
+  // scf.yield.
+  static void cloneStepWithYield(OpBuilder &builder, Location loc,
+                                 scf::ForOp forOp, IRMapping &mapping) {
+    for (Operation &op : forOp.getBody()->without_terminator())
+      builder.clone(op, mapping);
+
+    SmallVector<Value> yields = llvm::map_to_vector(
+        forOp.getBody()->getTerminator()->getOperands(),
+        [&](Value v) { return mapping.lookupOrDefault(v); });
+    scf::YieldOp::create(builder, loc, yields);
+  }
+
+  // originalToNewFnOps (unlike originalToNewFn) is a plain std::map maintained
+  // entirely by hand -- MLIR's cloner has no idea it exists. Ops nested inside
+  // a cloned op therefore keep whatever entry they had from the whole-function
+  // augmentation clone, which for a checkpointed loop points into the copy
+  // gutils->erase()s; a later getNewFromOriginal(op) -- how a nested rule's
+  // cacheValues() finds where to put its pushes -- then hands out a dangling
+  // pointer. Republishing straight off the map the cloner filled in as it went
+  // covers nested ops for free and cannot fall out of sync with what was
+  // actually cloned.
+  static void publishClonedOps(const IRMapping &mapping,
+                               MGradientUtilsReverse *gutils) {
+    for (auto &&[oldOp, newOp] : mapping.getOperationMap())
+      gutils->originalToNewFnOps[oldOp] = newOp;
+  }
+
+  // Hand a re-materialized step to gutils as forOp's body, so the reverse
+  // visitor resolves the step's primal through getNewFromOriginal. Only for the
+  // clone the visitor actually runs against: one that merely replays the primal
+  // publishes its ops but must keep its values private, or it would claim to be
+  // the new counterpart of forOp's body for the rest of the pass.
+  //
+  // The values published are the body's own arguments and its top-level ops'
+  // results -- precisely the ones a body op's reverse can name as an operand.
+  // Values nested deeper stay private to the clone: nothing outside resolves
+  // them, and parking them in the long-lived originalToNewFn is what lets a
+  // later Value allocated at a since-freed address collide with a stale entry.
+  static void publishClonedStep(scf::ForOp forOp, const IRMapping &mapping,
+                                MGradientUtilsReverse *gutils) {
+    for (BlockArgument arg : forOp.getBody()->getArguments())
+      gutils->originalToNewFn.map(arg, mapping.lookup(arg));
+
+    for (Operation &op : forOp.getBody()->without_terminator())
+      for (auto &&[oldVal, newVal] :
+           llvm::zip_equal(op.getResults(), mapping.lookup(&op)->getResults()))
+        gutils->originalToNewFn.map(oldVal, newVal);
+
+    publishClonedOps(mapping, gutils);
+  }
+
+  // forceAugmentedReturns() (called once, early, over the whole original
+  // function) plants an enzyme.placeholder for every mutable-typed value's
+  // shadow, including ones nested inside a checkpointed forOp's augmented
+  // copy (e.g. an affine.parallel's own pointer2memref result). Those
+  // placeholders are meant to survive until the reverse pass visits their
+  // defining op and replaces them via setInvertedPointer. But checkpointing
+  // discards the whole augmented-forward copy of forOp (it's redundant once
+  // the checkpoint-buffer reconstruction takes over) via gutils->erase(...),
+  // which -- if it happens before that replacement runs -- destroys the
+  // still-referenced placeholder out from under invertedPointers, leaving a
+  // dangling entry that only crashes later, whenever something finally reads
+  // it. Hoist any not-yet-replaced placeholders out of the doomed subtree
+  // first so they survive.
+  static void hoistPlaceholdersBefore(Operation *root, Operation *before) {
+    SmallVector<enzyme::PlaceholderOp> placeholders;
+    root->walk([&](enzyme::PlaceholderOp p) { placeholders.push_back(p); });
+    for (auto p : placeholders)
+      p->moveBefore(before);
   }
 
   // Reverse pass for binomial (Revolve) checkpointing. Iterates all N steps in
@@ -456,28 +745,43 @@ private:
              .has_value();
     auto numIterArgs = forOp.getNumRegionIterArgs();
 
-    SetVector<Value> outsideRefs;
-    getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
     SmallVector<Value> immutableRefs, mutableRefs;
-    for (auto ref : outsideRefs) {
-      if (isa<ClonableTypeInterface>(ref.getType()))
-        mutableRefs.push_back(ref);
-      else
-        immutableRefs.push_back(ref);
-    }
+    splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
+                                           isDynamic, gutils);
+    assert(caches.size() == layout.size() && "binomial cache layout mismatch");
 
-    IRMapping &mapping = gutils->originalToNewFn;
+    IRMapping mapping;
 
-    // Pop cached handles (order matches cacheBinomial).
+    // Below, each mutableRef's shadow is re-bound to the popped shadow handle.
+    // That binding must not outlive this function: ops *outside* the loop are
+    // visited after it (reverse order) and expect the caller's shadow, not
+    // ours. Restore the previous bindings on the way out.
+    SmallVector<std::pair<Value, Value>> savedMutableShadows;
+    for (auto ref : mutableRefs)
+      savedMutableShadows.emplace_back(
+          ref, gutils->invertedPointers.lookupOrNull(ref));
+    auto restoreMutableShadows = llvm::make_scope_exit([&]() {
+      for (auto &[ref, prev] : savedMutableShadows) {
+        if (prev)
+          gutils->invertedPointers.map(ref, prev);
+        else
+          gutils->invertedPointers.erase(ref);
+      }
+    });
+
+    // Pop cached handles (indices from the shared layout).
     SmallVector<Value> ckptBufs;
     for (size_t j = 0; j < numIterArgs; ++j)
-      ckptBufs.push_back(gutils->popCache(caches[j], builder));
-    Value idxBuf = gutils->popCache(caches[numIterArgs], builder);
+      ckptBufs.push_back(gutils->popCache(caches[layout.ckptBuf(j)], builder));
+    Value idxBuf = gutils->popCache(caches[layout.idxBuf()], builder);
 
-    size_t cacheIdx = numIterArgs + mutableRefs.size() + 1;
-
-    for (auto ref : immutableRefs)
-      mapping.map(ref, gutils->popCache(caches[cacheIdx++], builder));
+    SmallVector<Value> immutableRefsCaches;
+    for (auto &&[i, ref] : llvm::enumerate(immutableRefs)) {
+      Value cached = gutils->popCache(caches[layout.immutable(i)], builder);
+      mapping.map(ref, cached);
+      immutableRefsCaches.push_back(cached);
+    }
 
     Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
     Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
@@ -486,9 +790,9 @@ private:
     // these were cached by cacheBinomial (trailing entries, same order).
     Value numItersV, startV, stepV;
     if (isDynamic) {
-      numItersV = gutils->popCache(caches[cacheIdx++], builder);
-      startV = gutils->popCache(caches[cacheIdx++], builder);
-      stepV = gutils->popCache(caches[cacheIdx++], builder);
+      numItersV = gutils->popCache(caches[layout.numIters()], builder);
+      startV = gutils->popCache(caches[layout.start()], builder);
+      stepV = gutils->popCache(caches[layout.step()], builder);
     } else {
       int64_t numIters =
           ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
@@ -503,10 +807,27 @@ private:
     }
 
     // Effective budget = min(requested budget, trip count); must match
-    // cacheBinomial.
+    // cacheBinomial, including being unconditional.
     Value budgetV = arith::MinUIOp::create(
         builder, loc, arith::ConstantIndexOp::create(builder, loc, budget),
         numItersV);
+
+    // Clone buffers and shadows are single-entry caches, so they are popped
+    // once, here, outside the loop. Each ref also gets a working clone the
+    // reverse pass owns: the replay writes through the ref, so it must not
+    // write into a checkpoint slot -- slot `capo` is re-read on the next
+    // iteration whenever the remat placed finer checkpoints above it.
+    SmallVector<Value> mutBufs, workClones;
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      mutBufs.push_back(gutils->popCache(caches[layout.cloneBuf(r)], builder));
+      workClones.push_back(
+          iface.cloneValue(builder, gutils->getNewFromOriginal(ref)));
+      mapping.map(ref, workClones.back());
+      if (layout.mutableActive[r])
+        gutils->invertedPointers.map(
+            ref, gutils->popCache(caches[layout.shadow(r)], builder));
+    }
 
     // Outer reverse loop over all N steps; carries (sp, adjoints...).
     SmallVector<Value> outerInit;
@@ -519,14 +840,6 @@ private:
 
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(revOuter.getBody());
-
-    SmallVector<Value> cachedMutableRefs;
-    cacheIdx = numIterArgs + 1;
-    for (auto ref : mutableRefs) {
-      Value v = gutils->popCache(caches[cacheIdx++], builder);
-      cachedMutableRefs.push_back(v);
-      mapping.map(ref, v);
-    }
 
     Value ivO = revOuter.getInductionVar();
     Value sp = revOuter.getBody()->getArgument(1);
@@ -543,6 +856,13 @@ private:
           loadCheckpoint(builder, loc, buf, capo, arg.getType()));
     Value ckptStep =
         memref::LoadOp::create(builder, loc, idxBuf, ValueRange{capo});
+
+    // Re-prime each working clone from the snapshot paired with slot `capo`, so
+    // the replay below starts from the mutable memory as it was at ckptStep.
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
+      cast<ClonableTypeInterface>(ref.getType())
+          .copyValue(builder, workClones[r],
+                     cloneSlot(builder, loc, mutBufs[r], capo));
 
     // Inner remat scf.while: reconstruct state at (currentRevStep - 1),
     // carrying (pos, capo, state...).
@@ -582,10 +902,17 @@ private:
       Value split = enzyme::BinomialProgressOp::create(
           builder, loc, builder.getIndexType(), remaining, budgetRem);
 
-      // Place a checkpoint at slot `acapo`.
+      // Place a checkpoint at slot `acapo`. The mutable-ref snapshot has to go
+      // with it: the working clones currently hold the content at step `pos`
+      // (innerRemat below advances them only after this store), and a slot
+      // whose state and snapshot came from different steps replays wrongly.
       for (auto &&[buf, val] : llvm::zip_equal(ckptBufs, astate))
         storeCheckpoint(builder, loc, buf, acapo, val);
       memref::StoreOp::create(builder, loc, pos, idxBuf, ValueRange{acapo});
+      for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
+        cast<ClonableTypeInterface>(ref.getType())
+            .copyValue(builder, cloneSlot(builder, loc, mutBufs[r], acapo),
+                       workClones[r]);
 
       Value posPlusSplit = arith::AddIOp::create(builder, loc, pos, split);
       Value isLast = arith::CmpIOp::create(
@@ -605,21 +932,23 @@ private:
       {
         OpBuilder::InsertionGuard g2(builder);
         builder.setInsertionPointToStart(innerRemat.getBody());
-        Value idx = innerRemat.getInductionVar();
+        Value idx = castToType(builder, loc, innerRemat.getInductionVar(),
+                               stepV.getType());
         Value iv = arith::AddIOp::create(
             builder, loc, startV,
             arith::MulIOp::create(builder, loc, stepV, idx));
-        IRMapping m2 = mapping; // keep outside-ref mappings
+
         for (auto &&[oldArg, newArg] :
              llvm::zip_equal(forOp.getBody()->getArguments().drop_front(),
                              innerRemat.getBody()->getArguments().drop_front()))
-          m2.map(oldArg, newArg);
-        m2.map(forOp.getInductionVar(), iv);
-        for (auto &it : forOp.getBody()->without_terminator())
-          builder.clone(it, m2);
+          mapping.map(oldArg, newArg);
+        mapping.map(forOp.getInductionVar(), iv);
+
+        copyBlockWithoutTerminator(builder, forOp.getBody(), gutils, mapping);
+
         SmallVector<Value> yields;
         for (auto operand : forOp.getBody()->getTerminator()->getOperands())
-          yields.push_back(m2.lookupOrDefault(operand));
+          yields.push_back(mapping.lookupOrDefault(operand));
         scf::YieldOp::create(builder, loc, yields);
       }
 
@@ -643,15 +972,58 @@ private:
         builder, loc, startV,
         arith::MulIOp::create(builder, loc, stepV, stepAdjC));
 
+    mapping = IRMapping();
+
+    for (auto [ref, cached] :
+         llvm::zip_equal(immutableRefs, immutableRefsCaches))
+      mapping.map(ref, cached);
+
+    // Re-bind after the mapping reset above; the shadows were bound once,
+    // before revOuter, and do not need rebinding per iteration.
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
+      mapping.map(ref, workClones[r]);
+
     for (auto &&[oldArg, newArg] : llvm::zip_equal(
              forOp.getBody()->getArguments().drop_front(), reconState))
       mapping.map(oldArg, newArg);
     mapping.map(forOp.getInductionVar(), ivAdj);
 
     // Re-materialize primal ops of this step for the reverse visitor.
-    for (auto &it : forOp.getBody()->without_terminator()) {
-      Operation *cloned = builder.clone(it, mapping);
-      gutils->originalToNewFnOps[&it] = cloned;
+    copyBlockWithoutTerminator(builder, forOp.getBody(), gutils, mapping);
+
+    // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
+    // per active mutable value, positioned in the single augmented primal --
+    // which cacheBinomial has since erased, leaving those entries dangling (a
+    // later invertPointerM() would hand out freed IR). Re-seed a placeholder
+    // per body value here, in this per-step reconstruction: that is where the
+    // shadow that replaces it legitimately lives, and where the per-iteration
+    // popCache shadows of the outside refs (bound above) dominate it. Hoisting
+    // the originals out of the loop instead cannot work, precisely because
+    // those source shadows are per-iteration values inside revOuter.
+    SmallVector<Value> reseededShadowKeys;
+    {
+      OpBuilder::InsertionGuard g4(builder);
+      forOp.getBody()->walk([&](Operation *inner) {
+        for (Value res : inner->getResults()) {
+          if (gutils->isConstantValue(res))
+            continue;
+          Type shadowTy = gutils->getShadowType(res.getType());
+          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
+          if (!iface || !iface.isMutable())
+            continue;
+          Value newRes = mapping.lookupOrNull(res);
+          if (!newRes)
+            continue;
+          if (Operation *defOp = newRes.getDefiningOp())
+            builder.setInsertionPointAfter(defOp);
+          else
+            continue;
+          auto ph =
+              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
+          gutils->invertedPointers.map(res, ph);
+          reseededShadowKeys.push_back(res);
+        }
+      });
     }
 
     // Reset every (non-mutable) intermediate gradient slot to zero at the start
@@ -689,6 +1061,24 @@ private:
     for (auto it = first; it != last; ++it)
       valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
 
+    // Placeholders re-seeded above are consumed by setInvertedPointer (which
+    // RAUWs and erases them) only for values some rule actually asked to
+    // invert. Drop the unused remainder rather than leaving enzyme.placeholder
+    // litter in the output -- keyed by the original value, so invertedPointers
+    // never keeps an entry pointing at IR we just erased. A resolved entry no
+    // longer names a PlaceholderOp, which is what distinguishes it (its op is
+    // already gone, so we must not dereference the recorded pointer).
+    for (Value orig : reseededShadowKeys) {
+      Value cur = gutils->invertedPointers.lookupOrNull(orig);
+      if (!cur)
+        continue;
+      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
+      if (ph && ph->use_empty()) {
+        gutils->invertedPointers.erase(orig);
+        ph->erase();
+      }
+    }
+
     SmallVector<Value> newAdjoints;
     for (auto &&[active, arg] : llvm::zip_equal(
              operandsActive, forOp.getBody()->getArguments().drop_front())) {
@@ -698,10 +1088,6 @@ private:
           gutils->zeroDiffe(arg, builder);
       }
     }
-
-    for (auto ref : cachedMutableRefs)
-      if (auto iface = dyn_cast<ClonableTypeInterface>(ref.getType()))
-        iface.freeClonedValue(builder, ref);
 
     SmallVector<Value> outerYields;
     outerYields.push_back(newSp);
@@ -724,6 +1110,11 @@ private:
     for (auto buf : ckptBufs)
       memref::DeallocOp::create(builder, loc, buf);
     memref::DeallocOp::create(builder, loc, idxBuf);
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      iface.freeClonedValue(builder, workClones[r]);
+      freeCloneSlots(builder, loc, budget, mutBufs[r], iface);
+    }
 
     return success(valid);
   }
@@ -881,16 +1272,15 @@ public:
           arith::ConstantOp::create(builder, loc,
                                     IntegerAttr::get(ivTy, startI)));
 
-      for (auto [oldArg, newArg] :
-           llvm::zip_equal(forOp.getBody()->getArguments(),
-                           revInner.getBody()->getArguments()))
-        mapping.map(oldArg, newArg);
-      mapping.map(forOp.getInductionVar(), currentIV);
-
-      for (auto &it : *forOp.getBody()) {
-        auto newOp = builder.clone(it, mapping);
-        gutils->originalToNewFnOps[&it] = newOp;
-      }
+      // Re-materialize this segment's primal for the reverse visitor (below,
+      // in revLoop), and hand it that clone as forOp's body. The terminator is
+      // cloned along with the rest: it terminates revInner.
+      IRMapping segmentMap = bodyCloneMapping(
+          forOp, revInner.getBody()->getArguments().drop_front(), currentIV,
+          mapping);
+      for (Operation &it : *forOp.getBody())
+        builder.clone(it, segmentMap);
+      publishClonedStep(forOp, segmentMap, gutils);
 
       builder.setInsertionPointToEnd(revOuter.getBody());
 
@@ -1078,6 +1468,11 @@ public:
     Operation *newOp = gutils->getNewFromOriginal(op);
     OpBuilder cacheBuilder(newOp);
 
+    if (getenv("ENZYME_DEBUG_REVERSE_BINOMIAL"))
+      llvm::errs() << "[ForOpInterfaceReverse::cacheValues] ENTER op=" << op
+                   << " needsBinomial=" << needsBinomialCheckpointing(forOp)
+                   << " needsPeriodic=" << needsCheckpointing(forOp) << "\n";
+
     if (needsBinomialCheckpointing(forOp)) {
       auto budget = getCheckpointBudget(forOp);
       if (!budget || *budget <= 1) {
@@ -1175,14 +1570,16 @@ public:
                                 innerFwd.getInductionVar()),
           newForOp.getStep());
 
-      for (auto [oldArg, newArg] :
-           llvm::zip_equal(forOp.getBody()->getArguments(),
-                           innerFwd.getBody()->getArguments()))
-        mapping.map(oldArg, newArg);
-      mapping.map(forOp.getInductionVar(), currentIV);
-
-      for (auto &it : *forOp.getBody())
-        cacheBuilder.clone(it, mapping);
+      // As in cacheBinomial: a forward simulation, so publish its ops (theirs
+      // would otherwise stay pointing into the copy erased below) but not its
+      // values -- the reverse re-clones the segment it works against. The
+      // terminator is cloned along with the rest: it terminates innerFwd.
+      IRMapping fwdMap = bodyCloneMapping(
+          forOp, innerFwd.getBody()->getArguments().drop_front(), currentIV,
+          mapping);
+      for (Operation &it : *forOp.getBody())
+        cacheBuilder.clone(it, fwdMap);
+      publishClonedOps(fwdMap, gutils);
 
       cacheBuilder.setInsertionPointToEnd(outerFwd.getBody());
       for (auto initArg : innerFwd.getInitArgs())
@@ -1201,6 +1598,7 @@ public:
                                                   cacheBuilder));
 
       gutils->replaceOrigOpWith(op, outerFwd.getResults());
+      hoistPlaceholdersBefore(newForOp, newForOp);
       gutils->erase(newForOp);
       gutils->originalToNewFnOps[op] = outerFwd;
 

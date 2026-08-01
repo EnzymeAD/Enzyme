@@ -348,11 +348,32 @@ def LowerLLVMExtPass : Pass<"lower-llvm-ext"> {
   let dependentDialects = [
     "mlir::enzyme::llvm_ext::LLVMExtDialect",
     "LLVM::LLVMDialect",
+    // Device-space allocations lower through gpu.alloc/gpu.dealloc, sized with
+    // arith index casts.
+    "arith::ArithDialect",
+    "gpu::GPUDialect",
+    "memref::MemRefDialect"
   ];
   let options = [
     Option<"lowerToAllocaThreshold", "lower-to-alloca-threshold", "uint64_t",
            /*default=*/"0",
            "Maximum static size at which an alloc/free is promoted to an alloca (default -1: promotion disabled)">,
+  ];
+}
+
+def SinkCheckpointViewsPass : Pass<"sink-checkpoint-views"> {
+  let summary = "Sink pure views of mutable values into checkpointed loops.";
+  let description = [{
+    Checkpointing snapshots every mutable value a loop captures. A view and its
+    source are the same memory, so capturing both produces two snapshots of one
+    buffer and a replay that reads half its state from each. Sinking the view
+    into the loop leaves only the source captured, and the view is re-derived
+    from it inside the body.
+
+    Must run before `enzyme`, which is what reads the captures.
+  }];
+  let dependentDialects = [
+    "scf::SCFDialect"
   ];
 }
 

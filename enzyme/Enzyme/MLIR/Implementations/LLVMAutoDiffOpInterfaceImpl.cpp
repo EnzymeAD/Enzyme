@@ -409,36 +409,85 @@ struct InsertValueOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
-std::optional<Value> findPtrSize(Value ptr) {
+// Number of bytes reachable from a pointer, or null if that isn't recorded
+// anywhere. The memory space the bytes live in doesn't have to be discovered
+// alongside it: it is the address space of the pointer's own type, which is
+// what decides whether a clone can be made with plain host malloc/memcpy or
+// has to go through the device runtime.
+Value findPtrSize(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
     return allocOp.getSize();
 
-  for (auto user : ptr.getUsers()) {
-    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
+  for (auto user : ptr.getUsers())
+    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user))
       return psh.getSize();
-    }
-  }
 
-  return std::nullopt;
+  return nullptr;
+}
+
+// llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc and
+// llvm_ext.memcpy require an i64 size, so a narrower (or wider) hint has to be
+// converted rather than forwarded -- otherwise we build invalid IR that only
+// fails later, in the verifier. Returns null if the size is not an integer.
+static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size) {
+  auto i64Ty = builder.getIntegerType(64);
+  if (size.getType() == i64Ty)
+    return size;
+
+  auto srcTy = dyn_cast<IntegerType>(size.getType());
+  if (!srcTy) {
+    llvm::errs() << "ptr size hint is not an integer: " << size << "\n";
+    return nullptr;
+  }
+  // Sizes are non-negative, so zero-extend when widening.
+  if (srcTy.getWidth() < 64)
+    return LLVM::ZExtOp::create(builder, loc, i64Ty, size);
+  return LLVM::TruncOp::create(builder, loc, i64Ty, size);
 }
 
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
-    auto ptrSize = findPtrSize(value);
-    if (!ptrSize) {
+    Value extent = findPtrSize(value);
+    if (!extent) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;
     }
 
-    auto clone = llvm_ext::AllocOp::create(
-        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
-        *ptrSize);
-    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, *ptrSize,
-                           /*isVolatile*/ false);
+    Value size = normalizeSizeToI64(builder, value.getLoc(), extent);
+    if (!size)
+      return nullptr;
+
+    // The clone gets the type of what it clones, so it lands in the same
+    // address space, and picking the allocator and the copy is left to
+    // lower-llvm-ext: emitting host malloc/memcpy here would silently produce
+    // a host read of device memory (a segfault at runtime) whenever the value
+    // being checkpointed is a device pointer.
+    Value clone = llvm_ext::AllocOp::create(builder, value.getLoc(),
+                                            value.getType(), size);
+    llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, value, size);
 
     return clone;
+  }
+
+  void copyValue(Type self, OpBuilder &builder, Value dst, Value src) const {
+    // Prefer `src`: taking a checkpoint copies from the live ref, whose alloc
+    // (or size hint) is visible. Restoring one copies *out of* a clone buffer,
+    // where only `dst` -- a direct clone -- is traceable.
+    Value extent = findPtrSize(src);
+    if (!extent)
+      extent = findPtrSize(dst);
+    if (!extent) {
+      llvm::errs() << "cannot find size of ptr to copy: " << src << "\n";
+      return;
+    }
+
+    Value size = normalizeSizeToI64(builder, src.getLoc(), extent);
+    if (!size)
+      return;
+
+    llvm_ext::MemcpyOp::create(builder, src.getLoc(), dst, src, size);
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
