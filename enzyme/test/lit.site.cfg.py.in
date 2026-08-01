@@ -66,6 +66,33 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# mlir-opt/mlir-runner and the runner support libs live alongside the LLVM
+# tools/libs when LLVM is built with MLIR enabled (the CMake case here, since
+# this project builds against a preexisting LLVM+MLIR install/build). Under
+# Bazel, @llvm-project//mlir data deps land as a sibling of this file's own
+# runfiles directory (runfiles_root/llvm-project/mlir/...), same as how
+# %eopt's fallback above locates //:enzymemlir-opt relative to __file__.
+mlir_tools_dir = config.llvm_tools_dir
+mlir_libs_dir = config.llvm_libs_dir
+if len("@ENZYME_BINARY_DIR@") == 0:
+  mlir_tools_dir = (os.path.dirname(os.path.abspath(__file__))
+                     + "/../../llvm-project/mlir")
+  mlir_libs_dir = mlir_tools_dir
+
+mlir_opt = mlir_tools_dir + "/mlir-opt"
+mlir_runner = mlir_tools_dir + "/mlir-runner"
+mlir_runner_utils = mlir_libs_dir + "/libmlir_runner_utils" + config.llvm_shlib_ext
+mlir_c_runner_utils = mlir_libs_dir + "/libmlir_c_runner_utils" + config.llvm_shlib_ext
+
+if os.path.exists(mlir_runner):
+  config.available_features.add('mlir-runner')
+
+config.substitutions.append(('%mlir-opt', mlir_opt))
+config.substitutions.append(('%mlir-runner', mlir_runner))
+config.substitutions.append(('%mlir_runner_utils', mlir_runner_utils))
+config.substitutions.append(('%mlir_c_runner_utils', mlir_c_runner_utils))
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
