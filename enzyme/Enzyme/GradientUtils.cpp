@@ -48,6 +48,7 @@
 #include "llvm/IR/Value.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -3177,7 +3178,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   SmallPtrSet<Instruction *, 1> loopRematerializations;
   SmallPtrSet<Instruction *, 1> loopReallocations;
   SmallPtrSet<Instruction *, 1> loopShadowReallocations;
-  SmallPtrSet<Instruction *, 1> loopShadowZeroInits;
+  SmallSetVector<Instruction *, 1> loopShadowZeroInits;
   SmallPtrSet<Instruction *, 1> loopShadowRematerializations;
   Loop *origLI = nullptr;
   for (auto pair : rematerializableAllocations) {
