@@ -116,7 +116,14 @@ static LoopCacheType getCacheType(Operation *op) {
 }
 
 static bool hasMinCut(Operation *op) {
-  return !op->hasAttr("enzyme.disable_mincut");
+  if (op->hasAttr("enzyme.disable_mincut"))
+    return false;
+
+  while (op = op->getParentOp())
+    if (op->hasAttr("enzyme.disable_mincut"))
+      return false;
+
+  return true;
 }
 
 static bool hasLICM(Operation *op) {
@@ -811,6 +818,15 @@ public:
           memorySpace = MT.getMemorySpace();
         allocOp =
             getMultiDimCacheAllocOp(info.pushedValue(), cacheType, ST, forOp);
+        // The cache's element type can have lost the memory space -- what gets
+        // pushed may be a bare pointer-like memref<?xf32> while the allocation
+        // behind it lives in memory space 1. The pushed value is what names
+        // the space, and the forward pass reads it from exactly here; both
+        // sides must agree, or the reverse-pass subviews slice an allocation
+        // whose memory space their result type does not carry.
+        if (allocOp)
+          if (auto MT = dyn_cast<MemRefType>(info.pushedValue().getType()))
+            memorySpace = MT.getMemorySpace();
         ST = refineCacheShapeFromAlloc(ST, allocOp);
         cachedShapedTy = ST;
         bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
