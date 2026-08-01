@@ -82,10 +82,21 @@ struct RaiseLLVMExtPass
               return;
             }
 
-            // The address space selects which allocator/copy the clone of this
-            // pointer has to use, so it has to be known at compile time rather
-            // than being an arbitrary runtime value.
-            int64_t memorySpace = 0;
+            // The address space the clone of this pointer has to be allocated
+            // and copied in is the one in the pointer's own type; the optional
+            // third argument is only accepted so existing callers keep
+            // building, and has to agree with it. A pointer that is typed as
+            // host memory but really holds a device address needs an
+            // llvm.addrspacecast, not a differing annotation here -- otherwise
+            // every user of the pointer disagrees with the hint.
+            auto ptrTy = dyn_cast<LLVM::LLVMPointerType>(args[0].getType());
+            if (!ptrTy) {
+              failed = true;
+              call.emitError()
+                  << "first argument of __enzyme_ptr_size_hint is not a "
+                     "pointer";
+              return;
+            }
             if (args.size() == 3) {
               APInt space;
               if (!matchPattern(args[2], m_ConstantInt(&space))) {
@@ -94,12 +105,20 @@ struct RaiseLLVMExtPass
                                     "__enzyme_ptr_size_hint is not a constant";
                 return;
               }
-              memorySpace = space.getSExtValue();
+              if (space.getSExtValue() != (int64_t)ptrTy.getAddressSpace()) {
+                failed = true;
+                call.emitError()
+                    << "address space argument of __enzyme_ptr_size_hint is "
+                    << space.getSExtValue() << " but the pointer is in address "
+                    << "space " << ptrTy.getAddressSpace()
+                    << "; the memory space is taken from the pointer type";
+                return;
+              }
             }
 
             OpBuilder builder(call);
             llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), args[0],
-                                            args[1], memorySpace);
+                                            args[1]);
 
             call.erase();
           }

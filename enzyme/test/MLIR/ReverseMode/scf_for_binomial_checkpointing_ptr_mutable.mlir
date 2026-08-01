@@ -1,14 +1,13 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s
-// RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --lower-llvm-ext --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s --check-prefix=LOWER
+// RUN: %eopt %s --allow-unregistered-dialect --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --lower-llvm-ext --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s --check-prefix=LOWER
 
 // Binomial checkpointing of a bare !llvm.ptr, the shape a CUDA program hits:
 // the loop mutates memory reached through a pointer whose extent is not in its
 // type, so the size comes from llvm_ext.ptr_size_hint and the clone buffer holds
 // pointer *handles* rather than flattened contents.
 //
-// The second RUN line covers lower-llvm-ext, which has to recover each clone's
-// memory space at the free -- the free operates on a handle loaded out of the
-// buffer, so the space is only reachable by tracing back to the stores.
+// The second RUN line covers lower-llvm-ext; the copies it emits are enzymexla
+// ops, which live outside this repository, hence --allow-unregistered-dialect.
 
 module {
   func.func @main(%p: !llvm.ptr) -> f32 {
@@ -80,14 +79,15 @@ module {
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %[[SLOTS]] : memref<4x!llvm.ptr>
 
-// After lower-llvm-ext the host allocator is used throughout (memory space 0),
-// including for the frees of handles loaded back out of the buffer. Recovering
-// the space there needs the store-side trace; without it the pass would fail.
+// After lower-llvm-ext the host allocator is used throughout, including for the
+// frees of handles loaded back out of the buffer: those handles are typed
+// !llvm.ptr, so the memory space is right there in the type and no tracing back
+// to the allocation is needed to pick the deallocator.
 // LOWER-DAG:   llvm.func @malloc(i64) -> !llvm.ptr
 // LOWER-DAG:   llvm.func @free(!llvm.ptr)
 // LOWER-LABEL: func.func @main(
 // LOWER:         llvm.call @malloc
-// LOWER:         "llvm.intr.memcpy"
+// LOWER:         "enzymexla.memcpy"
 // LOWER:         memref.load
 // LOWER:         llvm.call @free
 // LOWER-NOT:     llvm_ext.
