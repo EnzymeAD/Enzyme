@@ -48,6 +48,7 @@
 #include "llvm/IR/Value.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -3177,7 +3178,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   SmallPtrSet<Instruction *, 1> loopRematerializations;
   SmallPtrSet<Instruction *, 1> loopReallocations;
   SmallPtrSet<Instruction *, 1> loopShadowReallocations;
-  SmallPtrSet<Instruction *, 1> loopShadowZeroInits;
+  SmallSetVector<Instruction *, 1> loopShadowZeroInits;
   SmallPtrSet<Instruction *, 1> loopShadowRematerializations;
   Loop *origLI = nullptr;
   for (auto pair : rematerializableAllocations) {
@@ -6521,7 +6522,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             return li;
           },
           invertPointerM(II->getArgOperand(0), bb));
-    case Intrinsic::masked_load:
+    case Intrinsic::masked_load: {
+      auto invDefault = invertPointerM(II->getArgOperand(3), bb, TT);
+      auto invPtr = invertPointerM(II->getArgOperand(0), bb);
       return applyChainRule(
           II->getType(), bb,
           [&](Value *ptr, Value *defaultV) {
@@ -6535,8 +6538,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
             return li;
           },
-          invertPointerM(II->getArgOperand(0), bb),
-          invertPointerM(II->getArgOperand(3), bb, TT));
+          invPtr, invDefault);
+    }
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
@@ -6569,7 +6572,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             }
             ++cnt;
          }
-         auto result = BuilderM.CreateSelect(which, invertPointerM(vals[1], BuilderM, TT), invertPointerM(vals[0], BuilderM, TT));
+         auto inv0 = invertPointerM(vals[0], BuilderM, TT);
+         auto inv1 = invertPointerM(vals[1], BuilderM, TT);
+         auto result = BuilderM.CreateSelect(which, inv1, inv0);
          return result;
      }
 #endif

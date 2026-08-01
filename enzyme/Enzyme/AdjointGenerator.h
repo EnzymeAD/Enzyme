@@ -1573,12 +1573,13 @@ public:
                         dyn_cast<VectorType>(SI.getOperand(0)->getType())) {
                   inc = Builder2.CreateVectorSplat(VTy->getElementCount(), inc);
                 }
-                Value *dif = CreateSelect(
-                    Builder2,
-                    Builder2.CreateICmpEQ(gutils->lookupM(index, EB), inc),
-                    diffe(&SI, Builder2),
-                    Constant::getNullValue(
-                        gutils->getShadowType(op1->getType())));
+                Value *difSI = diffe(&SI, Builder2);
+                Value *isSelected =
+                    Builder2.CreateICmpEQ(gutils->lookupM(index, EB), inc);
+                Value *dif =
+                    CreateSelect(Builder2, isSelected, difSI,
+                                 Constant::getNullValue(
+                                     gutils->getShadowType(op1->getType())));
                 addToDiffe(SI.getOperand(2 - i), dif, Builder2, addingType);
               }
             }
@@ -2636,10 +2637,10 @@ public:
                 prev = Builder2.CreateAdd(
                     prev, ConstantInt::get(prev->getType(), num, false), "",
                     /*NUW*/ true, /*NSW*/ true);
+                auto prevFP = Builder2.CreateBitCast(prev, FT);
+                auto idiffFP = Builder2.CreateBitCast(idiff, FT);
                 prev = Builder2.CreateBitCast(
-                    checkedMul(gutils->strongZero, Builder2,
-                               Builder2.CreateBitCast(idiff, FT),
-                               Builder2.CreateBitCast(prev, FT)),
+                    checkedMul(gutils->strongZero, Builder2, idiffFP, prevFP),
                     prev->getType());
                 return prev;
               };
@@ -2864,10 +2865,10 @@ public:
                 prev = Builder2.CreateAdd(
                     prev, ConstantInt::get(prev->getType(), num, false), "",
                     /*NUW*/ true, /*NSW*/ true);
+                auto prevFP = Builder2.CreateBitCast(prev, FT);
+                auto difiFP = Builder2.CreateBitCast(difi, FT);
                 prev = Builder2.CreateBitCast(
-                    checkedMul(gutils->strongZero, Builder2,
-                               Builder2.CreateBitCast(difi, FT),
-                               Builder2.CreateBitCast(prev, FT)),
+                    checkedMul(gutils->strongZero, Builder2, difiFP, prevFP),
                     prev->getType());
 
                 return prev;

@@ -19,4 +19,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Check for order-dependent IR emission
-      run: python3 enzyme/scripts/check_emission_order.py --github enzyme/Enzyme
+      run: |
+        python3 enzyme/scripts/check_emission_order.py --github \
+          --include-llvm-builder enzyme/Enzyme

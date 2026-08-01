@@ -2298,9 +2298,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
           for (unsigned i = 1; i <= 2; i++) {
             auto AI = bb.CreateAlloca(todiff->getReturnType());
-            bb.CreateStore(
-                bb.CreateExtractValue(cal, {i}),
-                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i))));
+            auto AIcast =
+                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i)));
+            bb.CreateStore(bb.CreateExtractValue(cal, {i}), AIcast);
             auto ty = todiff->getReturnType();
             if (i == 2)
               ty = GradientUtils::getShadowType(ty, width);
@@ -2378,9 +2378,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
           for (unsigned i = 1; i <= 1; i++) {
             auto AI = bb.CreateAlloca(todiff->getReturnType());
-            bb.CreateStore(
-                bb.CreateExtractValue(cal, {i}),
-                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i))));
+            auto AIcast =
+                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i)));
+            bb.CreateStore(bb.CreateExtractValue(cal, {i}), AIcast);
             Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }

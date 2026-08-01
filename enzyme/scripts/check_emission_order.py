@@ -28,6 +28,20 @@ a function or lambda in this tree whose own body does one of those (helpers
 such as `makeI64Constant`). Lambda *literals* passed as arguments do not
 count -- their body runs inside the callee, after argument evaluation.
 
+The second check is the same problem from a different source: iterating a
+container that orders by pointer or hash value rather than by insertion.
+
+    DenseMap<LLVMFuncOp, SmallVector<CallOpInterface>> kernelLaunches;
+    ...
+    for (auto &launch : kernelLaunches)   // order depends on pointer values
+      ... create ops ...
+
+This one is worse than the argument-order case: DenseMap/DenseSet order can
+differ between two runs of the same binary, not just between toolchains. The
+fix is a MapVector/SetVector, or sorting before the loop. Creating ops in the
+body is an error; merely collecting elements into a vector is reported as a
+warning, since whether that order reaches the output takes a human to judge.
+
 Suppress a false positive with `// NOLINT(emission-order)` on any line of the
 flagged expression.
 """
@@ -40,8 +54,17 @@ import sys
 # A call that inserts an op into the IR.
 MLIR_EMITTER = r"\b\w+::create\s*(?=\()|\bcreate\s*<|\breplaceOpWithNewOp\s*<"
 # LLVM's IRBuilder has the same hazard; opt in with --include-llvm-builder.
-LLVM_EMITTER = r"\bCreate[A-Z]\w*\s*(?=\()"
+# `Create*` only counts when the receiver is a builder declared in this file
+# (see builder_names) or when it is one of LLVM's static Instruction::Create
+# factories, which insert into a block themselves.
+LLVM_STATIC_EMITTER = r"\b[A-Z]\w*(?:Inst|Block|Node)::Create\s*(?=\()"
+BUILDER_DECL_RE = re.compile(
+    r"\b(?:IRBuilder|IRBuilderBase|OpBuilder|PatternRewriter|IRRewriter|"
+    r"RewriterBase|ImplicitLocOpBuilder)\s*(?:<[^;{}()]*>)?\s*"
+    r"(?:const\s*)?[&*]?\s*(\w+)\s*[(,;=)]"
+)
 EMITTER_RE = re.compile(MLIR_EMITTER)
+INCLUDE_LLVM = False
 
 # Statements/expressions that are not calls we should look into.
 KEYWORDS = {
@@ -81,6 +104,20 @@ SUPPRESS_RE = re.compile(r"NOLINT\(\s*emission-order\s*\)")
 
 SOURCE_SUFFIXES = (".cpp", ".cc", ".h", ".hpp")
 SKIP_DIRS = {".git", "build", "third_party", "external"}
+
+# Containers whose iteration order is a function of pointer or hash values
+# rather than of insertion order.
+UNORDERED_TYPE_RE = re.compile(
+    r"(?<![\w:])(?:llvm::|std::)?"
+    r"(?:SmallPtrSet|SmallPtrSetImpl|SmallDenseMap|SmallDenseSet|DenseMap|"
+    r"DenseMapBase|DenseSet|StringMap|StringSet|unordered_map|unordered_set|"
+    r"unordered_multimap|unordered_multiset)\s*<"
+)
+RANGE_FOR_RE = re.compile(r"\bfor\s*\(\s*[^;{}]*?\s:\s*([^)]*)\)")
+# Anything in a loop body that turns iteration order into program output.
+ORDER_SENSITIVE_RE = re.compile(
+    r"\b(?:push_back|emplace_back|append|emitError|emitWarning|emitRemark)\s*\("
+)
 
 
 def strip_noise(src):
@@ -166,8 +203,31 @@ def split_args(src, lo, hi):
     return args
 
 
-def collect_helpers(src):
+def builder_names(src):
+    """Names bound to an IR builder / rewriter in `src`."""
+    return set(BUILDER_DECL_RE.findall(src))
+
+
+def emitter_for(src):
+    """The emitter pattern for one file.
+
+    With --include-llvm-builder, `Create*` counts only on a receiver this file
+    declares as a builder, so an unrelated `CreateFoo()` helper is not mistaken
+    for IR emission.
+    """
+    if not INCLUDE_LLVM:
+        return EMITTER_RE
+    alts = [MLIR_EMITTER, LLVM_STATIC_EMITTER]
+    names = builder_names(src)
+    if names:
+        joined = "|".join(sorted(map(re.escape, names)))
+        alts.append(rf"\b(?:{joined})\s*(?:\.|->)\s*Create[A-Z]\w*\s*(?=\()")
+    return re.compile("|".join(alts))
+
+
+def collect_helpers(src, emitter_re=None):
     """Names of functions and lambdas in `src` whose body inserts ops."""
+    EMITTER_RE = emitter_re or emitter_for(src)
     names = set()
     for m in LAMBDA_ASSIGN_RE.finditer(src):
         open_idx = src.index("{", m.end() - 1)
@@ -208,6 +268,7 @@ def iter_sources(roots):
 def check_file(path, helper_re):
     raw = open(path, encoding="utf-8", errors="replace").read()
     src = strip_noise(raw)
+    EMITTER_RE = emitter_for(src)
 
     def emits(text):
         if LAMBDA_ARG_RE.match(text):
@@ -249,6 +310,157 @@ def check_file(path, helper_re):
     return findings
 
 
+def match_angle(src, open_idx):
+    depth = 0
+    for i in range(open_idx, len(src)):
+        if src[i] == "<":
+            depth += 1
+        elif src[i] == ">":
+            depth -= 1
+            if depth == 0:
+                return i
+        elif src[i] in ";{}":
+            return -1
+    return -1
+
+
+def brace_spans(src):
+    """(start, end) of every brace pair, innermost last for a given point."""
+    stack, spans = [], []
+    for i, c in enumerate(src):
+        if c == "{":
+            stack.append(i)
+        elif c == "}" and stack:
+            spans.append((stack.pop(), i))
+    return spans
+
+
+def unordered_decls(src):
+    """(name, pos, scope_start, scope_end) per unordered-container declaration.
+
+    Names are scoped to the innermost enclosing braces so that a parameter such
+    as `SmallPtrSetImpl<Block *> &block` in one function does not make every
+    other `block` in the file look like a hash container.
+    """
+    spans = brace_spans(src)
+    decls = []
+    for m in UNORDERED_TYPE_RE.finditer(src):
+        close = match_angle(src, m.end() - 1)
+        if close < 0:
+            continue
+        decl = re.match(r"\s*(?:const\s*)?[&*]?\s*(\w+)", src[close + 1 :])
+        if not decl:
+            continue
+        pos = m.start()
+        scope = min(
+            (s for s in spans if s[0] < close < s[1]),
+            key=lambda s: s[1] - s[0],
+            default=(0, len(src)),
+        )
+        decls.append((decl.group(1), pos, scope[0], scope[1]))
+    return decls
+
+
+def iterated_name(expr):
+    """The identifier a range-for actually iterates over, if any.
+
+    `xs`, `*xs`, `xs.keys()`, `llvm::reverse(xs)` -> "xs".
+    """
+    expr = expr.strip()
+    call = re.fullmatch(r"[\w:]+\s*\(\s*([^()]*?)\s*\)", expr)
+    if call:
+        expr = call.group(1).strip()
+    m = re.match(r"[*&]?\s*(\w+)\s*(?:\.\w+\s*\(\s*\)\s*)?$", expr)
+    return m.group(1) if m else None
+
+
+def check_container_iteration(path, helper_re):
+    """Loops over an unordered container that turn its order into output."""
+    raw = open(path, encoding="utf-8", errors="replace").read()
+    src = strip_noise(raw)
+    EMITTER_RE = emitter_for(src)
+    decls = unordered_decls(src)
+    if not decls:
+        return []
+
+    findings = []
+    for m in RANGE_FOR_RE.finditer(src):
+        name = iterated_name(m.group(1))
+        if name is None:
+            continue
+        at = m.start()
+        hit = next(
+            (
+                n
+                for n, pos, lo, hi in decls
+                if n == name and pos < at and lo <= at <= hi
+            ),
+            None,
+        )
+        if hit is None:
+            continue
+        # A braced body runs to its matching brace; a brace-less one is the
+        # single statement that follows.
+        rest = src[m.end() :]
+        lead = len(rest) - len(rest.lstrip())
+        if rest[lead : lead + 1] == "{":
+            open_idx = m.end() + lead
+            close = match_brace(src, open_idx)
+            if close < 0:
+                continue
+        else:
+            close = src.find(";", m.end())
+            if close < 0:
+                continue
+        body = src[m.end() : close]
+        # Iteration order only becomes instruction order when the insertion
+        # point is shared across iterations. A builder constructed inside the
+        # body anchors each op to its own item, and a static Foo::Create
+        # factory may not be inserted at all until something else places it --
+        # both are reported, but as warnings.
+        local_builders = builder_names(body)
+        strong = False
+        for em in EMITTER_RE.finditer(body):
+            text = em.group()
+            recv = re.match(r"(\w+)\s*(?:\.|->)", text)
+            if recv and recv.group(1) in local_builders:
+                continue
+            if re.match(r"[A-Z]\w*(?:Inst|Block|Node)::Create", text):
+                continue
+            if "::create" in text:  # MLIR: builder is the first argument
+                after = body[em.end() :]
+                paren = after.find("(")
+                first = (
+                    re.match(r"\s*\(?\s*(\w+)", after[paren:]) if paren >= 0 else None
+                )
+                if first and first.group(1) in local_builders:
+                    continue
+            strong = True
+            break
+        by_helper = bool(helper_re and helper_re.search(body))
+        emits = bool(EMITTER_RE.search(body)) or by_helper
+        strong = strong or by_helper
+        if not (emits or ORDER_SENSITIVE_RE.search(body)):
+            continue
+        if SUPPRESS_RE.search(raw[m.start() : close + 1]):
+            continue
+        line = src.count("\n", 0, m.start()) + 1
+        end_line = src.count("\n", 0, close) + 1
+        # Creating ops in the body puts the order straight into the IR. Merely
+        # collecting into a vector may or may not reach the output, so it is
+        # reported but does not fail the run.
+        findings.append(
+            (
+                line,
+                end_line,
+                hit,
+                " ".join(raw[m.start() : m.end()].split()),
+                "error" if (emits and strong) else "warning",
+            )
+        )
+    return findings
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -268,8 +480,8 @@ def main():
     args = parser.parse_args()
 
     if args.include_llvm_builder:
-        global EMITTER_RE
-        EMITTER_RE = re.compile(MLIR_EMITTER + "|" + LLVM_EMITTER)
+        global INCLUDE_LLVM
+        INCLUDE_LLVM = True
 
     files = list(iter_sources(args.roots))
     helpers = set()
@@ -288,28 +500,63 @@ def main():
         else None
     )
 
-    total = 0
+    errors, warnings = 0, 0
+
+    def report(path, line, end_line, msg, snippet, severity="error"):
+        nonlocal errors, warnings
+        if severity == "error":
+            errors += 1
+        else:
+            warnings += 1
+        print(f"{path}:{line}: {severity}: {msg}\n    {snippet}")
+        if args.github:
+            print(
+                f"::{severity} file={path},line={line},endLine={end_line},"
+                f"title=Nondeterministic IR emission order::{msg}"
+            )
+
     for path in files:
         for line, end_line, callee, snippet in check_file(path, helper_re):
-            total += 1
-            msg = (
+            report(
+                path,
+                line,
+                end_line,
                 f"{callee}(...) builds two or more ops in one argument list; "
                 f"evaluation order is unspecified, so the emitted IR order "
-                f"is compiler-dependent. Bind each to a local first."
+                f"is compiler-dependent. Bind each to a local first.",
+                snippet,
             )
-            print(f"{path}:{line}: {msg}\n    {snippet}")
-            if args.github:
-                print(
-                    f"::error file={path},line={line},endLine={end_line},"
-                    f"title=Nondeterministic IR emission order::{msg}"
-                )
+        for line, end_line, name, snippet, severity in check_container_iteration(
+            path, helper_re
+        ):
+            what = (
+                "creates ops while iterating"
+                if severity == "error"
+                else "collects the elements of"
+            )
+            report(
+                path,
+                line,
+                end_line,
+                f"loop {what} `{name}`, but that container orders by pointer "
+                f"or hash value rather than by insertion, so its order can "
+                f"differ between runs. Use MapVector/SetVector, or sort first.",
+                snippet,
+                severity,
+            )
 
-    if total:
+    if warnings:
         print(
-            f"\n{total} nondeterministic emission site(s). "
-            f"Bind each op to a local before the enclosing call, or add "
-            f"`// NOLINT(emission-order)` if the order provably cannot be "
-            f"observed.",
+            f"\n{warnings} loop(s) over an unordered container feed something "
+            f"order-sensitive but do not create ops directly; review whether "
+            f"the order reaches the output.",
+            file=sys.stderr,
+        )
+    if errors:
+        print(
+            f"\n{errors} nondeterministic emission site(s). See the guidance in "
+            f"each message, or add `// NOLINT(emission-order)` if the order "
+            f"provably cannot be observed.",
             file=sys.stderr,
         )
         return 1
