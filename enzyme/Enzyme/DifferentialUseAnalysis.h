@@ -84,9 +84,20 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
                             const llvm::PHINode *P0,
                             const llvm::Value *incomingVal);
 
+/// Add the preheader start value of a loopy reduction PHI to the min-cut
+/// recompute graph.
+///
+/// \p admissible must return whether a value may legally be added to
+/// \p Intermediates, i.e. that it is either already a known recompute or is
+/// legal to recompute given what is available in the reverse pass. Callers
+/// must supply the same admission rule that governs their own worklist:
+/// everything in \p Intermediates is later assumed to be recomputable unless
+/// the min-cut selected it for caching, and violating that fires an assertion
+/// in GradientUtils::computeMinCache.
 void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
                            llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo);
+                           std::deque<llvm::Value *> &todo,
+                           llvm::function_ref<bool(llvm::Value *)> admissible);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(

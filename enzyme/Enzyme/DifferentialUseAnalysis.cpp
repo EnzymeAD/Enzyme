@@ -1287,7 +1287,8 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
 
 void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
                            llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo) {
+                           std::deque<llvm::Value *> &todo,
+                           llvm::function_ref<bool(llvm::Value *)> admissible) {
   using namespace llvm;
   if (auto P0 = dyn_cast<PHINode>(V)) {
     if (!gutils->OrigLI)
@@ -1347,6 +1348,16 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       // thus need not be added to the recompute graph (which only contains
       // instructions).
       if (!isa<Instruction>(Pstart))
+        break;
+      // Only values the caller would itself admit may enter the recompute
+      // graph. Everything in Intermediates that the min-cut declines to cache
+      // is later assumed recomputable; adding a value that is not legal to
+      // recompute breaks that invariant and trips the assertion in
+      // computeMinCache. Such a value is instead handled by the ordinary
+      // caching path, exactly as the main worklist does when legalRecompute
+      // fails. Stop walking the chain: anything further up is only reachable
+      // through this value.
+      if (!admissible(Pstart))
         break;
       Intermediates.insert(Pstart);
       todo.push_back(Pstart);

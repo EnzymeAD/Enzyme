@@ -8740,10 +8740,33 @@ void GradientUtils::computeMinCache() {
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
 
+    // Same admission rule the worklist above applies before inserting into
+    // Intermediates: a value may join the recompute graph only if it is
+    // already a known recompute, or is legal to recompute from what the
+    // reverse pass has available. Keeping these two in agreement is what makes
+    // the `legalRecompute` assertion below hold.
+    auto admissibleIntermediate = [&](Value *V) {
+      if (Recomputes.count(V))
+        return true;
+      auto I = dyn_cast<Instruction>(V);
+      if (!I)
+        return false;
+      ValueToValueMapTy Available2;
+      for (auto a : Available)
+        Available2[a.first] = a.second;
+      for (Loop *L = OrigLI->getLoopFor(I->getParent()); L != nullptr;
+           L = L->getParentLoop()) {
+        for (auto v : LoopAvail[L]) {
+          Available2[v] = v;
+        }
+      }
+      return legalRecompute(V, Available2, nullptr);
+    };
+
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(
+          this, V, Intermediates, todo, admissibleIntermediate);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8754,8 +8777,8 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(
+          this, V, Intermediates, todo, admissibleIntermediate);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
