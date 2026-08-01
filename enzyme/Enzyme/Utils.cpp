@@ -518,10 +518,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
   Value *gVal;
 
-  Value *prevSize =
-      B.CreateSelect(B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1)),
-                     ConstantInt::get(next->getType(), 0),
-                     B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
+  Value *halfNext = B.CreateLShr(next, ConstantInt::get(next->getType(), 1));
+  Value *isFirstSize =
+      B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1));
+  Value *prevSize = B.CreateSelect(
+      isFirstSize, ConstantInt::get(next->getType(), 0), halfNext);
 
   auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
   bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
@@ -1365,27 +1366,39 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   auto i_plus_one = LB.CreateAdd(i, one, "", true, true);
   i->addIncoming(i_plus_one, loop);
 
-  Value *copyArgs[] = {
-      to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
-                       EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
-                         CreateSelect(LB, islowerarg, i_plus_one, i),
-                         CreateSelect(LB, islowerarg, i, i_plus_one)),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
-                             CreateSelect(LB, islowerarg, one, zero),
-                             CreateSelect(LB, islowerarg, zero, one)),
-          byRef, cublas, nullptr, EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
-                         CreateSelect(LB, islowerarg, i, i_plus_one),
-                         CreateSelect(LB, islowerarg, i_plus_one, i)),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
-                             CreateSelect(LB, islowerarg, zero, one),
-                             CreateSelect(LB, islowerarg, one, zero)),
-          byRef, cublas, nullptr, EB)};
+  // Each lookup_with_layout's two selects are bound in the order they are
+  // emitted; the array elements themselves stay in place, since a braced
+  // initializer is evaluated left to right.
+  Value *countArg = to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef,
+                                     cublas, nullptr, EB);
+
+  Value *aCol = CreateSelect(LB, islowerarg, i, i_plus_one);
+  Value *aRow = CreateSelect(LB, islowerarg, i_plus_one, i);
+  Value *aArg =
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg, aRow, aCol);
+
+  Value *incACol = CreateSelect(LB, islowerarg, zero, one);
+  Value *incARow = CreateSelect(LB, islowerarg, one, zero);
+  Value *incAArg =
+      to_blas_callconv(LB,
+                       lookup_with_layout(LB, fpType, layoutarg, nullptr,
+                                          ldaarg, incARow, incACol),
+                       byRef, cublas, nullptr, EB);
+
+  Value *bCol = CreateSelect(LB, islowerarg, i_plus_one, i);
+  Value *bRow = CreateSelect(LB, islowerarg, i, i_plus_one);
+  Value *bArg =
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg, bRow, bCol);
+
+  Value *incBCol = CreateSelect(LB, islowerarg, one, zero);
+  Value *incBRow = CreateSelect(LB, islowerarg, zero, one);
+  Value *incBArg =
+      to_blas_callconv(LB,
+                       lookup_with_layout(LB, fpType, layoutarg, nullptr,
+                                          ldaarg, incBRow, incBCol),
+                       byRef, cublas, nullptr, EB);
+
+  Value *copyArgs[] = {countArg, aArg, incAArg, bArg, incBArg};
 
   Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
                      copyArgs[2]->getType(), copyArgs[3]->getType(),

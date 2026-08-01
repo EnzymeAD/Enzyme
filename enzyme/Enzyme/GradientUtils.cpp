@@ -6521,7 +6521,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             return li;
           },
           invertPointerM(II->getArgOperand(0), bb));
-    case Intrinsic::masked_load:
+    case Intrinsic::masked_load: {
+      auto invDefault = invertPointerM(II->getArgOperand(3), bb, TT);
+      auto invPtr = invertPointerM(II->getArgOperand(0), bb);
       return applyChainRule(
           II->getType(), bb,
           [&](Value *ptr, Value *defaultV) {
@@ -6535,8 +6537,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
             return li;
           },
-          invertPointerM(II->getArgOperand(0), bb),
-          invertPointerM(II->getArgOperand(3), bb, TT));
+          invPtr, invDefault);
+    }
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
@@ -6569,7 +6571,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             }
             ++cnt;
          }
-         auto result = BuilderM.CreateSelect(which, invertPointerM(vals[1], BuilderM, TT), invertPointerM(vals[0], BuilderM, TT));
+         auto inv0 = invertPointerM(vals[0], BuilderM, TT);
+         auto inv1 = invertPointerM(vals[1], BuilderM, TT);
+         auto result = BuilderM.CreateSelect(which, inv1, inv0);
          return result;
      }
 #endif

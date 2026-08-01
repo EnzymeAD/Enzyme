@@ -1698,11 +1698,11 @@ void SplitPHIs(llvm::Function &F) {
         todo.insert(nPhi);
       } else {
         auto cur3 = cast<SelectInst>(cur);
-        auto rep = B.CreateSelect(
-            cur3->getCondition(),
-            GradientUtils::extractMeta(B, cur3->getTrueValue(), i),
-            GradientUtils::extractMeta(B, cur3->getFalseValue(), i),
-            cur->getName() + ".extract." + std::to_string(i));
+        auto falseV = GradientUtils::extractMeta(B, cur3->getFalseValue(), i);
+        auto trueV = GradientUtils::extractMeta(B, cur3->getTrueValue(), i);
+        auto rep =
+            B.CreateSelect(cur3->getCondition(), trueV, falseV,
+                           cur->getName() + ".extract." + std::to_string(i));
         replacements.push_back(rep);
         if (auto sel = dyn_cast<SelectInst>(rep))
           todo.insert(sel);
@@ -4774,9 +4774,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 SmallVector<Value *, 1> slice;
                 for (size_t i = 1; i < allOps.size(); i++)
                   slice.push_back(allOps[i]);
-                auto ane = pushcse(B.CreateFCmp(
-                    eq_predicate, pushcse(B.CreateFNeg(allOps[0])),
-                    pushcse(B.CreateCall(getFunctionFromCall(S), slice))));
+                auto sliceCall =
+                    pushcse(B.CreateCall(getFunctionFromCall(S), slice));
+                auto negOp = pushcse(B.CreateFNeg(allOps[0]));
+                auto ane =
+                    pushcse(B.CreateFCmp(eq_predicate, negOp, sliceCall));
                 auto ori = pushcse(B.CreateOr(op_checks, ane));
                 if (predicate == FCmpInst::FCMP_UNE ||
                     predicate == FCmpInst::FCMP_ONE) {
@@ -4998,12 +5000,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               return "UFCmpToICmp";
             }
             if (auto SI = dyn_cast<SelectInst>(fcmp->getOperand(1 - i))) {
+              auto falseCmp = pushcse(
+                  B.CreateCmp(fcmp->getPredicate(), C, SI->getFalseValue()));
+              auto trueCmp = pushcse(
+                  B.CreateCmp(fcmp->getPredicate(), C, SI->getTrueValue()));
               auto res = pushcse(
-                  B.CreateSelect(SI->getCondition(),
-                                 pushcse(B.CreateCmp(fcmp->getPredicate(), C,
-                                                     SI->getTrueValue())),
-                                 pushcse(B.CreateCmp(fcmp->getPredicate(), C,
-                                                     SI->getFalseValue()))));
+                  B.CreateSelect(SI->getCondition(), trueCmp, falseCmp));
               replaceAndErase(cur, res);
               return "FCmpSelect";
             }
@@ -5036,17 +5038,20 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         auto a = fcmp->getOperand(0);
         auto b = fcmp->getOperand(1);
         if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-          auto res = pushcse(
-              B.CreateOr(pushcse(B.CreateAnd(a, b)),
-                         pushcse(B.CreateAnd(pushcse(B.CreateNot(a)),
-                                             pushcse(B.CreateNot(b))))));
+          auto notB = pushcse(B.CreateNot(b));
+          auto notA = pushcse(B.CreateNot(a));
+          auto neitherAB = pushcse(B.CreateAnd(notA, notB));
+          auto bothAB = pushcse(B.CreateAnd(a, b));
+          auto res = pushcse(B.CreateOr(bothAB, neitherAB));
           replaceAndErase(cur, res);
           return "CmpI1EQ";
         }
         if (fcmp->getPredicate() == CmpInst::ICMP_NE) {
-          auto res = pushcse(
-              B.CreateOr(pushcse(B.CreateAnd(pushcse(B.CreateNot(a)), b)),
-                         pushcse(B.CreateAnd(a, pushcse(B.CreateNot(b))))));
+          auto notB = pushcse(B.CreateNot(b));
+          auto aNotB = pushcse(B.CreateAnd(a, notB));
+          auto notA = pushcse(B.CreateNot(a));
+          auto notAB = pushcse(B.CreateAnd(notA, b));
+          auto res = pushcse(B.CreateOr(notAB, aNotB));
           replaceAndErase(cur, res);
           return "CmpI1NE";
         }
@@ -8452,9 +8457,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     if (forSparsification.count(L) == 0) {
       {
         IRBuilder<> PB(preheader->getTerminator());
-        forSparsification[L].first =
-            std::make_pair(PB.CreatePHI(idx->getType(), 0, "ph.idx"),
-                           PB.CreatePHI(idx->getType(), 0, "loop.idx"));
+        auto loopIdxPhi = PB.CreatePHI(idx->getType(), 0, "loop.idx");
+        auto phIdxPhi = PB.CreatePHI(idx->getType(), 0, "ph.idx");
+        forSparsification[L].first = std::make_pair(phIdxPhi, loopIdxPhi);
       }
 
       Value *LoopCount = nullptr;
@@ -8471,9 +8476,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
             ConstantInt::get(idx->getType(), 1),
             Exp.expandCodeFor(LoopCountS, idx->getType(), &blk->front()));
       }
-      Value *inbounds = B.CreateAnd(
-          B.CreateICmpSLT(idx, LoopCount),
-          B.CreateICmpSGE(idx, ConstantInt::get(idx->getType(), 0)));
+      Value *nonNegative =
+          B.CreateICmpSGE(idx, ConstantInt::get(idx->getType(), 0));
+      Value *belowCount = B.CreateICmpSLT(idx, LoopCount);
+      Value *inbounds = B.CreateAnd(belowCount, nonNegative);
       Value *args[] = {inbounds, forSparsification[L].first.second};
       B.CreateCall(F.getParent()->getOrInsertFunction(
                        "enzyme.sparse.inbounds", B.getVoidTy(),
