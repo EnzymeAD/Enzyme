@@ -275,10 +275,10 @@ def PopOp : Enzyme_Op<"pop", [
   let results = (outs AnyType:$output);
 }
 
-def BinomialProgressScalarOrUnrankedTensor : AnyTypeOf<[
+def BinomialProgressScalarOrTensor : AnyTypeOf<[
     AnySignlessIntegerOrIndex,
-    UnrankedTensorOf<[AnySignlessInteger, Index]>],
-    "signless integer, index, or unranked tensor thereof">;
+    TensorOf<[AnySignlessInteger, Index]>],
+    "signless integer, index, or tensor thereof">;
 
 def BinomialProgressOp : Enzyme_Op<"binomial_progress",
     [Pure, SameOperandsAndResultType]> {
@@ -311,12 +311,13 @@ def BinomialProgressOp : Enzyme_Op<"binomial_progress",
     `num_steps`, not like `num_steps^(1/budget)`.
 
     `num_steps` and `budget` may be an index, a signless integer of any
-    width, or an unranked tensor thereof (with the result taking the same
-    type).
+    width, or a tensor thereof (with the result taking the same type). The
+    tensor forms carry the scalar computation for dialects whose scalars are
+    tensors: stablehlo callers use `tensor<i64>`, a rank-0 ranked tensor.
   }];
-  let arguments = (ins BinomialProgressScalarOrUnrankedTensor:$num_steps,
-                       BinomialProgressScalarOrUnrankedTensor:$budget);
-  let results = (outs BinomialProgressScalarOrUnrankedTensor:$result);
+  let arguments = (ins BinomialProgressScalarOrTensor:$num_steps,
+                       BinomialProgressScalarOrTensor:$budget);
+  let results = (outs BinomialProgressScalarOrTensor:$result);
   let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
   let hasFolder = 1;
 }

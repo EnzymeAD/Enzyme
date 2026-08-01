@@ -141,3 +141,14 @@ func.func @tensor(%n: tensor<*xi64>, %s: tensor<*xi64>) -> tensor<*xi64> {
 
 // CHECK-LABEL: func.func @tensor(
 // CHECK:         enzyme.binomial_progress
+
+// So are ranked ones. tensor<i64> -- a rank-0 ranked tensor, not an unranked
+// one -- is the form stablehlo callers use, and Enzyme-JAX lowers it to
+// stablehlo in lower-enzymexla-math.
+func.func @ranked_tensor(%n: tensor<i64>, %s: tensor<i64>) -> tensor<i64> {
+  %r = enzyme.binomial_progress %n, %s : tensor<i64>
+  return %r : tensor<i64>
+}
+
+// CHECK-LABEL: func.func @ranked_tensor(
+// CHECK:         enzyme.binomial_progress
