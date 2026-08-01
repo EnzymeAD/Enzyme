@@ -1194,12 +1194,12 @@ public:
       auto ivTy = forOp.getLowerBound().getType();
       Value outerUB = makeIntConstant(forOp.getLowerBound().getLoc(), builder,
                                       nOuter + hasTrailing, ivTy);
-      auto revOuter = scf::ForOp::create(
-          builder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0, ivTy),
-          outerUB,
-          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy),
-          incomingGradients);
+      Value outerStep =
+          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy);
+      Value outerLB =
+          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0, ivTy);
+      auto revOuter = scf::ForOp::create(builder, op->getLoc(), outerLB,
+                                         outerUB, outerStep, incomingGradients);
       preserveAttributesButCheckpointing(revOuter, forOp);
 
       OpBuilder::InsertionGuard guard(builder);
@@ -1233,11 +1233,12 @@ public:
       if (trailingIters > 0) {
         // this is the first reverse iteration
         Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = arith::SelectOp::create(
-            builder, loc,
+        Value trailingCst = makeIntConstant(loc, builder, trailingIters, ivTy);
+        Value isFirstRevIter =
             arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
-                                  revOuter.getInductionVar(), zero),
-            makeIntConstant(loc, builder, trailingIters, ivTy), nInnerCst);
+                                  revOuter.getInductionVar(), zero);
+        nInnerUB = arith::SelectOp::create(builder, loc, isFirstRevIter,
+                                           trailingCst, nInnerCst);
       }
 
       auto revInner = scf::ForOp::create(builder, forOp.getLoc(), zero,
@@ -1258,19 +1259,17 @@ public:
 
       builder.setInsertionPointToEnd(revInner.getBody());
 
-      Value currentIV = arith::AddIOp::create(
+      Value startCst = arith::ConstantOp::create(
+          builder, loc, IntegerAttr::get(ivTy, startI));
+      Value stepCst = arith::ConstantOp::create(builder, loc,
+                                                IntegerAttr::get(ivTy, stepI));
+      Value flatIV = arith::AddIOp::create(
           builder, loc,
-          arith::MulIOp::create(
-              builder, loc,
-              arith::AddIOp::create(builder, loc,
-                                    arith::MulIOp::create(builder, loc,
-                                                          currentOuterStep,
-                                                          nInnerCst),
-                                    revInner.getInductionVar()),
-              arith::ConstantOp::create(builder, loc,
-                                        IntegerAttr::get(ivTy, stepI))),
-          arith::ConstantOp::create(builder, loc,
-                                    IntegerAttr::get(ivTy, startI)));
+          arith::MulIOp::create(builder, loc, currentOuterStep, nInnerCst),
+          revInner.getInductionVar());
+      Value currentIV = arith::AddIOp::create(
+          builder, loc, arith::MulIOp::create(builder, loc, flatIV, stepCst),
+          startCst);
 
       // Re-materialize this segment's primal for the reverse visitor (below,
       // in revLoop), and hand it that clone as forOp's body. The terminator is
@@ -1515,13 +1514,16 @@ public:
       scf::ForOp newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
 
       Type ty = forOp.getLowerBound().getType();
-      auto outerFwd = scf::ForOp::create(
-          cacheBuilder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
+      Value outerFwdStep =
+          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, nInner, ty);
+      Value outerFwdUB =
           makeIntConstant(forOp.getUpperBound().getLoc(), cacheBuilder,
-                          nInner * (nOuter + hasTrailing), ty),
-          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, nInner, ty),
-          newForOp.getInitArgs());
+                          nInner * (nOuter + hasTrailing), ty);
+      Value outerFwdLB =
+          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty);
+      auto outerFwd =
+          scf::ForOp::create(cacheBuilder, op->getLoc(), outerFwdLB, outerFwdUB,
+                             outerFwdStep, newForOp.getInitArgs());
       preserveAttributesButCheckpointing(outerFwd, forOp);
 
       cacheBuilder.setInsertionPointToStart(outerFwd.getBody());
@@ -1533,13 +1535,15 @@ public:
         // if this is the last iteration, then the inner
         // loop will only make trailingIters iterations
         Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = arith::SelectOp::create(
-            cacheBuilder, loc,
-            arith::CmpIOp::create(
-                cacheBuilder, loc, arith::CmpIPredicate::eq,
-                outerFwd.getInductionVar(),
-                makeIntConstant(loc, cacheBuilder, nInner * nOuter, ty)),
-            makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
+        Value trailingCst =
+            makeIntConstant(loc, cacheBuilder, trailingIters, ty);
+        Value lastOuterIter =
+            makeIntConstant(loc, cacheBuilder, nInner * nOuter, ty);
+        Value isLastFwdIter =
+            arith::CmpIOp::create(cacheBuilder, loc, arith::CmpIPredicate::eq,
+                                  outerFwd.getInductionVar(), lastOuterIter);
+        nInnerUB = arith::SelectOp::create(cacheBuilder, loc, isLastFwdIter,
+                                           trailingCst, nInnerCst);
       }
 
       IRMapping &mapping = gutils->originalToNewFn;
@@ -1553,11 +1557,12 @@ public:
             gutils->initAndPushCache(clone, cacheBuilder));
       }
 
+      Value innerFwdStep =
+          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty);
+      Value innerFwdLB =
+          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty);
       auto innerFwd = scf::ForOp::create(
-          cacheBuilder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
-          nInnerUB,
-          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty),
+          cacheBuilder, op->getLoc(), innerFwdLB, nInnerUB, innerFwdStep,
           outerFwd.getBody()->getArguments().drop_front());
       preserveAttributesButCheckpointing(innerFwd, forOp);
 
