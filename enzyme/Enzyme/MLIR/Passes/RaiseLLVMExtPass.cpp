@@ -82,13 +82,6 @@ struct RaiseLLVMExtPass
               return;
             }
 
-            // The address space the clone of this pointer has to be allocated
-            // and copied in is the one in the pointer's own type; the optional
-            // third argument is only accepted so existing callers keep
-            // building, and has to agree with it. A pointer that is typed as
-            // host memory but really holds a device address needs an
-            // llvm.addrspacecast, not a differing annotation here -- otherwise
-            // every user of the pointer disagrees with the hint.
             auto ptrTy = dyn_cast<LLVM::LLVMPointerType>(args[0].getType());
             if (!ptrTy) {
               failed = true;
@@ -97,6 +90,20 @@ struct RaiseLLVMExtPass
                      "pointer";
               return;
             }
+
+            OpBuilder builder(call);
+            Value ptr = args[0];
+
+            // The optional third argument names the memory space the pointer
+            // really addresses. The callers that need it are the ones whose
+            // frontend cannot put that space in the type -- a cudaMalloc'd
+            // buffer is a plain `float *`, address space 0 like every other
+            // host pointer in CUDA C -- so rather than rejecting an annotation
+            // that disagrees with the type, hint an llvm.addrspacecast to the
+            // annotated space. Everything downstream keeps taking the memory
+            // space from a pointer's own type: the clone of this allocation is
+            // made from the cast, so it is allocated and copied with the device
+            // runtime instead of malloc/memcpy.
             if (args.size() == 3) {
               APInt space;
               if (!matchPattern(args[2], m_ConstantInt(&space))) {
@@ -105,19 +112,22 @@ struct RaiseLLVMExtPass
                                     "__enzyme_ptr_size_hint is not a constant";
                 return;
               }
-              if (space.getSExtValue() != (int64_t)ptrTy.getAddressSpace()) {
+              if (space.isNegative()) {
                 failed = true;
-                call.emitError()
-                    << "address space argument of __enzyme_ptr_size_hint is "
-                    << space.getSExtValue() << " but the pointer is in address "
-                    << "space " << ptrTy.getAddressSpace()
-                    << "; the memory space is taken from the pointer type";
+                call.emitError() << "address space argument of "
+                                    "__enzyme_ptr_size_hint is negative: "
+                                 << space.getSExtValue();
                 return;
+              }
+              if (space.getZExtValue() != ptrTy.getAddressSpace()) {
+                auto castTy = LLVM::LLVMPointerType::get(
+                    &getContext(), (unsigned)space.getZExtValue());
+                ptr = LLVM::AddrSpaceCastOp::create(builder, call.getLoc(),
+                                                    castTy, ptr);
               }
             }
 
-            OpBuilder builder(call);
-            llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), args[0],
+            llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), ptr,
                                             args[1]);
 
             call.erase();

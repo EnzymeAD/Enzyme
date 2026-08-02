@@ -33,20 +33,23 @@ module {
 }
 
 // CHECK-LABEL: func.func @main(
-// A budget-sized buffer of pointer handles, plus one clone per slot allocated
-// up front. The size on every alloc/memcpy is the hinted extent.
+// One clone per slot allocated up front, then the buffer of handles they are
+// stored in -- which is typed from a clone. The size on every alloc/memcpy is
+// the hinted extent.
 // CHECK:         %[[SZ:.+]] = llvm.mlir.constant(40 : i64) : i64
-// CHECK-DAG:     %[[SLOTS:.+]] = memref.alloc() : memref<4x!llvm.ptr>
 // CHECK:         %[[C0:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
 // CHECK-NEXT:    llvm_ext.memcpy %[[C0]], %arg0, %[[SZ]]
-// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0] : memref<4x!llvm.ptr>
-// CHECK:         %[[C1:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
+// CHECK-NEXT:    %[[C1:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
 // CHECK-NEXT:    llvm_ext.memcpy %[[C1]], %arg0, %[[SZ]]
+// CHECK-NEXT:    %[[C2:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
+// CHECK-NEXT:    llvm_ext.memcpy %[[C2]], %arg0, %[[SZ]]
+// CHECK-NEXT:    %[[C3:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
+// CHECK-NEXT:    llvm_ext.memcpy %[[C3]], %arg0, %[[SZ]]
+// CHECK-NEXT:    %[[SLOTS:.+]] = memref.alloc() : memref<4x!llvm.ptr>
+// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0] : memref<4x!llvm.ptr>
 // CHECK-NEXT:    memref.store %[[C1]], %[[SLOTS]][%c1] : memref<4x!llvm.ptr>
-// CHECK:         %[[C2:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK:         memref.store %[[C2]], %[[SLOTS]][%c2] : memref<4x!llvm.ptr>
-// CHECK:         %[[C3:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK:         memref.store %[[C3]], %[[SLOTS]][%c3] : memref<4x!llvm.ptr>
+// CHECK-NEXT:    memref.store %[[C2]], %[[SLOTS]][%c2] : memref<4x!llvm.ptr>
+// CHECK-NEXT:    memref.store %[[C3]], %[[SLOTS]][%c3] : memref<4x!llvm.ptr>
 
 // Forward: snapshot into slot %k with a copy, no new allocation.
 // CHECK:         scf.for %[[K:.+]] = %c0 to %c4 step %c1

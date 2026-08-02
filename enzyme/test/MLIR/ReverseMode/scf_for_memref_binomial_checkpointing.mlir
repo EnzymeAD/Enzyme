@@ -31,17 +31,18 @@ module {
 // CHECK-LABEL: func.func @main(
 // CHECK-DAG:     %[[STATE:.+]] = memref.alloc() : memref<3xf32>
 // CHECK-DAG:     %[[IDX:.+]] = memref.alloc() : memref<3xindex>
-// CHECK-DAG:     %[[SLOTS:.+]] = memref.alloc() : memref<3xmemref<f32>>
 
-// One clone per slot, allocated up front and stored into the handle buffer.
+// One clone per slot, allocated up front, then the handle buffer they are
+// stored into -- which is typed from a clone.
 // CHECK:         %[[C0:.+]] = memref.alloc() : memref<f32>
 // CHECK-NEXT:    memref.copy %arg0, %[[C0]]
-// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0]
-// CHECK:         %[[C1:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    %[[C1:.+]] = memref.alloc() : memref<f32>
 // CHECK-NEXT:    memref.copy %arg0, %[[C1]]
-// CHECK-NEXT:    memref.store %[[C1]], %[[SLOTS]][%c1]
-// CHECK:         %[[C2:.+]] = memref.alloc() : memref<f32>
+// CHECK-NEXT:    %[[C2:.+]] = memref.alloc() : memref<f32>
 // CHECK-NEXT:    memref.copy %arg0, %[[C2]]
+// CHECK-NEXT:    %[[SLOTS:.+]] = memref.alloc() : memref<3xmemref<f32>>
+// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0]
+// CHECK-NEXT:    memref.store %[[C1]], %[[SLOTS]][%c1]
 // CHECK-NEXT:    memref.store %[[C2]], %[[SLOTS]][%c2]
 
 // Forward checkpoint-placement loop (budget = 3): slot index is the loop IV.

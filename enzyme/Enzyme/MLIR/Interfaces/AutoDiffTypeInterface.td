@@ -136,6 +136,12 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
     InterfaceMethod<
       /*desc=*/[{
         Clone a value.
+
+        The clone does not have to have the type of what it clones: an
+        `!llvm.ptr` whose size hint annotates a memory space is cloned into
+        that space, and so comes back as a pointer in a different address
+        space. Buffers that hold clones have to be typed from one, not from
+        the value it was made of.
       }],
       /*retTy=*/"::mlir::Value",
       /*methodName=*/"cloneValue",
