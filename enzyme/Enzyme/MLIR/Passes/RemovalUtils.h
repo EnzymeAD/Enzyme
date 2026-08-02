@@ -304,6 +304,7 @@ public:
           toDelete.push_back(info);
           return;
         }
+
         cachesMap[pushedValue] = info;
 
         if (isa<OpName>(info.popOp->getParentOp())) {
@@ -329,6 +330,24 @@ public:
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
       return success();
+
+    // What is left here is carried out of this loop, so removing it needs the
+    // loop the pops are in, and that is only found when a pop's parent is a
+    // loop of this same kind (see where otherForOp is set). Without one, every
+    // use of otherForOp below would be through a null op. Report it rather than
+    // leaving caches nothing further down can lower either. Checked before the
+    // gradient rewriting starts, so the loop is not left half-transformed.
+    if (!caches.empty() && !otherForOp) {
+      auto diag = forOp->emitError()
+                  << "cannot remove " << caches.size()
+                  << " cache(s) pushed in this loop: no " << forOp->getName()
+                  << " holding their pops to pair it with";
+      for (CacheInfo &info : caches)
+        diag.attachNote(info.popOp->getLoc())
+            << "pop is in " << info.popOp->getParentOp()->getName()
+            << ", pushed from " << info.pushOp->getParentOp()->getName();
+      return diag;
+    }
 
     DenseMap<Value, llvm::SmallVector<Operation *>> updatedGradientUsers;
 

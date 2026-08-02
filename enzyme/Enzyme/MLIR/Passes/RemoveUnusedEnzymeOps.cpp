@@ -344,12 +344,47 @@ static void annotateRegionOpsInLoops(Operation *op) {
   // When we have non-looping region branch ops (e.g. scf.if) inside of a loop,
   // we want the pushes/pops to be removed by the outer loop remover, not the
   // inner op remover. This helps mincut reduce the overall caching overhead.
+  //
+  // Only for caches the loop remover can take. One it can is initialized
+  // outside the loop, so that it outlives an iteration and its pushes can be
+  // paired with pops in the reverse loop. An init inside the loop belongs to
+  // that iteration alone; removal stops at the init's parent and never reaches
+  // the loop, so standing the region op down for it leaves nothing to remove it
+  // at all. Inlining a differentiated function into a loop body brings in
+  // exactly those, along with the ifs it cached across.
   op->walk([](LoopLikeOpInterface loop) {
-    loop->walk([](RegionBranchOpInterface regionBranch) {
-      if (!regionBranch.hasLoop()) {
-        regionBranch->setAttr(kPreserveCacheAttrName,
-                              UnitAttr::get(regionBranch.getContext()));
-      }
+    loop->walk([&](RegionBranchOpInterface regionBranch) {
+      if (regionBranch.hasLoop())
+        return;
+
+      // The attribute covers the whole region op, so one loop-local cache in it
+      // is enough to have to keep removing them here. Both ends count: the
+      // push and the pop of such a cache sit in different region ops, and
+      // standing either of them down strands it.
+      bool anyLoopLocal = false;
+      auto checkCache = [&](Value cache) {
+        Operation *init = cache.getDefiningOp();
+        if (!init || loop->isProperAncestor(init))
+          anyLoopLocal = true;
+      };
+      regionBranch->walk([&](Operation *nested) {
+        // A cache under a nested loop is that loop's to pair, and its own
+        // region ops are annotated when the walk above reaches it.
+        if (nested != regionBranch.getOperation() &&
+            isa<LoopLikeOpInterface>(nested))
+          return WalkResult::skip();
+
+        if (auto push = dyn_cast<enzyme::PushOp>(nested))
+          checkCache(push.getCache());
+        else if (auto pop = dyn_cast<enzyme::PopOp>(nested))
+          checkCache(pop.getCache());
+        return WalkResult::advance();
+      });
+      if (anyLoopLocal)
+        return;
+
+      regionBranch->setAttr(kPreserveCacheAttrName,
+                            UnitAttr::get(regionBranch.getContext()));
     });
   });
 }
