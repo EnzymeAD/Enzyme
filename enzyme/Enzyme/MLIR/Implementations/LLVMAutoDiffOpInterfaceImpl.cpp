@@ -557,9 +557,10 @@ struct PointerClonableTypeInterface
     if (!size)
       return;
 
-    llvm_ext::MemcpyOp::create(builder, src.getLoc(),
-                               castLikeSpaceOf(builder, dst, extent.ptr),
-                               castLikeSpaceOf(builder, src, extent.ptr), size);
+    Value dstInSpace = castLikeSpaceOf(builder, dst, extent.ptr);
+    Value srcInSpace = castLikeSpaceOf(builder, src, extent.ptr);
+    llvm_ext::MemcpyOp::create(builder, src.getLoc(), dstInSpace, srcInSpace,
+                               size);
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
