@@ -21,18 +21,19 @@ module {
   }
 }
 
-// The mutable outside reference (%arg0) gets a budget-sized buffer of clone
-// handles (%alloc_1), filled up front so taking a checkpoint is a plain copy
-// into an existing allocation, plus one working clone (%alloc_6) that the
-// reverse pass replays into. Slot j of %alloc_1 pairs with slot j of the state
-// (%alloc) and step-index (%alloc_0) buffers, so all three are indexed by the
-// checkpoint stack pointer -- `%3 = arith.subi %arg4, %c1` below, where %arg4
-// is the reverse loop's live-checkpoint iter arg.
+// The mutable outside reference (%arg0) gets one clone per checkpoint slot
+// (%alloc_1 through %alloc_4) and a buffer of handles to them (%alloc_5), all
+// up front so taking a checkpoint is a plain copy into an existing allocation,
+// plus one working clone (%alloc_6) that the reverse pass replays into. Slot j
+// of %alloc_5 pairs with slot j of the state (%alloc) and step-index (%alloc_0)
+// buffers, so all three are indexed by the checkpoint stack pointer -- `%3 =
+// arith.subi %arg4, %c1` below, where %arg4 is the reverse loop's
+// live-checkpoint iter arg.
 //
 // The index must never be a function of the reverse induction variable. That is
-// the regression this test guards: it used to read %alloc_1 at `9 - %arg3`,
-// i.e. out of bounds of the 4-slot buffer for every iteration past the budget,
-// handing the replay a garbage buffer and then freeing it.
+// the regression this test guards: it used to read the handle buffer at
+// `9 - %arg3`, i.e. out of bounds of the 4-slot buffer for every iteration past
+// the budget, handing the replay a garbage buffer and then freeing it.
 
 // CHECK:  func.func @reduce_sum(%arg0: memref<10xf64>, %arg1: memref<10xf64>, %arg2: f64) {
 // CHECK-NEXT:    %c9 = arith.constant 9 : index
@@ -45,19 +46,19 @@ module {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<4xf64>
 // CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<4xindex>
-// CHECK-NEXT:    %alloc_1 = memref.alloc() : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    %alloc_1 = memref.alloc() : memref<10xf64>
+// CHECK-NEXT:    memref.copy %arg0, %alloc_1 : memref<10xf64> to memref<10xf64>
 // CHECK-NEXT:    %alloc_2 = memref.alloc() : memref<10xf64>
 // CHECK-NEXT:    memref.copy %arg0, %alloc_2 : memref<10xf64> to memref<10xf64>
-// CHECK-NEXT:    memref.store %alloc_2, %alloc_1[%c0] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:    %alloc_3 = memref.alloc() : memref<10xf64>
 // CHECK-NEXT:    memref.copy %arg0, %alloc_3 : memref<10xf64> to memref<10xf64>
-// CHECK-NEXT:    memref.store %alloc_3, %alloc_1[%c1] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:    %alloc_4 = memref.alloc() : memref<10xf64>
 // CHECK-NEXT:    memref.copy %arg0, %alloc_4 : memref<10xf64> to memref<10xf64>
-// CHECK-NEXT:    memref.store %alloc_4, %alloc_1[%c2] : memref<4xmemref<10xf64>>
-// CHECK-NEXT:    %alloc_5 = memref.alloc() : memref<10xf64>
-// CHECK-NEXT:    memref.copy %arg0, %alloc_5 : memref<10xf64> to memref<10xf64>
-// CHECK-NEXT:    memref.store %alloc_5, %alloc_1[%c3] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    %alloc_5 = memref.alloc() : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    memref.store %alloc_1, %alloc_5[%c0] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    memref.store %alloc_2, %alloc_5[%c1] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    memref.store %alloc_3, %alloc_5[%c2] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    memref.store %alloc_4, %alloc_5[%c3] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:    %0:2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %c0, %arg5 = %cst) -> (index, f64) {
 // CHECK-NEXT:      memref.store %arg5, %alloc[%arg3] : memref<4xf64>
 // CHECK-NEXT:      memref.store %arg4, %alloc_0[%arg3] : memref<4xindex>
@@ -65,7 +66,7 @@ module {
 // CHECK-NEXT:      %4 = arith.subi %c4, %arg3 : index
 // CHECK-NEXT:      %5 = arith.minui %4, %3 : index
 // CHECK-NEXT:      %6 = enzyme.binomial_progress %3, %5 : index
-// CHECK-NEXT:      %7 = memref.load %alloc_1[%arg3] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:      %7 = memref.load %alloc_5[%arg3] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:      memref.copy %arg0, %7 : memref<10xf64> to memref<10xf64>
 // CHECK-NEXT:      %8 = scf.for %arg6 = %c0 to %6 step %c1 iter_args(%arg7 = %arg5) -> (f64) {
 // CHECK-NEXT:        %10 = arith.addi %arg4, %arg6 : index
@@ -85,7 +86,7 @@ module {
 // CHECK-NEXT:      %4 = arith.subi %c10, %arg3 : index
 // CHECK-NEXT:      %5 = memref.load %alloc[%3] : memref<4xf64>
 // CHECK-NEXT:      %6 = memref.load %alloc_0[%3] : memref<4xindex>
-// CHECK-NEXT:      %7 = memref.load %alloc_1[%3] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:      %7 = memref.load %alloc_5[%3] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:      memref.copy %7, %alloc_6 : memref<10xf64> to memref<10xf64>
 // CHECK-NEXT:      %8:3 = scf.while (%arg6 = %6, %arg7 = %3, %arg8 = %5) : (index, index, f64) -> (index, index, f64) {
 // CHECK-NEXT:        %19 = arith.addi %arg6, %c1 : index
@@ -99,7 +100,7 @@ module {
 // CHECK-NEXT:        %22 = enzyme.binomial_progress %19, %21 : index
 // CHECK-NEXT:        memref.store %arg8, %alloc[%arg7] : memref<4xf64>
 // CHECK-NEXT:        memref.store %arg6, %alloc_0[%arg7] : memref<4xindex>
-// CHECK-NEXT:        %23 = memref.load %alloc_1[%arg7] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:        %23 = memref.load %alloc_5[%arg7] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:        memref.copy %alloc_6, %23 : memref<10xf64> to memref<10xf64>
 // CHECK-NEXT:        %24 = arith.addi %arg6, %22 : index
 // CHECK-NEXT:        %25 = arith.cmpi eq, %24, %4 : index
@@ -133,9 +134,9 @@ module {
 // CHECK-NEXT:    memref.dealloc %alloc_0 : memref<4xindex>
 // CHECK-NEXT:    memref.dealloc %alloc_6 : memref<10xf64>
 // CHECK-NEXT:    scf.for %arg3 = %c0 to %c4 step %c1 {
-// CHECK-NEXT:      %3 = memref.load %alloc_1[%arg3] : memref<4xmemref<10xf64>>
+// CHECK-NEXT:      %3 = memref.load %alloc_5[%arg3] : memref<4xmemref<10xf64>>
 // CHECK-NEXT:      memref.dealloc %3 : memref<10xf64>
 // CHECK-NEXT:    }
-// CHECK-NEXT:    memref.dealloc %alloc_1 : memref<4xmemref<10xf64>>
+// CHECK-NEXT:    memref.dealloc %alloc_5 : memref<4xmemref<10xf64>>
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }
