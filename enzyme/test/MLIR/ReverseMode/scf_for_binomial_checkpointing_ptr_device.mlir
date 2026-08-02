@@ -43,9 +43,9 @@ module {
 // CHECK:         %[[SZ:.+]] = llvm.mlir.constant(40 : i64) : i64
 // CHECK:         %[[DEV:.+]] = llvm.addrspacecast %arg0 : !llvm.ptr to !llvm.ptr<1>
 // CHECK:         llvm_ext.ptr_size_hint %[[DEV]], %[[SZ]] : !llvm.ptr<1>, i64
-// CHECK-DAG:     %[[SLOTS:.+]] = memref.alloc() : memref<4x!llvm.ptr<1>>
 // CHECK:         %[[C0:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr<1>
 // CHECK-NEXT:    llvm_ext.memcpy %[[C0]], %[[DEV]], %[[SZ]] : !llvm.ptr<1>, !llvm.ptr<1>, i64
+// CHECK:         %[[SLOTS:.+]] = memref.alloc() : memref<4x!llvm.ptr<1>>
 // CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0] : memref<4x!llvm.ptr<1>>
 
 // Snapshot into slot %k, and the working clone the reverse pass replays into.

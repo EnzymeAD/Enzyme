@@ -372,32 +372,38 @@ private:
     }
   };
 
-  // A `budget`-slot buffer of clone *handles* for one mutable ref. Not
-  // checkpointBufferType: what lives here is the identity of a snapshot
-  // allocation (slot j pairs with ckptBufs slot j), not its contents -- for a
-  // bare pointer the extent of the contents is not in the type at all.
-  // `cloneTy` is the type of a clone, which is the ref's own type only when
-  // cloning does not move the memory elsewhere (see getClonedType).
-  static MemRefType cloneBufferType(int64_t budget, Type cloneTy) {
-    return MemRefType::get({budget}, cloneTy);
-  }
-
   static Value cloneSlot(OpBuilder &b, Location loc, Value buf, Value slot) {
     return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
   }
 
-  // Give every slot of `buf` its own clone of `proto`. Deliberately unrolled:
-  // `budget` is static, and an allocation sitting in a loop body is both a
-  // hoisting candidate and (for pointers, under a raised alloca threshold) an
-  // alloca-promotion candidate -- either would silently make all slots alias.
-  static void fillCloneSlots(OpBuilder &b, Location loc, int64_t budget,
-                             Value buf, Value proto,
-                             ClonableTypeInterface iface) {
-    for (int64_t j = 0; j < budget; ++j) {
+  // A `budget`-slot buffer of clone *handles* for one mutable ref, with a clone
+  // of `proto` already in every slot. Not checkpointBufferType: what lives here
+  // is the identity of a snapshot allocation (slot j pairs with ckptBufs slot
+  // j), not its contents -- for a bare pointer the extent of the contents is
+  // not in the type at all.
+  //
+  // The clones are made first because they are what the buffer is typed from: a
+  // clone does not have to have the type of what it clones (a pointer whose
+  // size hint annotates a memory space is cloned into that space), and a buffer
+  // built from the ref's type could then neither hold nor free a handle.
+  //
+  // Deliberately unrolled: `budget` is static, and an allocation sitting in a
+  // loop body is both a hoisting candidate and (for pointers, under a raised
+  // alloca threshold) an alloca-promotion candidate -- either would silently
+  // make all slots alias.
+  static Value allocCloneSlots(OpBuilder &b, Location loc, int64_t budget,
+                               Value proto, ClonableTypeInterface iface) {
+    SmallVector<Value> clones;
+    for (int64_t j = 0; j < budget; ++j)
+      clones.push_back(iface.cloneValue(b, proto));
+
+    Value buf = memref::AllocOp::create(
+        b, loc, MemRefType::get({budget}, clones.front().getType()));
+    for (auto &&[j, clone] : llvm::enumerate(clones)) {
       Value slot = arith::ConstantIndexOp::create(b, loc, j);
-      Value clone = iface.cloneValue(b, proto);
       memref::StoreOp::create(b, loc, clone, buf, ValueRange{slot});
     }
+    return buf;
   }
 
   // Free each slot's clone, then the handle buffer itself. A loop is fine here:
@@ -496,10 +502,8 @@ private:
     SmallVector<Value> mutBufs;
     for (auto ref : mutableRefs) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
-      Value proto = gutils->getNewFromOriginal(ref);
-      Value buf = memref::AllocOp::create(
-          builder, loc, cloneBufferType(budget, iface.getClonedType(proto)));
-      fillCloneSlots(builder, loc, budget, buf, proto, iface);
+      Value buf = allocCloneSlots(builder, loc, budget,
+                                  gutils->getNewFromOriginal(ref), iface);
       mutBufs.push_back(buf);
     }
 

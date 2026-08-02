@@ -509,12 +509,6 @@ static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size) {
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
-  // A clone lands in the space of the pointer the extent was found on, which is
-  // not always the space of `value`'s own type.
-  mlir::Type getClonedType(Type self, Value value) const {
-    return findPtrExtent(value).ptr.getType();
-  }
-
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
     PtrExtent extent = findPtrExtent(value);
     if (!extent.size) {
