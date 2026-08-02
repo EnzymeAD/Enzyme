@@ -135,6 +135,22 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
   let methods = [
     InterfaceMethod<
       /*desc=*/[{
+        Type `cloneValue` gives a clone of `value`.
+
+        Not necessarily `value`'s own type: an `!llvm.ptr` whose size hint
+        annotates a memory space is cloned into that space, and so comes back
+        as a pointer in a different address space. Buffers that hold clones
+        have to be built from this rather than from the value's type, or the
+        clone can neither be stored in nor freed out of them.
+      }],
+      /*retTy=*/"::mlir::Type",
+      /*methodName=*/"getClonedType",
+      /*args=*/(ins "::mlir::Value":$value),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ return value.getType(); }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Clone a value.
       }],
       /*retTy=*/"::mlir::Value",

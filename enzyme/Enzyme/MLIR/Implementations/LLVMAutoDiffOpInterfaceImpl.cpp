@@ -219,6 +219,40 @@ struct GEPOpInterfaceReverse
   }
 };
 
+// Renaming a pointer into another address space moves nothing, so there is no
+// adjoint to accumulate; the shadow is the same rename of the shadow pointer,
+// as for llvm.getelementptr above. Needed because these sit in front of active
+// memory: raise-llvm-ext emits one for a size hint that annotates the memory
+// space of a pointer whose type cannot name it.
+struct AddrSpaceCastOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AddrSpaceCastOpInterfaceReverse, LLVM::AddrSpaceCastOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto asCast = cast<LLVM::AddrSpaceCastOp>(op);
+    auto arg = asCast.getArg();
+    if (gutils->isConstantValue(arg))
+      return;
+
+    auto newCast =
+        cast<LLVM::AddrSpaceCastOp>(gutils->getNewFromOriginal(op));
+    auto shadowCast = cast<LLVM::AddrSpaceCastOp>(builder.clone(*newCast));
+    shadowCast.getArgMutable().assign(gutils->invertPointerM(arg, builder));
+    gutils->setInvertedPointer(asCast.getRes(), shadowCast.getRes());
+  }
+};
+
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        LLVM::LoadOp> {
@@ -409,20 +443,48 @@ struct InsertValueOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
-// Number of bytes reachable from a pointer, or null if that isn't recorded
-// anywhere. The memory space the bytes live in doesn't have to be discovered
-// alongside it: it is the address space of the pointer's own type, which is
-// what decides whether a clone can be made with plain host malloc/memcpy or
-// has to go through the device runtime.
-Value findPtrSize(Value ptr) {
+// What is recorded about the allocation a pointer names: how many bytes are
+// reachable from it, and the pointer that says so. The second is not redundant.
+// A clone is allocated and copied in the address space of the pointer it is
+// made from -- which is what decides between host malloc/memcpy and the device
+// runtime -- and the pointer carrying the extent is not always the one asked
+// about: a size hint annotated with a memory space is attached to an
+// llvm.addrspacecast of it (see raise-llvm-ext), which is how memory a frontend
+// could only type as a host pointer still gets cloned on the device.
+struct PtrExtent {
+  Value size; // null when nothing records the extent
+  Value ptr;  // pointer the extent was found on; the queried one by default
+};
+
+static PtrExtent findPtrExtent(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
-    return allocOp.getSize();
+    return {allocOp.getSize(), ptr};
 
   for (auto user : ptr.getUsers())
     if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user))
-      return psh.getSize();
+      return {psh.getSize(), ptr};
 
-  return nullptr;
+  // A hint on a cast of `ptr` describes the same bytes, in the space the cast
+  // names. Looked for after the direct hints, so an unannotated one still wins.
+  for (auto user : ptr.getUsers()) {
+    auto cast = dyn_cast<LLVM::AddrSpaceCastOp>(user);
+    if (!cast)
+      continue;
+    for (auto castUser : cast.getRes().getUsers())
+      if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(castUser))
+        return {psh.getSize(), cast.getRes()};
+  }
+
+  return {nullptr, ptr};
+}
+
+// Names `ptr` in the address space `inSpaceOf` is in, so that both ends of a
+// copy agree on the space it is made in. Emits nothing when they already do.
+static Value castLikeSpaceOf(OpBuilder &builder, Value ptr, Value inSpaceOf) {
+  if (ptr.getType() == inSpaceOf.getType())
+    return ptr;
+  return LLVM::AddrSpaceCastOp::create(builder, ptr.getLoc(),
+                                       inSpaceOf.getType(), ptr);
 }
 
 // llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc and
@@ -448,25 +510,33 @@ static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size) {
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
+  // A clone lands in the space of the pointer the extent was found on, which is
+  // not always the space of `value`'s own type.
+  mlir::Type getClonedType(Type self, Value value) const {
+    return findPtrExtent(value).ptr.getType();
+  }
+
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
-    Value extent = findPtrSize(value);
-    if (!extent) {
+    PtrExtent extent = findPtrExtent(value);
+    if (!extent.size) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;
     }
 
-    Value size = normalizeSizeToI64(builder, value.getLoc(), extent);
+    Value size = normalizeSizeToI64(builder, value.getLoc(), extent.size);
     if (!size)
       return nullptr;
 
-    // The clone gets the type of what it clones, so it lands in the same
-    // address space, and picking the allocator and the copy is left to
-    // lower-llvm-ext: emitting host malloc/memcpy here would silently produce
-    // a host read of device memory (a segfault at runtime) whenever the value
-    // being checkpointed is a device pointer.
+    // Clone from the pointer that carries the extent, so the allocation and the
+    // copy land in the memory space that pointer names, and picking the
+    // allocator and the copy is left to lower-llvm-ext: emitting host
+    // malloc/memcpy here would silently produce a host read of device memory (a
+    // segfault at runtime) whenever what is being checkpointed is device
+    // memory.
     Value clone = llvm_ext::AllocOp::create(builder, value.getLoc(),
-                                            value.getType(), size);
-    llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, value, size);
+                                            extent.ptr.getType(), size);
+    llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, extent.ptr,
+                               size);
 
     return clone;
   }
@@ -475,19 +545,21 @@ struct PointerClonableTypeInterface
     // Prefer `src`: taking a checkpoint copies from the live ref, whose alloc
     // (or size hint) is visible. Restoring one copies *out of* a clone buffer,
     // where only `dst` -- a direct clone -- is traceable.
-    Value extent = findPtrSize(src);
-    if (!extent)
-      extent = findPtrSize(dst);
-    if (!extent) {
+    PtrExtent extent = findPtrExtent(src);
+    if (!extent.size)
+      extent = findPtrExtent(dst);
+    if (!extent.size) {
       llvm::errs() << "cannot find size of ptr to copy: " << src << "\n";
       return;
     }
 
-    Value size = normalizeSizeToI64(builder, src.getLoc(), extent);
+    Value size = normalizeSizeToI64(builder, src.getLoc(), extent.size);
     if (!size)
       return;
 
-    llvm_ext::MemcpyOp::create(builder, src.getLoc(), dst, src, size);
+    llvm_ext::MemcpyOp::create(builder, src.getLoc(),
+                               castLikeSpaceOf(builder, dst, extent.ptr),
+                               castLikeSpaceOf(builder, src, extent.ptr), size);
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
@@ -628,6 +700,8 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
+    LLVM::AddrSpaceCastOp::attachInterface<AddrSpaceCastOpInterfaceReverse>(
+        *context);
     LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
         *context);
     LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(

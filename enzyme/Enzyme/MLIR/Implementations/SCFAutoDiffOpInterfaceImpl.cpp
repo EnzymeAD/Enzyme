@@ -376,8 +376,10 @@ private:
   // checkpointBufferType: what lives here is the identity of a snapshot
   // allocation (slot j pairs with ckptBufs slot j), not its contents -- for a
   // bare pointer the extent of the contents is not in the type at all.
-  static MemRefType cloneBufferType(int64_t budget, Type refTy) {
-    return MemRefType::get({budget}, refTy);
+  // `cloneTy` is the type of a clone, which is the ref's own type only when
+  // cloning does not move the memory elsewhere (see getClonedType).
+  static MemRefType cloneBufferType(int64_t budget, Type cloneTy) {
+    return MemRefType::get({budget}, cloneTy);
   }
 
   static Value cloneSlot(OpBuilder &b, Location loc, Value buf, Value slot) {
@@ -494,10 +496,10 @@ private:
     SmallVector<Value> mutBufs;
     for (auto ref : mutableRefs) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
+      Value proto = gutils->getNewFromOriginal(ref);
       Value buf = memref::AllocOp::create(
-          builder, loc, cloneBufferType(budget, ref.getType()));
-      fillCloneSlots(builder, loc, budget, buf, gutils->getNewFromOriginal(ref),
-                     iface);
+          builder, loc, cloneBufferType(budget, iface.getClonedType(proto)));
+      fillCloneSlots(builder, loc, budget, buf, proto, iface);
       mutBufs.push_back(buf);
     }
 
