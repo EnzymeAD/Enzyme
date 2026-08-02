@@ -245,8 +245,7 @@ struct AddrSpaceCastOpInterfaceReverse
     if (gutils->isConstantValue(arg))
       return;
 
-    auto newCast =
-        cast<LLVM::AddrSpaceCastOp>(gutils->getNewFromOriginal(op));
+    auto newCast = cast<LLVM::AddrSpaceCastOp>(gutils->getNewFromOriginal(op));
     auto shadowCast = cast<LLVM::AddrSpaceCastOp>(builder.clone(*newCast));
     shadowCast.getArgMutable().assign(gutils->invertPointerM(arg, builder));
     gutils->setInvertedPointer(asCast.getRes(), shadowCast.getRes());
