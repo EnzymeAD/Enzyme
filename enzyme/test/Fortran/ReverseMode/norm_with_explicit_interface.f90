@@ -9,10 +9,13 @@
 !       https://github.com/EnzymeAD/Enzyme/issues/2822
 
 module normReverse
+  implicit none
   interface
     subroutine norm__enzyme_autodiff(sr, x_desc, x, dx, y_desc, y, dy)
+      implicit none
       interface
         subroutine sr_decal(a, b)
+          implicit none
           real, dimension(:), intent(in) :: a
           real, dimension(:), intent(out) :: b
         end subroutine sr_decal

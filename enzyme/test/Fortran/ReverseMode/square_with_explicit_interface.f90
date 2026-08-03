@@ -7,16 +7,19 @@
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 module squareReverse
+  implicit none
   interface
     subroutine square__enzyme_autodiff(fn, x, dx)
-    interface
-      real function fn_decal(a)
-        real, intent(in) :: a
-      end function fn_decal
-    end interface
-    procedure(fn_decal) :: fn
-    real, intent(in) :: x
-    real, intent(inout) :: dx
+      implicit none
+      interface
+        real function fn_decal(a)
+          implicit none
+          real, intent(in) :: a
+        end function fn_decal
+      end interface
+      procedure(fn_decal) :: fn
+      real, intent(in) :: x
+      real, intent(inout) :: dx
     end subroutine square__enzyme_autodiff
   end interface
 contains

@@ -13,8 +13,10 @@ module selectFirstForward
   implicit none
   interface
     subroutine selectFirst__enzyme_fwddiff(fnc, x, dx, y, dy)
+      implicit none
       interface
         subroutine fnc_decal(a, z)
+          implicit none
           real, allocatable, intent(in) :: a(:)
           real, intent(inout) :: z
         end subroutine fnc_decal
