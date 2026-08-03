@@ -27,6 +27,22 @@ using namespace mlir::enzyme;
 using namespace mlir::affine;
 
 namespace {
+
+// A loop created while differentiating `oldOp` is still doing that loop's work,
+// so it inherits what was set on it. The checkpointing directives are left
+// behind, since the rewrite has already acted on them. Mirrors the helper of
+// the same name in the SCF implementation.
+static void preserveAttributesButCheckpointing(Operation *newOp,
+                                               Operation *oldOp) {
+  for (auto attr : oldOp->getDiscardableAttrs()) {
+    auto name = attr.getName();
+    if (name != "enzyme.enable_checkpointing" &&
+        name != "enzyme.binomial_checkpointing" &&
+        name != "enzyme.checkpoint_period")
+      newOp->setAttr(name, attr.getValue());
+  }
+}
+
 affine::AffineForOp
 createAffineForWithShadows(Operation *op, OpBuilder &builder,
                            MGradientUtils *gutils, Operation *original,
@@ -109,6 +125,7 @@ struct AffineForOpInterfaceReverse
     auto revFor = affine::AffineForOp::create(
         builder, op->getLoc(), revLBOperands, lb.getMap(), revUBOperands,
         ub.getMap(), forOp.getStepAsInt(), incomingGradients);
+    preserveAttributesButCheckpointing(revFor, op);
 
     bool valid = true;
     for (auto &&[oldReg, newReg] :
@@ -403,6 +420,9 @@ struct AffineParallelOpEnzymeOpsRemover
         otherParOp.getLowerBoundsMap(), otherParOp.getLowerBoundsGroups(),
         otherParOp.getUpperBoundsMap(), otherParOp.getUpperBoundsGroups(),
         otherParOp.getSteps(), otherParOp.getMapOperands());
+
+    newOtherParOp->setDiscardableAttrs(
+        otherParOp->getDiscardableAttrDictionary());
 
     newOtherParOp.getRegion().takeBody(otherParOp.getRegion());
     rewriter.replaceOp(otherParOp, newOtherParOp->getResults().slice(
@@ -829,6 +849,10 @@ public:
         rewriter, otherForOp->getLoc(), otherForOp.getLowerBoundOperands(),
         otherForOp.getLowerBoundMap(), otherForOp.getUpperBoundOperands(),
         otherForOp.getUpperBoundMap(), otherForOp.getStepAsInt(), operands);
+
+    // Same loop, more iteration arguments: it keeps what was set on it.
+    newOtherForOp->setDiscardableAttrs(
+        otherForOp->getDiscardableAttrDictionary());
 
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
     rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
