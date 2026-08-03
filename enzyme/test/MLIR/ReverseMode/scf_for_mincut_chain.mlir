@@ -77,9 +77,9 @@ func.func @dchain(%x: memref<?xf32>, %dx: memref<?xf32>, %ub: index, %dseed: f32
 // were instead `mulf %[[LC3]], %k1` / `mulf %.., %k2` rebuilding the chain.
 // CHECK:             %[[LC3:.*]] = enzyme.load %[[ALLOC]]
 // CHECK-NOT:         enzyme.load
-// CHECK-NEXT:        %[[G0:.*]] = arith.mulf %{{.*}}, %[[LC3]] : f32
-// CHECK-NEXT:        %[[G1:.*]] = arith.mulf %{{.*}}, %[[LC3]] : f32
-// CHECK-NEXT:        %[[G2:.*]] = arith.addf %[[G0]], %[[G1]] : f32
+// CHECK-NEXT:        %[[G0:.*]] = arith.mulf %{{.*}}, %[[LC3]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[G1:.*]] = arith.mulf %{{.*}}, %[[LC3]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[G2:.*]] = arith.addf %[[G0]], %[[G1]] fastmath<fast> : f32
 // The three multiplies that follow are the chain rule for c1/c2/c3, each
 // against a constant -- not a recomputation of the forward chain.
 // CHECK-NEXT:        arith.mulf %[[G2]], %{{.*}} : f32

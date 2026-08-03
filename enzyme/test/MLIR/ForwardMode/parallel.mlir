@@ -43,11 +43,11 @@ module {
 // CHECK:       %[[x2:.+]] = memref.load %[[arg0]][%[[arg6]], %[[arg7]]] : memref<?x?xf64>
 // CHECK:       %[[x3:.+]] = memref.load %[[arg3]][%[[arg7]]] : memref<?xf64>
 // CHECK:       %[[x4:.+]] = memref.load %[[arg2]][%[[arg7]]] : memref<?xf64>
-// CHECK:       %[[x5:.+]] = arith.mulf %[[x1]], %[[x4]] : f64
-// CHECK:       %[[x6:.+]] = arith.mulf %[[x3]], %[[x2]] : f64
-// CHECK:       %[[x7:.+]] = arith.addf %[[x5]], %[[x6]] : f64
+// CHECK:       %[[x5:.+]] = arith.mulf %[[x1]], %[[x4]] fastmath<fast> : f64
+// CHECK:       %[[x6:.+]] = arith.mulf %[[x3]], %[[x2]] fastmath<fast> : f64
+// CHECK:       %[[x7:.+]] = arith.addf %[[x5]], %[[x6]] fastmath<fast> : f64
 // CHECK:       %[[x8:.+]] = arith.mulf %[[x2]], %[[x4]] : f64
-// CHECK:       %[[x9:.+]] = arith.addf %[[arg9]], %[[x7]] : f64
+// CHECK:       %[[x9:.+]] = arith.addf %[[arg9]], %[[x7]] fastmath<fast> : f64
 // CHECK:       %[[x10:.+]] = arith.addf %[[arg8]], %[[x8]] : f64
 // CHECK:       scf.yield %[[x10]], %[[x9]] : f64, f64
 // CHECK:     }

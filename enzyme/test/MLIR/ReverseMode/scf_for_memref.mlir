@@ -59,9 +59,9 @@ func.func @dreduce(%x: f32, %ub: index, %dres: f32) -> (f32) {
 // CHECK-NEXT:        %[[idx2:.+]] = arith.subi %c3, %[[arg7]] : index 
 
 // CHECK-NEXT:        %[[v4:.+]] = memref.load %subview[%[[idx2]]] : memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %[[arg8]], %arg0 : f32
-// CHECK-NEXT:        %[[v6:.+]] = arith.mulf %[[arg8]], %[[v4]] : f32
-// CHECK-NEXT:        %[[v7:.+]] = arith.addf %[[arg9]], %[[v6]] : f32
+// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %[[arg8]], %arg0 fastmath<fast> : f32
+// CHECK-NEXT:        %[[v6:.+]] = arith.mulf %[[arg8]], %[[v4]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[v7:.+]] = arith.addf %[[arg9]], %[[v6]] fastmath<fast> : f32
 // CHECK-NEXT:        scf.yield %[[v5]], %[[v7]] : f32, f32
 // CHECK-NEXT:      }
 // CHECK-NEXT:      scf.yield %[[v2]]#0, %[[v2]]#1 : f32, f32
@@ -125,15 +125,15 @@ func.func @dreverse_index(%lb: index, %ub: index, %x: memref<?xf32>, %dx: memref
 // CHECK:             %[[R_IV:.*]] = arith.subi %[[SUBI_6]], %[[VAL_2]] : index
 // CHECK:             %[[LOAD_1:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[RCANON_IV]]] : memref<?xf32>
                       // The gradient signal should be added together
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_3]], %[[VAL_4]] : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_3]], %[[VAL_4]] fastmath<fast> : f32
 // CHECK:             %[[LOAD_2:.*]] = memref.load %[[ARG3]]{{\[}}%[[R_IV]]] : memref<?xf32>
-// CHECK:             %[[ADDF_2:.*]] = arith.addf %[[ADDF_1]], %[[LOAD_2]] : f32
+// CHECK:             %[[ADDF_2:.*]] = arith.addf %[[ADDF_1]], %[[LOAD_2]] fastmath<fast> : f32
 // CHECK:             memref.store %[[CONSTANT_1]], %[[ARG3]]{{\[}}%[[R_IV]]] : memref<?xf32>
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[ADDF_2]], %[[LOAD_1]] : f32
-// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[ADDF_2]], %[[LOAD_1]] : f32
-// CHECK:             %[[ADDF_3:.*]] = arith.addf %[[MULF_1]], %[[MULF_2]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[ADDF_2]], %[[LOAD_1]] fastmath<fast> : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[ADDF_2]], %[[LOAD_1]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_3:.*]] = arith.addf %[[MULF_1]], %[[MULF_2]] fastmath<fast> : f32
 // CHECK:             %[[LOAD_3:.*]] = memref.load %[[ARG3]]{{\[}}%[[R_IV]]] : memref<?xf32>
-// CHECK:             %[[ADDF_4:.*]] = arith.addf %[[LOAD_3]], %[[ADDF_3]] : f32
+// CHECK:             %[[ADDF_4:.*]] = arith.addf %[[LOAD_3]], %[[ADDF_3]] fastmath<fast> : f32
 // CHECK:             memref.store %[[ADDF_4]], %[[ARG3]]{{\[}}%[[R_IV]]] : memref<?xf32>
 // CHECK:             scf.yield %[[ADDF_1]], %[[CONSTANT_1]] : f32, f32
 // CHECK:           }
@@ -186,9 +186,9 @@ func.func @dreduce(%x: f32, %ub: i32, %dres: f32) -> (f32) {
 // CHECK:             %[[SUBI_1:.*]] = arith.subi %[[SUBI_0]], %[[VAL_2]] : i32
 // CHECK:             %[[INDEX_CAST_2:.*]] = arith.index_cast %[[SUBI_1]] : i32 to index
 // CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[INDEX_CAST_2]]] : memref<?xf32>
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_3]], %[[ARG0]] : f32
-// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_3]], %[[LOAD_0]] : f32
-// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[VAL_4]], %[[MULF_2]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_3]], %[[ARG0]] fastmath<fast> : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_3]], %[[LOAD_0]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[VAL_4]], %[[MULF_2]] fastmath<fast> : f32
 // CHECK:             scf.yield %[[MULF_1]], %[[ADDF_0]] : f32, f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>

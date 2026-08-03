@@ -44,7 +44,7 @@ func.func @reduce_sum(%buf: memref<10xf64>) -> f64 {
 // CHECK-NEXT:      memref.store %arg4, %alloc_0[%3] : memref<4xf64>
 // CHECK-NEXT:      scf.yield %6 : f64
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %1 = arith.addf %arg2, %cst : f64
+// CHECK-NEXT:    %1 = arith.addf %arg2, %cst fastmath<fast> : f64
 // CHECK-NEXT:    %2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %1) -> (f64) {
 // CHECK-NEXT:      %3 = arith.subi %c3, %arg3 : index
 // CHECK-NEXT:      %subview = memref.subview %alloc[%3, 0] [1, 10] [1, 1] : memref<4x10xf64> to memref<10xf64, strided<[1], offset: ?>>
@@ -69,17 +69,17 @@ func.func @reduce_sum(%buf: memref<10xf64>) -> f64 {
 // CHECK-NEXT:      %10 = scf.for %arg5 = %c0 to %7 step %c1 iter_args(%arg6 = %arg4) -> (f64) {
 // CHECK-NEXT:        %11 = arith.subi %7, %c1 : index
 // CHECK-NEXT:        %12 = arith.subi %11, %arg5 : index
-// CHECK-NEXT:        %13 = arith.addf %arg6, %cst : f64
+// CHECK-NEXT:        %13 = arith.addf %arg6, %cst fastmath<fast> : f64
 // CHECK-NEXT:        %14 = enzyme.load %alloc_1[%12] ([%7]) : memref<?xmemref<10xf64>>
 // CHECK-NEXT:        %15 = enzyme.load %alloc_3[%12] ([%7]) : memref<?xindex>
 // CHECK-NEXT:        %16 = memref.load %14[%15] : memref<10xf64>
-// CHECK-NEXT:        %17 = arith.addf %13, %16 : f64
+// CHECK-NEXT:        %17 = arith.addf %13, %16 fastmath<fast> : f64
 // CHECK-NEXT:        memref.store %cst, %14[%15] : memref<10xf64>
-// CHECK-NEXT:        %18 = arith.addf %17, %cst : f64
-// CHECK-NEXT:        %19 = arith.addf %17, %cst : f64
+// CHECK-NEXT:        %18 = arith.addf %17, %cst fastmath<fast> : f64
+// CHECK-NEXT:        %19 = arith.addf %17, %cst fastmath<fast> : f64
 // CHECK-NEXT:        %20 = enzyme.load %alloc_2[%12] ([%7]) : memref<?xindex>
 // CHECK-NEXT:        %21 = memref.load %14[%20] : memref<10xf64>
-// CHECK-NEXT:        %22 = arith.addf %21, %19 : f64
+// CHECK-NEXT:        %22 = arith.addf %21, %19 fastmath<fast> : f64
 // CHECK-NEXT:        memref.store %22, %14[%20] : memref<10xf64>
 // CHECK-NEXT:        scf.yield %18 : f64
 // CHECK-NEXT:      } {enzyme.disable_mincut = true}

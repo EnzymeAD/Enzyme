@@ -22,7 +22,7 @@ module {
 // CHECK-DAG:     %[[c1:.+]] = arith.constant 1 : index
 // CHECK-DAG:     %[[c10:.+]] = arith.constant 10 : index
 // CHECK-NEXT:     %[[i0:.+]]:2 = scf.for %[[arg2:.+]] = %[[c0]] to %[[c10]] step %[[c1]] iter_args(%[[arg3:.+]] = %[[arg0]], %[[arg4:.+]] = %[[arg1]]) -> (f64, f64) {
-// CHECK-NEXT:       %[[i1:.+]] = arith.addf %[[arg4]], %[[arg1]] : f64
+// CHECK-NEXT:       %[[i1:.+]] = arith.addf %[[arg4]], %[[arg1]] fastmath<fast> : f64
 // CHECK-NEXT:       %[[i2:.+]] = arith.addf %[[arg3]], %[[arg0]] : f64
 // CHECK-NEXT:       scf.yield %[[i2]], %[[i1]] : f64, f64
 // CHECK-NEXT:     }

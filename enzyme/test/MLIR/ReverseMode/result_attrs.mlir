@@ -19,8 +19,8 @@ module {
 
 // CHECK:  func.func private @diffemain(%arg0: i32, %arg1: f32, %arg2: f32) -> (f32 {sdy.sharding = 2 : i64}, f32) {
 // CHECK:    %0 = arith.mulf %arg1, %arg1 : f32
-// CHECK:    %1 = arith.mulf %arg2, %arg1 : f32
-// CHECK:    %2 = arith.mulf %arg2, %arg1 : f32
-// CHECK:    %3 = arith.addf %1, %2 : f32
+// CHECK:    %1 = arith.mulf %arg2, %arg1 fastmath<fast> : f32
+// CHECK:    %2 = arith.mulf %arg2, %arg1 fastmath<fast> : f32
+// CHECK:    %3 = arith.addf %1, %2 fastmath<fast> : f32
 // CHECK:    return %0, %3 : f32, f32
 // CHECK:  }

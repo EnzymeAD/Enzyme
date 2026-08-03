@@ -39,9 +39,9 @@ func.func @dmaxnumf(%a: f64, %b: f64, %dr: f64) -> (f64, f64) {
 
 // CHECK: func.func private @diffemaxnumf(%[[a:.+]]: f64, %[[b:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64) {
 // CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK-NEXT:    %[[cmp1:.+]] = arith.cmpf olt, %[[a]], %[[b]] : f64
+// CHECK-NEXT:    %[[cmp1:.+]] = arith.cmpf olt, %[[a]], %[[b]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[da:.+]] = arith.select %[[cmp1]], %[[zero]], %[[dr]] : f64
-// CHECK-NEXT:    %[[cmp2:.+]] = arith.cmpf olt, %[[a]], %[[b]] : f64
+// CHECK-NEXT:    %[[cmp2:.+]] = arith.cmpf olt, %[[a]], %[[b]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[db:.+]] = arith.select %[[cmp2]], %[[dr]], %[[zero]] : f64
 // CHECK-NEXT:    return %[[da]], %[[db]] : f64, f64
 // CHECK-NEXT:  }
@@ -66,7 +66,7 @@ func.func @dselect_ptr(%c: i1, %a: memref<f64>, %da: memref<f64>, %b: memref<f64
 // CHECK: func.func private @diffeselect_ptr(%[[c:.+]]: i1, %[[a:.+]]: memref<f64>, %[[da:.+]]: memref<f64>, %[[b:.+]]: memref<f64>, %[[db:.+]]: memref<f64>, %[[dr:.+]]: f64) {
 // CHECK-NEXT:    %[[dptr:.+]] = arith.select %[[c]], %[[da]], %[[db]] : memref<f64>
 // CHECK-NEXT:    %[[v0:.+]] = memref.load %[[dptr]][] : memref<f64>
-// CHECK-NEXT:    %[[v1:.+]] = arith.addf %[[v0]], %[[dr]] : f64
+// CHECK-NEXT:    %[[v1:.+]] = arith.addf %[[v0]], %[[dr]] fastmath<fast> : f64
 // CHECK-NEXT:    memref.store %[[v1]], %[[dptr]][] : memref<f64>
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }

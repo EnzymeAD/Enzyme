@@ -13,7 +13,7 @@ module {
 }
 
 // CHECK:  func.func private @fwddiffesquare(%arg0: complex<f64>, %arg1: complex<f64>) 
-// CHECK-NEXT:    %0 = complex.mul %arg1, %arg0 : complex<f64>
-// CHECK-NEXT:    %1 = complex.add %0, %0 : complex<f64>
+// CHECK-NEXT:    %0 = complex.mul %arg1, %arg0 fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %1 = complex.add %0, %0 fastmath<fast> : complex<f64>
 // CHECK-NEXT:    return %1 : complex<f64>
 // CHECK-NEXT:  }

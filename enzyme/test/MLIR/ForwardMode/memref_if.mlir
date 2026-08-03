@@ -38,14 +38,14 @@ module {
 // CHECK: memref.store %[[cst0]], %[[alloc]][%[[c0]]] : memref<1xf64>
 // CHECK: memref.store %[[cst2]], %[[alloc_0]][%[[c0]]] : memref<1xf64>
 // CHECK: scf.if %[[arg2]] {
-// CHECK:   %[[v4:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK:   %[[v5:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK:   %[[v6:.+]] = arith.addf %[[v4]], %[[v5]] : f64
+// CHECK:   %[[v4:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK:   %[[v5:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK:   %[[v6:.+]] = arith.addf %[[v4]], %[[v5]] fastmath<fast> : f64
 // CHECK:   %[[v7:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK:   memref.store %[[v6]], %[[alloc]][%[[c0]]] : memref<1xf64>
 // CHECK:   memref.store %[[v7]], %[[alloc_0]][%[[c0]]] : memref<1xf64>
 // CHECK: }
 // CHECK: %[[v0:.+]] = memref.load %[[alloc]][%[[c0]]] : memref<1xf64>
 // CHECK: %[[v1:.+]] = memref.load %[[alloc_0]][%[[c0]]] : memref<1xf64>
-// CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst2]] : f64
+// CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst2]] fastmath<fast> : f64
 // CHECK: return %[[v2]] : f64
