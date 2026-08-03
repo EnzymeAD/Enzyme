@@ -18,11 +18,32 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/Utils.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
+
+#include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
+
+static llvm::cl::opt<bool> EnzymeMLIRFastMath(
+    "enzyme-mlir-fast-math", llvm::cl::init(true), llvm::cl::Hidden,
+    llvm::cl::desc("Build derivative expressions with fast-math enabled"));
+
+void mlir::enzyme::setDerivativeFastMath(Operation *op) {
+  if (!op || !EnzymeMLIRFastMath)
+    return;
+  if (auto iface = dyn_cast<arith::ArithFastMathInterface>(op))
+    op->setAttr(iface.getFastMathAttrName(),
+                arith::FastMathFlagsAttr::get(op->getContext(),
+                                              arith::FastMathFlags::fast));
+  else if (auto iface = dyn_cast<LLVM::FastmathFlagsInterface>(op))
+    op->setAttr(iface.getFastmathAttrName(),
+                LLVM::FastmathFlagsAttr::get(op->getContext(),
+                                             LLVM::FastmathFlags::fast));
+}
 
 mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                               llvm::StringRef value) {
