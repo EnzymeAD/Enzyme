@@ -10,6 +10,7 @@
 
 module normReverse
   implicit none
+  public
   interface
     subroutine norm__enzyme_autodiff(sr, x_desc, x, dx, y_desc, y, dy)
       implicit none

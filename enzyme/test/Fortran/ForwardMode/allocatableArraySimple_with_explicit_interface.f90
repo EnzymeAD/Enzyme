@@ -11,6 +11,7 @@
 
 module selectFirstForward
   implicit none
+  public
   interface
     subroutine selectFirst__enzyme_fwddiff(fnc, x, dx, y, dy)
       implicit none

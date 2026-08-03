@@ -8,6 +8,7 @@
 
 module squareReverse
   implicit none
+  public
   interface
     subroutine square__enzyme_autodiff(fn, x, dx)
       implicit none

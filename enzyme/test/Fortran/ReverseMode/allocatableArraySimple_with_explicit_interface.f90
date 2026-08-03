@@ -11,6 +11,7 @@
 
 module selectFirstReverse
   implicit none
+  public
   interface
     subroutine selectFirst__enzyme_autodiff(fnc, x, dx, y, dy)
       implicit none
