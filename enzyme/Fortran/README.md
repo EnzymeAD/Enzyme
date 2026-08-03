@@ -11,6 +11,31 @@ IFX Fortran compiler. We strongly recommend using the
 [Flang](https://flang.llvm.org) compiler, which is available as part of the
 [LLVM project](https://github.com/llvm/llvm-project).
 
+## Running Enzyme from flang
+
+Configuring Enzyme with `-DENZYME_FLANG=ON` builds `FlangEnzyme-<LLVM version>`, a
+pass plugin that flang can load with `-fpass-plugin`. Enzyme then runs as part of
+the flang optimization pipeline, so a single command differentiates and compiles:
+
+```console
+$ flang -fpass-plugin=/path/to/FlangEnzyme-21.so -I /path/to/enzyme/modules program.f90 -o program
+```
+
+The `-I` flag points at the directory holding the `enzyme.mod` module file, which is
+built by `-DENZYME_FORTRAN=ON` (see the sections below).
+
+Without the plugin the derivative has to be produced out of line, by emitting LLVM IR
+from flang and running the Enzyme pass over it with `opt`:
+
+```console
+$ flang -flto -c -I /path/to/enzyme/modules program.f90 -o program.bc
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so -passes=enzyme program.bc -o program-enzyme.bc
+$ flang -flto program-enzyme.bc -o program
+```
+
+Both routes are exercised by the tests in `enzyme/test/Fortran`. The plugin route is
+flang-only; with ifx use the `opt` pipeline above.
+
 ## Function hooks
 
 We provide bindings for the `__enzyme_fwddiff` and `__enzyme_autodiff` function
