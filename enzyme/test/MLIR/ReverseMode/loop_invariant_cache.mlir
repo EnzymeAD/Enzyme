@@ -74,9 +74,9 @@ func.func @dloop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32>, 
 // CHECK:               %[[LOAD_3:.*]] = memref.load %[[SUBVIEW_1]]{{\[}}%[[REMSI_1]]] : memref<8xf32, strided<[1], offset: ?>>
 // CHECK:               %[[LOAD_4:.*]] = memref.load %[[ARG5]]{{\[}}%[[SUBI_1]], %[[SUBI_3]]] : memref<?x?xf32>
 // CHECK:               memref.store %[[CONSTANT_3]], %[[ARG5]]{{\[}}%[[SUBI_1]], %[[SUBI_3]]] : memref<?x?xf32>
-// CHECK:               %[[MULF_1:.*]] = arith.mulf %[[LOAD_4]], %[[LOAD_3]] : f32
+// CHECK:               %[[MULF_1:.*]] = arith.mulf %[[LOAD_4]], %[[LOAD_3]] fastmath<fast> : f32
 // CHECK:               %[[LOAD_5:.*]] = memref.load %[[ARG3]]{{\[}}%[[SUBI_1]], %[[SUBI_3]]] : memref<?x?xf32>
-// CHECK:               %[[ADDF_0:.*]] = arith.addf %[[LOAD_5]], %[[MULF_1]] : f32
+// CHECK:               %[[ADDF_0:.*]] = arith.addf %[[LOAD_5]], %[[MULF_1]] fastmath<fast> : f32
 // CHECK:               memref.store %[[ADDF_0]], %[[ARG3]]{{\[}}%[[SUBI_1]], %[[SUBI_3]]] : memref<?x?xf32>
 // CHECK:             }
 // CHECK:           }

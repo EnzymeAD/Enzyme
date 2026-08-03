@@ -15,6 +15,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/IntegerSet.h"
@@ -1117,4 +1118,66 @@ void ForwardDiffRegionOp::getCanonicalizationPatterns(
     RewritePatternSet &patterns, MLIRContext *context) {
   patterns.add<FwdRetOpt<ForwardDiffRegionOp>, FwdInpOpt<ForwardDiffRegionOp>,
                RemoveUnusedArgs<ForwardDiffRegionOp>>(context);
+}
+
+// Adding zero leaves memory alone, so the read-modify-write is only a read.
+// This is only true of a floating point zero when signed zeros are not
+// significant: adding +0.0 to a stored -0.0 does change it to +0.0.
+static bool isRemovableAccumulation(arith::AtomicRMWKind kind, Value value,
+                                    arith::FastMathFlags fastmath) {
+  switch (kind) {
+  case arith::AtomicRMWKind::addi:
+    return matchPattern(value, m_Zero());
+  case arith::AtomicRMWKind::addf:
+    return matchPattern(value, m_AnyZeroFloat()) &&
+           bitEnumContainsAll(fastmath, arith::FastMathFlags::nsz);
+  default:
+    return false;
+  }
+}
+
+// Whether a plain load reads what an atomic read-modify-write of this ordering
+// would have. Anything an observer could order against needs a real atomic
+// load, which the memref dialect has no way to spell.
+static bool readIsUnordered(enzyme::Ordering ordering) {
+  return ordering == enzyme::Ordering::not_atomic ||
+         ordering == enzyme::Ordering::unordered ||
+         ordering == enzyme::Ordering::monotonic;
+}
+
+LogicalResult AtomicRMWOp::canonicalize(AtomicRMWOp op,
+                                        PatternRewriter &rewriter) {
+  if (!isRemovableAccumulation(op.getKind(), op.getValue(), op.getFastmath()))
+    return failure();
+
+  if (op.getResult().use_empty()) {
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  if (!readIsUnordered(op.getOrdering()))
+    return failure();
+
+  auto load = memref::LoadOp::create(rewriter, op.getLoc(), op.getMemref(),
+                                     op.getIndices());
+  if (auto alignment = op.getAlignmentAttr())
+    load.setAlignmentAttr(alignment);
+  rewriter.replaceOp(op, load.getResult());
+  return success();
+}
+
+LogicalResult AffineAtomicRMWOp::canonicalize(AffineAtomicRMWOp op,
+                                              PatternRewriter &rewriter) {
+  if (!isRemovableAccumulation(op.getKind(), op.getValue(), op.getFastmath()))
+    return failure();
+
+  if (op.getResult().use_empty()) {
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  auto load = affine::AffineLoadOp::create(
+      rewriter, op.getLoc(), op.getMemref(), op.getMap(), op.getIndices());
+  rewriter.replaceOp(op, load.getResult());
+  return success();
 }

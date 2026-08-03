@@ -22,7 +22,7 @@ func.func @dtest_fillzero(%x: f32, %dr: f32) -> f32 {
 // CHECK:           %[[ALLOC_0:.*]] = memref.alloc() : memref<f32>
 // CHECK:           enzyme.fill_zero %[[ALLOC_0]] : memref<f32>
 // CHECK:           %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]][] : memref<f32>
-// CHECK:           %[[ADDF_0:.*]] = arith.addf %[[LOAD_0]], %[[ARG1]] : f32
+// CHECK:           %[[ADDF_0:.*]] = arith.addf %[[LOAD_0]], %[[ARG1]] fastmath<fast> : f32
 // CHECK:           memref.store %[[ADDF_0]], %[[ALLOC_0]][] : memref<f32>
 // CHECK:           %[[LOAD_1:.*]] = memref.load %[[ALLOC_0]][] : memref<f32>
 // CHECK:           memref.store %[[CONSTANT_0]], %[[ALLOC_0]][] : memref<f32>

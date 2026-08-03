@@ -48,12 +48,12 @@ module {
 // CHECK-NEXT:        %[[ridx2:.+]] = arith.subi %c2, %[[arg8]] : index
 // CHECK-NEXT:        %extracted_0 = tensor.extract %[[v5]]#1[%[[ridx2]]] : tensor<3xf32>
 // CHECK-NEXT:        %[[r8:.+]] = arith.mulf %extracted_0, %extracted_0 : f32
-// CHECK-NEXT:        %[[v9:.+]] = math.sin %[[r8]] : f32
-// CHECK-NEXT:        %[[v10:.+]] = arith.negf %[[v9]] : f32
-// CHECK-NEXT:        %[[v11:.+]] = arith.mulf %[[arg9]], %[[v10]] : f32
-// CHECK-NEXT:        %[[v12:.+]] = arith.mulf %[[v11]], %extracted_0 : f32
-// CHECK-NEXT:        %[[v13:.+]] = arith.mulf %[[v11]], %extracted_0 : f32
-// CHECK-NEXT:        %[[v14:.+]] = arith.addf %[[v12]], %[[v13]] : f32
+// CHECK-NEXT:        %[[v9:.+]] = math.sin %[[r8]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[v10:.+]] = arith.negf %[[v9]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[v11:.+]] = arith.mulf %[[arg9]], %[[v10]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[v12:.+]] = arith.mulf %[[v11]], %extracted_0 fastmath<fast> : f32
+// CHECK-NEXT:        %[[v13:.+]] = arith.mulf %[[v11]], %extracted_0 fastmath<fast> : f32
+// CHECK-NEXT:        %[[v14:.+]] = arith.addf %[[v12]], %[[v13]] fastmath<fast> : f32
 // CHECK-NEXT:        scf.yield %[[v14]] : f32
 // CHECK-NEXT:      }
 // CHECK-NEXT:      scf.yield %[[v6]] : f32

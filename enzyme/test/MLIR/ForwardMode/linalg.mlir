@@ -35,7 +35,7 @@ module {
 // CHECK-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<4xf32>
 // CHECK-NEXT:    %1:2 = linalg.generic {indexing_maps = [#map, #map, #map, #map, #map, #map], iterator_types = ["parallel"]} ins(%arg0, %arg1, %arg2, %arg3 : tensor<4xf32>, tensor<4xf32>, tensor<4xf32>, tensor<4xf32>) outs(%0, %cst : tensor<4xf32>, tensor<4xf32>) {
 // CHECK-NEXT:    ^bb0(%in: f32, %in_0: f32, %in_1: f32, %in_2: f32, %out: f32, %out_3: f32):
-// CHECK-NEXT:      %2 = arith.addf %in_0, %in_2 : f32
+// CHECK-NEXT:      %2 = arith.addf %in_0, %in_2 fastmath<fast> : f32
 // CHECK-NEXT:      %3 = arith.addf %in, %in_1 : f32
 // CHECK-NEXT:      linalg.yield %3, %2 : f32, f32
 // CHECK-NEXT:    } -> (tensor<4xf32>, tensor<4xf32>)

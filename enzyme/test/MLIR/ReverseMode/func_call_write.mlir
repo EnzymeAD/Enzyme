@@ -27,7 +27,7 @@ module {
 // CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    memref.store %arg2, %arg0[] : memref<f32>
 // CHECK-NEXT:    %0 = memref.load %arg1[] : memref<f32>
-// CHECK-NEXT:    %1 = arith.addf %0, %arg3 : f32
+// CHECK-NEXT:    %1 = arith.addf %0, %arg3 fastmath<fast> : f32
 // CHECK-NEXT:    memref.store %1, %arg1[] : memref<f32>
 // CHECK-NEXT:    %2 = memref.load %arg1[] : memref<f32>
 // CHECK-NEXT:    memref.store %[[zero]], %arg1[] : memref<f32>

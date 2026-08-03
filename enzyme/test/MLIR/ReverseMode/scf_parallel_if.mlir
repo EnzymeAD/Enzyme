@@ -48,8 +48,8 @@ module {
   // CHECK:       %[[x1:.+]] = memref.load %[[alloc]][%[[arg5]]] : memref<?xf64>
   // CHECK:       %[[x2:.+]] = memref.load %arg4[%[[arg5]]] : memref<?xf64>
   // CHECK:       memref.store %[[cst]], %arg4[%[[arg5]]] : memref<?xf64>
-  // CHECK:       %[[x3:.+]] = arith.mulf %[[x2]], %[[x1]] : f64
-  // CHECK:       %[[x4:.+]] = enzyme.atomic_rmw addf %[[x3]], %arg1[%[[arg5]]] monotonic : (f64, memref<?xf64>) -> f64
+  // CHECK:       %[[x3:.+]] = arith.mulf %[[x2]], %[[x1]] fastmath<fast> : f64
+  // CHECK:       %[[x4:.+]] = enzyme.atomic_rmw addf %[[x3]], %arg1[%[[arg5]]] monotonic fastmath<fast> : (f64, memref<?xf64>) -> f64
   // CHECK:       scf.reduce 
   // CHECK:     }
   // CHECK:     memref.dealloc %[[alloc]] : memref<?xf64>

@@ -23,6 +23,13 @@ def Enzyme_Dialect : Dialect {
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
 
+  // Canonicalizing an atomic accumulation of zero away leaves a plain load
+  // behind, in whichever of these dialects the op was addressing memory in.
+  let dependentDialects = [
+    "::mlir::affine::AffineDialect",
+    "::mlir::memref::MemRefDialect",
+  ];
+
   let extraClassDeclaration = [{
     /// Names of analysis summary attributes
     static StringRef getPointerSummaryAttrName() { return "enzyme.p2p"; }

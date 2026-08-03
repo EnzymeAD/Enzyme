@@ -57,10 +57,10 @@ module {
 // CHECK-NEXT:        %6 = arith.subi %c2, %arg5 : index
 // CHECK-NEXT:        %7 = memref.load %alloc_1[%6] : memref<3xf32>
 // CHECK-NEXT:        %8 = memref.load %alloc_2[%6] : memref<3xf32>
-// CHECK-NEXT:        %9 = arith.mulf %arg6, %8 : f32
-// CHECK-NEXT:        %10 = arith.mulf %arg6, %7 : f32
+// CHECK-NEXT:        %9 = arith.mulf %arg6, %8 fastmath<fast> : f32
+// CHECK-NEXT:        %10 = arith.mulf %arg6, %7 fastmath<fast> : f32
 // CHECK-NEXT:        %11 = memref.load %arg1[] : memref<f32>
-// CHECK-NEXT:        %12 = arith.addf %11, %9 : f32
+// CHECK-NEXT:        %12 = arith.addf %11, %9 fastmath<fast> : f32
 // CHECK-NEXT:        memref.store %12, %arg1[] : memref<f32>
 // CHECK-NEXT:        scf.yield %10 : f32
 // CHECK-NEXT:      }

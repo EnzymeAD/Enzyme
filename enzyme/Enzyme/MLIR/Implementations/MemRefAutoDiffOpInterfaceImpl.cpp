@@ -70,10 +70,10 @@ struct LoadOpInterfaceReverse
                                   memrefGradient,
                                   ArrayRef<Value>(retrievedArguments));
         } else {
-          enzyme::AtomicRMWOp::create(
+          setDerivativeFastMath(enzyme::AtomicRMWOp::create(
               builder, loadOp.getLoc(), gradient.getType(),
               arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
-              memrefGradient, retrievedArguments, loadOp.getAlignmentAttr());
+              memrefGradient, retrievedArguments, loadOp.getAlignmentAttr()));
         }
       }
     }

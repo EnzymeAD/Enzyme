@@ -35,22 +35,22 @@ module {
 // CHECK-NEXT:    "enzyme.push"(%0, %c-1_i32) : (!enzyme.Cache<i32>, i32) -> ()
 // CHECK-NEXT:    cf.cond_br %4, ^bb1(%3 : f64), ^bb2
 // CHECK-NEXT:  ^bb2:  // pred: ^bb1
-// CHECK-NEXT:    %5 = arith.addf %arg1, %cst_0 : f64
+// CHECK-NEXT:    %5 = arith.addf %arg1, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    %6 = "enzyme.pop"(%0) : (!enzyme.Cache<i32>) -> i32
 // CHECK-NEXT:    %7 = arith.cmpi eq, %6, %c-1_i32 : i32
 // CHECK-NEXT:    %8 = arith.select %7, %5, %cst_0 : f64
-// CHECK-NEXT:    %9 = arith.addf %8, %cst_0 : f64
+// CHECK-NEXT:    %9 = arith.addf %8, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    cf.br ^bb3
 // CHECK-NEXT:  ^bb3:  // 2 preds: ^bb2, ^bb3
 // CHECK-NEXT:    %10 = "enzyme.pop"(%1) : (!enzyme.Cache<i32>) -> i32
 // CHECK-NEXT:    %11 = arith.cmpi eq, %10, %c-1_i32 : i32
 // CHECK-NEXT:    %12 = arith.select %11, %9, %cst_0 : f64
-// CHECK-NEXT:    %13 = arith.addf %12, %cst_0 : f64
+// CHECK-NEXT:    %13 = arith.addf %12, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    cf.switch %10 : i32, [
 // CHECK-NEXT:      default: ^bb3,
 // CHECK-NEXT:      0: ^bb4
 // CHECK-NEXT:    ]
 // CHECK-NEXT:  ^bb4:  // pred: ^bb3
-// CHECK-NEXT:    %14 = arith.addf %13, %cst_0 : f64
+// CHECK-NEXT:    %14 = arith.addf %13, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    return %14 : f64
 // CHECK-NEXT:  }

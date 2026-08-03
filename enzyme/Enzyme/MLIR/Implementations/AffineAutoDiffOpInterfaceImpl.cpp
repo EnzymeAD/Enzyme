@@ -543,15 +543,15 @@ struct AffineLoadOpInterfaceReverse
             computeAffineIndices(builder, loadOp.getLoc(),
                                  loadOp.getAffineMap(), retrievedArguments,
                                  indices);
-            enzyme::AtomicRMWOp::create(
+            setDerivativeFastMath(enzyme::AtomicRMWOp::create(
                 builder, loadOp.getLoc(), gradient.getType(),
                 arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
-                memrefGradient, indices, alignAttr);
+                memrefGradient, indices, alignAttr));
           } else {
-            enzyme::AffineAtomicRMWOp::create(
+            setDerivativeFastMath(enzyme::AffineAtomicRMWOp::create(
                 builder, loadOp.getLoc(), gradient.getType(),
                 arith::AtomicRMWKind::addf, gradient, memrefGradient,
-                retrievedArguments, loadOp.getAffineMap(), alignAttr);
+                retrievedArguments, loadOp.getAffineMap(), alignAttr));
           }
         }
       }

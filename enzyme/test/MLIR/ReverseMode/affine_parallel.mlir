@@ -29,13 +29,13 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 // CHECK-NEXT:    affine.parallel (%arg4) = (0) to (4) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg4] : memref<4xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst : f32
+// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
+// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<4xf32>
 // CHECK-NEXT:    return
@@ -73,13 +73,13 @@ func.func @dnonconst(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %
 // CHECK-NEXT:    affine.parallel (%arg5) = (0) to (symbol(%arg4)) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg5] : memref<?xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst : f32
+// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg5] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
+// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg5] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>
 // CHECK-NEXT:    return
@@ -119,13 +119,13 @@ func.func @dnon_1_step(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>,
 // CHECK-NEXT:      %0 = arith.divui %arg4, %c2 : index
 // CHECK-NEXT:      %1 = memref.load %alloc[%0] : memref<2xf32>
 // CHECK-NEXT:      %2 = memref.load %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.addf %2, %cst : f32
+// CHECK-NEXT:      %3 = arith.addf %2, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %4 = arith.mulf %3, %1 : f32
-// CHECK-NEXT:      %5 = arith.addf %4, %cst : f32
-// CHECK-NEXT:      %6 = arith.mulf %3, %1 : f32
-// CHECK-NEXT:      %7 = arith.addf %5, %6 : f32
-// CHECK-NEXT:      %8 = enzyme.atomic_rmw addf %7, %arg1[%arg4] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %4 = arith.mulf %3, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = arith.addf %4, %cst fastmath<fast> : f32
+// CHECK-NEXT:      %6 = arith.mulf %3, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %7 = arith.addf %5, %6 fastmath<fast> : f32
+// CHECK-NEXT:      %8 = enzyme.atomic_rmw addf %7, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<2xf32>
 // CHECK-NEXT:    return
@@ -162,13 +162,13 @@ func.func @dpar2d(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %y: memref<3x3xf32>
 // CHECK-NEXT:    affine.parallel (%arg4, %arg5) = (0, 0) to (3, 3) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg4, %arg5] : memref<3x3xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg4, %arg5] : memref<3x3xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst : f32
+// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4, %arg5] : memref<3x3xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4, %arg5] monotonic : (f32, memref<3x3xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
+// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
+// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4, %arg5] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<3x3xf32>
 // CHECK-NEXT:    return
@@ -223,11 +223,11 @@ func.func @dsome_inactive(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %inactive: 
 // CHECK-NOT:         math.sin
 // CHECK-NOT:         math.tanh
 // CHECK:             %[[LOAD_3:.*]] = memref.load %[[ARG4]]{{\[}}%[[VAL_2]], %[[VAL_3]]] : memref<3x3xf32>
-// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[LOAD_3]], %[[CONSTANT_0]] : f32
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[LOAD_3]], %[[CONSTANT_0]] fastmath<fast> : f32
 // CHECK:             memref.store %[[CONSTANT_0]], %[[ARG4]]{{\[}}%[[VAL_2]], %[[VAL_3]]] : memref<3x3xf32>
-// CHECK:             %[[MULF_3:.*]] = arith.mulf %[[ADDF_0]], %[[LOAD_2]] : f32
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[MULF_3]], %[[CONSTANT_0]] : f32
-// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_1]], %[[ARG1]]{{\[}}%[[VAL_2]], %[[VAL_3]]] monotonic : (f32, memref<3x3xf32>) -> f32
+// CHECK:             %[[MULF_3:.*]] = arith.mulf %[[ADDF_0]], %[[LOAD_2]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[MULF_3]], %[[CONSTANT_0]] fastmath<fast> : f32
+// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_1]], %[[ARG1]]{{\[}}%[[VAL_2]], %[[VAL_3]]] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<3x3xf32>
 // CHECK:           return

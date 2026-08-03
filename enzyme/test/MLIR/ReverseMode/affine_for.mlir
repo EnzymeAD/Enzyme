@@ -28,9 +28,9 @@ module {
 // CHECK-NEXT:    %1:2 = affine.for %arg2 = 0 to 128 iter_args(%arg3 = %arg1, %arg4 = %cst_0) -> (f32, f32) {
 // CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c127, %arg2 : index
 // CHECK-NEXT:      %[[a2:.+]] = memref.load %alloc[%[[ridx]]] : memref<128xf32>
-// CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg3, %arg0 : f32
-// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg3, %[[a2]] : f32
-// CHECK-NEXT:      %[[a5:.+]] = arith.addf %arg4, %[[a4]] : f32
+// CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg3, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg3, %[[a2]] fastmath<fast> : f32
+// CHECK-NEXT:      %[[a5:.+]] = arith.addf %arg4, %[[a4]] fastmath<fast> : f32
 // CHECK-NEXT:      affine.yield %[[a3]], %[[a5]] : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<128xf32>

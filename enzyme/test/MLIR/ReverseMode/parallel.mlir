@@ -41,9 +41,9 @@ module {
 // CHECK-NEXT:      %1 = memref.load %alloc[%arg5] : memref<4xf32>
 // CHECK-NEXT:      %2 = memref.load %arg4[%arg5] : memref<?xf32>
 // CHECK-NEXT:      memref.store %cst, %arg4[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %arg0 : f32
-// CHECK-NEXT:      %4 = arith.mulf %2, %1 : f32
-// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %3, %arg2[%arg5] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.mulf %2, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %3, %arg2[%arg5] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:      affine.yield %4 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<4xf32>
@@ -67,12 +67,12 @@ module {
 // CHECK-NEXT:      %1 = memref.load %alloc[%arg5] : memref<4xf32>
 // CHECK-NEXT:      %2 = memref.load %arg4[%arg5] : memref<?xf32>
 // CHECK-NEXT:      memref.store %cst, %arg4[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %arg0 : f32
-// CHECK-NEXT:      %4 = arith.mulf %2, %1 : f32
-// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %3, %arg2[%arg5] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.mulf %2, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %3, %arg2[%arg5] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:      scf.reduce(%4 : f32) {
 // CHECK-NEXT:      ^bb0(%arg6: f32, %arg7: f32):
-// CHECK-NEXT:        %6 = arith.addf %arg6, %arg7 : f32
+// CHECK-NEXT:        %6 = arith.addf %arg6, %arg7 fastmath<fast> : f32
 // CHECK-NEXT:        scf.reduce.return %6 : f32
 // CHECK-NEXT:      }
 // CHECK-NEXT:    }

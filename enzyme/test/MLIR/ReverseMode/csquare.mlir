@@ -14,8 +14,8 @@ module {
 
 // CHECK:  func.func private @diffesquare(%arg0: complex<f64>, %arg1: complex<f64>) -> complex<f64>
 // CHECK-NEXT:    %0 = complex.conj %arg1 : complex<f64>
-// CHECK-NEXT:    %1 = complex.mul %0, %arg0 : complex<f64>
+// CHECK-NEXT:    %1 = complex.mul %0, %arg0 fastmath<fast> : complex<f64>
 // CHECK-NEXT:    %2 = complex.conj %1 : complex<f64>
-// CHECK-NEXT:    %3 = complex.add %2, %2 : complex<f64>
+// CHECK-NEXT:    %3 = complex.add %2, %2 fastmath<fast> : complex<f64>
 // CHECK-NEXT:    return %3 : complex<f64>
 // CHECK-NEXT:  }

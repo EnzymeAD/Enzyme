@@ -43,20 +43,20 @@ module {
 // CHECK-NEXT:      %6 = arith.addf %4, %arg0 : f32
 // CHECK-NEXT:      %7 = math.cos %5 : f32
 // CHECK-NEXT:      %8 = arith.addf %7, %arg0 : f32
-// CHECK-NEXT:      %9 = arith.mulf %arg3, %6 : f32
-// CHECK-NEXT:      %10 = arith.mulf %arg3, %8 : f32
-// CHECK-NEXT:      %11 = arith.addf %arg4, %9 : f32
-// CHECK-NEXT:      %12 = math.sin %5 : f32
-// CHECK-NEXT:      %13 = arith.negf %12 : f32
-// CHECK-NEXT:      %14 = arith.mulf %9, %13 : f32
-// CHECK-NEXT:      %15 = arith.addf %11, %10 : f32
-// CHECK-NEXT:      %16 = arith.mulf %14, %arg0 : f32
-// CHECK-NEXT:      %17 = arith.addf %10, %16 : f32
-// CHECK-NEXT:      %18 = arith.mulf %14, %4 : f32
-// CHECK-NEXT:      %19 = arith.addf %15, %18 : f32
+// CHECK-NEXT:      %9 = arith.mulf %arg3, %6 fastmath<fast> : f32
+// CHECK-NEXT:      %10 = arith.mulf %arg3, %8 fastmath<fast> : f32
+// CHECK-NEXT:      %11 = arith.addf %arg4, %9 fastmath<fast> : f32
+// CHECK-NEXT:      %12 = math.sin %5 fastmath<fast> : f32
+// CHECK-NEXT:      %13 = arith.negf %12 fastmath<fast> : f32
+// CHECK-NEXT:      %14 = arith.mulf %9, %13 fastmath<fast> : f32
+// CHECK-NEXT:      %15 = arith.addf %11, %10 fastmath<fast> : f32
+// CHECK-NEXT:      %16 = arith.mulf %14, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:      %17 = arith.addf %10, %16 fastmath<fast> : f32
+// CHECK-NEXT:      %18 = arith.mulf %14, %4 fastmath<fast> : f32
+// CHECK-NEXT:      %19 = arith.addf %15, %18 fastmath<fast> : f32
 // CHECK-NEXT:      scf.yield %17, %19 : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<10xf32>
-// CHECK-NEXT:    %2 = arith.addf %1#1, %1#0 : f32
+// CHECK-NEXT:    %2 = arith.addf %1#1, %1#0 fastmath<fast> : f32
 // CHECK-NEXT:    return %2 : f32
 // CHECK-NEXT:  }

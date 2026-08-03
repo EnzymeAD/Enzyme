@@ -1145,10 +1145,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       } else if (opName == "CheckedDiv") {
         os << "checkedDiv(gutils->strongZero, " << builder << ", ";
       } else if (intrinsic == MLIRDerivatives) {
-        if (intrinsic == MLIRDerivatives) {
-          auto preop = Def->getValueAsString("preop");
-          os << preop;
-        }
+        // Derivative expressions are built with fast-math, as they are on the
+        // LLVM side; ops that carry no such flags are unaffected.
+        os << "setDerivativeFastMath(" << Def->getValueAsString("preop");
         auto dialect = Def->getValueAsString("dialect");
         os << dialect << "::" << opName << "::create(" << builder
            << ", op.getLoc(), ";
@@ -1180,8 +1179,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "})";
       os << ")";
       if (intrinsic == MLIRDerivatives) {
-        auto postop = Def->getValueAsString("postop");
-        os << postop;
+        os << Def->getValueAsString("postop") << ")";
       }
       if (isCall) {
         os << ")";

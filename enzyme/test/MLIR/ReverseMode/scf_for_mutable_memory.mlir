@@ -45,20 +45,20 @@ func.func @reduce_sum(%buf: memref<10xf64>) -> f64 {
 // CHECK:             memref.store %[[ADDF_0]], %[[ARG0]]{{\[}}%[[C0]]] : memref<10xf64>
 // CHECK:             scf.yield %[[ADDF_0]] : f64
 // CHECK:           }
-// CHECK:           %[[ADDF_1:.*]] = arith.addf %[[ARG2]], %[[CST]] : f64
+// CHECK:           %[[ADDF_1:.*]] = arith.addf %[[ARG2]], %[[CST]] fastmath<fast> : f64
 // CHECK:           %[[FOR_1:.*]] = scf.for %[[IV_REV:.*]] = %[[C0]] to %[[C10]] step %[[C1]] iter_args(%[[DACC:.*]] = %[[ADDF_1]]) -> (f64) {
 // CHECK:             %[[IDX:.*]] = arith.subi %[[C9]], %[[IV_REV]] : index
-// CHECK:             %[[ADDF_2:.*]] = arith.addf %[[DACC]], %[[CST]] : f64
+// CHECK:             %[[ADDF_2:.*]] = arith.addf %[[DACC]], %[[CST]] fastmath<fast> : f64
 // CHECK:             %[[SHADOW:.*]] = memref.load %[[ALLOC]]{{\[}}%[[IDX]]] : memref<10xmemref<10xf64>>
 // CHECK:             %[[STOREIDX:.*]] = memref.load %[[ALLOC_1]]{{\[}}%[[IDX]]] : memref<10xindex>
 // CHECK:             %[[DVAL_0:.*]] = memref.load %[[SHADOW]]{{\[}}%[[STOREIDX]]] : memref<10xf64>
-// CHECK:             %[[ADDF_3:.*]] = arith.addf %[[ADDF_2]], %[[DVAL_0]] : f64
+// CHECK:             %[[ADDF_3:.*]] = arith.addf %[[ADDF_2]], %[[DVAL_0]] fastmath<fast> : f64
 // CHECK:             memref.store %[[CST]], %[[SHADOW]]{{\[}}%[[STOREIDX]]] : memref<10xf64>
-// CHECK:             %[[ADDF_4:.*]] = arith.addf %[[ADDF_3]], %[[CST]] : f64
-// CHECK:             %[[ADDF_5:.*]] = arith.addf %[[ADDF_3]], %[[CST]] : f64
+// CHECK:             %[[ADDF_4:.*]] = arith.addf %[[ADDF_3]], %[[CST]] fastmath<fast> : f64
+// CHECK:             %[[ADDF_5:.*]] = arith.addf %[[ADDF_3]], %[[CST]] fastmath<fast> : f64
 // CHECK:             %[[LOADIDX:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[IDX]]] : memref<10xindex>
 // CHECK:             %[[DVAL_1:.*]] = memref.load %[[SHADOW]]{{\[}}%[[LOADIDX]]] : memref<10xf64>
-// CHECK:             %[[ADDF_6:.*]] = arith.addf %[[DVAL_1]], %[[ADDF_5]] : f64
+// CHECK:             %[[ADDF_6:.*]] = arith.addf %[[DVAL_1]], %[[ADDF_5]] fastmath<fast> : f64
 // The gradient contribution from the load is accumulated back into the
 // shadow memref (%[[SHADOW]], i.e. %[[ARG1]]) in place.
 // CHECK:             memref.store %[[ADDF_6]], %[[SHADOW]]{{\[}}%[[LOADIDX]]] : memref<10xf64>

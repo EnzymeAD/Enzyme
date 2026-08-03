@@ -38,14 +38,14 @@ module {
 // CHECK: llvm.store %[[cst0]], %[[alloc]] : f64, !llvm.ptr
 // CHECK: llvm.store %[[cst2]], %[[alloc_0]] : f64, !llvm.ptr
 // CHECK: scf.if %[[arg2]] {
-// CHECK:   %[[v4:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK:   %[[v5:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK:   %[[v6:.+]] = arith.addf %[[v4]], %[[v5]] : f64
+// CHECK:   %[[v4:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK:   %[[v5:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK:   %[[v6:.+]] = arith.addf %[[v4]], %[[v5]] fastmath<fast> : f64
 // CHECK:   %[[v7:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK:   llvm.store %[[v6]], %[[alloc]] : f64, !llvm.ptr
 // CHECK:   llvm.store %[[v7]], %[[alloc_0]] : f64, !llvm.ptr
 // CHECK: }
 // CHECK: %[[v0:.+]] = llvm.load %[[alloc]] : !llvm.ptr -> f64
 // CHECK: %[[v1:.+]] = llvm.load %[[alloc_0]] : !llvm.ptr -> f64
-// CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst2]] : f64
+// CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst2]] fastmath<fast> : f64
 // CHECK: return %[[v2]] : f64

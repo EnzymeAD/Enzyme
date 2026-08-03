@@ -94,7 +94,8 @@ struct ArithSubFSimplifyMathInterface
     }
 
     if (matchPattern(op.getLhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOpWithNewOp<arith::NegFOp>(op, op.getRhs());
+      rewriter.replaceOpWithNewOp<arith::NegFOp>(op, op.getRhs(),
+                                                 op.getFastmathAttr());
       return success();
     }
 

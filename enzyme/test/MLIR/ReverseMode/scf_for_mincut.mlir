@@ -43,12 +43,12 @@ module {
 
 // CHECK-NEXT:      %[[cache:.+]] = tensor.extract %[[for]]#1[%[[ridx]]] : tensor<10xf32>
 // CHECK-NEXT:      %[[v3:.+]] = arith.mulf %[[cache]], %[[cache]] : f32
-// CHECK-NEXT:      %[[v4:.+]] = math.sin %[[v3]] : f32
-// CHECK-NEXT:      %[[v5:.+]] = arith.negf %[[v4]] : f32
-// CHECK-NEXT:      %[[v6:.+]] = arith.mulf %arg3, %[[v5]] : f32
-// CHECK-NEXT:      %[[v7:.+]] = arith.mulf %[[v6]], %extracted : f32
-// CHECK-NEXT:      %[[v8:.+]] = arith.mulf %[[v6]], %extracted : f32
-// CHECK-NEXT:      %[[v9:.+]] = arith.addf %[[v7]], %[[v8]] : f32
+// CHECK-NEXT:      %[[v4:.+]] = math.sin %[[v3]] fastmath<fast> : f32
+// CHECK-NEXT:      %[[v5:.+]] = arith.negf %[[v4]] fastmath<fast> : f32
+// CHECK-NEXT:      %[[v6:.+]] = arith.mulf %arg3, %[[v5]] fastmath<fast> : f32
+// CHECK-NEXT:      %[[v7:.+]] = arith.mulf %[[v6]], %extracted fastmath<fast> : f32
+// CHECK-NEXT:      %[[v8:.+]] = arith.mulf %[[v6]], %extracted fastmath<fast> : f32
+// CHECK-NEXT:      %[[v9:.+]] = arith.addf %[[v7]], %[[v8]] fastmath<fast> : f32
 // CHECK-NEXT:      scf.yield %[[v9]] : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return %[[revFor:.+]] : f32
@@ -123,20 +123,20 @@ func.func @drecompute_if(%cond: memref<?xi1>, %arg0: f32, %dsum: f32) -> f32 {
 // CHECK:               %[[COS_1:.*]] = math.cos %[[LOAD_1]] : f32
 // CHECK:               scf.yield %[[COS_1]] : f32
 // CHECK:             } {preserve_cache}
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_3]], %[[IF_1]] : f32
-// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_3]], %[[LOAD_1]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_3]], %[[IF_1]] fastmath<fast> : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_3]], %[[LOAD_1]] fastmath<fast> : f32
 // CHECK:             %[[IF_2:.*]]:2 = scf.if %[[LOAD_2]] -> (f32, f32) {
 // CHECK:               scf.yield %[[MULF_2]], %[[MULF_1]] : f32, f32
 // CHECK:             } else {
-// CHECK:               %[[SIN_2:.*]] = math.sin %[[LOAD_1]] : f32
-// CHECK:               %[[NEGF_0:.*]] = arith.negf %[[SIN_2]] : f32
-// CHECK:               %[[MULF_3:.*]] = arith.mulf %[[MULF_2]], %[[NEGF_0]] : f32
-// CHECK:               %[[ADDF_0:.*]] = arith.addf %[[MULF_1]], %[[MULF_3]] : f32
+// CHECK:               %[[SIN_2:.*]] = math.sin %[[LOAD_1]] fastmath<fast> : f32
+// CHECK:               %[[NEGF_0:.*]] = arith.negf %[[SIN_2]] fastmath<fast> : f32
+// CHECK:               %[[MULF_3:.*]] = arith.mulf %[[MULF_2]], %[[NEGF_0]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_0:.*]] = arith.addf %[[MULF_1]], %[[MULF_3]] fastmath<fast> : f32
 // CHECK:               scf.yield %[[CONSTANT_4]], %[[ADDF_0]] : f32, f32
 // CHECK:             }
-// CHECK:             %[[COS_2:.*]] = math.cos %[[LOAD_1]] : f32
-// CHECK:             %[[MULF_4:.*]] = arith.mulf %[[VAL_4:.*]]#0, %[[COS_2]] : f32
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_4]]#1, %[[MULF_4]] : f32
+// CHECK:             %[[COS_2:.*]] = math.cos %[[LOAD_1]] fastmath<fast> : f32
+// CHECK:             %[[MULF_4:.*]] = arith.mulf %[[VAL_4:.*]]#0, %[[COS_2]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_4]]#1, %[[MULF_4]] fastmath<fast> : f32
 // CHECK:             scf.yield %[[ADDF_1]] : f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<10xf32>

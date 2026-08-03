@@ -268,6 +268,28 @@ void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
 mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);
+
+/// Give an operation built for a derivative the fast-math flags the LLVM path
+/// gives everything it builds (Utils.cpp's getFast()). A gradient is only as
+/// fast as the arithmetic it is allowed to reassociate, and one built without
+/// the flags its primal was compiled with leaves work on the table: much of
+/// what the reverse pass computes is a product with a seed, and only under
+/// fast-math does a zero seed fold away the expression it feeds.
+/// An op with no fast-math flags to give is left alone.
+void setDerivativeFastMath(Operation *op);
+
+inline Value setDerivativeFastMath(Value v) {
+  if (v)
+    setDerivativeFastMath(v.getDefiningOp());
+  return v;
+}
+
+template <typename OpTy>
+std::enable_if_t<std::is_base_of<OpState, OpTy>::value, OpTy>
+setDerivativeFastMath(OpTy op) {
+  setDerivativeFastMath(op.getOperation());
+  return op;
+}
 } // namespace enzyme
 } // namespace mlir
 
