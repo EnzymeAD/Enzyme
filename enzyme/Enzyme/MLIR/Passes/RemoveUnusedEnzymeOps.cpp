@@ -340,6 +340,35 @@ static void applyPatterns(Operation *op) {
   (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
 
+// Same patterns, for an op that is not IsolatedFromAbove: the greedy driver
+// only takes those, so the enzyme ops inside are handed to it individually.
+static void applyPatternsToEnzymeOps(Operation *op,
+                                     RewriterBase::Listener *listener) {
+  SmallVector<Operation *> ops;
+  op->walk([&](Operation *nested) {
+    if (isa<enzyme::InitOp, enzyme::PushOp, enzyme::PopOp, enzyme::GetOp,
+            enzyme::SetOp>(nested))
+      ops.push_back(nested);
+  });
+  if (ops.empty())
+    return;
+
+  RewritePatternSet patterns(op->getContext());
+  patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
+                  InitSimplify>(op->getContext());
+
+  GreedyRewriteConfig config;
+  config.enableFolding();
+  if (listener)
+    config.setListener(listener);
+  (void)applyOpPatternsGreedily(ops, std::move(patterns), config);
+}
+
+static bool hasInitInRegions(Operation *op) {
+  return op->walk([](enzyme::InitOp) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
 static void annotateRegionOpsInLoops(Operation *op) {
   // When we have non-looping region branch ops (e.g. scf.if) inside of a loop,
   // we want the pushes/pops to be removed by the outer loop remover, not the
@@ -545,6 +574,10 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
     auto op = worklist.pop();
     auto iface = cast<EnzymeOpsRemoverOpInterface>(op);
     current = op;
+
+    if (hasInitInRegions(op))
+      applyPatternsToEnzymeOps(op, this);
+
     rewriter.setInsertionPoint(current);
     result &= iface.removeEnzymeOps(rewriter).succeeded();
     current = nullptr;
