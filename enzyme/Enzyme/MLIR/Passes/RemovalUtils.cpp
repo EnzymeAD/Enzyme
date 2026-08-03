@@ -253,8 +253,16 @@ void dump(const Node &n) {
                  << "]\n";
 }
 
-struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
-  const SmallPtrSet<Node, 2> &at(const Node &n) {
+// The adjacency sets are insertion-ordered rather than hashed. A Node wraps a
+// Value or Operation pointer, so iterating a SmallPtrSet of them visits
+// neighbours in address order, which varies run to run under ASLR. The max
+// flow below then explores augmenting paths in a different order and, whenever
+// several minimum cuts have the same capacity, settles on a different one --
+// producing correct but different caching decisions on every run.
+using NodeSet = llvm::SmallSetVector<Node, 2>;
+
+struct Graph : public llvm::MapVector<Node, NodeSet> {
+  const NodeSet &at(const Node &n) {
     auto found = find(n);
     assert(found != end());
     return found->second;
@@ -625,7 +633,7 @@ static SetVector<Value> minCutValues(const Graph &Orig,
       assert(parent.count(v));
       Node u = parent.find(v)->second;
       assert(!u.isNull());
-      G[u].erase(v);
+      G[u].remove(v);
       G[v].insert(u);
       if (u.isValue() && !u.outgoing() && roots.contains(u.getValue()))
         break;
@@ -843,7 +851,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       continue;
     }
 
-    auto &&[_, inserted] = G[Node(owner)].insert(Node(todo));
+    bool inserted = G[Node(owner)].insert(Node(todo));
     if (inserted) {
       for (Value operand : owner->getOperands()) {
         G[Node(operand)].insert(Node(owner));
@@ -908,7 +916,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       for (auto user : todo.getUsers()) {
         Node N(user);
-        auto &&[_, inserted] = G[Node(todo)].insert(N);
+        bool inserted = G[Node(todo)].insert(N);
         if (inserted) {
           for (Value res : user->getResults()) {
             G[N].insert(Node(res));
