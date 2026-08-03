@@ -53,7 +53,7 @@ func.func @dflatten(%b0: index, %b1: index, %b2: index, %x: memref<?xf32>, %dx: 
 // CHECK:             %[[MULF_1:.*]] = arith.mulf %[[ADDF_0]], %[[LOAD_1]] fastmath<fast> : f32
 // CHECK:             %[[ADDF_1:.*]] = arith.addf %[[MULF_1]], %[[CONSTANT_0]] fastmath<fast> : f32
 // CHECK:             %[[ADDF_2:.*]] = arith.addf %[[ADDF_1]], %[[MULF_1]] fastmath<fast> : f32
-// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_2]], %[[ARG4]]{{\[}}%[[APPLY_0]]] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_2]], %[[ARG4]]{{\[}}%[[APPLY_0]]] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>
 // CHECK:           return

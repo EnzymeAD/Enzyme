@@ -43,7 +43,7 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 // CHECK:             %[[MULF_1:.*]] = arith.mulf %[[LOAD_2]], %[[LOAD_1]] fastmath<fast> : f32
 // CHECK:             %[[MULF_2:.*]] = arith.mulf %[[LOAD_2]], %[[LOAD_1]] fastmath<fast> : f32
 // CHECK:             %[[ADDF_0:.*]] = arith.addf %[[MULF_1]], %[[MULF_2]] fastmath<fast> : f32
-// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_0]], %[[ARG1]]{{\[}}%[[VAL_1]]] monotonic : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_0]], %[[ARG1]]{{\[}}%[[VAL_1]]] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK:             scf.reduce
 // CHECK:           }
 // CHECK:           return

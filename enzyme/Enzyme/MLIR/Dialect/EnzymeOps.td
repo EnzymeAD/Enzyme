@@ -27,6 +27,7 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Dialect/Arith/IR/ArithBase.td"
+include "mlir/Dialect/Arith/IR/ArithOpsInterfaces.td"
 
 
 def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
@@ -518,6 +519,7 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
       TypesMatchWith<"value type matches element type of memref",
                      "memref", "value",
                      "::llvm::cast<MemRefType>($_self).getElementType()">,
+      DeclareOpInterfaceMethods<ArithFastMathInterface>,
     ]> {
   let summary = "atomic rmw operation with ordering";
   let description = [{
@@ -531,12 +533,17 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
-      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment,
+      DefaultValuedAttr<Arith_FastMathAttr,
+                        "::mlir::arith::FastMathFlags::none">:$fastmath);
 
   let assemblyFormat = [{
-    $kind $value `,` $memref `[` $indices `]` $ordering attr-dict `:` `(` type($value) `,`
+    $kind $value `,` $memref `[` $indices `]` $ordering
+    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
   }];
+
+  let hasCanonicalizeMethod = 1;
 
   let extraClassDeclaration = [{
     MemRefType getMemRefType() {
@@ -545,7 +552,9 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
   }];
 }
 
-def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
+def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
+      DeclareOpInterfaceMethods<ArithFastMathInterface>,
+    ]> {
   let summary = "affine atomic rmw operation";
   let description = [{
   }];
@@ -558,12 +567,17 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
       AffineMapAttr:$map,
-      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment);
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment,
+      DefaultValuedAttr<Arith_FastMathAttr,
+                        "::mlir::arith::FastMathFlags::none">:$fastmath);
 
   let assemblyFormat = [{
-    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`
+    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]`
+    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
   }];
+
+  let hasCanonicalizeMethod = 1;
 }
 
 #endif // ENZYME_OPS
