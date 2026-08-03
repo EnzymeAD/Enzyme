@@ -28,12 +28,13 @@ program main
 
 contains
 
+  ! TODO: Switch to assumed shape implementation once
+  !       https://github.com/EnzymeAD/Enzyme/issues/2820
+  !       has been addressed
   subroutine norm(n, x, y)
     integer, intent(in) :: n
     real, dimension(n), intent(in) :: x
     real, dimension(n), intent(out) :: y
-    real :: s
-    integer :: i
     y(:) = x / sum(x)
   end subroutine
 

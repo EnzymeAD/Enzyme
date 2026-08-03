@@ -59,12 +59,14 @@ program main
 contains
 
   ! Function for computing the dot product of two vectors and adding a scalar
+  ! TODO: Switch to assumed shape implementation once
+  !       https://github.com/EnzymeAD/Enzyme/issues/2820
+  !       has been addressed
   real function dot(n, a, b, c)
     integer, intent(in) :: n
     real, dimension(n), intent(in) :: a
     real, dimension(n), intent(in) :: b
     real, intent(in) :: c
-    integer :: i
     dot = dot_product(a, b) + c
   end function
 
