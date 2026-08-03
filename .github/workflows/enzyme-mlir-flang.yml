@@ -92,6 +92,7 @@ jobs:
       run: |
         mkdir flang-build && cd flang-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;flang" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
+        -DFLANG_PLUGIN_SUPPORT=ON \
         -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
         -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
