@@ -125,6 +125,13 @@ public:
         rewriter, otherForOp->getLoc(), otherForOp.getLowerBound(),
         otherForOp.getUpperBound(), otherForOp.getStep(), operands);
 
+    // The rebuilt loop is the same loop with extra iteration arguments, so it
+    // keeps everything that was set on it. Without this, anything the caller
+    // put there -- enzyme.disable_mincut in particular -- is dropped the moment
+    // the removal pass needs to widen the loop.
+    newOtherForOp->setDiscardableAttrs(
+        otherForOp->getDiscardableAttrDictionary());
+
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
     rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
                                        0, otherForOp->getNumResults()));
@@ -1743,6 +1750,9 @@ struct ParallelOpEnzymeOpsRemover
     auto newOtherParOp = scf::ParallelOp::create(
         rewriter, otherParallelOp.getLoc(), otherParallelOp.getLowerBound(),
         otherParallelOp.getUpperBound(), otherParallelOp.getStep(), operands);
+
+    newOtherParOp->setDiscardableAttrs(
+        otherParallelOp->getDiscardableAttrDictionary());
 
     newOtherParOp.getRegion().takeBody(otherParallelOp.getRegion());
     rewriter.replaceOp(
