@@ -377,6 +377,42 @@ def SinkCheckpointViewsPass : Pass<"sink-checkpoint-views"> {
   ];
 }
 
+def HoistLoopAllocationsPass : Pass<"hoist-loop-allocations"> {
+  let summary = "Hoist per-iteration scratch buffers out of sequential loops.";
+  let description = [{
+    Lifts an allocation and its matching deallocation out of an `scf.for` or
+    `affine.for`, so a buffer that a loop body allocates and frees on every
+    iteration is allocated once for the whole loop:
+
+    ```mlir
+    scf.for %i = %lb to %ub step %st {   |   %0 = memref.alloc()
+      %0 = memref.alloc()                |   scf.for %i = %lb to %ub step %st {
+      ...                                |     ...
+      memref.dealloc %0                  |   }
+    }                                    |   memref.dealloc %0
+    ```
+
+    Only applies when the buffer is private to one iteration: its size operands
+    are loop invariant, exactly one deallocation frees it, both ops sit
+    directly in the body's entry block, and nothing derived from the buffer
+    escapes the iteration. Parallel loops are never eligible, since the
+    iterations would then share one buffer.
+
+    Note that the allocation becomes unconditional, so a loop that never runs
+    now allocates; `max-hoisted-bytes` bounds how much memory that can cost.
+  }];
+  let options = [
+    Option<
+      /*C++ variable name=*/"maxHoistedBytes",
+      /*CLI argument=*/"max-hoisted-bytes",
+      /*type=*/"uint64_t",
+      /*default=*/"0",
+      /*description=*/"Do not hoist buffers larger than this many bytes (0 = no limit)"
+    >
+  ];
+  // No dialect dependency: the pass only moves ops that are already there.
+}
+
 def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
   let summary = "Raise LLVM operations to the LLVM Ext dialect.";
   let dependentDialects = [
