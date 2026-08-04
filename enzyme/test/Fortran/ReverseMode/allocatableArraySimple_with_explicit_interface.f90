@@ -10,54 +10,57 @@
 !       https://github.com/EnzymeAD/Enzyme/issues/2820
 
 module selectFirstReverse
-    implicit none
-    interface
-        subroutine selectFirst__enzyme_autodiff(fnc, x, dx, y, dy)
-           interface
-               subroutine fnc_decal(a, z)
-                   real, allocatable, intent(in) :: a(:)
-                   real, intent(inout) :: z
-               end subroutine
-           end interface
-           procedure(fnc_decal) :: fnc
-           real, allocatable, intent(in) :: x(:)
-           real, allocatable, intent(inout) :: dx(:)
-           real, intent(inout) :: y
-           real, intent(inout) :: dy
-        end subroutine
-    end interface
+  implicit none
+  public
+  interface
+    subroutine selectFirst__enzyme_autodiff(fnc, x, dx, y, dy)
+      implicit none
+      interface
+        subroutine fnc_decal(a, z)
+          implicit none
+          real, allocatable, intent(in) :: a(:)
+          real, intent(inout) :: z
+        end subroutine fnc_decal
+      end interface
+      procedure(fnc_decal) :: fnc
+      real, allocatable, intent(in) :: x(:)
+      real, allocatable, intent(inout) :: dx(:)
+      real, intent(inout) :: y
+      real, intent(inout) :: dy
+    end subroutine selectFirst__enzyme_autodiff
+  end interface
 
-    contains
+  contains
 
-    subroutine selectFirst(x, y)
-        real, allocatable, intent(in) :: x(:)
-        real, intent(inout) :: y
-        y = x(1)
-    end subroutine
-end module
+  subroutine selectFirst(x, y)
+    real, allocatable, intent(in) :: x(:)
+    real, intent(inout) :: y
+    y = x(1)
+  end subroutine selectFirst
+end module selectFirstReverse
 
-program app
-    use selectFirstReverse, only: selectFirst, selectFirst__enzyme_autodiff
-    implicit none
-    real, allocatable :: x(:), dx(:)
-    real :: y, dy
+program main
+  use selectFirstReverse, only: selectFirst, selectFirst__enzyme_autodiff
+  implicit none
+  real, allocatable :: x(:), dx(:)
+  real :: y, dy
 
-    allocate(x(3))
-    allocate(dx(3))
+  allocate(x(3))
+  allocate(dx(3))
 
-    x = [2,3,4]
-    dx = [0,0,0]
-    y = 0
-    dy = 1
+  x = [2,3,4]
+  dx = [0,0,0]
+  y = 0
+  dy = 1
 
-    call selectFirst__enzyme_autodiff(selectFirst, x, dx, y, dy)
+  call selectFirst__enzyme_autodiff(selectFirst, x, dx, y, dy)
 
-    print *, int(y)
-    print *, int(dx(1))
-    print *, int(dx(2))
-    print *, int(dx(3))
-    print *, int(dy)
-end program
+  print *, int(y)
+  print *, int(dx(1))
+  print *, int(dx(2))
+  print *, int(dx(3))
+  print *, int(dy)
+end program main
 
 
 ! CHECK: 2

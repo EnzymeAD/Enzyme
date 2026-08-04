@@ -80,8 +80,6 @@ jobs:
         versions:
           - llvm: 15
             ifx: 2023.0.0
-          - llvm: 16
-            ifx: 2023.1.0
           - llvm: 17
             ifx: 2023.2.4
     timeout-minutes: 60

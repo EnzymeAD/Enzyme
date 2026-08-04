@@ -10,30 +10,30 @@
 !       For it to work with the ifx compiler we will need to figure out how to
 !       handle the indirection involved in the enzyme_fwddiff binding
 
-program app
-    use enzyme, only: enzyme_const, enzyme_dup, enzyme_fwddiff
-    implicit none
-    integer :: n
-    real, allocatable :: x(:), dx(:)
-    real :: y, dy
+program main
+  use enzyme, only: enzyme_const, enzyme_dup, enzyme_fwddiff
+  implicit none
+  integer :: n
+  real, allocatable :: x(:), dx(:)
+  real :: y, dy
 
-    n = 3
-    allocate(x(n))
-    allocate(dx(n))
+  n = 3
+  allocate(x(n))
+  allocate(dx(n))
 
-    x = [2,3,4]
-    dx = [1,0,0]
-    y = 0
-    dy = 0
+  x = [2,3,4]
+  dx = [1,0,0]
+  y = 0
+  dy = 0
 
-    call enzyme_fwddiff(selectFirst, enzyme_const, n, &
-                        enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call enzyme_fwddiff(selectFirst, enzyme_const, n, &
+                      enzyme_dup, x, dx, enzyme_dup, y, dy)
 
-    print *, int(y)
-    print *, int(dx(1))
-    print *, int(dx(2))
-    print *, int(dx(3))
-    print *, int(dy)
+  print *, int(y)
+  print *, int(dx(1))
+  print *, int(dx(2))
+  print *, int(dx(3))
+  print *, int(dy)
 
 contains
 
@@ -45,10 +45,9 @@ contains
         real, intent(in) :: x(n)
         real, intent(inout) :: y
         y = x(1)
-    end subroutine
+    end subroutine selectFirst
 
-end program
-
+end program main
 
 ! CHECK: 2
 ! CHECK-NEXT: 1
