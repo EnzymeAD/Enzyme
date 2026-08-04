@@ -62,7 +62,6 @@ program main
   print *, int(dy)
 end program main
 
-
 ! CHECK: 2
 ! CHECK-NEXT: 1
 ! CHECK-NEXT: 0
