@@ -36,6 +36,7 @@ using namespace mlir;
 
 void mlir::enzyme::registerEnzymeFortranInterfaces(DialectRegistry &registry) {
   registry.insert<mlir::enzyme::EnzymeDialect>();
+  registerFlangDialectAutoDiffInterfaces(registry);
   registerArithDialectAutoDiffInterface(registry);
   registerBuiltinDialectAutoDiffInterface(registry);
   registerComplexDialectAutoDiffInterface(registry);

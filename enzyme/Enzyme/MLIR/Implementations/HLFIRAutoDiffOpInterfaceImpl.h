@@ -36,6 +36,10 @@ namespace enzyme {
 // omitted).
 void registerEnzymeFortranInterfaces(DialectRegistry &registry);
 
+// Registers the FIR and HLFIR type and operation models used by the early
+// Flang differentiation pipeline.
+void registerFlangDialectAutoDiffInterfaces(DialectRegistry &registry);
+
 // A pass that rewrites Fortran differentiation-hook calls
 // (fir.call @...f__enzyme_fwddiff / f__enzyme_autodiff) into enzyme.fwddiff /
 // enzyme.autodiff ops, parsing enzyme_{const,dup,dupnoneed,out} activity

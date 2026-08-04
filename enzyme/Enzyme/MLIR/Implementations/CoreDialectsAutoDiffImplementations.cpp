@@ -168,6 +168,15 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
       newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     } else {
       if (gutils->isConstantValue(operand.get())) {
+        if (auto typeIface =
+                dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
+          if (typeIface.isMutable()) {
+            inverted[newOperands.size()] = true;
+            newOperands.push_back(
+                gutils->invertPointerM(operand.get(), builder));
+            continue;
+          }
+        }
 
         if (contains(storedVals, operand.getOperandNumber()) ||
             contains(storedVals, -1)) {
@@ -217,6 +226,8 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     }
   }
   for (auto &&[i, oval] : llvm::enumerate(orig->getResults())) {
+    if (gutils->isConstantValue(oval))
+      continue;
     Value sval;
     if (gutils->width == 1) {
       sval = shadows[0]->getResult(i);
