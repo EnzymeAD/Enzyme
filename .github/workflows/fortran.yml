@@ -45,7 +45,7 @@ jobs:
         build: [Release, Debug]
         os: [ubuntu-22.04]
         compiler: [flang]
-        llvm: [21]
+        llvm: [21, 22, 23, 24]
         mpi: [2021.7.1]
     timeout-minutes: 60
     steps:
