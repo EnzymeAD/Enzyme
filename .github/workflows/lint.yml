@@ -22,3 +22,13 @@ jobs:
       run: |
         python3 enzyme/scripts/check_emission_order.py --github \
           --include-llvm-builder enzyme/Enzyme
+
+  llvm-api:
+    name: Direct use of wrapped LLVM APIs
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check for direct LLVM API calls that Utils.h wraps
+      run: |
+        python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme

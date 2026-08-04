@@ -1197,11 +1197,17 @@ enum class MPI_Elem {
   Old = 7
 };
 
+/// Pointer into the given address space. From LLVM 17 on, and on LLVM 15/16
+/// whenever the context has opaque pointers enabled, the element type is
+/// ignored -- so callers with no element type to hand may pass any type
+/// belonging to the right context (see getInt8PtrTy).
 static inline llvm::PointerType *getPointerType(llvm::Type *T,
                                                 unsigned AddressSpace = 0) {
 #if LLVM_VERSION_MAJOR >= 17
+  // NOLINTNEXTLINE(enzyme-pointer-type): this is the wrapper
   return llvm::PointerType::get(T->getContext(), AddressSpace);
 #else
+  // NOLINTNEXTLINE(enzyme-pointer-type): this is the wrapper
   return llvm::PointerType::get(T, AddressSpace);
 #endif
 }
@@ -1213,6 +1219,21 @@ static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
 
 static inline llvm::PointerType *getUnqual(llvm::Type *T) {
   return getPointerType(T);
+}
+
+/// The same pointer type, in a different address space. On a typed-pointer
+/// build the pointee type is carried over; an opaque pointer has none to carry.
+/// Prefer this to rebuilding a pointer type by hand: it says that only the
+/// address space changes, rather than leaving it to the reader to check that
+/// dropping the pointee was deliberate.
+static inline llvm::PointerType *changePointerAddrSpace(llvm::PointerType *PT,
+                                                        unsigned AddressSpace) {
+#if LLVM_VERSION_MAJOR < 17
+  if (PT->getContext().supportsTypedPointers())
+    return getPointerType(PT->getPointerElementType(), AddressSpace);
+#endif
+  // NOLINTNEXTLINE(enzyme-pointer-type): this is the wrapper
+  return llvm::PointerType::get(PT->getContext(), AddressSpace);
 }
 
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
@@ -2473,12 +2494,8 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
   if (str == "test_type") {
     assert(C);
     llvm::SmallVector<llvm::Type *, 1> elts;
-#if LLVM_VERSION_MAJOR >= 17
-    elts.push_back(llvm::PointerType::get(*C, AddressSpace::Tracked));
-#else
     elts.push_back(
         getPointerType(llvm::StructType::get(*C, {}), AddressSpace::Tracked));
-#endif
     llvm::Type *inner = llvm::StructType::get(*C, elts);
     llvm::SmallVector<llvm::Type *, 1> innerElts;
     innerElts.push_back(inner);
