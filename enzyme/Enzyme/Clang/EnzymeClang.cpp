@@ -663,6 +663,90 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeSparseAccumulateAttrInfo>
     SparseX("enzyme_sparse_accumulate", "");
+
+struct EnzymeNoTypeAnalysisAttrInfo : public ParsedAttrInfo {
+  EnzymeNoTypeAnalysisAttrInfo() {
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_notypeanalysis"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_notypeanalysis"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_notypeanalysis"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_notypeanalysis"},
+      {ParsedAttr::AS_CXX11, "enzyme::notypeanalysis"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // Attribute appertains to functions
+    if (isa<FunctionDecl>(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "appertains only to functions";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+        << Attr << 0;
+      return AttributeNotApplied;
+    }
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, "enzyme_notypeanalysis", nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo> enzyme_notypeanalysis("enzyme_notypeanalysis", "");
+
+struct EnzymeTANoRecurAttrInfo : public ParsedAttrInfo {
+  EnzymeTANoRecurAttrInfo() {
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_ta_norecur"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_ta_norecur"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_ta_norecur"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_ta_norecur"},
+      {ParsedAttr::AS_CXX11, "enzyme::ta_norecur"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // Attribute appertains to functions and globals
+    if (isa<FunctionDecl>(D))
+      return true;
+    if (auto VD = dyn_cast<VarDecl>(D); VD->hasGlobalStorage())
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "appertains only to globals";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+        << Attr << 0;
+      return AttributeNotApplied;
+    }
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, "enzyme_ta_norecur", nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeTANoRecurAttrInfo> enzyme_ta_norecur(
+    "enzyme_ta_norecur", "");
+
 } // namespace
 
 #endif

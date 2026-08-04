@@ -484,6 +484,30 @@ bool preserveNVVM(bool Begin, Module &M,
               replacements.push_back(Constant::getNullValue(CAOp->getType()));
               continue;
             }
+
+            if (AS == "enzyme_notypeanalysis" && Func) {
+              Func->addAttribute(
+                  AttributeList::FunctionIndex,
+                  Attribute::get(Func->getContext(), "enzyme_notypeanalysis"));
+              changed = true;
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
+            if (AS == "enzyme_ta_norecur" && (Glob || Func)) {
+              if (Glob) {
+                Glob->setMetadata("enzyme_ta_norecur",
+                                  MDNode::get(Glob->getContext(), {}));
+              } else if (Func) {
+                Func->addAttribute(
+                    AttributeList::FunctionIndex,
+                    Attribute::get(Func->getContext(), "enzyme_ta_norecur"));
+              }
+              changed = true;
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
             replacements.push_back(cast<Constant>(CAOp));
           }
           GA->setInitializer(ConstantArray::get(CA->getType(), replacements));
