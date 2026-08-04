@@ -30,7 +30,8 @@ module squareBatch
     end subroutine square__enzyme_batch
   end interface
 contains
-  ! TODO: Get __enzyme_batch working with functions in Fortran
+  ! NOTE: __enzyme_batch works more straightforwardly with subroutines than with
+  !      Fortran functions
   subroutine square(x, y)
     real, intent(in)  :: x
     real, intent(out) :: y

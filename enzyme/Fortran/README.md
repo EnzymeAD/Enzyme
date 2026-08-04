@@ -36,7 +36,7 @@ $ flang -flto program-enzyme.bc -o program
 Both routes are exercised by the tests in `enzyme/test/Fortran`. The plugin route is
 flang-only; with ifx use the `opt` pipeline above.
 
-## Function hooks
+## Function hooks for differentiation
 
 We provide bindings for the `__enzyme_fwddiff` and `__enzyme_autodiff` function
 hooks using implicit interfaces. Some Fortran compilers disallow procedure names
@@ -105,3 +105,22 @@ then you can make use of activity descriptors like so:
   call enzyme_autodiff(my_subroutine, enzyme_const, n, &
                        enzyme_dup, x, dx, enzyme_dup, y, dy
 ```
+
+## Function hook for batching
+
+We do not currently provide bindings for the `__enzyme_batch` function hook
+because it requires `enzyme_width` to be passed-by-value as an integer and this
+is not supported by the implicit interfacing approach used for the other
+function hooks. As such, you will need to write your own explicit `interface`
+block to handle the batching. See the Fortran
+[batching test ](../test/Fortran/BatchMode/square_with_explicit_interface.f90)
+for an example.
+
+> [!NOTE]
+> In C, the batched output is provided using a simple `struct`. The required
+> syntax is different in Fortran - you should instead provide each entry of the
+> output batch individually.
+
+> [!NOTE]
+> You will likely find that batching works more straightforwardly with
+> subroutines than with Fortran functions.
