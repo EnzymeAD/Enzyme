@@ -6376,6 +6376,9 @@ public:
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
 
+  void handleFortran(llvm::CallInst &call, llvm::Function *called,
+                     llvm::StringRef funcName);
+
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,
                                   bool subsequent_calls_may_write,
