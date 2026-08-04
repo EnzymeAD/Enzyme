@@ -1484,8 +1484,10 @@ public:
     }
     subMD.push_back(llvm::MDString::get(ctx, base.str()));
     for (auto pair : todo) {
-      subMD.push_back(llvm::ConstantAsMetadata::get(
-          llvm::ConstantInt::get(llvm::IntegerType::get(ctx, 32), pair.first)));
+      // Offsets may be negative (e.g. -1 to denote any offset), so the
+      // constant must be created as a signed value.
+      subMD.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+          llvm::IntegerType::get(ctx, 32), pair.first, /*IsSigned*/ true)));
       subMD.push_back(pair.second.toMD(ctx));
     }
     return llvm::MDNode::get(ctx, subMD);

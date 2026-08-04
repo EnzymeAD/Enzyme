@@ -470,7 +470,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
         break;
       SmallVector<SCEVUse, 2> sv = {
           RHS,
-          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
+          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1,
+                                       /*IsSigned*/ true))};
       // Since this is not an infinite loop by induction, RHS cannot be
       // int_min/uint_min Therefore subtracting 1 does not wrap.
       if (IsSigned)
