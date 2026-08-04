@@ -147,13 +147,8 @@ static bool fitsBudget(Value buffer, uint64_t maxHoistedBytes) {
 
 /// Only sequential loops qualify: hoisting out of a parallel loop gives every
 /// concurrent iteration the same buffer.
-///
-/// The allowlist is deliberate rather than a `HasParallelRegion` check --
-/// `affine.parallel` carries no such trait, so a trait-only test would silently
-/// accept it.
 static bool isSupportedLoop(Operation *op) {
-  return isa<scf::ForOp, affine::AffineForOp>(op) &&
-         !op->hasTrait<OpTrait::HasParallelRegion>();
+  return isa<scf::ForOp, affine::AffineForOp>(op);
 }
 
 } // end anonymous namespace
