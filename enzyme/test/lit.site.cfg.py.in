@@ -127,6 +127,13 @@ if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
 
+# Built by ENZYME_FLANG=ON; lets flang run Enzyme itself instead of piping IR to opt.
+config.substitutions.append(('%loadFlangEnzyme',
+                             ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext))
+if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
+    config.available_features.add('flangenzyme')
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:

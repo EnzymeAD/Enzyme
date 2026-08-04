@@ -1,3 +1,9 @@
+if (ENZYME_FLANG)
+  set(ENZYME_FLANG_ENABLED 1)
+else()
+  set(ENZYME_FLANG_ENABLED 0)
+endif()
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
@@ -22,6 +28,9 @@ endif()
 endif()
 if (ENZYME_FORTRAN)
     list(APPEND ENZYME_TEST_DEPS EnzymeFortran)
+    if (ENZYME_FLANG)
+        list(APPEND ENZYME_TEST_DEPS FlangEnzyme-${LLVM_VERSION_MAJOR})
+    endif()
     add_subdirectory(Fortran)
 endif()
 if (ENZYME_BC_LOADER)
