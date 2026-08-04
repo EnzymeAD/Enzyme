@@ -1109,16 +1109,14 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
   return Changed == ChangeStatus::CHANGED;
 }
 
-// The Attributor recurses with the depth of the IR, which overflows small
-// caller stacks such as a Julia Task's fixed 4MB
-// (https://github.com/EnzymeAD/Enzyme.jl/issues/3427). 0 runs it inline.
 extern "C" {
-llvm::cl::opt<int> EnzymeAttributorStackSize(
+// Zero or less runs the Attributor on the caller's stack.
+cl::opt<int> EnzymeAttributorStackSize(
     "enzyme-attributor-stack-size", cl::init(64 * 1024 * 1024), cl::Hidden,
     cl::desc("Size in bytes of the stack the Attributor is run on"));
 }
 
-static void runAttributorOnModule(Module &M) {
+static bool runAttributorOnAllFunctions(Module &M) {
   AnalysisGetter AG;
   SetVector<Function *> Functions;
   for (Function &F : M)
@@ -1127,23 +1125,27 @@ static void runAttributorOnModule(Module &M) {
   CallGraphUpdater CGUpdater;
   BumpPtrAllocator Allocator;
   InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
-  runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
-                           /* DeleteFns*/ true,
-                           /* IsModulePass */ true);
+  return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                                  /* DeleteFns*/ true,
+                                  /* IsModulePass */ true);
 }
 
 extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
   auto &M = *unwrap(M0);
 
+  // The Attributor recurses with the depth of the IR, which overflows small
+  // caller stacks such as a Julia Task's fixed 4MB
+  // (https://github.com/EnzymeAD/Enzyme.jl/issues/3427).
   int StackSize = EnzymeAttributorStackSize;
   if (StackSize <= 0) {
-    runAttributorOnModule(M);
+    runAttributorOnAllFunctions(M);
     return;
   }
 
-  // Runs on a fresh thread with the requested stack size and joins it.
+  // Used only for its control over the stack size, crash recovery is not
+  // enabled.
   CrashRecoveryContext CRC;
-  if (!CRC.RunSafelyOnThread([&M]() { runAttributorOnModule(M); },
+  if (!CRC.RunSafelyOnThread([&M]() { runAttributorOnAllFunctions(M); },
                              (unsigned)StackSize))
     report_fatal_error("Enzyme: Attributor crashed");
 }
@@ -1157,17 +1159,7 @@ struct MyAttributorLegacyPass : public ModulePass {
     if (skipModule(M))
       return false;
 
-    AnalysisGetter AG;
-    SetVector<Function *> Functions;
-    for (Function &F : M)
-      Functions.insert(&F);
-
-    CallGraphUpdater CGUpdater;
-    BumpPtrAllocator Allocator;
-    InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
-    return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
-                                    /* DeleteFns*/ true,
-                                    /* IsModulePass */ true);
+    return runAttributorOnAllFunctions(M);
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
