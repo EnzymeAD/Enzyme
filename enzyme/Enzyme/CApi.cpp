@@ -1115,9 +1115,9 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 // very same module optimizes fine at top level and overflows the stack when the
 // gradient is taken inside a Distributed worker or a `@spawn`.
 // See https://github.com/EnzymeAD/Enzyme.jl/issues/3427.
-// Give the Attributor a stack of our own, rather than depending on the caller's,
-// the same way clang does for its own deeply recursive code. A value of 0 runs
-// the Attributor inline on the calling stack.
+// Give the Attributor a stack of our own, rather than depending on the
+// caller's, the same way clang does for its own deeply recursive code. A value
+// of 0 runs the Attributor inline on the calling stack.
 extern "C" {
 llvm::cl::opt<int> EnzymeAttributorStackSize(
     "enzyme-attributor-stack-size", cl::init(64 * 1024 * 1024), cl::Hidden,
