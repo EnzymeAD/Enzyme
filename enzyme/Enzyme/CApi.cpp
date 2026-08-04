@@ -1109,15 +1109,9 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
   return Changed == ChangeStatus::CHANGED;
 }
 
-// The Attributor recurses with the depth of the IR it is handed, and it runs on
-// whatever stack the caller happens to have. Callers do not necessarily have a
-// large one: Julia runs us on a Task stack, which is a fixed 4MB, so that the
-// very same module optimizes fine at top level and overflows the stack when the
-// gradient is taken inside a Distributed worker or a `@spawn`.
-// See https://github.com/EnzymeAD/Enzyme.jl/issues/3427.
-// Give the Attributor a stack of our own, rather than depending on the
-// caller's, the same way clang does for its own deeply recursive code. A value
-// of 0 runs the Attributor inline on the calling stack.
+// The Attributor recurses with the depth of the IR, which overflows small
+// caller stacks such as a Julia Task's fixed 4MB
+// (https://github.com/EnzymeAD/Enzyme.jl/issues/3427). 0 runs it inline.
 extern "C" {
 llvm::cl::opt<int> EnzymeAttributorStackSize(
     "enzyme-attributor-stack-size", cl::init(64 * 1024 * 1024), cl::Hidden,
@@ -1147,9 +1141,7 @@ extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
     return;
   }
 
-  // Runs the callback on a freshly created thread with the requested stack size
-  // and joins it. No crash handler is installed unless crash recovery has been
-  // enabled globally, which Enzyme never does.
+  // Runs on a fresh thread with the requested stack size and joins it.
   CrashRecoveryContext CRC;
   if (!CRC.RunSafelyOnThread([&M]() { runAttributorOnModule(M); },
                              (unsigned)StackSize))
