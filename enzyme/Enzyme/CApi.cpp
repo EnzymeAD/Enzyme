@@ -53,6 +53,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Transforms/IPO/Attributor.h"
 
 #define addAttribute addAttributeAtIndex
@@ -1108,8 +1109,22 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
   return Changed == ChangeStatus::CHANGED;
 }
 
-extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
-  auto &M = *unwrap(M0);
+// The Attributor recurses with the depth of the IR it is handed, and it runs on
+// whatever stack the caller happens to have. Callers do not necessarily have a
+// large one: Julia runs us on a Task stack, which is a fixed 4MB, so that the
+// very same module optimizes fine at top level and overflows the stack when the
+// gradient is taken inside a Distributed worker or a `@spawn`.
+// See https://github.com/EnzymeAD/Enzyme.jl/issues/3427.
+// Give the Attributor a stack of our own, rather than depending on the caller's,
+// the same way clang does for its own deeply recursive code. A value of 0 runs
+// the Attributor inline on the calling stack.
+extern "C" {
+llvm::cl::opt<int> EnzymeAttributorStackSize(
+    "enzyme-attributor-stack-size", cl::init(64 * 1024 * 1024), cl::Hidden,
+    cl::desc("Size in bytes of the stack the Attributor is run on"));
+}
+
+static void runAttributorOnModule(Module &M) {
   AnalysisGetter AG;
   SetVector<Function *> Functions;
   for (Function &F : M)
@@ -1121,6 +1136,24 @@ extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
   runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
                            /* DeleteFns*/ true,
                            /* IsModulePass */ true);
+}
+
+extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
+  auto &M = *unwrap(M0);
+
+  int StackSize = EnzymeAttributorStackSize;
+  if (StackSize <= 0) {
+    runAttributorOnModule(M);
+    return;
+  }
+
+  // Runs the callback on a freshly created thread with the requested stack size
+  // and joins it. No crash handler is installed unless crash recovery has been
+  // enabled globally, which Enzyme never does.
+  CrashRecoveryContext CRC;
+  if (!CRC.RunSafelyOnThread([&M]() { runAttributorOnModule(M); },
+                             (unsigned)StackSize))
+    report_fatal_error("Enzyme: Attributor crashed");
 }
 
 struct MyAttributorLegacyPass : public ModulePass {
