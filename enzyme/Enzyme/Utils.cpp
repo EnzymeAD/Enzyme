@@ -2306,7 +2306,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   assert(V->getType()->isIntegerTy());
   IntegerType *T = cast<IntegerType>(V->getType());
-  V = B.CreateAdd(V, ConstantInt::get(T, -1));
+  V = B.CreateAdd(V, ConstantInt::get(T, -1, /*IsSigned*/ true));
   for (size_t i = 1; i < T->getBitWidth(); i *= 2) {
     V = B.CreateOr(V, B.CreateLShr(V, ConstantInt::get(T, i)));
   }
