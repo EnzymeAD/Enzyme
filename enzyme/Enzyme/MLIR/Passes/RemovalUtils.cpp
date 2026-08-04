@@ -223,8 +223,6 @@ template <> struct llvm::PointerLikeTypeTraits<Node> {
   static inline Node getFromVoidPointer(void *p) {
     return Node::getFromOpaqueValue(p);
   }
-  static constexpr int NumLowBitsAvailable =
-      llvm::PointerLikeTypeTraits<Inner>::NumLowBitsAvailable;
 };
 
 template <> struct llvm::DenseMapInfo<Node> {
