@@ -1167,6 +1167,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
     if (hasMetadata(GV, "enzyme_ta_norecur"))
+      llvm:errs() << "Skipping updateAnalysis (enzyme_ta_norecur) " << GV->getName() << "\n"; 
       return;
   }
 
