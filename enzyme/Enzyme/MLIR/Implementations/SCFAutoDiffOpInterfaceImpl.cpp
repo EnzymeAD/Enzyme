@@ -222,9 +222,9 @@ struct ForOpInterfaceReverse
                                            const PeriodicSchedule &sched,
                                            ValueRange inits) {
     if (!sched.isDynamic())
-      return createConstantScaffoldLoop(
-          builder, loc, 0, sched.nInner * sched.numSegments(), sched.nInner,
-          inits);
+      return createConstantScaffoldLoop(builder, loc, 0,
+                                        sched.nInner * sched.numSegments(),
+                                        sched.nInner, inits);
 
     Value stepV = arith::ConstantIndexOp::create(builder, loc, sched.nInner);
     Value ubV = arith::MulIOp::create(builder, loc, sched.nOuterV, stepV);

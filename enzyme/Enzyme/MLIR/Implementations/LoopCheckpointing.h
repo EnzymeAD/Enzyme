@@ -304,11 +304,11 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // i.e. it is one of the values the copied block itself brings into being
   // rather than one of the caller's seeds.
   static bool isDefinedInBlock(Block *b, Value v) {
-    Block *owner = isa<BlockArgument>(v)
-                       ? cast<BlockArgument>(v).getOwner()
-                       : v.getDefiningOp()->getBlock();
-    for (; owner; owner = owner->getParentOp() ? owner->getParentOp()->getBlock()
-                                              : nullptr)
+    Block *owner = isa<BlockArgument>(v) ? cast<BlockArgument>(v).getOwner()
+                                         : v.getDefiningOp()->getBlock();
+    for (; owner; owner = owner->getParentOp()
+                              ? owner->getParentOp()->getBlock()
+                              : nullptr)
       if (owner == b)
         return true;
     return false;
@@ -618,16 +618,17 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     if (isDynamic) {
       startV = FinalClass::materializeLowerBound(builder, loc, forOp, gutils);
       stepV = FinalClass::materializeStep(builder, loc, forOp, gutils);
-      numItersV = FinalClass::getNumIterationsValue(builder, loc, forOp, gutils);
+      numItersV =
+          FinalClass::getNumIterationsValue(builder, loc, forOp, gutils);
       numItersV = FinalClass::castToType(builder, loc, numItersV, idxTy);
     } else {
       int64_t numIters =
           FinalClass::getConstantNumberOfIterations(forOp).value();
       numItersV = FinalClass::emitConst(builder, loc, numIters);
-      startV =
-          FinalClass::emitConst(builder, loc, FinalClass::getConstantStart(forOp));
-      stepV =
-          FinalClass::emitConst(builder, loc, FinalClass::getConstantStep(forOp));
+      startV = FinalClass::emitConst(builder, loc,
+                                     FinalClass::getConstantStart(forOp));
+      stepV = FinalClass::emitConst(builder, loc,
+                                    FinalClass::getConstantStep(forOp));
     }
 
     // Effective budget = min(requested budget, trip count): never keep more
@@ -683,9 +684,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     outerInit.append(newForOpInits.begin(), newForOpInits.end());
     if (carriedStores)
       outerInit.append(stores.begin(), stores.end());
-    auto outerFwd =
-        FinalClass::createScaffoldForLoop(builder, loc, c0, budgetV, c1,
-                                          outerInit);
+    auto outerFwd = FinalClass::createScaffoldForLoop(builder, loc, c0, budgetV,
+                                                      c1, outerInit);
     FinalClass::preserveAttributesButCheckpointing(outerFwd.op, forOp);
 
     builder.setInsertionPointToStart(outerFwd.body);
@@ -703,7 +703,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         liveStores[i] = arg;
 
     for (auto &&[i, val] : llvm::enumerate(state))
-      liveStores[i] = FinalClass::storeSlot(builder, loc, liveStores[i], k, val);
+      liveStores[i] =
+          FinalClass::storeSlot(builder, loc, liveStores[i], k, val);
     liveStores[idxStore] =
         FinalClass::storeSlot(builder, loc, liveStores[idxStore], k, stepCtr);
 
@@ -733,8 +734,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     builder.setInsertionPointToStart(innerFwd.body);
     Value i = innerFwd.getIV();
     Value globalStep = FinalClass::emitAdd(builder, loc, stepCtr, i);
-    globalStep = FinalClass::castToType(builder, loc, globalStep,
-                                        stepV.getType());
+    globalStep =
+        FinalClass::castToType(builder, loc, globalStep, stepV.getType());
     Value iv = FinalClass::emitAdd(
         builder, loc, startV,
         FinalClass::emitMul(builder, loc, stepV, globalStep));
@@ -803,9 +804,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     // The primal result of the loop is the final state.
     gutils->replaceOrigOpWith(
-        forOp, FinalClass::getPrimalResults(
-                   builder, loc, forOp, outerResults.slice(1, numIterArgs),
-                   gutils));
+        forOp, FinalClass::getPrimalResults(builder, loc, forOp,
+                                            outerResults.slice(1, numIterArgs),
+                                            gutils));
     gutils->erase(newForOp);
     gutils->originalToNewFnOps[forOp] = outerFwd.op;
 
@@ -947,13 +948,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     Value ivO = revOuter.getIV();
     auto revOuterArgs = revOuter.args();
     Value sp = revOuterArgs[0];
-    auto adjArgs =
-        revOuterArgs.slice(1, incomingGradients.size());
+    auto adjArgs = revOuterArgs.slice(1, incomingGradients.size());
 
     SmallVector<Value> liveStores(stores);
     if (carriedStores)
-      for (auto &&[i, arg] : llvm::enumerate(revOuterArgs.slice(
-               1 + incomingGradients.size(), stores.size())))
+      for (auto &&[i, arg] : llvm::enumerate(
+               revOuterArgs.slice(1 + incomingGradients.size(), stores.size())))
         liveStores[i] = arg;
 
     Value capo = FinalClass::emitSub(builder, loc, sp, c1);
@@ -966,8 +966,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
              FinalClass::getBodyBlock(forOp)->getArguments().drop_front()))
       ckptState.push_back(
           FinalClass::loadSlot(builder, loc, store, capo, arg.getType()));
-    Value ckptStep = FinalClass::loadSlot(builder, loc, liveStores[idxStore],
-                                          capo, FinalClass::getIndexLikeType(builder));
+    Value ckptStep =
+        FinalClass::loadSlot(builder, loc, liveStores[idxStore], capo,
+                             FinalClass::getIndexLikeType(builder));
 
     // Re-prime each working clone from the snapshot paired with slot `capo`,
     // so the replay below starts from the mutable memory as it was at
@@ -1047,14 +1048,13 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         builder.setInsertionPointToStart(innerRemat.body);
         Value idx = FinalClass::castToType(builder, loc, innerRemat.getIV(),
                                            stepV.getType());
-        Value iv = FinalClass::emitAdd(
-            builder, loc, startV,
-            FinalClass::emitMul(builder, loc, stepV, idx));
+        Value iv =
+            FinalClass::emitAdd(builder, loc, startV,
+                                FinalClass::emitMul(builder, loc, stepV, idx));
 
         Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
-        for (auto &&[oldArg, newArg] :
-             llvm::zip_equal(origBodyBlock->getArguments().drop_front(),
-                             innerRemat.args()))
+        for (auto &&[oldArg, newArg] : llvm::zip_equal(
+                 origBodyBlock->getArguments().drop_front(), innerRemat.args()))
           mapping.map(oldArg, newArg);
         mapping.map(FinalClass::getInductionVar(forOp), iv);
 
@@ -1083,17 +1083,17 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     Value newSp = whileResults[1];
     auto reconState = whileResults.slice(2, numIterArgs);
     if (carriedStores)
-      for (auto &&[i, res] : llvm::enumerate(
-               whileResults.slice(2 + numIterArgs, stores.size())))
+      for (auto &&[i, res] :
+           llvm::enumerate(whileResults.slice(2 + numIterArgs, stores.size())))
         liveStores[i] = res;
 
     // Adjoint of a single body step at (currentRevStep - 1).
     Value stepAdj = FinalClass::emitSub(builder, loc, currentRevStep, c1);
-    Value stepAdjC = FinalClass::castToType(builder, loc, stepAdj,
-                                            stepV.getType());
-    Value ivAdj = FinalClass::emitAdd(
-        builder, loc, startV,
-        FinalClass::emitMul(builder, loc, stepV, stepAdjC));
+    Value stepAdjC =
+        FinalClass::castToType(builder, loc, stepAdj, stepV.getType());
+    Value ivAdj =
+        FinalClass::emitAdd(builder, loc, startV,
+                            FinalClass::emitMul(builder, loc, stepV, stepAdjC));
 
     mapping = IRMapping();
 
@@ -1107,12 +1107,14 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       mapping.map(ref, workClones[r]);
 
     for (auto &&[oldArg, newArg] : llvm::zip_equal(
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(), reconState))
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
+             reconState))
       mapping.map(oldArg, newArg);
     mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
 
     // Re-materialize primal ops of this step for the reverse visitor.
-    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils, mapping);
+    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
+                               mapping);
 
     // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
     // per active mutable value, positioned in the single augmented primal --
@@ -1205,10 +1207,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     }
 
     SmallVector<Value> newAdjoints;
-    for (auto &&[active, arg] :
-         llvm::zip_equal(operandsActive, FinalClass::getBodyBlock(forOp)
-                                             ->getArguments()
-                                             .drop_front())) {
+    for (auto &&[active, arg] : llvm::zip_equal(
+             operandsActive,
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
       if (active) {
         newAdjoints.push_back(gutils->diffe(arg, builder));
         if (!gutils->isConstantValue(arg))
@@ -1264,7 +1265,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     auto period = FinalClass::getCheckpointBudget(forOp);
     auto numIters = FinalClass::getConstantNumberOfIterations(forOp);
     if (!numIters) {
-      // FinalClass::needsCheckpointing() only admits a dynamic trip count with a period.
+      // FinalClass::needsCheckpointing() only admits a dynamic trip count with
+      // a period.
       sched.nInner = *period;
       return sched;
     }
@@ -1329,9 +1331,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     mlir::enzyme::localizeGradients(builder, gutils, origBody);
 
     builder.setInsertionPointToEnd(revLoopBody);
-    for (auto &&[active, operand] :
-         llvm::zip_equal(operandsActive, FinalClass::getCarriedTerminatorOperands(
-                                             origBody->getTerminator()))) {
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(
+                                 origBody->getTerminator()))) {
       if (active)
         gutils->zeroDiffe(operand, builder);
     }
@@ -1349,9 +1351,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       builder.setInsertionPointToStart(revOuterBody);
       mlir::enzyme::localizeGradients(builder, gutils, origBody);
     }
-    for (auto &&[active, operand] :
-         llvm::zip_equal(operandsActive, FinalClass::getCarriedTerminatorOperands(
-                                             origBody->getTerminator()))) {
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(
+                                 origBody->getTerminator()))) {
       if (active)
         gutils->zeroDiffe(operand, builder);
     }
@@ -1376,10 +1378,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                          OpName forOp,
                                          MGradientUtilsReverse *gutils,
                                          PeriodicSchedule &sched) {
-    sched.startV = FinalClass::materializeLowerBound(builder, loc, forOp, gutils);
+    sched.startV =
+        FinalClass::materializeLowerBound(builder, loc, forOp, gutils);
     sched.stepV = FinalClass::materializeStep(builder, loc, forOp, gutils);
     sched.numItersV = FinalClass::castToType(
-        builder, loc, FinalClass::getNumIterationsValue(builder, loc, forOp, gutils),
+        builder, loc,
+        FinalClass::getNumIterationsValue(builder, loc, forOp, gutils),
         FinalClass::getIndexLikeType(builder));
     computeDynamicSegmentCount(builder, loc, sched);
   }
@@ -1441,8 +1445,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         FinalClass::getInductionVar(innerFwd), sched, fwdHint);
 
     Block *newForOpBody = FinalClass::getBodyBlock(newForOp);
-    for (auto [oldArg, newArg] : llvm::zip_equal(
-             newForOpBody->getArguments(), innerFwdBody->getArguments()))
+    for (auto [oldArg, newArg] : llvm::zip_equal(newForOpBody->getArguments(),
+                                                 innerFwdBody->getArguments()))
       mapping.map(oldArg, newArg);
 
     mapping.map(FinalClass::getInductionVar(newForOp), currentIV);
@@ -1460,7 +1464,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       caches.push_back(gutils->initAndPushCache(initArg, cacheBuilder));
 
     FinalClass::createScaffoldYield(
-        cacheBuilder, FinalClass::getBodyBlock(forOp)->getTerminator()->getLoc(),
+        cacheBuilder,
+        FinalClass::getBodyBlock(forOp)->getTerminator()->getLoc(),
         FinalClass::getCarriedResults(innerFwd));
 
     cacheBuilder.setInsertionPointAfter(outerFwd);
@@ -1479,10 +1484,10 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       caches.push_back(gutils->initAndPushCache(sched.stepV, cacheBuilder));
     }
 
-    gutils->replaceOrigOpWith(
-        op, FinalClass::getPrimalResults(cacheBuilder, loc, forOp,
-                                         FinalClass::getCarriedResults(outerFwd),
-                                         gutils));
+    gutils->replaceOrigOpWith(op, FinalClass::getPrimalResults(
+                                      cacheBuilder, loc, forOp,
+                                      FinalClass::getCarriedResults(outerFwd),
+                                      gutils));
     hoistPlaceholdersBefore(newForOp, newForOp);
     gutils->erase(newForOp);
     gutils->originalToNewFnOps[op] = outerFwd;
@@ -1513,11 +1518,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     IRMapping mapping;
 
-    assert(caches.size() == numIterArgs + mutableRefs.size() +
-                                immutableRefs.size() +
-                                (FinalClass::getConstantNumberOfIterations(forOp)
-                                     ? 0
-                                     : 3) &&
+    assert(caches.size() ==
+               numIterArgs + mutableRefs.size() + immutableRefs.size() +
+                   (FinalClass::getConstantNumberOfIterations(forOp) ? 0 : 3) &&
            "periodic cache layout mismatch");
 
     for (auto [i, ref] : llvm::enumerate(immutableRefs)) {
@@ -1578,8 +1581,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         sched, revHint);
 
     Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
-    for (auto [oldArg, newArg] : llvm::zip_equal(
-             origBodyBlock->getArguments(), revInnerBody->getArguments()))
+    for (auto [oldArg, newArg] : llvm::zip_equal(origBodyBlock->getArguments(),
+                                                 revInnerBody->getArguments()))
       mapping.map(oldArg, newArg);
 
     mapping.map(FinalClass::getInductionVar(forOp), currentIV);
@@ -1612,9 +1615,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     FinalClass::setInsertionPointToBodyEnd(builder, revLoopBody);
     int revIdx = 1;
-    for (auto &&[active, operand] :
-         llvm::zip_equal(operandsActive, FinalClass::getCarriedTerminatorOperands(
-                                             origBody->getTerminator()))) {
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(
+                                 origBody->getTerminator()))) {
       if (active) {
         gutils->addToDiffe(operand, revLoopBody->getArgument(revIdx), builder);
         revIdx++;
@@ -1650,11 +1653,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     }
 
     FinalClass::setInsertionPointToBodyEnd(builder, revLoopBody);
-    FinalClass::createScaffoldYield(builder, origBody->getTerminator()->getLoc(),
-                                    newResults);
+    FinalClass::createScaffoldYield(
+        builder, origBody->getTerminator()->getLoc(), newResults);
 
     FinalClass::setInsertionPointToBodyEnd(builder, revOuterBody);
-    FinalClass::createScaffoldYield(builder, origBody->getTerminator()->getLoc(),
+    FinalClass::createScaffoldYield(builder,
+                                    origBody->getTerminator()->getLoc(),
                                     FinalClass::getCarriedResults(revLoop));
 
     builder.setInsertionPointAfter(revOuter);
@@ -1680,7 +1684,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
   static std::optional<SmallVector<Value>>
   tryCacheValues(OpName forOp, Operation *op, MGradientUtilsReverse *gutils) {
-    if (!FinalClass::needsBinomialCheckpointing(forOp) && !FinalClass::needsCheckpointing(forOp))
+    if (!FinalClass::needsBinomialCheckpointing(forOp) &&
+        !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
     // Both schemes build their bookkeeping scaffold (budget/recompute loops,
@@ -1734,7 +1739,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       OpName forOp, Operation *op, OpBuilder &builder,
       MGradientUtilsReverse *gutils, SmallVector<Value> caches,
       ArrayRef<bool> operandsActive, ArrayRef<Value> incomingGradients) {
-    if (!FinalClass::needsBinomialCheckpointing(forOp) && !FinalClass::needsCheckpointing(forOp))
+    if (!FinalClass::needsBinomialCheckpointing(forOp) &&
+        !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
     // Mirrors the guard in tryCacheValues; already reported there, but

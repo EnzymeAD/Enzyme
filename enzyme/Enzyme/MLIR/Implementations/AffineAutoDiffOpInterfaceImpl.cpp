@@ -195,29 +195,29 @@ struct AffineForOpInterfaceReverse
   // Unlike scf.for (a plain sequential reverse-iteration counter), the reverse
   // outer loop steps by nInner, matching the forward one exactly -- see
   // computeReverseSegmentBound for what that buys.
-  static affine::AffineForOp createForwardOuterLoop(
-      OpBuilder &builder, Location loc, const PeriodicSchedule &sched,
-      ValueRange inits) {
-    return createConstantScaffoldLoop(
-        builder, loc, 0, sched.nInner * sched.numSegments(), sched.nInner,
-        inits);
+  static affine::AffineForOp
+  createForwardOuterLoop(OpBuilder &builder, Location loc,
+                         const PeriodicSchedule &sched, ValueRange inits) {
+    return createConstantScaffoldLoop(builder, loc, 0,
+                                      sched.nInner * sched.numSegments(),
+                                      sched.nInner, inits);
   }
 
-  static affine::AffineForOp createReverseOuterLoop(
-      OpBuilder &builder, Location loc, const PeriodicSchedule &sched,
-      ValueRange inits) {
-    return createConstantScaffoldLoop(
-        builder, loc, 0, sched.nInner * sched.numSegments(), sched.nInner,
-        inits);
+  static affine::AffineForOp
+  createReverseOuterLoop(OpBuilder &builder, Location loc,
+                         const PeriodicSchedule &sched, ValueRange inits) {
+    return createConstantScaffoldLoop(builder, loc, 0,
+                                      sched.nInner * sched.numSegments(),
+                                      sched.nInner, inits);
   }
 
   // Nothing to precompute: the bound below is a compile-time AffineMap
   // attached directly to the loop op, not a separately-emitted runtime
   // Value, so there is nothing to hoist relative to the mutable-ref cloning
   // loop the way scf.for's cmpi+select needs to be.
-  static SmallVector<Value> computeForwardSegmentHint(OpBuilder &, Location,
-                                                      Value,
-                                                      const PeriodicSchedule &) {
+  static SmallVector<Value>
+  computeForwardSegmentHint(OpBuilder &, Location, Value,
+                            const PeriodicSchedule &) {
     return {};
   }
 
@@ -294,9 +294,8 @@ struct AffineForOpInterfaceReverse
   // affine dimension, usable as an index by any affine.load/affine.store
   // cloned with it substituted in for forOp's own induction variable.
   static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
-                                       affine::AffineForOp forOp,
-                                       Value outerIV, Value localIV,
-                                       const PeriodicSchedule &,
+                                       affine::AffineForOp forOp, Value outerIV,
+                                       Value localIV, const PeriodicSchedule &,
                                        ArrayRef<Value> /*fwdHint*/) {
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
