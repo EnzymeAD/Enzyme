@@ -254,6 +254,12 @@ public:
     const auto &rhs =
         static_cast<const MapOfSetsLattice<KeyT, ElementT> &>(other);
 
+    // Joining with itself says nothing new, and the loop below walks the other
+    // side's map while inserting into this one, which the rehash would not
+    // survive. Say the first, which settles the second.
+    if (this == &rhs)
+      return ChangeResult::NoChange;
+
     // A key only this side has is left as it is, so only the other side's keys
     // are worth walking. Taking the union of both first meant every join cost
     // the size of what had been accumulated, which in a fixpoint is joined into
