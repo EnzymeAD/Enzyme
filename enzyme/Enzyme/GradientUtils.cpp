@@ -4879,7 +4879,13 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     TypeTree TT;
     if (haveCallSiteTypes)
       TT = callSiteTypes[argidx];
-    if (a.getType()->isFPOrFPVectorTy())
+    // An explicit enzyme_type on the parameter is authoritative: it is the
+    // only source of layout for a function reached through a dispatch table,
+    // where the caller's types never arrive.
+    if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type")) {
+      auto attr = fn->getAttributes().getParamAttr(a.getArgNo(), "enzyme_type");
+      TT = TypeTree::parse(attr.getValueAsString(), fn->getContext());
+    } else if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
     ++argidx;
     type_args.Arguments.insert(std::pair<Argument *, TypeTree>(&a, TT));
