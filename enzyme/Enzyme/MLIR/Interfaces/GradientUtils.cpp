@@ -51,9 +51,11 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
       ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {
   if (Logic.solver) {
+    dataflowSolver = std::make_unique<DataFlowSolver>(
+        DataFlowConfig().setInterprocedural(false));
     dataflowActivityAnalyzer =
         std::make_unique<enzyme::DataFlowActivityAnalyzer>(
-            *Logic.solver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
+            *dataflowSolver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
   }
 }
 
