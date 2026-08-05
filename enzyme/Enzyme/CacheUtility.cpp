@@ -257,8 +257,7 @@ void RemoveRedundantIVs(
 
     // We place that at first non phi as it may produce a non-phi instruction
     // and must thus be expanded after all phi's
-    Value *NewIV =
-        Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHI());
+    Value *NewIV = Exp.expandCodeFor(S, Tmp->getType(), getFirstNonPHI(Header));
 
     // Explicity preserve wrap behavior from original iv. This is necessary
     // until this PR in llvm is merged:
@@ -285,7 +284,7 @@ void RemoveRedundantIVs(
   }
 
   // Replace existing increments with canonical Increment
-  Increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
+  Increment->moveAfter(getFirstNonPHI(CanonicalIV->getParent()));
   SmallVector<Instruction *, 1> toErase;
   for (auto use : CanonicalIV->users()) {
     auto BO = dyn_cast<BinaryOperator>(use);
@@ -397,7 +396,7 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
 
   // Replace previous increment usage with new increment value
   if (Increment) {
-    Increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
+    Increment->moveAfter(getFirstNonPHI(CanonicalIV->getParent()));
 
     if (latches.size() == 1 && isCondBranchInst(latches[0]->getTerminator()))
       for (auto use : Increment->users()) {
@@ -1498,7 +1497,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   if (&*inst->getParent()->rbegin() != inst) {
     auto pn = dyn_cast<PHINode>(inst);
     Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (inst->getParent()->getFirstNonPHI())
+                                ? (getFirstNonPHI(inst->getParent()))
                                 : getNextNonDebugInstruction(inst);
     assert(putafter);
     v.SetInsertPoint(putafter);

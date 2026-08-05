@@ -1410,7 +1410,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       }
     }
     if (auto II = dyn_cast<InvokeInst>(res)) {
-      B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+      B.SetInsertPoint(getFirstNonPHI(II->getNormalDest()));
     } else {
       B.SetInsertPoint(res->getNextNode());
     }
@@ -1426,7 +1426,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       B.CreateStore(B.CreateLoad(AI->getAllocatedType(), AI), AI2);
       Bound->setArgOperand(i, AI2);
       if (auto II = dyn_cast<InvokeInst>(Bound)) {
-        B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+        B.SetInsertPoint(getFirstNonPHI(II->getNormalDest()));
       } else {
         B.SetInsertPoint(Bound->getNextNode());
       }
@@ -6449,7 +6449,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
 
   if (auto PN = dyn_cast<PHINode>(cur)) {
-    B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
+    B.SetInsertPoint(getFirstNonPHI(PN->getParent()));
     if (SE.isSCEVable(PN->getType())) {
       auto S = SE.getSCEV(PN);
 
@@ -6474,7 +6474,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         for (auto U : cur->users()) {
           push(U);
         }
-        auto point = PN->getParent()->getFirstNonPHI();
+        auto point = getFirstNonPHI(PN->getParent());
         auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
         cur->replaceAllUsesWith(tmp);
         cur->eraseFromParent();
@@ -8442,7 +8442,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
       Value *LoopCount = nullptr;
 
-      IRBuilder<> B(L->getHeader()->getFirstNonPHI());
+      IRBuilder<> B(getFirstNonPHI(L->getHeader()));
       {
 #if LLVM_VERSION_MAJOR >= 22
         SCEVExpander Exp(SE, "sparseenzyme");

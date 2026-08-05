@@ -349,7 +349,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
       ((mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeError) &&
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
-    IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
+    IRBuilder<> EB(getFirstNonPHI(&CI->getFunction()->getEntryBlock()));
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret,
                         Builder.CreatePointerCast(AL, getUnqual(diffretType)));
@@ -1893,7 +1893,7 @@ public:
     assert(!sampleFunctions.empty() || !observeFunctions.empty());
 
     bool autodiff = dtrace || dlikelihood;
-    IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
+    IRBuilder<> AllocaBuilder(getFirstNonPHI(CI->getParent()));
 
     if (!likelihood) {
       likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
@@ -2521,7 +2521,7 @@ public:
             CI->moveBefore(B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
-              IRBuilder<> P(post->getFirstNonPHI());
+              IRBuilder<> P(getFirstNonPHI(post));
               auto merge = P.CreatePHI(CI->getType(), 2);
               merge->addIncoming(cloned, sel1);
               merge->addIncoming(CI, sel2);
