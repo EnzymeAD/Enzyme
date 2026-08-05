@@ -5535,6 +5535,68 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
   return false;
 }
 
+/// Return C with every byte TypeAnalysis knows to be floating point replaced by
+/// zero, which is the shadow of a constant: float data differentiates to zero,
+/// everything else is carried through unchanged. Returns null if that cannot be
+/// expressed as a constant, in which case the caller must emit the masking.
+///
+/// This exists because a constant aggregate's shadow has to be a constant --
+/// its elements cannot be runtime instructions.
+static Constant *maskFloatsInConstant(Constant *C, TypeTree &TT, size_t off,
+                                      const DataLayout &DL) {
+  Type *T = C->getType();
+  size_t size = (DL.getTypeSizeInBits(T) + 7) / 8;
+
+  bool anyFloat = false;
+  for (size_t i = 0; i < size; i++)
+    if (TT[{(int)(off + i)}].isFloat()) {
+      anyFloat = true;
+      break;
+    }
+  // Nothing known to be float here, so the constant is its own shadow. This is
+  // the common case for an unanalyzable constant: the byte loop below would
+  // zero nothing at all.
+  if (!anyFloat)
+    return C;
+
+  if (T->isFloatingPointTy())
+    return Constant::getNullValue(T);
+
+  if (auto ST = dyn_cast<StructType>(T)) {
+    const StructLayout *SL = DL.getStructLayout(ST);
+    SmallVector<Constant *, 8> elems;
+    for (unsigned i = 0, e = ST->getNumElements(); i < e; i++) {
+      Constant *el = C->getAggregateElement(i);
+      if (!el)
+        return nullptr;
+      Constant *masked =
+          maskFloatsInConstant(el, TT, off + SL->getElementOffset(i), DL);
+      if (!masked)
+        return nullptr;
+      elems.push_back(masked);
+    }
+    return ConstantStruct::get(ST, elems);
+  }
+
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    size_t esz = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
+    SmallVector<Constant *, 8> elems;
+    for (uint64_t i = 0, e = AT->getNumElements(); i < e; i++) {
+      Constant *el = C->getAggregateElement(i);
+      if (!el)
+        return nullptr;
+      Constant *masked = maskFloatsInConstant(el, TT, off + i * esz, DL);
+      if (!masked)
+        return nullptr;
+      elems.push_back(masked);
+    }
+    return ConstantArray::get(AT, elems);
+  }
+
+  // A scalar only partly covered by float cannot be masked as a constant.
+  return nullptr;
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
@@ -5665,6 +5727,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (TT.allFloat(oval, DL, /*anythingIsFloat*/ true))
         return Constant::getNullValue(getShadowType(oval->getType()));
       else {
+        // A constant's mask can be folded, and must be when the constant is an
+        // element of a constant aggregate, whose shadow cannot contain
+        // instructions.
+        if (auto C = dyn_cast<Constant>(oval)) {
+          if (Constant *masked = maskFloatsInConstant(C, TT, 0, DL)) {
+            auto rule = [&masked]() -> Value * { return masked; };
+            return applyChainRule(oval->getType(), BuilderM, rule);
+          }
+        }
         IRBuilder<> bb(inversionAllocs);
         if (auto arg = dyn_cast<Instruction>(oval)) {
           arg = getNewFromOriginal(arg);
