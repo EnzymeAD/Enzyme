@@ -180,9 +180,18 @@ struct DifferentiatePass
       return failure();
 
     OpBuilder builder(CI);
-    auto dCI = func::CallOp::create(builder, CI.getLoc(), newFunc.getName(),
-                                    newFunc.getResultTypes(), args);
-    if (dCI.getNumResults() != CI.getNumResults()) {
+    // Ask the function how it is called, as the reverse handler does: what is
+    // being differentiated is often an llvm.func, and a func.call to one of
+    // those is not a call at all.
+    auto iface = dyn_cast<AutoDiffFunctionInterface>(newFunc.getOperation());
+    if (!iface) {
+      newFunc.getOperation()->emitError()
+          << "this function operation does not implement "
+             "AutoDiffFunctionInterface";
+      return failure();
+    }
+    Operation *dCI = iface.createCall(builder, CI.getLoc(), args);
+    if (dCI->getNumResults() != CI.getNumResults()) {
       CI.emitError() << "Incorrect number of results for enzyme operation: "
                      << *CI << " expected " << *dCI;
       return failure();
