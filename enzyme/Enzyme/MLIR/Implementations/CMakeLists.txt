@@ -100,20 +100,26 @@ add_mlir_library(MLIREnzymeImplementations
   MLIRLinalgDialect
 )
 
-# The Flang-dependent Fortran plumbing: the shared Fortran autodiff registration
-# and the `enzyme-lower-fortran-calls` pass (f__enzyme_* hook calls -> enzyme.*
-# ops, see HLFIREnzymeCallLowering.cpp). Behind ENZYME_FLANG_MLIR so the core
-# Enzyme-MLIR build never gains a Flang dependency. Bundled into the FIREnzyme
-# and FlangEnzymeMLIR plugins.
+# The Flang-dependent Fortran plumbing: the shared Fortran autodiff registration,
+# the FIR/HLFIR autodiff models, and the `enzyme-lower-fortran-calls` pass
+# (f__enzyme_* hook calls -> enzyme.* ops, see HLFIREnzymeCallLowering.cpp).
+# Behind ENZYME_FLANG_MLIR so the core Enzyme-MLIR build never gains a Flang
+# dependency. Bundled into the FIREnzyme and FlangEnzymeMLIR plugins.
 if (ENZYME_FLANG_MLIR)
+  set(LLVM_TARGET_DEFINITIONS FIRDerivatives.td)
+  enzyme_tablegen(FIRDerivatives.inc -gen-mlir-derivatives)
+  add_public_tablegen_target(FIRDerivativesIncGen)
+
   add_mlir_library(MLIREnzymeHLFIRImplementations
     HLFIREnzymeCallLowering.cpp
     EnzymeFortranAutoDiffRegistration.cpp
+    FIRAutoDiffOpInterfaceImpl.cpp
     PARTIAL_SOURCES_INTENDED
 
     DEPENDS
     MLIRAutoDiffOpInterfaceIncGen
     MLIREnzymeEnumsIncGen
+    FIRDerivativesIncGen
 
     LINK_LIBS PUBLIC
     MLIREnzymeImplementations
@@ -125,7 +131,7 @@ if (ENZYME_FLANG_MLIR)
   target_include_directories(MLIREnzymeHLFIRImplementations PRIVATE ${FLANG_INCLUDE_DIRS})
 
   # FlangEnzymeMLIR: a -load'able plugin for `flang -fc1` whose static
-  # initializer registers the Enzyme HLFIR passes into flang's codegen pipeline
+  # initializer registers the Enzyme passes into flang's codegen pipeline
   # via fir::registerPassPipelineConfigCallback. See
   # HLFIRFlangPluginRegistration.cpp.
   add_llvm_library(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}

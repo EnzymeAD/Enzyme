@@ -6,22 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Shared registration of the Enzyme dialect + the autodiff interface external
-// models the `enzyme` differentiation pass needs to differentiate Fortran, i.e.
-// HLFIR/FIR plus the upstream dialects flang lowers to (arith, math, complex,
-// cf, scf, tensor, func, LLVM). Both delivery vehicles reuse this one entry
-// point so they register exactly the same set:
+// Shared by both plugins (enzyme-fir-plugin.cpp and
+// HLFIRFlangPluginRegistration.cpp): the Enzyme dialect plus the autodiff
+// models for FIR/HLFIR and the upstream dialects flang lowers to.
 //
-//   * the fir-opt MLIR plugin  -- enzyme-fir-plugin.cpp
-//   * the flang -fc1 -load one -- HLFIRFlangPluginRegistration.cpp
-//
-// It is deliberately a *subset* of registerCoreDialectAutodiffInterfaces: the
-// Linalg, NVVM and Affine models are omitted because Fortran HLFIR never
-// produces those ops at this stage and -- crucially for the lean plugins --
-// neither `flang -fc1` nor `fir-opt` registers those dialects, so their symbols
-// are not exported for the plugin to resolve against. The MemRef model is
-// likewise omitted: Fortran lowers to !fir.ref, not memref, and MemRef's
-// zeroInPlace pulls in linalg.fill (a Linalg symbol the host does not export).
+// This is deliberately a subset of registerCoreDialectAutodiffInterfaces. The
+// Linalg, NVVM and Affine models are omitted because neither `flang -fc1` nor
+// `fir-opt` registers those dialects, so a plugin cannot resolve their symbols
+// against the host. MemRef is omitted too: Fortran lowers to !fir.ref, and
+// MemRef's zeroInPlace pulls in linalg.fill.
 //
 //===----------------------------------------------------------------------===//
 
@@ -46,4 +39,7 @@ void mlir::enzyme::registerEnzymeFortranInterfaces(DialectRegistry &registry) {
   registerFuncDialectAutoDiffInterface(registry);
   registerTensorDialectAutoDiffInterface(registry);
   registerEnzymeDialectAutoDiffInterface(registry);
+  // The by-reference model: without it nothing can differentiate a Fortran
+  // function, whose arguments and locals are all !fir.ref<T>.
+  registerFIRDialectAutoDiffInterface(registry);
 }

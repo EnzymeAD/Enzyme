@@ -7,13 +7,9 @@
 //===----------------------------------------------------------------------===//
 //
 // Registration entry points for the Flang-dependent Enzyme plumbing. These live
-// in a separate, Flang-dependent library so the core Enzyme-MLIR build does not
-// gain a Flang dependency; it is bundled only into the Enzyme fir-opt/flang
-// plugins (FIREnzyme, FlangEnzymeMLIR), which resolve HLFIR from the host. This
-// foundational layer declares the shared Fortran registration and the call-
-// lowering pass; the FIR/HLFIR autodiff registration entry points are declared
-// alongside their implementations in the later autodiff layers. See
-// PLAN_flang_enzyme_mlir.md.
+// in their own library so the core Enzyme-MLIR build does not gain a Flang
+// dependency; it is bundled only into the FIREnzyme and FlangEnzymeMLIR
+// plugins, which resolve FIR/HLFIR from the host.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,21 +22,16 @@ namespace mlir {
 class DialectRegistry;
 class Pass;
 namespace enzyme {
-// Registers the Enzyme dialect and the subset of autodiff interface external
-// models needed to differentiate Fortran (HLFIR/FIR) code, into `registry`.
-// Shared by both delivery vehicles -- the fir-opt MLIR plugin
-// (enzyme-fir-plugin.cpp) and the flang -fc1 -load plugin
-// (HLFIRFlangPluginRegistration.cpp) -- so they register exactly the same set.
-// A deliberate subset of registerCoreDialectAutodiffInterfaces (see
-// EnzymeFortranAutoDiffRegistration.cpp for why Linalg/NVVM/Affine are
-// omitted).
+// Registers the Enzyme dialect and the autodiff models needed to differentiate
+// Fortran. Both plugins call this, so they register the same set.
 void registerEnzymeFortranInterfaces(DialectRegistry &registry);
 
-// A pass that rewrites Fortran differentiation-hook calls
-// (fir.call @...f__enzyme_fwddiff / f__enzyme_autodiff) into enzyme.fwddiff /
-// enzyme.autodiff ops, parsing enzyme_{const,dup,dupnoneed,out} activity
-// markers. Mirrors HandleAutoDiff/getMetadataName in Enzyme.cpp (the LLVM
-// path).
+// Attaches the AutoDiffTypeInterface to !fir.ref and the active-memory models
+// to the FIR/HLFIR memory ops (fir.load/store/alloca, hlfir.declare/assign).
+void registerFIRDialectAutoDiffInterface(DialectRegistry &registry);
+
+// Rewrites Fortran differentiation-hook calls (f__enzyme_fwddiff /
+// f__enzyme_autodiff) into enzyme.fwddiff / enzyme.autodiff ops.
 std::unique_ptr<Pass> createHLFIRLowerEnzymeCallsPass();
 void registerHLFIRLowerEnzymeCallsPass();
 } // namespace enzyme
