@@ -1,5 +1,4 @@
 name = "enzyme"
-version = "0.0.79"
 license = "Apache-2.0 WITH LLVM-exception"
 description = "Fortran bindings for Enzyme (the enzyme module)"
 homepage = "https://enzyme.mit.edu"
@@ -10,9 +9,6 @@ homepage = "https://enzyme.mit.edu"
 #   [dependencies]
 #   enzyme = { git = "https://github.com/EnzymeAD/Enzyme.git" }
 #
-# instead of copying enzyme.f90 / enzyme_function_hooks.f90 or pointing -I at a
-# CMake build's modules directory. This builds only the bindings; the Enzyme
-# pass plugin itself still comes from the CMake build.
 
 [build]
 auto-executables = false
