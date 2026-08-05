@@ -6548,6 +6548,18 @@ void TypeAnalyzer::considerRustDebugInfo() {
   DataLayout DL = fntypeinfo.Function->getParent()->getDataLayout();
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
+#if LLVM_VERSION_MAJOR >= 19
+      for (DbgVariableRecord &DVR :
+           filterDbgVars(I.getDbgRecordRange())) {
+        if (!DVR.isDbgDeclare())
+          continue;
+        TypeTree TT = parseDIType(DVR, DL);
+        if (!TT.isKnown())
+          continue;
+        TT |= TypeTree(BaseType::Pointer);
+        updateAnalysis(DVR.getAddress(), TT.Only(-1, &I), &I);
+      }
+#endif
       if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(&I)) {
         TypeTree TT = parseDIType(*DDI, DL);
         if (!TT.isKnown()) {

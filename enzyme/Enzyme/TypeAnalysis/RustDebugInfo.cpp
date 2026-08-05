@@ -168,6 +168,17 @@ bool isU8PointerType(DIType &type) {
   return false;
 }
 
+#if LLVM_VERSION_MAJOR >= 19
+// Debug info is carried by records rather than intrinsics on newer LLVM, so
+// the intrinsic overload below never matches there.
+TypeTree parseDIType(DbgVariableRecord &DVR, DataLayout &DL) {
+  DIType *type = DVR.getVariable()->getType();
+  if (isU8PointerType(*type))
+    return TypeTree();
+  return parseDIType(*type, *DVR.getInstruction(), DL);
+}
+#endif
+
 TypeTree parseDIType(DbgDeclareInst &I, DataLayout &DL) {
   DIType *type = I.getVariable()->getType();
 
