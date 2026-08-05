@@ -229,6 +229,8 @@ bool isInactiveCall(CallBase &CI) {
   // clang-format off
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    // LLVM flang's I/O runtime, the modern equivalent of f90io above.
+    "_FortranAio",
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -242,6 +244,12 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 const StringSet<> KnownInactiveFunctions = {
+    // Fortran runtime queries and character handling. Neither moves floating
+    // point data, so neither can carry a derivative. Note _FortranAAssign is
+    // deliberately absent: it copies data which may include reals, so it needs
+    // a real rule rather than being declared inactive.
+    "_FortranAClassIs",
+    "_FortranATrim",
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",

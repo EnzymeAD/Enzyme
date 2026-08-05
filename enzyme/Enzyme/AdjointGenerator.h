@@ -3628,9 +3628,15 @@ public:
                   minInt = pair.first[0];
                   mv = pair.second;
                 }
-                assert(mv != BaseType::Unknown);
-                vd.insert({0}, mv);
-                goto known;
+                // Note the comparison above is unsigned, so an entry at the
+                // any-offset index -1 is skipped and mv is left unknown. That
+                // is the common shape for a tree such as {[]:Pointer,
+                // [-1]:Anything}, so fall through to the diagnostics below
+                // rather than assuming a type was found.
+                if (mv != BaseType::Unknown) {
+                  vd.insert({0}, mv);
+                  goto known;
+                }
               }
             }
           }
