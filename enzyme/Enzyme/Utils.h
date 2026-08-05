@@ -193,16 +193,41 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+/// Emit a diagnostic which is always shown, unlike EmitWarning which requires
+/// the user to opt in with -Rpass=enzyme. Use this for messages which describe
+/// a potential correctness problem (e.g. mismatched activity) as opposed to a
+/// performance note.
+template <typename... Args>
+void EmitWarningAlways(llvm::StringRef RemarkName,
+                       const llvm::DiagnosticLocation &Loc,
+                       const llvm::Function &F, const Args &...args) {
+  // DiagnosticInfoUnsupported does not copy its message, so keep the backing
+  // storage alive until diagnose() returns.
+  std::string str = "Enzyme: ";
+  llvm::raw_string_ostream ss(str);
+  (ss << ... << args);
+  F.getContext().diagnose(EnzymeWarning(str, Loc, &F));
+}
+
+template <typename... Args>
+void EmitWarningAlways(llvm::StringRef RemarkName, const llvm::Instruction &I,
+                       const Args &...args) {
+  EmitWarningAlways(RemarkName, I.getDebugLoc(), *I.getParent()->getParent(),
+                    args...);
+}
+
 template <typename... Args>
 void EmitWarningAlways(llvm::StringRef RemarkName, const llvm::Function &F,
                        const Args &...args) {
-  llvm::LLVMContext &Ctx = F.getContext();
-  std::string str;
-  llvm::raw_string_ostream ss(str);
-  (ss << ... << args);
-  auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
-  Ctx.diagnose((EnzymeWarning(ss.str(), F.getSubprogram(), &F)));
+  EmitWarningAlways(RemarkName, F.getSubprogram(), F, args...);
 }
+
+/// Remedy appended to mismatched-activity warnings, which are emitted when a
+/// value Enzyme proved inactive is used where an active value may be required.
+static constexpr const char *MixedActivityHint =
+    ". If this value may be active at runtime, enable runtime activity "
+    "analysis (pass \"enzyme_runtime_activity\" to __enzyme_autodiff); "
+    "otherwise its derivative will be assumed zero.";
 
 template <typename... Args>
 void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
