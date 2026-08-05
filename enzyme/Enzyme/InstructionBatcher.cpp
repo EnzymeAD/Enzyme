@@ -24,6 +24,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "BranchCompat.h"
+
 #include "InstructionBatcher.h"
 
 #include "llvm/IR/InstVisitor.h"
@@ -178,7 +180,7 @@ void InstructionBatcher::visitSwitchInst(llvm::SwitchInst &inst) {
   return;
 }
 
-void InstructionBatcher::visitBranchInst(llvm::BranchInst &branch) {
+void InstructionBatcher::visitBranchLike(llvm::Instruction &branch) {
   // TODO: runtime check
   hasError = true;
   EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),

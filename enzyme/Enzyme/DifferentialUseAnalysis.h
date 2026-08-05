@@ -27,6 +27,8 @@
 #ifndef ENZYME_DIFFERENTIALUSEANALYSIS_H_
 #define ENZYME_DIFFERENTIALUSEANALYSIS_H_
 
+#include "BranchCompat.h"
+
 #include <deque>
 #include <map>
 #include <set>
@@ -394,7 +396,7 @@ inline bool is_value_needed_in_reverse(
       // TODO save loop bounds for dynamic loop
 
       // TODO make this more aggressive and dont need to save loop latch
-      if (isa<BranchInst>(use) || isa<SwitchInst>(use)) {
+      if (isBranchInst(use) || isa<SwitchInst>(use)) {
         size_t num = 0;
         for (auto suc : successors(cast<Instruction>(use)->getParent())) {
           if (!oldUnreachable.count(suc)) {

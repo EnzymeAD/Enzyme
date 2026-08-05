@@ -249,6 +249,43 @@ if(LLVM_VERSION_MAJOR LESS 15)
   message(FATAL_ERROR "LLVM version < 15 is not supported")
 endif()
 
+# Some LLVM API changes land mid-release-cycle, so they cannot be keyed off
+# LLVM_VERSION_MAJOR; probe for them instead.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${LLVM_INCLUDE_DIRS})
+set(CMAKE_REQUIRED_DEFINITIONS ${LLVM_DEFINITIONS})
+set(CMAKE_REQUIRED_FLAGS "-std=c++17")
+# Compile only: linking would need the LLVM libraries.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# BranchInst was split into UncondBrInst and CondBrInst, and removed
+# (llvm-project 464639bdcc8c and friends). See Enzyme/BranchCompat.h.
+check_cxx_source_compiles("
+#include \"llvm/IR/Instructions.h\"
+llvm::CondBrInst *I;
+int main() { return 0; }
+" ENZYME_SPLIT_BRANCH_INST)
+if (ENZYME_SPLIT_BRANCH_INST)
+  add_definitions(-DENZYME_SPLIT_BRANCH_INST=1)
+endif()
+
+# ScalarEvolution::getLosslessPtrToIntExpr was renamed to getPtrToAddrExpr.
+check_cxx_source_compiles("
+#include \"llvm/Analysis/ScalarEvolution.h\"
+struct T : public llvm::ScalarEvolution {
+  const llvm::SCEV *f(const llvm::SCEV *S) { return getPtrToAddrExpr(S); }
+};
+int main() { return 0; }
+" ENZYME_HAS_SCEV_PTRTOADDR)
+if (ENZYME_HAS_SCEV_PTRTOADDR)
+  add_definitions(-DENZYME_HAS_SCEV_PTRTOADDR=1)
+endif()
+
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_DEFINITIONS)
+unset(CMAKE_REQUIRED_FLAGS)
+unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+
 option(ENZYME_FLANG_VERSION "Build for non-version compliant FLANG" OFF)
 if (ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)

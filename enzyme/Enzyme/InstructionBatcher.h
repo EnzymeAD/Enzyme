@@ -27,6 +27,8 @@
 #ifndef INSTRUCTION_BATCHER_H_
 #define INSTRUCTION_BATCHER_H_
 
+#include "BranchCompat.h"
+
 #include <llvm/Config/llvm-config.h>
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -76,7 +78,14 @@ public:
 
   void visitSwitchInst(llvm::SwitchInst &inst);
 
-  void visitBranchInst(llvm::BranchInst &branch);
+  // InstVisitor dispatches to one hook per branch class; both end up here.
+  void visitBranchLike(llvm::Instruction &branch);
+#ifdef ENZYME_SPLIT_BRANCH_INST
+  void visitUncondBrInst(llvm::UncondBrInst &branch) { visitBranchLike(branch); }
+  void visitCondBrInst(llvm::CondBrInst &branch) { visitBranchLike(branch); }
+#else
+  void visitBranchInst(llvm::BranchInst &branch) { visitBranchLike(branch); }
+#endif
 
   void visitReturnInst(llvm::ReturnInst &ret);
 

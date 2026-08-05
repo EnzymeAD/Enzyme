@@ -23,6 +23,8 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include "BranchCompat.h"
+
 #include <llvm/Config/llvm-config.h>
 #include <memory>
 
@@ -2080,9 +2082,17 @@ public:
         SmallVector<OperandBundleDef, 1> OpBundles;
         II->getOperandBundlesAsDefs(OpBundles);
         // Insert a normal call instruction...
-        CallInst *NewCall =
-            CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
-                             CallArgs, OpBundles, "", II);
+        CallInst *NewCall = CallInst::Create(
+            II->getFunctionType(), II->getCalledOperand(), CallArgs, OpBundles,
+            "",
+#if LLVM_VERSION_MAJOR >= 19
+            // Instruction* insert positions were removed; the iterator
+            // overload exists as far back as LLVM 19.
+            II->getIterator()
+#else
+            II
+#endif
+        );
         NewCall->takeName(II);
         NewCall->setCallingConv(II->getCallingConv());
         NewCall->setAttributes(II->getAttributes());
@@ -2090,7 +2100,7 @@ public:
         II->replaceAllUsesWith(NewCall);
 
         // Insert an unconditional branch to the normal destination.
-        BranchInst::Create(II->getNormalDest(), II);
+        createUncondBranch(II->getNormalDest(), II);
 
         // Remove any PHI node entries from the exception destination.
         II->getUnwindDest()->removePredecessor(&BB);

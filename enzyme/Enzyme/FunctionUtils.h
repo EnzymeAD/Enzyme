@@ -25,6 +25,8 @@
 #ifndef ENZYME_FUNCTION_UTILS_H
 #define ENZYME_FUNCTION_UTILS_H
 
+#include "BranchCompat.h"
+
 #include <deque>
 #include <set>
 
@@ -141,8 +143,10 @@ getExitBlocks(const llvm::Loop *L,
         goto exitblockcheck;
       }
       checked.insert(foo);
-      if (auto bi = llvm::dyn_cast<llvm::BranchInst>(foo->getTerminator())) {
-        for (auto nb : bi->successors()) {
+      if (auto bi = asBranchInst(foo->getTerminator())) {
+        // The free function works on every supported LLVM;
+        // Instruction::successors() is newer.
+        for (auto nb : llvm::successors(bi)) {
           if (L->contains(nb))
             continue;
           tocheck.push_back(nb);

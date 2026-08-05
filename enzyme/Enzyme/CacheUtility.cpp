@@ -24,6 +24,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "BranchCompat.h"
+
 #include "CacheUtility.h"
 #include "FunctionUtils.h"
 
@@ -320,12 +322,10 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
                          Instruction *Increment,
                          ArrayRef<BasicBlock *> latches) {
   // Attempt to explicitly rewrite the latch
-  if (latches.size() == 1 && isa<BranchInst>(latches[0]->getTerminator()) &&
-      cast<BranchInst>(latches[0]->getTerminator())->isConditional())
+  if (latches.size() == 1 && isCondBranchInst(latches[0]->getTerminator()))
     for (auto use : CanonicalIV->users()) {
       if (auto cmp = dyn_cast<ICmpInst>(use)) {
-        if (cast<BranchInst>(latches[0]->getTerminator())->getCondition() !=
-            cmp)
+        if (getBranchCondition(latches[0]->getTerminator()) != cmp)
           continue;
         // Force i to be on LHS
         if (cmp->getOperand(0) != CanonicalIV) {
@@ -399,12 +399,10 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
   if (Increment) {
     Increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
 
-    if (latches.size() == 1 && isa<BranchInst>(latches[0]->getTerminator()) &&
-        cast<BranchInst>(latches[0]->getTerminator())->isConditional())
+    if (latches.size() == 1 && isCondBranchInst(latches[0]->getTerminator()))
       for (auto use : Increment->users()) {
         if (auto cmp = dyn_cast<ICmpInst>(use)) {
-          if (cast<BranchInst>(latches[0]->getTerminator())->getCondition() !=
-              cmp)
+          if (getBranchCondition(latches[0]->getTerminator()) != cmp)
             continue;
 
           // Force i+1 to be on LHS

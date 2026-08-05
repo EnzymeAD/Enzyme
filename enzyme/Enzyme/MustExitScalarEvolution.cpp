@@ -25,6 +25,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "BranchCompat.h"
+
 #include "MustExitScalarEvolution.h"
 #include "FunctionUtils.h"
 #include "llvm/ADT/SmallVector.h"
@@ -96,13 +98,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimit(
 
   bool IsOnlyExit = ExitingBlocks.size() == 1;
   auto *Term = ExitingBlock->getTerminator();
-  if (BranchInst *BI = dyn_cast<BranchInst>(Term)) {
-    assert(BI->isConditional() && "If unconditional, it can't be in loop!");
+  if (Instruction *BI = asBranchInst(Term)) {
+    assert(isCondBranchInst(BI) && "If unconditional, it can't be in loop!");
     bool ExitIfTrue = !L->contains(BI->getSuccessor(0));
     assert(ExitIfTrue == L->contains(BI->getSuccessor(1)) &&
            "It should have one successor in loop and one exit block!");
     // Proceed to the next level to examine the exit condition expression.
-    return computeExitLimitFromCond(L, BI->getCondition(), ExitIfTrue,
+    return computeExitLimitFromCond(L, getBranchCondition(BI), ExitIfTrue,
                                     /*ControlsExit=*/IsOnlyExit,
                                     AllowPredicates);
   }
@@ -980,16 +982,24 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // pointers in general.
   const SCEV *OrigStart = Start;
   const SCEV *OrigRHS = RHS;
+  // getLosslessPtrToIntExpr was renamed to getPtrToAddrExpr; ENZYME_HAS_SCEV_PTRTOADDR
+  // is set by CMake when the LLVM being built against has the new name.
+#ifdef ENZYME_HAS_SCEV_PTRTOADDR
+#define ENZYME_SCEV_PTR_TO_INT getPtrToAddrExpr
+#else
+#define ENZYME_SCEV_PTR_TO_INT getLosslessPtrToIntExpr
+#endif
   if (Start->getType()->isPointerTy()) {
-    Start = getLosslessPtrToIntExpr(Start);
+    Start = ENZYME_SCEV_PTR_TO_INT(Start);
     if (isa<SCEVCouldNotCompute>(Start))
       return Start;
   }
   if (RHS->getType()->isPointerTy()) {
-    RHS = getLosslessPtrToIntExpr(RHS);
+    RHS = ENZYME_SCEV_PTR_TO_INT(RHS);
     if (isa<SCEVCouldNotCompute>(RHS))
       return RHS;
   }
+#undef ENZYME_SCEV_PTR_TO_INT
 
   // When the RHS is not invariant, we do not know the end bound of the loop and
   // cannot calculate the ExactBECount needed by ExitLimit. However, we can

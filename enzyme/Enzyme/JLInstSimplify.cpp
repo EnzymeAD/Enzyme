@@ -22,6 +22,8 @@
 // results of a given function.
 //
 //===----------------------------------------------------------------------===//
+#include "BranchCompat.h"
+
 #include <cstdint>
 #include <llvm/Config/llvm-config.h>
 
@@ -71,7 +73,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         if (FI->hasOneUse()) {
           bool allBranch = true;
           for (auto user : FI->users()) {
-            if (!isa<BranchInst>(user)) {
+            if (!isBranchInst(user)) {
               allBranch = false;
               break;
             }

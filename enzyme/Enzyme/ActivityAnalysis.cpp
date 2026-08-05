@@ -24,6 +24,8 @@
 // functions that compute this for values and instructions, respectively.
 //
 //===----------------------------------------------------------------------===//
+#include "BranchCompat.h"
+
 #include <cstdint>
 #include <deque>
 
@@ -843,7 +845,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
 
   // Branch, unreachable, and previously computed constants are inactive
-  if (isa<UnreachableInst>(I) || isa<BranchInst>(I) ||
+  if (isa<UnreachableInst>(I) || isBranchInst(I) ||
       (ConstantInstructions.find(I) != ConstantInstructions.end())) {
     return true;
   }
