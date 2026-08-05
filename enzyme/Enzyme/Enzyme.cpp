@@ -75,6 +75,7 @@
 
 #include "ActivityAnalysis.h"
 #include "DiffeGradientUtils.h"
+#include "EnzymeCallMarkers.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "PassUtils.h"
@@ -173,6 +174,20 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
     return nullptr;
   }
   return Builder.CreateBitCast(value, destType);
+}
+
+static DIFFE_TYPE toDiffeType(enzyme_markers::MarkerActivity activity) {
+  switch (activity) {
+  case enzyme_markers::MarkerActivity::Const:
+    return DIFFE_TYPE::CONSTANT;
+  case enzyme_markers::MarkerActivity::Dup:
+    return DIFFE_TYPE::DUP_ARG;
+  case enzyme_markers::MarkerActivity::DupNoNeed:
+    return DIFFE_TYPE::DUP_NONEED;
+  case enzyme_markers::MarkerActivity::Out:
+    return DIFFE_TYPE::OUT_DIFF;
+  }
+  llvm_unreachable("unknown marker activity");
 }
 
 #if LLVM_VERSION_MAJOR > 16
@@ -705,10 +720,36 @@ public:
 
       // handle metadata
       while (metaString && startsWith(*metaString, "enzyme_")) {
+        // What a marker names and what it takes for itself are described once,
+        // in EnzymeCallMarkers.h, so that the MLIR raising of the same call
+        // reads it the same way. Only what a marker then does with what it
+        // took is particular to it.
+        auto marker = enzyme_markers::lookupEnzymeMarker(*metaString);
+        if (!marker) {
+          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
+                      "illegal enzyme metadata classification ", *CI,
+                      *metaString);
+          return {};
+        }
+
+        if (marker->activity)
+          opt_ty = toDiffeType(*marker->activity);
+
+        if (marker->extraOperands) {
+          if ((size_t)i + marker->extraOperands >= CI->arg_size()) {
+            EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                        "Too few arguments to Enzyme call ", *CI);
+            return {};
+          }
+          i += marker->extraOperands;
+        }
+
+        // A flag configures the call; nothing after it is an argument.
+        skipArg = marker->role == enzyme_markers::MarkerRole::CallFlag;
+
         if (*metaString == "enzyme_not_overwritten") {
           overwritten = false;
         } else if (*metaString == "enzyme_byref") {
-          ++i;
           if (!isa<ConstantInt>(CI->getArgOperand(i))) {
             EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
                         "illegal enzyme byref size ", *CI->getArgOperand(i),
@@ -717,13 +758,8 @@ public:
           }
           byRefSize = cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
           assert(byRefSize > 0);
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_dup") {
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-        } else if (*metaString == "enzyme_dupv") {
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-          ++i;
+        } else if (*metaString == "enzyme_dupv" ||
+                   *metaString == "enzyme_dupnoneedv") {
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
             batchOffset = offset_arg;
@@ -734,31 +770,8 @@ public:
                         *CI->getArgOperand(i), " in", *CI);
             return {};
           }
-        } else if (*metaString == "enzyme_dupnoneed") {
-          opt_ty = DIFFE_TYPE::DUP_NONEED;
-        } else if (*metaString == "enzyme_dupnoneedv") {
-          opt_ty = DIFFE_TYPE::DUP_NONEED;
-          ++i;
-          Value *offset_arg = CI->getArgOperand(i);
-          if (offset_arg->getType()->isIntegerTy()) {
-            batchOffset = offset_arg;
-          } else {
-            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
-                        "enzyme_batch must be followd by an integer "
-                        "offset.",
-                        *CI->getArgOperand(i), " in", *CI);
-            return {};
-          }
-        } else if (*metaString == "enzyme_out") {
-          opt_ty = DIFFE_TYPE::OUT_DIFF;
-        } else if (*metaString == "enzyme_const") {
-          opt_ty = DIFFE_TYPE::CONSTANT;
-        } else if (*metaString == "enzyme_noret") {
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_allocated") {
           assert(!sizeOnly);
-          ++i;
           if (!isa<ConstantInt>(CI->getArgOperand(i))) {
             EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
                         "illegal enzyme allocated size ", *CI->getArgOperand(i),
@@ -767,78 +780,33 @@ public:
           }
           allocatedTapeSize =
               cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_tape") {
           assert(!sizeOnly);
-          ++i;
           tape = CI->getArgOperand(i);
           tapeIsPointer = true;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_nofree") {
           assert(!sizeOnly);
           freeMemory = false;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_runtime_activity") {
           runtimeActivity = true;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_strong_zero") {
           strongZero = true;
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_primal_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_const_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_active_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_dup_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_width") {
-          ++i;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_interface") {
-          ++i;
           dynamic_interface = CI->getArgOperand(i);
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_trace") {
-          trace = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          trace = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_duptrace") {
-          trace = CI->getArgOperand(++i);
+          trace = CI->getArgOperand(i);
           diffeTrace = true;
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_likelihood") {
-          likelihood = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          likelihood = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_duplikelihood") {
-          likelihood = CI->getArgOperand(++i);
-          diffeLikelihood = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-          skipArg = true;
-          break;
+          likelihood = CI->getArgOperand(i - 1);
+          diffeLikelihood = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_observations") {
-          observations = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          observations = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_active_rand_var") {
-          Value *string = CI->getArgOperand(++i);
+          Value *string = CI->getArgOperand(i);
           StringRef const_string;
           if (getConstantStringInfo(string, const_string)) {
             ActiveRandomVariables.insert(const_string);
@@ -848,14 +816,13 @@ public:
                 "active variable address must be a compile-time constant", *CI,
                 *metaString);
           }
-          skipArg = true;
-          break;
-        } else {
-          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
-                      "illegal enzyme metadata classification ", *CI,
-                      *metaString);
-          return {};
         }
+        // The rest -- the activities, enzyme_interleave, enzyme_width and the
+        // *_return flags -- are wholly described by the table.
+
+        if (skipArg)
+          break;
+
         if (sizeOnly) {
           assert(opt_ty);
           constants.push_back(*opt_ty);
