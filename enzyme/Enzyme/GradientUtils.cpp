@@ -5680,7 +5680,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
         auto alloc = bb.CreateAlloca(oval->getType());
         auto AT = ArrayType::get(bb.getInt8Ty(), size);
-        bb.CreateStore(getNewFromOriginal(oval), alloc);
+        // Constants are shared between the old and new function, so they are
+        // not in the original-to-new map; only instructions and arguments are.
+        bb.CreateStore(isa<Constant>(oval) ? oval : getNewFromOriginal(oval),
+                       alloc);
         Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
         size_t i = 0;
         assert(size > 0);
