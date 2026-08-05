@@ -62,3 +62,41 @@ func.func @df_memref(%m: memref<?x!llvm.ptr>, %dm: memref<?x!llvm.ptr>, %out: !l
 // CHECK:         llvm.store %[[new2]], %[[dp2]] : f64, !llvm.ptr
 // CHECK-NOT:     enzyme.placeholder
 // CHECK:         return
+
+// -----
+
+// And through affine.load, where the map rather than an index operand picks the
+// element out.
+
+func.func @f_affine(%m: memref<?x!llvm.ptr>, %out: !llvm.ptr) {
+  affine.for %i = 0 to 4 {
+    %p = affine.load %m[%i] : memref<?x!llvm.ptr>
+    %v = llvm.load %p : !llvm.ptr -> f64
+    %s = arith.mulf %v, %v : f64
+    llvm.store %s, %out : f64, !llvm.ptr
+  }
+  return
+}
+
+func.func @df_affine(%m: memref<?x!llvm.ptr>, %dm: memref<?x!llvm.ptr>, %out: !llvm.ptr, %dout: !llvm.ptr) {
+  enzyme.autodiff @f_affine(%m, %dm, %out, %dout) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (memref<?x!llvm.ptr>, memref<?x!llvm.ptr>, !llvm.ptr, !llvm.ptr) -> ()
+  return
+}
+
+// The shadow pointer is read out of the shadow memref on the way forward and
+// kept, and the reverse loop accumulates through what it kept.
+
+// CHECK: func.func private @diffef_affine(%[[m3:.+]]: memref<?x!llvm.ptr>, %[[dm3:.+]]: memref<?x!llvm.ptr>, %[[out3:.+]]: !llvm.ptr, %[[dout3:.+]]: !llvm.ptr)
+// CHECK-NOT:     enzyme.placeholder
+// CHECK:         %[[cache:.+]] = memref.alloc() : memref<4x!llvm.ptr>
+// CHECK:         affine.for %[[iv:.+]] = 0 to 4 {
+// CHECK:           %[[dp3:.+]] = affine.load %[[dm3]]{{\[}}%[[iv]]] : memref<?x!llvm.ptr>
+// CHECK:           memref.store %[[dp3]], %[[cache]]{{\[}}%[[iv]]]
+// CHECK:           affine.load %[[m3]]{{\[}}%[[iv]]] : memref<?x!llvm.ptr>
+// CHECK:         affine.for
+// CHECK:           %[[rdp3:.+]] = memref.load %[[cache]]
+// CHECK:           %[[old3:.+]] = llvm.load %[[rdp3]] : !llvm.ptr -> f64
+// CHECK:           %[[new3:.+]] = arith.addf %[[old3]], %{{.+}} fastmath<fast> : f64
+// CHECK:           llvm.store %[[new3]], %[[rdp3]] : f64, !llvm.ptr
+// CHECK-NOT:     enzyme.placeholder
+// CHECK:         return
