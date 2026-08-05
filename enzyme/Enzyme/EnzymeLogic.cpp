@@ -2651,7 +2651,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                       str.c_str(), wrap(ri), ErrorType::MixedActivityError,
                       gutils, wrap(orig_oldval), wrap(&BuilderZ)));
                 else
-                  EmitWarning("MixedActivityError", *ri, ss.str());
+                  EmitWarningAlways("MixedActivityError", *ri, ss.str(),
+                                    MixedActivityHint);
               }
             }
           }
@@ -3237,7 +3238,8 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
                   str.c_str(), wrap(inst), ErrorType::MixedActivityError,
                   gutils, wrap(ret), wrap(&nBuilder)));
             else
-              EmitWarning("MixedActivityError", *inst, ss.str());
+              EmitWarningAlways("MixedActivityError", *inst, ss.str(),
+                                MixedActivityHint);
           }
         }
       }

@@ -6138,7 +6138,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
                     wrap(op), wrap(&bb)));
               else
-                EmitWarning("MixedActivityError", *arg, ss.str());
+                EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                                  MixedActivityHint);
             }
           }
         }
@@ -6252,7 +6253,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                             ErrorType::MixedActivityError, this,
                                             wrap(tval), wrap(&bb)));
         else
-          EmitWarning("MixedActivityError", *arg, ss.str());
+          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                            MixedActivityHint);
       }
       if (!itval) {
         itval = invertPointerM(tval, bb, TT);
@@ -6272,7 +6274,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                             ErrorType::MixedActivityError, this,
                                             wrap(fval), wrap(&bb)));
         else
-          EmitWarning("MixedActivityError", *arg, ss.str());
+          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                            MixedActivityHint);
       }
       if (!ifval) {
         ifval = invertPointerM(fval, bb, TT);
@@ -6624,7 +6627,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
-              EmitWarning("MixedActivityError", *phi, ss.str());
+              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
+                                MixedActivityHint);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);
@@ -6697,7 +6701,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
-              EmitWarning("MixedActivityError", *phi, ss.str());
+              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
+                                MixedActivityHint);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);

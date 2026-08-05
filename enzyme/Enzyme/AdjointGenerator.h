@@ -1044,7 +1044,8 @@ public:
               if (diff)
                 needs_writebarrier = true;
             } else
-              EmitWarning("MixedActivityError", I, ss.str());
+              EmitWarningAlways("MixedActivityError", I, ss.str(),
+                                MixedActivityHint);
           }
         }
       }
@@ -1306,7 +1307,8 @@ public:
                     if (valueop)
                       needs_writebarrier = true;
                   } else
-                    EmitWarning("MixedActivityError", I, ss.str());
+                    EmitWarningAlways("MixedActivityError", I, ss.str(),
+                                      MixedActivityHint);
                 }
               }
             }
