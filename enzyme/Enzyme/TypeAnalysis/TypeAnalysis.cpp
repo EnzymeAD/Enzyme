@@ -4729,6 +4729,12 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 
   Function *ci = getFunctionFromCall(&call);
 
+  // A callee loaded out of a constant dispatch table (flang lowers a type-bound
+  // procedure call this way) is the direct call it folds to, so treat it as
+  // one -- notably to let visitIPOCall below relate caller and callee types.
+  if (!ci)
+    ci = getDevirtualizedCallee(&call);
+
   if (ci) {
     if (ci->getAttributes().hasAttribute(AttributeList::FunctionIndex,
                                          "enzyme_ta_norecur"))
