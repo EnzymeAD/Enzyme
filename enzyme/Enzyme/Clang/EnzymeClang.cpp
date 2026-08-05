@@ -41,12 +41,6 @@
 
 using namespace clang;
 
-#if LLVM_VERSION_MAJOR >= 18
-constexpr auto StructKind = clang::TagTypeKind::Struct;
-#else
-constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
-#endif
-
 template <typename ConsumerType>
 class EnzymeAction final : public clang::PluginASTAction {
 protected:
@@ -83,6 +77,105 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
 #if LLVM_VERSION_MAJOR >= 18
 extern "C" void registerEnzyme(llvm::PassBuilder &PB);
 #endif
+
+namespace {
+
+/// Whether this declaration of D is a definition, and hence whether clang will
+/// emit an annotation on it -- annotations are only emitted for the entities a
+/// translation unit defines.
+bool isDefinitionInThisTU(const Decl *D) {
+  if (auto FD = dyn_cast<FunctionDecl>(D))
+    return FD->isThisDeclarationADefinition();
+  if (auto VD = dyn_cast<VarDecl>(D))
+    return VD->isThisDeclarationADefinition() != VarDecl::DeclarationOnly;
+  return false;
+}
+
+/// Synthesize the global registering D with Enzyme, whose initializer is the
+/// address of D. Kind is the Enzyme registration kind, e.g. "inactivefn".
+/// Returns false if D is templated, and so has no address to register yet.
+bool registerEnzymeGlobal(Sema &S, Decl *D, StringRef Kind) {
+  auto &AST = S.getASTContext();
+
+  // The registration global is emitted alongside D, so step out of any
+  // enclosing record.
+  DeclContext *declCtx = D->getDeclContext();
+  for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+    if (tmpCtx->isRecord()) {
+      declCtx = tmpCtx->getParent();
+    }
+  }
+
+  auto VD = cast<ValueDecl>(D);
+  auto loc = D->getLocation();
+  auto T = VD->getType();
+  auto FT = AST.getPointerType(T);
+
+  auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, VD, false,
+                                loc, T, ExprValueKind::VK_LValue, VD,
+                                /*TemplateArgs*/ nullptr);
+  auto rval = ExprValueKind::VK_PRValue;
+  Expr *expr = nullptr;
+  if (isa<FunctionDecl>(D)) {
+    expr =
+        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                 DR, nullptr, rval, FPOptionsOverride());
+  } else {
+    expr = UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT,
+                                 rval, clang::ExprObjectKind ::OK_Ordinary, loc,
+                                 /*canoverflow*/ false, FPOptionsOverride());
+  }
+
+  // A templated declaration has no address until it is instantiated.
+  if (expr->isValueDependent())
+    return false;
+
+  auto &Id = AST.Idents.get(
+      (StringRef("__enzyme_") + Kind + "_autoreg_" + VD->getNameAsString())
+          .str());
+  auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
+  V->setStorageClass(SC_PrivateExtern);
+  V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+  V->setInit(expr);
+  S.MarkVariableReferenced(loc, V);
+  S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+  return true;
+}
+
+/// The Enzyme registration kind matching an annotation emitted by one of the
+/// marker attributes, or the empty string for any other annotation.
+StringRef enzymeRegistrationKind(StringRef Annotation, const Decl *D) {
+  if (isa<FunctionDecl>(D))
+    return llvm::StringSwitch<StringRef>(Annotation)
+        .Case("enzyme_inactivefn", "inactivefn")
+        .Case("enzyme_inactivenoblockfn", "inactivenoblockfn")
+        .Case("enzyme_nofree", "nofree")
+        .Case("enzyme_sparse_accumulate", "sparse_accumulate")
+        .Default("");
+  if (isa<VarDecl>(D))
+    return llvm::StringSwitch<StringRef>(Annotation)
+        .Case("enzyme_inactive", "inactive_global")
+        .Case("enzyme_nofree", "nofree")
+        .Default("");
+  return "";
+}
+
+/// Clang only emits annotations for the entities a translation unit defines, so
+/// a declaration carrying one of the marker annotations but defined elsewhere
+/// needs a registration global to force the reference instead.
+void registerEnzymeDeclIfNotDefinedHere(Sema &S, Decl *D) {
+  if (!isa<FunctionDecl>(D) && !isa<VarDecl>(D))
+    return;
+  if (isDefinitionInThisTU(D))
+    return;
+  for (auto A : D->specific_attrs<AnnotateAttr>()) {
+    StringRef Kind = enzymeRegistrationKind(A->getAnnotation(), D);
+    if (!Kind.empty())
+      registerEnzymeGlobal(S, D, Kind);
+  }
+}
+
+} // namespace
 
 class EnzymePlugin final : public clang::ASTConsumer {
   clang::CompilerInstance &CI;
@@ -175,6 +268,10 @@ public:
     // Forcibly require emission of all libdevice
     for (it = dg.begin(); it != dg.end(); ++it) {
       // v.TraverseDecl(*it);
+      // Whether a declaration is defined here is only settled once it reaches
+      // the consumer, so this is where a marked declaration defined in another
+      // translation unit picks up its registration global.
+      registerEnzymeDeclIfNotDefinedHere(CI.getSema(), *it);
       if (auto FD = dyn_cast<FunctionDecl>(*it)) {
         if (!FD->hasAttr<clang::CUDADeviceAttr>())
           continue;
@@ -221,6 +318,62 @@ static clang::FrontendPluginRegistry::Add<EnzymeAction<EnzymePlugin>>
 
 #if LLVM_VERSION_MAJOR > 10
 namespace {
+
+/// Shared check for the registration attributes which apply to both functions
+/// and global variables.
+bool appertainsToFunctionOrGlobal(Sema &S, const ParsedAttr &Attr,
+                                  const Decl *D) {
+  if (isa<FunctionDecl>(D))
+    return true;
+  if (auto VD = dyn_cast<VarDecl>(D)) {
+    if (VD->hasGlobalStorage())
+      return true;
+  }
+  S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+      << Attr << "functions and globals";
+  return false;
+}
+
+/// Shared implementation of the attributes which mark a declaration for Enzyme.
+///
+/// These lower to an annotation, which clang propagates through template
+/// instantiation for us, so the attribute also applies to declarations written
+/// inside a template -- where the alternative of taking the address of the
+/// declaration is not possible until instantiation. FnAnnotation is used for
+/// functions and VarAnnotation for variables.
+///
+/// Clang only emits annotations for the entities a translation unit defines,
+/// so a declaration defined elsewhere additionally needs a registration global
+/// to force the reference. Whether a function declarator will have a body is
+/// not yet known here, as attributes are processed before the body is parsed,
+/// so that is left to registerEnzymeDeclIfNotDefinedHere once the declaration
+/// reaches the AST consumer.
+///
+/// A class member never reaches the consumer on its own, so it is registered
+/// here instead, and for the same reason without knowing whether it is defined
+/// in this translation unit. A member defined here therefore gets both
+/// lowerings; they mark it identically, and the redundant global is consumed by
+/// PreserveNVVM like any other.
+ParsedAttrInfo::AttrHandling handleEnzymeMarkerAttr(Sema &S, Decl *D,
+                                                    const ParsedAttr &Attr,
+                                                    StringRef AttrName,
+                                                    StringRef FnAnnotation,
+                                                    StringRef VarAnnotation) {
+  if (Attr.getNumArgs() != 0) {
+    unsigned ID = S.getDiagnostics().getCustomDiagID(
+        DiagnosticsEngine::Error, "'%0' attribute requires zero arguments");
+    S.Diag(Attr.getLoc(), ID) << AttrName;
+    return ParsedAttrInfo::AttributeNotApplied;
+  }
+
+  StringRef Annotation = isa<FunctionDecl>(D) ? FnAnnotation : VarAnnotation;
+  D->addAttr(
+      AnnotateAttr::Create(S.Context, Annotation, nullptr, 0, Attr.getRange()));
+
+  if (D->getDeclContext()->isRecord())
+    registerEnzymeDeclIfNotDefinedHere(S, D);
+  return ParsedAttrInfo::AttributeApplied;
+}
 
 struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   EnzymeFunctionLikeAttrInfo() {
@@ -269,84 +422,10 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
-#if LLVM_VERSION_MAJOR >= 12
     D->addAttr(AnnotateAttr::Create(
         S.Context, ("enzyme_function_like=" + Literal->getString()).str(),
         nullptr, 0, Attr.getRange()));
     return AttributeApplied;
-#else
-    auto FD = cast<FunctionDecl>(D);
-    // if (FD->isLateTemplateParsed()) return;
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = FD->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = FD->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto Tinfo = nullptr;
-    auto Tinfo0 = nullptr;
-    auto FT = AST.getPointerType(FD->getType());
-    auto CharTy = AST.getIntTypeForBitwidth(8, false);
-    auto FD0 = FieldDecl::Create(AST, RD, loc, loc, /*Ud*/ nullptr, FT, Tinfo0,
-                                 /*expr*/ nullptr, /*mutable*/ true,
-                                 /*inclassinit*/ ICIS_NoInit);
-    FD0->setAccess(AS_public);
-    RD->addDecl(FD0);
-    auto FD1 = FieldDecl::Create(
-        AST, RD, loc, loc, /*Ud*/ nullptr, AST.getPointerType(CharTy), Tinfo0,
-        /*expr*/ nullptr, /*mutable*/ true, /*inclassinit*/ ICIS_NoInit);
-    FD1->setAccess(AS_public);
-    RD->addDecl(FD1);
-    RD->completeDefinition();
-    assert(RD->getDefinition());
-    auto &Id = AST.Idents.get("__enzyme_function_like_autoreg_" +
-                              FD->getNameAsString());
-    auto T = AST.getRecordType(RD);
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, Tinfo, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
-                                  loc, FD->getType(), ExprValueKind::VK_LValue,
-                                  FD, TemplateArgs);
-    auto rval = ExprValueKind::VK_PRValue;
-    StringRef cstr = Literal->getString();
-    Expr *exprs[2] = {
-        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                 DR, nullptr, rval, FPOptionsOverride()),
-        ImplicitCastExpr::Create(
-            AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-            StringLiteral::Create(
-                AST, cstr, stringkind,
-                /*Pascal*/ false,
-                AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-            nullptr, rval, FPOptionsOverride())};
-    auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
-    V->setInit(IL);
-    IL->setType(T);
-    if (IL->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_function_like' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
-    return AttributeApplied;
-#endif
   }
 };
 
@@ -421,85 +500,14 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 
   bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
                             const Decl *D) const override {
-    // This attribute appertains to functions only.
-    if (isa<FunctionDecl>(D))
-      return true;
-    if (auto VD = dyn_cast<VarDecl>(D)) {
-      if (VD->hasGlobalStorage())
-        return true;
-    }
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-        << Attr << "functions and globals";
-    return false;
+    return appertainsToFunctionOrGlobal(S, Attr, D);
   }
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "'enzyme_inactive' attribute requires zero arguments");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
-                                  : cast<VarDecl>(D)->getType();
-    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
-                                     : cast<VarDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto subname = isa<FunctionDecl>(D) ? "inactivefn" : "inactive_global";
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_") + subname + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-    auto rval = ExprValueKind::VK_PRValue;
-    Expr *expr = nullptr;
-    if (isa<FunctionDecl>(D)) {
-      expr =
-          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                   DR, nullptr, rval, FPOptionsOverride());
-    } else {
-      expr =
-          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
-                                clang::ExprObjectKind ::OK_Ordinary, loc,
-                                /*canoverflow*/ false, FPOptionsOverride());
-    }
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_inactive' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
-    return AttributeApplied;
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_inactive",
+                                  /*FnAnnotation*/ "enzyme_inactivefn",
+                                  /*VarAnnotation*/ "enzyme_inactive");
   }
 };
 
@@ -526,87 +534,14 @@ struct EnzymeInactiveNoblockAttrInfo : public ParsedAttrInfo {
 
   bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
                             const Decl *D) const override {
-    // This attribute appertains to functions only.
-    if (isa<FunctionDecl>(D))
-      return true;
-    if (auto VD = dyn_cast<VarDecl>(D)) {
-      if (VD->hasGlobalStorage())
-        return true;
-    }
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-        << Attr << "functions and globals";
-    return false;
+    return appertainsToFunctionOrGlobal(S, Attr, D);
   }
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "'enzyme_inactive_noblock' attribute requires zero arguments");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
-                                  : cast<VarDecl>(D)->getType();
-    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
-                                     : cast<VarDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto subname =
-        isa<FunctionDecl>(D) ? "inactivenoblockfn" : "inactive_global";
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_") + subname + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-    auto rval = ExprValueKind::VK_PRValue;
-    Expr *expr = nullptr;
-    if (isa<FunctionDecl>(D)) {
-      expr =
-          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                   DR, nullptr, rval, FPOptionsOverride());
-    } else {
-      expr =
-          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
-                                clang::ExprObjectKind ::OK_Ordinary, loc,
-                                /*canoverflow*/ false, FPOptionsOverride());
-    }
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "use of attribute 'enzyme_inactive_noblock' "
-          "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
-    return AttributeApplied;
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_inactive_noblock",
+                                  /*FnAnnotation*/ "enzyme_inactivenoblockfn",
+                                  /*VarAnnotation*/ "enzyme_inactive");
   }
 };
 
@@ -676,84 +611,14 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
   bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
                             const Decl *D) const override {
-    // This attribute appertains to functions only.
-    if (isa<FunctionDecl>(D))
-      return true;
-    if (auto VD = dyn_cast<VarDecl>(D)) {
-      if (VD->hasGlobalStorage())
-        return true;
-    }
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-        << Attr << "functions and globals";
-    return false;
+    return appertainsToFunctionOrGlobal(S, Attr, D);
   }
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "'enzyme_nofree' attribute requires zero arguments");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
-                                  : cast<VarDecl>(D)->getType();
-    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
-                                     : cast<VarDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_nofree") + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-    auto rval = ExprValueKind::VK_PRValue;
-    Expr *expr = nullptr;
-    if (isa<FunctionDecl>(D)) {
-      expr =
-          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                   DR, nullptr, rval, FPOptionsOverride());
-    } else {
-      expr =
-          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
-                                clang::ExprObjectKind ::OK_Ordinary, loc,
-                                /*canoverflow*/ false, FPOptionsOverride());
-    }
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_nofree' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
-    return AttributeApplied;
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_nofree",
+                                  /*FnAnnotation*/ "enzyme_nofree",
+                                  /*VarAnnotation*/ "enzyme_nofree");
   }
 };
 
@@ -790,62 +655,9 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "'enzyme_sparse_accumulate' attribute requires zero arguments");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = cast<FunctionDecl>(D)->getType();
-    auto Name = cast<FunctionDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_sparse_accumulate") + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-    auto rval = ExprValueKind::VK_PRValue;
-    Expr *expr = nullptr;
-    expr =
-        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                 DR, nullptr, rval, FPOptionsOverride());
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "use of attribute 'enzyme_sparse_accumulate' "
-          "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
-    return AttributeApplied;
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_sparse_accumulate",
+                                  /*FnAnnotation*/ "enzyme_sparse_accumulate",
+                                  /*VarAnnotation*/ "enzyme_sparse_accumulate");
   }
 };
 
