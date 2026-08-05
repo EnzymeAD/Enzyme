@@ -179,6 +179,11 @@ struct AffineForOpInterfaceReverse
   // any affine.load/affine.store cloned into it valid without needing
   // cloneOp's memref-lowering fallback.
 
+  // An affine.for's bounds are AffineMaps, i.e. compile-time constants plus
+  // dimensions valid in the enclosing affine scope; a runtime trip count is
+  // neither, so a dynamic loop falls back to the plain reverse path.
+  static bool supportsDynamicPeriodic() { return false; }
+
   static affine::AffineForOp createConstantScaffoldLoop(OpBuilder &builder,
                                                         Location loc,
                                                         int64_t lb, int64_t ub,
@@ -187,13 +192,33 @@ struct AffineForOpInterfaceReverse
     return affine::AffineForOp::create(builder, loc, lb, ub, step, inits);
   }
 
+  // Unlike scf.for (a plain sequential reverse-iteration counter), the reverse
+  // outer loop steps by nInner, matching the forward one exactly -- see
+  // computeReverseSegmentBound for what that buys.
+  static affine::AffineForOp createForwardOuterLoop(
+      OpBuilder &builder, Location loc, const PeriodicSchedule &sched,
+      ValueRange inits) {
+    return createConstantScaffoldLoop(
+        builder, loc, 0, sched.nInner * sched.numSegments(), sched.nInner,
+        inits);
+  }
+
+  static affine::AffineForOp createReverseOuterLoop(
+      OpBuilder &builder, Location loc, const PeriodicSchedule &sched,
+      ValueRange inits) {
+    return createConstantScaffoldLoop(
+        builder, loc, 0, sched.nInner * sched.numSegments(), sched.nInner,
+        inits);
+  }
+
   // Nothing to precompute: the bound below is a compile-time AffineMap
   // attached directly to the loop op, not a separately-emitted runtime
   // Value, so there is nothing to hoist relative to the mutable-ref cloning
   // loop the way scf.for's cmpi+select needs to be.
-  static Value computeForwardSegmentBound(OpBuilder &, Location, Value,
-                                          int64_t, int64_t, int64_t) {
-    return Value();
+  static SmallVector<Value> computeForwardSegmentHint(OpBuilder &, Location,
+                                                      Value,
+                                                      const PeriodicSchedule &) {
+    return {};
   }
 
   // Bound = min(nInner, numIters - outerIV): the standard affine-tiling idiom
@@ -203,9 +228,10 @@ struct AffineForOpInterfaceReverse
   // neither formula's boundary case is active.
   static affine::AffineForOp
   createForwardSegmentLoop(OpBuilder &builder, Location loc, Value outerIV,
-                           Value /*precomputedBound*/, int64_t nInner,
-                           int64_t nOuter, int64_t trailingIters,
-                           ValueRange inits) {
+                           ArrayRef<Value> /*fwdHint*/,
+                           const PeriodicSchedule &sched, ValueRange inits) {
+    int64_t nInner = sched.nInner, nOuter = sched.nOuter,
+            trailingIters = sched.trailingIters;
     int64_t numIters = nInner * nOuter + trailingIters;
     MLIRContext *ctx = builder.getContext();
     AffineExpr d0 = builder.getAffineDimExpr(0);
@@ -218,18 +244,8 @@ struct AffineForOpInterfaceReverse
                                        /*step=*/1, inits);
   }
 
-  // Unlike scf.for (a plain sequential reverse-iteration counter), this
-  // steps by nInner, matching the outer *forward* loop's own step exactly
-  // (see getReverseOuterScaffoldBounds below).
-  static std::array<int64_t, 3>
-  getReverseOuterScaffoldBounds(int64_t nInner, int64_t nOuter,
-                               int64_t trailingIters) {
-    int64_t s = nOuter + (trailingIters > 0 ? 1 : 0);
-    return {0, nInner * s, nInner};
-  }
-
   // Reverse counterpart. `outerIV` (call it j') is the *reverse* outer
-  // loop's own induction variable; per getReverseOuterScaffoldBounds, that
+  // loop's own induction variable; per createReverseOuterLoop, that
   // loop steps by nInner, so j' = j * nInner where j = 0 (last forward
   // segment), 1, 2, .... The forward segment index being replayed is
   // k = (nOuter + hasTrailing - 1) - j, so its base is
@@ -242,8 +258,10 @@ struct AffineForOpInterfaceReverse
   // the LoopCheckpointing.h doc comment.)
   static affine::AffineForOp
   createReverseSegmentLoop(OpBuilder &builder, Location loc, Value outerIV,
-                           int64_t nInner, int64_t nOuter,
-                           int64_t trailingIters, ValueRange inits) {
+                           ArrayRef<Value> /*revHint*/,
+                           const PeriodicSchedule &sched, ValueRange inits) {
+    int64_t nInner = sched.nInner, nOuter = sched.nOuter,
+            trailingIters = sched.trailingIters;
     int64_t numIters = nInner * nOuter + trailingIters;
     int64_t s = nOuter + (trailingIters > 0 ? 1 : 0);
     // numIters - segmentBase, segmentBase = (s-1)*nInner - j'
@@ -277,7 +295,9 @@ struct AffineForOpInterfaceReverse
   // cloned with it substituted in for forOp's own induction variable.
   static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
                                        affine::AffineForOp forOp,
-                                       Value outerIV, Value localIV) {
+                                       Value outerIV, Value localIV,
+                                       const PeriodicSchedule &,
+                                       ArrayRef<Value> /*fwdHint*/) {
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
     MLIRContext *ctx = builder.getContext();
@@ -292,19 +312,19 @@ struct AffineForOpInterfaceReverse
   // hasTrailing - 1) * nInner - outerIV -- see createReverseSegmentLoop for
   // why this differs from scf.for's formula, and for why `outerIV` (j' =
   // j * nInner) needs no division here to recover segmentBase = k * nInner.
-  static Value computeReverseSegmentBound(OpBuilder &builder, Location loc,
-                                          Value outerIV, int64_t nInner,
-                                          int64_t nOuter,
-                                          int64_t trailingIters) {
-    return Value();
+  static SmallVector<Value>
+  computeReverseSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
+                            const PeriodicSchedule &) {
+    return {};
   }
 
   static Value computeReverseSegmentIV(OpBuilder &builder, Location loc,
                                        affine::AffineForOp forOp, Value outerIV,
-                                       Value localIV, int64_t nInner,
-                                       int64_t nOuter, int64_t trailingIters,
-                                       Value precomputedBound) {
-    int64_t s = nOuter + (trailingIters > 0 ? 1 : 0);
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
+                                       ArrayRef<Value> /*revHint*/) {
+    int64_t nInner = sched.nInner;
+    int64_t s = sched.nOuter + (sched.trailingIters > 0 ? 1 : 0);
     int64_t lastSegmentBase = (s - 1) * nInner;
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
