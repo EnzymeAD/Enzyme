@@ -49,8 +49,11 @@ struct LoadOpInterfaceReverse
     Value memref = loadOp.getMemref();
 
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      // A mutable type's derivative is a shadow, not a value to add into: there
+      // is nothing to accumulate here, the same way the store adjoint below has
+      // nothing to take back out. Loading a pointer is the case in hand.
       if (!gutils->isConstantValue(loadOp) &&
-          !gutils->isConstantValue(memref)) {
+          !gutils->isConstantValue(memref) && !iface.isMutable()) {
         Value gradient = gutils->diffe(loadOp, builder);
         Value memrefGradient = gutils->popCache(caches.front(), builder);
 
