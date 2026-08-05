@@ -8745,10 +8745,36 @@ void GradientUtils::computeMinCache() {
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
 
+    // The start value of a loopy reduction is needed in the reverse pass, but
+    // is only discovered now that the min cut is known. Since the cut has
+    // already been computed, such a value can no longer be selected for
+    // caching -- everything placed into Intermediates from here on will be
+    // marked as recomputed below. Only add it if that is legal; if it is not,
+    // it has already been given an explicit cache decision by the scan above,
+    // which must not be overwritten. Either way push it onto the worklist so
+    // the need graph stays complete.
+    auto pushLoopyPHIPreheader = [&](Value *V) {
+      SmallVector<Value *, 2> preheaderVals;
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, preheaderVals);
+      for (Value *PV : preheaderVals) {
+        ValueToValueMapTy Available2;
+        for (auto a : Available)
+          Available2[a.first] = a.second;
+        for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(PV)->getParent());
+             L != nullptr; L = L->getParentLoop()) {
+          for (auto v : LoopAvail[L]) {
+            Available2[v] = v;
+          }
+        }
+        if (legalRecompute(PV, Available2, nullptr))
+          Intermediates.insert(PV);
+        todo.push_back(PV);
+      }
+    };
+
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+      pushLoopyPHIPreheader(V);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8759,8 +8785,7 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+      pushLoopyPHIPreheader(V);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
