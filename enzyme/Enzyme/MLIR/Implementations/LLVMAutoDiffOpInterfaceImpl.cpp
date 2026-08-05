@@ -303,8 +303,22 @@ struct LoadOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    // auto loadOp = cast<LLVM::LoadOp>(op);
-    // Value ptr = loadOp.getAddr();
+    auto loadOp = cast<LLVM::LoadOp>(op);
+    Value addr = loadOp.getAddr();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
+    // What a load of a mutable type reads is itself a handle on active memory,
+    // so what stands for it is the handle held at the same place in the shadow:
+    // the same load, off the shadow address. Reading it out is the whole of the
+    // derivative -- see the adjoint above, which leaves it alone.
+    if (!iface || !iface.isMutable())
+      return;
+    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(addr))
+      return;
+    Value addrShadow = gutils->invertPointerM(addr, builder);
+    auto newLoad = cast<LLVM::LoadOp>(gutils->getNewFromOriginal(op));
+    auto shadowLoad = cast<LLVM::LoadOp>(builder.clone(*newLoad));
+    shadowLoad.getAddrMutable().assign(addrShadow);
+    gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
   }
 };
 

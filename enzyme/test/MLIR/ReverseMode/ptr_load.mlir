@@ -3,6 +3,8 @@
 // Loading a pointer out of a pointer gives an active value whose derivative is
 // a shadow pointer, not a number to accumulate. The load adjoints used to reach
 // for createAddOp on it all the same, and a pointer has no addition to give.
+// What stands for it is the handle held at the same place in the shadow: the
+// same load, off the shadow address.
 
 llvm.func @f_llvm(%pp: !llvm.ptr, %out: !llvm.ptr) {
   %p = llvm.load %pp : !llvm.ptr -> !llvm.ptr
@@ -17,16 +19,19 @@ func.func @df_llvm(%pp: !llvm.ptr, %dpp: !llvm.ptr, %out: !llvm.ptr, %dout: !llv
   return
 }
 
-// The pointer load is replayed and the gradient goes to the shadow it stands
-// for; nothing is added into the pointer itself.
+// The shadow pointer is read out of the shadow of %pp, and d(v*v) = 2v lands
+// through it. Nothing is added into the pointer itself, and the shadow is a
+// real value rather than a placeholder left standing.
 
 // CHECK: llvm.func @diffef_llvm(%[[pp:.+]]: !llvm.ptr, %[[dpp:.+]]: !llvm.ptr, %[[out:.+]]: !llvm.ptr, %[[dout:.+]]: !llvm.ptr)
-// CHECK:         %[[shadow:.+]] = "enzyme.placeholder"() : () -> !llvm.ptr
+// CHECK-NOT:     enzyme.placeholder
+// CHECK:         %[[dp:.+]] = llvm.load %[[dpp]] : !llvm.ptr -> !llvm.ptr
 // CHECK:         %[[p:.+]] = llvm.load %[[pp]] : !llvm.ptr -> !llvm.ptr
 // CHECK:         %[[v:.+]] = llvm.load %[[p]] : !llvm.ptr -> f64
-// CHECK:         %[[old:.+]] = llvm.load %[[shadow]] : !llvm.ptr -> f64
+// CHECK:         %[[old:.+]] = llvm.load %[[dp]] : !llvm.ptr -> f64
 // CHECK:         %[[new:.+]] = arith.addf %[[old]], %{{.+}} fastmath<fast> : f64
-// CHECK:         llvm.store %[[new]], %[[shadow]] : f64, !llvm.ptr
+// CHECK:         llvm.store %[[new]], %[[dp]] : f64, !llvm.ptr
+// CHECK-NOT:     enzyme.placeholder
 // CHECK:         llvm.return
 
 // -----
@@ -47,6 +52,13 @@ func.func @df_memref(%m: memref<?x!llvm.ptr>, %dm: memref<?x!llvm.ptr>, %out: !l
   return
 }
 
-// CHECK: func.func private @diffef_memref
-// CHECK:         memref.load
+// CHECK: func.func private @diffef_memref(%[[m:.+]]: memref<?x!llvm.ptr>, %[[dm:.+]]: memref<?x!llvm.ptr>, %[[out2:.+]]: !llvm.ptr, %[[dout2:.+]]: !llvm.ptr)
+// CHECK-NOT:     enzyme.placeholder
+// CHECK:         %[[dp2:.+]] = memref.load %[[dm]]{{\[}}%{{.+}}] : memref<?x!llvm.ptr>
+// CHECK:         %[[p2:.+]] = memref.load %[[m]]{{\[}}%{{.+}}] : memref<?x!llvm.ptr>
+// CHECK:         %[[v2:.+]] = llvm.load %[[p2]] : !llvm.ptr -> f64
+// CHECK:         %[[old2:.+]] = llvm.load %[[dp2]] : !llvm.ptr -> f64
+// CHECK:         %[[new2:.+]] = arith.addf %[[old2]], %{{.+}} fastmath<fast> : f64
+// CHECK:         llvm.store %[[new2]], %[[dp2]] : f64, !llvm.ptr
+// CHECK-NOT:     enzyme.placeholder
 // CHECK:         return

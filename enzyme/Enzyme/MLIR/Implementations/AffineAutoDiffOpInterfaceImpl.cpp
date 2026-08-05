@@ -606,10 +606,22 @@ struct AffineLoadOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    // auto loadOp = cast<memref::LoadOp>(op);
-    // Value memref = loadOp.getMemref();
-    // Value shadow = gutils->getShadowValue(memref);
-    // Do nothing yet. In the future support memref<memref<...>>
+    auto loadOp = cast<affine::AffineLoadOp>(op);
+    Value memref = loadOp.getMemref();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
+    // What a load of a mutable type reads is itself a handle on active memory,
+    // so what stands for it is the handle held at the same place in the shadow:
+    // the same load, off the shadow memref. Reading it out is the whole of the
+    // derivative -- see the adjoint above, which leaves it alone.
+    if (!iface || !iface.isMutable())
+      return;
+    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(memref))
+      return;
+    Value memrefShadow = gutils->invertPointerM(memref, builder);
+    auto newLoad = cast<affine::AffineLoadOp>(gutils->getNewFromOriginal(op));
+    auto shadowLoad = cast<affine::AffineLoadOp>(builder.clone(*newLoad));
+    shadowLoad.getMemrefMutable().assign(memrefShadow);
+    gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
   }
 };
 
