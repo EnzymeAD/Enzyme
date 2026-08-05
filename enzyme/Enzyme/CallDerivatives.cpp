@@ -2447,6 +2447,72 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    // is LLVM flang's assignment between descriptors. It moves data which may
+    // include reals, so it cannot be declared inactive; its derivative is the
+    // same assignment applied to the shadow data.
+    //
+    // The shadow of a descriptor is only shadow storage: the runtime metadata
+    // (element length, rank, type, and the derived type addendum) is never
+    // written to it, since none of that is differentiated. Handing such a
+    // descriptor to the runtime makes it read a zeroed rank and type. Copy the
+    // primal descriptor over the shadow first, keeping the shadow's own data
+    // pointer, so the runtime sees a well formed descriptor addressing the
+    // shadow data.
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        const DataLayout &DL = called->getParent()->getDataLayout();
+
+        // The descriptors flang emits for this are stack slots, so their size
+        // is known. Without it there is nothing safe to copy, and falling
+        // through reports the call as underivable rather than guessing.
+        auto descriptorSize = [&](Value *v) -> uint64_t {
+          if (auto AI = dyn_cast<AllocaInst>(getBaseObject(v)))
+            if (auto Num = dyn_cast<ConstantInt>(AI->getArraySize()))
+              return Num->getZExtValue() *
+                     DL.getTypeAllocSize(AI->getAllocatedType());
+          return 0;
+        };
+        uint64_t toSize = descriptorSize(call.getArgOperand(0));
+        uint64_t fromSize = descriptorSize(call.getArgOperand(1));
+
+        if (toSize && fromSize && !gutils->isConstantInstruction(&call)) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          Value *primalTo = gutils->getNewFromOriginal(call.getArgOperand(0));
+          Value *primalFrom = gutils->getNewFromOriginal(call.getArgOperand(1));
+          Value *file = gutils->getNewFromOriginal(call.getArgOperand(2));
+          Value *line = gutils->getNewFromOriginal(call.getArgOperand(3));
+          Value *shadowTo =
+              gutils->invertPointerM(call.getArgOperand(0), Builder2);
+          Value *shadowFrom =
+              gutils->invertPointerM(call.getArgOperand(1), Builder2);
+
+          auto rule = [&](Value *sTo, Value *sFrom) {
+            auto reify = [&](Value *shadow, Value *primal, uint64_t size) {
+              Value *base = Builder2.CreateLoad(
+                  getInt8PtrTy(call.getContext()), shadow, "shadow.base_addr");
+              Builder2.CreateMemCpy(shadow, MaybeAlign(8), primal,
+                                    MaybeAlign(8), size);
+              Builder2.CreateStore(base, shadow);
+            };
+            reify(sTo, primalTo, toSize);
+            reify(sFrom, primalFrom, fromSize);
+            auto dcall = Builder2.CreateCall(called->getFunctionType(), called,
+                                             {sTo, sFrom, file, line});
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+          };
+          applyChainRule(Builder2, rule, shadowTo, shadowFrom);
+
+          eraseIfUnused(call);
+          return true;
+        }
+      }
+    }
+
     /*
      * int gsl_sf_legendre_array_e(const gsl_sf_legendre_t norm,
                                    const size_t lmax,
