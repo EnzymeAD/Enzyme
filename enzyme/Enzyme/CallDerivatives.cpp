@@ -3180,10 +3180,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                           getUnqual(anti->getType()->getPointerElementType()));
                   }
 #endif
-                  if (int AS = cast<PointerType>(anti->getType())
-                                   ->getAddressSpace()) {
-                    llvm::PointerType *PT = changePointerAddrSpace(
-                        cast<PointerType>(anti->getType()), AS);
+                  auto PT = cast<PointerType>(anti->getType());
+                  if (PT->getAddressSpace()) {
                     replacement = bb.CreateAddrSpaceCast(replacement, PT);
                     cast<Instruction>(replacement)
                         ->setMetadata(
@@ -3412,9 +3410,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               replacement, getUnqual(call.getType()->getPointerElementType()));
       }
 #endif
-      if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
-        llvm::PointerType *PT =
-            changePointerAddrSpace(cast<PointerType>(call.getType()), AS);
+      auto PT = cast<PointerType>(call.getType());
+      if (PT->getAddressSpace()) {
         replacement = B.CreateAddrSpaceCast(replacement, PT);
         cast<Instruction>(replacement)
             ->setMetadata("enzyme_backstack",
