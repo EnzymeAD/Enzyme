@@ -62,6 +62,24 @@ using namespace llvm;
 #define ENZYME_ENABLE_NVVM_ATTRIBUTION 1
 #endif
 
+/// Mark F itself as inactive, and additionally mark everything in its body, so
+/// that differentiating through the body is a no-op rather than merely calls to
+/// F being inactive.
+void markFunctionInactive(Function &F) {
+  F.addAttribute(AttributeList::FunctionIndex,
+                 Attribute::get(F.getContext(), "enzyme_inactive"));
+  auto MD = MDNode::get(F.getContext(), {});
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (auto CB = dyn_cast<CallBase>(&I)) {
+        CB->addFnAttr(llvm::Attribute::get(F.getContext(), "enzyme_inactive"));
+      } else {
+        I.setMetadata("enzyme_inactive", MD);
+      }
+    }
+  }
+}
+
 //! Returns whether changed.
 bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
@@ -387,6 +405,22 @@ bool preserveNVVM(bool Begin, Module &M) {
               continue;
             }
 
+            // Counterparts of the __enzyme_inactivefn and
+            // __enzyme_inactivenoblockfn registration globals below, emitted by
+            // the clang plugin for __attribute__((enzyme_inactive)) and
+            // __attribute__((enzyme_inactive_noblock)). Unlike the bare
+            // enzyme_inactive annotation above these also mark the body of the
+            // function.
+            if ((AS == "enzyme_inactivefn" ||
+                 AS == "enzyme_inactivenoblockfn") &&
+                Func) {
+              markFunctionInactive(*Func);
+              changed = true;
+              preserveLinkage(Begin, *Func);
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
             if (AS == "enzyme_elementwise_read" && Func) {
               Func->addAttribute(AttributeList::FunctionIndex,
                                  Attribute::get(Func->getContext(),
@@ -537,19 +571,7 @@ bool preserveNVVM(bool Begin, Module &M) {
           break;
         }
         if (auto F = cast<Function>(V)) {
-          F->addAttribute(AttributeList::FunctionIndex,
-                          Attribute::get(g.getContext(), "enzyme_inactive"));
-          auto MD = MDNode::get(F->getContext(), {});
-          for (auto &BB : *F) {
-            for (auto &I : BB) {
-              if (auto CB = dyn_cast<CallBase>(&I)) {
-                CB->addFnAttr(
-                    llvm::Attribute::get(F->getContext(), "enzyme_inactive"));
-              } else {
-                I.setMetadata("enzyme_inactive", MD);
-              }
-            }
-          }
+          markFunctionInactive(*F);
           toErase.push_back(&g);
           changed = true;
         } else {
