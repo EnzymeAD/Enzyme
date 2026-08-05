@@ -330,7 +330,7 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
         (isPure(op) ||
          llvm::all_of(op->getOperands(),
                       [this](Value v) { return isConstantValue(v); })) &&
-        activityAnalyzer->isConstantOperation(TR, op)) {
+        isConstantInstruction(op)) {
       return success();
     }
     // }
