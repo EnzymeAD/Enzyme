@@ -253,31 +253,18 @@ public:
   ChangeResult join(const AbstractDenseLattice &other) {
     const auto &rhs =
         static_cast<const MapOfSetsLattice<KeyT, ElementT> &>(other);
-    llvm::SmallDenseSet<DistinctAttr> keys;
-    auto lhsRange = llvm::make_first_range(map);
-    auto rhsRange = llvm::make_first_range(rhs.map);
-    keys.insert(lhsRange.begin(), lhsRange.end());
-    keys.insert(rhsRange.begin(), rhsRange.end());
 
+    // A key only this side has is left as it is, so only the other side's keys
+    // are worth walking. Taking the union of both first meant every join cost
+    // the size of what had been accumulated, which in a fixpoint is joined into
+    // over and over by something small.
     ChangeResult result = ChangeResult::NoChange;
-    for (DistinctAttr key : keys) {
-      auto lhsIt = map.find(key);
-      auto rhsIt = rhs.map.find(key);
-      assert(lhsIt != map.end() || rhsIt != rhs.map.end());
-
-      // If present in both, join.
-      if (lhsIt != map.end() && rhsIt != rhs.map.end()) {
-        result |= lhsIt->getSecond().join(rhsIt->getSecond());
-        continue;
-      }
-
-      // Copy from RHS if available only there.
-      if (lhsIt == map.end()) {
-        map.try_emplace(rhsIt->getFirst(), rhsIt->getSecond());
+    for (const auto &it : rhs.map) {
+      auto [lhsIt, inserted] = map.try_emplace(it.getFirst(), it.getSecond());
+      if (inserted)
         result = ChangeResult::Change;
-      }
-
-      // Do nothing if available only in LHS.
+      else
+        result |= lhsIt->getSecond().join(it.getSecond());
     }
     return result;
   }
