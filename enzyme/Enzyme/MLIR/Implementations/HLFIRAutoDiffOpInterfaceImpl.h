@@ -26,6 +26,10 @@ namespace enzyme {
 // Fortran. Both plugins call this, so they register the same set.
 void registerEnzymeFortranInterfaces(DialectRegistry &registry);
 
+// Attaches the AutoDiffTypeInterface to hlfir.expr and the forward and reverse
+// models to the differentiable hlfir.* intrinsics.
+void registerHLFIRDialectAutoDiffInterface(DialectRegistry &registry);
+
 // Attaches the AutoDiffTypeInterface to !fir.ref and the active-memory models
 // to the FIR/HLFIR memory ops (fir.load/store/alloca, hlfir.declare/assign).
 void registerFIRDialectAutoDiffInterface(DialectRegistry &registry);

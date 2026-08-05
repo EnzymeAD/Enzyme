@@ -72,7 +72,10 @@ callee and per-argument activities, exactly as in `test/MLIR/`.
 
 Flang-dependent; built into `MLIREnzymeHLFIRImplementations` and registered by
 `registerFIRDialectAutoDiffInterface` (see
-`Implementations/FIRAutoDiffOpInterfaceImpl.cpp`).
+`Implementations/FIRAutoDiffOpInterfaceImpl.cpp`) and
+`registerHLFIRDialectAutoDiffInterface` (see
+`Implementations/HLFIRAutoDiffOpInterfaceImpl.cpp`), the latter including an
+`AutoDiffTypeInterface` for `!hlfir.expr`.
 
 ## Status
 
@@ -80,7 +83,8 @@ Flang-dependent; built into `MLIREnzymeHLFIRImplementations` and registered by
   reverse mode over the by-reference memory model — `!fir.ref` as active memory
   plus the surrounding `fir.load`/`fir.store`/`fir.alloca` and
   `hlfir.declare`/`hlfir.assign` (`test/MLIR/FIR/fir_ref_*.mlir`), end to end
-  through `flang` (`test/MLIR/FIR/flang_plugin_*`).
-- **Next:** the `hlfir.*` array intrinsics — `hlfir.matmul`, `hlfir.sum`,
-  `hlfir.dot_product` — which need an `AutoDiffTypeInterface` for
-  `!hlfir.expr`.
+  through `flang` (`test/MLIR/FIR/flang_plugin_*`). For the array intrinsics,
+  `hlfir.matmul` forward and reverse over `!hlfir.expr`
+  (`test/MLIR/FIR/matmul_*.mlir`, `fortran_matmul.f90`).
+- **Next:** the remaining array intrinsics, `hlfir.sum` and
+  `hlfir.dot_product`.
