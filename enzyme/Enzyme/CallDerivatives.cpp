@@ -2492,6 +2492,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               gutils->invertPointerM(call.getArgOperand(1), Builder2);
 
           auto rule = [&](Value *sTo, Value *sFrom) {
+            // When a descriptor is inactive its shadow is the primal itself.
+            // Assigning through it would overwrite the primal data with the
+            // shadow's, so there is nothing to do.
+            if (sTo == primalTo || sTo == call.getArgOperand(0))
+              return;
             auto reify = [&](Value *shadow, Value *primal, uint64_t size) {
               Value *base = Builder2.CreateLoad(
                   getInt8PtrTy(call.getContext()), shadow, "shadow.base_addr");

@@ -3646,6 +3646,31 @@ public:
           vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
           goto known;
         }
+        // A copy out of a constant whose type contains no floating point
+        // member cannot carry a derivative, so it is integer data rather than
+        // something undeducible. flang emits character literals this way, and
+        // TypeAnalysis turns their bytes into Anything, which the source query
+        // above purges.
+        {
+          std::function<bool(llvm::Type *)> containsFloat = [&](llvm::Type *T) {
+            if (T->isFPOrFPVectorTy())
+              return true;
+            if (auto AT = dyn_cast<ArrayType>(T))
+              return containsFloat(AT->getElementType());
+            if (auto ST = dyn_cast<StructType>(T)) {
+              for (auto *E : ST->elements())
+                if (containsFloat(E))
+                  return true;
+            }
+            return false;
+          };
+          if (auto GV = dyn_cast<GlobalVariable>(getBaseObject(orig_src)))
+            if (GV->isConstant() && GV->hasInitializer() &&
+                !containsFloat(GV->getValueType())) {
+              vd = TypeTree(BaseType::Integer).Only(0, &MTI);
+              goto known;
+            }
+        }
         if (errorIfNoType) {
           std::string str;
           raw_string_ostream ss(str);
