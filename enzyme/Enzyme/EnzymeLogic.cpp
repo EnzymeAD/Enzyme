@@ -2577,7 +2577,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         maker.eraseIfUnused(*I, /*erase*/ true, /*check*/ true);
       }
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
-      if (!newBB->getTerminator()) {
+      if (!hasTerminator(newBB)) {
         for (auto next : successors(&oBB)) {
           auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
           sucBB->removePredecessor(newBB, /*KeepOneInputPHIs*/ true);
@@ -3486,7 +3486,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                     gutils->reverseBlocks[*loopContext.exitBlocks.begin()]
                         .back();
                 IRBuilder<> EB(REB);
-                if (REB->getTerminator())
+                if (hasTerminator(REB))
                   EB.SetInsertPoint(REB->getTerminator());
 
                 auto index = gutils->getOrInsertConditionalIndex(
@@ -3543,7 +3543,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               BasicBlock *REB =
                   gutils->reverseBlocks[*loopContext.exitBlocks.begin()].back();
               IRBuilder<> EB(REB);
-              if (REB->getTerminator())
+              if (hasTerminator(REB))
                 EB.SetInsertPoint(REB->getTerminator());
 
               auto product = gutils->getOrInsertTotalMultiplicativeProduct(

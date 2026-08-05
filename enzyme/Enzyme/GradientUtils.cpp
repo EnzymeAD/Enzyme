@@ -8435,7 +8435,7 @@ nofast:;
     for (const auto &pair : storing) {
       IRBuilder<> pbuilder(pair.first);
 
-      if (pair.first->getTerminator())
+      if (hasTerminator(pair.first))
         pbuilder.SetInsertPoint(pair.first->getTerminator());
 
       pbuilder.setFastMathFlags(getFast());
@@ -9698,8 +9698,8 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
                          ErrorType::InternalError, nullptr, nullptr, nullptr);
     } else {
       DebugLoc loc;
-      if (auto term = found->second->getTerminator()) {
-        loc = term->getDebugLoc();
+      if (hasTerminator(found->second)) {
+        loc = found->second->getTerminator()->getDebugLoc();
       }
       EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
                   ss.str());

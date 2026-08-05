@@ -357,16 +357,8 @@ void RecursivelyReplaceAddressSpace(
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
 
-        Type *resTy;
-#if LLVM_VERSION_MAJOR < 17
-        if (GEP->getContext().supportsTypedPointers()) {
-          resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
-        } else {
-          resTy = PointerType::get(rep->getContext(), 11);
-        }
-#else
-        resTy = PointerType::get(rep->getContext(), 11);
-#endif
+        Type *resTy =
+            changePointerAddrSpace(cast<PointerType>(rep->getType()), 11);
         rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       SmallVector<Value *, 1> ind(GEP->indices());
@@ -468,16 +460,8 @@ void RecursivelyReplaceAddressSpace(
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
         IRBuilder<> B(LI);
-        Type *resTy;
-#if LLVM_VERSION_MAJOR < 17
-        if (LI->getContext().supportsTypedPointers()) {
-          resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
-        } else {
-          resTy = PointerType::get(rep->getContext(), 11);
-        }
-#else
-        resTy = PointerType::get(rep->getContext(), 11);
-#endif
+        Type *resTy =
+            changePointerAddrSpace(cast<PointerType>(rep->getType()), 11);
         rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       LI->setOperand(0, rep);
@@ -488,16 +472,8 @@ void RecursivelyReplaceAddressSpace(
         if (EnzymeJuliaAddrLoad &&
             cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
           IRBuilder<> B(SI);
-          Type *resTy;
-#if LLVM_VERSION_MAJOR < 17
-          if (SI->getContext().supportsTypedPointers()) {
-            resTy = getPointerType(rep->getType()->getPointerElementType(), 11);
-          } else {
-            resTy = PointerType::get(rep->getContext(), 11);
-          }
-#else
-          resTy = PointerType::get(rep->getContext(), 11);
-#endif
+          Type *resTy =
+              changePointerAddrSpace(cast<PointerType>(rep->getType()), 11);
           rep = B.CreateAddrSpaceCast(rep, resTy);
         }
         SI->setOperand(1, rep);
@@ -8759,16 +8735,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
   auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
     if (auto PT = dyn_cast<PointerType>(V->getType())) {
       if (PT->getAddressSpace() != 0) {
-#if LLVM_VERSION_MAJOR < 17
-        if (CI->getContext().supportsTypedPointers()) {
-          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getPointerElementType()));
-        } else {
-          V = B.CreateAddrSpaceCast(V,
-                                    PointerType::getUnqual(PT->getContext()));
-        }
-#else
-        V = B.CreateAddrSpaceCast(V, PointerType::getUnqual(PT->getContext()));
-#endif
+        V = B.CreateAddrSpaceCast(V, changePointerAddrSpace(PT, 0));
       }
       return B.CreatePtrToInt(V, intTy);
     }

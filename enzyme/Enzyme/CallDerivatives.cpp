@@ -3182,19 +3182,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 #endif
                   if (int AS = cast<PointerType>(anti->getType())
                                    ->getAddressSpace()) {
-                    llvm::PointerType *PT;
-#if LLVM_VERSION_MAJOR < 17
-                    if (call.getContext().supportsTypedPointers()) {
-                      PT = getPointerType(
-                          anti->getType()->getPointerElementType(), AS);
-#endif
-#if LLVM_VERSION_MAJOR < 17
-                    } else {
-#endif
-                      PT = PointerType::get(anti->getContext(), AS);
-#if LLVM_VERSION_MAJOR < 17
-                    }
-#endif
+                    llvm::PointerType *PT = changePointerAddrSpace(
+                        cast<PointerType>(anti->getType()), AS);
                     replacement = bb.CreateAddrSpaceCast(replacement, PT);
                     cast<Instruction>(replacement)
                         ->setMetadata(
@@ -3424,18 +3413,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
-        llvm::PointerType *PT;
-#if LLVM_VERSION_MAJOR < 17
-        if (call.getContext().supportsTypedPointers()) {
-          PT = getPointerType(call.getType()->getPointerElementType(), AS);
-#endif
-#if LLVM_VERSION_MAJOR < 17
-        } else {
-#endif
-          PT = PointerType::get(call.getContext(), AS);
-#if LLVM_VERSION_MAJOR < 17
-        }
-#endif
+        llvm::PointerType *PT =
+            changePointerAddrSpace(cast<PointerType>(call.getType()), AS);
         replacement = B.CreateAddrSpaceCast(replacement, PT);
         cast<Instruction>(replacement)
             ->setMetadata("enzyme_backstack",
