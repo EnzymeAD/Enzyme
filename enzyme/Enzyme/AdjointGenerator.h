@@ -4037,6 +4037,13 @@ public:
       case Intrinsic::nvvm_membar_sys:
       case Intrinsic::amdgcn_s_barrier:
         return false;
+
+      // llvm.fake.use only keeps a value live for the debugger; it computes
+      // nothing, so there is nothing to differentiate. flang emits it for
+      // every local at -O0 -g, which otherwise stops differentiation.
+      case Intrinsic::fake_use:
+        return false;
+
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
@@ -4260,6 +4267,12 @@ public:
         setDiffe(&I, dif, Builder2);
         return false;
       }
+      // llvm.fake.use only keeps a value live for the debugger; it computes
+      // nothing, so there is nothing to differentiate. flang emits it for
+      // every local at -O0 -g.
+      case Intrinsic::fake_use:
+        return false;
+
       default:
         if (!gutils->isConstantValue(&I)) {
           auto toset =
