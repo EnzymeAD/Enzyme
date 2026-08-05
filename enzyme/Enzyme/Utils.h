@@ -1338,6 +1338,26 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
+/// Marks a global as an Enzyme-created shadow, so that a shadowed dispatch
+/// table is not mistaken for a source-level one.
+static constexpr const char *EnzymeShadowGlobalMD = "enzyme_shadow_of";
+
+/// The function an indirect call *must* target, proven by constant-folding the
+/// callee, or null. Also null for a callee that is already a direct constant --
+/// use getFunctionFromCall for those.
+llvm::Function *getDevirtualizedCallee(llvm::CallBase *CB);
+
+/// Over-approximate the targets of a `call (inttoptr? (load (base + const
+/// offset)))` with the function at that offset in every constant dispatch table
+/// in the module. `base` need not be known, which is what reaches Fortran
+/// type-bound procedure dispatch off a runtime class descriptor.
+///
+/// False means the call is not of that shape and must be read as "may call
+/// anything". True fills Out, which remains an over-approximation: a table
+/// outside this module could hold something else at the same slot.
+bool getIndirectCallCandidates(llvm::CallBase &CB,
+                               llvm::SmallVectorImpl<llvm::Function *> &Out);
+
 static inline llvm::StringRef getFuncName(llvm::Function *called) {
   if (called->hasFnAttribute("enzyme_math"))
     return called->getFnAttribute("enzyme_math").getValueAsString();

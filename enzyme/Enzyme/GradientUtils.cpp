@@ -4700,6 +4700,11 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       arg->setMetadata("enzyme_shadow",
                        MDTuple::get(shadow->getContext(),
                                     {ConstantAsMetadata::get(shadow)}));
+      // Mark the shadow so that dispatch-table analysis does not mistake this
+      // Enzyme-created mirror of a table for a source-level dispatch table.
+      shadow->setMetadata(
+          EnzymeShadowGlobalMD,
+          MDTuple::get(shadow->getContext(), {ConstantAsMetadata::get(arg)}));
       shadow->setAlignment(arg->getAlign());
       shadow->setUnnamedAddr(arg->getUnnamedAddr());
       if (arg->hasInitializer())
@@ -4711,6 +4716,94 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   }
   llvm::errs() << " unknown constant to create shadow of: " << *oval << "\n";
   llvm_unreachable("unknown constant to create shadow of");
+}
+
+/// Meet the argument types over every call in the module which may reach `fn`,
+/// for a function whose address only appears inside a dispatch table and which
+/// therefore has no direct call site to take type information from.
+///
+/// The result constrains the *shadow* of `fn`, not `fn`, and a shadow is only
+/// reachable through the shadow table Enzyme writes into this same module -- an
+/// external caller invokes the original. So these really are all of the
+/// shadow's call sites, despite `fn` itself having external linkage.
+///
+/// Erring towards less information is therefore the safe direction, and both
+/// approximations do: a candidate set that is too large only adds call sites,
+/// which the meet then weakens against, and an indirect call we cannot bound at
+/// all makes us give up and return false.
+static bool
+collectDispatchCallSiteTypes(llvm::Function *fn, TypeAnalysis &TA,
+                             llvm::SmallVectorImpl<TypeTree> &out) {
+  auto M = fn->getParent();
+  auto FT = fn->getFunctionType();
+  if (FT->isVarArg())
+    return false;
+
+  // We run while Enzyme is part-way through emitting other functions into this
+  // module; TypeAnalysis asserts on those. They are copies of callers we visit
+  // anyway, so nothing is lost by skipping them.
+  auto analyzable = [](Function &F) {
+    if (F.empty())
+      return false;
+    for (auto &BB : F)
+      if (!BB.hasTerminator())
+        return false;
+    return true;
+  };
+
+  SmallVector<CallBase *, 4> sites;
+  for (auto &F : *M) {
+    if (!analyzable(F))
+      continue;
+    for (auto &BB : F)
+      for (auto &I : BB) {
+        auto CB = dyn_cast<CallBase>(&I);
+        if (!CB)
+          continue;
+        // A mismatched signature can neither land in fn nor be read off
+        // argument by argument.
+        if (CB->getFunctionType() != FT)
+          continue;
+        if (auto direct = getFunctionFromCall(CB)) {
+          if (direct == fn)
+            sites.push_back(CB);
+          continue;
+        }
+        if (isa<InlineAsm>(CB->getCalledOperand()))
+          continue;
+        SmallVector<Function *, 4> cands;
+        if (!getIndirectCallCandidates(*CB, cands))
+          return false;
+        if (llvm::is_contained(cands, fn))
+          sites.push_back(CB);
+      }
+  }
+  if (sites.empty())
+    return false;
+
+  out.assign(fn->arg_size(), TypeTree());
+  bool first = true;
+  for (auto CB : sites) {
+    auto caller = CB->getFunction();
+    FnTypeInfo callerInfo(caller);
+    for (auto &a : caller->args()) {
+      callerInfo.Arguments.insert(std::pair<Argument *, TypeTree>(&a, {}));
+      callerInfo.KnownValues.insert(
+          std::pair<Argument *, std::set<int64_t>>(&a, {}));
+    }
+    TypeResults TR = TA.analyzeFunction(callerInfo);
+    for (size_t i = 0, e = fn->arg_size(); i < e; ++i) {
+      TypeTree TT;
+      if (i < CB->arg_size())
+        TT = TR.query(CB->getArgOperand(i));
+      if (first)
+        out[i] = TT;
+      else
+        out[i].andIn(TT);
+    }
+    first = false;
+  }
+  return true;
 }
 
 Constant *GradientUtils::GetOrCreateShadowFunction(
@@ -4770,14 +4863,25 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     type_args.Return.insert({-1, -1}, BaseType::Pointer);
   }
 
+  // Without this, a pointer argument reaches TypeAnalysis below carrying no
+  // information at all, which for a dispatch table entry (no direct call site
+  // anywhere) leaves the body as the only source of type information.
+  SmallVector<TypeTree, 4> callSiteTypes;
+  bool haveCallSiteTypes =
+      !isRealloc && collectDispatchCallSiteTypes(fn, TA, callSiteTypes);
+
   // conservatively assume that we can only cache existing floating types
   // (i.e. that all args are overwritten)
   std::vector<DIFFE_TYPE> types;
+  size_t argidx = 0;
   for (auto &a : fn->args()) {
     overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
     TypeTree TT;
+    if (haveCallSiteTypes)
+      TT = callSiteTypes[argidx];
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
+    ++argidx;
     type_args.Arguments.insert(std::pair<Argument *, TypeTree>(&a, TT));
     type_args.KnownValues.insert(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
