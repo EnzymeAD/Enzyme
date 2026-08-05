@@ -191,6 +191,30 @@ public:
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 
+// A lifetime marker says when the memory it names is live. The shadow is
+// memory too and lives exactly as long, so the tangent is the same marker said
+// again of the shadow. The op is declared inactive, which is about what it
+// makes active and not about whether the derivative needs it said: a barrier is
+// inactive too and still has to be there.
+template <typename OpTy>
+struct LifetimeForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<LifetimeForwardInterface<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto ltOp = cast<OpTy>(op);
+    // Memory nothing differentiates has no shadow whose lifetime this could be.
+    if (gutils->isConstantValue(ltOp.getPtr()))
+      return success();
+
+    Value shadow = gutils->invertPointerM(ltOp.getPtr(), builder);
+    auto newOp = cast<OpTy>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<OpTy>(builder.clone(*newOp));
+    shadowOp.getPtrMutable().assign(shadow);
+    return success();
+  }
+};
+
 struct GEPOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<GEPOpInterfaceReverse,
                                                        LLVM::GEPOp> {
@@ -707,6 +731,10 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
     LLVM::LLVMArrayType::attachInterface<ArrayTypeInterface>(*context);
 
+    LLVM::LifetimeStartOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeStartOp>>(*context);
+    LLVM::LifetimeEndOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeEndOp>>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
