@@ -272,6 +272,19 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
     >,
     InterfaceMethod<
     /*desc=*/[{
+      Called on a derivative once it is in a symbol table under its own name, to
+      give up whatever it inherited from the primal it was cloned from that
+      names the primal rather than itself. For an llvm.func that is the comdat:
+      a group is kept or discarded whole, so a derivative left in the primal's
+      group is discarded along with it by any translation unit that offers the
+      primal without a derivative.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"detachFromPrimalDefinition",
+    /*args=*/(ins)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
       Get function type attr name.
     }],
     /*retTy=*/"StringRef",

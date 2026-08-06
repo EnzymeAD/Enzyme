@@ -724,6 +724,48 @@ class AutoDiffLLVMFuncOpFunctionInterface
     : public AutoDiffFunctionInterface::ExternalModel<
           AutoDiffLLVMFuncOpFunctionInterface, LLVM::LLVMFuncOp> {
 public:
+  // A comdat says which of the identical copies of a symbol the linker should
+  // keep, and it keeps or discards the whole group at once. The derivative is
+  // cloned from the primal and so arrives holding the primal's comdat, which
+  // puts it in that group -- but only the translation units that differentiate
+  // the primal put a derivative in it. A unit that merely calls the primal
+  // offers a group of one under the same key, and if that is the copy the
+  // linker keeps, the derivative goes with the copy it discarded and every call
+  // to it is left undefined.
+  //
+  // The derivative is its own symbol and wants its own group: keyed on its own
+  // name, it still dedupes against the other units that built the same
+  // derivative, and nothing else can take it away.
+  void detachFromPrimalDefinition(Operation *self) const {
+    auto fn = cast<LLVM::LLVMFuncOp>(self);
+    SymbolRefAttr comdat = fn.getComdatAttr();
+    if (!comdat)
+      return;
+
+    // Follow the primal's selector to the table holding it, and to the kind of
+    // deduplication it asked for.
+    auto selector =
+        SymbolTable::lookupNearestSymbolFrom<LLVM::ComdatSelectorOp>(self,
+                                                                     comdat);
+    if (!selector)
+      return;
+    auto table = dyn_cast<LLVM::ComdatOp>(selector->getParentOp());
+    if (!table)
+      return;
+
+    StringRef name = fn.getSymName();
+    SymbolTable selectors(table);
+    if (!selectors.lookup(name)) {
+      OpBuilder builder(table.getContext());
+      builder.setInsertionPointToEnd(&table.getBody().back());
+      LLVM::ComdatSelectorOp::create(builder, selector.getLoc(), name,
+                                     selector.getComdat());
+    }
+    fn.setComdatAttr(
+        SymbolRefAttr::get(table.getSymNameAttr(),
+                           {FlatSymbolRefAttr::get(fn.getContext(), name)}));
+  }
+
   void transformResultTypes(Operation *self,
                             SmallVectorImpl<Type> &resultTypes) const {
     auto fn = cast<mlir::FunctionOpInterface>(self);
