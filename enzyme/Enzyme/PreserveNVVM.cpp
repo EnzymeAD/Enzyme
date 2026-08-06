@@ -99,6 +99,30 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   return false;
 }
 
+static void handleFunctionLike(bool Begin, Value *Target,
+                               StringRef FunctionName) {
+  while (auto *CE = dyn_cast<ConstantExpr>(Target))
+    Target = CE->getOperand(0);
+
+  if (FunctionName.empty()) {
+    errs() << "Use of enzyme_function_like requires a non-empty function "
+              "name\n";
+    llvm_unreachable("enzyme_function_like");
+  }
+
+  auto *F = dyn_cast<Function>(Target);
+  if (!F) {
+    errs() << "First argument of enzyme_function_like must be a constant "
+              "function\n"
+           << *Target << "\n";
+    llvm_unreachable("enzyme_function_like");
+  }
+
+  F->addAttribute(AttributeList::FunctionIndex,
+                  Attribute::get(F->getContext(), "enzyme_math", FunctionName));
+  preserveLinkage(Begin, *F);
+}
+
 // Return true if the module has a triple indicating an nvptx target, false
 // otherwise.
 bool isTargetNVPTX(llvm::Module &M) {
@@ -466,11 +490,8 @@ bool preserveNVVM(bool Begin, Module &M,
 
             if (startsWith(AS, "enzyme_function_like") && Func) {
               auto val = AS.substr(1 + AS.find('='));
-              Func->addAttribute(
-                  AttributeList::FunctionIndex,
-                  Attribute::get(Func->getContext(), "enzyme_math", val));
+              handleFunctionLike(Begin, Func, val);
               changed = true;
-              preserveLinkage(Begin, *Func);
               replacements.push_back(Constant::getNullValue(CAOp->getType()));
               continue;
             }
@@ -663,9 +684,6 @@ bool preserveNVVM(bool Begin, Module &M,
         }
         Value *V = CA->getOperand(0);
         Value *name = CA->getOperand(1);
-        while (auto CE = dyn_cast<ConstantExpr>(V)) {
-          V = CE->getOperand(0);
-        }
         while (auto CE = dyn_cast<ConstantExpr>(name)) {
           name = CE->getOperand(0);
         }
@@ -678,27 +696,9 @@ bool preserveNVVM(bool Begin, Module &M,
                     CA->isCString())
                   nameVal = CA->getAsCString();
 
-        if (nameVal == "") {
-          llvm::errs() << *name << "\n";
-          llvm::errs() << "Use of "
-                       << "enzyme_function_like"
-                       << "requires a non-empty function name"
-                       << "\n";
-          llvm_unreachable("enzyme_function_like");
-        }
-        if (auto F = cast<Function>(V)) {
-          F->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::get(g.getContext(), "enzyme_math", nameVal));
-          toErase.push_back(&g);
-          changed = true;
-        } else {
-          llvm::errs() << "Param of __enzyme_function_like must be a "
-                          "constant function"
-                       << g << "\n"
-                       << *V << "\n";
-          llvm_unreachable("__enzyme_function_like");
-        }
+        handleFunctionLike(Begin, V, nameVal);
+        toErase.push_back(&g);
+        changed = true;
       }
     }
     if (g.getName().contains("__enzyme_allocation_like")) {
