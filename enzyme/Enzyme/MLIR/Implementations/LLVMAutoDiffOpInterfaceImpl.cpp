@@ -215,6 +215,44 @@ struct LifetimeForwardInterface
   }
 };
 
+// After a memset the memory holds a fixed byte pattern, which depends on no
+// input, so its tangent is zero everywhere the memset reached. Forward mode
+// says that by clearing the shadow over the same range -- whatever derivative
+// the memory carried before is gone along with the value it belonged to.
+//
+// llvm.intr.memset is declared inactive, which is about what it makes active
+// and not about whether the derivative needs it said.
+struct MemsetForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<MemsetForwardInterface,
+                                                LLVM::MemsetOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memset = cast<LLVM::MemsetOp>(op);
+    // Memory nothing differentiates has no shadow to clear.
+    if (gutils->isConstantValue(memset.getDst()))
+      return success();
+
+    // A byte something differentiates is splatted across the memory, and its
+    // tangent would have to be splatted across the shadow. Nothing produces
+    // that today, and guessing at it would quietly zero a derivative.
+    if (!gutils->isConstantValue(memset.getVal()))
+      return op->emitError()
+             << "could not compute the tangent of a memset whose value is "
+                "differentiated "
+             << *op;
+
+    Value shadow = gutils->invertPointerM(memset.getDst(), builder);
+    auto newOp = cast<LLVM::MemsetOp>(gutils->getNewFromOriginal(op));
+    Value zero = LLVM::ConstantOp::create(builder, op->getLoc(),
+                                          newOp.getVal().getType(),
+                                          builder.getI8IntegerAttr(0));
+    auto shadowOp = cast<LLVM::MemsetOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(shadow);
+    shadowOp.getValMutable().assign(zero);
+    return success();
+  }
+};
+
 struct GEPOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<GEPOpInterfaceReverse,
                                                        LLVM::GEPOp> {
@@ -735,6 +773,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
         LifetimeForwardInterface<LLVM::LifetimeStartOp>>(*context);
     LLVM::LifetimeEndOp::attachInterface<
         LifetimeForwardInterface<LLVM::LifetimeEndOp>>(*context);
+    LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
