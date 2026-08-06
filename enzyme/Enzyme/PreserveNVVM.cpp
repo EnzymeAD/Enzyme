@@ -478,15 +478,6 @@ bool preserveNVVM(bool Begin, Module &M) {
               continue;
             }
 
-            if (AS == "enzyme_notypeanalysis" && Func) {
-              Func->addAttribute(
-                  AttributeList::FunctionIndex,
-                  Attribute::get(Func->getContext(), "enzyme_notypeanalysis"));
-              changed = true;
-              replacements.push_back(Constant::getNullValue(CAOp->getType()));
-              continue;
-            }
-
             if (AS == "enzyme_ta_norecur" && (Glob || Func)) {
               if (Glob) {
                 Glob->setMetadata("enzyme_ta_norecur",
