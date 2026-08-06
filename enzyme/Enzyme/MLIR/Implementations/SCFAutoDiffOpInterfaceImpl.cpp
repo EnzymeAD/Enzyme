@@ -155,9 +155,11 @@ struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
                                                        scf::ForOp>,
       public LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp> {
-  // ---- hooks required by LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp> ----
+  // ---- hooks required by LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp>
+  // ----
 
-  static std::optional<int64_t> getConstantNumberOfIterations(scf::ForOp forOp) {
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(scf::ForOp forOp) {
     return ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp);
   }
 
@@ -420,9 +422,8 @@ public:
       }
     }
 
-    if (auto r = tryCreateReverseModeAdjoint(forOp, op, builder, gutils,
-                                             caches, operandsActive,
-                                             incomingGradients))
+    if (auto r = tryCreateReverseModeAdjoint(forOp, op, builder, gutils, caches,
+                                             operandsActive, incomingGradients))
       return *r;
 
     auto start = gutils->popCache(caches[0], builder);

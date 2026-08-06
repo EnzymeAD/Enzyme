@@ -87,21 +87,23 @@ struct AffineForOpInterfaceReverse
   static Value materializeLowerBound(OpBuilder &builder, Location loc,
                                      affine::AffineForOp forOp,
                                      MGradientUtilsReverse *gutils) {
-    SmallVector<Value> ops = llvm::map_to_vector(
-        forOp.getLowerBoundOperands(),
-        [&](Value v) { return gutils->getNewFromOriginal(v); });
-    return affine::AffineApplyOp::create(builder, loc,
-                                         forOp.getLowerBoundMap(), ops);
+    SmallVector<Value> ops =
+        llvm::map_to_vector(forOp.getLowerBoundOperands(), [&](Value v) {
+          return gutils->getNewFromOriginal(v);
+        });
+    return affine::AffineApplyOp::create(builder, loc, forOp.getLowerBoundMap(),
+                                         ops);
   }
 
   static Value materializeUpperBound(OpBuilder &builder, Location loc,
                                      affine::AffineForOp forOp,
                                      MGradientUtilsReverse *gutils) {
-    SmallVector<Value> ops = llvm::map_to_vector(
-        forOp.getUpperBoundOperands(),
-        [&](Value v) { return gutils->getNewFromOriginal(v); });
-    return affine::AffineApplyOp::create(builder, loc,
-                                         forOp.getUpperBoundMap(), ops);
+    SmallVector<Value> ops =
+        llvm::map_to_vector(forOp.getUpperBoundOperands(), [&](Value v) {
+          return gutils->getNewFromOriginal(v);
+        });
+    return affine::AffineApplyOp::create(builder, loc, forOp.getUpperBoundMap(),
+                                         ops);
   }
 
   static Value materializeStep(OpBuilder &builder, Location loc,
@@ -137,9 +139,10 @@ struct AffineForOpInterfaceReverse
   // memref.load/memref.store. Every other op clones as-is.
   static void cloneOp(OpBuilder &builder, Operation &op, IRMapping &mapping) {
     if (auto loadOp = dyn_cast<affine::AffineLoadOp>(&op)) {
-      SmallVector<Value> operands = llvm::map_to_vector(
-          loadOp.getIndices(),
-          [&](Value v) { return mapping.lookupOrDefault(v); });
+      SmallVector<Value> operands =
+          llvm::map_to_vector(loadOp.getIndices(), [&](Value v) {
+            return mapping.lookupOrDefault(v);
+          });
       auto indices = affine::expandAffineMap(builder, loadOp.getLoc(),
                                              loadOp.getAffineMap(), operands);
       assert(indices && "failed to expand affine.load's index map");
@@ -157,16 +160,17 @@ struct AffineForOpInterfaceReverse
       return;
     }
     if (auto storeOp = dyn_cast<affine::AffineStoreOp>(&op)) {
-      SmallVector<Value> operands = llvm::map_to_vector(
-          storeOp.getIndices(),
-          [&](Value v) { return mapping.lookupOrDefault(v); });
-      auto indices = affine::expandAffineMap(
-          builder, storeOp.getLoc(), storeOp.getAffineMap(), operands);
+      SmallVector<Value> operands =
+          llvm::map_to_vector(storeOp.getIndices(), [&](Value v) {
+            return mapping.lookupOrDefault(v);
+          });
+      auto indices = affine::expandAffineMap(builder, storeOp.getLoc(),
+                                             storeOp.getAffineMap(), operands);
       assert(indices && "failed to expand affine.store's index map");
       Value memref = mapping.lookupOrDefault(storeOp.getMemref());
       Value value = mapping.lookupOrDefault(storeOp.getValue());
       Operation *newStore = memref::StoreOp::create(builder, storeOp.getLoc(),
-                                                     value, memref, *indices);
+                                                    value, memref, *indices);
       mapping.map(&op, newStore);
       return;
     }
@@ -184,11 +188,9 @@ struct AffineForOpInterfaceReverse
   // neither, so a dynamic loop falls back to the plain reverse path.
   static bool supportsDynamicPeriodic() { return false; }
 
-  static affine::AffineForOp createConstantScaffoldLoop(OpBuilder &builder,
-                                                        Location loc,
-                                                        int64_t lb, int64_t ub,
-                                                        int64_t step,
-                                                        ValueRange inits) {
+  static affine::AffineForOp
+  createConstantScaffoldLoop(OpBuilder &builder, Location loc, int64_t lb,
+                             int64_t ub, int64_t step, ValueRange inits) {
     return affine::AffineForOp::create(builder, loc, lb, ub, step, inits);
   }
 
@@ -238,10 +240,10 @@ struct AffineForOpInterfaceReverse
     AffineExpr nInnerExpr = builder.getAffineConstantExpr(nInner);
     AffineExpr remainingExpr = builder.getAffineConstantExpr(numIters) - d0;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
-    return affine::AffineForOp::create(builder, loc, /*lbOperands=*/ValueRange{},
-                                       AffineMap::getConstantMap(0, ctx),
-                                       ValueRange{outerIV}, ubMap,
-                                       /*step=*/1, inits);
+    return affine::AffineForOp::create(
+        builder, loc, /*lbOperands=*/ValueRange{},
+        AffineMap::getConstantMap(0, ctx), ValueRange{outerIV}, ubMap,
+        /*step=*/1, inits);
   }
 
   // Reverse counterpart. `outerIV` (call it j') is the *reverse* outer
@@ -272,16 +274,15 @@ struct AffineForOpInterfaceReverse
     AffineExpr nInnerExpr = builder.getAffineConstantExpr(nInner);
     AffineExpr remainingExpr = builder.getAffineConstantExpr(constOffset) + d0;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
-    return affine::AffineForOp::create(builder, loc, /*lbOperands=*/ValueRange{},
-                                       AffineMap::getConstantMap(0, ctx),
-                                       ValueRange{outerIV}, ubMap,
-                                       /*step=*/1, inits);
+    return affine::AffineForOp::create(
+        builder, loc, /*lbOperands=*/ValueRange{},
+        AffineMap::getConstantMap(0, ctx), ValueRange{outerIV}, ubMap,
+        /*step=*/1, inits);
   }
 
   static affine::AffineForOp
   createLoopWithSameBounds(OpBuilder &builder, Location loc,
-                           affine::AffineForOp templateLoop,
-                           ValueRange inits) {
+                           affine::AffineForOp templateLoop, ValueRange inits) {
     return affine::AffineForOp::create(
         builder, loc, templateLoop.getLowerBoundOperands(),
         templateLoop.getLowerBoundMap(), templateLoop.getUpperBoundOperands(),
@@ -300,7 +301,8 @@ struct AffineForOpInterfaceReverse
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
     MLIRContext *ctx = builder.getContext();
-    AffineExpr d0 = builder.getAffineDimExpr(0), d1 = builder.getAffineDimExpr(1);
+    AffineExpr d0 = builder.getAffineDimExpr(0),
+               d1 = builder.getAffineDimExpr(1);
     AffineExpr expr = (d0 + d1) * step + start;
     AffineMap map = AffineMap::get(2, 0, {expr}, ctx);
     return affine::AffineApplyOp::create(builder, loc, map,
@@ -329,7 +331,7 @@ struct AffineForOpInterfaceReverse
     int64_t start = getConstantStart(forOp);
     MLIRContext *ctx = builder.getContext();
     AffineExpr jPrime = builder.getAffineDimExpr(0),
-              localIdx = builder.getAffineDimExpr(1);
+               localIdx = builder.getAffineDimExpr(1);
     AffineExpr segmentBase = lastSegmentBase - jPrime;
     AffineExpr flatIV = segmentBase + localIdx;
     AffineExpr expr = flatIV * step + start;
@@ -381,9 +383,9 @@ struct AffineForOpInterfaceReverse
             gutils->zeroDiffe(res, builder);
         }
       }
-      if (auto r = tryCreateReverseModeAdjoint(forOp, op, builder, gutils,
-                                               caches, operandsActive,
-                                               incomingGradients))
+      if (auto r =
+              tryCreateReverseModeAdjoint(forOp, op, builder, gutils, caches,
+                                          operandsActive, incomingGradients))
         return *r;
     }
 
