@@ -237,6 +237,48 @@ struct PopSimplify : public OpRewritePattern<enzyme::PopOp> {
   }
 };
 
+// A pop nobody reads is worth keeping only for what it does to the cache: it
+// moves the stack on for whatever pops next. When it is the one pop its cache
+// has, there is no next, and the whole cache is dead -- so the pushes go with
+// it, in the one rewrite. Taking the pop alone would leave a cache pushed and
+// never popped, which is worse than what was there before.
+//
+// PopSimplify cannot reach these: it pairs a pop with the push that dominates
+// it and gives up when the two are in different blocks, which is exactly the
+// shape reverse mode leaves behind for a branch whose adjoint turned out empty.
+struct DeadPopSimplify : public OpRewritePattern<enzyme::PopOp> {
+  using OpRewritePattern<enzyme::PopOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::PopOp pop,
+                                PatternRewriter &rewriter) const final {
+    if (!pop.getResult().use_empty())
+      return failure();
+
+    auto init = pop.getCache().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    // Anything else holding the cache could be reading the stack in a way this
+    // cannot see; only a cache that is nothing but pushed and popped is known.
+    SmallVector<enzyme::PushOp> pushes;
+    for (Operation *user : init.getResult().getUsers()) {
+      if (user == pop)
+        continue;
+      if (auto push = dyn_cast<enzyme::PushOp>(user)) {
+        pushes.push_back(push);
+        continue;
+      }
+      return failure();
+    }
+
+    rewriter.eraseOp(pop);
+    for (enzyme::PushOp push : pushes)
+      rewriter.eraseOp(push);
+    rewriter.eraseOp(init);
+    return success();
+  }
+};
+
 struct GetSimplify : public OpRewritePattern<enzyme::GetOp> {
   using OpRewritePattern<enzyme::GetOp>::OpRewritePattern;
 
@@ -331,8 +373,8 @@ struct IgnoreDerivativesSimplifyPattern
 
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
-  patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                  InitSimplify, IgnoreDerivativesSimplifyPattern>(
+  patterns.insert<PopSimplify, DeadPopSimplify, GetSimplify, PushSimplify,
+                  SetSimplify, InitSimplify, IgnoreDerivativesSimplifyPattern>(
       op->getContext());
 
   GreedyRewriteConfig config;
@@ -354,8 +396,8 @@ static void applyPatternsToEnzymeOps(Operation *op,
     return;
 
   RewritePatternSet patterns(op->getContext());
-  patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                  InitSimplify>(op->getContext());
+  patterns.insert<PopSimplify, DeadPopSimplify, GetSimplify, PushSimplify,
+                  SetSimplify, InitSimplify>(op->getContext());
 
   GreedyRewriteConfig config;
   config.enableFolding();
