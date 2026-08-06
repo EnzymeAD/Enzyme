@@ -319,18 +319,20 @@ static clang::FrontendPluginRegistry::Add<EnzymeAction<EnzymePlugin>>
 #if LLVM_VERSION_MAJOR > 10
 namespace {
 
+bool isGlobalDecl(const Decl *D) {
+  auto VD = dyn_cast<VarDecl>(D);
+  return VD && VD->hasGlobalStorage();
+}
+
 /// Shared check for the registration attributes which apply to both functions
 /// and global variables.
 bool appertainsToFunctionOrGlobal(Sema &S, const ParsedAttr &Attr,
                                   const Decl *D) {
-  if (isa<FunctionDecl>(D))
+  if (isa<FunctionDecl>(D) || isGlobalDecl(D))
     return true;
-  if (auto VD = dyn_cast<VarDecl>(D)) {
-    if (VD->hasGlobalStorage())
-      return true;
-  }
+
   S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-      << Attr << "functions and globals";
+      << Attr << " applies to functions and globals only";
   return false;
 }
 
@@ -681,71 +683,19 @@ struct EnzymeNoTypeAnalysisAttrInfo : public ParsedAttrInfo {
 
   bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
                             const Decl *D) const override {
-    // Attribute appertains to functions
-    if (isa<FunctionDecl>(D))
-      return true;
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-        << Attr << "appertains only to functions";
-    return false;
+    return appertainsToFunctionOrGlobal(S, Attr, D);
   }
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
-        << Attr << 0;
-      return AttributeNotApplied;
-    }
-    D->addAttr(AnnotateAttr::Create(
-        S.Context, "enzyme_notypeanalysis", nullptr, 0, Attr.getRange()));
-    return AttributeApplied;
+    // For now enzyme::notypeanalysis corresponds to the internal attribute enzyme_ta_norecur
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_notypeanalysis",
+                                    /*FnAnnotation*/ "enzyme_ta_norecur",
+                                    /*VarAnnotation*/ "enzyme_ta_norecur");
   }
 };
 
 static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo> enzyme_notypeanalysis("enzyme_notypeanalysis", "");
-
-struct EnzymeTANoRecurAttrInfo : public ParsedAttrInfo {
-  EnzymeTANoRecurAttrInfo() {
-    static constexpr Spelling S[] = {
-      {ParsedAttr::AS_GNU, "enzyme_ta_norecur"},
-#if LLVM_VERSION_MAJOR > 17
-      {ParsedAttr::AS_C23, "enzyme_ta_norecur"},
-#else
-      {ParsedAttr::AS_C2x, "enzyme_ta_norecur"},
-#endif
-      {ParsedAttr::AS_CXX11, "enzyme_ta_norecur"},
-      {ParsedAttr::AS_CXX11, "enzyme::ta_norecur"}
-    };
-    Spellings = S;
-  }
-
-  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
-                            const Decl *D) const override {
-    // Attribute appertains to functions and globals
-    if (isa<FunctionDecl>(D))
-      return true;
-    if (auto VD = dyn_cast<VarDecl>(D); VD->hasGlobalStorage())
-      return true;
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-        << Attr << "appertains only to globals";
-    return false;
-  }
-
-  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
-                                   const ParsedAttr &Attr) const override {
-    if (Attr.getNumArgs() != 0) {
-      S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
-        << Attr << 0;
-      return AttributeNotApplied;
-    }
-    D->addAttr(AnnotateAttr::Create(
-        S.Context, "enzyme_ta_norecur", nullptr, 0, Attr.getRange()));
-    return AttributeApplied;
-  }
-};
-
-static ParsedAttrInfoRegistry::Add<EnzymeTANoRecurAttrInfo> enzyme_ta_norecur(
-    "enzyme_ta_norecur", "");
 
 } // namespace
 
