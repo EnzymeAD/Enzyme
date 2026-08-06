@@ -43,16 +43,16 @@ jobs:
       fail-fast: false
       matrix:
         build: [Release, Debug]
-        os: [ubuntu-22.04]
+        os: [ubuntu-26.04]
         compiler: [flang]
-        llvm: [21]
+        llvm: [21, 22, 23]
         mpi: [2021.7.1]
     timeout-minutes: 60
     steps:
     - name: add llvm with clang and flang
       run: |
         set -eo pipefail
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
         sudo python3 -m pip install --upgrade pip lit
@@ -87,7 +87,7 @@ jobs:
     - name: add llvm without clang and flang
       run: |
         set -eo pipefail
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.versions.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.versions.llvm }}-dev ninja-build pip
         sudo python3 -m pip install --upgrade pip lit
@@ -95,7 +95,7 @@ jobs:
       run: |
         set -eo pipefail
         wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
-        sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+        sudo gpg --dearmor -o /usr/share/keyrings/intel-oneapi-archive-keyring.gpg GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
         sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.versions.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
