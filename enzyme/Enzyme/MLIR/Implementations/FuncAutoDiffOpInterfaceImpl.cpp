@@ -244,6 +244,9 @@ public:
   void transformResultTypes(Operation *self,
                             SmallVectorImpl<Type> &types) const {}
 
+  // A func.func carries no linkage of its own for the clone to have inherited.
+  void detachFromPrimalDefinition(Operation *self) const {}
+
   Operation *createCall(Operation *self, OpBuilder &builder, Location loc,
                         ValueRange args) const {
     return func::CallOp::create(builder, loc, cast<func::FuncOp>(self), args);
