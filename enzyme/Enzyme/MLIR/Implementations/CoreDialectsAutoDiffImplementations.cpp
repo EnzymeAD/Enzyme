@@ -96,8 +96,11 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   SmallVector<Value> newVals;
 
   SmallVector<int32_t> segSizes;
-  // Keep non-differentiated, non-forwarded operands
-  size_t non_forwarded = 0;
+  // Keep non-differentiated, non-forwarded operands. These are the ones ahead
+  // of the first operand any successor forwards -- a condition, a switch value.
+  // When no successor takes an operand there is no such boundary to find, and
+  // every operand the op has is one of these.
+  size_t non_forwarded = binst->getNumOperands();
   for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
     auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
     if (ops.empty())
