@@ -332,18 +332,22 @@ private:
 
     for (const auto &[srcClass, destClasses] : map) {
       SmallVector<Attribute> pair = {srcClass};
-      SmallVector<Attribute> aliasClasses;
+      // Unknown and undefined are said as the bare marker string, the way
+      // serializeSetNaive says them and the way the readers of these summaries
+      // look for them. Wrapped in the list they read as one more element of a
+      // known set, and get cast to whatever the elements are supposed to be.
       if (destClasses.isUnknown()) {
-        aliasClasses.push_back(StringAttr::get(ctx, unknownSetString));
+        pair.push_back(StringAttr::get(ctx, unknownSetString));
       } else if (destClasses.isUndefined()) {
-        aliasClasses.push_back(StringAttr::get(ctx, undefinedSetString));
+        pair.push_back(StringAttr::get(ctx, undefinedSetString));
       } else {
+        SmallVector<Attribute> aliasClasses;
         for (const Attribute &destClass : destClasses.getElements()) {
           aliasClasses.push_back(destClass);
         }
         llvm::sort(aliasClasses, sortAttributes);
+        pair.push_back(ArrayAttr::get(ctx, aliasClasses));
       }
-      pair.push_back(ArrayAttr::get(ctx, aliasClasses));
       pointsToArray.push_back(ArrayAttr::get(ctx, pair));
     }
     llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {
