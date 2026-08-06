@@ -2938,11 +2938,22 @@ public:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
-      if (looseTypeAnalysis) {
+      // An integer operation narrower than a pointer cannot be pointer
+      // arithmetic, and integer arithmetic on the bits of a float is not
+      // meaningful, so an operation of unknown type here is an integer one and
+      // its result is constant. flang needs this: the integer counters of a
+      // derived type are only ever loaded, incremented and stored, so nothing
+      // ever gives them a type, and without this the only way through is
+      // -enzyme-loose-types, which guesses everywhere rather than here.
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      bool narrowInteger =
+          BO.getType()->isIntegerTy() &&
+          BO.getType()->getScalarSizeInBits() < DL.getPointerSizeInBits();
+      if (looseTypeAnalysis || narrowInteger) {
         forwardModeInvertedPointerFallback(BO);
-        llvm::errs() << "warning: binary operator is integer and constant: "
-                     << BO << "\n";
-        // if loose type analysis, assume this integer add is constant
+        if (looseTypeAnalysis)
+          llvm::errs() << "warning: binary operator is integer and constant: "
+                       << BO << "\n";
         return;
       }
       goto def;
@@ -4312,12 +4323,22 @@ public:
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
             ID == Intrinsic::ssub_with_overflow ||
-            ID == Intrinsic::usub_with_overflow)
-          if (looseTypeAnalysis) {
-            EmitWarning("CannotDeduceType", I,
-                        "failed to deduce type of intrinsic ", I);
+            ID == Intrinsic::usub_with_overflow) {
+          // As for the integer binary operators: narrower than a pointer
+          // means this cannot be pointer arithmetic, and an integer max or
+          // abs of a float's bits is not meaningful, so an unknown type here
+          // is an integer one and the result is constant.
+          auto &DL = gutils->newFunc->getParent()->getDataLayout();
+          bool narrowInteger =
+              I.getType()->isIntegerTy() &&
+              I.getType()->getScalarSizeInBits() < DL.getPointerSizeInBits();
+          if (looseTypeAnalysis || narrowInteger) {
+            if (looseTypeAnalysis)
+              EmitWarning("CannotDeduceType", I,
+                          "failed to deduce type of intrinsic ", I);
             return false;
           }
+        }
         std::string s;
         llvm::raw_string_ostream ss(s);
         if (Intrinsic::isOverloaded(ID))
