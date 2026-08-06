@@ -51,9 +51,11 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
       ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {
   if (Logic.solver) {
+    dataflowSolver = std::make_unique<DataFlowSolver>(
+        DataFlowConfig().setInterprocedural(false));
     dataflowActivityAnalyzer =
         std::make_unique<enzyme::DataFlowActivityAnalyzer>(
-            *Logic.solver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
+            *dataflowSolver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
   }
 }
 
@@ -328,7 +330,7 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
         (isPure(op) ||
          llvm::all_of(op->getOperands(),
                       [this](Value v) { return isConstantValue(v); })) &&
-        activityAnalyzer->isConstantOperation(TR, op)) {
+        isConstantInstruction(op)) {
       return success();
     }
     // }

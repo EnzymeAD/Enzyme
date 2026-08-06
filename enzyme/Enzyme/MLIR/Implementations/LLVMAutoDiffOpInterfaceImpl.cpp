@@ -191,6 +191,68 @@ public:
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 
+// A lifetime marker says when the memory it names is live. The shadow is
+// memory too and lives exactly as long, so the tangent is the same marker said
+// again of the shadow. The op is declared inactive, which is about what it
+// makes active and not about whether the derivative needs it said: a barrier is
+// inactive too and still has to be there.
+template <typename OpTy>
+struct LifetimeForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<LifetimeForwardInterface<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto ltOp = cast<OpTy>(op);
+    // Memory nothing differentiates has no shadow whose lifetime this could be.
+    if (gutils->isConstantValue(ltOp.getPtr()))
+      return success();
+
+    Value shadow = gutils->invertPointerM(ltOp.getPtr(), builder);
+    auto newOp = cast<OpTy>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<OpTy>(builder.clone(*newOp));
+    shadowOp.getPtrMutable().assign(shadow);
+    return success();
+  }
+};
+
+// After a memset the memory holds a fixed byte pattern, which depends on no
+// input, so its tangent is zero everywhere the memset reached. Forward mode
+// says that by clearing the shadow over the same range -- whatever derivative
+// the memory carried before is gone along with the value it belonged to.
+//
+// llvm.intr.memset is declared inactive, which is about what it makes active
+// and not about whether the derivative needs it said.
+struct MemsetForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<MemsetForwardInterface,
+                                                LLVM::MemsetOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memset = cast<LLVM::MemsetOp>(op);
+    // Memory nothing differentiates has no shadow to clear.
+    if (gutils->isConstantValue(memset.getDst()))
+      return success();
+
+    // A byte something differentiates is splatted across the memory, and its
+    // tangent would have to be splatted across the shadow. Nothing produces
+    // that today, and guessing at it would quietly zero a derivative.
+    if (!gutils->isConstantValue(memset.getVal()))
+      return op->emitError()
+             << "could not compute the tangent of a memset whose value is "
+                "differentiated "
+             << *op;
+
+    Value shadow = gutils->invertPointerM(memset.getDst(), builder);
+    auto newOp = cast<LLVM::MemsetOp>(gutils->getNewFromOriginal(op));
+    Value zero = LLVM::ConstantOp::create(builder, op->getLoc(),
+                                          newOp.getVal().getType(),
+                                          builder.getI8IntegerAttr(0));
+    auto shadowOp = cast<LLVM::MemsetOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(shadow);
+    shadowOp.getValMutable().assign(zero);
+    return success();
+  }
+};
+
 struct GEPOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<GEPOpInterfaceReverse,
                                                        LLVM::GEPOp> {
@@ -662,6 +724,48 @@ class AutoDiffLLVMFuncOpFunctionInterface
     : public AutoDiffFunctionInterface::ExternalModel<
           AutoDiffLLVMFuncOpFunctionInterface, LLVM::LLVMFuncOp> {
 public:
+  // A comdat says which of the identical copies of a symbol the linker should
+  // keep, and it keeps or discards the whole group at once. The derivative is
+  // cloned from the primal and so arrives holding the primal's comdat, which
+  // puts it in that group -- but only the translation units that differentiate
+  // the primal put a derivative in it. A unit that merely calls the primal
+  // offers a group of one under the same key, and if that is the copy the
+  // linker keeps, the derivative goes with the copy it discarded and every call
+  // to it is left undefined.
+  //
+  // The derivative is its own symbol and wants its own group: keyed on its own
+  // name, it still dedupes against the other units that built the same
+  // derivative, and nothing else can take it away.
+  void detachFromPrimalDefinition(Operation *self) const {
+    auto fn = cast<LLVM::LLVMFuncOp>(self);
+    SymbolRefAttr comdat = fn.getComdatAttr();
+    if (!comdat)
+      return;
+
+    // Follow the primal's selector to the table holding it, and to the kind of
+    // deduplication it asked for.
+    auto selector =
+        SymbolTable::lookupNearestSymbolFrom<LLVM::ComdatSelectorOp>(self,
+                                                                     comdat);
+    if (!selector)
+      return;
+    auto table = dyn_cast<LLVM::ComdatOp>(selector->getParentOp());
+    if (!table)
+      return;
+
+    StringRef name = fn.getSymName();
+    SymbolTable selectors(table);
+    if (!selectors.lookup(name)) {
+      OpBuilder builder(table.getContext());
+      builder.setInsertionPointToEnd(&table.getBody().back());
+      LLVM::ComdatSelectorOp::create(builder, selector.getLoc(), name,
+                                     selector.getComdat());
+    }
+    fn.setComdatAttr(
+        SymbolRefAttr::get(table.getSymNameAttr(),
+                           {FlatSymbolRefAttr::get(fn.getContext(), name)}));
+  }
+
   void transformResultTypes(Operation *self,
                             SmallVectorImpl<Type> &resultTypes) const {
     auto fn = cast<mlir::FunctionOpInterface>(self);
@@ -707,6 +811,11 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
     LLVM::LLVMArrayType::attachInterface<ArrayTypeInterface>(*context);
 
+    LLVM::LifetimeStartOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeStartOp>>(*context);
+    LLVM::LifetimeEndOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeEndOp>>(*context);
+    LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);

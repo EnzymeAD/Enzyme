@@ -454,6 +454,16 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
     if (!calleePointsTo)
       continue;
 
+    // A callee that could not say what this argument ends up pointing to says
+    // nothing narrower to the caller either.
+    if (calleePointsTo->isUnknown()) {
+      changed |= after->insert(arg->getAliasClassesObject(),
+                               AliasClassSet::getUnknown());
+      continue;
+    }
+    if (calleePointsTo->isUndefined())
+      continue;
+
     for (DistinctAttr ac : calleePointsTo->getElements()) {
       if (!isa<PseudoAliasClassAttr>(ac.getReferencedAttr())) {
         // Fresh classes go in directly

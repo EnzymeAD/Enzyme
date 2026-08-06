@@ -33,6 +33,12 @@ public:
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
   DenseMap<Operation *, bool> readOnlyCache;
   std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
+  // The solver the annotations below were run in. One per function being
+  // differentiated: a DataFlowSolver keeps every lattice it has ever made, and
+  // these analyses are not interprocedural, so one shared across a module's
+  // worth of functions only makes each of them join against all the ones
+  // before. Declared ahead of the analyzer, which refers to it.
+  std::unique_ptr<DataFlowSolver> dataflowSolver;
   std::unique_ptr<enzyme::DataFlowActivityAnalyzer> dataflowActivityAnalyzer;
 
   MTypeAnalysis &TA;

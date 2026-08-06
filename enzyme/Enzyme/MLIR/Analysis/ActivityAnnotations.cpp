@@ -502,10 +502,10 @@ static void deserializePointsTo(
     auto pointer = cast<DistinctAttr>(pair[0]);
     auto pointsToSet = enzyme::ValueOriginSet::getUndefined();
     if (auto strAttr = dyn_cast<StringAttr>(pair[1])) {
-      if (strAttr.getValue() == "unknown") {
+      if (strAttr.getValue() == enzyme::unknownSetString) {
         (void)pointsToSet.markUnknown();
       } else {
-        assert(strAttr.getValue() == "undefined" &&
+        assert(strAttr.getValue() == enzyme::undefinedSetString &&
                "unrecognized points-to destination");
       }
     } else {
@@ -576,10 +576,19 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
 
   for (const auto &[destClass, sourceOrigins] : summary) {
     ValueOriginSet callerOrigins;
-    for (Attribute sourceOrigin : sourceOrigins.getElements()) {
-      unsigned argNumber =
-          cast<ArgumentOriginAttr>(sourceOrigin).getArgNumber();
-      (void)callerOrigins.join(argumentOrigins[argNumber]);
+    // A callee that could not say where this memory came from says nothing
+    // narrower to the caller either; only a set that names its origins has
+    // arguments to translate.
+    if (sourceOrigins.isUndefined())
+      continue;
+    if (sourceOrigins.isUnknown()) {
+      (void)callerOrigins.markUnknown();
+    } else {
+      for (Attribute sourceOrigin : sourceOrigins.getElements()) {
+        unsigned argNumber =
+            cast<ArgumentOriginAttr>(sourceOrigin).getArgNumber();
+        (void)callerOrigins.join(argumentOrigins[argNumber]);
+      }
     }
 
     AliasClassSet callerDestClasses;
@@ -758,6 +767,15 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
 
     if (destOrigins.isUndefined())
       continue;
+
+    // A callee that could not say which of its arguments this memory flows back
+    // to leaves every one of the caller's classes a candidate.
+    if (sourceOrigins.isUndefined())
+      continue;
+    if (sourceOrigins.isUnknown()) {
+      changed |= before->markAllOriginsUnknown();
+      continue;
+    }
 
     // Get the source alias classes
     AliasClassSet callerSourceClasses;
