@@ -965,6 +965,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.h",
         "Enzyme/MLIR/Analysis/*.h",
         "Enzyme/MLIR/Implementations/*.h",
+        "Enzyme/EnzymeCallMarkers.h",
         "Enzyme/Utils.h",
         "Enzyme/TypeAnalysis/*.h",
     ]),

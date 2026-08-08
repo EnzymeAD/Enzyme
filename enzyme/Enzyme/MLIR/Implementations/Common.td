@@ -197,5 +197,7 @@ def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
 def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
+def PowF : MathInst<"PowFOp">;
+def LogF : MathInst<"LogOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

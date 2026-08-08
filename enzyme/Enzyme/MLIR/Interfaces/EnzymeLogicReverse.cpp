@@ -201,8 +201,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     bool markReadonly) {
 
   if (fn.getFunctionBody().empty()) {
-    llvm::errs() << fn << "\n";
-    llvm_unreachable("Differentiating empty function");
+    fn.emitError() << "cannot differentiate a function without a body: "
+                   << fn.getNameAttr() << "\n";
+    return nullptr;
   }
 
   MReverseCacheKey tup = {fn,

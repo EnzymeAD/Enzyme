@@ -103,6 +103,48 @@ struct ArithSubFSimplifyMathInterface
   }
 };
 
+// An active operand contributes its shadow; a constant immutable operand a
+// zero. A constant mutable operand has no shadow of its own -- hand back the
+// primal and warn, pending proper runtime activity handling.
+static Value operandTangent(Value v, Operation *op, OpBuilder &builder,
+                            MGradientUtils *gutils) {
+  if (!gutils->isConstantValue(v))
+    return gutils->invertPointerM(v, builder);
+  auto iface = dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()));
+  if (iface && !iface.isMutable())
+    return iface.createNullValue(builder, op->getLoc());
+  op->emitWarning()
+      << "constant mutable operand of an active select is passed through "
+         "as its own shadow pending runtime activity handling";
+  return gutils->getNewFromOriginal(v);
+}
+
+// The condition carries no tangent; the result's tangent follows the same
+// choice between the branch tangents, a constant branch contributing zero.
+// Reverse-generated adjoints are full of these selects, and forward-over-
+// reverse differentiates them again.
+struct SelectOpFwdInterface
+    : public AutoDiffOpInterface::ExternalModel<SelectOpFwdInterface,
+                                                arith::SelectOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    gutils->eraseIfUnused(op);
+    if (gutils->isConstantInstruction(op))
+      return success();
+    // The same rule serves values and pointers: a value's tangent and a
+    // pointer's shadow both follow the choice the primal made.
+    Value cond = gutils->getNewFromOriginal(selectOp.getCondition());
+    Value dTrue = operandTangent(selectOp.getTrueValue(), op, builder, gutils);
+    Value dFalse =
+        operandTangent(selectOp.getFalseValue(), op, builder, gutils);
+    Value tangent =
+        arith::SelectOp::create(builder, op->getLoc(), cond, dTrue, dFalse);
+    gutils->setDiffe(selectOp.getResult(), tangent, builder);
+    return success();
+  }
+};
+
 struct SelectOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<SelectOpInterfaceReverse,
                                                        arith::SelectOp> {
@@ -197,6 +239,7 @@ void mlir::enzyme::registerArithDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     registerInterfaces(context);
     arith::SelectOp::attachInterface<SelectActivityInterface>(*context);
+    arith::SelectOp::attachInterface<SelectOpFwdInterface>(*context);
     arith::SelectOp::attachInterface<SelectOpInterfaceReverse>(*context);
     arith::ConstantOp::attachInterface<ArithConstantOpBatchInterface>(*context);
     arith::AddFOp::attachInterface<ArithAddFSimplifyMathInterface>(*context);
