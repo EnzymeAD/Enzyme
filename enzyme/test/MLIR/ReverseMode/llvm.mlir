@@ -203,12 +203,12 @@ func.func @dalloca_zero(%x: f64, %dr: f64) -> f64 {
 }
 
 // CHECK:  llvm.func @diffealloca_zero(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 attributes {sym_visibility = "private"} {
-// CHECK-NEXT:    %[[c8_i64:.+]] = llvm.mlir.constant(8 : i64) : i64
+// CHECK-NEXT:    %[[c1_i64:.+]] = llvm.mlir.constant(1 : i64) : i64
 // CHECK-NEXT:    %[[c0_i8:.+]] = llvm.mlir.constant(0 : i8) : i8
+// CHECK-NEXT:    %[[c8_i64:.+]] = llvm.mlir.constant(8 : i64) : i64
 // CHECK-NEXT:    %[[c1:.+]] = arith.constant 1 : i32
 // CHECK:         %[[dptr:.+]] = llvm.alloca %[[c1]] x f64 : (i32) -> !llvm.ptr
-// CHECK-NEXT:    %[[ext:.+]] = llvm.sext %[[c1]] : i32 to i64
-// CHECK-NEXT:    %[[size:.+]] = llvm.mul %[[ext]], %[[c8_i64]] : i64
+// CHECK-NEXT:    %[[size:.+]] = llvm.mul %[[c8_i64]], %[[c1_i64]] : i64
 // CHECK-NEXT:    "llvm.intr.memset"(%[[dptr]], %[[c0_i8]], %[[size]]) <{isVolatile = false}> : (!llvm.ptr, i8, i64) -> ()
 
 

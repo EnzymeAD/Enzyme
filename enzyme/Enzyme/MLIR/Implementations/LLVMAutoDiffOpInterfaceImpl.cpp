@@ -19,12 +19,16 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
+
+static mlir::Value allocaExtent(mlir::OpBuilder &builder,
+                                mlir::LLVM::AllocaOp alloca);
 #include "Implementations/LLVMDerivatives.inc"
 
 // Lets activity analysis treat llvm.store generically via StoreLikeInterface.
@@ -171,15 +175,11 @@ public:
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     if (auto allocaOp = val.getDefiningOp<LLVM::AllocaOp>()) {
+      Value size = allocaExtent(builder, allocaOp);
+      if (!size)
+        return failure();
       Value zero =
           LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
-      auto elemType = cast<AutoDiffTypeInterface>(allocaOp.getElemType());
-      unsigned byteSize = elemType.getApproxSize() / 8;
-      Value byteValue = LLVM::ConstantOp::create(
-          builder, loc, builder.getI64IntegerAttr(byteSize));
-      Value arraySize = LLVM::SExtOp::create(builder, loc, byteValue.getType(),
-                                             allocaOp.getArraySize());
-      Value size = LLVM::MulOp::create(builder, loc, arraySize, byteValue);
       LLVM::MemsetOp::create(builder, loc, val, zero, size,
                              /*isVolatile=*/false);
       return success();
@@ -535,7 +535,29 @@ struct PtrExtent {
   Value ptr;  // pointer the extent was found on; the queried one by default
 };
 
-static PtrExtent findPtrExtent(Value ptr) {
+static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size);
+
+// An alloca says how much it is: the size of the element type, that many times.
+// Nothing has to have annotated it, and `builder` is only used to say the
+// product, next to the copy that wants it.
+static Value allocaExtent(OpBuilder &builder, LLVM::AllocaOp alloca) {
+  auto dl = DataLayout::closest(alloca);
+  uint64_t elemBytes = dl.getTypeSize(alloca.getElemType());
+  auto i64Ty = builder.getIntegerType(64);
+  Value bytes = LLVM::ConstantOp::create(builder, alloca.getLoc(), i64Ty,
+                                         builder.getI64IntegerAttr(elemBytes));
+  Value count =
+      normalizeSizeToI64(builder, alloca.getLoc(), alloca.getArraySize());
+  if (!count)
+    return nullptr;
+  Value size = LLVM::MulOp::create(builder, alloca.getLoc(), bytes, count);
+  return size;
+}
+
+// `builder` may be null where the caller has nowhere to put an op; the extent
+// of an alloca is the one that has to be said rather than found, so that is the
+// case it gives up on.
+static PtrExtent findPtrExtent(Value ptr, OpBuilder *builder = nullptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
     return {allocOp.getSize(), ptr};
 
@@ -553,6 +575,13 @@ static PtrExtent findPtrExtent(Value ptr) {
       if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(castUser))
         return {psh.getSize(), cast.getRes()};
   }
+
+  // Last, since a hint is what someone meant and this is only what the type
+  // says.
+  if (builder)
+    if (auto alloca = ptr.getDefiningOp<LLVM::AllocaOp>())
+      if (Value size = allocaExtent(*builder, alloca))
+        return {size, ptr};
 
   return {nullptr, ptr};
 }
@@ -590,7 +619,7 @@ struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
-    PtrExtent extent = findPtrExtent(value);
+    PtrExtent extent = findPtrExtent(value, &builder);
     if (!extent.size) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;

@@ -123,8 +123,11 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "arith::ArithDialect",
     "complex::ComplexDialect",
     "cf::ControlFlowDialect",
+    "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
-    "memref::MemRefDialect"
+    "memref::MemRefDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::enzyme::llvm_ext::LLVMExtDialect"
   ];
   let options = [
     Option<
