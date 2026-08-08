@@ -176,20 +176,6 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   return Builder.CreateBitCast(value, destType);
 }
 
-static DIFFE_TYPE toDiffeType(enzyme_markers::MarkerActivity activity) {
-  switch (activity) {
-  case enzyme_markers::MarkerActivity::Const:
-    return DIFFE_TYPE::CONSTANT;
-  case enzyme_markers::MarkerActivity::Dup:
-    return DIFFE_TYPE::DUP_ARG;
-  case enzyme_markers::MarkerActivity::DupNoNeed:
-    return DIFFE_TYPE::DUP_NONEED;
-  case enzyme_markers::MarkerActivity::Out:
-    return DIFFE_TYPE::OUT_DIFF;
-  }
-  llvm_unreachable("unknown marker activity");
-}
-
 #if LLVM_VERSION_MAJOR > 16
 static std::optional<StringRef> getMetadataName(llvm::Value *res);
 #else
@@ -733,7 +719,7 @@ public:
         }
 
         if (marker->activity)
-          opt_ty = toDiffeType(*marker->activity);
+          opt_ty = *marker->activity;
 
         if (marker->extraOperands) {
           if ((size_t)i + marker->extraOperands >= CI->arg_size()) {

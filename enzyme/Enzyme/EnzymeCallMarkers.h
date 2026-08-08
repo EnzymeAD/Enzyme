@@ -44,15 +44,27 @@ enum class MarkerRole {
   Modifier,
 };
 
-/// The activities a marker can name. Kept apart from DIFFE_TYPE so this header
-/// stays free of the rest of Enzyme; each reader maps it to its own.
-enum class MarkerActivity { Const, Dup, DupNoNeed, Out };
+} // namespace enzyme_markers
+
+/// Potential differentiable argument classifications
+enum class DIFFE_TYPE {
+  OUT_DIFF = 0, // add differential to an output struct. Only for scalar values
+                // in ReverseMode variants.
+  DUP_ARG = 1,  // duplicate the argument and store differential inside.
+               // For references, pointers, or integers in ReverseMode variants.
+               // For all types in ForwardMode variants.
+  CONSTANT = 2,  // no differential. Usable everywhere.
+  DUP_NONEED = 3 // duplicate this argument and store differential inside, but
+                 // don't need the forward. Same as DUP_ARG otherwise.
+};
+
+namespace enzyme_markers {
 
 struct MarkerInfo {
   MarkerRole role;
   /// Set where the role is Activity, and for the few call flags that also fix
   /// the activity of what they name.
-  std::optional<MarkerActivity> activity;
+  std::optional<DIFFE_TYPE> activity;
   /// Operands the marker itself takes, before whatever follows it.
   unsigned extraOperands;
 };
@@ -63,25 +75,25 @@ struct MarkerInfo {
 /// error it is rather than carrying on, since guessing at an unknown marker is
 /// how an argument gets read as a marker.
 inline std::optional<MarkerInfo> lookupEnzymeMarker(llvm::StringRef name) {
-  auto activity = [](MarkerActivity a, unsigned extra = 0) {
+  auto activity = [](DIFFE_TYPE a, unsigned extra = 0) {
     return MarkerInfo{MarkerRole::Activity, a, extra};
   };
   auto flag = [](unsigned extra = 0) {
     return MarkerInfo{MarkerRole::CallFlag, std::nullopt, extra};
   };
-  auto flagWithActivity = [](MarkerActivity a, unsigned extra) {
+  auto flagWithActivity = [](DIFFE_TYPE a, unsigned extra) {
     return MarkerInfo{MarkerRole::CallFlag, a, extra};
   };
 
   return llvm::StringSwitch<std::optional<MarkerInfo>>(name)
       // Activities.
-      .Case("enzyme_const", activity(MarkerActivity::Const))
-      .Case("enzyme_dup", activity(MarkerActivity::Dup))
-      .Case("enzyme_dupnoneed", activity(MarkerActivity::DupNoNeed))
-      .Case("enzyme_out", activity(MarkerActivity::Out))
+      .Case("enzyme_const", activity(DIFFE_TYPE::CONSTANT))
+      .Case("enzyme_dup", activity(DIFFE_TYPE::DUP_ARG))
+      .Case("enzyme_dupnoneed", activity(DIFFE_TYPE::DUP_NONEED))
+      .Case("enzyme_out", activity(DIFFE_TYPE::OUT_DIFF))
       // Vector activities, each followed by the offset between lanes.
-      .Case("enzyme_dupv", activity(MarkerActivity::Dup, 1))
-      .Case("enzyme_dupnoneedv", activity(MarkerActivity::DupNoNeed, 1))
+      .Case("enzyme_dupv", activity(DIFFE_TYPE::DUP_ARG, 1))
+      .Case("enzyme_dupnoneedv", activity(DIFFE_TYPE::DUP_NONEED, 1))
       // Where the shadows are.
       .Case("enzyme_interleave",
             MarkerInfo{MarkerRole::Interleave, std::nullopt, 0})
@@ -104,17 +116,17 @@ inline std::optional<MarkerInfo> lookupEnzymeMarker(llvm::StringRef name) {
       .Case("enzyme_width", flag(1))
       .Case("enzyme_interface", flag(1))
       .Case("enzyme_active_rand_var", flag(1))
-      .Case("enzyme_trace", flagWithActivity(MarkerActivity::Const, 1))
-      .Case("enzyme_duptrace", flagWithActivity(MarkerActivity::Const, 1))
-      .Case("enzyme_likelihood", flagWithActivity(MarkerActivity::Const, 1))
-      .Case("enzyme_observations", flagWithActivity(MarkerActivity::Const, 1))
-      .Case("enzyme_duplikelihood", flagWithActivity(MarkerActivity::Dup, 2))
+      .Case("enzyme_trace", flagWithActivity(DIFFE_TYPE::CONSTANT, 1))
+      .Case("enzyme_duptrace", flagWithActivity(DIFFE_TYPE::CONSTANT, 1))
+      .Case("enzyme_likelihood", flagWithActivity(DIFFE_TYPE::CONSTANT, 1))
+      .Case("enzyme_observations", flagWithActivity(DIFFE_TYPE::CONSTANT, 1))
+      .Case("enzyme_duplikelihood", flagWithActivity(DIFFE_TYPE::DUP_ARG, 2))
       .Default(std::nullopt);
 }
 
 /// Whether an activity is one that a shadow goes with.
-inline bool markerActivityTakesShadow(MarkerActivity a) {
-  return a == MarkerActivity::Dup || a == MarkerActivity::DupNoNeed;
+inline bool markerActivityTakesShadow(DIFFE_TYPE a) {
+  return a == DIFFE_TYPE::DUP_ARG || a == DIFFE_TYPE::DUP_NONEED;
 }
 
 /// Where the primals stop and the shadows start.
