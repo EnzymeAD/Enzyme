@@ -506,7 +506,7 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     One = ConstantVector::getSplat(VTy->getElementCount(), One);
   }
   PN->addIncoming(One, lc.preheader);
-  lbuilder.SetInsertPoint(lc.header->getFirstNonPHI());
+  lbuilder.SetInsertPoint(getFirstNonPHI(lc.header));
   if (auto inst = dyn_cast<Instruction>(val)) {
     if (DT.dominates(PN, inst))
       lbuilder.SetInsertPoint(inst->getNextNode());
@@ -6597,7 +6597,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
-        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        IRBuilder<> postPhi(getFirstNonPHI(NewV->getParent()));
         Type *shadowTy = getShadowType(phi->getType());
         PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 

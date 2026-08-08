@@ -50,9 +50,21 @@ from a deliberate opaque pointer.
 
 MLIR's unrelated `LLVM::LLVMPointerType::get` is not affected and not flagged.
 
+`BasicBlock::getFirstNonPHI` and friends
+----------------------------------------
+
+    BB->getFirstNonPHI()                // removed on LLVM main
+
+LLVM removed the instruction-returning `getFirstNonPHI` (llvm-project
+62c5ede9fd14), leaving the iterator-flavoured `getFirstNonPHIIt` -- which in
+turn does not exist before LLVM 18. `getFirstNonPHIOrDbg` changed its return
+type to an iterator in LLVM 20 the same way. Utils.h wraps both; call the
+free functions `getFirstNonPHI(BB)` / `getFirstNonPHIOrDbg(BB)` instead of
+any member spelling.
+
 Suppress a false positive with `// NOLINT(<check>)` on the flagged line, or
 `// NOLINTNEXTLINE(<check>)` on the line before it, where `<check>` is
-`terminator-null-test` or `enzyme-pointer-type`.
+`terminator-null-test`, `enzyme-pointer-type` or `enzyme-first-non-phi`.
 """
 
 import argparse
@@ -83,12 +95,26 @@ POINTER_TYPE = re.compile(
     r"(?<![\w:])(?:llvm::)?PointerType::(?:get|getUnqual)\s*\("
 )
 
+# Member-call spellings of the getFirstNonPHI family. The Utils.h wrappers are
+# free functions, so `getFirstNonPHI(BB)` does not match: only `X->` / `X.`
+# calls do. `getFirstNonPHIOrDbgOrLifetime` is not matched (the `\s*\(` must
+# follow one of the listed suffixes immediately).
+FIRST_NON_PHI = re.compile(r"(?:->|\.)\s*getFirstNonPHI(?:It|OrDbg)?\s*\(")
+
 CHECKS = [
     (
         "terminator-null-test",
         TERMINATOR_NULL_TEST,
         "getTerminator() used as a null test; this returns null only through "
         "LLVM 22 and asserts from LLVM 23 on. Use hasTerminator(BB) from "
+        "Utils.h.",
+    ),
+    (
+        "enzyme-first-non-phi",
+        FIRST_NON_PHI,
+        "getFirstNonPHI/getFirstNonPHIIt/getFirstNonPHIOrDbg called as a "
+        "member; no one spelling exists on every supported LLVM. Use the "
+        "free functions getFirstNonPHI(BB) / getFirstNonPHIOrDbg(BB) from "
         "Utils.h.",
     ),
     (

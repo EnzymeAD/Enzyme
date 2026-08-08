@@ -2342,10 +2342,22 @@ getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
 #endif
 }
 
+static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
+#if LLVM_VERSION_MAJOR >= 18
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIIt();
+#else
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return B->getFirstNonPHI();
+#endif
+}
+
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 #if LLVM_VERSION_MAJOR >= 20
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return B->getFirstNonPHIOrDbg();
 #endif
 }

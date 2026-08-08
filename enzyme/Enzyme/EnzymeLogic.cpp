@@ -1844,7 +1844,7 @@ void restoreCache(
         IRBuilder<> BuilderZ(newi->getNextNode());
         if (isa<PHINode>(m.first.first)) {
           BuilderZ.SetInsertPoint(
-              cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+              getFirstNonPHI(cast<Instruction>(newi)->getParent()));
         }
         Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
                                                /*replace*/ false);
@@ -2617,7 +2617,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
             if (isa<PHINode>(newi)) {
               BuilderZ.SetInsertPoint(
-                  cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+                  getFirstNonPHI(cast<Instruction>(newi)->getParent()));
             }
             gutils->cacheForReverse(BuilderZ, newi,
                                     getIndex(&I, CacheType::Self, BuilderZ));
@@ -2913,7 +2913,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   CloneFunctionInto(NewF, nf, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
 
-  IRBuilder<> ib(NewF->getEntryBlock().getFirstNonPHI());
+  IRBuilder<> ib(getFirstNonPHI(&NewF->getEntryBlock()));
 
   AllocaInst *ret = noReturn ? nullptr : ib.CreateAlloca(RetType);
 
@@ -2952,7 +2952,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       j->setName("tape");
       tapeMemory = j;
       // if structs were supported by openmp we could do this, but alas, no
-      // IRBuilder<> B(NewF->getEntryBlock().getFirstNonPHI());
+      // IRBuilder<> B(getFirstNonPHI(&NewF->getEntryBlock()));
       // tapeMemory = B.CreateAlloca(j->getType());
       // B.CreateStore(j, tapeMemory);
     } else {
@@ -2981,7 +2981,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         auto inst = cast<Instruction>(VMap[v]);
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))
-          ib.SetInsertPoint(inst->getParent()->getFirstNonPHI());
+          ib.SetInsertPoint(getFirstNonPHI(inst->getParent()));
         Value *Idxs[] = {ib.getInt32(0), ib.getInt32(i)};
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
@@ -5994,7 +5994,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
   auto entry = std::next(NewF->begin());
-  IRBuilder<> Builder2(entry->getFirstNonPHI());
+  IRBuilder<> Builder2(getFirstNonPHI(&*entry));
   Builder2.SetCurrentDebugLocation(DebugLoc());
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
     Argument *orig_arg = tobatch->arg_begin() + i;
