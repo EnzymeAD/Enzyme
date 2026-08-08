@@ -1762,6 +1762,14 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // Later LLVM folds readonly/readnone into the memory(...) attribute,
+    // whose per-location effects can also say argument memory is only read
+    // even when the function writes elsewhere.
+    if (!llvm::isModSet(F->getMemoryEffects().getModRef(
+            llvm::MemoryEffects::Location::ArgMem)))
+      return true;
+#endif
     // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
     //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
     //   return true;
@@ -1774,6 +1782,17 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    // Use the callee's effects only under a matching calling convention,
+    // for the same reason as the attribute path below.
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv())
+      if (!llvm::isModSet(call->getMemoryEffects().getModRef(
+              llvm::MemoryEffects::Location::ArgMem)))
+        return true;
+  }
+#endif
 
   if (auto F = getFunctionFromCall(call)) {
     // Do not use function attrs for if different calling conv, such as a julia
@@ -1878,6 +1897,14 @@ static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // As in isReadOnly: the memory(...) attribute's per-location effects can
+    // say argument memory is never read even when the function reads
+    // elsewhere.
+    if (!llvm::isRefSet(F->getMemoryEffects().getModRef(
+            llvm::MemoryEffects::Location::ArgMem)))
+      return true;
+#endif
   }
   return false;
 }
@@ -1888,6 +1915,15 @@ static inline bool isWriteOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyWritesMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv())
+      if (!llvm::isRefSet(call->getMemoryEffects().getModRef(
+              llvm::MemoryEffects::Location::ArgMem)))
+        return true;
+  }
+#endif
 #else
   if (call->hasFnAttr(llvm::Attribute::WriteOnly) ||
       call->hasFnAttr(llvm::Attribute::ReadNone))
