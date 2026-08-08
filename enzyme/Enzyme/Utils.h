@@ -2270,6 +2270,43 @@ llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
                                  llvm::IRBuilder<> &entryBuilder,
                                  llvm::Twine const & = "");
 
+/// Values of cuBLAS's cublasPointerMode_t.
+enum CublasPointerMode {
+  CublasPointerModeHost = 0,
+  CublasPointerModeDevice = 1,
+};
+
+/// cuBLAS reads and writes its scalars -- gemm's alpha and beta, dot's result
+/// -- from host or from device memory depending on the handle's pointer mode.
+/// That is runtime state: a C caller usually leaves the default host mode in
+/// place, while CUDA.jl puts every handle it creates into device mode. The
+/// derivative sequence Enzyme emits materializes its scalars on the stack, so
+/// instead of duplicating every scalar path it forces the handle to host mode
+/// for the duration and copies the caller's own scalars in and out around it.
+/// Returns the mode that was in effect, to be handed back to
+/// `emitCublasEndHostMode` before the primal call runs.
+llvm::Value *emitCublasBeginHostMode(llvm::IRBuilder<> &B,
+                                     llvm::Function *called,
+                                     llvm::Value *handle,
+                                     llvm::IRBuilder<> &entryBuilder);
+
+void emitCublasEndHostMode(llvm::IRBuilder<> &B, llvm::Function *called,
+                           llvm::Value *handle, llvm::Value *savedMode);
+
+/// Copy a scalar the caller owns into host memory, returning the host pointer.
+/// A no-op copy when the handle was already in host mode.
+llvm::Value *emitCublasLoadScalar(llvm::IRBuilder<> &B, llvm::Function *called,
+                                  llvm::Value *handle, llvm::Value *savedMode,
+                                  llvm::Value *src, llvm::Type *fpTy,
+                                  llvm::IRBuilder<> &entryBuilder,
+                                  llvm::Twine const & = "");
+
+/// Write a host-resident scalar back through a pointer the caller owns.
+void emitCublasStoreScalar(llvm::IRBuilder<> &B, llvm::Function *called,
+                           llvm::Value *handle, llvm::Value *savedMode,
+                           llvm::Value *dst, llvm::Value *V,
+                           llvm::IRBuilder<> &entryBuilder);
+
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
