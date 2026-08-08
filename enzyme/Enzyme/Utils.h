@@ -1752,6 +1752,20 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // Later LLVM folds readonly/readnone into the memory(...) attribute. The
+    // argument's bytes must not be written through the argument pointers
+    // (ArgMem) nor through anything else that could alias them (Other);
+    // inaccessible memory cannot alias an argument, so it alone may be
+    // written.
+    {
+      auto ME = F->getMemoryEffects();
+      if (!llvm::isModSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isModSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+#endif
     // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
     //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
     //   return true;
@@ -1764,6 +1778,21 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    // Use the callee's effects only under a matching calling convention,
+    // for the same reason as the attribute path below. As above, both the
+    // argument-memory and aliasable-other locations must be write-free.
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+      auto ME = call->getMemoryEffects();
+      if (!llvm::isModSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isModSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+  }
+#endif
 
   if (auto F = getFunctionFromCall(call)) {
     // Do not use function attrs for if different calling conv, such as a julia
@@ -1868,6 +1897,18 @@ static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // As in isReadOnly: the argument's bytes must be unread both through the
+    // argument pointers and through anything that could alias them; only
+    // inaccessible memory may be read.
+    {
+      auto ME = F->getMemoryEffects();
+      if (!llvm::isRefSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isRefSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+#endif
   }
   return false;
 }
@@ -1878,6 +1919,18 @@ static inline bool isWriteOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyWritesMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+      auto ME = call->getMemoryEffects();
+      if (!llvm::isRefSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isRefSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+  }
+#endif
 #else
   if (call->hasFnAttr(llvm::Attribute::WriteOnly) ||
       call->hasFnAttr(llvm::Attribute::ReadNone))
