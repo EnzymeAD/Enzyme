@@ -52,8 +52,6 @@ void mlir::enzyme::registerFuncDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, func::FuncDialect *) {
     registerInterfaces(context);
-    func::CallOp::attachInterface<AutoDiffCallFwd<func::CallOp>>(*context);
-    func::CallOp::attachInterface<AutoDiffCallRev<func::CallOp>>(*context);
     func::FuncOp::attachInterface<AutoDiffFuncFuncFunctionInterface>(*context);
   });
 }
