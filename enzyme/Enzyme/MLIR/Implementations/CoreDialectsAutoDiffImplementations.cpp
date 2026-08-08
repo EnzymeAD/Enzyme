@@ -625,7 +625,8 @@ static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
          me.getTargetMem1() == LLVM::ModRefInfo::NoModRef;
 }
 
-static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
+static bool splitReverseMemoryOkImpl(Operation *orig, FunctionOpInterface fn,
+                                     SmallPtrSetImpl<Operation *> &visited) {
   if (auto call = dyn_cast<LLVM::CallOp>(orig))
     if (memoryEffectsNone(call.getMemoryEffectsAttr()))
       return true;
@@ -638,12 +639,27 @@ static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
           if (s.getValue() == "readnone")
             return true;
   }
+  if (fn.getFunctionBody().empty())
+    return false;
+  // A cycle contributes no effects beyond those already under check.
+  if (!visited.insert(fn.getOperation()).second)
+    return true;
   WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
     if (isMemoryEffectFree(op))
       return WalkResult::advance();
+    // A call op answers conservatively for itself -- its effects are its
+    // callee's, so ask the callee.
+    if (auto callee = getDirectCallee(op))
+      if (splitReverseMemoryOkImpl(op, callee, visited))
+        return WalkResult::advance();
     return WalkResult::interrupt();
   });
   return !res.wasInterrupted();
+}
+
+static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
+  SmallPtrSet<Operation *, 8> visited;
+  return splitReverseMemoryOkImpl(orig, fn, visited);
 }
 
 static LogicalResult checkSplitReverseMemory(Operation *orig,
