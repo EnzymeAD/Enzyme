@@ -17,7 +17,6 @@ module {
 }
 
 // CHECK-LABEL: func.func private @fwddifferelu(%arg0: f64, %arg1: f64) -> f64
-// CHECK: %[[cst:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK: %[[c:.+]] = arith.cmpf ugt, %arg0, %[[cst]] : f64
+// CHECK: %[[c:.+]] = arith.cmpf ugt, %arg0, %{{.+}} : f64
 // CHECK: %[[t:.+]] = arith.select %[[c]], %arg1, %{{.+}} : f64
 // CHECK: return %[[t]] : f64

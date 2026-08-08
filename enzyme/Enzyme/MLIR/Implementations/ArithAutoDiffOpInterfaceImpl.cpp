@@ -116,20 +116,13 @@ struct SelectOpFwdInterface
     gutils->eraseIfUnused(op);
     if (gutils->isConstantInstruction(op))
       return success();
-    auto iface = dyn_cast<AutoDiffTypeInterface>(selectOp.getType());
-    if (!iface || iface.isMutable())
-      return op->emitError()
-             << "could not compute the tangent of a select of mutable values";
-    auto siface = cast<AutoDiffTypeInterface>(getShadowType(selectOp.getType()));
+    // The same rule serves values and pointers: a value's tangent and a
+    // pointer's shadow both follow the choice the primal made, and
+    // invertPointerM hands back the appropriate null or primal for a
+    // constant branch.
     Value cond = gutils->getNewFromOriginal(selectOp.getCondition());
-    Value dTrue =
-        gutils->isConstantValue(selectOp.getTrueValue())
-            ? siface.createNullValue(builder, op->getLoc())
-            : gutils->invertPointerM(selectOp.getTrueValue(), builder);
-    Value dFalse =
-        gutils->isConstantValue(selectOp.getFalseValue())
-            ? siface.createNullValue(builder, op->getLoc())
-            : gutils->invertPointerM(selectOp.getFalseValue(), builder);
+    Value dTrue = gutils->invertPointerM(selectOp.getTrueValue(), builder);
+    Value dFalse = gutils->invertPointerM(selectOp.getFalseValue(), builder);
     Value tangent =
         arith::SelectOp::create(builder, op->getLoc(), cond, dTrue, dFalse);
     gutils->setDiffe(selectOp.getResult(), tangent, builder);
