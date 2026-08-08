@@ -602,6 +602,63 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   return success();
 }
 
+// Whether `ptr` is derived from an argument of `fn` through address
+// arithmetic alone.
+static bool tracesToArgument(Value ptr, FunctionOpInterface fn) {
+  while (true) {
+    if (auto ba = dyn_cast<BlockArgument>(ptr))
+      return ba.getOwner() == &fn.getFunctionBody().front();
+    Operation *def = ptr.getDefiningOp();
+    if (!def)
+      return false;
+    if (isa<LLVM::GEPOp, LLVM::BitcastOp, LLVM::AddrSpaceCastOp>(def)) {
+      ptr = def->getOperand(0);
+      continue;
+    }
+    return false;
+  }
+}
+
+// The reverse call runs long after the forward one, against whatever memory
+// looks like by then; the only state carried across is the cached argument
+// values and shadows. A callee is therefore only differentiable here when
+// the memory it touches is exactly that: it is readnone, or every op in its
+// body is free of memory effects, or its loads and stores go through
+// pointers derived from its own arguments.
+static LogicalResult checkSplitReverseMemory(Operation *orig,
+                                             FunctionOpInterface fn) {
+  if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
+    if (auto me = llvmFn.getMemoryEffectsAttr())
+      if (me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
+          me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
+          me.getOther() == LLVM::ModRefInfo::NoModRef)
+        return success();
+    if (auto pass = llvmFn->getAttrOfType<ArrayAttr>("passthrough"))
+      for (Attribute a : pass)
+        if (auto s = dyn_cast<StringAttr>(a))
+          if (s.getValue() == "readnone")
+            return success();
+  }
+  WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
+    if (isMemoryEffectFree(op))
+      return WalkResult::advance();
+    if (auto load = dyn_cast<LLVM::LoadOp>(op))
+      if (tracesToArgument(load.getAddr(), fn))
+        return WalkResult::advance();
+    if (auto store = dyn_cast<LLVM::StoreOp>(op))
+      if (tracesToArgument(store.getAddr(), fn))
+        return WalkResult::advance();
+    return WalkResult::interrupt();
+  });
+  if (res.wasInterrupted())
+    return orig->emitError()
+           << "cannot differentiate a call in reverse mode whose callee "
+              "touches memory beyond its own arguments; no state is carried "
+              "between the forward and reverse passes: "
+           << fn.getNameAttr() << "\n";
+  return success();
+}
+
 LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtilsReverse *gutils,
                                           SmallVector<Value> caches) {
@@ -612,6 +669,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     return orig->emitError()
            << "could not find the callee of: " << *orig << "\n";
   }
+  if (failed(checkSplitReverseMemory(orig, fn)))
+    return failure();
 
   auto narg = orig->getNumOperands();
   auto nret = orig->getNumResults();
