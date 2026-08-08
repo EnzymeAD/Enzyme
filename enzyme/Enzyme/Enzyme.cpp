@@ -3480,6 +3480,11 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
           return true;
         }
+        if (Name == "preserve-nvvm-inline-only") {
+          MPM.addPass(
+              PreserveNVVMNewPM(/*Begin*/ true, /*PromoteMathLinkage*/ false));
+          return true;
+        }
         if (Name == "preserve-nvvm-end") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
           return true;

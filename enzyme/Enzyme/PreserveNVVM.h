@@ -35,7 +35,13 @@ class ModulePass;
 class FunctionPass;
 } // namespace llvm
 
-llvm::ModulePass *createPreserveNVVMPass(bool Begin);
+// `PromoteMathLinkage` controls whether the preserved libdevice/math
+// definitions are also promoted to external linkage so they survive to
+// Enzyme. A consumer whose pipeline keeps them alive its own way (Reactant's
+// raising consumes the math calls itself) passes false and gets only the
+// inlining toggle.
+llvm::ModulePass *createPreserveNVVMPass(bool Begin,
+                                         bool PromoteMathLinkage = true);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
 class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
@@ -43,11 +49,13 @@ class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
 
 private:
   bool Begin;
+  bool PromoteMathLinkage;
   static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;
-  PreserveNVVMNewPM(bool Begin) : Begin(Begin) {}
+  PreserveNVVMNewPM(bool Begin, bool PromoteMathLinkage = true)
+      : Begin(Begin), PromoteMathLinkage(PromoteMathLinkage) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 

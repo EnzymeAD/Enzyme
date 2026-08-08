@@ -81,7 +81,14 @@ void markFunctionInactive(Function &F) {
 }
 
 //! Returns whether changed.
-bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
+// `PromoteLinkage` is what keeps a definition alive until Enzyme has seen it:
+// promoted to external, nothing internalizes or drops it. A consumer that
+// keeps the definitions alive its own way (the Reactant raising pipeline
+// consumes the math calls itself) can pass false and only toggle inlining --
+// the call sites still have to survive recognizably, but the definitions need
+// no export.
+bool preserveLinkage(bool Begin, Function &F, bool Inlining = true,
+                     bool PromoteLinkage = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
     F.addFnAttr("prev_fixup");
     if (F.hasFnAttribute(Attribute::AlwaysInline))
@@ -92,8 +99,10 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
       F.removeFnAttr(Attribute::AlwaysInline);
       F.addFnAttr(Attribute::NoInline);
     }
-    F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
-    F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+    if (PromoteLinkage) {
+      F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
+      F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+    }
     return true;
   }
   return false;
@@ -342,7 +351,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
-bool preserveNVVM(bool Begin, Module &M) {
+bool preserveNVVM(bool Begin, Module &M, bool PromoteMathLinkage = true) {
   bool changed = false;
   constexpr static const char gradient_handler_name[] =
       "__enzyme_register_gradient";
@@ -963,7 +972,8 @@ bool preserveNVVM(bool Begin, Module &M) {
         F.addFnAttr("implements", found->second.second);
         F.addFnAttr("implements2", found->second.first);
         F.addFnAttr("enzyme_math", found->second.first);
-        changed |= preserveLinkage(Begin, F);
+        changed |=
+            preserveLinkage(Begin, F, /*Inlining*/ true, PromoteMathLinkage);
       }
     } else if (F.getName() == "_ZL21__internal_float2halffRjS_" ||
                F.getName() == "_ZL4hlog6__half" ||
@@ -989,7 +999,8 @@ bool preserveNVVM(bool Begin, Module &M) {
                F.getName() == "_ZL32__internal_device_bfloat162floatt") {
       changed = true;
       if (Begin) {
-        changed |= preserveLinkage(Begin, F);
+        changed |=
+            preserveLinkage(Begin, F, /*Inlining*/ true, PromoteMathLinkage);
       }
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
@@ -1004,9 +1015,14 @@ bool preserveNVVM(bool Begin, Module &M) {
       } else {
         F.removeFnAttr(Attribute::NoInline);
       }
-      int64_t val;
-      F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
-      F.setLinkage((Function::LinkageTypes)val);
+      if (F.hasFnAttribute("prev_linkage")) {
+        int64_t val;
+        F.getFnAttribute("prev_linkage")
+            .getValueAsString()
+            .getAsInteger(10, val);
+        F.setLinkage((Function::LinkageTypes)val);
+        F.removeFnAttr("prev_linkage");
+      }
     }
   }
   return changed;
@@ -1018,10 +1034,14 @@ class PreserveNVVM final : public ModulePass {
 public:
   static char ID;
   bool Begin;
-  PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
+  bool PromoteMathLinkage;
+  PreserveNVVM(bool Begin = true, bool PromoteMathLinkage = true)
+      : ModulePass(ID), Begin(Begin), PromoteMathLinkage(PromoteMathLinkage) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
-  bool runOnModule(Module &M) override { return preserveNVVM(Begin, M); }
+  bool runOnModule(Module &M) override {
+    return preserveNVVM(Begin, M, PromoteMathLinkage);
+  }
 };
 
 class PreserveNVVMFn final : public FunctionPass {
@@ -1047,8 +1067,8 @@ static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 static RegisterPass<PreserveNVVMFn> XFn("preserve-nvvm-fn",
                                         "Preserve NVVM Pass");
 
-ModulePass *createPreserveNVVMPass(bool Begin) {
-  return new PreserveNVVM(Begin);
+ModulePass *createPreserveNVVMPass(bool Begin, bool PromoteMathLinkage) {
+  return new PreserveNVVM(Begin, PromoteMathLinkage);
 }
 
 FunctionPass *createPreserveNVVMFnPass(bool Begin) {
@@ -1066,7 +1086,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = preserveNVVM(Begin, M);
+  bool changed = preserveNVVM(Begin, M, PromoteMathLinkage);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;
