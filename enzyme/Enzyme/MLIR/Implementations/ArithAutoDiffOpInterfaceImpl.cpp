@@ -103,6 +103,40 @@ struct ArithSubFSimplifyMathInterface
   }
 };
 
+// The condition carries no tangent; the result's tangent follows the same
+// choice between the branch tangents, a constant branch contributing zero.
+// Reverse-generated adjoints are full of these selects, and forward-over-
+// reverse differentiates them again.
+struct SelectOpFwdInterface
+    : public AutoDiffOpInterface::ExternalModel<SelectOpFwdInterface,
+                                                arith::SelectOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    gutils->eraseIfUnused(op);
+    if (gutils->isConstantInstruction(op))
+      return success();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(selectOp.getType());
+    if (!iface || iface.isMutable())
+      return op->emitError()
+             << "could not compute the tangent of a select of mutable values";
+    auto siface = cast<AutoDiffTypeInterface>(getShadowType(selectOp.getType()));
+    Value cond = gutils->getNewFromOriginal(selectOp.getCondition());
+    Value dTrue =
+        gutils->isConstantValue(selectOp.getTrueValue())
+            ? siface.createNullValue(builder, op->getLoc())
+            : gutils->invertPointerM(selectOp.getTrueValue(), builder);
+    Value dFalse =
+        gutils->isConstantValue(selectOp.getFalseValue())
+            ? siface.createNullValue(builder, op->getLoc())
+            : gutils->invertPointerM(selectOp.getFalseValue(), builder);
+    Value tangent =
+        arith::SelectOp::create(builder, op->getLoc(), cond, dTrue, dFalse);
+    gutils->setDiffe(selectOp.getResult(), tangent, builder);
+    return success();
+  }
+};
+
 struct SelectOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<SelectOpInterfaceReverse,
                                                        arith::SelectOp> {
@@ -197,6 +231,7 @@ void mlir::enzyme::registerArithDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     registerInterfaces(context);
     arith::SelectOp::attachInterface<SelectActivityInterface>(*context);
+    arith::SelectOp::attachInterface<SelectOpFwdInterface>(*context);
     arith::SelectOp::attachInterface<SelectOpInterfaceReverse>(*context);
     arith::ConstantOp::attachInterface<ArithConstantOpBatchInterface>(*context);
     arith::AddFOp::attachInterface<ArithAddFSimplifyMathInterface>(*context);
