@@ -117,6 +117,15 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   }
 }
 
+/// Return whether a given function frees a CUDA allocation. Their first
+/// argument is the allocation being freed, which for the driver API is a
+/// CUdeviceptr -- an integer at the LLVM level rather than a pointer.
+static inline bool isCudaDeallocationFunction(const llvm::StringRef name) {
+  return name == "cuMemFree" || name == "cuMemFree_v2" ||
+         name == "cuMemFreeAsync" || name == "cudaFree" ||
+         name == "cudaFreeAsync" || name == "cudaFreeHost";
+}
+
 /// Return whether a given function is a known C/C++ memory deallocation
 /// function For updating below one should read MemoryBuiltins.cpp,
 /// TargetLibraryInfo.cpp
@@ -134,6 +143,10 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
     if (name == "__rust_dealloc")
       return true;
     if (name == "swift_release")
+      return true;
+    // Counterparts of the CUDA allocations recognized in
+    // AdjointGenerator::handleKnownCallDerivatives.
+    if (isCudaDeallocationFunction(name))
       return true;
     return false;
   }

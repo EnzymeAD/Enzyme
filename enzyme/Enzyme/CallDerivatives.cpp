@@ -2211,6 +2211,173 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
+bool AdjointGenerator::handleCudaMemTransfer(CallInst &call, Function *called,
+                                             const CudaMemTransferInfo &CMT) {
+  // Reversing a device-side transfer needs an accumulating copy that runs in
+  // device memory, which cannot be emitted from the host; leave those modes to
+  // report a missing derivative rather than silently getting them wrong.
+  if (Mode != DerivativeMode::ForwardMode &&
+      Mode != DerivativeMode::ForwardModeError)
+    return false;
+
+  auto &ctx = call.getContext();
+  auto M = gutils->newFunc->getParent();
+  auto *I8Ptr = getInt8PtrTy(ctx);
+  auto *I8 = Type::getInt8Ty(ctx);
+
+  Value *origDst = call.getArgOperand(0);
+  Value *origSrc = call.getArgOperand(1);
+  Value *newSize = gutils->getNewFromOriginal(call.getArgOperand(2));
+
+  Value *kind =
+      CMT.kindIdx >= 0
+          ? gutils->getNewFromOriginal(call.getArgOperand(CMT.kindIdx))
+          : nullptr;
+  Value *stream =
+      CMT.streamIdx >= 0
+          ? gutils->getNewFromOriginal(call.getArgOperand(CMT.streamIdx))
+          : nullptr;
+
+  // Everything past (dst, src, size) -- the transfer kind and/or stream -- is
+  // replayed unchanged onto the shadow transfer.
+  SmallVector<Value *, 2> trailing;
+  SmallVector<ValueType, 5> valtys = {ValueType::Shadow, ValueType::Shadow,
+                                      ValueType::Primal};
+  for (size_t i = 3; i < call.arg_size(); ++i) {
+    trailing.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+    valtys.push_back(ValueType::Primal);
+  }
+
+  IRBuilder<> BundleB(gutils->getNewFromOriginal(&call));
+  auto Defs = gutils->getInvertedBundles(&call, valtys, BundleB,
+                                         /*lookup*/ false);
+
+  // Shadows arrive as i8*; a CUdeviceptr argument is an integer instead.
+  auto toArgTy = [](IRBuilder<> &B, Value *V, Type *T) -> Value * {
+    if (V->getType() == T)
+      return V;
+    if (T->isIntegerTy())
+      return B.CreatePtrToInt(V, T);
+    if (V->getType()->isIntegerTy())
+      return B.CreateIntToPtr(V, T);
+    return B.CreatePointerCast(V, T);
+  };
+
+  // Zero `len` bytes of the shadow destination, used when the source is
+  // inactive float data. Which primitive applies depends on where the
+  // destination lives.
+  auto emitZero = [&](IRBuilder<> &B, Value *ddst, Value *len) {
+    CudaMemSpace dstSpace = CMT.dstSpace;
+    if (dstSpace == CudaMemSpace::FromKind) {
+      if (auto CI = dyn_cast<ConstantInt>(kind)) {
+        switch (CI->getZExtValue()) {
+        case CudaMemcpyHostToHost:
+        case CudaMemcpyDeviceToHost:
+          dstSpace = CudaMemSpace::Host;
+          break;
+        case CudaMemcpyHostToDevice:
+        case CudaMemcpyDeviceToDevice:
+          dstSpace = CudaMemSpace::Device;
+          break;
+        default:
+          // cudaMemcpyDefault leaves the direction to unified addressing.
+          break;
+        }
+      }
+    }
+
+    if (dstSpace == CudaMemSpace::Host) {
+      B.CreateMemSet(ddst, ConstantInt::get(I8, 0), len, MaybeAlign());
+      return;
+    }
+
+    if (dstSpace == CudaMemSpace::Device) {
+      SmallVector<Value *, 4> args;
+      StringRef memsetName;
+      if (CMT.isRuntimeAPI) {
+        // cudaMemset(void *devPtr, int value, size_t count[, stream])
+        memsetName = stream ? "cudaMemsetAsync" : "cudaMemset";
+        args.push_back(ddst);
+        args.push_back(ConstantInt::get(Type::getInt32Ty(ctx), 0));
+      } else {
+        // cuMemsetD8(CUdeviceptr dst, unsigned char uc, size_t N[, stream])
+        memsetName = stream ? "cuMemsetD8Async"
+                            : (CMT.isV2 ? "cuMemsetD8_v2" : "cuMemsetD8");
+        args.push_back(toArgTy(B, ddst, origDst->getType()));
+        args.push_back(ConstantInt::get(I8, 0));
+      }
+      args.push_back(len);
+      if (stream)
+        args.push_back(stream);
+
+      SmallVector<Type *, 4> tys;
+      for (auto a : args)
+        tys.push_back(a->getType());
+      auto F = getOrInsertPerCallingConv(
+          *M, called, memsetName,
+          FunctionType::get(call.getType(), tys, false));
+      B.CreateCall(F, args);
+      return;
+    }
+
+    // The direction is only known at runtime. Stage a zeroed host buffer and
+    // let the runtime route the copy, rewriting the kind so that the source
+    // side is the host buffer we just built.
+    assert(kind && "runtime-API transfer without a kind argument");
+    auto *sizeTy = len->getType();
+    auto MallocF = M->getOrInsertFunction("malloc", I8Ptr, sizeTy);
+    Value *buf = B.CreateCall(MallocF, {len});
+    B.CreateMemSet(buf, ConstantInt::get(I8, 0), len, MaybeAlign());
+
+    // Each operation is bound before it is used, so that the order the IR is
+    // emitted in does not depend on argument evaluation order.
+    auto *kindTy = kind->getType();
+    Value *isDtoD = B.CreateICmpEQ(
+        kind, ConstantInt::get(kindTy, CudaMemcpyDeviceToDevice));
+    Value *asHtoD = B.CreateSelect(
+        isDtoD, ConstantInt::get(kindTy, CudaMemcpyHostToDevice), kind);
+    Value *isDtoH =
+        B.CreateICmpEQ(kind, ConstantInt::get(kindTy, CudaMemcpyDeviceToHost));
+    Value *adjusted = B.CreateSelect(
+        isDtoH, ConstantInt::get(kindTy, CudaMemcpyHostToHost), asHtoD);
+
+    SmallVector<Value *, 5> args = {ddst, buf, len, adjusted};
+    if (stream)
+      args.push_back(stream);
+    B.CreateCall(called, args, Defs);
+
+    // An async copy must complete before the staging buffer goes away.
+    if (stream) {
+      auto SyncF = getOrInsertPerCallingConv(
+          *M, called, "cudaStreamSynchronize",
+          FunctionType::get(call.getType(), {stream->getType()}, false));
+      B.CreateCall(SyncF, {stream});
+    }
+    auto FreeF = M->getOrInsertFunction("free", Type::getVoidTy(ctx), I8Ptr);
+    B.CreateCall(FreeF, {buf});
+  };
+
+  auto emit = [&](IRBuilder<> &B, Value *ddst, Value *dsrc, Value *len,
+                  bool zero) {
+    if (zero) {
+      emitZero(B, ddst, len);
+      return;
+    }
+    SmallVector<Value *, 5> args = {toArgTy(B, ddst, origDst->getType()),
+                                    toArgTy(B, dsrc, origSrc->getType()), len};
+    args.append(trailing.begin(), trailing.end());
+    auto cal = B.CreateCall(called, args, Defs);
+    cal->setAttributes(call.getAttributes());
+    cal->setCallingConv(call.getCallingConv());
+    cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+  };
+
+  visitMemTransferCommon(Intrinsic::memcpy, /*srcAlign*/ MaybeAlign(1),
+                         /*dstAlign*/ MaybeAlign(1), call, origDst, origSrc,
+                         newSize, ConstantInt::getFalse(ctx), emit);
+  return true;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -3737,6 +3904,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     visitMemSetCommon(call);
     return true;
   }
+  // CUDA transfers behave like a memcpy, except that the shadow copy has to go
+  // back through the CUDA API since at least one side lives in device memory.
+  if (auto CMT = extractCudaMemTransfer(funcName)) {
+    if (handleCudaMemTransfer(call, called, *CMT))
+      return true;
+  }
   if (funcName == "enzyme_zerotype") {
     IRBuilder<> BuilderZ(&call);
     getForwardBuilder(BuilderZ);
@@ -3924,8 +4097,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
               } else if (funcName == "cudaMalloc") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cudaMemset",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cudaMemset",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3934,8 +4107,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                          funcName == "cudaMallocFromPoolAsync") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
                                stream->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cudaMemsetAsync",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cudaMemsetAsync",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3943,8 +4116,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               } else if (funcName == "cuMemAllocAsync") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
                                stream->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cuMemsetD8Async",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cuMemsetD8Async",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3952,8 +4125,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               } else if (funcName == "cuMemAlloc" ||
                          funcName == "cuMemAlloc_v2") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cuMemsetD8",
+                // Match the ABI of the allocation: the v1 entry point takes an
+                // unsigned int length where v2 takes a size_t.
+                auto F = getOrInsertPerCallingConv(
+                    *M, called,
+                    funcName == "cuMemAlloc_v2" ? "cuMemsetD8_v2"
+                                                : "cuMemsetD8",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3999,30 +4176,37 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                       M->getOrInsertFunction("free", VoidTy, IntPtrTy);
                   Builder2.CreateCall(FreeFunc, tofree);
                 } else if (funcName == "cuMemAllocAsync") {
-                  auto FreeFunc = M->getOrInsertFunction(
-                      "cuMemFreeAsync", VoidTy, IntPtrTy, streamL->getType());
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cuMemFreeAsync",
+                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
+                                        false));
                   Value *nargs[] = {tofree, streamL};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cuMemAlloc" ||
                            funcName == "cuMemAlloc_v2") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cuMemFree", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cuMemFree",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMalloc") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cudaFree", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFree",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMallocAsync" ||
                            funcName == "cudaMallocFromPoolAsync") {
-                  auto FreeFunc = M->getOrInsertFunction(
-                      "cudaFreeAsync", VoidTy, IntPtrTy, streamL->getType());
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFreeAsync",
+                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
+                                        false));
                   Value *nargs[] = {tofree, streamL};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMallocHost") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cudaFreeHost", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFreeHost",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else
@@ -4079,27 +4263,34 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
         Builder2.CreateCall(FreeFunc, tofree);
       } else if (funcName == "cuMemAllocAsync") {
-        auto FreeFunc = M->getOrInsertFunction("cuMemFreeAsync", VoidTy,
-                                               IntPtrTy, streamL->getType());
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cuMemFreeAsync",
+            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
         Value *nargs[] = {tofree, streamL};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2") {
-        auto FreeFunc = M->getOrInsertFunction("cuMemFree", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cuMemFree",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMalloc") {
-        auto FreeFunc = M->getOrInsertFunction("cudaFree", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFree",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMallocAsync" ||
                  funcName == "cudaMallocFromPoolAsync") {
-        auto FreeFunc = M->getOrInsertFunction("cudaFreeAsync", VoidTy,
-                                               IntPtrTy, streamL->getType());
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFreeAsync",
+            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
         Value *nargs[] = {tofree, streamL};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMallocHost") {
-        auto FreeFunc =
-            M->getOrInsertFunction("cudaFreeHost", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFreeHost",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else

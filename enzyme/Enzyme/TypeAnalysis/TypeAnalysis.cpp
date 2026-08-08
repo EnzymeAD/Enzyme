@@ -3690,7 +3690,8 @@ void TypeAnalyzer::visitMemTransferInst(llvm::MemTransferInst &MTI) {
   visitMemTransferCommon(MTI);
 }
 
-void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
+void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI,
+                                          unsigned intArgsEnd) {
   if (MTI.getType()->isIntegerTy()) {
     updateAnalysis(&MTI, TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
   }
@@ -3748,11 +3749,11 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   updateAnalysis(MTI.getArgOperand(0), res, &MTI);
   updateAnalysis(MTI.getArgOperand(1), res, &MTI);
 #if LLVM_VERSION_MAJOR >= 14
-  for (unsigned i = 2; i < MTI.arg_size(); ++i)
+  unsigned numArgs = MTI.arg_size();
 #else
-  for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i)
+  unsigned numArgs = MTI.getNumArgOperands();
 #endif
-  {
+  for (unsigned i = 2; i < std::min(numArgs, intArgsEnd); ++i) {
     updateAnalysis(MTI.getArgOperand(i),
                    TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
   }
@@ -5396,6 +5397,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       visitMemTransferCommon(call);
       return;
     }
+    // The CUDA memcpy family shares memcpy's (dst, src, size) prefix, so the
+    // same propagation of the pointee type between the two sides applies.
+    if (auto CMT = extractCudaMemTransfer(funcName)) {
+      // A CUdeviceptr is an integer at the LLVM level, but both sides of a
+      // transfer are pointers regardless of which one lives on the device.
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      // The length, and the transfer kind if there is one, are integers; the
+      // stream that may follow them is a pointer, so stop before it.
+      unsigned intArgsEnd =
+          CMT->streamIdx >= 0 ? (unsigned)CMT->streamIdx : (unsigned)-1;
+      visitMemTransferCommon(call, intArgsEnd);
+      return;
+    }
     if (funcName == "posix_memalign") {
       TypeTree ptrptr;
       ptrptr.insert({-1}, BaseType::Pointer);
@@ -5587,8 +5604,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (isDeallocationFunction(funcName, TLI)) {
+      bool cudaFree = isCudaDeallocationFunction(funcName);
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
+        // The allocation freed by the CUDA driver API is a CUdeviceptr, an
+        // integer at the LLVM level, but still a pointer.
+        if (Idx == 0 && cudaFree) {
+          updateAnalysis(call.getOperand(Idx),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          Idx++;
+          continue;
+        }
         if (Arg.getType()->isIntegerTy()) {
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);

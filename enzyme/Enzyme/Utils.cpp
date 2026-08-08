@@ -2195,6 +2195,16 @@ Function *getOrInsertDifferentialFloatMemmove(
                                             atomic);
 }
 
+FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
+                                         StringRef callee, FunctionType *FT) {
+  auto res = M.getOrInsertFunction(
+      getRenamedPerCallingConv(templateFn->getName(), callee), FT);
+  if (auto F = dyn_cast<Function>(res.getCallee()))
+    if (!F->hasFnAttribute("enzyme_math"))
+      F->addFnAttr("enzyme_math", callee);
+  return res;
+}
+
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
@@ -2249,8 +2259,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  addFunctionNoCapture(F, 0);
-  addFunctionNoCapture(F, 1);
+  // A CUdeviceptr is passed as an integer, which cannot carry nocapture.
+  if (Ty->isPointerTy()) {
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
@@ -3731,6 +3744,65 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
       }
     }
   }
+  return {};
+}
+
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in) {
+#else
+llvm::Optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in) {
+#endif
+  // Driver API. The direction is baked into the name, and each entry point
+  // exists both with and without the "_v2" ABI suffix. CUdeviceptr arguments
+  // are plain integers rather than pointers.
+  struct DriverEntry {
+    const char *stem;
+    CudaMemSpace dst;
+    CudaMemSpace src;
+  };
+  static const DriverEntry DriverEntries[] = {
+      {"cuMemcpyHtoD", CudaMemSpace::Device, CudaMemSpace::Host},
+      {"cuMemcpyDtoH", CudaMemSpace::Host, CudaMemSpace::Device},
+      {"cuMemcpyDtoD", CudaMemSpace::Device, CudaMemSpace::Device},
+      // Unified-addressing copy: both sides are CUdeviceptr.
+      {"cuMemcpy", CudaMemSpace::Device, CudaMemSpace::Device},
+  };
+
+  for (auto &E : DriverEntries) {
+    for (bool async : {false, true}) {
+      for (bool v2 : {false, true}) {
+        // The unified-addressing cuMemcpy/cuMemcpyAsync have no _v2 form.
+        if (v2 && llvm::StringRef(E.stem) == "cuMemcpy")
+          continue;
+        std::string name =
+            (llvm::Twine(E.stem) + (async ? "Async" : "") + (v2 ? "_v2" : ""))
+                .str();
+        if (in != name)
+          continue;
+        return CudaMemTransferInfo{E.dst,
+                                   E.src,
+                                   /*kindIdx*/ -1,
+                                   async ? 3 : -1,
+                                   /*isRuntimeAPI*/ false,
+                                   v2};
+      }
+    }
+  }
+
+  // Runtime API. The direction is a runtime cudaMemcpyKind argument.
+  if (in == "cudaMemcpy")
+    return CudaMemTransferInfo{CudaMemSpace::FromKind, CudaMemSpace::FromKind,
+                               /*kindIdx*/ 3,
+                               /*streamIdx*/ -1,
+                               /*isRuntimeAPI*/ true,
+                               /*isV2*/ false};
+  if (in == "cudaMemcpyAsync")
+    return CudaMemTransferInfo{CudaMemSpace::FromKind, CudaMemSpace::FromKind,
+                               /*kindIdx*/ 3,
+                               /*streamIdx*/ 4,
+                               /*isRuntimeAPI*/ true,
+                               /*isV2*/ false};
+
   return {};
 }
 
