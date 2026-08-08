@@ -117,12 +117,25 @@ struct SelectOpFwdInterface
     if (gutils->isConstantInstruction(op))
       return success();
     // The same rule serves values and pointers: a value's tangent and a
-    // pointer's shadow both follow the choice the primal made, and
-    // invertPointerM hands back the appropriate null or primal for a
-    // constant branch.
+    // pointer's shadow both follow the choice the primal made. An active
+    // branch contributes its shadow; a constant immutable branch a zero. A
+    // constant mutable branch has no shadow of its own -- hand back the
+    // primal and warn, pending proper runtime activity handling.
+    auto operandTangent = [&](Value v) -> Value {
+      if (!gutils->isConstantValue(v))
+        return gutils->invertPointerM(v, builder);
+      auto iface =
+          dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()));
+      if (iface && !iface.isMutable())
+        return iface.createNullValue(builder, op->getLoc());
+      op->emitWarning()
+          << "constant mutable operand of an active select is passed "
+             "through as its own shadow pending runtime activity handling";
+      return gutils->getNewFromOriginal(v);
+    };
     Value cond = gutils->getNewFromOriginal(selectOp.getCondition());
-    Value dTrue = gutils->invertPointerM(selectOp.getTrueValue(), builder);
-    Value dFalse = gutils->invertPointerM(selectOp.getFalseValue(), builder);
+    Value dTrue = operandTangent(selectOp.getTrueValue());
+    Value dFalse = operandTangent(selectOp.getFalseValue());
     Value tangent =
         arith::SelectOp::create(builder, op->getLoc(), cond, dTrue, dFalse);
     gutils->setDiffe(selectOp.getResult(), tangent, builder);
