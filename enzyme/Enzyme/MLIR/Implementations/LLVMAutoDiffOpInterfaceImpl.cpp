@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/LLVMExt/LLVMExt.h"
-#include "Implementations/CallAutoDiffImplementations.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
