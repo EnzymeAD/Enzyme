@@ -10,6 +10,7 @@
 // ops.
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -21,6 +22,8 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #define DEBUG_TYPE "enzyme"
 
