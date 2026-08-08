@@ -15,6 +15,7 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -48,9 +49,15 @@ struct DifferentiatePass
       pm.getDependentDialects(registry);
     }
 
+    // llvm_ext is what a clone of a pointer is written in -- see
+    // PointerClonableTypeInterface -- so this pass builds ops of it and has to
+    // say so. In a pipeline that raised through llvm_ext it is already loaded,
+    // which is why only running this pass on its own ever noticed.
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
-                    mlir::memref::MemRefDialect, mlir::enzyme::EnzymeDialect>();
+                    mlir::memref::MemRefDialect, mlir::enzyme::EnzymeDialect,
+                    mlir::LLVM::LLVMDialect,
+                    mlir::enzyme::llvm_ext::LLVMExtDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
@@ -165,15 +172,16 @@ struct DifferentiatePass
     bool omp = false;
     size_t width = CI.getWidth();
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
-        /*addedType*/ nullptr, type_args, volatile_args,
+        /*addedType*/ nullptr, type_args, overwritten_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero());
     if (!newFunc)
@@ -331,16 +339,17 @@ struct DifferentiatePass
     bool freeMemory = true;
     size_t width = CI.getWidth();
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(
         fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
         freeMemory, CI.getAtomicAdd(), width,
-        /*addedType*/ nullptr, type_args, volatile_args,
+        /*addedType*/ nullptr, type_args, overwritten_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero(), markReadonly);
     if (!newFunc)

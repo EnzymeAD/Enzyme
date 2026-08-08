@@ -16,6 +16,7 @@
 #define ENZYMEMLIR_CORE_IMPL_H_
 
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -201,7 +202,61 @@ public:
                                    /*zero*/ true);
   }
 };
+
+// Differentiating a call is the same work whichever dialect spelled it:
+// find the callee, ask Logic for its derivative, and call that. What differs
+// is how the call names its callee and how a call to the derivative is
+// written, and both are already asked through interfaces.
+
+LogicalResult callForwardHandler(Operation *orig, OpBuilder &builder,
+                                 MGradientUtils *gutils);
+
+LogicalResult callReverseHandler(Operation *orig, OpBuilder &builder,
+                                 MGradientUtilsReverse *gutils,
+                                 SmallVector<Value> caches);
+
+SmallVector<Value> callCacheValues(Operation *orig,
+                                   MGradientUtilsReverse *gutils);
+
 } // namespace detail
+
+template <typename OpTy>
+class AutoDiffCallFwd
+    : public AutoDiffOpInterface::ExternalModel<AutoDiffCallFwd<OpTy>, OpTy> {
+public:
+  LogicalResult createForwardModeTangent(Operation *orig, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return detail::callForwardHandler(orig, builder, gutils);
+  }
+};
+
+template <typename OpTy>
+class AutoDiffCallRev
+    : public ReverseAutoDiffOpInterface::ExternalModel<AutoDiffCallRev<OpTy>,
+                                                       OpTy> {
+public:
+  LogicalResult createReverseModeAdjoint(Operation *orig, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return detail::callReverseHandler(orig, builder, gutils, caches);
+  }
+
+  SmallVector<Value> cacheValues(Operation *orig,
+                                 MGradientUtilsReverse *gutils) const {
+    return detail::callCacheValues(orig, gutils);
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
+// Registers the generic call handlers for the given op; the tablegen-emitted
+// registerInterfaces calls this for each `def : CallOp<...>`.
+template <typename OpTy>
+void registerAutoDiffUsingCallInterface(MLIRContext &context) {
+  OpTy::template attachInterface<AutoDiffCallFwd<OpTy>>(context);
+  OpTy::template attachInterface<AutoDiffCallRev<OpTy>>(context);
+}
 
 // Registers AutoDiffUsingControlFlow for the given op.
 template <typename OpTy>

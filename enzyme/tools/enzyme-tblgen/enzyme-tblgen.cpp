@@ -2792,6 +2792,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     const auto &allocpatterns =
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
+    const auto &callpatterns = recordKeeper.getAllDerivedDefinitions("CallOp");
+
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (auto [pattern, act] : zip(patterns, hasActivity)) {
       auto opName = pattern->getValueAsString("opName");
@@ -2857,6 +2859,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingAllocationInterface<" << dialect
          << "::" << opName << ">(*context);\n";
+    }
+    for (const Record *pattern : callpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingCallInterface<" << dialect << "::" << opName
+         << ">(*context);\n";
     }
     os << "}\n";
   }

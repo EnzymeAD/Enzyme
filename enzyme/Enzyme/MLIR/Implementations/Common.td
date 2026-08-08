@@ -51,6 +51,11 @@ class ReturnOp<string dialect_, string opName_> {
   string opName = opName_;
 }
 
+class CallOp<string dialect_, string opName_> {
+  string dialect = dialect_;
+  string opName = opName_;
+}
+
 class BranchOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;

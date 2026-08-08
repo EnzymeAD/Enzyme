@@ -508,3 +508,307 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
   return success();
 }
+
+namespace edetail = mlir::enzyme::detail;
+
+// The callee of `op`, or null where it is not a direct call to something this
+// can see the body of.
+static FunctionOpInterface getDirectCallee(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return nullptr;
+  auto sym = dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee());
+  if (!sym)
+    return nullptr;
+  return dyn_cast_or_null<FunctionOpInterface>(
+      SymbolTable::lookupNearestSymbolFrom(op, sym));
+}
+
+LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
+                                          MGradientUtils *gutils) {
+  DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  auto fn = getDirectCallee(orig);
+  if (!fn) {
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
+  }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
+  }
+
+  auto narg = orig->getNumOperands();
+  auto nret = orig->getNumResults();
+
+  std::vector<DIFFE_TYPE> RetActivity;
+  RetActivity.reserve(nret);
+  for (auto res : orig->getResults()) {
+    RetActivity.push_back(gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+                                                       : DIFFE_TYPE::DUP_ARG);
+  }
+
+  std::vector<DIFFE_TYPE> ArgActivity;
+  ArgActivity.reserve(narg);
+  for (auto arg : orig->getOperands()) {
+    ArgActivity.push_back(gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
+                                                       : DIFFE_TYPE::DUP_ARG);
+  }
+
+  std::vector<bool> returnPrimal(nret, true);
+  std::vector<bool> returnShadow(nret, false);
+
+  auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+  bool freeMemory = true;
+  size_t width = gutils->width;
+
+  std::vector<bool> overwritten_args(narg, false);
+
+  auto forwardFn = gutils->Logic.CreateForwardDiff(
+      fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, mode, freeMemory,
+      width,
+      /* addedType */ nullptr, type_args, overwritten_args,
+      /* augmented */ nullptr, gutils->omp, gutils->postpasses,
+      gutils->verifyPostPasses, gutils->strongZero);
+
+  SmallVector<Value> fwdArguments;
+
+  for (auto &&[arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    fwdArguments.push_back(gutils->getNewFromOriginal(arg));
+    if (act == DIFFE_TYPE::DUP_ARG)
+      fwdArguments.push_back(gutils->invertPointerM(arg, builder));
+  }
+
+  auto *fwdCallOp = cast<AutoDiffFunctionInterface>(forwardFn.getOperation())
+                        .createCall(builder, orig->getLoc(), fwdArguments);
+
+  SmallVector<Value> primals;
+  primals.reserve(nret);
+
+  int fwdIndex = 0;
+  for (auto &&[ret, act] : llvm::zip_equal(orig->getResults(), RetActivity)) {
+    auto fwdRet = fwdCallOp->getResult(fwdIndex);
+    primals.push_back(fwdRet);
+
+    fwdIndex++;
+
+    if (act == DIFFE_TYPE::DUP_ARG) {
+      gutils->setDiffe(ret, fwdCallOp->getResult(fwdIndex), builder);
+      fwdIndex++;
+    }
+  }
+
+  auto newOp = gutils->getNewFromOriginal(orig);
+  gutils->replaceOrigOpWith(orig, primals);
+  gutils->erase(newOp);
+
+  return success();
+}
+
+// The reverse call runs long after the forward one, against whatever memory
+// looks like by then -- even argument memory may have been overwritten in
+// between, and deciding which of it was is the overwritten-args analysis
+// Enzyme's LLVM side has and this side does not yet. Until it does, only a
+// callee that touches no memory at all is differentiable here: readnone, or
+// every op in its body free of memory effects.
+// Whether a memory-effects attribute -- later LLVM's spelling of
+// readnone -- rules out every kind of access.
+static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
+  return me && me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getOther() == LLVM::ModRefInfo::NoModRef &&
+         me.getErrnoMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem0() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem1() == LLVM::ModRefInfo::NoModRef;
+}
+
+static bool splitReverseMemoryOkImpl(Operation *orig, FunctionOpInterface fn,
+                                     SmallPtrSetImpl<Operation *> &visited) {
+  if (auto call = dyn_cast<LLVM::CallOp>(orig))
+    if (memoryEffectsNone(call.getMemoryEffectsAttr()))
+      return true;
+  if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
+    if (memoryEffectsNone(llvmFn.getMemoryEffectsAttr()))
+      return true;
+    if (auto pass = llvmFn->getAttrOfType<ArrayAttr>("passthrough"))
+      for (Attribute a : pass)
+        if (auto s = dyn_cast<StringAttr>(a))
+          if (s.getValue() == "readnone")
+            return true;
+  }
+  if (fn.getFunctionBody().empty())
+    return false;
+  // A cycle contributes no effects beyond those already under check.
+  if (!visited.insert(fn.getOperation()).second)
+    return true;
+  WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
+    if (isMemoryEffectFree(op))
+      return WalkResult::advance();
+    // A call op answers conservatively for itself -- its effects are its
+    // callee's, so ask the callee.
+    if (auto callee = getDirectCallee(op))
+      if (splitReverseMemoryOkImpl(op, callee, visited))
+        return WalkResult::advance();
+    return WalkResult::interrupt();
+  });
+  return !res.wasInterrupted();
+}
+
+static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
+  SmallPtrSet<Operation *, 8> visited;
+  return splitReverseMemoryOkImpl(orig, fn, visited);
+}
+
+static LogicalResult checkSplitReverseMemory(Operation *orig,
+                                             FunctionOpInterface fn) {
+  if (splitReverseMemoryOk(orig, fn))
+    return success();
+  return orig->emitError()
+         << "cannot differentiate a call in reverse mode whose callee "
+            "touches memory; caching of overwritten arguments is not yet "
+            "implemented here: "
+         << fn.getNameAttr() << "\n";
+}
+
+LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
+                                          MGradientUtilsReverse *gutils,
+                                          SmallVector<Value> caches) {
+  DerivativeMode mode = DerivativeMode::ReverseModeGradient;
+
+  auto fn = getDirectCallee(orig);
+  if (!fn) {
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
+  }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
+  }
+  if (failed(checkSplitReverseMemory(orig, fn)))
+    return failure();
+
+  auto narg = orig->getNumOperands();
+  auto nret = orig->getNumResults();
+
+  std::vector<DIFFE_TYPE> RetActivity;
+  for (auto res : orig->getResults()) {
+    RetActivity.push_back(
+        gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+        : cast<AutoDiffTypeInterface>(res.getType()).isMutable()
+            ? DIFFE_TYPE::DUP_ARG
+            : DIFFE_TYPE::OUT_DIFF);
+  }
+
+  std::vector<DIFFE_TYPE> ArgActivity;
+  for (auto arg : orig->getOperands()) {
+    ArgActivity.push_back(
+        gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
+        : cast<AutoDiffTypeInterface>(arg.getType()).isMutable()
+            ? DIFFE_TYPE::DUP_ARG
+            : DIFFE_TYPE::OUT_DIFF);
+  }
+
+  if (llvm::any_of(RetActivity,
+                   [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
+    return orig->emitError()
+           << "could not emit adjoint with mutable return types in: " << *orig
+           << "\n";
+  }
+
+  std::vector<bool> overwritten_args(narg, true);
+  std::vector<bool> returnShadow(nret, false);
+  std::vector<bool> returnPrimal(nret, false);
+
+  auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+  bool freeMemory = true;
+  size_t width = gutils->width;
+
+  auto revFn = gutils->Logic.CreateReverseDiff(
+      fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
+      mode, freeMemory, gutils->AtomicAdd, width, /*addedType*/ nullptr,
+      type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
+      gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
+      /*markReadonly=*/false);
+
+  SmallVector<Value> revArguments;
+
+  size_t cacheIdx = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+    if (act == DIFFE_TYPE::DUP_ARG)
+      revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+  }
+  assert(cacheIdx == caches.size());
+
+  for (auto result : orig->getResults()) {
+    if (gutils->isConstantValue(result))
+      continue;
+    revArguments.push_back(gutils->diffe(result, builder));
+  }
+
+  auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
+                        .createCall(builder, orig->getLoc(), revArguments);
+
+  int revIndex = 0, fwdIndex = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    fwdIndex++;
+
+    if (gutils->isConstantValue(arg))
+      continue;
+
+    if (act == DIFFE_TYPE::DUP_ARG) {
+      cast<ClonableTypeInterface>(arg.getType())
+          .freeClonedValue(builder, revArguments[fwdIndex - 1]);
+      fwdIndex++;
+    } else {
+      auto diffe = revCallOp->getResult(revIndex);
+      gutils->addToDiffe(arg, diffe, builder);
+      revIndex++;
+    }
+  }
+
+  return success();
+}
+
+SmallVector<Value> edetail::callCacheValues(Operation *orig,
+                                            MGradientUtilsReverse *gutils) {
+  SmallVector<Value> cachedArguments;
+
+  // A callee the adjoint will refuse gets nothing cached: the caching of
+  // pointer arguments would already need the sizes and copies that the
+  // refusal is about.
+  auto fn = getDirectCallee(orig);
+  if (!fn || fn.getFunctionBody().empty() || !splitReverseMemoryOk(orig, fn))
+    return cachedArguments;
+
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  OpBuilder cacheBuilder(newOp);
+
+  for (auto arg : orig->getOperands()) {
+    Value toCache = gutils->getNewFromOriginal(arg);
+    if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
+      toCache = iface.cloneValue(cacheBuilder, toCache);
+    }
+    Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
+    cachedArguments.push_back(cache);
+    // A mutable shadow is a value of the forward pass -- a shadow of a
+    // pointer derived inside a loop body, say -- and the reverse pass
+    // cannot always rebuild it. Cache it beside its primal; the shadow
+    // buffer itself is shared, so it is the pointer that is put by, not a
+    // copy. (Groundwork: a memory-touching callee is refused until
+    // overwritten-args support lands, so this does not fire yet.)
+    if (!gutils->isConstantValue(arg) &&
+        cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      Value shadow = gutils->invertPointerM(arg, cacheBuilder);
+      cachedArguments.push_back(gutils->initAndPushCache(shadow, cacheBuilder));
+    }
+  }
+
+  return cachedArguments;
+}

@@ -227,7 +227,7 @@ public:
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
-                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
+                    MFnTypeInfo type_args, std::vector<bool> overwritten_args,
                     void *augmented, bool omp, llvm::StringRef postpasses,
                     bool verifyPostPasses, bool strongZero);
 
@@ -238,8 +238,8 @@ public:
                     std::vector<bool> returnShadows, DerivativeMode mode,
                     bool freeMemory, bool atomicAdd, size_t width,
                     mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented, bool omp,
-                    llvm::StringRef postpasses, bool verifyPostPasses,
+                    std::vector<bool> overwritten_args, void *augmented,
+                    bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
                     bool strongZero, bool markReadonly);
 
   void

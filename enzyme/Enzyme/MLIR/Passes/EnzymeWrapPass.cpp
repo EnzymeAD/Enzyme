@@ -128,10 +128,11 @@ struct DifferentiateWrapperPass
     bool freeMemory = true;
     size_t width = 1;
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc;
@@ -139,7 +140,7 @@ struct DifferentiateWrapperPass
       newFunc = Logic.CreateForwardDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
           width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
       if (!newFunc)
         return signalPassFailure();
@@ -147,7 +148,7 @@ struct DifferentiateWrapperPass
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, atomicAdd, width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
           markReadonly);
     }
