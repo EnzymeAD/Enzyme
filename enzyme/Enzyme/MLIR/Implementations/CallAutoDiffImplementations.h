@@ -81,6 +81,14 @@ public:
                           MGradientUtilsReverse *gutils) const {}
 };
 
+// Registers the generic call handlers for the given op; the tablegen-emitted
+// registerInterfaces calls this for each `def : CallOp<...>`.
+template <typename OpTy>
+void registerAutoDiffUsingCallInterface(MLIRContext &context) {
+  OpTy::template attachInterface<AutoDiffCallFwd<OpTy>>(context);
+  OpTy::template attachInterface<AutoDiffCallRev<OpTy>>(context);
+}
+
 } // namespace enzyme
 } // namespace mlir
 

@@ -43,3 +43,4 @@ def : MLIRDerivative<"LLVM", "SelectOp", (Op $pred, $x, $y),
                     ]
                   >;
 
+def : CallOp<"LLVM", "CallOp">;

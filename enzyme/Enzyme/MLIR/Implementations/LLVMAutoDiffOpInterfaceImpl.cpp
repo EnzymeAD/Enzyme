@@ -807,8 +807,6 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
-    LLVM::CallOp::attachInterface<AutoDiffCallFwd<LLVM::CallOp>>(*context);
-    LLVM::CallOp::attachInterface<AutoDiffCallRev<LLVM::CallOp>>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
