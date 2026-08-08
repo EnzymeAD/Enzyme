@@ -1,17 +1,16 @@
 // RUN: %eopt --enzyme --verify-diagnostics %s
 
-// A callee that reads a global sees whatever is there by reverse time; it
-// is refused like any other memory-touching callee.
+// The reverse call runs long after the forward one, and even argument memory
+// may have been overwritten in between; deciding which of it was is the
+// overwritten-args analysis Enzyme's LLVM side has and this side does not
+// yet. Until then a callee that touches memory -- its own argument here --
+// is refused.
 
 module {
-  llvm.mlir.global internal @counter(0.000000e+00 : f64) : f64
   llvm.func @scale(%p: !llvm.ptr, %f: f64) {
-    %g = llvm.mlir.addressof @counter : !llvm.ptr
-    %c = llvm.load %g : !llvm.ptr -> f64
     %v = llvm.load %p : !llvm.ptr -> f64
     %s = arith.mulf %v, %f : f64
-    %t = arith.addf %s, %c : f64
-    llvm.store %t, %p : f64, !llvm.ptr
+    llvm.store %s, %p : f64, !llvm.ptr
     llvm.return
   }
   llvm.func @f(%x: !llvm.ptr, %out: !llvm.ptr) {

@@ -602,29 +602,12 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   return success();
 }
 
-// Whether `ptr` is derived from an argument of `fn` through address
-// arithmetic alone.
-static bool tracesToArgument(Value ptr, FunctionOpInterface fn) {
-  while (true) {
-    if (auto ba = dyn_cast<BlockArgument>(ptr))
-      return ba.getOwner() == &fn.getFunctionBody().front();
-    Operation *def = ptr.getDefiningOp();
-    if (!def)
-      return false;
-    if (isa<LLVM::GEPOp, LLVM::BitcastOp, LLVM::AddrSpaceCastOp>(def)) {
-      ptr = def->getOperand(0);
-      continue;
-    }
-    return false;
-  }
-}
-
 // The reverse call runs long after the forward one, against whatever memory
-// looks like by then; the only state carried across is the cached argument
-// values and shadows. A callee is therefore only differentiable here when
-// the memory it touches is exactly that: it is readnone, or every op in its
-// body is free of memory effects, or its loads and stores go through
-// pointers derived from its own arguments.
+// looks like by then -- even argument memory may have been overwritten in
+// between, and deciding which of it was is the overwritten-args analysis
+// Enzyme's LLVM side has and this side does not yet. Until it does, only a
+// callee that touches no memory at all is differentiable here: readnone, or
+// every op in its body free of memory effects.
 static LogicalResult checkSplitReverseMemory(Operation *orig,
                                              FunctionOpInterface fn) {
   if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
@@ -642,19 +625,13 @@ static LogicalResult checkSplitReverseMemory(Operation *orig,
   WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
     if (isMemoryEffectFree(op))
       return WalkResult::advance();
-    if (auto load = dyn_cast<LLVM::LoadOp>(op))
-      if (tracesToArgument(load.getAddr(), fn))
-        return WalkResult::advance();
-    if (auto store = dyn_cast<LLVM::StoreOp>(op))
-      if (tracesToArgument(store.getAddr(), fn))
-        return WalkResult::advance();
     return WalkResult::interrupt();
   });
   if (res.wasInterrupted())
     return orig->emitError()
            << "cannot differentiate a call in reverse mode whose callee "
-              "touches memory beyond its own arguments; no state is carried "
-              "between the forward and reverse passes: "
+              "touches memory; caching of overwritten arguments is not yet "
+              "implemented here: "
            << fn.getNameAttr() << "\n";
   return success();
 }
@@ -774,7 +751,8 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
     // pointer derived inside a loop body, say -- and the reverse pass
     // cannot always rebuild it. Cache it beside its primal; the shadow
     // buffer itself is shared, so it is the pointer that is put by, not a
-    // copy.
+    // copy. (Groundwork: a memory-touching callee is refused until
+    // overwritten-args support lands, so this does not fire yet.)
     if (!gutils->isConstantValue(arg) &&
         cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
       Value shadow = gutils->invertPointerM(arg, cacheBuilder);
