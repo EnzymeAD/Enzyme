@@ -208,10 +208,6 @@ public:
 // is how the call names its callee and how a call to the derivative is
 // written, and both are already asked through interfaces.
 
-// The callee of `op`, or null where it is not a direct call to something this
-// can see the body of.
-FunctionOpInterface getDirectCallee(Operation *op);
-
 LogicalResult callForwardHandler(Operation *orig, OpBuilder &builder,
                                  MGradientUtils *gutils);
 

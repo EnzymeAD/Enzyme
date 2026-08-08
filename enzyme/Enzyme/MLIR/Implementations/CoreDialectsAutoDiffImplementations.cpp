@@ -511,7 +511,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
-FunctionOpInterface edetail::getDirectCallee(Operation *op) {
+// The callee of `op`, or null where it is not a direct call to something this
+// can see the body of.
+static FunctionOpInterface getDirectCallee(Operation *op) {
   auto callOp = dyn_cast<CallOpInterface>(op);
   if (!callOp)
     return nullptr;
@@ -528,8 +530,8 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
 
   auto fn = getDirectCallee(orig);
   if (!fn) {
-    orig->emitError() << "could not find the callee of: " << *orig << "\n";
-    return failure();
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
   }
 
   auto narg = orig->getNumOperands();
@@ -607,8 +609,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
 
   auto fn = getDirectCallee(orig);
   if (!fn) {
-    orig->emitError() << "could not find the callee of: " << *orig << "\n";
-    return failure();
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
   }
 
   auto narg = orig->getNumOperands();
@@ -634,9 +636,9 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
 
   if (llvm::any_of(RetActivity,
                    [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
-    orig->emitError() << "could not emit adjoint with mutable return types in: "
-                      << *orig << "\n";
-    return failure();
+    return orig->emitError()
+           << "could not emit adjoint with mutable return types in: " << *orig
+           << "\n";
   }
 
   std::vector<bool> overwritten_args(narg, true);
