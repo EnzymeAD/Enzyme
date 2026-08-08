@@ -27,6 +27,12 @@ public:
   bool isInactiveValue(Value value);
 
 private:
+  // The answers are fixed once the analysis is constructed, and the queries
+  // walk points-to closures: differentiation asks about every value, often
+  // repeatedly, so cache.
+  DenseMap<Value, bool> inactiveValueCache;
+  DenseMap<Operation *, bool> inactiveOpCache;
+
   FunctionOpInterface funcOp;
   DataFlowSolver &solver;
   enzyme::PointsToSets p2sets;

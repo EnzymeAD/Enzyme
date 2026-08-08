@@ -274,13 +274,17 @@ enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
   StringRef pointerSummaryName = EnzymeDialect::getPointerSummaryAttrName();
   for (CallableOpInterface node : sorted) {
     // A serialized summary lets CALLERS of this function reuse the analysis,
-    // but the function being differentiated needs its own per-value maps
-    // regardless: nested differentiation reaches here with funcOp already
-    // summarized by an enclosing analysis, and skipping it left every value
-    // looking inactive -- the second derivative of anything was zero.
+    // but the function being differentiated needs its own per-value solver
+    // states regardless: nested differentiation reaches here with funcOp
+    // already summarized by an enclosing analysis, and skipping it left
+    // every value looking inactive -- the second derivative of anything was
+    // zero. Strip the stale self-summary first so the fresh analysis does
+    // not read it as callee information about itself.
     if (!node.getCallableRegion() ||
         (node->hasAttr(pointerSummaryName) && node.getOperation() != funcOp))
       continue;
+    if (node.getOperation() == funcOp && node->hasAttr(pointerSummaryName))
+      removeSummaries(node);
 
     auto childFunc = cast<FunctionOpInterface>(node.getOperation());
     if (failed(runActivityAnnotationsForFunction(childFunc, solver))) {
@@ -348,6 +352,9 @@ void enzyme::DataFlowActivityAnalyzer::joinActiveValueState(
 std::optional<Value> getStored(Operation *op);
 
 bool enzyme::DataFlowActivityAnalyzer::isInactiveOperation(Operation *op) {
+  auto cached = inactiveOpCache.find(op);
+  if (cached != inactiveOpCache.end())
+    return cached->second;
   // An operation is active if it propagates active data.
   ForwardOriginsLattice sources(nullptr);
   BackwardOriginsLattice sinks(nullptr);
@@ -406,7 +413,9 @@ bool enzyme::DataFlowActivityAnalyzer::isInactiveOperation(Operation *op) {
     });
   };
   bool activeOp = latticeIsActive(sources) && latticeIsActive(sinks);
-  return !activeOp;
+  bool result = !activeOp;
+  inactiveOpCache[op] = result;
+  return result;
 }
 
 bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
@@ -415,6 +424,10 @@ bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
     if (blockArg.getOwner() == &funcOp.getFunctionBody().front())
       return argActivity[blockArg.getArgNumber()] == DIFFE_TYPE::CONSTANT;
   }
+
+  auto cached = inactiveValueCache.find(value);
+  if (cached != inactiveValueCache.end())
+    return cached->second;
 
   ForwardOriginsLattice sources(nullptr);
   BackwardOriginsLattice sinks(nullptr);
@@ -442,7 +455,9 @@ bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
     });
   }
   bool activeVal = activeSource && activeSink;
-  return !activeVal;
+  bool result = !activeVal;
+  inactiveValueCache[value] = result;
+  return result;
 }
 
 static Operation *getFunctionFromCall(CallOpInterface iface) {
