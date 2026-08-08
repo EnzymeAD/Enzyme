@@ -619,32 +619,36 @@ static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
          me.getTargetMem1() == LLVM::ModRefInfo::NoModRef;
 }
 
-static LogicalResult checkSplitReverseMemory(Operation *orig,
-                                             FunctionOpInterface fn) {
+static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
   if (auto call = dyn_cast<LLVM::CallOp>(orig))
     if (memoryEffectsNone(call.getMemoryEffectsAttr()))
-      return success();
+      return true;
   if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
     if (memoryEffectsNone(llvmFn.getMemoryEffectsAttr()))
-      return success();
+      return true;
     if (auto pass = llvmFn->getAttrOfType<ArrayAttr>("passthrough"))
       for (Attribute a : pass)
         if (auto s = dyn_cast<StringAttr>(a))
           if (s.getValue() == "readnone")
-            return success();
+            return true;
   }
   WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
     if (isMemoryEffectFree(op))
       return WalkResult::advance();
     return WalkResult::interrupt();
   });
-  if (res.wasInterrupted())
-    return orig->emitError()
-           << "cannot differentiate a call in reverse mode whose callee "
-              "touches memory; caching of overwritten arguments is not yet "
-              "implemented here: "
-           << fn.getNameAttr() << "\n";
-  return success();
+  return !res.wasInterrupted();
+}
+
+static LogicalResult checkSplitReverseMemory(Operation *orig,
+                                             FunctionOpInterface fn) {
+  if (splitReverseMemoryOk(orig, fn))
+    return success();
+  return orig->emitError()
+         << "cannot differentiate a call in reverse mode whose callee "
+            "touches memory; caching of overwritten arguments is not yet "
+            "implemented here: "
+         << fn.getNameAttr() << "\n";
 }
 
 LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
@@ -747,6 +751,13 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
 SmallVector<Value> edetail::callCacheValues(Operation *orig,
                                             MGradientUtilsReverse *gutils) {
   SmallVector<Value> cachedArguments;
+
+  // A callee the adjoint will refuse gets nothing cached: the caching of
+  // pointer arguments would already need the sizes and copies that the
+  // refusal is about.
+  auto fn = getDirectCallee(orig);
+  if (!fn || fn.getFunctionBody().empty() || !splitReverseMemoryOk(orig, fn))
+    return cachedArguments;
 
   Operation *newOp = gutils->getNewFromOriginal(orig);
   OpBuilder cacheBuilder(newOp);
