@@ -41,6 +41,12 @@ public:
 
     Operation *callee = symbolTable.lookup(callOp.getCallee());
     auto fn = cast<FunctionOpInterface>(callee);
+    if (fn.getFunctionBody().empty()) {
+      orig->emitError() << "cannot differentiate a call to a function without "
+                           "a body and without a registered derivative: "
+                        << fn.getNameAttr() << "\n";
+      return failure();
+    }
 
     auto narg = orig->getNumOperands();
     auto nret = orig->getNumResults();
@@ -75,6 +81,8 @@ public:
         /* addedType */ nullptr, type_args, volatile_args,
         /* augmented */ nullptr, gutils->omp, gutils->postpasses,
         gutils->verifyPostPasses, gutils->strongZero);
+    if (!forwardFn)
+      return failure();
 
     SmallVector<Value> fwdArguments;
 
@@ -129,6 +137,12 @@ public:
 
     Operation *callee = symbolTable.lookup(callOp.getCallee());
     auto fn = cast<FunctionOpInterface>(callee);
+    if (fn.getFunctionBody().empty()) {
+      orig->emitError() << "cannot differentiate a call to a function without "
+                           "a body and without a registered derivative: "
+                        << fn.getNameAttr() << "\n";
+      return failure();
+    }
 
     auto narg = orig->getNumOperands();
     auto nret = orig->getNumResults();
@@ -174,6 +188,8 @@ public:
         type_args, volatile_args, /*augmented*/ nullptr, gutils->omp,
         gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
         /*markReadonly=*/false);
+    if (!revFn)
+      return failure();
 
     SmallVector<Value> revArguments;
 

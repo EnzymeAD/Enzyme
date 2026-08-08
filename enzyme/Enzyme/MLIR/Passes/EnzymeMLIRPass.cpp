@@ -178,6 +178,8 @@ struct DifferentiatePass
         CI.getStrongZero());
     if (!newFunc)
       return failure();
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     // Ask the function how it is called, as the reverse handler does: what is
@@ -343,6 +345,8 @@ struct DifferentiatePass
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero(), markReadonly);
+    if (!newFunc)
+      return failure();
     if (!newFunc)
       return failure();
 

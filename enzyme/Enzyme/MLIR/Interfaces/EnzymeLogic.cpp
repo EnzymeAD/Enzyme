@@ -88,8 +88,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<bool> volatile_args, void *augmented, bool omp,
     llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero) {
   if (fn.getFunctionBody().empty()) {
-    llvm::errs() << fn << "\n";
-    llvm_unreachable("Differentiating empty function");
+    fn.emitError() << "cannot differentiate a function without a body: "
+                   << fn.getNameAttr() << "\n";
+    return nullptr;
   }
   assert(fn.getFunctionBody().front().getNumArguments() == ArgActivity.size());
   assert(fn.getFunctionBody().front().getNumArguments() ==
