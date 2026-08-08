@@ -533,6 +533,12 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
     return orig->emitError()
            << "could not find the callee of: " << *orig << "\n";
   }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
+  }
 
   auto narg = orig->getNumOperands();
   auto nret = orig->getNumResults();
@@ -660,6 +666,12 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
   if (!fn) {
     return orig->emitError()
            << "could not find the callee of: " << *orig << "\n";
+  }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
   }
   if (failed(checkSplitReverseMemory(orig, fn)))
     return failure();
