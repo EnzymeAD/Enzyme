@@ -172,15 +172,15 @@ struct DifferentiatePass
     bool omp = false;
     size_t width = CI.getWidth();
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
-        /*addedType*/ nullptr, type_args, volatile_args,
+        /*addedType*/ nullptr, type_args, overwritten_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero());
     if (!newFunc)
@@ -338,16 +338,16 @@ struct DifferentiatePass
     bool freeMemory = true;
     size_t width = CI.getWidth();
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(
         fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
         freeMemory, CI.getAtomicAdd(), width,
-        /*addedType*/ nullptr, type_args, volatile_args,
+        /*addedType*/ nullptr, type_args, overwritten_args,
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero(), markReadonly);
     if (!newFunc)

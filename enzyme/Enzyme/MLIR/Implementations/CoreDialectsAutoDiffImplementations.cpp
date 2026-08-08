@@ -522,13 +522,6 @@ FunctionOpInterface edetail::getDirectCallee(Operation *op) {
       SymbolTable::lookupNearestSymbolFrom(op, sym));
 }
 
-Operation *edetail::createCallToFunction(FunctionOpInterface fn,
-                                         OpBuilder &builder, Location loc,
-                                         ValueRange args) {
-  return cast<AutoDiffFunctionInterface>(fn.getOperation())
-      .createCall(builder, loc, args);
-}
-
 LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
@@ -564,12 +557,12 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   bool freeMemory = true;
   size_t width = gutils->width;
 
-  std::vector<bool> volatile_args(narg, false);
+  std::vector<bool> overwritten_args(narg, false);
 
   auto forwardFn = gutils->Logic.CreateForwardDiff(
       fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, mode, freeMemory,
       width,
-      /* addedType */ nullptr, type_args, volatile_args,
+      /* addedType */ nullptr, type_args, overwritten_args,
       /* augmented */ nullptr, gutils->omp, gutils->postpasses,
       gutils->verifyPostPasses, gutils->strongZero);
 
@@ -581,8 +574,8 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       fwdArguments.push_back(gutils->invertPointerM(arg, builder));
   }
 
-  auto *fwdCallOp =
-      createCallToFunction(forwardFn, builder, orig->getLoc(), fwdArguments);
+  auto *fwdCallOp = cast<AutoDiffFunctionInterface>(forwardFn.getOperation())
+                        .createCall(builder, orig->getLoc(), fwdArguments);
 
   SmallVector<Value> primals;
   primals.reserve(nret);
@@ -646,7 +639,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     return failure();
   }
 
-  std::vector<bool> volatile_args(narg, true);
+  std::vector<bool> overwritten_args(narg, true);
   std::vector<bool> returnShadow(nret, false);
   std::vector<bool> returnPrimal(nret, false);
 
@@ -658,7 +651,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
   auto revFn = gutils->Logic.CreateReverseDiff(
       fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
       mode, freeMemory, gutils->AtomicAdd, width, /*addedType*/ nullptr,
-      type_args, volatile_args, /*augmented*/ nullptr, gutils->omp,
+      type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
       gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
       /*markReadonly=*/false);
 
@@ -677,8 +670,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     revArguments.push_back(gutils->diffe(result, builder));
   }
 
-  auto *revCallOp =
-      createCallToFunction(revFn, builder, orig->getLoc(), revArguments);
+  auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
+                        .createCall(builder, orig->getLoc(), revArguments);
 
   int revIndex = 0, fwdIndex = 0;
   for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {

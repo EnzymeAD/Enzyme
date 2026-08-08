@@ -212,10 +212,6 @@ public:
 // can see the body of.
 FunctionOpInterface getDirectCallee(Operation *op);
 
-// Write a call to `fn`, in whatever dialect `fn` is a function of.
-Operation *createCallToFunction(FunctionOpInterface fn, OpBuilder &builder,
-                                Location loc, ValueRange args);
-
 LogicalResult callForwardHandler(Operation *orig, OpBuilder &builder,
                                  MGradientUtils *gutils);
 

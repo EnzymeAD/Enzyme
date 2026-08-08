@@ -196,7 +196,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
     mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented, bool omp,
+    std::vector<bool> overwritten_args, void *augmented, bool omp,
     llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
     bool markReadonly) {
 
@@ -216,7 +216,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           static_cast<unsigned>(width),
                           addedType,
                           type_args,
-                          volatile_args,
+                          overwritten_args,
                           omp};
 
   {
