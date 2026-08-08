@@ -608,14 +608,25 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
 // Enzyme's LLVM side has and this side does not yet. Until it does, only a
 // callee that touches no memory at all is differentiable here: readnone, or
 // every op in its body free of memory effects.
+// Whether a memory-effects attribute -- later LLVM's spelling of
+// readnone -- rules out every kind of access.
+static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
+  return me && me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getOther() == LLVM::ModRefInfo::NoModRef &&
+         me.getErrnoMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem0() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem1() == LLVM::ModRefInfo::NoModRef;
+}
+
 static LogicalResult checkSplitReverseMemory(Operation *orig,
                                              FunctionOpInterface fn) {
+  if (auto call = dyn_cast<LLVM::CallOp>(orig))
+    if (memoryEffectsNone(call.getMemoryEffectsAttr()))
+      return success();
   if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
-    if (auto me = llvmFn.getMemoryEffectsAttr())
-      if (me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
-          me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
-          me.getOther() == LLVM::ModRefInfo::NoModRef)
-        return success();
+    if (memoryEffectsNone(llvmFn.getMemoryEffectsAttr()))
+      return success();
     if (auto pass = llvmFn->getAttrOfType<ArrayAttr>("passthrough"))
       for (Attribute a : pass)
         if (auto s = dyn_cast<StringAttr>(a))
