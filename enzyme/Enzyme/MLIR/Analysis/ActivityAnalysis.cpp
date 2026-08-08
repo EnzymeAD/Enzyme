@@ -273,7 +273,13 @@ enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
 
   StringRef pointerSummaryName = EnzymeDialect::getPointerSummaryAttrName();
   for (CallableOpInterface node : sorted) {
-    if (!node.getCallableRegion() || node->hasAttr(pointerSummaryName))
+    // A serialized summary lets CALLERS of this function reuse the analysis,
+    // but the function being differentiated needs its own per-value maps
+    // regardless: nested differentiation reaches here with funcOp already
+    // summarized by an enclosing analysis, and skipping it left every value
+    // looking inactive -- the second derivative of anything was zero.
+    if (!node.getCallableRegion() ||
+        (node->hasAttr(pointerSummaryName) && node.getOperation() != funcOp))
       continue;
 
     auto childFunc = cast<FunctionOpInterface>(node.getOperation());
