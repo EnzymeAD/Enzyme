@@ -659,12 +659,13 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
 
   SmallVector<Value> revArguments;
 
-  for (auto [arg, act, cache] :
-       llvm::zip_equal(orig->getOperands(), ArgActivity, caches)) {
-    revArguments.push_back(gutils->popCache(cache, builder));
+  size_t cacheIdx = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
     if (act == DIFFE_TYPE::DUP_ARG)
-      revArguments.push_back(gutils->invertPointerM(arg, builder));
+      revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
   }
+  assert(cacheIdx == caches.size());
 
   for (auto result : orig->getResults()) {
     if (gutils->isConstantValue(result))
@@ -710,6 +711,16 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
     }
     Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
     cachedArguments.push_back(cache);
+    // A mutable shadow is a value of the forward pass -- a shadow of a
+    // pointer derived inside a loop body, say -- and the reverse pass
+    // cannot always rebuild it. Cache it beside its primal; the shadow
+    // buffer itself is shared, so it is the pointer that is put by, not a
+    // copy.
+    if (!gutils->isConstantValue(arg) &&
+        cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      Value shadow = gutils->invertPointerM(arg, cacheBuilder);
+      cachedArguments.push_back(gutils->initAndPushCache(shadow, cacheBuilder));
+    }
   }
 
   return cachedArguments;
