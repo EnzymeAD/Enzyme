@@ -2195,6 +2195,16 @@ Function *getOrInsertDifferentialFloatMemmove(
                                             atomic);
 }
 
+FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
+                                         StringRef callee, FunctionType *FT) {
+  auto res = M.getOrInsertFunction(
+      getRenamedPerCallingConv(templateFn->getName(), callee), FT);
+  if (auto F = dyn_cast<Function>(res.getCallee()))
+    if (!F->hasFnAttribute("enzyme_math"))
+      F->addFnAttr("enzyme_math", callee);
+  return res;
+}
+
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
@@ -2249,8 +2259,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  addFunctionNoCapture(F, 0);
-  addFunctionNoCapture(F, 1);
+  // A CUdeviceptr is passed as an integer, which cannot carry nocapture.
+  if (Ty->isPointerTy()) {
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
@@ -3734,6 +3747,65 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   return {};
 }
 
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in) {
+#else
+llvm::Optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in) {
+#endif
+  // Driver API. The direction is baked into the name, and each entry point
+  // exists both with and without the "_v2" ABI suffix. CUdeviceptr arguments
+  // are plain integers rather than pointers.
+  struct DriverEntry {
+    const char *stem;
+    CudaMemSpace dst;
+    CudaMemSpace src;
+  };
+  static const DriverEntry DriverEntries[] = {
+      {"cuMemcpyHtoD", CudaMemSpace::Device, CudaMemSpace::Host},
+      {"cuMemcpyDtoH", CudaMemSpace::Host, CudaMemSpace::Device},
+      {"cuMemcpyDtoD", CudaMemSpace::Device, CudaMemSpace::Device},
+      // Unified-addressing copy: both sides are CUdeviceptr.
+      {"cuMemcpy", CudaMemSpace::Device, CudaMemSpace::Device},
+  };
+
+  for (auto &E : DriverEntries) {
+    for (bool async : {false, true}) {
+      for (bool v2 : {false, true}) {
+        // The unified-addressing cuMemcpy/cuMemcpyAsync have no _v2 form.
+        if (v2 && llvm::StringRef(E.stem) == "cuMemcpy")
+          continue;
+        std::string name =
+            (llvm::Twine(E.stem) + (async ? "Async" : "") + (v2 ? "_v2" : ""))
+                .str();
+        if (in != name)
+          continue;
+        return CudaMemTransferInfo{E.dst,
+                                   E.src,
+                                   /*kindIdx*/ -1,
+                                   async ? 3 : -1,
+                                   /*isRuntimeAPI*/ false,
+                                   v2};
+      }
+    }
+  }
+
+  // Runtime API. The direction is a runtime cudaMemcpyKind argument.
+  if (in == "cudaMemcpy")
+    return CudaMemTransferInfo{CudaMemSpace::FromKind, CudaMemSpace::FromKind,
+                               /*kindIdx*/ 3,
+                               /*streamIdx*/ -1,
+                               /*isRuntimeAPI*/ true,
+                               /*isV2*/ false};
+  if (in == "cudaMemcpyAsync")
+    return CudaMemTransferInfo{CudaMemSpace::FromKind, CudaMemSpace::FromKind,
+                               /*kindIdx*/ 3,
+                               /*streamIdx*/ 4,
+                               /*isRuntimeAPI*/ true,
+                               /*isV2*/ false};
+
+  return {};
+}
+
 llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
                                          bool forceZero) {
   if (EnzymeUndefinedValueForType)
@@ -3909,6 +3981,155 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
     allocV = B.CreatePointerCast(allocV, fpTy, "fpcast." + name);
 
   return allocV;
+}
+
+Value *emitCublasBeginHostMode(IRBuilder<> &B, Function *called, Value *handle,
+                               IRBuilder<> &entryBuilder) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  auto &ctx = M.getContext();
+  auto *I32 = Type::getInt32Ty(ctx);
+
+  auto *slot = entryBuilder.CreateAlloca(I32, nullptr, "cublas.pointermode");
+  B.CreateStore(ConstantInt::get(I32, CublasPointerModeHost), slot);
+
+  Type *getTys[] = {handle->getType(), slot->getType()};
+  B.CreateCall(getOrInsertPerCallingConv(M, called, "cublasGetPointerMode_v2",
+                                         FunctionType::get(I32, getTys, false)),
+               {handle, slot});
+  Value *saved = B.CreateLoad(I32, slot, "cublas.savedmode");
+
+  Type *setTys[] = {handle->getType(), I32};
+  B.CreateCall(getOrInsertPerCallingConv(M, called, "cublasSetPointerMode_v2",
+                                         FunctionType::get(I32, setTys, false)),
+               {handle, ConstantInt::get(I32, CublasPointerModeHost)});
+  return saved;
+}
+
+void emitCublasEndHostMode(IRBuilder<> &B, Function *called, Value *handle,
+                           Value *savedMode) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  auto *I32 = Type::getInt32Ty(M.getContext());
+  Type *setTys[] = {handle->getType(), I32};
+  B.CreateCall(getOrInsertPerCallingConv(M, called, "cublasSetPointerMode_v2",
+                                         FunctionType::get(I32, setTys, false)),
+               {handle, savedMode});
+}
+
+/// Emit, once per module, a helper that moves one scalar between a pointer the
+/// caller owns and a host buffer. The direction depends on the pointer mode the
+/// handle was in, so the branch lives inside the helper rather than splitting
+/// the block the derivative is being built into.
+static Function *getOrInsertCublasScalarHelper(Module &M, Function *called,
+                                               Type *fpTy, bool store) {
+  auto &ctx = M.getContext();
+  auto *I32 = Type::getInt32Ty(ctx);
+  auto *I8Ptr = getInt8PtrTy(ctx);
+  auto *VoidTy = Type::getVoidTy(ctx);
+  uint64_t bytes = M.getDataLayout().getTypeAllocSize(fpTy);
+
+  StringRef vecFn = store ? "cublasSetVector" : "cublasGetVector";
+  std::string renamed = getRenamedPerCallingConv(called->getName(), vecFn);
+  std::string name =
+      "__enzyme_cublas_scalar_" + std::to_string(bytes) + "_" + renamed;
+
+  // (handle, savedMode, cublasPtr, hostPtr)
+  Type *argTys[] = {I8Ptr, I32, I8Ptr, I8Ptr};
+  FunctionType *FT = FunctionType::get(VoidTy, argTys, false);
+  auto *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+
+  auto *entry = BasicBlock::Create(ctx, "entry", F);
+  auto *devBB = BasicBlock::Create(ctx, "device", F);
+  auto *hostBB = BasicBlock::Create(ctx, "host", F);
+  auto *end = BasicBlock::Create(ctx, "end", F);
+
+  Value *handle = F->arg_begin();
+  Value *mode = F->arg_begin() + 1;
+  Value *cublasPtr = F->arg_begin() + 2;
+  Value *hostPtr = F->arg_begin() + 3;
+
+  IRBuilder<> EntryB(entry);
+  EntryB.CreateCondBr(
+      EntryB.CreateICmpEQ(mode, ConstantInt::get(I32, CublasPointerModeDevice)),
+      devBB, hostBB);
+
+  {
+    IRBuilder<> DevB(devBB);
+    // cublasGetVector(n, elemSize, x, incx, y, incy) copies device -> host and
+    // cublasSetVector the other way; both take the device side as the pointer
+    // the caller handed us.
+    Value *src = store ? hostPtr : cublasPtr;
+    Value *dst = store ? cublasPtr : hostPtr;
+    Type *tys[] = {I32, I32, I8Ptr, I32, I8Ptr, I32};
+    Value *args[] = {ConstantInt::get(I32, 1),
+                     ConstantInt::get(I32, bytes),
+                     src,
+                     ConstantInt::get(I32, 1),
+                     dst,
+                     ConstantInt::get(I32, 1)};
+    DevB.CreateCall(getOrInsertPerCallingConv(
+                        M, called, vecFn, FunctionType::get(I32, tys, false)),
+                    args);
+    DevB.CreateBr(end);
+  }
+
+  {
+    IRBuilder<> HostB(hostBB);
+    Value *src = store ? hostPtr : cublasPtr;
+    Value *dst = store ? cublasPtr : hostPtr;
+    HostB.CreateMemCpy(dst, MaybeAlign(), src, MaybeAlign(),
+                       ConstantInt::get(Type::getInt64Ty(ctx), bytes));
+    HostB.CreateBr(end);
+  }
+
+  IRBuilder<> EndB(end);
+  EndB.CreateRetVoid();
+  (void)handle;
+  return F;
+}
+
+/// Cast to the opaque pointer the scalar helpers take.
+static Value *toHelperPtr(IRBuilder<> &B, Value *V) {
+  auto *I8Ptr = getInt8PtrTy(B.getContext());
+  if (V->getType() == I8Ptr)
+    return V;
+  if (V->getType()->isIntegerTy())
+    return B.CreateIntToPtr(V, I8Ptr);
+  return B.CreatePointerCast(V, I8Ptr);
+}
+
+Value *emitCublasLoadScalar(IRBuilder<> &B, Function *called, Value *handle,
+                            Value *savedMode, Value *src, Type *fpTy,
+                            IRBuilder<> &entryBuilder,
+                            llvm::Twine const &name) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  auto *host = entryBuilder.CreateAlloca(fpTy, nullptr, "cublas.host." + name);
+  auto *F = getOrInsertCublasScalarHelper(M, called, fpTy, /*store*/ false);
+  Value *args[] = {toHelperPtr(B, handle), savedMode, toHelperPtr(B, src),
+                   toHelperPtr(B, host)};
+  B.CreateCall(F, args);
+  if (src->getType()->isPointerTy() && src->getType() != host->getType())
+    return B.CreatePointerCast(host, src->getType());
+  return host;
+}
+
+void emitCublasStoreScalar(IRBuilder<> &B, Function *called, Value *handle,
+                           Value *savedMode, Value *dst, Value *V,
+                           IRBuilder<> &entryBuilder) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  auto *host =
+      entryBuilder.CreateAlloca(V->getType(), nullptr, "cublas.host.out");
+  B.CreateStore(V, host);
+  auto *F = getOrInsertCublasScalarHelper(M, called, V->getType(),
+                                          /*store*/ true);
+  Value *args[] = {toHelperPtr(B, handle), savedMode, toHelperPtr(B, dst),
+                   toHelperPtr(B, host)};
+  B.CreateCall(F, args);
 }
 
 Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
