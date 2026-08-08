@@ -128,7 +128,7 @@ InsertNewCanonicalIV(Loop *L, Type *Ty, const llvm::Twine &Name) {
   IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
-  B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
+  B.SetInsertPoint(getFirstNonPHIOrDbg(Header));
   Instruction *Inc = cast<Instruction>(
       B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), Name + ".next",
                   /*NUW*/ true, /*NSW*/ true));
