@@ -289,6 +289,11 @@ struct MemsetForwardInterface
     auto shadowOp = cast<LLVM::MemsetOp>(builder.clone(*newOp));
     shadowOp.getDstMutable().assign(shadow);
     shadowOp.getValMutable().assign(zero);
+
+    // A memset into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not write the primal half at all.
+    if (gutils->primalStoreElidable(memset.getDst()))
+      gutils->erase(newOp);
     return success();
   }
 };
@@ -458,6 +463,11 @@ struct StoreOpInterfaceReverse
       }
     }
 
+    // A store into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not happen in the augmented
+    // forward pass either.
+    if (gutils->primalStoreElidable(storeOp.getAddr()))
+      gutils->erase(gutils->getNewFromOriginal(op));
     return success();
   }
 

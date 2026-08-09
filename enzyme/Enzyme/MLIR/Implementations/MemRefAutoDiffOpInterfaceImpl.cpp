@@ -169,6 +169,12 @@ struct StoreOpInterfaceReverse
         zeroStoreOp.setAlignmentAttr(storeOp.getAlignmentAttr());
       }
     }
+
+    // A store into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not happen in the augmented
+    // forward pass either.
+    if (gutils->primalStoreElidable(storeOp.getMemref()))
+      gutils->erase(gutils->getNewFromOriginal(op));
     return success();
   }
 
