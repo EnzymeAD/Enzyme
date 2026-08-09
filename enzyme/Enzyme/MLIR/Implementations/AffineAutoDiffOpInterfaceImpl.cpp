@@ -149,7 +149,7 @@ struct AffineForOpInterfaceReverse
       Value memref = mapping.lookupOrDefault(loadOp.getMemref());
       Operation *newLoad =
           memref::LoadOp::create(builder, loadOp.getLoc(), memref, *indices);
-      if (auto align = loadOp->getAttrOfType<IntegerAttr>("alignment"))
+      if (auto align = loadOp.getAlignmentAttr())
         cast<memref::LoadOp>(newLoad).setAlignmentAttr(align);
       mapping.map(loadOp.getResult(), newLoad->getResult(0));
       // IRMapping tracks an operation map alongside its value map (populated
@@ -173,7 +173,7 @@ struct AffineForOpInterfaceReverse
       Value value = mapping.lookupOrDefault(storeOp.getValue());
       Operation *newStore = memref::StoreOp::create(builder, storeOp.getLoc(),
                                                     value, memref, *indices);
-      if (auto align = storeOp->getAttrOfType<IntegerAttr>("alignment"))
+      if (auto align = storeOp.getAlignmentAttr())
         cast<memref::StoreOp>(newStore).setAlignmentAttr(align);
       mapping.map(&op, newStore);
       return;
@@ -829,7 +829,7 @@ struct AffineLoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-          auto alignAttr = loadOp->getAttrOfType<IntegerAttr>("alignment");
+          auto alignAttr = loadOp.getAlignmentAttr();
           bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
           // if index had to be cached, the pop is not necessarily a valid index
           if (hasIndex) {
@@ -852,18 +852,18 @@ struct AffineLoadOpInterfaceReverse
                 builder, loadOp.getLoc(), memrefGradient, loadOp.getAffineMap(),
                 ArrayRef<Value>(retrievedArguments));
             if (alignAttr)
-              loadedGradientOp->setAttr("alignment", alignAttr);
+              loadedGradientOp.setAlignmentAttr(alignAttr);
             Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                     loadedGradientOp, gradient);
             auto storeGradientOp = affine::AffineStoreOp::create(
                 builder, loadOp.getLoc(), addedGradient, memrefGradient,
                 loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
             if (alignAttr)
-              storeGradientOp->setAttr("alignment", alignAttr);
+              storeGradientOp.setAlignmentAttr(alignAttr);
           }
         } else {
           bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
-          auto alignAttr = loadOp->getAttrOfType<IntegerAttr>("alignment");
+          auto alignAttr = loadOp.getAlignmentAttr();
           // if index had to be cached, the pop is not necessarily a valid index
           if (hasIndex) {
             SmallVector<Value> indices;
@@ -968,7 +968,7 @@ struct AffineStoreOpInterfaceReverse
       }
 
       bool hasIndex = storeOp.getAffineMap().getNumDims() > 0;
-      auto alignAttr = storeOp->getAttrOfType<IntegerAttr>("alignment");
+      auto alignAttr = storeOp.getAlignmentAttr();
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
@@ -987,7 +987,7 @@ struct AffineStoreOpInterfaceReverse
                 builder, storeOp.getLoc(), memrefGradient,
                 storeOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
             if (alignAttr)
-              loadedGradientOp->setAttr("alignment", alignAttr);
+              loadedGradientOp.setAlignmentAttr(alignAttr);
             loadedGradient = loadedGradientOp;
           }
           gutils->addToDiffe(val, loadedGradient, builder);
@@ -1011,7 +1011,7 @@ struct AffineStoreOpInterfaceReverse
               builder, storeOp.getLoc(), zero, memrefGradient,
               storeOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
           if (alignAttr)
-            zeroStoreOp->setAttr("alignment", alignAttr);
+            zeroStoreOp.setAlignmentAttr(alignAttr);
         }
       }
     }
