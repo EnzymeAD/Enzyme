@@ -532,7 +532,8 @@ public:
                        const llvm::ValueToValueMapTy &incoming_availalble =
                            llvm::ValueToValueMapTy(),
                        bool tryLegalRecomputeCheck = true,
-                       llvm::BasicBlock *scope = nullptr) override;
+                       llvm::BasicBlock *scope = nullptr,
+                       bool permitFailure = false) override;
 
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM);
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
