@@ -1283,9 +1283,12 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
   }
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
+/// `templateFn` is the MPI entry point this reduction is being built for; the
+/// MPI_Op_create it needs is named to match.
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
+                                   llvm::Type *OpPtr, llvm::Type *OpType,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
@@ -2564,6 +2567,18 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
   }
   return callee.str();
 }
+
+/// Declare `callee` in `M` under whatever naming convention the frontend used
+/// to reach `templateFn`, recording the plain name in enzyme_math so that the
+/// declaration is still recognized afterwards. A helper introduced next to a
+/// call has to follow that call's convention to resolve at link time: Julia,
+/// for one, names its lazily bound ccalls "ejlstr$<function>$<library>" and
+/// loads those libraries RTLD_LOCAL, so a plainly named declaration would not
+/// be reachable via dlsym.
+llvm::FunctionCallee getOrInsertPerCallingConv(llvm::Module &M,
+                                               llvm::Function *templateFn,
+                                               llvm::StringRef callee,
+                                               llvm::FunctionType *FT);
 
 static inline std::string convertSRetTypeToString(llvm::Type *T) {
   return std::to_string((size_t)T);

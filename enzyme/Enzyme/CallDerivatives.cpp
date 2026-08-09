@@ -1017,7 +1017,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             /*count*/ count,
             /*datatype*/ datatype,
             /*op (MPI_SUM)*/
-            getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
+            getOrInsertOpFloatSum(*gutils->newFunc->getParent(), called,
                                   MPI_OP_Ptr_type, MPI_OP_type, CT,
                                   root->getType(), Builder2),
             /*int root*/ root,
@@ -2098,7 +2098,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             /*recvcount*/ sendcount,
             /*recvtype*/ sendtype,
             /*op (MPI_SUM)*/
-            getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
+            getOrInsertOpFloatSum(*gutils->newFunc->getParent(), called,
                                   MPI_OP_Ptr_type, MPI_OP_type, CT,
                                   call.getType(), Builder2),
             /*comm*/ comm,
@@ -2480,8 +2480,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             call.getOperand(4)->getType(), call.getOperand(4)->getType(),
         };
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        auto F = called->getParent()->getOrInsertFunction(
-            "gsl_sf_legendre_deriv_array_e", FT);
+        auto F = getOrInsertPerCallingConv(*called->getParent(), called,
+                                           "gsl_sf_legendre_deriv_array_e", FT);
 
         llvm::Value *args[6] = {
             gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(0)),
@@ -2498,8 +2498,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         Type *typesS[] = {args[1]->getType()};
         FunctionType *FTS =
             FunctionType::get(args[1]->getType(), typesS, false);
-        auto FS = called->getParent()->getOrInsertFunction(
-            "gsl_sf_legendre_array_n", FTS);
+        auto FS = getOrInsertPerCallingConv(*called->getParent(), called,
+                                            "gsl_sf_legendre_array_n", FTS);
         Value *alSize = Builder2.CreateCall(FS, args[1]);
         Value *tmp = CreateAllocation(Builder2, types[2], alSize);
         Value *dtmp = CreateAllocation(Builder2, types[2], alSize);
@@ -3829,8 +3829,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
       val = gutils->lookupM(val, Builder2);
-      auto FreeFunc = gutils->newFunc->getParent()->getOrInsertFunction(
-          "cuStreamDestroy", call.getType(), PT);
+      auto FreeFunc = getOrInsertPerCallingConv(
+          *gutils->newFunc->getParent(), called, "cuStreamDestroy",
+          FunctionType::get(call.getType(), {PT}, false));
       Value *nargs[] = {val};
       Builder2.CreateCall(FreeFunc, nargs);
     }
@@ -3924,8 +3925,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
               } else if (funcName == "cudaMalloc") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cudaMemset",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cudaMemset",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3934,8 +3935,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                          funcName == "cudaMallocFromPoolAsync") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
                                stream->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cudaMemsetAsync",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cudaMemsetAsync",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3943,8 +3944,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               } else if (funcName == "cuMemAllocAsync") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
                                stream->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cuMemsetD8Async",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called, "cuMemsetD8Async",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3952,8 +3953,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               } else if (funcName == "cuMemAlloc" ||
                          funcName == "cuMemAlloc_v2") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = M->getOrInsertFunction(
-                    "cuMemsetD8",
+                auto F = getOrInsertPerCallingConv(
+                    *M, called,
+                    funcName == "cuMemAlloc_v2" ? "cuMemsetD8_v2"
+                                                : "cuMemsetD8",
                     FunctionType::get(call.getType(), tys, false));
                 Value *nargs[] = {dst_arg, val_arg, len_arg};
                 auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
@@ -3999,30 +4002,37 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                       M->getOrInsertFunction("free", VoidTy, IntPtrTy);
                   Builder2.CreateCall(FreeFunc, tofree);
                 } else if (funcName == "cuMemAllocAsync") {
-                  auto FreeFunc = M->getOrInsertFunction(
-                      "cuMemFreeAsync", VoidTy, IntPtrTy, streamL->getType());
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cuMemFreeAsync",
+                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
+                                        false));
                   Value *nargs[] = {tofree, streamL};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cuMemAlloc" ||
                            funcName == "cuMemAlloc_v2") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cuMemFree", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cuMemFree",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMalloc") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cudaFree", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFree",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMallocAsync" ||
                            funcName == "cudaMallocFromPoolAsync") {
-                  auto FreeFunc = M->getOrInsertFunction(
-                      "cudaFreeAsync", VoidTy, IntPtrTy, streamL->getType());
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFreeAsync",
+                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
+                                        false));
                   Value *nargs[] = {tofree, streamL};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else if (funcName == "cudaMallocHost") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("cudaFreeHost", VoidTy, IntPtrTy);
+                  auto FreeFunc = getOrInsertPerCallingConv(
+                      *M, called, "cudaFreeHost",
+                      FunctionType::get(VoidTy, {IntPtrTy}, false));
                   Value *nargs[] = {tofree};
                   Builder2.CreateCall(FreeFunc, nargs);
                 } else
@@ -4079,27 +4089,34 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
         Builder2.CreateCall(FreeFunc, tofree);
       } else if (funcName == "cuMemAllocAsync") {
-        auto FreeFunc = M->getOrInsertFunction("cuMemFreeAsync", VoidTy,
-                                               IntPtrTy, streamL->getType());
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cuMemFreeAsync",
+            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
         Value *nargs[] = {tofree, streamL};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2") {
-        auto FreeFunc = M->getOrInsertFunction("cuMemFree", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cuMemFree",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMalloc") {
-        auto FreeFunc = M->getOrInsertFunction("cudaFree", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFree",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMallocAsync" ||
                  funcName == "cudaMallocFromPoolAsync") {
-        auto FreeFunc = M->getOrInsertFunction("cudaFreeAsync", VoidTy,
-                                               IntPtrTy, streamL->getType());
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFreeAsync",
+            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
         Value *nargs[] = {tofree, streamL};
         Builder2.CreateCall(FreeFunc, nargs);
       } else if (funcName == "cudaMallocHost") {
-        auto FreeFunc =
-            M->getOrInsertFunction("cudaFreeHost", VoidTy, IntPtrTy);
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "cudaFreeHost",
+            FunctionType::get(VoidTy, {IntPtrTy}, false));
         Value *nargs[] = {tofree};
         Builder2.CreateCall(FreeFunc, nargs);
       } else
