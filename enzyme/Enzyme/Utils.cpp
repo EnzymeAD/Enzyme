@@ -2259,8 +2259,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  addFunctionNoCapture(F, 0);
-  addFunctionNoCapture(F, 1);
+  // A CUdeviceptr is passed as an integer, which cannot carry nocapture.
+  if (Ty->isPointerTy()) {
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);

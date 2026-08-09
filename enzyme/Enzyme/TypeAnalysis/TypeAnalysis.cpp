@@ -5587,8 +5587,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (isDeallocationFunction(funcName, TLI)) {
+      bool cudaFree = isCudaDeallocationFunction(funcName);
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
+        // The allocation freed by the CUDA driver API is a CUdeviceptr, an
+        // integer at the LLVM level, but still a pointer.
+        if (Idx == 0 && cudaFree) {
+          updateAnalysis(call.getOperand(Idx),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          Idx++;
+          continue;
+        }
         if (Arg.getType()->isIntegerTy()) {
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);
