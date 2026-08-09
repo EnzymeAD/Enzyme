@@ -24,6 +24,10 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
+
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -342,4 +346,41 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
   }
   return op->emitError() << "could not compute the adjoint for this operation "
                          << *op;
+}
+
+Value MGradientUtils::getBaseObject(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      v = view.getViewSource();
+      continue;
+    }
+    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
+      v = gep.getBase();
+      continue;
+    }
+    if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
+      v = bc.getArg();
+      continue;
+    }
+    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
+      v = asc.getArg();
+      continue;
+    }
+    break;
+  }
+  return v;
+}
+
+DIFFE_TYPE MGradientUtils::getDiffeTypeOfBase(Value ptr) {
+  Value base = getBaseObject(ptr);
+  auto blockArg = dyn_cast<BlockArgument>(base);
+  if (!blockArg)
+    return DIFFE_TYPE::DUP_ARG;
+  Block *owner = blockArg.getOwner();
+  if (owner != &oldFunc.getFunctionBody().front())
+    return DIFFE_TYPE::DUP_ARG;
+  unsigned idx = blockArg.getArgNumber();
+  if (idx >= ArgDiffeTypes.size())
+    return DIFFE_TYPE::DUP_ARG;
+  return ArgDiffeTypes[idx];
 }

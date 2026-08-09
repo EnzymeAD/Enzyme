@@ -256,6 +256,13 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     gutils->setDiffe(oval, sval, builder);
   }
 
+  // A store into memory whose primal contents the caller declared unneeded
+  // (enzyme_dupnoneed) need not happen: the shadow store above is the whole
+  // of the derivative.
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(orig))
+    if (gutils->primalStoreElidable(store.getStoredPointer()))
+      gutils->erase(primal);
+
   return success();
 }
 
@@ -553,8 +560,17 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   std::vector<DIFFE_TYPE> ArgActivity;
   ArgActivity.reserve(narg);
   for (auto arg : orig->getOperands()) {
-    ArgActivity.push_back(gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
-                                                       : DIFFE_TYPE::DUP_ARG);
+    if (gutils->isConstantValue(arg)) {
+      ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
+      continue;
+    }
+    // A pointer whose base the caller declared enzyme_dupnoneed keeps that
+    // declaration through the call: the callee is where the stores live,
+    // and it can only skip their primal halves if it is told.
+    ArgActivity.push_back(gutils->getDiffeTypeOfBase(arg) ==
+                                  DIFFE_TYPE::DUP_NONEED
+                              ? DIFFE_TYPE::DUP_NONEED
+                              : DIFFE_TYPE::DUP_ARG);
   }
 
   std::vector<bool> returnPrimal(nret, true);
@@ -578,7 +594,7 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
 
   for (auto &&[arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
     fwdArguments.push_back(gutils->getNewFromOriginal(arg));
-    if (act == DIFFE_TYPE::DUP_ARG)
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
       fwdArguments.push_back(gutils->invertPointerM(arg, builder));
   }
 
@@ -706,11 +722,21 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
 
   std::vector<DIFFE_TYPE> ArgActivity;
   for (auto arg : orig->getOperands()) {
-    ArgActivity.push_back(
-        gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
-        : cast<AutoDiffTypeInterface>(arg.getType()).isMutable()
-            ? DIFFE_TYPE::DUP_ARG
-            : DIFFE_TYPE::OUT_DIFF);
+    if (gutils->isConstantValue(arg)) {
+      ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
+      continue;
+    }
+    if (cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      // A pointer whose base the caller declared enzyme_dupnoneed keeps
+      // that declaration through the call: the callee is where the stores
+      // live, and it can only skip their primal halves if it is told.
+      ArgActivity.push_back(gutils->getDiffeTypeOfBase(arg) ==
+                                    DIFFE_TYPE::DUP_NONEED
+                                ? DIFFE_TYPE::DUP_NONEED
+                                : DIFFE_TYPE::DUP_ARG);
+      continue;
+    }
+    ArgActivity.push_back(DIFFE_TYPE::OUT_DIFF);
   }
 
   if (llvm::any_of(RetActivity,
@@ -741,7 +767,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
   size_t cacheIdx = 0;
   for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
     revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
-    if (act == DIFFE_TYPE::DUP_ARG)
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
       revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
   }
   assert(cacheIdx == caches.size());
@@ -762,7 +788,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     if (gutils->isConstantValue(arg))
       continue;
 
-    if (act == DIFFE_TYPE::DUP_ARG) {
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
       cast<ClonableTypeInterface>(arg.getType())
           .freeClonedValue(builder, revArguments[fwdIndex - 1]);
       fwdIndex++;
