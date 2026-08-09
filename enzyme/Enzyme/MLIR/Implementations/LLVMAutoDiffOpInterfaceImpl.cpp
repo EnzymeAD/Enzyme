@@ -215,6 +215,46 @@ struct LifetimeForwardInterface
   }
 };
 
+// A debug intrinsic narrates the primal: it names which source variable a
+// value stands for, and computes nothing. The primal copy in the generated
+// function keeps saying it; the derivative has nothing to add -- there is no
+// variable metadata under which a shadow could honestly be described. Like the
+// lifetime markers, the op is declared inactive, and this interface exists
+// because inactivity alone answers "what does it make active", not "what is
+// its tangent": an op whose operand is active is still asked for one.
+template <typename OpTy>
+struct NoTangentForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<NoTangentForwardInterface<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return success();
+  }
+};
+
+// The reverse-mode side of the same statement. The activity tables say these
+// ops are inactive, but not every analyzer consults that when deciding what
+// to skip; owning the answer here keeps -g working regardless of which one
+// ran.
+template <typename OpTy>
+struct NoAdjointReverseInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          NoAdjointReverseInterface<OpTy>, OpTy> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 // After a memset the memory holds a fixed byte pattern, which depends on no
 // input, so its tangent is zero everywhere the memset reached. Forward mode
 // says that by clearing the shadow over the same range -- whatever derivative
@@ -848,6 +888,18 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
         LifetimeForwardInterface<LLVM::LifetimeStartOp>>(*context);
     LLVM::LifetimeEndOp::attachInterface<
         LifetimeForwardInterface<LLVM::LifetimeEndOp>>(*context);
+    LLVM::DbgValueOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgValueOp>>(*context);
+    LLVM::DbgDeclareOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgDeclareOp>>(*context);
+    LLVM::DbgLabelOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgLabelOp>>(*context);
+    LLVM::DbgValueOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgValueOp>>(*context);
+    LLVM::DbgDeclareOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgDeclareOp>>(*context);
+    LLVM::DbgLabelOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgLabelOp>>(*context);
     LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
