@@ -232,6 +232,29 @@ struct NoTangentForwardInterface
   }
 };
 
+// The reverse-mode side of the same statement. The activity tables say these
+// ops are inactive, but not every analyzer consults that when deciding what
+// to skip; owning the answer here keeps -g working regardless of which one
+// ran.
+template <typename OpTy>
+struct NoAdjointReverseInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          NoAdjointReverseInterface<OpTy>, OpTy> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 // After a memset the memory holds a fixed byte pattern, which depends on no
 // input, so its tangent is zero everywhere the memset reached. Forward mode
 // says that by clearing the shadow over the same range -- whatever derivative
@@ -871,6 +894,12 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
         NoTangentForwardInterface<LLVM::DbgDeclareOp>>(*context);
     LLVM::DbgLabelOp::attachInterface<
         NoTangentForwardInterface<LLVM::DbgLabelOp>>(*context);
+    LLVM::DbgValueOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgValueOp>>(*context);
+    LLVM::DbgDeclareOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgDeclareOp>>(*context);
+    LLVM::DbgLabelOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgLabelOp>>(*context);
     LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
