@@ -2195,6 +2195,16 @@ Function *getOrInsertDifferentialFloatMemmove(
                                             atomic);
 }
 
+FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
+                                         StringRef callee, FunctionType *FT) {
+  auto res = M.getOrInsertFunction(
+      getRenamedPerCallingConv(templateFn->getName(), callee), FT);
+  if (auto F = dyn_cast<Function>(res.getCallee()))
+    if (!F->hasFnAttribute("enzyme_math"))
+      F->addFnAttr("enzyme_math", callee);
+  return res;
+}
+
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
@@ -2489,9 +2499,10 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   return F;
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, IRBuilder<> &B2) {
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
+                                   llvm::Type *OpPtr, llvm::Type *OpType,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
   auto FlT = CT.isFloat();
@@ -2571,10 +2582,13 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   llvm::Type *rtypes[] = {getInt8PtrTy(M.getContext()), intType, OpPtr};
   FunctionType *RFT = FunctionType::get(intType, rtypes, false);
 
-  Constant *RF = M.getNamedValue("MPI_Op_create");
+  std::string opCreate =
+      getRenamedPerCallingConv(templateFn->getName(), "MPI_Op_create");
+  Constant *RF = M.getNamedValue(opCreate);
   if (!RF) {
-    RF =
-        cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
+    RF = cast<Function>(
+        getOrInsertPerCallingConv(M, templateFn, "MPI_Op_create", RFT)
+            .getCallee());
   } else {
     RF = ConstantExpr::getBitCast(RF, getUnqual(RFT));
   }
