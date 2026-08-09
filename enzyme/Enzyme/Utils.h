@@ -99,15 +99,21 @@ static inline void setBranchCondition(llvm::Value *V, llvm::Value *Cond) {
 #endif
 }
 
+#if LLVM_VERSION_MAJOR >= 24
 static inline llvm::Instruction *
 createUnconditionalBranch(llvm::BasicBlock *Target,
                           llvm::InsertPosition InsertBefore) {
-#if LLVM_VERSION_MAJOR >= 24
   return llvm::UncondBrInst::Create(Target, InsertBefore);
-#else
-  return llvm::BranchInst::Create(Target, InsertBefore);
-#endif
 }
+#else
+// llvm::InsertPosition arrives later than some supported majors; accept
+// whatever this LLVM's BranchInst::Create does.
+template <typename PosT>
+static inline llvm::Instruction *
+createUnconditionalBranch(llvm::BasicBlock *Target, PosT InsertBefore) {
+  return llvm::BranchInst::Create(Target, InsertBefore);
+}
+#endif
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
