@@ -843,7 +843,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
 
   // Branch, unreachable, and previously computed constants are inactive
-  if (isa<UnreachableInst>(I) || isa<BranchInst>(I) ||
+  if (isa<UnreachableInst>(I) || isAnyBranch(I) ||
       (ConstantInstructions.find(I) != ConstantInstructions.end())) {
     return true;
   }

@@ -141,8 +141,11 @@ getExitBlocks(const llvm::Loop *L,
         goto exitblockcheck;
       }
       checked.insert(foo);
-      if (auto bi = llvm::dyn_cast<llvm::BranchInst>(foo->getTerminator())) {
-        for (auto nb : bi->successors()) {
+      if (isAnyBranch(foo->getTerminator())) {
+        auto *bTerm = foo->getTerminator();
+        // Instruction::successors() postdates some supported majors; index.
+        for (unsigned i = 0, e = bTerm->getNumSuccessors(); i < e; ++i) {
+          auto *nb = bTerm->getSuccessor(i);
           if (L->contains(nb))
             continue;
           tocheck.push_back(nb);
