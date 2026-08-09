@@ -79,7 +79,11 @@ SKIP_DIRS = {".git", "build", "third_party", "external"}
 #   if (BB->getTerminator())            if (!BB->getTerminator())
 #   if (auto T = BB->getTerminator())   BB->getTerminator() ? a : b
 #   BB->getTerminator() == nullptr      nullptr != BB->getTerminator()
-RECEIVER = r"[\w.>\-\[\]()*&:]*?"
+# A receiver is a chain of segments like `BB->`, `blocks[0]->`, `foo()->`,
+# `A::B.` -- crucially it may not contain a bare `(`, or the pattern would
+# reach across an enclosing call's argument list and flag argument uses such
+# as `isAnyBranch(foo->getTerminator())` as null tests.
+RECEIVER = r"(?:[*&]?(?:\w|::)+(?:\(\))?(?:\[[^\]()]*\])?(?:->|\.))*"
 TERMINATOR_NULL_TEST = re.compile(
     r"if\s*\(\s*!?\s*" + RECEIVER + r"getTerminator\s*\(\s*\)\s*\)"
     r"|if\s*\(\s*(?:auto|const\s+auto|[\w:]+\s*\*)\s*\*?\s*\w+\s*=\s*"
