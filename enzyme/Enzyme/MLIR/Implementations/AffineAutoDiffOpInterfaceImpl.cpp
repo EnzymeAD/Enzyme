@@ -149,6 +149,8 @@ struct AffineForOpInterfaceReverse
       Value memref = mapping.lookupOrDefault(loadOp.getMemref());
       Operation *newLoad =
           memref::LoadOp::create(builder, loadOp.getLoc(), memref, *indices);
+      if (auto align = loadOp->getAttrOfType<IntegerAttr>("alignment"))
+        cast<memref::LoadOp>(newLoad).setAlignmentAttr(align);
       mapping.map(loadOp.getResult(), newLoad->getResult(0));
       // IRMapping tracks an operation map alongside its value map (populated
       // automatically by builder.clone, which this bypasses); callers such
@@ -171,6 +173,8 @@ struct AffineForOpInterfaceReverse
       Value value = mapping.lookupOrDefault(storeOp.getValue());
       Operation *newStore = memref::StoreOp::create(builder, storeOp.getLoc(),
                                                     value, memref, *indices);
+      if (auto align = storeOp->getAttrOfType<IntegerAttr>("alignment"))
+        cast<memref::StoreOp>(newStore).setAlignmentAttr(align);
       mapping.map(&op, newStore);
       return;
     }
