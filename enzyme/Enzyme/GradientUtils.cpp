@@ -1905,18 +1905,20 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             goto rnextpair;
 
           {
-            auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+            auto bi1 = (isAnyBranch(block->getTerminator())
+                            ? cast<Instruction>(block->getTerminator())
+                            : nullptr);
             if (!bi1) {
               goto endCheck;
             }
 
-            auto cond1 = getOp(bi1->getCondition());
+            auto cond1 = getOp(getBranchCondition(bi1));
             if (cond1 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
-            auto bi2 = cast<BranchInst>(subblock->getTerminator());
-            auto cond2 = getOp(bi2->getCondition());
+            auto bi2 = cast<Instruction>(subblock->getTerminator());
+            auto cond2 = getOp(getBranchCondition(bi2));
             if (cond2 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
@@ -2204,9 +2206,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                        ConstantInt::get(prevIdx->getType(), 0));
 
         if (blocks[0]->size() == 1 && blocks[1]->size() == 1) {
-          if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-            if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-              if (B1->isUnconditional() && B2->isUnconditional() &&
+          if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                             ? cast<Instruction>(blocks[0]->getTerminator())
+                             : nullptr))
+            if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                               ? cast<Instruction>(blocks[1]->getTerminator())
+                               : nullptr))
+              if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                   B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
                 eraseBlocks(blocks, bret);
                 Value *toret = BuilderM.CreateSelect(
@@ -2280,14 +2286,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   fast:;
     assert(equivalentTerminator);
 
-    if (isa<BranchInst>(equivalentTerminator) ||
+    if (isAnyBranch(equivalentTerminator) ||
         isa<SwitchInst>(equivalentTerminator)) {
       BasicBlock *oldB = BuilderM.GetInsertBlock();
 
       SmallVector<BasicBlock *, 2> predBlocks;
       Value *cond = nullptr;
-      if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
-        cond = branch->getCondition();
+      if (auto branch = (isAnyBranch(equivalentTerminator)
+                             ? cast<Instruction>(equivalentTerminator)
+                             : nullptr)) {
+        cond = getBranchCondition(branch);
         predBlocks.push_back(branch->getSuccessor(0));
         predBlocks.push_back(branch->getSuccessor(1));
       } else {
@@ -2374,11 +2382,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
       // Fast path to not make a split block if no additional instructions
       // were made in the two blocks
-      if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
+      if (isAnyBranch(equivalentTerminator) && blocks[0]->size() == 1 &&
           blocks[1]->size() == 1) {
-        if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-          if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-            if (B1->isUnconditional() && B2->isUnconditional() &&
+        if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                           ? cast<Instruction>(blocks[0]->getTerminator())
+                           : nullptr))
+          if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                             ? cast<Instruction>(blocks[1]->getTerminator())
+                             : nullptr))
+            if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                 B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
               eraseBlocks(blocks, bret);
               Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
@@ -2401,7 +2413,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
 
       bret->moveAfter(last);
-      if (isa<BranchInst>(equivalentTerminator)) {
+      if (isAnyBranch(equivalentTerminator)) {
         BuilderM.CreateCondBr(cond, blocks[0], blocks[1]);
       } else {
         auto SI = cast<SwitchInst>(equivalentTerminator);
@@ -3709,8 +3721,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       assert(TI);
       if (notForAnalysis.count(B)) {
         NB.CreateUnreachable();
-      } else if (auto BI = dyn_cast<BranchInst>(TI)) {
-        if (BI->isUnconditional()) {
+      } else if (auto BI =
+                     (isAnyBranch(TI) ? cast<Instruction>(TI) : nullptr)) {
+        if (isUnconditionalBranch(BI)) {
           if (notForAnalysis.count(BI->getSuccessor(0)))
             NB.CreateUnreachable();
           else
@@ -3725,9 +3738,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           } else if (notForAnalysis.count(BI->getSuccessor(1))) {
             NB.CreateBr(remap(BI->getSuccessor(0)));
           } else {
-            NB.CreateCondBr(
-                lookupM(getNewFromOriginal(BI->getCondition()), NB, available),
-                remap(BI->getSuccessor(0)), remap(BI->getSuccessor(1)));
+            NB.CreateCondBr(lookupM(getNewFromOriginal(getBranchCondition(BI)),
+                                    NB, available),
+                            remap(BI->getSuccessor(0)),
+                            remap(BI->getSuccessor(1)));
           }
         }
       } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
@@ -7973,13 +7987,13 @@ void GradientUtils::branchToCorrespondingTarget(
   if (targetToPreds.size() == 1) {
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << *oldFunc << "\n";
         llvm::errs() << *newFunc << "\n";
         llvm::errs() << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateBr(targetToPreds.begin()->first);
     } else {
       for (auto pair : *replacePHIs) {
@@ -8104,7 +8118,9 @@ void GradientUtils::branchToCorrespondingTarget(
         // Only handle cases where the split was due to a conditional
         // branch. This branch, `bi`, splits off uniqueTargets[0] from
         // the remainder of foundTargets.
-        auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+        auto bi1 = (isAnyBranch(block->getTerminator())
+                        ? cast<Instruction>(block->getTerminator())
+                        : nullptr);
         if (!bi1)
           goto rnextpair;
 
@@ -8177,17 +8193,19 @@ void GradientUtils::branchToCorrespondingTarget(
 
           // This branch, `bi2`, splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
+          auto bi2 = (isAnyBranch(subblock->getTerminator())
+                          ? cast<Instruction>(subblock->getTerminator())
+                          : nullptr);
           if (!bi2)
             goto rnextpair;
 
           // Condition cond1 splits off uniqueTargets[0] from
           // the remainder of foundTargets.
-          auto cond1 = lookupM(bi1->getCondition(), BuilderM);
+          auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
 
           // Condition cond2 splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto cond2 = lookupM(bi2->getCondition(), BuilderM);
+          auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
 
           if (replacePHIs == nullptr) {
             BasicBlock *staging =
@@ -8309,27 +8327,29 @@ void GradientUtils::branchToCorrespondingTarget(
 fast:;
   assert(equivalentTerminator);
 
-  if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
+  if (auto branch = (isAnyBranch(equivalentTerminator)
+                         ? cast<Instruction>(equivalentTerminator)
+                         : nullptr)) {
     BasicBlock *block = equivalentTerminator->getParent();
-    assert(branch->getCondition());
+    assert(getBranchCondition(branch));
 
-    assert(branch->getCondition()->getType() == T);
+    assert(getBranchCondition(branch)->getType() == T);
 
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << "newFunc : " << *newFunc << "\n";
         llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(
-          lookupM(branch->getCondition(), BuilderM),
+          lookupM(getBranchCondition(branch), BuilderM),
           *done[std::make_pair(block, branch->getSuccessor(0))].begin(),
           *done[std::make_pair(block, branch->getSuccessor(1))].begin());
     } else {
       for (auto pair : *replacePHIs) {
-        Value *phi = lookupM(branch->getCondition(), BuilderM);
+        Value *phi = lookupM(getBranchCondition(branch), BuilderM);
         Value *val = nullptr;
         if (pair.first ==
             *done[std::make_pair(block, branch->getSuccessor(0))].begin()) {
@@ -8472,7 +8492,7 @@ nofast:;
   if (replacePHIs == nullptr) {
     if (targetToPreds.size() == 2) {
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(which, /*true*/ targets[1], /*false*/ targets[0]);
     } else {
       assert(targets.size() > 0);

@@ -96,13 +96,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimit(
 
   bool IsOnlyExit = ExitingBlocks.size() == 1;
   auto *Term = ExitingBlock->getTerminator();
-  if (BranchInst *BI = dyn_cast<BranchInst>(Term)) {
-    assert(BI->isConditional() && "If unconditional, it can't be in loop!");
+  if (Instruction *BI =
+          (isAnyBranch(Term) ? cast<Instruction>(Term) : nullptr)) {
+    assert(isConditionalBranch(BI) && "If unconditional, it can't be in loop!");
     bool ExitIfTrue = !L->contains(BI->getSuccessor(0));
     assert(ExitIfTrue == L->contains(BI->getSuccessor(1)) &&
            "It should have one successor in loop and one exit block!");
     // Proceed to the next level to examine the exit condition expression.
-    return computeExitLimitFromCond(L, BI->getCondition(), ExitIfTrue,
+    return computeExitLimitFromCond(L, getBranchCondition(BI), ExitIfTrue,
                                     /*ControlsExit=*/IsOnlyExit,
                                     AllowPredicates);
   }
@@ -980,6 +981,18 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // pointers in general.
   const SCEV *OrigStart = Start;
   const SCEV *OrigRHS = RHS;
+#if LLVM_VERSION_MAJOR >= 24
+  if (Start->getType()->isPointerTy()) {
+    Start = getPtrToAddrExpr(Start);
+    if (isa<SCEVCouldNotCompute>(Start))
+      return Start;
+  }
+  if (RHS->getType()->isPointerTy()) {
+    RHS = getPtrToAddrExpr(RHS);
+    if (isa<SCEVCouldNotCompute>(RHS))
+      return RHS;
+  }
+#else
   if (Start->getType()->isPointerTy()) {
     Start = getLosslessPtrToIntExpr(Start);
     if (isa<SCEVCouldNotCompute>(Start))
@@ -990,6 +1003,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     if (isa<SCEVCouldNotCompute>(RHS))
       return RHS;
   }
+#endif
 
   // When the RHS is not invariant, we do not know the end bound of the loop and
   // cannot calculate the ExactBECount needed by ExitLimit. However, we can

@@ -2033,9 +2033,15 @@ public:
         SmallVector<OperandBundleDef, 1> OpBundles;
         II->getOperandBundlesAsDefs(OpBundles);
         // Insert a normal call instruction...
+#if LLVM_VERSION_MAJOR >= 24
+        CallInst *NewCall =
+            CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
+                             CallArgs, OpBundles, "", II->getIterator());
+#else
         CallInst *NewCall =
             CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
                              CallArgs, OpBundles, "", II);
+#endif
         NewCall->takeName(II);
         NewCall->setCallingConv(II->getCallingConv());
         NewCall->setAttributes(II->getAttributes());
@@ -2043,7 +2049,11 @@ public:
         II->replaceAllUsesWith(NewCall);
 
         // Insert an unconditional branch to the normal destination.
-        BranchInst::Create(II->getNormalDest(), II);
+#if LLVM_VERSION_MAJOR >= 24
+        createUnconditionalBranch(II->getNormalDest(), II->getIterator());
+#else
+        createUnconditionalBranch(II->getNormalDest(), II);
+#endif
 
         // Remove any PHI node entries from the exception destination.
         II->getUnwindDest()->removePredecessor(&BB);

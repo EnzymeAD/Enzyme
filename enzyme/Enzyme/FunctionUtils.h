@@ -141,8 +141,8 @@ getExitBlocks(const llvm::Loop *L,
         goto exitblockcheck;
       }
       checked.insert(foo);
-      if (auto bi = llvm::dyn_cast<llvm::BranchInst>(foo->getTerminator())) {
-        for (auto nb : bi->successors()) {
+      if (isAnyBranch(foo->getTerminator())) {
+        for (auto nb : foo->getTerminator()->successors()) {
           if (L->contains(nb))
             continue;
           tocheck.push_back(nb);

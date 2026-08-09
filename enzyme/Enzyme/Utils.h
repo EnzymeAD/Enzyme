@@ -48,6 +48,67 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/IR/Instructions.h"
+
+// LLVM 24 split BranchInst into CondBrInst and UncondBrInst. These helpers
+// ask the questions Enzyme asks of a branch in one spelling for every
+// supported LLVM; successors need no helper, Instruction::getSuccessor and
+// getNumSuccessors say them generically on both sides of the split.
+static inline bool isAnyBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::CondBrInst, llvm::UncondBrInst>(V);
+#else
+  return llvm::isa<llvm::BranchInst>(V);
+#endif
+}
+
+static inline bool isConditionalBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::CondBrInst>(V);
+#else
+  if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(V))
+    return BI->isConditional();
+  return false;
+#endif
+}
+
+static inline bool isUnconditionalBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::UncondBrInst>(V);
+#else
+  if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(V))
+    return BI->isUnconditional();
+  return false;
+#endif
+}
+
+/// The condition of a branch isConditionalBranch says yes to.
+static inline llvm::Value *getBranchCondition(llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::cast<llvm::CondBrInst>(V)->getCondition();
+#else
+  return llvm::cast<llvm::BranchInst>(V)->getCondition();
+#endif
+}
+
+static inline void setBranchCondition(llvm::Value *V, llvm::Value *Cond) {
+#if LLVM_VERSION_MAJOR >= 24
+  llvm::cast<llvm::CondBrInst>(V)->setCondition(Cond);
+#else
+  llvm::cast<llvm::BranchInst>(V)->setCondition(Cond);
+#endif
+}
+
+static inline llvm::Instruction *
+createUnconditionalBranch(llvm::BasicBlock *Target,
+                          llvm::InsertPosition InsertBefore) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::UncondBrInst::Create(Target, InsertBefore);
+#else
+  return llvm::BranchInst::Create(Target, InsertBefore);
+#endif
+}
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 
