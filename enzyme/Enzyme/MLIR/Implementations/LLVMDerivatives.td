@@ -12,6 +12,9 @@ def : InactiveOp<"LLVM", "StackRestoreOp">;
 def : InactiveOp<"LLVM", "NoAliasScopeDeclOp">;
 def : InactiveOp<"LLVM", "LifetimeStartOp">;
 def : InactiveOp<"LLVM", "LifetimeEndOp">;
+def : InactiveOp<"LLVM", "DbgValueOp">;
+def : InactiveOp<"LLVM", "DbgDeclareOp">;
+def : InactiveOp<"LLVM", "DbgLabelOp">;
 def : InactiveOp<"LLVM", "Prefetch">;
 def : InactiveOp<"LLVM", "MemsetOp">;
 
