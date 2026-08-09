@@ -961,7 +961,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           }                                                                    \
         origParent = lookupInst;                                               \
         if (!noLookup)                                                         \
-          ___res = lookupM(v, Builder, available, v != val, origParent);       \
+          ___res = lookupM(v, Builder, available, v != val, origParent,        \
+                           /*permitFailure*/ true);                            \
       }                                                                        \
       if (___res)                                                              \
         assert(___res->getType() == vty && "uw");                              \
@@ -2158,7 +2159,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   if (!noLookup) {
                     BasicBlock *nS2 = nextScope;
                     Value *v = inst;
-                    ___res = lookupM(v, B, prevAvailable, v != val, nS2);
+                    ___res = lookupM(v, B, prevAvailable, v != val, nS2,
+                                     /*permitFailure*/ true);
                   }
                 }
                 if (___res)
@@ -2459,7 +2461,11 @@ endCheck:
         }
       }
     auto toreturn = lookupM(nval, BuilderM, available,
-                            /*tryLegalRecomputeCheck*/ false, scope);
+                            /*tryLegalRecomputeCheck*/ false, scope,
+                            /*permitFailure*/ unwrapMode ==
+                                UnwrapMode::AttemptFullUnwrapWithLookup);
+    if (!toreturn)
+      return nullptr;
     assert(val->getType() == toreturn->getType());
     return toreturn;
   }
