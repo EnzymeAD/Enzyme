@@ -333,13 +333,15 @@ struct LoadOpInterfaceReverse
         Value addrGradient = gutils->popCache(caches.front(), builder);
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient = LLVM::LoadOp::create(builder, loadOp.getLoc(),
-                                                      iface, addrGradient);
+          Value loadedGradient = LLVM::LoadOp::create(
+              builder, loadOp.getLoc(), iface, addrGradient,
+              loadOp.getAlignment().value_or(0));
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                   loadedGradient, gradient);
 
           LLVM::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
-                                addrGradient);
+                                addrGradient,
+                                loadOp.getAlignment().value_or(0));
         } else {
           LLVM::AtomicRMWOp::create(builder, loadOp.getLoc(),
                                     LLVM::AtomicBinOp::fadd, addrGradient,
@@ -402,7 +404,8 @@ struct StoreOpInterfaceReverse
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
           Value loadedGradient = LLVM::LoadOp::create(
-              builder, storeOp.getLoc(), val.getType(), addrGradient);
+              builder, storeOp.getLoc(), val.getType(), addrGradient,
+              storeOp.getAlignment().value_or(0));
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -410,7 +413,8 @@ struct StoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        LLVM::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient);
+        LLVM::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient,
+                              storeOp.getAlignment().value_or(0));
       }
     }
 

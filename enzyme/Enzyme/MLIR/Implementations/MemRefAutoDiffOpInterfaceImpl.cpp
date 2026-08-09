@@ -64,14 +64,16 @@ struct LoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient =
+          auto loadedGradientOp =
               memref::LoadOp::create(builder, loadOp.getLoc(), memrefGradient,
                                      ArrayRef<Value>(retrievedArguments));
+          loadedGradientOp.setAlignmentAttr(loadOp.getAlignmentAttr());
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                  loadedGradient, gradient);
-          memref::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
-                                  memrefGradient,
-                                  ArrayRef<Value>(retrievedArguments));
+                                                  loadedGradientOp, gradient);
+          auto storeGradientOp = memref::StoreOp::create(
+              builder, loadOp.getLoc(), addedGradient, memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          storeGradientOp.setAlignmentAttr(loadOp.getAlignmentAttr());
         } else {
           setDerivativeFastMath(enzyme::AtomicRMWOp::create(
               builder, loadOp.getLoc(), gradient.getType(),
@@ -150,18 +152,21 @@ struct StoreOpInterfaceReverse
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient =
+          auto loadedGradientOp =
               memref::LoadOp::create(builder, storeOp.getLoc(), memrefGradient,
                                      ArrayRef<Value>(retrievedArguments));
-          gutils->addToDiffe(val, loadedGradient, builder);
+          loadedGradientOp.setAlignmentAttr(storeOp.getAlignmentAttr());
+          gutils->addToDiffe(val, loadedGradientOp, builder);
         }
 
         auto zero =
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        memref::StoreOp::create(builder, storeOp.getLoc(), zero, memrefGradient,
-                                ArrayRef<Value>(retrievedArguments));
+        auto zeroStoreOp = memref::StoreOp::create(
+            builder, storeOp.getLoc(), zero, memrefGradient,
+            ArrayRef<Value>(retrievedArguments));
+        zeroStoreOp.setAlignmentAttr(storeOp.getAlignmentAttr());
       }
     }
     return success();
