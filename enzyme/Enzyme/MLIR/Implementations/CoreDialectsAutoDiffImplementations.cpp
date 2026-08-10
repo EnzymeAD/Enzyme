@@ -204,6 +204,11 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
               newOperands.push_back(toret);
               continue;
             }
+            // A mutable value nothing differentiates -- an inactive pointer
+            // -- is its own shadow: the shadow memory's structural fields
+            // must read as the primal's.
+            newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+            continue;
           }
         }
         orig->emitError()
