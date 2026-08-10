@@ -16,6 +16,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
 
 using namespace mlir;
@@ -104,22 +105,22 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
   return false;
 }
 
-static Value getBase(Value v) {
-  while (true) {
-    if (auto s = v.getDefiningOp<LLVM::GEPOp>()) {
-      v = s.getBase();
+Value getBaseObject(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      v = view.getViewSource();
       continue;
     }
-    if (auto s = v.getDefiningOp<LLVM::BitcastOp>()) {
-      v = s.getArg();
+    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
+      v = gep.getBase();
       continue;
     }
-    if (auto s = v.getDefiningOp<LLVM::AddrSpaceCastOp>()) {
-      v = s.getArg();
+    if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
+      v = bc.getArg();
       continue;
     }
-    if (auto s = v.getDefiningOp<memref::CastOp>()) {
-      v = s.getSource();
+    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
+      v = asc.getArg();
       continue;
     }
     break;
@@ -134,8 +135,8 @@ static bool isStackAlloca(Value v) {
 }
 
 bool mayAlias(Value v1, Value v2) {
-  v1 = getBase(v1);
-  v2 = getBase(v2);
+  v1 = getBaseObject(v1);
+  v2 = getBaseObject(v2);
   if (v1 == v2)
     return true;
 
