@@ -364,7 +364,10 @@ public:
   lookupM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
           const llvm::ValueToValueMapTy &incoming_availalble =
               llvm::ValueToValueMapTy(),
-          bool tryLegalityCheck = true, llvm::BasicBlock *scope = nullptr) = 0;
+          bool tryLegalityCheck = true, llvm::BasicBlock *scope = nullptr,
+          /// If set, return null when the value cannot be made available in
+          /// scope, rather than failing.
+          bool permitFailure = false) = 0;
 
   virtual bool assumeDynamicLoopOfSizeOne(llvm::Loop *L) const = 0;
 
