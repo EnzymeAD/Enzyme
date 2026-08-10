@@ -200,12 +200,27 @@ struct StoreOpInterfaceReverse
     return SmallVector<Value>();
   }
 
+  // A store of a mutable value -- a pointer, an inner memref -- has no float
+  // adjoint to accumulate; its derivative story is structural: the shadow
+  // memory must hold the shadow value at the same spot, so shadow loads
+  // traverse shadow structures. A value nothing differentiates is its own
+  // shadow, keeping inactive fields readable through the shadow object.
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    // auto storeOp = cast<memref::StoreOp>(op);
-    // Value memref = storeOp.getMemref();
-    // Value shadow = gutils->getShadowValue(memref);
-    // Do nothing yet. In the future support memref<memref<...>>
+    auto storeOp = cast<memref::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface || !iface.isMutable() || gutils->isConstantValue(memref))
+      return;
+    Value memrefShadow = gutils->invertPointerM(memref, builder);
+    Value valShadow = gutils->isConstantValue(val)
+                          ? gutils->getNewFromOriginal(val)
+                          : gutils->invertPointerM(val, builder);
+    auto newOp = cast<memref::StoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<memref::StoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getMemrefMutable().assign(memrefShadow);
   }
 };
 

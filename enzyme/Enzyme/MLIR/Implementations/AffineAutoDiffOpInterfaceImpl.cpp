@@ -1042,12 +1042,24 @@ struct AffineStoreOpInterfaceReverse
     return SmallVector<Value>();
   }
 
+  // Same structural story as memref.store: a stored mutable value's shadow
+  // must land at the same affine position in the shadow memref.
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    // auto storeOp = cast<memref::StoreOp>(op);
-    // Value memref = storeOp.getMemref();
-    // Value shadow = gutils->getShadowValue(memref);
-    // Do nothing yet. In the future support memref<memref<...>>
+    auto storeOp = cast<affine::AffineStoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface || !iface.isMutable() || gutils->isConstantValue(memref))
+      return;
+    Value memrefShadow = gutils->invertPointerM(memref, builder);
+    Value valShadow = gutils->isConstantValue(val)
+                          ? gutils->getNewFromOriginal(val)
+                          : gutils->invertPointerM(val, builder);
+    auto newOp = cast<affine::AffineStoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<affine::AffineStoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getMemrefMutable().assign(memrefShadow);
   }
 };
 

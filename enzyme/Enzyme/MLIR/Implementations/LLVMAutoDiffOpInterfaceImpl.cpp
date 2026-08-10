@@ -482,8 +482,29 @@ struct StoreOpInterfaceReverse
                                      cacheBuilder)};
   }
 
+  // A store of a mutable value -- a pointer -- has no float adjoint to
+  // accumulate; its derivative story is structural, like llvm.getelementptr
+  // above: the shadow memory must hold the shadow pointer at the same spot,
+  // so shadow loads traverse shadow structures. A pointer nothing
+  // differentiates is its own shadow, keeping inactive fields readable
+  // through the shadow object.
   void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+                          MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<LLVM::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value addr = storeOp.getAddr();
+    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface.isMutable() || gutils->isConstantValue(addr))
+      return;
+    Value addrShadow = gutils->invertPointerM(addr, builder);
+    Value valShadow = gutils->isConstantValue(val)
+                          ? gutils->getNewFromOriginal(val)
+                          : gutils->invertPointerM(val, builder);
+    auto newOp = cast<LLVM::StoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<LLVM::StoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getAddrMutable().assign(addrShadow);
+  }
 };
 
 struct ExtractValueOpInterfaceReverse
