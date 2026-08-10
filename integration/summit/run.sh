@@ -60,7 +60,9 @@ cmake -S pyre -B pyre-build \
 cmake --build pyre-build --target install -j $NPROC
 
 echo "Cloning sumMIT"
-git clone --depth 1 -b $SUMMIT_BRANCH "$SUMMIT_URL" sumMIT
+# not shallow: summit_getVersion runs git describe --tags --long --always, and
+# without tags reachable from HEAD that yields a bare sha, which sumMIT rejects
+git clone -b $SUMMIT_BRANCH "$SUMMIT_URL" sumMIT
 
 echo "Writing sumMIT toolchain file"
 # sumMIT resolves its dependencies through a toolchain file rather than through
