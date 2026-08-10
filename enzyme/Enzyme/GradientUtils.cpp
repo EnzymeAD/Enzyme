@@ -5441,6 +5441,65 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
   return false;
 }
 
+/// Return a copy of the scalar constant `C` with every byte that `TT` types as
+/// a float (or as something other than an integer or a pointer) replaced by
+/// zero, keeping the remaining bytes as they were. This is the constant-folded
+/// equivalent of the alloca/store/store-zero/load sequence invertPointerM emits
+/// for a value that is only partially float, and it lets the shadow of a
+/// constant stay a constant. Returns null if `C` cannot be reinterpreted
+/// bitwise, in which case the caller falls back to emitting that sequence.
+static Constant *nullFloatBytesOfConstant(Constant *C, const TypeTree &TT,
+                                          const DataLayout &DL) {
+  auto *Ty = C->getType();
+
+  APInt bytes(8, 0);
+  if (auto CI = dyn_cast<ConstantInt>(C))
+    bytes = CI->getValue();
+  else if (auto CFP = dyn_cast<ConstantFP>(C))
+    bytes = CFP->getValueAPF().bitcastToAPInt();
+  else
+    return nullptr;
+
+  // Only a whole number of bytes can be masked byte-wise, and only a type
+  // whose value fills its in-memory footprint can be rebuilt from those bytes
+  // (this rules out i1, i24, x86_fp80, ...).
+  unsigned bits = bytes.getBitWidth();
+  size_t size = bits / 8;
+  size_t storeSize = (DL.getTypeStoreSizeInBits(Ty) + 7) / 8;
+  if (size == 0 || size * 8 != bits || size != storeSize)
+    return nullptr;
+
+  APInt mask(bits, 0);
+  for (size_t i = 0; i < size;) {
+    auto CT = TT[{(int)i}];
+    size_t chunk = 1;
+    if (CT == BaseType::Pointer) {
+      // A pointer is carried through unchanged, like an integer.
+      i += DL.getPointerSize(0);
+      continue;
+    } else if (auto flt = CT.isFloat()) {
+      chunk = (DL.getTypeSizeInBits(flt) + 7) / 8;
+    } else if (CT == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    // Float, unknown, and anything all get a zero derivative. Byte `j` of the
+    // memory image is bits [8j, 8j+8) of the APInt on a little endian target
+    // and bits [8(size-1-j), 8(size-j)) on a big endian one.
+    size_t end = std::min(i + chunk, size);
+    size_t loByte = DL.isLittleEndian() ? i : size - end;
+    size_t hiByte = DL.isLittleEndian() ? end : size - i;
+    mask |= APInt::getBitsSet(bits, loByte * 8, hiByte * 8);
+    i += chunk;
+  }
+  bytes &= ~mask;
+
+  if (Ty->isIntegerTy())
+    return ConstantInt::get(Ty, bytes);
+  return ConstantFP::get(Ty->getContext(),
+                         APFloat(Ty->getFltSemantics(), bytes));
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
@@ -5570,7 +5629,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (TT.anyFloat(oval, DL)) {
       if (TT.allFloat(oval, DL, /*anythingIsFloat*/ true))
         return Constant::getNullValue(getShadowType(oval->getType()));
-      else {
+      // The shadow of a constant has to stay a constant: this value may be an
+      // element of a constant aggregate whose inversion above feeds
+      // ConstantArray/ConstantStruct/ConstantVector::get. Zero the float bytes
+      // by folding rather than with the alloca/store/load below, which would
+      // hand back a LoadInst and trip the cast<Constant> in those callers.
+      Constant *folded = nullptr;
+      if (auto C = dyn_cast<Constant>(oval))
+        folded = nullFloatBytesOfConstant(C, TT, DL);
+      if (folded) {
+        auto rule = [&folded]() { return folded; };
+        return applyChainRule(oval->getType(), BuilderM, rule);
+      } else {
         IRBuilder<> bb(inversionAllocs);
         if (auto arg = dyn_cast<Instruction>(oval)) {
           arg = getNewFromOriginal(arg);
