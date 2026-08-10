@@ -16,7 +16,9 @@ endif()
 
 if (ENZYME_ENABLE_PLUGINS)
 if (NOT ("${BC_LOAD_HEADER}" STREQUAL ""))
-    add_custom_target(blasheaders mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/gsl" && cp ${BC_LOAD_HEADER} "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
+  # fmt: off
+  add_custom_target(blasheaders mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/gsl" && cp ${BC_LOAD_HEADER} "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
+  # fmt: on
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
 elseif (${Clang_FOUND})
 include(ExternalProject)
@@ -76,8 +78,9 @@ ExternalProject_Add(fblas
     TEST_COMMAND      ""
 )
 set_target_properties(fblas PROPERTIES EXCLUDE_FROM_ALL TRUE)
-
+# fmt: off
 add_custom_target(blasheaders cp "${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake" "${CMAKE_CURRENT_BINARY_DIR}/gsl/CMakeLists.txt" && cd "${CMAKE_CURRENT_BINARY_DIR}/gsl" && ${CMAKE_COMMAND} . DEPENDS gsl gsl64 fblas ${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake)
+# fmt: on
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
