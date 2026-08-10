@@ -36,8 +36,8 @@ contains
     real, intent(in)  :: x
     real, intent(out) :: y
     y = x ** 2
-  end subroutine
-end module
+  end subroutine square
+end module squareBatch
 
 program main
   use enzyme, only: enzyme_vector, enzyme_width
@@ -59,7 +59,7 @@ program main
   write(*,"(f0.4)") y2
   write(*,"(f0.4)") y3
   write(*,"(f0.4)") y4
-end program
+end program main
 
 ! CHECK: 533.6100
 ! CHECK-NEXT: 100.0000
