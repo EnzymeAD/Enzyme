@@ -11,7 +11,14 @@ NPROC=${3:-`nproc`}
 LLDENZYME=$ENZYME_DIR/LLDEnzyme-$CLANGV.so
 
 # sumMIT lives in a private repository, so the workflow forwards SUMMIT_TOKEN, a
-# token with read access to it. Without one the clone below cannot succeed.
+# token with read access to it. Fail early rather than on a bare git credential
+# prompt, so an expired or missing token is obvious from the log.
+if [ -z "$SUMMIT_URL" ] && [ -z "$SUMMIT_TOKEN" ]; then
+    echo "SUMMIT_TOKEN is empty; cloning the private sumMIT repository needs a token" >&2
+    echo "with read access to MIT-PSAAP-IV/sumMIT. If the secret exists, it has" >&2
+    echo "most likely expired and needs to be reissued." >&2
+    exit 1
+fi
 SUMMIT_URL=${SUMMIT_URL:-https://${SUMMIT_TOKEN:+x-access-token:$SUMMIT_TOKEN@}github.com/MIT-PSAAP-IV/sumMIT.git}
 # the Enzyme tests live on the enzyme-ad branch; switch to main once it lands
 SUMMIT_BRANCH=${SUMMIT_BRANCH:-enzyme-ad}

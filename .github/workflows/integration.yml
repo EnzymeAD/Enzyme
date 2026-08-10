@@ -27,10 +27,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     container:
       image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images_24.04@sha256:2d3132895ab3c3a593cb494fad4ce1e17f4c145771a92809f070805d0250ac71' ) || '' }}
-    env:
-      # sumMIT is a private repository, so its clone needs a token with read access.
-      # Forks do not receive secrets, so the sumMIT tests are skipped there.
-      SUMMIT_TOKEN: ${{ secrets.SUMMIT_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +61,12 @@ jobs:
         working-directory: build
         run: make -j `nproc`
       - name: "Run tests"
-        if: matrix.package != 'summit' || env.SUMMIT_TOKEN != ''
+        # sumMIT is private, so its clone needs SUMMIT_TOKEN. Forks are not given
+        # secrets, so skip there; anywhere else a missing or expired token must
+        # fail rather than quietly turn the job green without running anything.
+        if: matrix.package != 'summit' || github.event.pull_request.head.repo.fork != true
+        env:
+          SUMMIT_TOKEN: ${{ secrets.SUMMIT_TOKEN }}
         run: |
           bash integration/${{ matrix.package }}/run.sh ${{ matrix.llvm }} ${PWD}/build/Enzyme `nproc`
         shell: bash
