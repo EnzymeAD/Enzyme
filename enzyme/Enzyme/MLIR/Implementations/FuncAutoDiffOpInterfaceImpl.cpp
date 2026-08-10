@@ -36,8 +36,16 @@ public:
   void transformResultTypes(Operation *self,
                             SmallVectorImpl<Type> &types) const {}
 
-  // A func.func carries no linkage of its own for the clone to have inherited.
-  void detachFromPrimalDefinition(Operation *self) const {}
+  // A func.func carries no linkage of its own, but one raised from an
+  // llvm.func still holds the primal's comdat as a plain attribute, and the
+  // clone inherits it. The derivative is not part of the primal's
+  // deduplication group (see the llvm.func model above for why that group is
+  // wrong for it), and a func.func cannot express a comdat anyway -- what
+  // remains is a dangling nested symbol reference that breaks symbol-use
+  // walks such as gpu-kernel-outlining's. Drop it.
+  void detachFromPrimalDefinition(Operation *self) const {
+    self->removeAttr("comdat");
+  }
 
   Operation *createCall(Operation *self, OpBuilder &builder, Location loc,
                         ValueRange args) const {

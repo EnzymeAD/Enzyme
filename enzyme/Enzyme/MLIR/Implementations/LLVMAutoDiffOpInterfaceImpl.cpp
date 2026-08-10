@@ -431,6 +431,90 @@ struct LoadOpInterfaceReverse
   }
 };
 
+// A memcpy moves whatever bytes sit at the source, so its adjoint depends on
+// what those bytes are. When the destination provably holds no floating point
+// data -- its underlying object is an alloca of a float-free type, as for the
+// capture structs a kernel launch packs its arguments into -- the copy only
+// relocates pointers and integers. Their derivative story is entirely
+// structural: the shadow object must hold the shadow pointers at the same
+// offsets, which one copy of the shadow bytes in the forward sweep provides,
+// and the reverse sweep has nothing to accumulate. Bytes that do hold floats
+// need the classic adjoint (dsrc += ddst; ddst = 0) instead, which needs to
+// know where the floats are; without that knowledge we still refuse.
+static Type getUnderlyingAllocaType(Value ptr) {
+  while (true) {
+    Operation *def = ptr.getDefiningOp();
+    if (!def)
+      return nullptr;
+    if (auto alloca = dyn_cast<LLVM::AllocaOp>(def))
+      return alloca.getElemType();
+    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
+      ptr = gep.getBase();
+      continue;
+    }
+    if (auto cast = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
+      ptr = cast.getArg();
+      continue;
+    }
+    if (auto cast = dyn_cast<LLVM::BitcastOp>(def)) {
+      ptr = cast.getArg();
+      continue;
+    }
+    return nullptr;
+  }
+}
+
+static bool typeContainsFloat(Type type) {
+  if (isa<FloatType>(type))
+    return true;
+  if (auto structType = dyn_cast<LLVM::LLVMStructType>(type))
+    return llvm::any_of(structType.getBody(), typeContainsFloat);
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(type))
+    return typeContainsFloat(arrayType.getElementType());
+  if (auto vecType = dyn_cast<VectorType>(type))
+    return typeContainsFloat(vecType.getElementType());
+  return false;
+}
+
+static bool isFloatFreeCopy(LLVM::MemcpyOp memcpy) {
+  Type dstType = getUnderlyingAllocaType(memcpy.getDst());
+  return dstType && !typeContainsFloat(dstType);
+}
+
+// In forward mode the tangent of a memcpy is a memcpy of the shadows: float
+// bytes carry their tangents, pointer bytes carry their shadow pointers, and
+// one copy serves both. A source nothing differentiates has no shadow to copy
+// from: its float bytes have a zero tangent, while a float-free copy (see
+// above) wants the primal bytes themselves so structural fields stay usable
+// through the shadow object.
+struct MemcpyForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<MemcpyForwardInterface,
+                                                LLVM::MemcpyOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memcpy = cast<LLVM::MemcpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return success();
+    Value dstShadow = gutils->invertPointerM(memcpy.getDst(), builder);
+    auto newOp = cast<LLVM::MemcpyOp>(gutils->getNewFromOriginal(op));
+    if (gutils->isConstantValue(memcpy.getSrc()) && !isFloatFreeCopy(memcpy)) {
+      Value zero =
+          LLVM::ConstantOp::create(builder, op->getLoc(), builder.getI8Type(),
+                                   builder.getI8IntegerAttr(0));
+      LLVM::MemsetOp::create(builder, op->getLoc(), dstShadow, zero,
+                             newOp.getLen(), newOp.getIsVolatile());
+      return success();
+    }
+    Value srcShadow = gutils->isConstantValue(memcpy.getSrc())
+                          ? gutils->getNewFromOriginal(memcpy.getSrc())
+                          : gutils->invertPointerM(memcpy.getSrc(), builder);
+    auto shadowOp = cast<LLVM::MemcpyOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(dstShadow);
+    shadowOp.getSrcMutable().assign(srcShadow);
+    return success();
+  }
+};
+
 struct StoreOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse,
                                                        LLVM::StoreOp> {
@@ -911,6 +995,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::DbgLabelOp::attachInterface<
         NoAdjointReverseInterface<LLVM::DbgLabelOp>>(*context);
     LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
+    LLVM::MemcpyOp::attachInterface<MemcpyForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
