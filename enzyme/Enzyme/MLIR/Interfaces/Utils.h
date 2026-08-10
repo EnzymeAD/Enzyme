@@ -8,12 +8,14 @@
 //===----------------------------------------------------------------------===//
 #pragma once
 
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
 namespace enzyme {
+class MGradientUtils;
 namespace oputils {
 
 const std::set<std::string> &getNonCapturingFunctions();
@@ -24,6 +26,15 @@ const std::set<std::string> &getNonCapturingFunctions();
 bool isReadOnly(Operation *op);
 
 bool isReadNone(Operation *op);
+
+// The shadow of a stored value nothing differentiates is the primal value
+// itself: the shadow memory's structural fields must read as the primal's.
+// If the activity given was wrong about the value, only runtime activity
+// could catch it; every site says so through here, so a future runtime
+// activity implementation has a single seam to take over (as EnzymeLLVM's
+// does).
+Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
+                                Value stored, OpBuilder &builder);
 
 // Walks a pointer-like value to the object it is derived from, looking
 // through view-like ops (memref.cast, memref.memory_space_cast, subviews),

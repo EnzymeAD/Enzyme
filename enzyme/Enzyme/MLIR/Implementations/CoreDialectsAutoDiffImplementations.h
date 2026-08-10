@@ -125,8 +125,10 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 template <typename OpTy>
@@ -146,8 +148,10 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // Implements the forward autodiff interface for operations which are
@@ -196,10 +200,11 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     (void)allocationForwardHandler(op, builder, (MGradientUtils *)gutils,
                                    /*zero*/ true);
+    return success();
   }
 };
 
@@ -246,8 +251,10 @@ public:
     return detail::callCacheValues(orig, gutils);
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // Registers the generic call handlers for the given op; the tablegen-emitted

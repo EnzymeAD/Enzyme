@@ -16,6 +16,7 @@
 #include "Implementations/LoopCheckpointing.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "Passes/RemovalUtils.h"
 #include "Passes/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -520,8 +521,10 @@ struct AffineForOpInterfaceReverse
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct AffineParallelOpInterfaceReverse
@@ -597,8 +600,10 @@ struct AffineParallelOpInterfaceReverse
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct AffineParallelOpEnzymeOpsRemover
@@ -904,8 +909,8 @@ struct AffineLoadOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<affine::AffineLoadOp>(op);
     Value memref = loadOp.getMemref();
     auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
@@ -913,15 +918,29 @@ struct AffineLoadOpInterfaceReverse
     // so what stands for it is the handle held at the same place in the shadow:
     // the same load, off the shadow memref. Reading it out is the whole of the
     // derivative -- see the adjoint above, which leaves it alone.
-    if (!iface || !iface.isMutable())
-      return;
-    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(memref))
-      return;
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a load of a type without "
+                "autodiff semantics "
+             << *op;
+    // An immutable load's derivative is the adjoint's to accumulate.
+    if (!iface.isMutable())
+      return success();
+    if (gutils->isConstantValue(loadOp))
+      return success();
+    // Cannot load a non-constant value out of a constant memref: there is no
+    // shadow to read the handle from, so the claimed activity cannot be
+    // honored.
+    if (gutils->isConstantValue(memref))
+      return op->emitError()
+             << "cannot load a non-constant value out of a constant memref "
+             << *op;
     Value memrefShadow = gutils->invertPointerM(memref, builder);
     auto newLoad = cast<affine::AffineLoadOp>(gutils->getNewFromOriginal(op));
     auto shadowLoad = cast<affine::AffineLoadOp>(builder.clone(*newLoad));
     shadowLoad.getMemrefMutable().assign(memrefShadow);
     gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
+    return success();
   }
 };
 
@@ -1044,22 +1063,34 @@ struct AffineStoreOpInterfaceReverse
 
   // Same structural story as memref.store: a stored mutable value's shadow
   // must land at the same affine position in the shadow memref.
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<affine::AffineStoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
     auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
-    if (!iface || !iface.isMutable() || gutils->isConstantValue(memref))
-      return;
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a store of a type without "
+                "autodiff semantics "
+             << *op;
+    if (gutils->isConstantValue(memref))
+      return success();
+    // Immutable values' shadows live in the reverse sweep's adjoint, which
+    // accumulates and zeroes the slot; only mutable values need the forward
+    // sweep to place their shadow.
+    if (!iface.isMutable())
+      return success();
     Value memrefShadow = gutils->invertPointerM(memref, builder);
-    Value valShadow = gutils->isConstantValue(val)
-                          ? gutils->getNewFromOriginal(val)
-                          : gutils->invertPointerM(val, builder);
+    Value valShadow =
+        gutils->isConstantValue(val)
+            ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
+            : gutils->invertPointerM(val, builder);
     auto newOp = cast<affine::AffineStoreOp>(gutils->getNewFromOriginal(op));
     auto shadowOp = cast<affine::AffineStoreOp>(builder.clone(*newOp));
     shadowOp.getValueMutable().assign(valShadow);
     shadowOp.getMemrefMutable().assign(memrefShadow);
+    return success();
   }
 };
 

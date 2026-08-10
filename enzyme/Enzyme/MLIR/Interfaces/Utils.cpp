@@ -10,6 +10,8 @@
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Interfaces/GradientUtils.h"
+#include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -103,6 +105,25 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
   }
 
   return false;
+}
+
+Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
+                                Value stored, OpBuilder &builder) {
+  auto iface = cast<AutoDiffTypeInterface>(stored.getType());
+  // An immutable value carries no aliasing structure into the shadow; its
+  // tangent is simply zero.
+  if (!iface.isMutable())
+    return cast<AutoDiffTypeInterface>(gutils.getShadowType(stored.getType()))
+        .createNullValue(builder, orig->getLoc());
+  orig->emitWarning()
+      << "storing an inactive value into differentiated memory; the shadow "
+         "holds the primal value, which runtime activity would be needed to "
+         "check";
+  Value primal = gutils.getNewFromOriginal(stored);
+  if (gutils.width == 1)
+    return primal;
+  SmallVector<Value> batched(gutils.width, primal);
+  return getConcatValue(builder, orig->getLoc(), batched);
 }
 
 Value getBaseObject(Value v) {

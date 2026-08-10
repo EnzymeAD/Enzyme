@@ -59,7 +59,8 @@ LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
     OpBuilder augmentBuilder(gutils->getNewFromOriginal(op));
-    ifaceOp.createShadowValues(augmentBuilder, gutils);
+    if (failed(ifaceOp.createShadowValues(augmentBuilder, gutils)))
+      return failure();
     return ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
   }
   op->emitError() << "could not compute the adjoint for this operation " << *op;

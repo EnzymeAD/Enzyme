@@ -1744,9 +1744,10 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "          return toret;\n";
   os << "       }\n";
   os << "\n";
-  os << "  void createShadowValues(Operation *op, OpBuilder &builder,\n";
+  os << "  LogicalResult createShadowValues(Operation *op, OpBuilder "
+        "&builder,\n";
   os << "                          MGradientUtilsReverse *gutils) const "
-        "{}\n";
+        "{ return success(); }\n";
 
   os << "     LogicalResult createReverseModeAdjoint(Operation *op0, OpBuilder "
         "&builder,\n";
