@@ -4173,8 +4173,8 @@ bool GradientUtils::legalRecompute(const Value *val,
               bool failed = false;
 
               allInstructionsBetween(
-                  const_cast<GradientUtils *>(this)->LI, origStart,
-                  const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
+                  *OrigLI, origStart, const_cast<Instruction *>(orig),
+                  [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
                             &TR, *OrigAA, TLI,
