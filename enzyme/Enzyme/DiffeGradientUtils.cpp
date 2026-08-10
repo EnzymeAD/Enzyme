@@ -915,8 +915,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   tbuild.setFastMathFlags(getFast());
 
   // ensure we are before the terminator if it exists
-  if (tbuild.GetInsertBlock()->size() &&
-      tbuild.GetInsertBlock()->getTerminator()) {
+  if (hasTerminator(tbuild.GetInsertBlock())) {
     tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getTerminator());
   }
 
