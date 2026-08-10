@@ -41,7 +41,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install cmakefmt
       run: |
-        python3 venv enzyme_venv
+        python3 -m venv enzyme_venv
         . enzyme_venv/bin/activate
         pip install cmakefmt
     - name: Run cmakefmt --check
