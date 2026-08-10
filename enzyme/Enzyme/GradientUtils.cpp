@@ -5521,6 +5521,19 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #endif
 
   auto &DL = oldFunc->getParent()->getDataLayout();
+
+  // A constant can arrive here with no type information at all: the
+  // GlobalVariable case inverts an initializer with the tree it holds for the
+  // pointer, which says nothing about the pointee's contents, and the
+  // aggregate cases below then slice that empty tree per element. Every byte
+  // stays Unknown, which anyFloat() reads as "may be a float" while allFloat()
+  // reads as "not all float" -- the one combination that sends a compile-time
+  // constant down the runtime partially-float path. Type analysis already
+  // knows the answer for constants, so ask it rather than guessing from
+  // nothing.
+  if (!TT.isKnown() && isa<Constant>(oval))
+    TT = TR.query(oval);
+
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
       isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval) ||
       isa<PoisonValue>(oval)) {
