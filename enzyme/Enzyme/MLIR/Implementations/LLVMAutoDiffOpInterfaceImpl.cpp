@@ -17,6 +17,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
@@ -442,26 +443,9 @@ struct LoadOpInterfaceReverse
 // need the classic adjoint (dsrc += ddst; ddst = 0) instead, which needs to
 // know where the floats are; without that knowledge we still refuse.
 static Type getUnderlyingAllocaType(Value ptr) {
-  while (true) {
-    Operation *def = ptr.getDefiningOp();
-    if (!def)
-      return nullptr;
-    if (auto alloca = dyn_cast<LLVM::AllocaOp>(def))
-      return alloca.getElemType();
-    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
-      ptr = gep.getBase();
-      continue;
-    }
-    if (auto cast = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
-      ptr = cast.getArg();
-      continue;
-    }
-    if (auto cast = dyn_cast<LLVM::BitcastOp>(def)) {
-      ptr = cast.getArg();
-      continue;
-    }
-    return nullptr;
-  }
+  if (auto alloca = oputils::getBaseObject(ptr).getDefiningOp<LLVM::AllocaOp>())
+    return alloca.getElemType();
+  return nullptr;
 }
 
 static bool typeContainsFloat(Type type) {
@@ -474,11 +458,6 @@ static bool typeContainsFloat(Type type) {
   if (auto vecType = dyn_cast<VectorType>(type))
     return typeContainsFloat(vecType.getElementType());
   return false;
-}
-
-static bool isFloatFreeCopy(LLVM::MemcpyOp memcpy) {
-  Type dstType = getUnderlyingAllocaType(memcpy.getDst());
-  return dstType && !typeContainsFloat(dstType);
 }
 
 // In forward mode the tangent of a memcpy is a memcpy of the shadows: float
@@ -497,13 +476,33 @@ struct MemcpyForwardInterface
       return success();
     Value dstShadow = gutils->invertPointerM(memcpy.getDst(), builder);
     auto newOp = cast<LLVM::MemcpyOp>(gutils->getNewFromOriginal(op));
-    if (gutils->isConstantValue(memcpy.getSrc()) && !isFloatFreeCopy(memcpy)) {
-      Value zero =
-          LLVM::ConstantOp::create(builder, op->getLoc(), builder.getI8Type(),
-                                   builder.getI8IntegerAttr(0));
-      LLVM::MemsetOp::create(builder, op->getLoc(), dstShadow, zero,
-                             newOp.getLen(), newOp.getIsVolatile());
-      return success();
+    if (gutils->isConstantValue(memcpy.getSrc())) {
+      // A source nothing differentiates has no shadow to copy from; what
+      // the destination's tangent should hold depends on what the bytes
+      // are, which only the destination's type can say.
+      Type dstType = getUnderlyingAllocaType(memcpy.getDst());
+      if (!dstType)
+        return op->emitError()
+               << "could not compute the tangent of a memcpy from an "
+                  "undifferentiated source without knowing the copied type "
+               << *op;
+      if (typeContainsFloat(dstType)) {
+        // TODO: without type analysis saying where the floats sit, zeroing
+        // is right for them but also nulls any structural fields (sizes,
+        // inactive pointers) the copy carried.
+        op->emitWarning()
+            << "assuming the bytes copied from an undifferentiated source "
+               "are floating point and zeroing their tangent "
+            << *op;
+        Value zero =
+            LLVM::ConstantOp::create(builder, op->getLoc(), builder.getI8Type(),
+                                     builder.getI8IntegerAttr(0));
+        LLVM::MemsetOp::create(builder, op->getLoc(), dstShadow, zero,
+                               newOp.getLen(), newOp.getIsVolatile());
+        return success();
+      }
+      // Float-free: the shadow's structural fields (sizes, inactive
+      // pointers) must read as the primal's.
     }
     Value srcShadow = gutils->isConstantValue(memcpy.getSrc())
                           ? gutils->getNewFromOriginal(memcpy.getSrc())
@@ -511,6 +510,11 @@ struct MemcpyForwardInterface
     auto shadowOp = cast<LLVM::MemcpyOp>(builder.clone(*newOp));
     shadowOp.getDstMutable().assign(dstShadow);
     shadowOp.getSrcMutable().assign(srcShadow);
+
+    // A copy into memory whose primal contents the caller declared unneeded
+    // (enzyme_dupnoneed) need not write the primal half at all.
+    if (gutils->primalStoreElidable(memcpy.getDst()))
+      gutils->erase(newOp);
     return success();
   }
 };

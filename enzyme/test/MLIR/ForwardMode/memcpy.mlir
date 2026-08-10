@@ -26,17 +26,19 @@ module {
 
 // -----
 
-// A source nothing differentiates has no shadow to copy from, and without
-// knowing where in the bytes the floats sit the only safe tangent for them is
-// zero everywhere the copy reached.
+// A source nothing differentiates has no shadow to copy from; the
+// destination is an alloca of floats, whose tangent over the copied range
+// is zero.
 
 module {
   llvm.func @g(%p: !llvm.ptr, %c: !llvm.ptr) {
+    %c1 = llvm.mlir.constant(1 : i32) : i32
     %n = llvm.mlir.constant(8 : i64) : i64
-    %v = llvm.load %p : !llvm.ptr -> f64
+    %a = llvm.alloca %c1 x f64 : (i32) -> !llvm.ptr
+    "llvm.intr.memcpy"(%a, %c, %n) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()
+    %v = llvm.load %a : !llvm.ptr -> f64
     %s = arith.mulf %v, %v : f64
     llvm.store %s, %p : f64, !llvm.ptr
-    "llvm.intr.memcpy"(%p, %c, %n) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()
     llvm.return
   }
 
@@ -47,8 +49,8 @@ module {
 }
 
 // CHECK: llvm.func @fwddiffeg(%[[p2:.+]]: !llvm.ptr, %[[dp2:.+]]: !llvm.ptr, %[[c2:.+]]: !llvm.ptr)
-// CHECK-DAG:     "llvm.intr.memset"(%[[dp2]], %{{.+}}, %{{.+}})
-// CHECK-DAG:     "llvm.intr.memcpy"(%[[p2]], %[[c2]], %{{.+}})
+// CHECK-DAG:     "llvm.intr.memset"(%[[sa:.+]], %{{.+}}, %{{.+}})
+// CHECK-DAG:     "llvm.intr.memcpy"(%[[a:.+]], %[[c2]], %{{.+}})
 
 // -----
 
