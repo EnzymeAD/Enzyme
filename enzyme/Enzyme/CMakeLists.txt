@@ -2,15 +2,17 @@
 #  set(LLVM_LINK_COMPONENTS Core Support)
 #endif()
 
-if ("${Enzyme_TABLEGEN_EXE}" STREQUAL "")
+if("${Enzyme_TABLEGEN_EXE}" STREQUAL "")
   set(Enzyme_TABLEGEN_EXE $<TARGET_FILE:enzyme-tblgen>)
 endif()
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
-if (NOT TBL_LINKED_LIBS)
+if(NOT TBL_LINKED_LIBS)
 else()
-list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
-set_property(TARGET LLVMSupport PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_LIBS})
+  list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
+  set_property(
+    TARGET LLVMSupport
+    PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_LIBS})
 endif()
 
 function(enzyme_tablegen ofn)
@@ -42,277 +44,305 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 set(LLVM_LINK_COMPONENTS Demangle)
 
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-    "*.cpp"
-)
+     "*.cpp")
 list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
+list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp
+     TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-if (ENZYME_ENABLE_PLUGINS)
-    # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
-    if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
-        add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
-            ${ENZYME_SRC}
-            PARTIAL_SOURCES_INTENDED
-            MODULE
-            DEPENDS
-            intrinsics_gen
-        LINK_COMPONENTS
-        LLVM
-        )
-        if (${Clang_FOUND})
-            add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
-                ${ENZYME_SRC} Clang/EnzymeClang.cpp
-                Clang/EnzymePassLoader.cpp
-                PARTIAL_SOURCES_INTENDED
-                MODULE
-                DEPENDS
-                intrinsics_gen
-            LINK_COMPONENTS
-            LLVM
-            )
-            target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-        endif() # CLANG_FOUND
-        if (${ENZYME_FLANG})
-            add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
-                ${ENZYME_SRC} 
-                PARTIAL_SOURCES_INTENDED
-                MODULE
-                DEPENDS
-                intrinsics_gen
-            LINK_COMPONENTS
-            LLVM
-            )
-            target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-        endif() # ENZYME_FLANG
-        add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
-            ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
-            PARTIAL_SOURCES_INTENDED
-            MODULE
-            DEPENDS
-            intrinsics_gen
-        LINK_COMPONENTS
-        LLVM
-        )
-        target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-    else()
-        add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
-            ${ENZYME_SRC}
-            PARTIAL_SOURCES_INTENDED
-            MODULE
-            DEPENDS
-            intrinsics_gen
-            PLUGIN_TOOL
-            opt
-        )
-        if (${Clang_FOUND})
-            add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
-                ${ENZYME_SRC} Clang/EnzymeClang.cpp
-                Clang/EnzymePassLoader.cpp
-                PARTIAL_SOURCES_INTENDED
-                MODULE
-                DEPENDS
-                intrinsics_gen
-                PLUGIN_TOOL
-                clang
-            )
-            target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-        endif() # Clang_FOUND
-        if (${ENZYME_FLANG})
-            # On DLL platforms PLUGIN_TOOL makes the module link against the
-            # named tool, so only pass it when that target has actually been
-            # imported -- Enzyme has no find_package(Flang).
-            if (TARGET flang)
-                set(ENZYME_FLANG_PLUGIN_TOOL PLUGIN_TOOL flang)
-            else()
-                set(ENZYME_FLANG_PLUGIN_TOOL "")
-            endif()
-            add_llvm_library( FlangEnzyme-${LLVM_VERSION_MAJOR}
-                ${ENZYME_SRC}
-                PARTIAL_SOURCES_INTENDED
-                MODULE
-                DEPENDS
-                intrinsics_gen
-                ${ENZYME_FLANG_PLUGIN_TOOL}
-            )
-            target_compile_definitions(FlangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-        endif() # ENZYME_FLANG
-        add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
-            ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
-            PARTIAL_SOURCES_INTENDED
-            MODULE
-            DEPENDS
-            intrinsics_gen
-            PLUGIN_TOOL
-            opt
-        )
-        target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-    endif() # WIN32 OR CYGWIN AND LLVM_LINK_LLVM_DYLIB
-endif() # ENZYME_ENABLE_PLUGINS
-
-if (${ENZYME_STATIC_LIB})
-    add_llvm_library( EnzymeStatic-${LLVM_VERSION_MAJOR}
+if(ENZYME_ENABLE_PLUGINS)
+  # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
+  if((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
+    add_llvm_library(
+      LLVMEnzyme-${LLVM_VERSION_MAJOR}
+      ${ENZYME_SRC}
+      PARTIAL_SOURCES_INTENDED
+      MODULE
+      DEPENDS
+      intrinsics_gen
+      LINK_COMPONENTS
+      LLVM)
+    if(${Clang_FOUND})
+      add_llvm_library(
+        ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        Clang/EnzymeClang.cpp
+        Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        STATIC
+        MODULE
         DEPENDS
         intrinsics_gen
-    )
+        LINK_COMPONENTS
+        LLVM)
+      target_compile_definitions(
+        ClangEnzyme-${LLVM_VERSION_MAJOR}
+        PUBLIC ENZYME_RUNPASS)
+    endif() # CLANG_FOUND
+    if(${ENZYME_FLANG})
+      add_llvm_library(
+        FlangEnzyme-${LLVM_VERSION_MAJOR}
+        ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
+        MODULE
+        DEPENDS
+        intrinsics_gen
+        LINK_COMPONENTS
+        LLVM)
+      target_compile_definitions(
+        FlangEnzyme-${LLVM_VERSION_MAJOR}
+        PUBLIC ENZYME_RUNPASS)
+    endif() # ENZYME_FLANG
+    add_llvm_library(
+      LLDEnzyme-${LLVM_VERSION_MAJOR}
+      ${ENZYME_SRC}
+      Clang/EnzymePassLoader.cpp
+      PARTIAL_SOURCES_INTENDED
+      MODULE
+      DEPENDS
+      intrinsics_gen
+      LINK_COMPONENTS
+      LLVM)
+    target_compile_definitions(
+      LLDEnzyme-${LLVM_VERSION_MAJOR}
+      PUBLIC ENZYME_RUNPASS)
+  else()
+    add_llvm_library(
+      LLVMEnzyme-${LLVM_VERSION_MAJOR}
+      ${ENZYME_SRC}
+      PARTIAL_SOURCES_INTENDED
+      MODULE
+      DEPENDS
+      intrinsics_gen
+      PLUGIN_TOOL
+      opt)
+    if(${Clang_FOUND})
+      add_llvm_library(
+        ClangEnzyme-${LLVM_VERSION_MAJOR}
+        ${ENZYME_SRC}
+        Clang/EnzymeClang.cpp
+        Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
+        MODULE
+        DEPENDS
+        intrinsics_gen
+        PLUGIN_TOOL
+        clang)
+      target_compile_definitions(
+        ClangEnzyme-${LLVM_VERSION_MAJOR}
+        PUBLIC ENZYME_RUNPASS)
+    endif() # Clang_FOUND
+    if(${ENZYME_FLANG})
+      # On DLL platforms PLUGIN_TOOL makes the module link against the
+      # named tool, so only pass it when that target has actually been
+      # imported -- Enzyme has no find_package(Flang).
+      if(TARGET flang)
+        set(ENZYME_FLANG_PLUGIN_TOOL PLUGIN_TOOL flang)
+      else()
+        set(ENZYME_FLANG_PLUGIN_TOOL "")
+      endif()
+      add_llvm_library(
+        FlangEnzyme-${LLVM_VERSION_MAJOR}
+        ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
+        MODULE
+        DEPENDS
+        intrinsics_gen
+        ${ENZYME_FLANG_PLUGIN_TOOL})
+      target_compile_definitions(
+        FlangEnzyme-${LLVM_VERSION_MAJOR}
+        PUBLIC ENZYME_RUNPASS)
+    endif() # ENZYME_FLANG
+    add_llvm_library(
+      LLDEnzyme-${LLVM_VERSION_MAJOR}
+      ${ENZYME_SRC}
+      Clang/EnzymePassLoader.cpp
+      PARTIAL_SOURCES_INTENDED
+      MODULE
+      DEPENDS
+      intrinsics_gen
+      PLUGIN_TOOL
+      opt)
+    target_compile_definitions(
+      LLDEnzyme-${LLVM_VERSION_MAJOR}
+      PUBLIC ENZYME_RUNPASS)
+  endif() # WIN32 OR CYGWIN AND LLVM_LINK_LLVM_DYLIB
+endif() # ENZYME_ENABLE_PLUGINS
+
+if(${ENZYME_STATIC_LIB})
+  add_llvm_library(EnzymeStatic-${LLVM_VERSION_MAJOR} ${ENZYME_SRC}
+                   PARTIAL_SOURCES_INTENDED STATIC DEPENDS intrinsics_gen)
 endif()
 
-if (${ENZYME_EXTERNAL_SHARED_LIB})
-    add_library( Enzyme-${LLVM_VERSION_MAJOR}
-        SHARED
-        ${ENZYME_SRC}
-    )
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BinopDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} IntrinsicDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} CallDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
+if(${ENZYME_EXTERNAL_SHARED_LIB})
+  add_library(Enzyme-${LLVM_VERSION_MAJOR} SHARED ${ENZYME_SRC})
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BinopDerivativesIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} IntrinsicDerivativesIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} CallDerivativesIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
+  add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
 
-    if (APPLE AND ENZYME_APPLE_DYNAMIC_LOOKUP)
-        target_link_options(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE
-            "-Wl,-flat_namespace"
-            "-Wl,-undefined,dynamic_lookup")
-    else()
-        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
-    endif()
+  if(APPLE AND ENZYME_APPLE_DYNAMIC_LOOKUP)
+    target_link_options(
+      Enzyme-${LLVM_VERSION_MAJOR}
+      PRIVATE "-Wl,-flat_namespace" "-Wl,-undefined,dynamic_lookup")
+  else()
+    target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+  endif()
 
-    install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
-        EXPORT EnzymeTargets
-        LIBRARY DESTINATION lib COMPONENT shlib
-        PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
-        COMPONENT dev)
+  install(
+    TARGETS Enzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme" COMPONENT dev)
 endif()
 
 # Reactant-focused Enzyme subset as one static lib.
-if (${ENZYME_ENABLE_REACTANT})
-  set(ENZYME_REACTANT_SUPPORT_SRC
-    PreserveNVVM.cpp
-  )
+if(${ENZYME_ENABLE_REACTANT})
+  set(ENZYME_REACTANT_SUPPORT_SRC PreserveNVVM.cpp)
 
-  add_llvm_library(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
-    ${ENZYME_REACTANT_SUPPORT_SRC}
-    PARTIAL_SOURCES_INTENDED
-    STATIC
-  )
+  add_llvm_library(
+    EnzymeReactantSupport-${LLVM_VERSION_MAJOR} ${ENZYME_REACTANT_SUPPORT_SRC}
+    PARTIAL_SOURCES_INTENDED STATIC)
 
-  target_compile_definitions(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
-    PRIVATE ENZYME_ENABLE_NVVM_ATTRIBUTION=0
-  )
+  target_compile_definitions(
+    EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
+    PRIVATE ENZYME_ENABLE_NVVM_ATTRIBUTION=0)
 
-  target_include_directories(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
+  target_include_directories(
+    EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
     PUBLIC
       $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
-      $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
-      $<INSTALL_INTERFACE:include>
-  )
+      $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}> $<INSTALL_INTERFACE:include>)
 
-  install(TARGETS EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
+  install(
+    TARGETS EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
-    ARCHIVE DESTINATION lib COMPONENT dev
-  )
+    ARCHIVE DESTINATION lib COMPONENT dev)
 
   # Export internal Enzyme headers like Enzyme/Utils.h and Enzyme/PreserveNVVM.h
   install(
     DIRECTORY "${PROJECT_SOURCE_DIR}/Enzyme/"
     DESTINATION include/Enzyme
     FILES_MATCHING
-      PATTERN "*.h"
-  )
+    PATTERN "*.h")
 endif()
 
-if (APPLE)
-# Darwin-specific linker flags for loadable modules.
-if (ENZYME_ENABLE_PLUGINS)
-set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
-    LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-if (${Clang_FOUND})
-set_target_properties(ClangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
-        LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-endif()
-if (${ENZYME_FLANG})
-set_target_properties(FlangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
-        LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-endif()
-set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
-        LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-endif()
+if(APPLE)
+  # Darwin-specific linker flags for loadable modules.
+  if(ENZYME_ENABLE_PLUGINS)
+    set_target_properties(
+      LLVMEnzyme-${LLVM_VERSION_MAJOR}
+      PROPERTIES LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+    if(${Clang_FOUND})
+      set_target_properties(
+        ClangEnzyme-${LLVM_VERSION_MAJOR}
+        PROPERTIES LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+    endif()
+    if(${ENZYME_FLANG})
+      set_target_properties(
+        FlangEnzyme-${LLVM_VERSION_MAJOR}
+        PROPERTIES LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+    endif()
+    set_target_properties(
+      LLDEnzyme-${LLVM_VERSION_MAJOR}
+      PROPERTIES LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+  endif()
 endif()
 
 add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
-target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+target_link_options(
+  LLDEnzymeFlags
+  INTERFACE
+    "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+target_link_options(
+  LLDEnzymeFlags
+  INTERFACE
+    "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 
 add_library(LLDEnzymeAssumeUnknownNoFree INTERFACE)
-target_link_options(LLDEnzymeAssumeUnknownNoFree INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")
+target_link_options(
+  LLDEnzymeAssumeUnknownNoFree
+  INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")
 
 add_library(LLDEnzymeLooseTypeFlags INTERFACE)
-target_link_options(LLDEnzymeLooseTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-loose-types=1")
+target_link_options(
+  LLDEnzymeLooseTypeFlags
+  INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-loose-types=1")
 
 add_library(LLDEnzymePrintTypeFlags INTERFACE)
-target_link_options(LLDEnzymePrintTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print-type=1")
+target_link_options(
+  LLDEnzymePrintTypeFlags
+  INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print-type=1")
 
 add_library(LLDEnzymePrintFlags INTERFACE)
-target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print=1")
+target_link_options(
+  LLDEnzymePrintFlags
+  INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print=1")
 
 add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
-target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
+target_link_options(
+  LLDEnzymeNoStrictAliasingFlags
+  INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
 
-if (ENZYME_ENABLE_PLUGINS)
-# this custom target exists to prevent CMake from incorrectly assuming that
-# targets that link depend on LLDEnzyme-XX can be built at the same time or
-# before LLDEnzyme-XX has finished.
-add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
-add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
+if(ENZYME_ENABLE_PLUGINS)
+  # this custom target exists to prevent CMake from incorrectly assuming that
+  # targets that link depend on LLDEnzyme-XX can be built at the same time or
+  # before LLDEnzyme-XX has finished.
+  add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
+  add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
 
-add_library(ClangEnzymeFlags INTERFACE)
-target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+  add_library(ClangEnzymeFlags INTERFACE)
+  target_compile_options(
+    ClangEnzymeFlags
+    INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 
-# this custom target exists to prevent CMake from incorrectly assuming that
-# targets that link depend on ClangEnzyme-XX can be built at the same time or
-# before ClangEnzyme-XX has finished.
-add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
-add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
+  # this custom target exists to prevent CMake from incorrectly assuming that
+  # targets that link depend on ClangEnzyme-XX can be built at the same time or
+  # before ClangEnzyme-XX has finished.
+  add_custom_target(
+    ClangEnzymeDummy ""
+    DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
+  add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
-install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
-install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
+  install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
+  install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
-install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
+  install(
+    TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
+    LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
 
-if (${Clang_FOUND})
-install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
+  if(${Clang_FOUND})
+    install(
+      TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
+      EXPORT EnzymeTargets
+      LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
+    install(
+      DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme"
+      DESTINATION "include")
+  endif()
+  if(${ENZYME_FLANG})
+    install(
+      TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
+      EXPORT EnzymeTargets
+      LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
+  endif()
+  install(
+    TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
-    install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
+    LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
+
 endif()
-if (${ENZYME_FLANG})
-install(TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
-    EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
-endif()
-install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
-    EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
 
-endif()
-    
-if (ENZYME_MLIR)
-    add_subdirectory(MLIR)
+if(ENZYME_MLIR)
+  add_subdirectory(MLIR)
 endif()
