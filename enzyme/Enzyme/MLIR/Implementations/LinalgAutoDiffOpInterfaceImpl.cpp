@@ -269,8 +269,10 @@ struct GenericOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 class GenericFwd

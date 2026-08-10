@@ -542,9 +542,10 @@ public:
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     // auto forOp = cast<scf::ForOp>(op);
+    return success();
   }
 };
 
@@ -760,8 +761,10 @@ struct ParallelOpInterfaceReverse
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct IfOpEnzymeOpsRemover
@@ -900,12 +903,12 @@ struct IfOpInterfaceReverse
     return SmallVector<Value>{cacheCond};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     // TODO: consider making this generic for RegionBranchOpInterface
     auto ifOp = cast<scf::IfOp>(op);
     if (ifOp.getNumResults() == 0)
-      return;
+      return success();
 
     auto newIf = cast<scf::IfOp>(gutils->getNewFromOriginal(ifOp));
     SmallVector<Type> newResultTypes;
@@ -965,6 +968,7 @@ struct IfOpInterfaceReverse
     }
     newIf.replaceAllUsesWith(augmentedResults);
     newIf.erase();
+    return success();
   }
 };
 

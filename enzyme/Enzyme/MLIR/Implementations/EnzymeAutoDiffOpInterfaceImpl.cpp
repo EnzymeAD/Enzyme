@@ -109,8 +109,10 @@ struct AffineAtomicRMWOpInterfaceReverse
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // Forward mode mirrors the primal on the shadows: the tangent of the value

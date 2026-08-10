@@ -252,8 +252,10 @@ struct NoAdjointReverseInterface
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // After a memset the memory holds a fixed byte pattern, which depends on no
@@ -313,8 +315,8 @@ struct GEPOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto gep = cast<LLVM::GEPOp>(op);
     auto newGep = cast<LLVM::GEPOp>(gutils->getNewFromOriginal(op));
     auto base = gep.getBase();
@@ -324,6 +326,7 @@ struct GEPOpInterfaceReverse
       shadowGep.getBaseMutable().assign(baseShadow);
       gutils->setInvertedPointer(gep.getRes(), shadowGep->getResult(0));
     }
+    return success();
   }
 };
 
@@ -346,17 +349,18 @@ struct AddrSpaceCastOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto asCast = cast<LLVM::AddrSpaceCastOp>(op);
     auto arg = asCast.getArg();
     if (gutils->isConstantValue(arg))
-      return;
+      return success();
 
     auto newCast = cast<LLVM::AddrSpaceCastOp>(gutils->getNewFromOriginal(op));
     auto shadowCast = cast<LLVM::AddrSpaceCastOp>(builder.clone(*newCast));
     shadowCast.getArgMutable().assign(gutils->invertPointerM(arg, builder));
     gutils->setInvertedPointer(asCast.getRes(), shadowCast.getRes());
+    return success();
   }
 };
 
@@ -411,8 +415,8 @@ struct LoadOpInterfaceReverse
                                      cacheBuilder)};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<LLVM::LoadOp>(op);
     Value addr = loadOp.getAddr();
     auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
@@ -420,15 +424,29 @@ struct LoadOpInterfaceReverse
     // so what stands for it is the handle held at the same place in the shadow:
     // the same load, off the shadow address. Reading it out is the whole of the
     // derivative -- see the adjoint above, which leaves it alone.
-    if (!iface || !iface.isMutable())
-      return;
-    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(addr))
-      return;
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a load of a type without "
+                "autodiff semantics "
+             << *op;
+    // An immutable load's derivative is the adjoint's to accumulate.
+    if (!iface.isMutable())
+      return success();
+    if (gutils->isConstantValue(loadOp))
+      return success();
+    // Cannot load a non-constant value out of a constant address: there is no
+    // shadow to read the handle from, so the claimed activity cannot be
+    // honored.
+    if (gutils->isConstantValue(addr))
+      return op->emitError()
+             << "cannot load a non-constant value out of a constant address "
+             << *op;
     Value addrShadow = gutils->invertPointerM(addr, builder);
     auto newLoad = cast<LLVM::LoadOp>(gutils->getNewFromOriginal(op));
     auto shadowLoad = cast<LLVM::LoadOp>(builder.clone(*newLoad));
     shadowLoad.getAddrMutable().assign(addrShadow);
     gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
+    return success();
   }
 };
 
@@ -505,7 +523,8 @@ struct MemcpyForwardInterface
       // pointers) must read as the primal's.
     }
     Value srcShadow = gutils->isConstantValue(memcpy.getSrc())
-                          ? gutils->getNewFromOriginal(memcpy.getSrc())
+                          ? oputils::inactiveStoredValueShadow(
+                                op, *gutils, memcpy.getSrc(), builder)
                           : gutils->invertPointerM(memcpy.getSrc(), builder);
     auto shadowOp = cast<LLVM::MemcpyOp>(builder.clone(*newOp));
     shadowOp.getDstMutable().assign(dstShadow);
@@ -576,22 +595,34 @@ struct StoreOpInterfaceReverse
   // so shadow loads traverse shadow structures. A pointer nothing
   // differentiates is its own shadow, keeping inactive fields readable
   // through the shadow object.
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<LLVM::StoreOp>(op);
     Value val = storeOp.getValue();
     Value addr = storeOp.getAddr();
-    auto iface = cast<AutoDiffTypeInterface>(val.getType());
-    if (!iface.isMutable() || gutils->isConstantValue(addr))
-      return;
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a store of a type without "
+                "autodiff semantics "
+             << *op;
+    if (gutils->isConstantValue(addr))
+      return success();
+    // Immutable values' shadows live in the reverse sweep's adjoint, which
+    // accumulates and zeroes the slot; only mutable values need the forward
+    // sweep to place their shadow.
+    if (!iface.isMutable())
+      return success();
     Value addrShadow = gutils->invertPointerM(addr, builder);
-    Value valShadow = gutils->isConstantValue(val)
-                          ? gutils->getNewFromOriginal(val)
-                          : gutils->invertPointerM(val, builder);
+    Value valShadow =
+        gutils->isConstantValue(val)
+            ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
+            : gutils->invertPointerM(val, builder);
     auto newOp = cast<LLVM::StoreOp>(gutils->getNewFromOriginal(op));
     auto shadowOp = cast<LLVM::StoreOp>(builder.clone(*newOp));
     shadowOp.getValueMutable().assign(valShadow);
     shadowOp.getAddrMutable().assign(addrShadow);
+    return success();
   }
 };
 
@@ -629,8 +660,10 @@ struct ExtractValueOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct InsertValueOpInterfaceReverse
@@ -681,8 +714,10 @@ struct InsertValueOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // What is recorded about the allocation a pointer names: how many bytes are
