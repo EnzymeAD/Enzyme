@@ -5577,11 +5577,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           // Go one after since otherwise we won't be able
           // to use in the store.
           arg = arg->getNextNode();
-          while (auto PN = dyn_cast<PHINode>(arg)) {
-            if (PN->getNumIncomingValues() == 0)
-              break;
-            arg = PN->getNextNode();
-          }
+          // Skip every phi, including ones whose incoming values have not been
+          // filled in yet: a shadow phi created by the PHINode case below has
+          // no incoming values until after it has recursed into this function
+          // for each incoming value, and stopping on it would insert these
+          // stores above a phi.
+          while (isa<PHINode>(arg))
+            arg = arg->getNextNode();
           bb.SetInsertPoint(arg);
         }
         auto alloc = bb.CreateAlloca(oval->getType());
