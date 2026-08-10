@@ -34,6 +34,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -381,6 +382,59 @@ bool preserveNVVM(bool Begin, Module &M,
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
+
+  // Flang cannot construct the constant function/string aggregate used by
+  // __enzyme_function_like. The Fortran binding instead passes a function and
+  // a BIND(C) global whose name is enzyme_math_<function>.
+  if (Begin) {
+    SmallVector<CallInst *, 4> functionLikeCalls;
+    for (Function &Caller : M) {
+      for (BasicBlock &BB : Caller) {
+        for (Instruction &I : BB) {
+          auto *Call = dyn_cast<CallInst>(&I);
+          if (!Call)
+            continue;
+
+          auto *Hook =
+              dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
+          if (!Hook || !Hook->getName().contains("f__enzyme_function_like"))
+            continue;
+
+          if (Call->arg_size() != 2) {
+            errs() << "Fortran enzyme_function_like requires exactly a "
+                      "function and a function name\n"
+                   << *Call << "\n";
+            llvm_unreachable("invalid Fortran enzyme_function_like call");
+          }
+
+          auto *NameGlobal = dyn_cast<GlobalVariable>(
+              Call->getArgOperand(1)->stripPointerCasts());
+          if (!NameGlobal) {
+            errs() << "Second argument of Fortran enzyme_function_like must "
+                      "be an enzyme_math_* function name\n"
+                   << *Call->getArgOperand(1) << "\n";
+            llvm_unreachable(
+                "invalid Fortran enzyme_function_like function name");
+          }
+
+          StringRef FunctionName = NameGlobal->getName();
+          if (!FunctionName.consume_front("enzyme_math_")) {
+            errs() << "Fortran enzyme_function_like function name must use "
+                      "the enzyme_math_* BIND(C) naming convention\n"
+                   << *NameGlobal << "\n";
+            llvm_unreachable(
+                "invalid Fortran enzyme_function_like function name");
+          }
+
+          handleFunctionLike(Begin, Call->getArgOperand(0), FunctionName);
+          functionLikeCalls.push_back(Call);
+          changed = true;
+        }
+      }
+    }
+    for (CallInst *Call : functionLikeCalls)
+      Call->eraseFromParent();
+  }
 
   if (Begin)
     if (GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations")) {
