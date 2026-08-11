@@ -67,6 +67,36 @@ affine::AffineIfOp createAffineIfWithShadows(Operation *op, OpBuilder &builder,
       adaptor.getOperands(), !original.getElseRegion().empty());
 }
 
+affine::AffineParallelOp
+createAffineParallelWithShadows(Operation *op, OpBuilder &builder,
+                                MGradientUtils *gutils,
+                                affine::AffineParallelOp original,
+                                ValueRange remappedOperands, TypeRange rettys) {
+  // A result of an affine.parallel is a reduction, and a reduction of the
+  // tangents is the derivative of a sum. Anything else needs its own rule,
+  // which reverse mode does not have either.
+  SmallVector<Attribute> reductions;
+  for (auto &&[reduction, result] :
+       llvm::zip_equal(original.getReductions(), original.getResults())) {
+    reductions.push_back(reduction);
+    if (gutils->isConstantValue(result))
+      continue;
+    auto kind = cast<arith::AtomicRMWKindAttr>(reduction).getValue();
+    if (kind != arith::AtomicRMWKind::addf &&
+        kind != arith::AtomicRMWKind::addi)
+      original.emitError() << "forward mode of an active "
+                           << stringifyEnum(kind)
+                           << " reduction is not yet implemented";
+    reductions.push_back(reduction);
+  }
+  auto reductionsAttr = builder.getArrayAttr(reductions);
+  return affine::AffineParallelOp::create(
+      builder, original->getLoc(), rettys, reductionsAttr,
+      original.getLowerBoundsMapAttr(), original.getLowerBoundsGroupsAttr(),
+      original.getUpperBoundsMapAttr(), original.getUpperBoundsGroupsAttr(),
+      original.getStepsAttr(), remappedOperands);
+}
+
 struct AffineForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineForOpInterfaceReverse, affine::AffineForOp>,
