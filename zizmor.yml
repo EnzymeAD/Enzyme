@@ -1,0 +1,6 @@
+# Configuration for Zizmor GitHub Actions linter
+rules:
+  template-injection:
+    ignore:
+      # Ignore template injection where it is not a concern
+      - tagger.yml:55
