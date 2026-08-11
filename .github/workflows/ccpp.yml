@@ -54,9 +54,9 @@ jobs:
     - name: make check-enzyme-integration
       working-directory: build
       run: make -j `nproc` check-enzyme-integration
-      
+
     - name: Update Nightly Release
-      uses: ncipollo/release-action@v1
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
       if: ${{ !cancelled() && github.ref == 'refs/heads/main' }} 
       with:
         tag: nightly
