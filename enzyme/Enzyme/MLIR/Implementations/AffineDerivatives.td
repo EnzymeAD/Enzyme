@@ -10,6 +10,17 @@ def : ControlFlowOp<"affine", "AffineForOp", [{
   }
 }]>;
 
+def : ControlFlowOp<"affine", "AffineParallelOp", [{
+  Operation *createWithShadows(Operation *op, OpBuilder &builder,
+                               MGradientUtils *gutils, Operation *original,
+                               ValueRange remappedOperands,
+                               TypeRange rettys) const {
+    return createAffineParallelWithShadows(op, builder, gutils,
+                                           cast<affine::AffineParallelOp>(original),
+                                           remappedOperands, rettys);
+  }
+}]>;
+
 def : ControlFlowOp<"affine", "AffineIfOp", [{
     Operation *createWithShadows(Operation *op, OpBuilder &builder,
                                MGradientUtils *gutils, Operation *original,
