@@ -24,6 +24,8 @@ def : InactiveOp<"LLVM", "UnreachableOp">;
 
 
 def : ReadOnlyIdentityOp<"LLVM", "LoadOp", [0]>;
+def : MemoryIdentityOp<"LLVM", "ExtractValueOp", [0], [0]>;
+def : MemoryIdentityOp<"LLVM", "InsertValueOp", [0, 1], [0, 1]>;
 def : ReadOnlyIdentityOp<"LLVM", "AddrSpaceCastOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "BitcastOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "GEPOp", [0]>;
