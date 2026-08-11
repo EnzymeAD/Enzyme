@@ -344,7 +344,6 @@ public:
 
     for (auto [i, sz] : llvm::enumerate(MT.getShape())) {
       if (sz == ShapedType::kDynamic) {
-        Value dimI = arith::ConstantIndexOp::create(builder, loc, i);
         dynSizes.push_back(memref::DimOp::create(builder, loc, base, i));
       }
     }
