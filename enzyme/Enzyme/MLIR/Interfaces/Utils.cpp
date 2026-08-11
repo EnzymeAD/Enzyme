@@ -10,12 +10,15 @@
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Interfaces/GradientUtils.h"
+#include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
 
 using namespace mlir;
@@ -104,22 +107,41 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
   return false;
 }
 
-static Value getBase(Value v) {
-  while (true) {
-    if (auto s = v.getDefiningOp<LLVM::GEPOp>()) {
-      v = s.getBase();
+Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
+                                Value stored, OpBuilder &builder) {
+  auto iface = cast<AutoDiffTypeInterface>(stored.getType());
+  // An immutable value carries no aliasing structure into the shadow; its
+  // tangent is simply zero.
+  if (!iface.isMutable())
+    return cast<AutoDiffTypeInterface>(gutils.getShadowType(stored.getType()))
+        .createNullValue(builder, orig->getLoc());
+  orig->emitWarning()
+      << "storing an inactive value into differentiated memory; the shadow "
+         "holds the primal value, which runtime activity would be needed to "
+         "check";
+  Value primal = gutils.getNewFromOriginal(stored);
+  if (gutils.width == 1)
+    return primal;
+  SmallVector<Value> batched(gutils.width, primal);
+  return getConcatValue(builder, orig->getLoc(), batched);
+}
+
+Value getBaseObject(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      v = view.getViewSource();
       continue;
     }
-    if (auto s = v.getDefiningOp<LLVM::BitcastOp>()) {
-      v = s.getArg();
+    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
+      v = gep.getBase();
       continue;
     }
-    if (auto s = v.getDefiningOp<LLVM::AddrSpaceCastOp>()) {
-      v = s.getArg();
+    if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
+      v = bc.getArg();
       continue;
     }
-    if (auto s = v.getDefiningOp<memref::CastOp>()) {
-      v = s.getSource();
+    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
+      v = asc.getArg();
       continue;
     }
     break;
@@ -134,8 +156,8 @@ static bool isStackAlloca(Value v) {
 }
 
 bool mayAlias(Value v1, Value v2) {
-  v1 = getBase(v1);
-  v2 = getBase(v2);
+  v1 = getBaseObject(v1);
+  v2 = getBaseObject(v2);
   if (v1 == v2)
     return true;
 

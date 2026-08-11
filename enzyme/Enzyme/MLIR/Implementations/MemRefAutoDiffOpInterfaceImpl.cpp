@@ -16,6 +16,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -107,8 +108,8 @@ struct LoadOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
@@ -116,15 +117,29 @@ struct LoadOpInterfaceReverse
     // so what stands for it is the handle held at the same place in the shadow:
     // the same load, off the shadow memref. Reading it out is the whole of the
     // derivative -- see the adjoint above, which leaves it alone.
-    if (!iface || !iface.isMutable())
-      return;
-    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(memref))
-      return;
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a load of a type without "
+                "autodiff semantics "
+             << *op;
+    // An immutable load's derivative is the adjoint's to accumulate.
+    if (!iface.isMutable())
+      return success();
+    if (gutils->isConstantValue(loadOp))
+      return success();
+    // Cannot load a non-constant value out of a constant memref: there is no
+    // shadow to read the handle from, so the claimed activity cannot be
+    // honored.
+    if (gutils->isConstantValue(memref))
+      return op->emitError()
+             << "cannot load a non-constant value out of a constant memref "
+             << *op;
     Value memrefShadow = gutils->invertPointerM(memref, builder);
     auto newLoad = cast<memref::LoadOp>(gutils->getNewFromOriginal(op));
     auto shadowLoad = cast<memref::LoadOp>(builder.clone(*newLoad));
     shadowLoad.getMemrefMutable().assign(memrefShadow);
     gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
+    return success();
   }
 };
 
@@ -200,12 +215,39 @@ struct StoreOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-    // auto storeOp = cast<memref::StoreOp>(op);
-    // Value memref = storeOp.getMemref();
-    // Value shadow = gutils->getShadowValue(memref);
-    // Do nothing yet. In the future support memref<memref<...>>
+  // A store of a mutable value -- a pointer, an inner memref -- has no float
+  // adjoint to accumulate; its derivative story is structural: the shadow
+  // memory must hold the shadow value at the same spot, so shadow loads
+  // traverse shadow structures. A value nothing differentiates is its own
+  // shadow, keeping inactive fields readable through the shadow object.
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<memref::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a store of a type without "
+                "autodiff semantics "
+             << *op;
+    if (gutils->isConstantValue(memref))
+      return success();
+    // Immutable values' shadows live in the reverse sweep's adjoint, which
+    // accumulates and zeroes the slot; only mutable values need the forward
+    // sweep to place their shadow.
+    if (!iface.isMutable())
+      return success();
+    Value memrefShadow = gutils->invertPointerM(memref, builder);
+    Value valShadow =
+        gutils->isConstantValue(val)
+            ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
+            : gutils->invertPointerM(val, builder);
+    auto newOp = cast<memref::StoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<memref::StoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getMemrefMutable().assign(memrefShadow);
+    return success();
   }
 };
 
@@ -223,8 +265,8 @@ struct SubViewOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto subviewOp = cast<memref::SubViewOp>(op);
     auto newSubviewOp = cast<memref::SubViewOp>(gutils->getNewFromOriginal(op));
     if (!gutils->isConstantValue(subviewOp.getSource())) {
@@ -235,6 +277,7 @@ struct SubViewOpInterfaceReverse
           newSubviewOp.getMixedStrides());
       gutils->setInvertedPointer(subviewOp, shadow);
     }
+    return success();
   }
 };
 

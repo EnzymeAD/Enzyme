@@ -16,6 +16,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "Passes/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -195,15 +196,12 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
         if (contains(storedVals, operand.getOperandNumber()) ||
             contains(storedVals, -1)) {
-          if (auto iface =
-                  dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
-            if (!iface.isMutable()) {
-              Type retTy = iface.getShadowType(gutils->width);
-              auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
-                  builder, operand.get().getLoc());
-              newOperands.push_back(toret);
-              continue;
-            }
+          if (isa<AutoDiffTypeInterface>(operand.get().getType())) {
+            // Zero for an immutable value; for a mutable value -- an
+            // inactive pointer -- the primal is its own shadow.
+            newOperands.push_back(oputils::inactiveStoredValueShadow(
+                orig, *gutils, operand.get(), builder));
+            continue;
           }
         }
         orig->emitError()

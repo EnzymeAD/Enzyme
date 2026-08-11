@@ -201,11 +201,11 @@ struct SelectOpInterfaceReverse
     }
     return caches;
   }
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto selectOp = cast<arith::SelectOp>(op);
     if (gutils->isConstantValue(selectOp.getResult()))
-      return;
+      return success();
 
     auto iface =
         dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
@@ -217,6 +217,7 @@ struct SelectOpInterfaceReverse
           gutils->invertPointerM(selectOp.getFalseValue(), builder));
       gutils->setInvertedPointer(selectOp.getResult(), shadowOp.getResult());
     }
+    return success();
   }
 };
 
