@@ -277,6 +277,76 @@ public:
   void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {
     memref::DeallocOp::create(builder, value.getLoc(), value);
   };
+
+  bool implementsBatchAllocation(Type self, Value base,
+                                 OpFoldResult size) const {
+    return true;
+  }
+
+  Value deriveSubElement(Type self, OpBuilder &builder, Location loc,
+                         Value base, Value multiel, Value index) const {
+    auto MT = cast<MemRefType>(base.getType());
+
+    SmallVector<Value> dynSizes, offsets;
+
+    offsets.push_back(index);
+
+    SmallVector<int64_t> static_offsets(MT.getRank() + 1, 0);
+    static_offsets[0] = ShapedType::kDynamic;
+
+    SmallVector<int64_t> static_sizes;
+    static_sizes.push_back(1);
+    static_sizes.append(MT.getShape().begin(), MT.getShape().end());
+    SmallVector<int64_t> static_strides(MT.getRank() + 1, 1);
+
+    for (auto [i, sz] : llvm::enumerate(MT.getShape())) {
+      if (sz == ShapedType::kDynamic) {
+        Value dimI = arith::ConstantIndexOp::create(builder, loc, i);
+        dynSizes.push_back(memref::DimOp::create(builder, loc, base, i));
+      }
+    }
+
+    auto RT = memref::SubViewOp::inferRankReducedResultType(
+        MT.getShape(), cast<MemRefType>(multiel.getType()), static_offsets,
+        static_sizes, static_strides);
+    auto sv = memref::SubViewOp::create(
+        builder, loc, RT, multiel, offsets, dynSizes, /*strides=*/ValueRange(),
+        /*static_offsets=*/builder.getDenseI64ArrayAttr(static_offsets),
+        /*static_sizes=*/builder.getDenseI64ArrayAttr(static_sizes),
+        /*static_strides=*/builder.getDenseI64ArrayAttr(static_strides));
+
+    return sv;
+  }
+
+  Value batchAllocate(Type self, OpBuilder &builder, Location loc, Value base,
+                      OpFoldResult numel) const {
+    auto MT = cast<MemRefType>(self);
+
+    SmallVector<int64_t> shape;
+    SmallVector<Value> dynSizes;
+
+    if (auto attr = dyn_cast<Attribute>(numel)) {
+      shape.push_back(cast<IntegerAttr>(attr).getValue().getSExtValue());
+    } else {
+      shape.push_back(ShapedType::kDynamic);
+      dynSizes.push_back(cast<Value>(numel));
+    }
+
+    for (auto [i, sz] : llvm::enumerate(MT.getShape())) {
+      shape.push_back(sz);
+
+      if (sz == ShapedType::kDynamic) {
+        dynSizes.push_back(memref::DimOp::create(
+            builder, loc, base,
+            arith::ConstantIndexOp::create(builder, loc, i)));
+      }
+    }
+
+    Value alloc = memref::AllocOp::create(
+        builder, loc, MemRefType::get(shape, MT.getElementType()), dynSizes);
+
+    return alloc;
+  }
 };
 
 class MemRefAutoDiffTypeInterface

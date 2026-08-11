@@ -69,7 +69,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Check if the mlir Attribute with the given type is 0.       
+        Check if the mlir Attribute with the given type is 0.
       }],
       /*retTy=*/"bool",
       /*methodName=*/"isZeroAttr",
@@ -149,6 +149,48 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Does the type implement batch allocation and subelement derivation.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"implementsBatchAllocation",
+      /*args=*/(ins "::mlir::Value":$base, "::mlir::OpFoldResult":$numel),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return false;
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Tries to allocate multiple values.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"batchAllocate",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc,
+                    "::mlir::Value":$base, "::mlir::OpFoldResult":$numel),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        llvm_unreachable("multiple values allocation not implemented");
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Given the bulk allocation return a subview to the element located at
+        index `index`.
+
+        The type returned by `deriveSubElement` does not have to match self
+        completely but should be usable in place of it.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"deriveSubElement",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc,
+                    "::mlir::Value":$base, "::mlir::Value":$multiel, "::mlir::Value":$index),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        llvm_unreachable("bulk allocation is not implemented for type");
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Copy the contents of `src` into the already-allocated `dst`.
 
         Allocates nothing, so one clone can be reused across several
@@ -168,7 +210,7 @@ def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Free the clone.
+        Free the clone or batch allocated value.
       }],
       /*retTy=*/"void",
       /*methodName=*/"freeClonedValue",

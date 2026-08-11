@@ -589,7 +589,7 @@ struct PtrExtent {
   Value ptr;  // pointer the extent was found on; the queried one by default
 };
 
-static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size);
+static Value normalizeToI64(OpBuilder &builder, Location loc, Value size);
 
 // An alloca says how much it is: the size of the element type, that many times.
 // Nothing has to have annotated it, and `builder` is only used to say the
@@ -600,8 +600,7 @@ static Value allocaExtent(OpBuilder &builder, LLVM::AllocaOp alloca) {
   auto i64Ty = builder.getIntegerType(64);
   Value bytes = LLVM::ConstantOp::create(builder, alloca.getLoc(), i64Ty,
                                          builder.getI64IntegerAttr(elemBytes));
-  Value count =
-      normalizeSizeToI64(builder, alloca.getLoc(), alloca.getArraySize());
+  Value count = normalizeToI64(builder, alloca.getLoc(), alloca.getArraySize());
   if (!count)
     return nullptr;
   Value size = LLVM::MulOp::create(builder, alloca.getLoc(), bytes, count);
@@ -649,24 +648,23 @@ static Value castLikeSpaceOf(OpBuilder &builder, Value ptr, Value inSpaceOf) {
                                        inSpaceOf.getType(), ptr);
 }
 
-// llvm_ext.ptr_size_hint accepts AnyInteger, but llvm_ext.alloc and
-// llvm_ext.memcpy require an i64 size, so a narrower (or wider) hint has to be
-// converted rather than forwarded -- otherwise we build invalid IR that only
-// fails later, in the verifier. Returns null if the size is not an integer.
-static Value normalizeSizeToI64(OpBuilder &builder, Location loc, Value size) {
-  auto i64Ty = builder.getIntegerType(64);
-  if (size.getType() == i64Ty)
-    return size;
+static Value normalizeToI64(OpBuilder &builder, Location loc, Value val) {
+  auto i64Ty = builder.getI64Type();
+  if (val.getType() == i64Ty)
+    return val;
 
-  auto srcTy = dyn_cast<IntegerType>(size.getType());
+  if (val.getType().isIndex())
+    return arith::IndexCastOp::create(builder, loc, i64Ty, val);
+
+  auto srcTy = dyn_cast<IntegerType>(val.getType());
   if (!srcTy) {
-    llvm::errs() << "ptr size hint is not an integer: " << size << "\n";
+    llvm::errs() << "ptr size hint is not an integer: " << val << "\n";
     return nullptr;
   }
   // Sizes are non-negative, so zero-extend when widening.
   if (srcTy.getWidth() < 64)
-    return LLVM::ZExtOp::create(builder, loc, i64Ty, size);
-  return LLVM::TruncOp::create(builder, loc, i64Ty, size);
+    return LLVM::ZExtOp::create(builder, loc, i64Ty, val);
+  return LLVM::TruncOp::create(builder, loc, i64Ty, val);
 }
 
 struct PointerClonableTypeInterface
@@ -679,7 +677,7 @@ struct PointerClonableTypeInterface
       return nullptr;
     }
 
-    Value size = normalizeSizeToI64(builder, value.getLoc(), extent.size);
+    Value size = normalizeToI64(builder, value.getLoc(), extent.size);
     if (!size)
       return nullptr;
 
@@ -709,7 +707,7 @@ struct PointerClonableTypeInterface
       return;
     }
 
-    Value size = normalizeSizeToI64(builder, src.getLoc(), extent.size);
+    Value size = normalizeToI64(builder, src.getLoc(), extent.size);
     if (!size)
       return;
 
@@ -721,6 +719,44 @@ struct PointerClonableTypeInterface
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
     llvm_ext::FreeOp::create(builder, value.getLoc(), value);
+  }
+
+  bool implementsBatchAllocation(Type self, Value base,
+                                 OpFoldResult size) const {
+    return true;
+  }
+
+  Value deriveSubElement(Type self, OpBuilder &builder, Location loc,
+                         Value base, Value multiel, Value index) const {
+    PtrExtent extent = findPtrExtent(base);
+    Value size = normalizeToI64(builder, loc, extent.size);
+    index = normalizeToI64(builder, loc, index);
+
+    Value offset = arith::MulIOp::create(builder, loc, size, index);
+    Value gep =
+        LLVM::GEPOp::create(builder, loc, multiel.getType(),
+                            builder.getI8Type(), multiel, ValueRange{offset});
+
+    return gep;
+  }
+
+  Value batchAllocate(Type self, OpBuilder &builder, Location loc, Value base,
+                      OpFoldResult size) const {
+    PtrExtent extent = findPtrExtent(base);
+
+    Value numel = dyn_cast<Value>(size);
+    if (auto attr = dyn_cast<Attribute>(size)) {
+      numel = arith::ConstantOp::materialize(builder, attr,
+                                             builder.getI64Type(), loc);
+    }
+
+    Value baseSize = normalizeToI64(builder, loc, extent.size);
+    Value totalSize = arith::MulIOp::create(builder, loc, numel, baseSize);
+
+    Value ptr = llvm_ext::AllocOp::create(builder, loc, extent.ptr.getType(),
+                                          totalSize);
+
+    return ptr;
   }
 };
 

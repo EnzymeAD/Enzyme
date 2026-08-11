@@ -541,8 +541,16 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     return llvm::to_vector(state);
   }
 
-  static Value cloneSlot(OpBuilder &b, Location loc, Value buf, Value slot) {
-    return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
+  static Value cloneSlot(OpBuilder &builder, Location loc, Value base,
+                         Value buf, Value slot, int64_t budget) {
+    auto iface = cast<ClonableTypeInterface>(base.getType());
+    if (iface.implementsBatchAllocation(
+            base, OpFoldResult(builder.getI64IntegerAttr(budget)))) {
+      Value loaded = iface.deriveSubElement(builder, loc, base, buf, slot);
+      return loaded;
+    }
+
+    return memref::LoadOp::create(builder, loc, buf, ValueRange{slot});
   }
 
   // A `budget`-slot buffer of clone *handles* for one mutable ref, with a
@@ -563,34 +571,60 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // make all slots alias.
   static Value allocCloneSlots(OpBuilder &b, Location loc, int64_t budget,
                                Value proto, ClonableTypeInterface iface) {
-    SmallVector<Value> clones;
-    for (int64_t j = 0; j < budget; ++j)
-      clones.push_back(iface.cloneValue(b, proto));
+    OpFoldResult size = OpFoldResult(b.getI64IntegerAttr(budget));
+
+    if (iface.implementsBatchAllocation(proto, size)) {
+      Value batchAlloc = iface.batchAllocate(b, loc, proto, size);
+      return batchAlloc;
+    }
 
     Value buf = memref::AllocOp::create(
-        b, loc, MemRefType::get({budget}, clones.front().getType()));
-    for (auto &&[j, clone] : llvm::enumerate(clones)) {
-      Value slot = arith::ConstantIndexOp::create(b, loc, j);
-      memref::StoreOp::create(b, loc, clone, buf, ValueRange{slot});
+        b, loc, MemRefType::get({budget}, proto.getType()));
+
+    Value lb = arith::ConstantIndexOp::create(b, loc, 0);
+    Value ub = arith::ConstantIndexOp::create(b, loc, budget);
+    Value step = arith::ConstantIndexOp::create(b, loc, 1);
+    auto loop = scf::ForOp::create(b, loc, lb, ub, step);
+
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPoint(loop.getBody()->getTerminator());
+      Value clone = iface.cloneValue(b, proto);
+      memref::StoreOp::create(b, loc, clone, buf,
+                              ValueRange{loop.getInductionVar()});
     }
+
     return buf;
   }
 
   // Free each slot's clone, then the handle buffer itself. A loop is fine
   // here: a free has side effects so it cannot be hoisted, and nothing can
   // alias.
-  static void freeCloneSlots(OpBuilder &b, Location loc, int64_t budget,
-                             Value buf, ClonableTypeInterface iface) {
-    Value lb = arith::ConstantIndexOp::create(b, loc, 0);
-    Value ub = arith::ConstantIndexOp::create(b, loc, budget);
-    Value step = arith::ConstantIndexOp::create(b, loc, 1);
-    auto loop = scf::ForOp::create(b, loc, lb, ub, step);
-    {
-      OpBuilder::InsertionGuard g(b);
-      b.setInsertionPointToStart(loop.getBody());
-      iface.freeClonedValue(b, cloneSlot(b, loc, buf, loop.getInductionVar()));
+  static void freeCloneSlots(OpBuilder &builder, Value ref, Value buf,
+                             int64_t budget) {
+    ClonableTypeInterface iface = cast<ClonableTypeInterface>(ref.getType());
+    OpFoldResult numel = builder.getI64IntegerAttr(budget);
+
+    if (iface.implementsBatchAllocation(ref, numel)) {
+      iface.freeClonedValue(builder, buf);
+      return;
     }
-    memref::DeallocOp::create(b, loc, buf);
+
+    Value lb = arith::ConstantIndexOp::create(builder, ref.getLoc(), 0);
+    Value ub = arith::ConstantIndexOp::create(builder, ref.getLoc(), budget);
+    Value step = arith::ConstantIndexOp::create(builder, ref.getLoc(), 1);
+    auto loop = scf::ForOp::create(builder, ref.getLoc(), lb, ub, step);
+
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(loop.getBody()->getTerminator());
+
+      Value val = memref::LoadOp::create(builder, buf.getLoc(), buf,
+                                         loop.getInductionVar());
+      iface.freeClonedValue(builder, val);
+    }
+
+    memref::DeallocOp::create(builder, buf.getLoc(), buf);
   }
 
   // Forward augmentation for binomial (Revolve) checkpointing. Builds an
@@ -721,7 +755,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // advance.
     for (auto &&[ref, buf] : llvm::zip_equal(mutableRefs, mutBufs)) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
-      iface.copyValue(builder, cloneSlot(builder, loc, buf, k),
+      iface.copyValue(builder,
+                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                buf, k, budget),
                       gutils->getNewFromOriginal(ref));
     }
 
@@ -973,10 +1009,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // Re-prime each working clone from the snapshot paired with slot `capo`,
     // so the replay below starts from the mutable memory as it was at
     // ckptStep.
-    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-      cast<ClonableTypeInterface>(ref.getType())
-          .copyValue(builder, workClones[r],
-                     cloneSlot(builder, loc, mutBufs[r], capo));
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      iface.copyValue(builder, workClones[r],
+                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                mutBufs[r], capo, budget));
+    }
 
     // Inner remat loop: reconstruct state at (currentRevStep - 1), carrying
     // (pos, capo, state..., [stores...]).
@@ -1025,10 +1063,14 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
             FinalClass::storeSlot(builder, loc, wStores[i], acapo, val);
       wStores[idxStore] =
           FinalClass::storeSlot(builder, loc, wStores[idxStore], acapo, pos);
-      for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-        cast<ClonableTypeInterface>(ref.getType())
-            .copyValue(builder, cloneSlot(builder, loc, mutBufs[r], acapo),
-                       workClones[r]);
+
+      for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        iface.copyValue(builder,
+                        cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                  mutBufs[r], acapo, budget),
+                        workClones[r]);
+      }
 
       Value posPlusSplit = FinalClass::emitAdd(builder, loc, pos, split);
       Value isLast =
@@ -1244,7 +1286,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
       iface.freeClonedValue(builder, workClones[r]);
-      freeCloneSlots(builder, loc, budget, mutBufs[r], iface);
+      freeCloneSlots(builder, ref, mutBufs[r], budget);
     }
 
     return success(valid);
