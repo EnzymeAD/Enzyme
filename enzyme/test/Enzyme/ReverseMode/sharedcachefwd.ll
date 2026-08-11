@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-shared-forward -enzyme -mem2reg -sroa -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-shared-forward -passes="enzyme,function(mem2reg,sroa,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-shared-forward -enzyme -mem2reg -sroa -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-shared-forward -passes="enzyme,function(mem2reg,sroa,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 ; TODO the code generated here may cause illegal reads as the phi recopmutation does not check that a load is legal to recompute for
 ; bounds reasons, only aliasing reasons. This code illustrates an example where it is incorrect and should be remedied. Now, the value

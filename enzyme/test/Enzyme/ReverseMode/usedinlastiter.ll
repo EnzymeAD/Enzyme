@@ -1,8 +1,8 @@
-; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
-; RUN: if [ %llvmver -lt 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s --check-prefix=BEFORE; fi
+; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s --check-prefix=BEFORE; fi
 
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s; fi
-; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s --check-prefix=BEFORE; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s --check-prefix=BEFORE; fi
 
 define void @foo(float* noalias %out, float* noalias %in, i64* %x2.i.i, i1 %a9) {
 entry:

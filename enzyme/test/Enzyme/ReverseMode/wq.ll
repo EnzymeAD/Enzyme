@@ -1372,7 +1372,7 @@ attributes #14 = { noreturn nounwind }
 ; CHECK-NEXT:   ret { {} } undef
 ; CHECK-NEXT: }
 
-; CHECK: define internal {} @diffe_ZN5Eigen8internal10redux_implINS0_13scalar_sum_opIddEENS0_15redux_evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEELi3ELi2EE3runERKS7_RKS3_(%"class.Eigen::internal::redux_evaluator"* dereferenceable(24) %mat, %"class.Eigen::internal::redux_evaluator"* %"mat'", %"struct.Eigen::internal::scalar_sum_op"* dereferenceable(1) %func, %"struct.Eigen::internal::scalar_sum_op"* %"func'", double %differeturn, {} %tapeArg) local_unnamed_addr #3 align 2 {
+; CHECK: define internal {} @diffe_ZN5Eigen8internal10redux_implINS0_13scalar_sum_opIddEENS0_15redux_evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEELi3ELi2EE3runERKS7_RKS3_(%"class.Eigen::internal::redux_evaluator"* %mat, %"class.Eigen::internal::redux_evaluator"* %"mat'", %"struct.Eigen::internal::scalar_sum_op"* %func, %"struct.Eigen::internal::scalar_sum_op"* %"func'", double %differeturn, {} %tapeArg) local_unnamed_addr #3 align 2 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"m_data'ipc" = bitcast %"class.Eigen::internal::redux_evaluator"* %"mat'" to <2 x double>**
 ; CHECK-NEXT:   %"from'ipl" = load <2 x double>*, <2 x double>** %"m_data'ipc", align 8
@@ -1612,7 +1612,7 @@ attributes #14 = { noreturn nounwind }
 ; CHECK-NEXT:   ret { { { { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } } } } %.fca.0.0.0.5.insert
 ; CHECK-NEXT: }
 
-; CHECK: define internal {} @diffe_ZN5Eigen8internal15redux_evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEC2ERKS3_(%"class.Eigen::internal::redux_evaluator"* %this, %"class.Eigen::internal::redux_evaluator"* %"this'", %"class.Eigen::Matrix"* dereferenceable(32) %xpr, %"class.Eigen::Matrix"* %"xpr'", { { { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } } } %tapeArg) unnamed_addr #2 align 2 {
+; CHECK: define internal {} @diffe_ZN5Eigen8internal15redux_evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEC2ERKS3_(%"class.Eigen::internal::redux_evaluator"* %this, %"class.Eigen::internal::redux_evaluator"* %"this'", %"class.Eigen::Matrix"* %xpr, %"class.Eigen::Matrix"* %"xpr'", { { { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } } } %tapeArg) unnamed_addr #2 align 2 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"m_evaluator'ipge" = getelementptr inbounds %"class.Eigen::internal::redux_evaluator", %"class.Eigen::internal::redux_evaluator"* %"this'", i64 0, i32 0
 ; CHECK-NEXT:   %m_evaluator = getelementptr inbounds %"class.Eigen::internal::redux_evaluator", %"class.Eigen::internal::redux_evaluator"* %this, i64 0, i32 0
@@ -1621,7 +1621,7 @@ attributes #14 = { noreturn nounwind }
 ; CHECK-NEXT:   ret {} undef
 ; CHECK-NEXT: }
 
-; CHECK: define internal {} @diffe_ZN5Eigen8internal9evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEC2ERKS3_(%"struct.Eigen::internal::evaluator"* %this, %"struct.Eigen::internal::evaluator"* %"this'", %"class.Eigen::Matrix"* dereferenceable(32) %m, %"class.Eigen::Matrix"* %"m'", { { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } } %tapeArg) unnamed_addr #2 align 2 {
+; CHECK: define internal {} @diffe_ZN5Eigen8internal9evaluatorINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEC2ERKS3_(%"struct.Eigen::internal::evaluator"* %this, %"struct.Eigen::internal::evaluator"* %"this'", %"class.Eigen::Matrix"* %m, %"class.Eigen::Matrix"* %"m'", { { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } } %tapeArg) unnamed_addr #2 align 2 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'ipge" = getelementptr inbounds %"class.Eigen::Matrix", %"class.Eigen::Matrix"* %"m'", i64 0, i32 0
 ; CHECK-NEXT:   %0 = getelementptr inbounds %"class.Eigen::Matrix", %"class.Eigen::Matrix"* %m, i64 0, i32 0
@@ -1632,7 +1632,7 @@ attributes #14 = { noreturn nounwind }
 ; CHECK-NEXT:   ret {} undef
 ; CHECK-NEXT: }
 
-; CHECK: define internal {} @diffe_ZN5Eigen8internal9evaluatorINS_15PlainObjectBaseINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEEEC2ERKS5_(%"struct.Eigen::internal::evaluator.6"* %this, %"struct.Eigen::internal::evaluator.6"* %"this'", %"class.Eigen::PlainObjectBase"* dereferenceable(32) %m, %"class.Eigen::PlainObjectBase"* %"m'", { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } %tapeArg) unnamed_addr #2 align 2 {
+; CHECK: define internal {} @diffe_ZN5Eigen8internal9evaluatorINS_15PlainObjectBaseINS_6MatrixIdLi2ELi2ELi0ELi2ELi2EEEEEEC2ERKS5_(%"struct.Eigen::internal::evaluator.6"* %this, %"struct.Eigen::internal::evaluator.6"* %"this'", %"class.Eigen::PlainObjectBase"* %m, %"class.Eigen::PlainObjectBase"* %"m'", { {}, { { { { { i64 }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* } } }, {}, %"class.Eigen::Matrix"*, %"class.Eigen::Matrix"* }, i64, { {} }, double*, double*, { {} } } %tapeArg) unnamed_addr #2 align 2 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"m_outerStride'ipge" = getelementptr inbounds %"struct.Eigen::internal::evaluator.6", %"struct.Eigen::internal::evaluator.6"* %"this'", i64 0, i32 1
 ; CHECK-NEXT:   %m_outerStride = getelementptr inbounds %"struct.Eigen::internal::evaluator.6", %"struct.Eigen::internal::evaluator.6"* %this, i64 0, i32 1

@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 define void @f({ double, double* }* "enzyme_type"="{[-1,0]:Float@double, [-1,8]:Pointer}" %out, double %in, double* "enzyme_type"="{[-1]:Pointer}" %in2) {
 entry:
@@ -23,7 +23,7 @@ declare void @__enzyme_augmentfwd(...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = alloca { double, double* }
 ; CHECK-NEXT:   %ins1 = insertvalue { double, double* } {{(undef|poison)}}, double %in, 0
-; CHECK-NEXT:   %"ins2'ipiv" = insertvalue { double, double* } { double 0.000000e+00, double* undef }, double* %"in2'", 1
+; CHECK-NEXT:   %"ins2'ipiv" = insertvalue { double, {{(double\*|ptr)}} } zeroinitializer, {{(double\*|ptr)}} %"in2'", 1
 ; CHECK-NEXT:   %ins2 = insertvalue { double, double* } %ins1, double* %in2, 1
 ; CHECK-NEXT:   store { double, double* } %"ins2'ipiv", { double, double* }* %[[i0]]
 ; CHECK-NEXT:   %[[i1:.+]] = bitcast { double, double* }* %"out'" to i8*

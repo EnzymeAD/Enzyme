@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -107,7 +107,7 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body.i ], [ 0, %for.body.i.i.i ]
 ; CHECK-NEXT:   %res.i.0 = phi double [ %add.i23.i, %for.body.i ], [ 0.000000e+00, %for.body.i.i.i ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %tmp28 = load double, double* %tmp19, align 8, !alias.scope !10, !noalias !13
+; CHECK-NEXT:   %tmp28 = load double, double* %tmp19, align 8, !alias.scope ![[SCOPE_10:[0-9]+]], !noalias ![[NOALIAS_13:[0-9]+]]
 ; CHECK-NEXT:   %mul.i.i.i37.i = fmul double %tmp28, %tmp28
 ; CHECK-NEXT:   %add.i23.i = fadd double %res.i.0, %mul.i.i.i37.i
 ; CHECK-NEXT:   %cmp.i.i.i45 = icmp ne i64 %iv.next2, 4

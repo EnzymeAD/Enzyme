@@ -133,7 +133,7 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     if (isVecLikeArg(ty)) {
       os
 << "  if (cache_" << nameVec[i] << ")\n"
-<< "    cacheTypes.push_back(PointerType::getUnqual(fpType));\n";
+<< "    cacheTypes.push_back(getUnqual(fpType));\n";
     }
   }
 }
@@ -170,7 +170,12 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n"
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << name << "\");\n";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << name << "\", &malloccall);\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n";
 
     os
 << "      Value *margs[] = {malins, arg_" << name << ", malloc_size, llvm::ConstantInt::getFalse(IntegerType::getInt1Ty(call.getContext()))};\n"
@@ -206,9 +211,14 @@ os
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
 << "      Instruction *SubZero = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", /*caller*/nullptr";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -287,9 +297,14 @@ os
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      Instruction *SubZero = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", /*caller*/nullptr";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n"
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -301,6 +316,8 @@ os << "      if (EnzymeLapackCopy) {\n"
 << "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
+<< "        else\n"
+<< "           args.push_back(ConstantInt::get(intType, 1));\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"

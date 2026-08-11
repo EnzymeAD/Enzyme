@@ -24,7 +24,7 @@ entry:
 ; Function Attrs: nounwind
 declare double @__enzyme_fwddiff(double (double)*, ...)
 
-; CHECK: define internal double @fwddiffetester(double %x0, double %"x0'") #0 {
+; CHECK: define internal double @fwddiffetester(double %x0, double %"x0'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"x5'ipc" = fpext double %"x0'" to x86_fp80
 ; CHECK-NEXT:   %"x7'ipc" = fptrunc x86_fp80 %"x5'ipc" to double

@@ -39,6 +39,10 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 
+#if LLVM_VERSION_MAJOR <= 22
+#define SCEVUse const SCEV *
+#endif
+
 using namespace llvm;
 
 bool MustExitScalarEvolution::loopIsFiniteByAssumption(const Loop *L) {
@@ -92,13 +96,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimit(
 
   bool IsOnlyExit = ExitingBlocks.size() == 1;
   auto *Term = ExitingBlock->getTerminator();
-  if (BranchInst *BI = dyn_cast<BranchInst>(Term)) {
-    assert(BI->isConditional() && "If unconditional, it can't be in loop!");
+  if (Instruction *BI =
+          (isAnyBranch(Term) ? cast<Instruction>(Term) : nullptr)) {
+    assert(isConditionalBranch(BI) && "If unconditional, it can't be in loop!");
     bool ExitIfTrue = !L->contains(BI->getSuccessor(0));
     assert(ExitIfTrue == L->contains(BI->getSuccessor(1)) &&
            "It should have one successor in loop and one exit block!");
     // Proceed to the next level to examine the exit condition expression.
-    return computeExitLimitFromCond(L, BI->getCondition(), ExitIfTrue,
+    return computeExitLimitFromCond(L, getBranchCondition(BI), ExitIfTrue,
                                     /*ControlsExit=*/IsOnlyExit,
                                     AllowPredicates);
   }
@@ -359,8 +364,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     }
 #endif
 
-  const SCEV *LHS = getSCEV(ExitCond->getOperand(0));
-  const SCEV *RHS = getSCEV(ExitCond->getOperand(1));
+  SCEVUse LHS = getSCEV(ExitCond->getOperand(0));
+  SCEVUse RHS = getSCEV(ExitCond->getOperand(1));
 
 #define PROP_PHI(LHS)                                                          \
   if (auto un = dyn_cast<SCEVUnknown>(LHS)) {                                  \
@@ -440,7 +445,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), 1))};
       // Since this is not an infinite loop by induction, RHS cannot be
@@ -464,9 +469,10 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
-          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
+          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1,
+                                       /*IsSigned*/ true))};
       // Since this is not an infinite loop by induction, RHS cannot be
       // int_min/uint_min Therefore subtracting 1 does not wrap.
       if (IsSigned)
@@ -598,7 +604,7 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
   // Create an AddExpr for "PreStart" after subtracting Step. Full SCEV
   // subtraction is expensive. For this purpose, perform a quick and dirty
   // difference, by checking for Step in the operand list.
-  SmallVector<const SCEV *, 4> DiffOps;
+  SmallVector<SCEVUse, 4> DiffOps;
   for (const SCEV *Op : SA->operands())
     if (Op != Step)
       DiffOps.push_back(Op);
@@ -621,9 +627,15 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
   //
 
   const SCEV *BECount = SE->getBackedgeTakenCount(L);
+#if LLVM_VERSION_MAJOR >= 23
+  if (PreAR && any(PreAR->getNoWrapFlags(WrapType)) &&
+      !isa<SCEVCouldNotCompute>(BECount) && SE->isKnownPositive(BECount))
+    return PreStart;
+#else
   if (PreAR && PreAR->getNoWrapFlags(WrapType) &&
       !isa<SCEVCouldNotCompute>(BECount) && SE->isKnownPositive(BECount))
     return PreStart;
+#endif
 
   // 2. Direct overflow check on the step operation's expression.
   unsigned BitWidth = SE->getTypeSizeInBits(AR->getType());
@@ -632,7 +644,12 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       SE->getAddExpr((SE->*GetExtendExpr)(PreStart, WideTy, Depth),
                      (SE->*GetExtendExpr)(Step, WideTy, Depth));
   if ((SE->*GetExtendExpr)(Start, WideTy, Depth) == OperandExtendedStart) {
-    if (PreAR && AR->getNoWrapFlags(WrapType)) {
+#if LLVM_VERSION_MAJOR >= 23
+    if (PreAR && any(AR->getNoWrapFlags(WrapType)))
+#else
+    if (PreAR && AR->getNoWrapFlags(WrapType))
+#endif
+    {
       // If we know `AR` == {`PreStart`+`Step`,+,`Step`} is `WrapType` (FlagNSW
       // or FlagNUW) and that `PreStart` + `Step` is `WrapType` too, then
       // `PreAR` == {`PreStart`,+,`Step`} is also `WrapType`.  Cache this fact.
@@ -680,7 +697,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   (void)CanAnalyze;
   assert(CanAnalyze && "don't call from other places!");
 
-  int SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
+  auto SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
   SCEV::NoWrapFlags SignOrUnsignWrap =
       ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
@@ -839,7 +856,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // implicit/exceptional) which causes the loop to execute before the
   // exiting instruction we're analyzing would trigger UB.
   auto WrapType = IsSigned ? SCEV::FlagNSW : SCEV::FlagNUW;
+
+#if LLVM_VERSION_MAJOR >= 23
+  bool NoWrap = ControlsExit && any(IV->getNoWrapFlags(WrapType));
+#else
   bool NoWrap = ControlsExit && IV->getNoWrapFlags(WrapType);
+#endif
+
   ICmpInst::Predicate Cond = IsSigned ? ICmpInst::ICMP_SLT : ICmpInst::ICMP_ULT;
 
   const SCEV *Stride = IV->getStepRecurrence(*this);
@@ -958,6 +981,18 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // pointers in general.
   const SCEV *OrigStart = Start;
   const SCEV *OrigRHS = RHS;
+#if LLVM_VERSION_MAJOR >= 24
+  if (Start->getType()->isPointerTy()) {
+    Start = getPtrToAddrExpr(Start);
+    if (isa<SCEVCouldNotCompute>(Start))
+      return Start;
+  }
+  if (RHS->getType()->isPointerTy()) {
+    RHS = getPtrToAddrExpr(RHS);
+    if (isa<SCEVCouldNotCompute>(RHS))
+      return RHS;
+  }
+#else
   if (Start->getType()->isPointerTy()) {
     Start = getLosslessPtrToIntExpr(Start);
     if (isa<SCEVCouldNotCompute>(Start))
@@ -968,6 +1003,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     if (isa<SCEVCouldNotCompute>(RHS))
       return RHS;
   }
+#endif
 
   // When the RHS is not invariant, we do not know the end bound of the loop and
   // cannot calculate the ExactBECount needed by ExitLimit. However, we can

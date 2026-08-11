@@ -135,6 +135,6 @@ attributes #8 = { noreturn nounwind }
 
 ; CHECK: staging:                                          ; preds = %entry
 ; CHECK-NEXT:   %[[_unwrap1:.+]] = add i32 %SINCOSN, -2
-; CHECK-NEXT:   %[[_unwrap2]] = zext i32 %[[_unwrap1]] to i64
+; CHECK-NEXT:   %[[_unwrap2]] = sext i32 %[[_unwrap1]] to i64
 ; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

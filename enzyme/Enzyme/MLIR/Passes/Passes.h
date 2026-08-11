@@ -15,7 +15,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "Dialect/Dialect.h"
 
@@ -23,29 +27,6 @@ namespace mlir {
 class PatternRewriter;
 class RewritePatternSet;
 class DominanceInfo;
-namespace enzyme {
-std::unique_ptr<Pass> createDifferentiatePass();
-
-std::unique_ptr<Pass> createBatchPass();
-
-std::unique_ptr<Pass> createDifferentiateWrapperPass();
-
-std::unique_ptr<Pass> createPrintActivityAnalysisPass();
-
-std::unique_ptr<Pass> createPrintAliasAnalysisPass();
-
-std::unique_ptr<Pass> createEnzymeToMemRefPass();
-
-std::unique_ptr<Pass> createMathematicSimplificationPass();
-
-std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass();
-
-std::unique_ptr<Pass> createAddToOpToSplitPass();
-
-std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass();
-
-std::unique_ptr<Pass> createSimplifyMemrefCachePass();
-} // namespace enzyme
 } // namespace mlir
 
 namespace mlir {
@@ -93,8 +74,33 @@ namespace tensor {
 class TensorDialect;
 } // end namespace tensor
 
+namespace linalg {
+class LinalgDialect;
+} // end namespace linalg
+
+namespace memref {
+class MemRefDialect;
+} // end namespace memref
+
+namespace enzyme {
+
+#define GEN_PASS_DECL
+#include "Passes/Passes.h.inc"
+
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
+
+class AutoDiffOp;
+bool inlineAutodiffOp(enzyme::AutoDiffOp &op, RewriterBase &rewriter,
+                      SymbolTableCollection &symbolTable);
+
+/// Moves allocation/deallocation pairs that are private to one iteration of
+/// `loop` out of it, so the buffer is allocated once for the whole loop.
+/// `maxHoistedBytes` bounds the size of a hoisted buffer; 0 means no bound.
+/// Returns whether anything moved.
+bool hoistLoopAllocations(LoopLikeOpInterface loop,
+                          uint64_t maxHoistedBytes = 0);
+} // namespace enzyme
 
 } // end namespace mlir
 

@@ -276,6 +276,9 @@ private:
   OriginalClasses originalClasses;
 };
 
+void markReadOnlyLoads(CallableOpInterface funcOp,
+                       function_ref<void(Operation *)> annotate);
+
 } // namespace enzyme
 } // namespace mlir
 

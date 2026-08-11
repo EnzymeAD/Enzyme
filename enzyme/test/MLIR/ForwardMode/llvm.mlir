@@ -29,9 +29,9 @@ module {
 // CHECK-NEXT:     %[[c1_i64:.+]] = arith.constant 1 : i64
 // CHECK-NEXT:     %[[i0:.+]] = llvm.alloca %[[c1_i64]] x f64 : (i64) -> !llvm.ptr
 // CHECK-NEXT:     %[[i1:.+]] = llvm.alloca %[[c1_i64]] x f64 : (i64) -> !llvm.ptr
-// CHECK-NEXT:     %[[i2:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i4:.+]] = arith.addf %[[i2]], %[[i3]] : f64
+// CHECK-NEXT:     %[[i2:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i4:.+]] = arith.addf %[[i2]], %[[i3]] fastmath<fast> : f64
 // CHECK-NEXT:     %[[i5:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK-NEXT:     llvm.store %[[i4]], %[[i0]] : f64, !llvm.ptr
 // CHECK-NEXT:     llvm.store %[[i5]], %[[i1]] : f64, !llvm.ptr
@@ -41,8 +41,8 @@ module {
 // CHECK-NEXT:   }
 
 // CHECK:  func.func private @fwddiffeexp(%[[arg0:.+]]: f32, %[[arg1:.+]]: f32) -> f32 {
-// CHECK-NEXT:    %[[der:.+]] = llvm.intr.exp(%[[arg0]]) : (f32) -> f32
-// CHECK-NEXT:    %[[res:.+]] = llvm.fmul %[[arg1]], %[[der]] : f32
+// CHECK-NEXT:    %[[der:.+]] = llvm.intr.exp(%[[arg0]]) {fastmathFlags = #llvm.fastmath<fast>} : (f32) -> f32
+// CHECK-NEXT:    %[[res:.+]] = llvm.fmul %[[arg1]], %[[der]] {fastmathFlags = #llvm.fastmath<fast>} : f32
 // CHECK-NEXT:    %[[exp:.+]] = llvm.intr.exp(%[[arg0]]) : (f32) -> f32
 // CHECK-NEXT:    return %[[res]] : f32
 // CHECK-NEXT:  }

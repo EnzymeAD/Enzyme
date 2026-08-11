@@ -61,6 +61,20 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 }
 
+// Perform an analysis to detect functions which only write to visible memory
+// outside the function if an error is not throw. Such a function can touch
+// inaccessible memory [e.g. the insides of malloc/etc], and the only violation
+// is whether existing memory before the call is written to.
+// If non-local, returning memory written to is a violation (since it writes to
+// externally visible memory).
+// If local, returning memory written to is fine (since existing memory before
+// the call remains unchanged).
+// In other words, malloc [local and non-local], calloc [local and non-local],
+// copy_array [local only], and friends, are all considered
+// readonly_or_throw, as they only either read externally visible state, throw
+// an error, or write to inaccesible memory.
+bool DetectReadonlyOrThrow(llvm::Module &M);
+
 class PreProcessCache {
 public:
   PreProcessCache();
@@ -91,8 +105,8 @@ public:
       llvm::ArrayRef<DIFFE_TYPE> constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
-      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, ReturnType returnValue,
-      DIFFE_TYPE returnType, const llvm::Twine &name,
+      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, bool returnTape,
+      bool returnPrimal, bool returnShadow, const llvm::Twine &name,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
@@ -127,8 +141,11 @@ getExitBlocks(const llvm::Loop *L,
         goto exitblockcheck;
       }
       checked.insert(foo);
-      if (auto bi = llvm::dyn_cast<llvm::BranchInst>(foo->getTerminator())) {
-        for (auto nb : bi->successors()) {
+      if (isAnyBranch(foo->getTerminator())) {
+        auto *bTerm = foo->getTerminator();
+        // Instruction::successors() postdates some supported majors; index.
+        for (unsigned i = 0, e = bTerm->getNumSuccessors(); i < e; ++i) {
+          auto *nb = bTerm->getSuccessor(i);
           if (L->contains(nb))
             continue;
           tocheck.push_back(nb);
@@ -398,7 +415,7 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
+    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow);
 
 /// Lower __enzyme_todense, returning if changed.
 bool LowerSparsification(llvm::Function *F, bool replaceAll = true);

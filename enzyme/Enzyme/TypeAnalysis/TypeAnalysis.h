@@ -61,6 +61,16 @@ extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
                                          llvm::Intrinsic::ID *ID = nullptr) {
   llvm::StringRef ogstr = str;
+  if (ID) {
+    if (str == "llvm.enzyme.lifetime_start") {
+      *ID = llvm::Intrinsic::lifetime_start;
+      return false;
+    }
+    if (str == "llvm.enzyme.lifetime_end") {
+      *ID = llvm::Intrinsic::lifetime_end;
+      return false;
+    }
+  }
   if (startsWith(str, "__") && endsWith(str, "_finite")) {
     str = str.substr(2, str.size() - 2 - 7);
   } else if (startsWith(str, "__fd_") && endsWith(str, "_1")) {
@@ -69,6 +79,16 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
     str = str.substr(5, str.size() - 5);
   } else if (startsWith(str, "__ocml_")) {
     str = str.substr(7, str.size() - 7);
+  } else if (startsWith(str, "air.")) {
+    // Metal AIR math intrinsics, e.g. air.cos.f32, air.fast_tanh.f32.
+    // Defense-in-depth alongside PreserveNVVM.cpp's Implements map: this
+    // raw-name check works even in pipelines that don't run preserve-nvvm,
+    // exactly as __nv_/__ocml_ above already do for CUDA/ROCm.
+    str = str.substr(4, str.size() - 4);
+    if (endsWith(str, ".f16") || endsWith(str, ".f32") || endsWith(str, ".f64"))
+      str = str.substr(0, str.size() - 4);
+    if (startsWith(str, "fast_"))
+      str = str.substr(5, str.size() - 5);
   }
   if (LIBM_FUNCTIONS.find(str.str()) != LIBM_FUNCTIONS.end()) {
     if (ID)
@@ -164,6 +184,7 @@ static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
 
 class TypeAnalyzer;
 class TypeAnalysis;
+class EnzymeLogic;
 
 /// A holder class representing the results of running TypeAnalysis
 /// on a given function
@@ -174,7 +195,9 @@ public:
 public:
   TypeResults(std::nullptr_t);
   TypeResults(TypeAnalyzer &analyzer);
-  ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
+  ConcreteType intType(size_t num, llvm::Value *val, llvm::Instruction *I,
+                       GradientUtils *gutils = nullptr,
+                       llvm::IRBuilder<> *BuilderIfShouldErr = nullptr,
                        bool pointerIntSame = false) const;
   llvm::Type *addingType(size_t num, llvm::Value *val, size_t start = 0) const;
 
@@ -182,7 +205,8 @@ public:
   /// none If pointerIntSame is set to true, then consider either as the same
   /// (and thus mergable)
   ConcreteType firstPointer(size_t num, llvm::Value *val, llvm::Instruction *I,
-                            bool errIfNotFound = true,
+                            GradientUtils *gutils = nullptr,
+                            llvm::IRBuilder<> *BuilderIfShouldErr = nullptr,
                             bool pointerIntSame = false) const;
 
   /// The TypeTree of a particular Value
@@ -194,6 +218,9 @@ public:
   // The flag `anythingIsFloat` specifies whether an anything should
   // be considered a float.
   bool anyFloat(llvm::Value *val, bool anythingIsFloat = true) const;
+
+  /// Whether all of the top level register is known to contain float data
+  bool allFloat(llvm::Value *val) const;
 
   /// Whether any part of the top level register can contain a pointer
   ///   e.g. { i64, i8* } can contain a pointer, but { i64, float } would not.
@@ -399,8 +426,8 @@ public:
 /// Full interprocedural TypeAnalysis
 class TypeAnalysis {
 public:
-  llvm::FunctionAnalysisManager &FAM;
-  TypeAnalysis(llvm::FunctionAnalysisManager &FAM) : FAM(FAM) {}
+  EnzymeLogic &Logic;
+  TypeAnalysis(EnzymeLogic &Logic) : Logic(Logic) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,

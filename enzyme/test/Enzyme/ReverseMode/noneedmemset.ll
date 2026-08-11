@@ -20,7 +20,7 @@ entry:
 
 declare void @__enzyme_autodiff(...)
 
-; CHECK: define internal void @diffefoo(double* nocapture %a0, double* nocapture %"a0'")
+; CHECK: define internal void @diffefoo(double* nocapture writeonly %a0, double* nocapture %"a0'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"a2'ipc" = bitcast double* %"a0'" to i8*
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 8 dereferenceable(16) %"a2'ipc", i8 0, i64 16, i1 false)

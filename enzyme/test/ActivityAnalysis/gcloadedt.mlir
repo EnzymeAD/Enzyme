@@ -408,17 +408,17 @@ attributes #24 = { nounwind }
 ; CHECK-NEXT:   %i49 = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %i48, i64 0, i32 1: icv:0 ici:1
 ; CHECK-NEXT:   %i50 = bitcast {} addrspace(10)** addrspace(11)* %i49 to i8* addrspace(11)*: icv:0 ici:1
 ; CHECK-NEXT:   %i51 = load i8*, i8* addrspace(11)* %i50, align 8, !tbaa !6, !alias.scope !43, !noalias !44, !nonnull !22, !enzyme_type !19, !enzymejl_byref_BITS_VALUE !22, !enzymejl_source_type_Ptr\7BFloat64\7D !22, !enzyme_nocache !22: icv:0 ici:1
-; CHECK-NEXT:   %i52 = call noalias nonnull align 8 dereferenceable(24) "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Pointer, [-1,8,0]:Integer, [-1,8,1]:Integer, [-1,8,2]:Integer, [-1,8,3]:Integer, [-1,8,4]:Integer, [-1,8,5]:Integer, [-1,8,6]:Integer, [-1,8,7]:Integer, [-1,8,8]:Pointer, [-1,8,8,-1]:Float@double, [-1,16]:Integer, [-1,17]:Integer, [-1,18]:Integer, [-1,19]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer}" {} addrspace(10)* @julia.gc_alloc_obj({}* nonnull %i4, i64 noundef 24, {} addrspace(10)* noundef addrspacecast ({}* inttoptr (i64 4698642384 to {}*) to {} addrspace(10)*)) #17: icv:1 ici:1
-; CHECK-NEXT:   %i53 = bitcast {} addrspace(10)* %i52 to { i8*, {} addrspace(10)* } addrspace(10)*: icv:1 ici:1
-; CHECK-NEXT:   %i54 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %i53 to { i8*, {} addrspace(10)* } addrspace(11)*: icv:1 ici:1
-; CHECK-NEXT:   %i55 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i54, i64 0, i32 0: icv:1 ici:1
-; CHECK-NEXT:   store i8* %i51, i8* addrspace(11)* %i55, align 8, !tbaa !8, !alias.scope !11, !noalias !51: icv:1 ici:1
-; CHECK-NEXT:   %i56 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i54, i64 0, i32 1: icv:1 ici:1
-; CHECK-NEXT:   store {} addrspace(10)* %i46, {} addrspace(10)* addrspace(11)* %i56, align 8, !tbaa !8, !alias.scope !11, !noalias !51: icv:1 ici:1
-; CHECK-NEXT:   %i57 = bitcast {} addrspace(10)* %i52 to i8 addrspace(10)*: icv:1 ici:1
-; CHECK-NEXT:   %i58 = addrspacecast i8 addrspace(10)* %i57 to i8 addrspace(11)*: icv:1 ici:1
-; CHECK-NEXT:   %i59 = getelementptr inbounds i8, i8 addrspace(11)* %i58, i64 16: icv:1 ici:1
-; CHECK-NEXT:   %i60 = bitcast i8 addrspace(11)* %i59 to i64 addrspace(11)*: icv:1 ici:1
+; CHECK-NEXT:   %i52 = call noalias nonnull align 8 dereferenceable(24) "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Pointer, [-1,8,0]:Integer, [-1,8,1]:Integer, [-1,8,2]:Integer, [-1,8,3]:Integer, [-1,8,4]:Integer, [-1,8,5]:Integer, [-1,8,6]:Integer, [-1,8,7]:Integer, [-1,8,8]:Pointer, [-1,8,8,-1]:Float@double, [-1,16]:Integer, [-1,17]:Integer, [-1,18]:Integer, [-1,19]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer}" {} addrspace(10)* @julia.gc_alloc_obj({}* nonnull %i4, i64 noundef 24, {} addrspace(10)* noundef addrspacecast ({}* inttoptr (i64 4698642384 to {}*) to {} addrspace(10)*)) #17: icv:0 ici:1
+; CHECK-NEXT:   %i53 = bitcast {} addrspace(10)* %i52 to { i8*, {} addrspace(10)* } addrspace(10)*: icv:0 ici:1
+; CHECK-NEXT:   %i54 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %i53 to { i8*, {} addrspace(10)* } addrspace(11)*: icv:0 ici:1
+; CHECK-NEXT:   %i55 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i54, i64 0, i32 0: icv:0 ici:1
+; CHECK-NEXT:   store i8* %i51, i8* addrspace(11)* %i55, align 8, !tbaa !8, !alias.scope !11, !noalias !51: icv:1 ici:0
+; CHECK-NEXT:   %i56 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %i54, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT:   store {} addrspace(10)* %i46, {} addrspace(10)* addrspace(11)* %i56, align 8, !tbaa !8, !alias.scope !11, !noalias !51: icv:1 ici:0
+; CHECK-NEXT:   %i57 = bitcast {} addrspace(10)* %i52 to i8 addrspace(10)*: icv:0 ici:1
+; CHECK-NEXT:   %i58 = addrspacecast i8 addrspace(10)* %i57 to i8 addrspace(11)*: icv:0 ici:1
+; CHECK-NEXT:   %i59 = getelementptr inbounds i8, i8 addrspace(11)* %i58, i64 16: icv:0 ici:1
+; CHECK-NEXT:   %i60 = bitcast i8 addrspace(11)* %i59 to i64 addrspace(11)*: icv:0 ici:1
 ; CHECK-NEXT:   store i64 %i38, i64 addrspace(11)* %i60, align 8, !tbaa !54, !alias.scope !11, !noalias !51: icv:1 ici:1
 ; CHECK-NEXT:   %i61 = icmp slt i64 %i38, 1: icv:1 ici:1
 ; CHECK-NEXT:   %i62 = bitcast i8* %i51 to {} addrspace(10)**: icv:0 ici:1
@@ -436,7 +436,7 @@ attributes #24 = { nounwind }
 ; CHECK-NEXT:   br i1 %i69, label %bb71, label %bb66: icv:1 ici:1
 ; CHECK-NEXT: bb71
 ; CHECK-NEXT:   %i72 = call i64 @llvm.smax.i64(i64 %i38, i64 noundef 0): icv:1 ici:1
-; CHECK-NEXT:   %i73 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i56, align 8, !enzyme_type !25, !enzymejl_source_type_Memory\7BFloat64\7D !22, !enzymejl_byref_MUT_REF !22: icv:1 ici:1
+; CHECK-NEXT:   %i73 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i56, align 8, !enzyme_type !25, !enzymejl_source_type_Memory\7BFloat64\7D !22, !enzymejl_byref_MUT_REF !22: icv:0 ici:1
 ; CHECK-NEXT:   %i74 = add nsw i64 %i72, -1: icv:1 ici:1
 ; CHECK-NEXT:   %i75 = icmp ugt i64 %i38, %i74: icv:1 ici:1
 ; CHECK-NEXT:   %i76 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %i73, {} addrspace(10)** noundef %i62): icv:0 ici:1

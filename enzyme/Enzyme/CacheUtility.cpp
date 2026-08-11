@@ -125,10 +125,10 @@ InsertNewCanonicalIV(Loop *L, Type *Ty, const llvm::Twine &Name) {
 
   BasicBlock *Header = L->getHeader();
   assert(Header);
-  IRBuilder<> B(&Header->front());
+  IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
-  B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
+  B.SetInsertPoint(getFirstNonPHIOrDbg(Header));
   Instruction *Inc = cast<Instruction>(
       B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), Name + ".next",
                   /*NUW*/ true, /*NSW*/ true));
@@ -246,13 +246,16 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
 
     // We place that at first non phi as it may produce a non-phi instruction
     // and must thus be expanded after all phi's
-    Value *NewIV =
-        Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHI());
+    Value *NewIV = Exp.expandCodeFor(S, Tmp->getType(), getFirstNonPHI(Header));
 
     // Explicity preserve wrap behavior from original iv. This is necessary
     // until this PR in llvm is merged:
@@ -260,10 +263,17 @@ void RemoveRedundantIVs(
     if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
       if (addrec->getLoop()->getHeader() == Header) {
         if (auto add_or_mul = dyn_cast<BinaryOperator>(NewIV)) {
+#if LLVM_VERSION_MAJOR >= 23
+          if (any(addrec->getNoWrapFlags(llvm::SCEV::FlagNUW)))
+            add_or_mul->setHasNoUnsignedWrap(true);
+          if (any(addrec->getNoWrapFlags(llvm::SCEV::FlagNSW)))
+            add_or_mul->setHasNoSignedWrap(true);
+#else
           if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
             add_or_mul->setHasNoUnsignedWrap(true);
           if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
             add_or_mul->setHasNoSignedWrap(true);
+#endif
         }
       }
     }
@@ -272,7 +282,7 @@ void RemoveRedundantIVs(
   }
 
   // Replace existing increments with canonical Increment
-  Increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
+  Increment->moveAfter(getFirstNonPHI(CanonicalIV->getParent()));
   SmallVector<Instruction *, 1> toErase;
   for (auto use : CanonicalIV->users()) {
     auto BO = dyn_cast<BinaryOperator>(use);
@@ -309,12 +319,10 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
                          Instruction *Increment,
                          ArrayRef<BasicBlock *> latches) {
   // Attempt to explicitly rewrite the latch
-  if (latches.size() == 1 && isa<BranchInst>(latches[0]->getTerminator()) &&
-      cast<BranchInst>(latches[0]->getTerminator())->isConditional())
+  if (latches.size() == 1 && isConditionalBranch(latches[0]->getTerminator()))
     for (auto use : CanonicalIV->users()) {
       if (auto cmp = dyn_cast<ICmpInst>(use)) {
-        if (cast<BranchInst>(latches[0]->getTerminator())->getCondition() !=
-            cmp)
+        if (getBranchCondition(latches[0]->getTerminator()) != cmp)
           continue;
         // Force i to be on LHS
         if (cmp->getOperand(0) != CanonicalIV) {
@@ -386,14 +394,12 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
 
   // Replace previous increment usage with new increment value
   if (Increment) {
-    Increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
+    Increment->moveAfter(getFirstNonPHI(CanonicalIV->getParent()));
 
-    if (latches.size() == 1 && isa<BranchInst>(latches[0]->getTerminator()) &&
-        cast<BranchInst>(latches[0]->getTerminator())->isConditional())
+    if (latches.size() == 1 && isConditionalBranch(latches[0]->getTerminator()))
       for (auto use : Increment->users()) {
         if (auto cmp = dyn_cast<ICmpInst>(use)) {
-          if (cast<BranchInst>(latches[0]->getTerminator())->getCondition() !=
-              cmp)
+          if (getBranchCondition(latches[0]->getTerminator()) != cmp)
             continue;
 
           // Force i+1 to be on LHS
@@ -465,7 +471,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
                           /*shouldfree*/ true);
 
   for (auto ExitBlock : found.exitBlocks) {
-    IRBuilder<> B(&ExitBlock->front());
+    IRBuilder<> B(ExitBlock, ExitBlock->begin());
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
@@ -714,11 +720,29 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     }
   endOMP:;
 
-    if (Limit->getType() != CanonicalIV->getType())
-      Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+    if (Limit->getType() != CanonicalIV->getType()) {
+      const SCEV *Zero = SE.getZero(Limit->getType());
+      const Loop *outermost = L;
+      while (outermost->getParentLoop()) {
+        outermost = outermost->getParentLoop();
+      }
+      BasicBlock *outermostPreheader = outermost->getLoopPreheader();
+      Instruction *context = outermostPreheader
+                                 ? outermostPreheader->getTerminator()
+                                 : loopContexts[L].preheader->getTerminator();
+      if (SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, Limit, Zero, context)) {
+        Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
+      } else {
+        Limit = SE.getSignExtendExpr(Limit, CanonicalIV->getType());
+      }
+    }
 
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
     LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
@@ -754,8 +778,12 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
 
     loopContexts[L].maxLimit =
         Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
@@ -825,11 +853,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
     alloc->setAlignment(Align(align));
   }
-  if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
-    if (!isa<UndefValue>(val))
-      scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
-  }
+  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+                                          /*forceZero*/ false);
+  if (!isa<UndefValue>(undef_v))
+    scopeInstructions[alloc].push_back(
+        entryBuilder.CreateStore(undef_v, alloc));
 
   Value *storeInto = alloc;
 
@@ -887,6 +915,16 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         Value *firstallocation = CreateAllocation(
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
             /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
+
+        if (malloccall) {
+          auto ident = MDNode::getDistinct(
+              malloccall->getContext(),
+              {ConstantAsMetadata::get(
+                  ConstantInt::getFalse(malloccall->getContext()))});
+          malloccall->setMetadata(
+              "enzyme_cache_alloc",
+              MDNode::get(malloccall->getContext(), {ident}));
+        }
 
         scopeInstructions[alloc].push_back(malloccall);
         if (firstallocation != malloccall)
@@ -989,12 +1027,24 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
             invgroup;
       }
+      Type *nextType = types[i + 1];
       auto freecall = freeCache(
-          containedloops.back().first.preheader, sublimits, i, alloc,
+          containedloops.back().first.preheader, sublimits, i, alloc, nextType,
           byteSizeOfType, storeInto,
           CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      if (freecall) {
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getFalse(
+                                    freecall->getContext()))});
+        freecall->setMetadata("enzyme_cache_free",
+                              MDNode::get(freecall->getContext(), {ident}));
+      }
       if (freecall && malloccall) {
-        auto ident = MDNode::getDistinct(malloccall->getContext(), {});
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getTrue(
+                                    freecall->getContext()))});
         malloccall->setMetadata("enzyme_cache_alloc",
                                 MDNode::get(malloccall->getContext(), {ident}));
         freecall->setMetadata("enzyme_cache_free",
@@ -1248,7 +1298,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           limits[i] = found->second;
         } else {
           limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNUWAdd(
+              allocationBuilder.CreateNSWAdd(
                   limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
         }
       } else {
@@ -1260,7 +1310,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNUWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
       }
     }
   }
@@ -1445,7 +1495,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   if (&*inst->getParent()->rbegin() != inst) {
     auto pn = dyn_cast<PHINode>(inst);
     Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (inst->getParent()->getFirstNonPHI())
+                                ? (getFirstNonPHI(inst->getParent()))
                                 : getNextNonDebugInstruction(inst);
     assert(putafter);
     v.SetInsertPoint(putafter);

@@ -26,17 +26,17 @@ module {
 // CHECK-NEXT:   }
 
 // CHECK:   func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> (f64, f64) {
-// CHECK-NEXT:     %[[i0:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i1:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i2:.+]] = arith.addf %[[i0]], %[[i1]] : f64
+// CHECK-NEXT:     %[[i0:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i1:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i2:.+]] = arith.addf %[[i0]], %[[i1]] fastmath<fast> : f64
 // CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK-NEXT:     return %[[i2]], %[[arg1]] : f64, f64
 // CHECK-NEXT:   }
 
 // CHECK:   func.func private @fwddiffesquare_0(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> (f64, f64, f64, f64) {
-// CHECK-NEXT:     %[[i0:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i1:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:     %[[i2:.+]] = arith.addf %[[i0]], %[[i1]] : f64
+// CHECK-NEXT:     %[[i0:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i1:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:     %[[i2:.+]] = arith.addf %[[i0]], %[[i1]] fastmath<fast> : f64
 // CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK-NEXT:     return %[[i3]], %[[i2]], %[[arg0]], %[[arg1]] : f64, f64, f64, f64
 // CHECK-NEXT:   }

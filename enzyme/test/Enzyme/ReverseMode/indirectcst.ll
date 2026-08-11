@@ -24,7 +24,7 @@ entry:
 ; CHECK-NEXT:   br i1 %2, label %error.i, label %__enzyme_runtimeinactiveerr.exit
 
 ; CHECK: error.i:                                          ; preds = %entry
-; CHECK-NEXT:   %3 = call i32 @puts(i8* getelementptr inbounds ([79 x i8], [79 x i8]* @.str, i32 0, i32 0))
+; CHECK-NEXT:   %3 = call i32 @puts(i8* getelementptr inbounds ([80 x i8], [80 x i8]* @.str, i32 0, i32 0))
 ; CHECK-NEXT:   call void @exit(i32 1)
 ; CHECK-NEXT:   unreachable
 

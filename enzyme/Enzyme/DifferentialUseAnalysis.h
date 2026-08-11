@@ -27,6 +27,7 @@
 #ifndef ENZYME_DIFFERENTIALUSEANALYSIS_H_
 #define ENZYME_DIFFERENTIALUSEANALYSIS_H_
 
+#include <deque>
 #include <map>
 #include <set>
 
@@ -34,6 +35,7 @@
 #include "llvm/IR/Instruction.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -53,17 +55,6 @@ extern llvm::StringMap<
                        const llvm::Value *, bool, DerivativeMode, bool &)>>
     customDiffUseHandlers;
 
-/// Classification of what type of use is requested
-enum class QueryType {
-  // The original value is needed for the derivative
-  Primal = 0,
-  // The shadow value is needed for the derivative
-  Shadow = 1,
-  // The primal value is needed to stand in for the shadow
-  // value and compute the derivative of an instruction
-  ShadowByConstPrimal = 2
-};
-
 static inline std::string to_string(QueryType mode) {
   switch (mode) {
   case QueryType::Primal:
@@ -75,8 +66,6 @@ static inline std::string to_string(QueryType mode) {
   }
   llvm_unreachable("illegal QueryType");
 }
-
-typedef std::pair<const llvm::Value *, QueryType> UsageKey;
 
 namespace DifferentialUseAnalysis {
 
@@ -90,6 +79,14 @@ bool is_use_directly_needed_in_reverse(
     const llvm::Instruction *user,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
     QueryType shadow, bool *recursiveUse = nullptr);
+
+bool checkLoopyReductionPHI(const GradientUtils *gutils,
+                            const llvm::PHINode *P0,
+                            const llvm::Value *incomingVal);
+
+void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
+                           llvm::SetVector<llvm::Value *> &Intermediates,
+                           std::deque<llvm::Value *> &todo);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
@@ -179,7 +176,7 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-      if (!TR.anyFloat(const_cast<Value *>(inst)))
+      if (!TR.allFloat(const_cast<Value *>(inst)))
         if (auto IVI = dyn_cast<Instruction>(user)) {
           bool inserted = false;
           if (auto II = dyn_cast<InsertValueInst>(IVI))
@@ -215,10 +212,32 @@ inline bool is_value_needed_in_reverse(
                 }
 
                 bool partial = false;
-                if (!gutils->isConstantValue(const_cast<Instruction *>(cur))) {
-                  partial = is_value_needed_in_reverse<QueryType::Shadow>(
-                      gutils, user, mode, seen, oldUnreachable);
+                if (auto UI = dyn_cast<Instruction>(u)) {
+                  if (!gutils->isConstantValue(
+                          const_cast<Instruction *>(cur))) {
+                    bool recursiveUse = false;
+                    if (is_use_directly_needed_in_reverse(
+                            gutils, cur, mode, UI, oldUnreachable,
+                            QueryType::Shadow, &recursiveUse)) {
+                      partial = true;
+                    } else if (recursiveUse && !OneLevel) {
+                      partial = is_value_needed_in_reverse<QueryType::Shadow>(
+                          gutils, UI, mode, seen, oldUnreachable);
+                    }
+                  } else if (VT == QueryType::Shadow) {
+                    bool recursiveUse = false;
+                    if (is_use_directly_needed_in_reverse(
+                            gutils, cur, mode, UI, oldUnreachable,
+                            QueryType::ShadowByConstPrimal, &recursiveUse)) {
+                      partial = true;
+                    } else if (recursiveUse && !OneLevel) {
+                      partial = is_value_needed_in_reverse<
+                          QueryType::ShadowByConstPrimal>(gutils, UI, mode,
+                                                          seen, oldUnreachable);
+                    }
+                  }
                 }
+
                 if (partial) {
 
                   if (EnzymePrintDiffUse)
@@ -239,12 +258,39 @@ inline bool is_value_needed_in_reverse(
 
     assert(VT == QueryType::Primal);
 
+    if (auto P0 = dyn_cast<PHINode>(user)) {
+      if (checkLoopyReductionPHI(gutils, P0, inst)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                       << *inst
+                       << " in reverse as loopy reduction preheader of "
+                       << *user << "\n";
+        return seen[idx] = true;
+      }
+      if (P0->getNumIncomingValues() == 1) {
+        for (auto u2 : P0->users()) {
+          if (auto P1 = dyn_cast<PHINode>(u2)) {
+            if (checkLoopyReductionPHI(gutils, P1, inst) ||
+                checkLoopyReductionPHI(gutils, P1, P0)) {
+              if (EnzymePrintDiffUse)
+                llvm::errs()
+                    << " Need: " << to_string(VT) << "(" << mode << ") of "
+                    << *inst
+                    << " in reverse via LCSSA loopy reduction preheader of "
+                    << *P1 << "\n";
+              return seen[idx] = true;
+            }
+          }
+        }
+      }
+    }
+
     // If a sub user needs, we need
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
                                                     oldUnreachable)) {
       if (EnzymePrintDiffUse)
-        llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                     << " in reverse as sub-need " << *user << "\n";
+        llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                     << *inst << " in reverse as sub-need " << *user << "\n";
       return seen[idx] = true;
     }
 
@@ -290,6 +336,15 @@ inline bool is_value_needed_in_reverse(
           // directly say unused by induction instead of checking the final
           // loads.
           if (pair.second.stores.count(user)) {
+            bool allocNeeded =
+                gutils->allocationsToBeRematerialized.count(pair.first);
+            if (allocNeeded) {
+              if (EnzymePrintDiffUse)
+                llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                             << " in reverse from rematerialized alloc "
+                             << *pair.first << "\n";
+              return seen[idx] = true;
+            }
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {
@@ -339,7 +394,7 @@ inline bool is_value_needed_in_reverse(
       // TODO save loop bounds for dynamic loop
 
       // TODO make this more aggressive and dont need to save loop latch
-      if (isa<BranchInst>(use) || isa<SwitchInst>(use)) {
+      if (isAnyBranch(use) || isa<SwitchInst>(use)) {
         size_t num = 0;
         for (auto suc : successors(cast<Instruction>(use)->getParent())) {
           if (!oldUnreachable.count(suc)) {
@@ -385,6 +440,9 @@ inline bool is_value_needed_in_reverse(
         primalUsedInShadowPointer = false;
       }
       if (funcName.contains("__enzyme_todense")) {
+        primalUsedInShadowPointer = false;
+      }
+      if (funcName.contains("__enzyme_ignore_derivatives")) {
         primalUsedInShadowPointer = false;
       }
     }
@@ -551,7 +609,8 @@ forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
 
 //! Return whether or not this is a constant and should use reverse pass
 bool callShouldNotUseDerivative(const GradientUtils *gutils,
-                                llvm::CallBase &orig);
+                                llvm::CallBase &orig, QueryType qtype,
+                                const llvm::Value *val);
 
 }; // namespace DifferentialUseAnalysis
 

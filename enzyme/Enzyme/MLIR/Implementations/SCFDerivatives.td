@@ -6,10 +6,55 @@ def : ControlFlowOp<"scf", "ForOp", [{
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
     scf::ForOpAdaptor adaptor(remappedOperands);
-    auto repFor = builder.create<scf::ForOp>(
-        op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
+    auto repFor = scf::ForOp::create(
+        builder, op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
         adaptor.getStep(), adaptor.getInitArgs());
     return repFor;
+  }
+}]>;
+
+def : ControlFlowOp<"scf", "ParallelOp", [{
+  Operation *createWithShadows(Operation *op, OpBuilder &builder,
+                               MGradientUtils *gutils, Operation *original,
+                               ValueRange remappedOperands,
+                               TypeRange rettys) const {
+    // This should work but doesn't because ParallelOpAdaptor returns empty ranges
+    // for lower/upper bounds, step, and init-vals.  So we do it manually instead.
+    // Perhaps we need to also pass in the properties?
+
+    // auto dict = DictionaryAttr::get(op->getContext(), op->getAttrs());
+    // scf::ParallelOpAdaptor adaptor(remappedOperands, dict);
+    // auto repParallel = scf::ParallelOp::create(
+    //     builder, op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
+    //     adaptor.getStep(), adaptor.getInitVals());
+    
+    mlir::scf::ParallelOp par_op = dyn_cast<mlir::scf::ParallelOp>(op);
+    auto rob = remappedOperands.begin();
+    auto roe = std::next(rob, par_op.getLowerBound().size());
+    ValueRange lb = ValueRange(rob, roe);
+    rob = roe;
+    roe = std::next(roe, par_op.getUpperBound().size());
+    ValueRange ub = ValueRange(rob, roe);
+    rob = roe;
+    roe = std::next(roe, par_op.getStep().size());
+    ValueRange st = ValueRange(rob, roe);
+    rob = roe;
+    roe = std::next(roe, rettys.size());  // Use rettys instead of par_op.getInitVals() to account for shadows
+    ValueRange in = ValueRange(rob, roe);
+    auto repParallel = scf::ParallelOp::create(
+        builder, op->getLoc(), lb, ub, st, in);
+
+    return repParallel;
+  }
+
+  OperandRange getSuccessorOperands(Operation *op,
+                                    RegionBranchOpInterface& regionBranchOp,
+                                    RegionSuccessor const& successor) const {
+    mlir::scf::ParallelOp par_op = dyn_cast<mlir::scf::ParallelOp>(op);
+    if (successor.isOperation())
+      return par_op.getInitVals();
+    
+    return regionBranchOp.getEntrySuccessorOperands(successor);
   }
 }]>;
 
@@ -19,8 +64,8 @@ def : ControlFlowOp<"scf", "IfOp", [{
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
     scf::IfOpAdaptor adaptor(remappedOperands);
-    auto repIf = builder.create<scf::IfOp>(
-        op->getLoc(), rettys, adaptor.getCondition());
+    auto repIf = scf::IfOp::create(
+        builder, op->getLoc(), rettys, adaptor.getCondition());
     return repIf;
   }
 }]>;
@@ -30,8 +75,8 @@ def : ControlFlowOp<"scf", "WhileOp", [{
                                MGradientUtils *gutils, Operation *original,
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
-    return builder.create<scf::WhileOp>(original->getLoc(), rettys,
-                                        remappedOperands, original->getAttrs());
+    return scf::WhileOp::create(builder, original->getLoc(), rettys,
+                                remappedOperands, original->getAttrs());
   }
 }]>;
 
@@ -40,8 +85,8 @@ def : ControlFlowOp<"scf", "ExecuteRegionOp", [{
                                MGradientUtils *gutils, Operation *original,
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
-    auto repIf = builder.create<scf::ExecuteRegionOp>(
-        op->getLoc(), rettys);
+    auto repIf = scf::ExecuteRegionOp::create(
+        builder, op->getLoc(), rettys);
     return repIf;
   }
 }]>;

@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,%simplifycfg)" -S | FileCheck %s
 
 declare i1 @cmp()
 
@@ -26,7 +26,7 @@ entry:
 ; CHECK-NEXT:   %"ins2'de" = alloca { double, i32 }
 ; CHECK-NEXT:   store { double, i32 } zeroinitializer, { double, i32 }* %"ins2'de"
 ; CHECK-NEXT:   %[[i1:.+]] = alloca { double, i32 }
-; CHECK-NEXT:   %"ins'ipiv" = insertvalue { double, i32 } undef, i32 %z, 1
+; CHECK-NEXT:   %"ins'ipiv" = insertvalue { double, i32 } zeroinitializer, i32 %z, 1
 ; CHECK-NEXT:   %ins = insertvalue { double, i32 } undef, i32 %z, 1
 ; CHECK-NEXT:   %"ins2'ipiv" = insertvalue { double, i32 } %"ins'ipiv", double 0.000000e+00, 0
 ; CHECK-NEXT:   %ins2 = insertvalue { double, i32 } %ins, double %x, 0

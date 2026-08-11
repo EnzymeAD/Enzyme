@@ -28,17 +28,17 @@ entry:
   ret i1 %res
 }
 
-; CHECK: define internal i1 @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y) {
+; CHECK: define internal i1 @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y)
 ; CHECK-NEXT:   %res = call i1 @__enzyme_fprt_64_52_fcmp_olt(double %x, double %y, i64 8, i64 23, i64 1)
 ; CHECK-NEXT:   ret i1 %res
 ; CHECK-NEXT: }
 
-; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y) {
+; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y)
 ; CHECK-NEXT:   %res = fcmp olt double %x, %y
 ; CHECK-NEXT:   ret i1 %res
 ; CHECK-NEXT: }
 
-; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to11_7_f(double %x, double %y) {
+; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to11_7_f(double %x, double %y)
 ; CHECK-NEXT:   %res = fcmp olt double %x, %y
 ; CHECK-NEXT:   ret i1 %res
 ; CHECK-NEXT: }

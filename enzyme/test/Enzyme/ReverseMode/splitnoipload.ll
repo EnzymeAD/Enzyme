@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
 
 declare i8* @malloc(i64)
 declare void @free(i8*)
@@ -50,7 +50,7 @@ attributes #2 = { nounwind }
 
 ; CHECK: define internal i64* @augmented_subsum(i64** %off, i64** %"off'", double* nocapture readonly %x, double* nocapture %"x'", i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = add nuw i64 %n, 1
+; CHECK-NEXT:   %0 = add nsw i64 %n, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %0, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %idx_malloccache = bitcast i8* %malloccall to i64*

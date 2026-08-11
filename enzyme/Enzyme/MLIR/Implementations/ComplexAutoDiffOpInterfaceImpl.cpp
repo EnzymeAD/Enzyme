@@ -27,19 +27,6 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/ComplexDerivatives.inc"
 
-bool isZero(mlir::Value v) {
-  ArrayAttr lhs;
-  matchPattern(v, m_Constant(&lhs));
-  if (lhs) {
-    for (auto e : lhs) {
-      if (!cast<FloatAttr>(e).getValue().isZero())
-        return false;
-    }
-    return true;
-  }
-  return false;
-}
-
 struct ComplexAddSimplifyMathInterface
     : public MathSimplifyInterface::ExternalModel<
           ComplexAddSimplifyMathInterface, complex::AddOp> {
@@ -47,12 +34,14 @@ struct ComplexAddSimplifyMathInterface
                                    PatternRewriter &rewriter) const {
     auto op = cast<complex::AddOp>(src);
 
-    if (isZero(op.getLhs())) {
+    auto ATy = cast<AutoDiffTypeInterface>(op.getLhs().getType());
+
+    if (ATy.isZero(op.getLhs())) {
       rewriter.replaceOp(op, op.getRhs());
       return success();
     }
 
-    if (isZero(op.getRhs())) {
+    if (ATy.isZero(op.getRhs())) {
       rewriter.replaceOp(op, op.getLhs());
       return success();
     }
@@ -68,12 +57,14 @@ struct ComplexSubSimplifyMathInterface
                                    PatternRewriter &rewriter) const {
     auto op = cast<complex::SubOp>(src);
 
-    if (isZero(op.getRhs())) {
+    auto ATy = cast<AutoDiffTypeInterface>(op.getLhs().getType());
+
+    if (ATy.isZero(op.getRhs())) {
       rewriter.replaceOp(op, op.getLhs());
       return success();
     }
 
-    if (isZero(op.getLhs())) {
+    if (ATy.isZero(op.getLhs())) {
       rewriter.replaceOpWithNewOp<complex::NegOp>(op, op.getRhs());
       return success();
     }

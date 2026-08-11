@@ -31,7 +31,15 @@ public:
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
+  DenseMap<Operation *, bool> readOnlyCache;
   std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
+  // The solver the annotations below were run in. One per function being
+  // differentiated: a DataFlowSolver keeps every lattice it has ever made, and
+  // these analyses are not interprocedural, so one shared across a module's
+  // worth of functions only makes each of them join against all the ones
+  // before. Declared ahead of the analyzer, which refers to it.
+  std::unique_ptr<DataFlowSolver> dataflowSolver;
+  std::unique_ptr<enzyme::DataFlowActivityAnalyzer> dataflowActivityAnalyzer;
 
   MTypeAnalysis &TA;
   MTypeResults TR;
@@ -79,6 +87,22 @@ public:
   }
   bool isConstantInstruction(mlir::Operation *v) const;
   bool isConstantValue(mlir::Value v) const;
+
+  /// The base allocation a pointer-like value views: view-like ops and LLVM
+  /// geps and casts peeled away, the way LLVM's getUnderlyingObject does.
+  static mlir::Value getBaseObject(mlir::Value v);
+
+  /// The activity the caller declared for the memory this pointer views:
+  /// the base's entry in ArgDiffeTypes when the base is an argument of the
+  /// function being differentiated, DUP_ARG otherwise.
+  DIFFE_TYPE getDiffeTypeOfBase(mlir::Value ptr);
+
+  /// True when a primal store through this pointer may be omitted:
+  /// declaring the base enzyme_dupnoneed is the caller saying nothing --
+  /// itself included -- needs the primal contents of that memory.
+  bool primalStoreElidable(mlir::Value ptr) {
+    return getDiffeTypeOfBase(ptr) == DIFFE_TYPE::DUP_NONEED;
+  }
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   void forceAugmentedReturns();
 
@@ -87,6 +111,7 @@ public:
   LogicalResult visitChild(Operation *op);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+  void setInvertedPointer(mlir::Value origv, mlir::Value newv);
 
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
@@ -109,8 +134,13 @@ protected:
   IRMapping differentials;
 
   Block *initializationBlock;
+  SmallVector<std::function<Value(Location, Type)>> gradientCreatorHook;
 
 public:
+  void registerGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  void deregisterGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  Value getNewGradient(Location loc, Type t);
+
   mlir::Value getDifferential(mlir::Value origv);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);

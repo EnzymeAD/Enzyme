@@ -57,7 +57,7 @@ declare void @_Z17__enzyme_autodiffz(...)
 declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 
 ; we must actually save or set the matmul
-; CHECK: define internal void @diffe_Z3mulR4ProdPd(ptr nocapture align 8 dereferenceable(16) %P, ptr nocapture align 8 %"P'", ptr noalias nocapture readonly %rhs, ptr nocapture %"rhs'", { ptr, ptr, ptr, ptr } %tapeArg)
+; CHECK: define internal void @diffe_Z3mulR4ProdPd(ptr nocapture align 8 %P, ptr nocapture align 8 %"P'", ptr noalias nocapture readonly %rhs, ptr nocapture %"rhs'", { ptr, ptr, ptr, ptr } %tapeArg)
 ; CHECK-NEXT: invertentry:
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double, align 8
@@ -77,10 +77,10 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   %byref.constant.int.022 = alloca i32, align 4
 ; CHECK-NEXT:   %byref.constant.fp.1.023 = alloca double, align 8
 ; CHECK-NEXT:   %[[i1:.+]] = alloca i32, align 4
-; CHECK-NEXT:   %malloccall3 = alloca i8, i64 8, align 8
+; CHECK-NEXT:   %malloccall3 = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %malloccall = alloca i8, i64 1, align 1
-; CHECK-NEXT:   %malloccall2 = alloca i8, i64 8, align 8
-; CHECK-NEXT:   %malloccall1 = alloca i8, i64 4, align 4
+; CHECK-NEXT:   %malloccall2 = alloca double, i64 1, align 8
+; CHECK-NEXT:   %malloccall1 = alloca i32, i64 1, align 4
 ; CHECK-NEXT:   %"calloc'mi" = extractvalue { ptr, ptr, ptr, ptr } %tapeArg, 2
 ; CHECK-NEXT:   %calloc = extractvalue { ptr, ptr, ptr, ptr } %tapeArg, 3
 ; CHECK-NEXT:   store i8 78, ptr %malloccall, align 1

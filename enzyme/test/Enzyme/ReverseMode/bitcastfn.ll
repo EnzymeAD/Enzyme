@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s
 
 ; ModuleID = 'ode-unopt.ll'
 source_filename = "ode.cpp"
@@ -306,7 +306,7 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   %arrayidx.i1.i = getelementptr inbounds %"class.boost::array.1", %"class.boost::array.1"* %x, i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %_augmented = call i8* @augmented_sub(i64 ptrtoint (void (%"class.boost::array.1"*)* @indir to i64), i64 ptrtoint ({ i8* (%"class.boost::array.1"*, %"class.boost::array.1"*)*, void (%"class.boost::array.1"*, %"class.boost::array.1"*, i8*)* }* @"_enzyme_reverse_indir'" to i64), %"class.boost::array.1"* nonnull %x, %"class.boost::array.1"* nonnull %"x'ipa")
 ; CHECK-NEXT:   %call.i = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([22 x i8], [22 x i8]* @.str, i64 0, i64 0), double 0.000000e+00)
-; CHECK-NEXT:   %1 = load double, double* %arrayidx.i1.i, align 8, !tbaa !8
+; CHECK-NEXT:   %1 = load double, double* %arrayidx.i1.i, align 8
 ; CHECK-NEXT:   %mul.i1 = fmul fast double %1, -1.200000e+00
 ; CHECK-NEXT:   %[[m0diffemuli1:.+]] = fmul fast double %differeturn, %div
 ; CHECK-NEXT:   %[[m1diffediv:.+]] = fmul fast double %differeturn, %mul.i1
@@ -328,7 +328,7 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffeindir(%"class.boost::array.1"* dereferenceable(8) %x, %"class.boost::array.1"* %"x'", i8* %tapeArg)
+; CHECK: define internal void @diffeindir(%"class.boost::array.1"* %x, %"class.boost::array.1"* %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   ret void
@@ -344,7 +344,7 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   br i1 %2, label %error.i, label %__enzyme_runtimeinactiveerr.exit
 
 ; CHECK: error.i:                                          ; preds = %entry
-; CHECK-NEXT:   %3 = call i32 @puts(i8* getelementptr inbounds ([79 x i8], [79 x i8]* @.str.1, i32 0, i32 0))
+; CHECK-NEXT:   %3 = call i32 @puts(i8* getelementptr inbounds ([80 x i8], [80 x i8]* @.str.1, i32 0, i32 0))
 ; CHECK-NEXT:   call void @exit(i32 1)
 ; CHECK-NEXT:   unreachable
 

@@ -30,9 +30,6 @@ namespace enzyme {
 
 class EnzymeDialect;
 
-#define GEN_PASS_CLASSES
-#include "Passes/Passes.h.inc"
-
 } // namespace enzyme
 } // namespace mlir
 

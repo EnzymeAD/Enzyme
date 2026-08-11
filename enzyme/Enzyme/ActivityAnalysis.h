@@ -250,7 +250,8 @@ public:
   /// Is the value free of any active uses
   bool isValueInactiveFromUsers(TypeResults const &TR, llvm::Value *val,
                                 UseActivity UA,
-                                llvm::Instruction **FoundInst = nullptr);
+                                llvm::Instruction **FoundInst = nullptr,
+                                llvm::Value **FoundValue = nullptr);
 
   /// Is the value potentially actively returned or stored
   bool isValueActivelyStoredOrReturned(TypeResults const &TR, llvm::Value *val,

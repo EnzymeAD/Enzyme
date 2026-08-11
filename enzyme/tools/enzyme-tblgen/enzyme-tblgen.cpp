@@ -313,19 +313,20 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
               os << curIndent << INDENT << "for (auto &val : " << argName << "_"
                  << (idx - 1) << ") {\n";
               os << curIndent << INDENT << INDENT
-                 << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), "
+                 << "val = enzyme::BroadcastOp::create(builder, op.getLoc(), "
                     "val, "
                     "llvm::SmallVector<int64_t>({gutils->width}));\n";
               os << curIndent << INDENT << "}\n";
             } else {
               os << curIndent << " " << argName << "_" << (idx - 1)
-                 << " = builder.create<enzyme::BroadcastOp>(\n"
+                 << " = enzyme::BroadcastOp::create(builder, \n"
                  << curIndent << "   op.getLoc(),\n"
                  << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
                  << curIndent
                  << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
             }
             os << curIndent << "}";
+            vecValue = true;
           }
         }
 
@@ -591,7 +592,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         } else {
           os << curIndent << INDENT << "if (gutils->width != 1)\n"
              << curIndent << INDENT << INDENT
-             << "imVal = builder.create<enzyme::BroadcastOp>(imVal.getLoc(), "
+             << "imVal = enzyme::BroadcastOp::create(builder, imVal.getLoc(), "
                 "imVal, SmallVector<int64_t>({gutils->width}));\n";
         }
         os << curIndent << INDENT << "}\n";
@@ -611,27 +612,58 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         if (resultRoot->getNumArgs() > 1)
           PrintFatalError(pattern->getLoc(),
                           "only zero or single op constantfp supported");
-        os << builder << ".create<"
-           << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
+        os << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
-           << ">(op.getLoc(), ";
+           << "::create(" << builder << ", op.getLoc(), ";
         std::string ord;
+        bool shadowType = false;
         if (resultRoot->getNumArgs() == 0) {
           ord = "op->getResult(0)";
         } else {
-          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord1, isVec, ext, isva] =
-              nameToOrdinal.lookup(name, pattern, resultTree);
-          assert(!ext.size());
-          assert(!isva);
-          ord = ord1;
+          if (resultRoot->getArgName(0)) {
+            auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+            auto [ord1, isVec, ext, isva] =
+                nameToOrdinal.lookup(name, pattern, resultTree);
+            assert(!ext.size());
+            assert(!isva);
+            ord = ord1;
+          } else {
+            bool handled = false;
+            if (auto argRoot = dyn_cast<DagInit>(resultRoot->getArg(0))) {
+              auto opName = argRoot->getOperator()->getAsString();
+              auto Def = cast<DefInit>(argRoot->getOperator())->getDef();
+              if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+                if (argRoot->getArgName(0)) {
+                  auto name = argRoot->getArgName(0)->getAsUnquotedString();
+                  auto [ord1, isVec, ext, isva] =
+                      nameToOrdinal.lookup(name, pattern, resultTree);
+                  assert(!ext.size());
+                  assert(!isva);
+                  ord = "gutils->getShadowType(" + ord1;
+                  shadowType = true;
+                  handled = true;
+                }
+              }
+            }
+            if (!handled) {
+              PrintFatalError(pattern->getLoc(),
+                              "ConstantFP op only supports args with no type "
+                              "specified, an arg type, or shadow of arg type");
+            }
+          }
         }
-        os << ord << ".getType(), ";
+        os << ord << ".getType()";
+        if (shadowType)
+          os << ")";
+        os << ", ";
         auto typeCast =
             dyn_cast<StringInit>(Def->getValueInit("type"))->getValue();
         if (typeCast != "")
           os << "(" << typeCast << ")";
-        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType(), ";
+        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType()";
+        if (shadowType)
+          os << ")";
+        os << ", ";
         os << "\"" << value->getValue() << "\"))";
       } else {
         if (resultRoot->getNumArgs() != 1)
@@ -863,7 +895,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       os << ", " << builder;
       if (intrinsic != MLIRDerivatives)
-        os << ", /*nullShadow*/true";
+        os << ", TR.query(&" << origName << ")";
       os << ")";
       if (lookup)
         os << ", " << builder << ")";
@@ -1113,13 +1145,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       } else if (opName == "CheckedDiv") {
         os << "checkedDiv(gutils->strongZero, " << builder << ", ";
       } else if (intrinsic == MLIRDerivatives) {
-        if (intrinsic == MLIRDerivatives) {
-          auto preop = Def->getValueAsString("preop");
-          os << preop;
-        }
+        // Derivative expressions are built with fast-math, as they are on the
+        // LLVM side; ops that carry no such flags are unaffected.
+        os << "setDerivativeFastMath(" << Def->getValueAsString("preop");
         auto dialect = Def->getValueAsString("dialect");
-        os << builder << ".create<" << dialect << "::" << opName
-           << ">(op.getLoc(), ";
+        os << dialect << "::" << opName << "::create(" << builder
+           << ", op.getLoc(), ";
       } else {
         os << builder << ".Create" << opName << "(";
       }
@@ -1148,8 +1179,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "})";
       os << ")";
       if (intrinsic == MLIRDerivatives) {
-        auto postop = Def->getValueAsString("postop");
-        os << postop;
+        os << Def->getValueAsString("postop") << ")";
       }
       if (isCall) {
         os << ")";
@@ -1714,9 +1744,10 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "          return toret;\n";
   os << "       }\n";
   os << "\n";
-  os << "  void createShadowValues(Operation *op, OpBuilder &builder,\n";
+  os << "  LogicalResult createShadowValues(Operation *op, OpBuilder "
+        "&builder,\n";
   os << "                          MGradientUtilsReverse *gutils) const "
-        "{}\n";
+        "{ return success(); }\n";
 
   os << "     LogicalResult createReverseModeAdjoint(Operation *op0, OpBuilder "
         "&builder,\n";
@@ -2762,6 +2793,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     const auto &allocpatterns =
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
+    const auto &callpatterns = recordKeeper.getAllDerivedDefinitions("CallOp");
+
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (auto [pattern, act] : zip(patterns, hasActivity)) {
       auto opName = pattern->getValueAsString("opName");
@@ -2827,6 +2860,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingAllocationInterface<" << dialect
          << "::" << opName << ">(*context);\n";
+    }
+    for (const Record *pattern : callpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingCallInterface<" << dialect << "::" << opName
+         << ">(*context);\n";
     }
     os << "}\n";
   }

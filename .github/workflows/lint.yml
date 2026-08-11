@@ -1,0 +1,34 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+  merge_group:
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  emission-order:
+    name: Deterministic IR emission order
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check for order-dependent IR emission
+      run: |
+        python3 enzyme/scripts/check_emission_order.py --github \
+          --include-llvm-builder enzyme/Enzyme
+
+  llvm-api:
+    name: Direct use of wrapped LLVM APIs
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check for direct LLVM API calls that Utils.h wraps
+      run: |
+        python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme

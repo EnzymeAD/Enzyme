@@ -41,17 +41,18 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
   SmallVector<Value> dims;
   SmallVector<Value> dimSubOnes;
   SmallVector<Value> strides;
-  Value negOne = builder.create<arith::ConstantIndexOp>(loc, -1);
+  Value negOne = arith::ConstantIndexOp::create(builder, loc, -1);
   int shapeDim = iType.getShape().size();
   for (int i = 0; i < shapeDim; i++) {
-    Value dim = builder.create<memref::DimOp>(loc, inp, i);
+    Value dim = memref::DimOp::create(builder, loc, inp, i);
     dims.push_back(dim);
-    auto dimSubOne = builder.create<arith::AddIOp>(loc, dim, negOne);
+    auto dimSubOne = arith::AddIOp::create(builder, loc, dim, negOne);
     dimSubOnes.push_back(dimSubOne);
     strides.push_back(negOne);
   }
-  Value view = builder.create<memref::SubViewOp>(
-      loc, inp, ValueRange(dimSubOnes), ValueRange(dims), ValueRange(strides));
+  Value view =
+      memref::SubViewOp::create(builder, loc, inp, ValueRange(dimSubOnes),
+                                ValueRange(dims), ValueRange(strides));
   return view;
 }
 
@@ -72,8 +73,10 @@ struct GenericOpInterfaceReverse
                                          MGradientUtilsReverse *gutils,
                                          SmallVector<Value> caches) const {
     auto linalgOp = cast<linalg::LinalgOp>(op);
-    assert(linalgOp.hasPureBufferSemantics() &&
-           "Linalg op with tensor semantics not yet supported");
+    if (!linalgOp.hasPureBufferSemantics()) {
+      llvm::errs() << "Linalg op with tensor semantics not yet supported\n";
+      return failure();
+    }
 
     linalg::LinalgOp newOp =
         cast<linalg::LinalgOp>(gutils->getNewFromOriginal(linalgOp));
@@ -99,9 +102,9 @@ struct GenericOpInterfaceReverse
       auto shape = cast<MemRefType>(input->get().getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
-            cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
-        auto dim = cacheBuilder.create<memref::DimOp>(op->getLoc(),
-                                                      input->get(), dimI);
+            arith::ConstantIndexOp::create(cacheBuilder, op->getLoc(), i);
+        auto dim = memref::DimOp::create(cacheBuilder, op->getLoc(),
+                                         input->get(), dimI);
         dims.push_back(dim);
       }
     }
@@ -109,9 +112,9 @@ struct GenericOpInterfaceReverse
       auto shape = cast<MemRefType>(output.getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
-            cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
+            arith::ConstantIndexOp::create(cacheBuilder, op->getLoc(), i);
         auto dim =
-            cacheBuilder.create<memref::DimOp>(op->getLoc(), output, dimI);
+            memref::DimOp::create(cacheBuilder, op->getLoc(), output, dimI);
         dims.push_back(dim);
       }
     }
@@ -120,8 +123,8 @@ struct GenericOpInterfaceReverse
     SmallVector<int64_t> shapes;
     for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
       AffineMap subMap = aMap.getSubMap({i});
-      Value domain = cacheBuilder.create<affine::AffineApplyOp>(
-          op->getLoc(), subMap, ValueRange(dims));
+      Value domain = affine::AffineApplyOp::create(cacheBuilder, op->getLoc(),
+                                                   subMap, ValueRange(dims));
       iterationDomains.push_back(domain);
       shapes.push_back(ShapedType::kDynamic);
     }
@@ -159,10 +162,10 @@ struct GenericOpInterfaceReverse
             iteratorTypes, [&](utils::IteratorType iter) -> mlir::Attribute {
               return linalg::IteratorTypeAttr::get(builder.getContext(), iter);
             })));
-    auto adjoint = builder.create<enzyme::GenericAdjointOp>(
-        op->getLoc(), TypeRange(), ValueRange(outputs), ValueRange(inputs),
-        indexingMapsArrayAttr, iteratorTypesArrayAttr, StringAttr(),
-        StringAttr());
+    auto adjoint = enzyme::GenericAdjointOp::create(
+        builder, op->getLoc(), TypeRange(), ValueRange(outputs),
+        ValueRange(inputs), indexingMapsArrayAttr, iteratorTypesArrayAttr,
+        StringAttr(), StringAttr());
 
     int numInputs = inputs.size();
     auto buildFuncReturnOp = [&gutils, numInputs](OpBuilder &builder,
@@ -172,8 +175,8 @@ struct GenericOpInterfaceReverse
       for (auto arg : oBB->getArguments()) {
         retargs.push_back(gutils->invertPointerM(arg, builder));
       }
-      builder.create<enzyme::AddToOp>(
-          loc, ValueRange{retargs}.take_front(numInputs));
+      enzyme::AddToOp::create(builder, loc,
+                              ValueRange{retargs}.take_front(numInputs));
       return;
     };
 
@@ -187,7 +190,7 @@ struct GenericOpInterfaceReverse
     auto hook = [newOpRegion, adjointRegion, loc, &numCaches = numCaches,
                  numInputsAdjoint, &pushCaches = pushCaches](Type t) {
       OpBuilder builder(newOpRegion);
-      Value pushCache = builder.create<enzyme::InitOp>(loc, t);
+      Value pushCache = enzyme::InitOp::create(builder, loc, t);
       pushCaches.push_back(pushCache);
       newOpRegion->addArgument(t, loc);
 
@@ -224,8 +227,8 @@ struct GenericOpInterfaceReverse
 
       Type ct = cacheArg.getType();
       Type type = MemRefType::get(shapes, ct);
-      auto alloc = cacheBuilder.create<memref::AllocOp>(
-          op->getLoc(), type, ValueRange(iterationDomains));
+      auto alloc = memref::AllocOp::create(cacheBuilder, op->getLoc(), type,
+                                           ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
       // TODO use higher level API
       alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
@@ -266,9 +269,142 @@ struct GenericOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
+
+class GenericFwd
+    : public AutoDiffOpInterface::ExternalModel<GenericFwd, linalg::GenericOp> {
+public:
+  LogicalResult createForwardModeTangent(Operation *orig, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+
+    auto op = cast<linalg::GenericOp>(orig);
+
+    // For all active results, add shadow types.
+    // For now, assuming all results are relevant.
+    Operation *newOp = gutils->getNewFromOriginal(op);
+    SmallVector<Type> newOpResultTypes;
+    newOpResultTypes.reserve(op->getNumResults() * 2);
+    for (auto &&[result, init] :
+         llvm::zip_equal(op->getResults(), op.getOutputs())) {
+      newOpResultTypes.push_back(result.getType());
+      if (gutils->isConstantValue(result) && gutils->isConstantValue(init)) {
+        continue;
+      }
+      auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      if (!typeIface) {
+        op->emitError() << " AutoDiffTypeInterface not implemented for "
+                        << result.getType() << "\n";
+        return failure();
+      }
+      newOpResultTypes.push_back(typeIface.getShadowType(gutils->width));
+    }
+
+    SmallVector<Value> newInputs;
+    SmallVector<Value> newOutputs;
+    SmallVector<AffineMap> indexingMaps;
+    {
+      size_t idx = 0;
+      for (Value operand : op.getInputs()) {
+        newInputs.push_back(gutils->getNewFromOriginal(operand));
+        indexingMaps.push_back(op.getIndexingMapsArray()[idx]);
+        if (!gutils->isConstantValue(operand)) {
+          newInputs.push_back(gutils->invertPointerM(operand, builder));
+          indexingMaps.push_back(op.getIndexingMapsArray()[idx]);
+        }
+        idx++;
+      }
+      for (auto &&[operand, res, oarg] :
+           llvm::zip_equal(op.getOutputs(), op->getResults(),
+                           op.getRegion().front().getArguments().slice(
+                               op.getInputs().size()))) {
+        newOutputs.push_back(gutils->getNewFromOriginal(operand));
+        indexingMaps.push_back(op.getIndexingMapsArray()[idx]);
+        bool shadow = false;
+        if (!gutils->isConstantValue(operand)) {
+          shadow = true;
+          newOutputs.push_back(gutils->invertPointerM(operand, builder));
+          indexingMaps.push_back(op.getIndexingMapsArray()[idx]);
+        } else if (!gutils->isConstantValue(res)) {
+          auto typeIface = dyn_cast<AutoDiffTypeInterface>(operand.getType());
+          shadow = true;
+          newOutputs.push_back(
+              typeIface.createNullValue(builder, operand.getLoc()));
+          indexingMaps.push_back(op.getIndexingMapsArray()[idx]);
+        }
+
+        if (shadow && gutils->isConstantValue(oarg)) {
+          auto typeIface = dyn_cast<AutoDiffTypeInterface>(oarg.getType());
+          auto newBA = cast<BlockArgument>(gutils->getNewFromOriginal(oarg));
+          newBA.getOwner()->insertArgument(newBA.getArgNumber() + 1,
+                                           typeIface.getShadowType(),
+                                           newBA.getLoc());
+        }
+
+        idx++;
+      }
+    }
+    // We are assuming the op can forward additional operands, listed
+    // immediately after the original operands, to the same regions.
+    // ^^
+    // Our interface guarantees this.
+    // We also assume that the region-holding op returns all of the values
+    // yielded by terminators, and only those values.
+
+    auto replacement = linalg::GenericOp::create(
+        builder, op.getLoc(), newOpResultTypes, newInputs, newOutputs,
+        indexingMaps, op.getIteratorTypesArray(),
+        /*doc*/ "",
+        /*libraryCall*/ "");
+
+    assert(replacement->getNumResults() == newOpResultTypes.size());
+    for (auto &&[region, replacementRegion] :
+         llvm::zip(newOp->getRegions(), replacement->getRegions())) {
+      replacementRegion.takeBody(region);
+    }
+
+    // Inject the mapping for the new results into GradientUtil's shadow
+    // table.
+    SmallVector<Value> reps;
+    size_t idx = 0;
+    for (OpResult r : op->getResults()) {
+      // TODO only if used
+      reps.push_back(replacement->getResult(idx));
+      idx++;
+      if (!gutils->isConstantValue(r)) {
+        auto inverted = gutils->invertedPointers.lookupOrNull(r);
+        assert(inverted);
+        gutils->invertedPointers.map(r, replacement->getResult(idx));
+        inverted.replaceAllUsesWith(replacement->getResult(idx));
+        gutils->erase(inverted.getDefiningOp());
+        idx++;
+      }
+    }
+
+    // Differentiate body.
+    for (auto &origRegion : op->getRegions()) {
+      for (auto &origBlock : origRegion) {
+        for (Operation &o : origBlock) {
+          if (failed(gutils->visitChild(&o))) {
+            return failure();
+          }
+        }
+      }
+    }
+
+    // Replace all uses of original results
+    gutils->replaceOrigOpWith(op, reps);
+    gutils->erase(newOp);
+    gutils->originalToNewFnOps[op] = replacement;
+
+    return success();
+  }
+};
+
+#include "Implementations/LinalgDerivatives.inc"
 } // namespace
 
 template <typename... Ts> void attachAllInterfaces(MLIRContext *context) {
@@ -278,6 +414,8 @@ template <typename... Ts> void attachAllInterfaces(MLIRContext *context) {
 void mlir::enzyme::registerLinalgDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, linalg::LinalgDialect *) {
+    registerInterfaces(context);
+    linalg::GenericOp::attachInterface<GenericFwd>(*context);
     attachAllInterfaces<
 #define GET_OP_LIST
 #include "mlir/Dialect/Linalg/IR/LinalgStructuredOps.cpp.inc"

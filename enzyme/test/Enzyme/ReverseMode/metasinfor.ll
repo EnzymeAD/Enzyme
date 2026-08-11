@@ -79,10 +79,9 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a.addr'ipa", align 8
 ; CHECK-NEXT:   %a.addr = alloca double, align 8
 ; CHECK-NEXT:   store double %a, double* %a.addr, align 8, !tbaa !2
-; CHECK-NEXT:   %0 = zext i32 %n to i64
-; CHECK-NEXT:   %1 = add {{(nuw nsw )?}}i64 %0, 1
-; CHECK-NEXT:   br label 
-; %invertfor.cond
+; CHECK-NEXT:   %0 = add {{(nuw )?}}i32 %n, 1
+; CHECK-NEXT:   %1 = sext i32 %0 to i64
+; CHECK-NEXT:   br label %invertfor.cond
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.cond
 ; CHECK-NEXT:   %[[padd:.+]] = load double, double* %"a.addr'ipa", align 8

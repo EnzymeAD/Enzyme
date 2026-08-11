@@ -92,7 +92,7 @@ attributes #4 = { nounwind willreturn "enzyme_no_escaping_allocation" }
 !27 = !{!14, !15, !9, !17}
 !28 = !{!12, !14, !15, !9, !17}
 
-; CHECK: define internal void @diffejulia_set_params_870({} addrspace(10)* nocapture readonly align 8 %arg, {} addrspace(10)* nocapture align 8 %"arg'", {} addrspace(10)* align 8 dereferenceable(24) %arg1, {} addrspace(10)* align 8 %"arg1'", i1 %arg2, i8* %tapeArg)
+; CHECK: define internal void @diffejulia_set_params_870({} addrspace(10)* nocapture readonly align 8 %arg, {} addrspace(10)* nocapture align 8 %"arg'", {} addrspace(10)* nocapture readonly align 8 %arg1, {} addrspace(10)* nocapture align 8 %"arg1'", i1 %arg2, i8* %tapeArg)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { {} addrspace(10)*, {} addrspace(10)* }*
 ; CHECK-NEXT:   %truetape = load { {} addrspace(10)*, {} addrspace(10)* }, { {} addrspace(10)*, {} addrspace(10)* }* %0, align 8, !enzyme_mustcache !
@@ -121,7 +121,7 @@ attributes #4 = { nounwind willreturn "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:   br i1 %i5, label %remat_enter, label %bb3
 
 ; CHECK: invertbb:                                         ; preds = %invertbb12_phimerge
-; CHECK-NEXT:   call void @diffef({} addrspace(10)* %arg1, {} addrspace(10)* %"arg1'")
+; CHECK-NEXT:   call void @diffef({} addrspace(10)* %arg1, {} addrspace(10)* {{(undef|poison)}})
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret void
 

@@ -1,7 +1,7 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s; fi
-; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,UNDEF %s; fi
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s; fi
-; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,ZERO %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-zero-cache=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,UNDEF %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,ZERO %s; fi
 
 declare dso_local double @__enzyme_reverse(...)
 

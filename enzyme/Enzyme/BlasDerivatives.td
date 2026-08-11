@@ -159,6 +159,10 @@ class CopyLowerToUpper<string _tmp> {
   string unused = _tmp;
 }
 
+class MemcpyMatAdd<bit _shouldZero> {
+  bit shouldZero = _shouldZero;
+}
+
 class For<string idx_, bit offset_> {
   string idx = idx_;
   bit offset = offset_;
@@ -195,12 +199,19 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   (Seq<[], [], 1> (BlasCall<"scal"> $n, $alpha, (Shadow $x)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $x)))
                   >;
 
+// B is dst, A is src, B .= A
+// in reverse mode this becomes
+// dA .+= dB
+// dB  .= 0
 def lacpy : CallBlasPattern<(Op $layout, $uplo, $m, $n, $A, $lda, $B, $ldb),
                   ["B"],[cblas_layout, uplo, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
                   [
-                  (AssertingInactiveArg), // from
-                  (AssertingInactiveArg), // to
-                  ]
+                  (MemcpyMatAdd<true> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B)),
+                  (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $m, $n, (Shadow $B), Alloca<1>),
+                  ],
+                  (Seq<[], [], 1>
+                    (BlasCall<"lacpy"> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B))
+                  )
                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
@@ -239,7 +250,7 @@ def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [
                   (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
                   ],
-		              (BFDiv (BSqrt (BlasCall<"dot"> $n, $x, (Shadow $x))), (BlasCall<"nrm2"> $n, $x))
+		              (BFDiv (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
                   >;
 
 
@@ -551,7 +562,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   [
                   
                   /* alpha */ (AssertingInactiveArg), /*(Seq<["AB", "product", "m", "n"], [], true> 
-                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $n, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $n), $B, (ld $B, $transb, $ldb, $n, $k), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),*/
                   /* A     */
                   (Seq<[], [], 1>
@@ -564,7 +575,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                             (Concat $k, $n)),
                         $alpha,
                         (Shadow $C),
-                        $A, (ld $A, $trans, $lda, $n, $k),
+                        $A, (ld $A, $trans, $lda, $k, $n),
                         Constant<"1">,
                         (Shadow $A)
                     ),
@@ -574,12 +585,12 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                             (BFMul $alpha, (LoadLookup $layout, (Shadow $C), $i, $i)),
                             (First
                                 (Lookup $layout,
-                                    (Concat $A, (ld $A, $trans, $lda, $n, $k)),
+                                    (Concat $A, (ld $A, $trans, $lda, $k, $n)),
                                     (Rows $trans, $i, ConstantInt<0>),
                                     (Rows $trans, ConstantInt<0>, $i)
                                 )
                             ),
-                            (Rows $trans, (ld $A, $trans, $lda, $n, $k), ConstantInt<1>),
+                            (Rows $trans, (ld $A, $trans, $lda, $k, $n), ConstantInt<1>),
                             (First
                                 (Lookup $layout,
                                     (Shadow $A),

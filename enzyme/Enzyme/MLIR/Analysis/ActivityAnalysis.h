@@ -2,7 +2,9 @@
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANALYSIS_H
 
 #include "../../Utils.h"
+#include "Analysis/ActivityAnnotations.h"
 #include "mlir/IR/Block.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir {
 
@@ -15,6 +17,41 @@ namespace enzyme {
 
 class MTypeResults;
 
+class DataFlowActivityAnalyzer {
+public:
+  DataFlowActivityAnalyzer(DataFlowSolver &solver, FunctionOpInterface funcOp,
+                           ArrayRef<DIFFE_TYPE> argActivity,
+                           ArrayRef<DIFFE_TYPE> returnActivity);
+
+  bool isInactiveOperation(Operation *op);
+  bool isInactiveValue(Value value);
+
+private:
+  // The answers are fixed once the analysis is constructed, and the queries
+  // walk points-to closures: differentiation asks about every value, often
+  // repeatedly, so cache.
+  DenseMap<Value, bool> inactiveValueCache;
+  DenseMap<Operation *, bool> inactiveOpCache;
+
+  FunctionOpInterface funcOp;
+  DataFlowSolver &solver;
+  enzyme::PointsToSets p2sets;
+  enzyme::ForwardOriginsMap forwardOriginsMap;
+  enzyme::BackwardOriginsMap backwardOriginsMap;
+
+  const ArrayRef<DIFFE_TYPE> argActivity;
+  const ArrayRef<DIFFE_TYPE> returnActivity;
+
+  bool isOriginActive(OriginAttr origin);
+  void joinActiveDataState(Value v, ForwardOriginsLattice &sources,
+                           BackwardOriginsLattice &sinks);
+  void joinActivePointerState(const AliasClassSet &aliasClasses,
+                              ForwardOriginsLattice &sources,
+                              BackwardOriginsLattice &sinks);
+  void joinActiveValueState(Value v, ForwardOriginsLattice &sources,
+                            BackwardOriginsLattice &sinks);
+};
+
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {
   // PreProcessCache &PPC;
@@ -24,6 +61,9 @@ class ActivityAnalyzer {
 
   // Blocks not to be analyzed
   const llvm::SmallPtrSetImpl<Block *> &notForAnalysis;
+
+  // Blocks not to be analyzed
+  llvm::DenseMap<Operation *, bool> &readOnlyCache;
 
   /// Library Information
   // llvm::TargetLibraryInfo &TLI;
@@ -68,12 +108,13 @@ public:
   ActivityAnalyzer(
       // PreProcessCache &PPC, llvm::AAResults &AA_,
       const llvm::SmallPtrSetImpl<Block *> &notForAnalysis_,
+      llvm::DenseMap<Operation *, bool> &readOnlyCache_,
       // llvm::TargetLibraryInfo &TLI_,
       const llvm::SmallPtrSetImpl<Value> &ConstantValues,
       const llvm::SmallPtrSetImpl<Value> &ActiveValues,
       llvm::ArrayRef<DIFFE_TYPE> ActiveReturns)
-      : notForAnalysis(notForAnalysis_), ActiveReturns(ActiveReturns),
-        directions(UP | DOWN),
+      : notForAnalysis(notForAnalysis_), readOnlyCache(readOnlyCache_),
+        ActiveReturns(ActiveReturns), directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
         ActiveValues(ActiveValues.begin(), ActiveValues.end()) {}
 
@@ -85,6 +126,8 @@ public:
   /// Return whether this values is known not to contain derivative
   /// information, either directly or as a pointer to
   bool isConstantValue(MTypeResults const &TR, Value val);
+
+  bool isReadOnly(Operation *val);
 
 private:
   DenseMap<Operation *, llvm::SmallPtrSet<Value, 4>>
@@ -100,8 +143,8 @@ private:
   /// This is used to perform inductive assumptions
   ActivityAnalyzer(ActivityAnalyzer &Other, uint8_t directions)
       : notForAnalysis(Other.notForAnalysis),
-        ActiveReturns(Other.ActiveReturns), directions(directions),
-        ConstantOperations(Other.ConstantOperations),
+        readOnlyCache(Other.readOnlyCache), ActiveReturns(Other.ActiveReturns),
+        directions(directions), ConstantOperations(Other.ConstantOperations),
         ActiveOperations(Other.ActiveOperations),
         ConstantValues(Other.ConstantValues), ActiveValues(Other.ActiveValues) {
     // DeducingPointers(Other.DeducingPointers) {

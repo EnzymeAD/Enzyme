@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -simplifycfg -instsimplify -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -simplifycfg -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i, i64 %j) local_unnamed_addr #0 {
@@ -57,7 +57,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal void @diffef(double* nocapture %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[np1:.+]] = add nuw i64 %n, 1
+; CHECK-NEXT:   %[[np1:.+]] = add nsw i64 %n, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[np1]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %call_malloccache = bitcast i8* %malloccall to double**
@@ -65,7 +65,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: for.cond3.preheader:                              ; preds = %for.cond.cleanup6, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup6 ], [ 0, %entry ]
-; CHECK-NEXT:   %iv.next = add nuw i64 %iv, 1
+; CHECK-NEXT:   %iv.next = add nsw i64 %iv, 1
 ; CHECK-NEXT:   %[[mallocgep1:.+]] = getelementptr inbounds double*, double** %call_malloccache, i64 %iv
 ; CHECK-NEXT:   %[[mallocsize1:.+]] = mul nuw nsw i64 %iv.next, 8
 ; CHECK-NEXT:   %[[malloccall2:.+]] = tail call noalias nonnull i8* @malloc(i64 %[[mallocsize1]])

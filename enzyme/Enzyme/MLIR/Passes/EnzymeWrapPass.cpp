@@ -10,6 +10,7 @@
 // ops.
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -21,8 +22,17 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #define DEBUG_TYPE "enzyme"
+
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_DIFFERENTIATEWRAPPERPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -53,10 +63,12 @@ std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
 
 namespace {
 struct DifferentiateWrapperPass
-    : public DifferentiateWrapperPassBase<DifferentiateWrapperPass> {
+    : public enzyme::impl::DifferentiateWrapperPassBase<
+          DifferentiateWrapperPass> {
+  using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
-    MEnzymeLogic Logic;
+    MEnzymeLogic Logic(dataflowActivity);
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(getOperation());
 
@@ -73,16 +85,21 @@ struct DifferentiateWrapperPass
         symbolOp = &op;
       }
     }
+    if (!symbolOp) {
+      llvm::errs() << " Could not find function '" << infn
+                   << "' to differentiate\n";
+      signalPassFailure();
+      return;
+    }
     auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
     std::string postpasses = "";
     bool verifyPostPasses = true;
-    bool strongZero = false;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
 
-    if (ArgActivity.size() != fn.getFunctionBody().front().getNumArguments()) {
+    if (ArgActivity.size() != fn.getNumArguments()) {
       fn->emitError()
           << "Incorrect number of arg activity states for function, found "
           << ArgActivity.size() << " expected "
@@ -92,12 +109,10 @@ struct DifferentiateWrapperPass
 
     std::vector<DIFFE_TYPE> RetActivity =
         parseActivityString(retTys.getValue());
-    if (RetActivity.size() !=
-        cast<FunctionType>(fn.getFunctionType()).getNumResults()) {
+    if (RetActivity.size() != fn.getNumResults()) {
       fn->emitError()
           << "Incorrect number of ret activity states for function, found "
-          << RetActivity.size() << " expected "
-          << cast<FunctionType>(fn.getFunctionType()).getNumResults();
+          << RetActivity.size() << " expected " << fn.getNumResults();
       return;
     }
     std::vector<bool> returnPrimal;
@@ -113,10 +128,11 @@ struct DifferentiateWrapperPass
     bool freeMemory = true;
     size_t width = 1;
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc;
@@ -124,14 +140,17 @@ struct DifferentiateWrapperPass
       newFunc = Logic.CreateForwardDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
           width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+      if (!newFunc)
+        return signalPassFailure();
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
-          freeMemory, width,
-          /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+          freeMemory, atomicAdd, width,
+          /*addedType*/ nullptr, type_args, overwritten_args,
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
+          markReadonly);
     }
     if (!newFunc) {
       signalPassFailure();
@@ -147,15 +166,9 @@ struct DifferentiateWrapperPass
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)outfn);
     }
+
+    getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
   }
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createDifferentiateWrapperPass() {
-  return std::make_unique<DifferentiateWrapperPass>();
-}
-} // namespace enzyme
-} // namespace mlir

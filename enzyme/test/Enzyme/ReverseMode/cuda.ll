@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] ; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,adce,instsimplify,early-cse)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ] ; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -gvn -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,gvn,adce,instsimplify,early-cse)" -S | FileCheck %s
 
 ; ModuleID = 'cuda.cu'
 source_filename = "cuda.cu"
@@ -39,7 +39,7 @@ declare double @llvm.cos.f64(double)
 declare double @llvm.sin.f64(double)
 
 
-;   /home/wmoses/git/Enzyme/build/./bin/opt < /mnt/Data/git/Enzyme/enzyme/test/Enzyme/cuda.ll  -load=/home/wmoses/git/Enzyme/enzyme/build7/Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -adce -instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -loop-simplify -jump-threading -instsimplify -early-cse -simplifycfg -S 
+;   /home/wmoses/git/Enzyme/build/./bin/opt < /mnt/Data/git/Enzyme/enzyme/test/Enzyme/cuda.ll  -load=/home/wmoses/git/Enzyme/enzyme/build7/Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -inline -mem2reg -gvn -adce -instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -loop-simplify -jump-threading -instsimplify -early-cse -simplifycfg -S 
 
 attributes #0 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "frame-pointer"="all" "less-precise-fpmad"="false" "min-legal-vector-width"="0" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="sm_50" "target-features"="+ptx64,+sm_50" "unsafe-fp-math"="false" "use-soft-double"="false" }
 attributes #2 = { nounwind readnone }

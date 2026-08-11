@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -gt 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -adce -instsimplify -S | FileCheck %s; fi
-; RUN: if [ %llvmver -gt 11 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),%simplifycfg,correlated-propagation,adce,instsimplify)" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -gt 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -adce -instsimplify -S | FileCheck %s; fi
+; RUN: if [ %llvmver -gt 11 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),%simplifycfg,correlated-propagation,adce,instsimplify)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s; fi
 
 ; Function Attrs: nounwind
 declare void @__enzyme_autodiff(i8*, ...)

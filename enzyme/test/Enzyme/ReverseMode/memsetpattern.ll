@@ -17,7 +17,7 @@ define void @df(double* %x, double* %xp) {
   ret void
 }
 
-; CHECK: define internal void @diffef(double* %x, double* %"x'")
+; CHECK: define internal void @diffef(double* nocapture writeonly %x, double* nocapture %"x'")
 ; CHECK-NEXT: invert:
 ; CHECK-NEXT:   call void @memset_pattern16(double* %x, i8* bitcast ([2 x double]* @.memset_pattern to i8*), i64 16)
 ; CHECK-NEXT:   %0 = bitcast double* %"x'" to i8*

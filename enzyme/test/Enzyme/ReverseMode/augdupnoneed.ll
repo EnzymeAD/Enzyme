@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 define void @f(double** nonnull dereferenceable(8) %_M_current, double** nonnull align 8 dereferenceable(8) %__i) {
 entry:
@@ -17,7 +17,7 @@ entry:
 ; Function Attrs: nounwind
 declare void @__enzyme_augmentfwd(...)
 
-; CHECK: define internal i8* @augmented_f(double** nonnull dereferenceable(8) %_M_current, double** %"_M_current'", double** align 8 dereferenceable(8) %__i, double** align 8 %"__i'") 
+; CHECK: define internal i8* @augmented_f(double** nonnull dereferenceable(8) %_M_current, double** %"_M_current'", double** align 8 %__i, double** align 8 %"__i'") 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'ipl" = load double*, double** %"__i'"
 ; CHECK-NEXT:   %[[i0:.+]] = load double*, double** %__i

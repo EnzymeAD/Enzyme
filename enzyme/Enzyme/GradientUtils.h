@@ -93,6 +93,18 @@ extern llvm::StringMap<
 
 constexpr int IndexMappingError = 0x0000fffd;
 
+/// Classification of what type of use is requested
+enum class QueryType {
+  // The original value is needed for the derivative
+  Primal = 0,
+  // The shadow value is needed for the derivative
+  Shadow = 1,
+  // The primal value is needed to stand in for the shadow
+  // value and compute the derivative of an instruction
+  ShadowByConstPrimal = 2
+};
+typedef std::pair<const llvm::Value *, QueryType> UsageKey;
+
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
@@ -290,11 +302,13 @@ public:
   };
 
   llvm::ValueMap<llvm::Value *, Rematerializer> rematerializableAllocations;
+  llvm::SmallPtrSet<llvm::Value *, 4> allocationsToBeRematerialized;
 
   /// Only loaded from and stored to (not captured), mapped to the stores (and
   /// memset). Boolean denotes whether the primal initializes the shadow as well
   /// (for use) as a structure which carries data.
   llvm::ValueMap<llvm::Value *, ShadowRematerializer> backwardsOnlyShadows;
+  std::vector<bool> nowrite_shadows;
 
   void computeForwardingProperties(llvm::Instruction *V);
   void computeGuaranteedFrees();
@@ -318,6 +332,17 @@ public:
   llvm::BasicBlock *addReverseBlock(llvm::BasicBlock *currentBlock,
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
+
+  std::map<UsageKey, bool> populateSeenFromKnownRecompute() const {
+    std::map<UsageKey, bool> Seen;
+    for (auto pair : knownRecomputeHeuristic) {
+      if (!pair.second || unnecessaryIntermediates.count(
+                              llvm::cast<llvm::Instruction>(pair.first))) {
+        Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+      }
+    }
+    return Seen;
+  }
 
   bool legalRecompute(const llvm::Value *val,
                       const llvm::ValueToValueMapTy &available,
@@ -430,7 +455,8 @@ public:
                    bool isVolatile, llvm::AtomicOrdering ordering,
                    llvm::SyncScope::ID syncScope, llvm::Value *mask,
                    llvm::ArrayRef<llvm::Metadata *> noAlias,
-                   llvm::ArrayRef<llvm::Metadata *> scopes);
+                   llvm::ArrayRef<llvm::Metadata *> scopes,
+                   bool needs_post_cache = false);
 
 private:
   llvm::BasicBlock *originalForReverseBlock(llvm::BasicBlock &BB2) const;
@@ -476,7 +502,6 @@ public:
   bool isConstantInstruction(const llvm::Instruction *inst) const;
 
   bool getContext(llvm::BasicBlock *BB, LoopContext &lc);
-
   void forceAugmentedReturns();
 
 private:
@@ -509,8 +534,11 @@ public:
                        bool tryLegalRecomputeCheck = true,
                        llvm::BasicBlock *scope = nullptr) override;
 
+  llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM);
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
-                              bool nullShadow = false);
+                              TypeTree look);
+
+  bool isAtomic(llvm::Value *origptr) const;
 
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
@@ -657,7 +685,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,
                        llvm::Type *secretty, llvm::Intrinsic::ID intrinsic,
                        unsigned dstalign, unsigned srcalign, unsigned offset,
                        bool dstConstant, llvm::Value *shadow_dst,
-                       bool srcConstant, llvm::Value *shadow_src,
+                       llvm::Value *primal_dst, bool srcConstant,
+                       llvm::Value *shadow_src, llvm::Value *primal_src,
                        llvm::Value *length, llvm::Value *isVolatile,
                        llvm::CallInst *MTI, bool allowForward = true,
                        bool shadowsLookedUp = false,

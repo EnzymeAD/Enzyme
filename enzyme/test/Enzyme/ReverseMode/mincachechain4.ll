@@ -59,7 +59,7 @@ entry:
 attributes #0 = { readnone speculatable }
 
 
-; CHECK: define internal double* @augmented_pb(double* %__x, double* %"__x'", i64* %v)
+; CHECK: define internal double* @augmented_pb(double* nocapture %__x, double* nocapture %"__x'", i64* nocapture readonly %v)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(32) dereferenceable_or_null(32) i8* @malloc(i64 32)
 ; CHECK-NEXT:   %icall_malloccache = bitcast i8* %malloccall to double*
@@ -84,7 +84,7 @@ attributes #0 = { readnone speculatable }
 ; CHECK-NEXT:   ret double* %icall_malloccache
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffepb(double* %__x, double* %"__x'", i64* %v, double %differeturn, double* %tapeArg)
+; CHECK: define internal void @diffepb(double* nocapture %__x, double* nocapture %"__x'", i64* nocapture readonly %v, double %differeturn, double* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %for.body
 

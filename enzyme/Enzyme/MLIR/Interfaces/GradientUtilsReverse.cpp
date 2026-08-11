@@ -57,14 +57,20 @@ Type mlir::enzyme::MGradientUtilsReverse::getIndexType() {
 
 Value mlir::enzyme::MGradientUtilsReverse::insertInit(Type t) {
   OpBuilder builder(initializationBlock, initializationBlock->begin());
-  return builder.create<enzyme::InitOp>(
-      (initializationBlock->rbegin())->getLoc(), t);
+  // The block is where the init goes, not where a location comes from: asking
+  // its last operation for one reads off the end of an empty block, and the
+  // first cache anything asks for is the one that finds it empty.
+  Location loc = initializationBlock->empty()
+                     ? builder.getUnknownLoc()
+                     : initializationBlock->rbegin()->getLoc();
+  return enzyme::InitOp::create(builder, loc, t);
 }
 
 // Cache
 Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t) {
-  Type cacheType =
-      CacheType::get(initializationBlock->begin()->getContext(), t);
+  // Likewise the context, which is the type's own and does not need looking up
+  // in the block.
+  Type cacheType = CacheType::get(t.getContext(), t);
   return cacheType;
 }
 
@@ -93,15 +99,16 @@ std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
 // We assume that caches will only be written to at one location. The returned
 // cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
-  builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
+  auto ct = getCacheType(v.getType());
+  auto [pushCache, popCache] = getNewCache(ct);
+  enzyme::PushOp::create(builder, v.getLoc(), pushCache, v);
   return popCache;
 }
 
 Value MGradientUtilsReverse::popCache(Value cache, OpBuilder &builder) {
-  return builder.create<enzyme::PopOp>(
-      cache.getLoc(), cast<enzyme::CacheType>(cache.getType()).getType(),
-      cache);
+  return enzyme::PopOp::create(
+      builder, cache.getLoc(),
+      cast<enzyme::CacheType>(cache.getType()).getType(), cache);
 }
 
 Operation *

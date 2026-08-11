@@ -27,9 +27,9 @@ attributes #0 = { noinline }
 
 ; CHECK: define internal void @diffeman_max(float* %a, float* %"a'", float* %b, float* %"b'", float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"preb1'ipie" = insertelement <2 x float*> undef, float* %"a'", i32 0
+; CHECK-NEXT:   %"preb1'ipie" = insertelement <2 x float*> zeroinitializer, float* %"a'", i32 0
 ; CHECK-NEXT:   %"vec'ipie" = insertelement <2 x float*> %"preb1'ipie", float* %"b'", i32 1
-; CHECK-NEXT:   %"ovec'ipsv" = shufflevector <2 x float*> %"vec'ipie", <2 x float*> undef, <1 x i32> zeroinitializer
+; CHECK-NEXT:   %"ovec'ipsv" = shufflevector <2 x float*> %"vec'ipie", <2 x float*> zeroinitializer, <1 x i32> zeroinitializer
 ; CHECK-NEXT:   %"ptr'ipee" = extractelement <1 x float*> %"ovec'ipsv", i32 0
 ; CHECK-NEXT:   %0 = load float, float* %"ptr'ipee", align 4
 ; CHECK-NEXT:   %1 = fadd fast float %0, %differeturn

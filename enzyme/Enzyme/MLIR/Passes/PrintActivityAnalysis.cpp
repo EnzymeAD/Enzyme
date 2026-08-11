@@ -30,6 +30,13 @@
 
 using namespace mlir;
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_PRINTACTIVITYANALYSISPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 namespace {
 
 enzyme::Activity getDefaultActivity(Type argType) {
@@ -49,7 +56,9 @@ enzyme::Activity getDefaultActivity(Type argType) {
 }
 
 struct PrintActivityAnalysisPass
-    : public enzyme::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
+    : public enzyme::impl::PrintActivityAnalysisPassBase<
+          PrintActivityAnalysisPass> {
+  using PrintActivityAnalysisPassBase::PrintActivityAnalysisPassBase;
 
   /// Do the simplest possible inference of argument and result activities, or
   /// take the user's explicit override if provided
@@ -136,6 +145,7 @@ struct PrintActivityAnalysisPass
       enzyme::runActivityAnnotations(callee, argActivities, config);
     } else if (config.dataflow) {
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                          resultActivities,
                                           /*print=*/true, verbose, annotate);
     } else {
 
@@ -159,8 +169,10 @@ struct PrintActivityAnalysisPass
           ReturnActivity.push_back(DIFFE_TYPE::CONSTANT);
       }
 
-      enzyme::ActivityAnalyzer activityAnalyzer(
-          blocksNotForAnalysis, constant_values, activevals_, ReturnActivity);
+      DenseMap<Operation *, bool> readOnlyCache;
+      enzyme::ActivityAnalyzer activityAnalyzer(blocksNotForAnalysis,
+                                                readOnlyCache, constant_values,
+                                                activevals_, ReturnActivity);
 
       callee.walk([&](Operation *op) {
 
@@ -288,11 +300,3 @@ struct PrintActivityAnalysisPass
   }
 };
 } // namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createPrintActivityAnalysisPass() {
-  return std::make_unique<PrintActivityAnalysisPass>();
-}
-} // namespace enzyme
-} // namespace mlir

@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -enzyme -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-julia-addr-load -enzyme -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme-julia-addr-load -passes="enzyme" -S | FileCheck %s; fi
 
 source_filename = "start"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -1714,7 +1714,7 @@ declare void @free(i8* %0)
 ; CHECK-NEXT:   %3 = load i64*, i64** %mdyncache_fromtape_cache, align 8
 ; CHECK-NEXT:   %4 = getelementptr inbounds i64, i64* %3, i64 %iv
 ; CHECK-NEXT:   %a29 = load i64, i64* %4, align 8
-; CHECK-NEXT:   %5 = add nuw i64 %a29, 1
+; CHECK-NEXT:   %5 = add nsw i64 %a29, 1
 ; CHECK-NEXT:   %6 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
 ; CHECK-NEXT:   %7 = getelementptr inbounds i1*, i1** %6, i64 %iv
 ; CHECK-NEXT:   br label %L86

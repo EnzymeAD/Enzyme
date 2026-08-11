@@ -12,7 +12,7 @@ module attributes {
     #dlti.dl_entry<f64, dense<64> : vector<2xi64>>,
     #dlti.dl_entry<f128, dense<128> : vector<2xi64>>,
     #dlti.dl_entry<"dlti.endianness", "little">>} {
-  llvm.func @f(%arg0: !llvm.ptr {llvm.nocapture, llvm.readonly}) -> !llvm.ptr attributes {memory = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read>, sym_visibility = "private"} {
+  llvm.func @f(%arg0: !llvm.ptr {llvm.nocapture, llvm.readonly}) -> !llvm.ptr attributes {memory_effects = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read, errnoMem = none, targetMem0 = none, targetMem1 = none>, sym_visibility = "private"} {
     %0 = llvm.load %arg0 {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr
     llvm.return %0 : !llvm.ptr
   }

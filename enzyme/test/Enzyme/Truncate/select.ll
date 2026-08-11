@@ -23,12 +23,12 @@ entry:
   ret double %res
 }
 
-; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
+; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond)
 ; CHECK-NEXT:   %res = select i1 %cond, double %x, double %y
 ; CHECK-NEXT:   ret double %res
 ; CHECK-NEXT: }
 
-; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
+; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y, i1 %cond)
 ; CHECK-NEXT:   %res = select i1 %cond, double %x, double %y
 ; CHECK-NEXT:   ret double %res
 ; CHECK-NEXT: }

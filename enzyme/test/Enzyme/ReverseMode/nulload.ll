@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=false -enzyme -mem2reg -simplifycfg -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify)" -S | FileCheck %s
 
 source_filename = "start"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -42,7 +42,7 @@ bb:
 
 !0 = !{}
 
-; CHECK: define internal void @diffewat({} addrspace(10)* align 16 dereferenceable(40) %arg2, {} addrspace(10)* align 16 %"arg2'", i8* %tapeArg) 
+; CHECK: define internal void @diffewat({} addrspace(10)* align 16 %arg2, {} addrspace(10)* align 16 %"arg2'", i8* %tapeArg) 
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i8*, i8* }*
 ; CHECK-NEXT:   %truetape = load { i8*, i8* }, { i8*, i8* }* %0, align 8

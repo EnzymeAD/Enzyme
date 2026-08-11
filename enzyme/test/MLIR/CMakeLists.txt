@@ -2,8 +2,9 @@ add_subdirectory(ActivityAnalysis)
 add_subdirectory(AliasAnalysis)
 add_subdirectory(Batch)
 add_subdirectory(ForwardMode)
+add_subdirectory(OptimizeAD)
 add_subdirectory(Passes)
-add_subdirectory(ProbProg)
+add_subdirectory(Impulse)
 add_subdirectory(ReverseMode)
 
 # Run regression and unit tests

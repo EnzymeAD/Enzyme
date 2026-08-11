@@ -38,20 +38,20 @@ module {
 
 // CHECK:  ^bb1:  // pred: ^bb0
 // CHECK-NEXT:    %[[prevdret0:.+]] = "enzyme.get"(%[[dy]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:    %[[postdret0:.+]] = arith.addf %[[prevdret0]], %arg1 : f64
+// CHECK-NEXT:    %[[postdret0:.+]] = arith.addf %[[prevdret0]], %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    "enzyme.set"(%[[dy]], %[[postdret0]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK-NEXT:    %[[prevdret:.+]] = "enzyme.get"(%[[dy]]) : (!enzyme.Gradient<f64>) -> f64
 // CHECK-NEXT:    %[[c2:.+]] = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:    "enzyme.set"(%[[dy]], %[[c2]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK-NEXT:    %[[postlhs:.+]] = "enzyme.pop"(%[[rhscache]]) : (!enzyme.Cache<f64>) -> f64
 // CHECK-NEXT:    %[[postrhs:.+]] = "enzyme.pop"(%[[lhscache]]) : (!enzyme.Cache<f64>) -> f64
-// CHECK-NEXT:    %[[dlhs:.+]] = arith.mulf %[[prevdret]], %[[postrhs]] : f64
+// CHECK-NEXT:    %[[dlhs:.+]] = arith.mulf %[[prevdret]], %[[postrhs]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[prevdx1:.+]] = "enzyme.get"(%[[dx]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:    %[[postdx1:.+]] = arith.addf %[[prevdx1]], %[[dlhs]] : f64
+// CHECK-NEXT:    %[[postdx1:.+]] = arith.addf %[[prevdx1]], %[[dlhs]] fastmath<fast> : f64
 // CHECK-NEXT:    "enzyme.set"(%[[dx]], %[[postdx1]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:    %[[drhs:.+]] = arith.mulf %[[prevdret]], %[[postlhs]] : f64
+// CHECK-NEXT:    %[[drhs:.+]] = arith.mulf %[[prevdret]], %[[postlhs]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[prevdx2:.+]] = "enzyme.get"(%[[dx]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:    %[[postdx2:.+]] = arith.addf %[[prevdx2]], %[[drhs]] : f64
+// CHECK-NEXT:    %[[postdx2:.+]] = arith.addf %[[prevdx2]], %[[drhs]] fastmath<fast> : f64
 // CHECK-NEXT:    "enzyme.set"(%[[dx]], %[[postdx2]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK-NEXT:    %[[res:.+]] = "enzyme.get"(%[[dx]]) : (!enzyme.Gradient<f64>) -> f64
 // CHECK-NEXT:    return %[[res]] : f64
@@ -60,16 +60,16 @@ module {
 
 // REM:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
 // REM-NEXT:    %[[cst:.+]] = arith.constant 0.000000e+00 : f64
-// REM-NEXT:    %[[a1:.+]] = arith.addf %arg1, %[[cst]] : f64
-// REM-NEXT:    %[[a2:.+]] = arith.mulf %[[a1]], %arg0 : f64
-// REM-NEXT:    %[[a3:.+]] = arith.addf %[[a2]], %[[cst]] : f64
-// REM-NEXT:    %[[a4:.+]] = arith.mulf %[[a1]], %arg0 : f64
-// REM-NEXT:    %[[a5:.+]] = arith.addf %[[a3]], %[[a4]] : f64
+// REM-NEXT:    %[[a1:.+]] = arith.addf %arg1, %[[cst]] fastmath<fast> : f64
+// REM-NEXT:    %[[a2:.+]] = arith.mulf %[[a1]], %arg0 fastmath<fast> : f64
+// REM-NEXT:    %[[a3:.+]] = arith.addf %[[a2]], %[[cst]] fastmath<fast> : f64
+// REM-NEXT:    %[[a4:.+]] = arith.mulf %[[a1]], %arg0 fastmath<fast> : f64
+// REM-NEXT:    %[[a5:.+]] = arith.addf %[[a3]], %[[a4]] fastmath<fast> : f64
 // REM-NEXT:    return %[[a5]] : f64
 // REM-NEXT:  }
 
 // FIN:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
-// FIN-NEXT:    %0 = arith.mulf %arg1, %arg0 : f64
-// FIN-NEXT:    %1 = arith.addf %0, %0 : f64
+// FIN-NEXT:    %0 = arith.mulf %arg1, %arg0 fastmath<fast> : f64
+// FIN-NEXT:    %1 = arith.addf %0, %0 fastmath<fast> : f64
 // FIN-NEXT:    return %1 : f64
 // FIN-NEXT:  }

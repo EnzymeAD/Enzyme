@@ -16,6 +16,7 @@
 #define ENZYMEMLIR_CORE_IMPL_H_
 
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -124,8 +125,10 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 template <typename OpTy>
@@ -145,8 +148,10 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 // Implements the forward autodiff interface for operations which are
@@ -195,13 +200,70 @@ public:
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     (void)allocationForwardHandler(op, builder, (MGradientUtils *)gutils,
                                    /*zero*/ true);
+    return success();
   }
 };
+
+// Differentiating a call is the same work whichever dialect spelled it:
+// find the callee, ask Logic for its derivative, and call that. What differs
+// is how the call names its callee and how a call to the derivative is
+// written, and both are already asked through interfaces.
+
+LogicalResult callForwardHandler(Operation *orig, OpBuilder &builder,
+                                 MGradientUtils *gutils);
+
+LogicalResult callReverseHandler(Operation *orig, OpBuilder &builder,
+                                 MGradientUtilsReverse *gutils,
+                                 SmallVector<Value> caches);
+
+SmallVector<Value> callCacheValues(Operation *orig,
+                                   MGradientUtilsReverse *gutils);
+
 } // namespace detail
+
+template <typename OpTy>
+class AutoDiffCallFwd
+    : public AutoDiffOpInterface::ExternalModel<AutoDiffCallFwd<OpTy>, OpTy> {
+public:
+  LogicalResult createForwardModeTangent(Operation *orig, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return detail::callForwardHandler(orig, builder, gutils);
+  }
+};
+
+template <typename OpTy>
+class AutoDiffCallRev
+    : public ReverseAutoDiffOpInterface::ExternalModel<AutoDiffCallRev<OpTy>,
+                                                       OpTy> {
+public:
+  LogicalResult createReverseModeAdjoint(Operation *orig, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return detail::callReverseHandler(orig, builder, gutils, caches);
+  }
+
+  SmallVector<Value> cacheValues(Operation *orig,
+                                 MGradientUtilsReverse *gutils) const {
+    return detail::callCacheValues(orig, gutils);
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
+};
+
+// Registers the generic call handlers for the given op; the tablegen-emitted
+// registerInterfaces calls this for each `def : CallOp<...>`.
+template <typename OpTy>
+void registerAutoDiffUsingCallInterface(MLIRContext &context) {
+  OpTy::template attachInterface<AutoDiffCallFwd<OpTy>>(context);
+  OpTy::template attachInterface<AutoDiffCallRev<OpTy>>(context);
+}
 
 // Registers AutoDiffUsingControlFlow for the given op.
 template <typename OpTy>
@@ -252,6 +314,7 @@ void registerAffineDialectAutoDiffInterface(DialectRegistry &registry);
 void registerArithDialectAutoDiffInterface(DialectRegistry &registry);
 void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);
+void registerLLVMExtDialectAutoDiffInterface(DialectRegistry &registry);
 void registerNVVMDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMemRefDialectAutoDiffInterface(DialectRegistry &registry);
 void registerComplexDialectAutoDiffInterface(DialectRegistry &registry);
@@ -261,11 +324,34 @@ void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
 void registerFuncDialectAutoDiffInterface(DialectRegistry &registry);
 void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
+void registerGPUDialectAutoDiffInterface(DialectRegistry &registry);
 void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
 mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);
+
+/// Give an operation built for a derivative the fast-math flags the LLVM path
+/// gives everything it builds (Utils.cpp's getFast()). A gradient is only as
+/// fast as the arithmetic it is allowed to reassociate, and one built without
+/// the flags its primal was compiled with leaves work on the table: much of
+/// what the reverse pass computes is a product with a seed, and only under
+/// fast-math does a zero seed fold away the expression it feeds.
+/// An op with no fast-math flags to give is left alone.
+void setDerivativeFastMath(Operation *op);
+
+inline Value setDerivativeFastMath(Value v) {
+  if (v)
+    setDerivativeFastMath(v.getDefiningOp());
+  return v;
+}
+
+template <typename OpTy>
+std::enable_if_t<std::is_base_of<OpState, OpTy>::value, OpTy>
+setDerivativeFastMath(OpTy op) {
+  setDerivativeFastMath(op.getOperation());
+  return op;
+}
 } // namespace enzyme
 } // namespace mlir
 

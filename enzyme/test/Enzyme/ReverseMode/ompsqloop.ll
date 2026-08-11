@@ -128,8 +128,8 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   br i1 %cmp.not, label %omp.precond.end, label %omp.precond.then
 
 ; CHECK: omp.precond.then:                                 ; preds = %entry
-; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4, !tbaa !7
-; CHECK-NEXT:   %1 = load i32, i32* %.global_tid., align 4, !tbaa !7
+; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4, !tbaa ![[TBAA_INT:[0-9]+]]
+; CHECK-NEXT:   %1 = load i32, i32* %.global_tid., align 4, !tbaa ![[TBAA_INT]]
 ; CHECK-NEXT:   store i64 0, i64* %.omp.lb_smpl
 ; CHECK-NEXT:   store i64 %sub4, i64* %.omp.ub_smpl
 ; CHECK-NEXT:   store i64 1, i64* %.omp.stride_smpl
@@ -148,12 +148,12 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   %[[true1iv:.+]] = add nuw i64 
 ;                            %[[lb]], %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %tmp, i64 %[[true1iv]]
-; CHECK-NEXT:   %[[ld:.+]] = load double, double* %arrayidx, align 8, !tbaa !9
+; CHECK-NEXT:   %[[ld:.+]] = load double, double* %arrayidx, align 8, !tbaa ![[TBAA_DOUBLE:[0-9]+]]
 ; CHECK-NEXT:   %call = call double @sqrt(double %[[ld]])
-; CHECK-NEXT:   store double %call, double* %arrayidx, align 8, !tbaa !9
+; CHECK-NEXT:   store double %call, double* %arrayidx, align 8, !tbaa ![[TBAA_DOUBLE]]
 ; CHECK-NEXT:   %[[trueiv:.+]] = add nuw nsw i64 %iv, %[[lb]]
 ; CHECK-NEXT:   %[[loc:.+]] = getelementptr inbounds double, double* %0, i64 %[[trueiv]]
-; CHECK-NEXT:   store double %[[ld]], double* %[[loc]], align 8, !tbaa !9, !invariant.group !
+; CHECK-NEXT:   store double %[[ld]], double* %[[loc]], align 8, !tbaa ![[TBAA_DOUBLE]], !invariant.group !
 ; CHECK-NEXT:   %add11 = add nuw i64 %[[true1iv]], 1
 ; CHECK-NEXT:   %add = add nuw i64 %cond, 1
 ; CHECK-NEXT:   %cmp7 = icmp ult i64 %add11, %add
@@ -167,7 +167,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture align 8 dereferenceable(8) %tmp, double* nocapture align 8 %"tmp'", double** %tapeArg)
+; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture align 8 %tmp, double* nocapture align 8 %"tmp'", double** %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %truetape = load double*, double** %tapeArg
 ; CHECK-NEXT:   %.omp.lb_smpl = alloca i64
@@ -179,8 +179,8 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   br i1 %cmp.not, label %invertentry, label %omp.precond.then
 
 ; CHECK: omp.precond.then:                                 ; preds = %entry
-; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4, !tbaa !7
-; CHECK-NEXT:   %0 = load i32, i32* %.global_tid., align 4, !tbaa !7
+; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4, !tbaa ![[TBAA_INT]]
+; CHECK-NEXT:   %0 = load i32, i32* %.global_tid., align 4, !tbaa ![[TBAA_INT]]
 ; CHECK-NEXT:   store i64 0, i64* %.omp.lb_smpl
 ; CHECK-NEXT:   store i64 %sub4, i64* %.omp.ub_smpl
 ; CHECK-NEXT:   store i64 1, i64* %.omp.stride_smpl
@@ -197,7 +197,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertomp.precond.then: 
-; CHECK-NEXT:   %_unwrap = load i32, i32* %.global_tid., align 4, !tbaa !7
+; CHECK-NEXT:   %_unwrap = load i32, i32* %.global_tid., align 4, !tbaa ![[TBAA_INT]]
 ; CHECK-NEXT:   call void @__kmpc_for_static_fini(%struct.ident_t* @1, i32 %_unwrap)
 ; CHECK-NEXT:   br label %invertentry
 
@@ -210,7 +210,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i9:.+]] = add nuw nsw i64 %"iv'ac.0", %_unwrap2
 ; CHECK-NEXT:   %[[i10:.+]] = getelementptr inbounds double, double* %truetape, i64 %[[i9]]
-; CHECK-NEXT:   %[[i11:.+]] = load double, double* %[[i10]], align 8, !tbaa !9, !invariant.group !
+; CHECK-NEXT:   %[[i11:.+]] = load double, double* %[[i10]], align 8, !tbaa ![[TBAA_DOUBLE]], !invariant.group !
 ; CHECK-NEXT:   %[[i15:.+]] = fcmp fast ueq double %[[i11]], 0.000000e+00
 ; CHECK-NEXT:   %[[i12:.+]] = call fast double @sqrt(double %[[i11]])
 ; CHECK-NEXT:   %[[i13:.+]] = fmul fast double 2.000000e+00, %[[i12]]

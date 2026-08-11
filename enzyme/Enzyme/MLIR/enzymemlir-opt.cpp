@@ -13,7 +13,7 @@
 
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Affine/Passes.h"
+#include "mlir/Dialect/Affine/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
@@ -24,7 +24,9 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
@@ -35,6 +37,8 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "Dialect/Dialect.h"
+#include "Dialect/Impulse/Impulse.h"
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
 
@@ -69,13 +73,17 @@ int main(int argc, char **argv) {
   registry.insert<mlir::math::MathDialect>();
   registry.insert<mlir::linalg::LinalgDialect>();
   registry.insert<mlir::tensor::TensorDialect>();
+  registry.insert<mlir::ub::UBDialect>();
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
+  registry.insert<mlir::impulse::ImpulseDialect>();
+  registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
 
-  mlir::registerenzymePasses();
+  mlir::enzyme::registerenzymePasses();
 
   mlir::func::registerInlinerExtension(registry);
+  mlir::LLVM::registerInlinerInterface(registry);
 
   // Register the standard passes we want.
   mlir::registerCSEPass();
@@ -90,6 +98,7 @@ int main(int argc, char **argv) {
   mlir::registerSCFToControlFlowPass();
   mlir::affine::registerAffinePasses();
   mlir::registerReconcileUnrealizedCastsPass();
+  mlir::registerLinalgPasses();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);

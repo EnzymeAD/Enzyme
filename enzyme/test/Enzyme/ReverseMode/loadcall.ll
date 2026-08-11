@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme" -S | FileCheck %s
 
 source_filename = "loadcall.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -84,6 +84,6 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[ligep:.+]] = load double, double* %[[callp]], align 8
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[ligep]], %[[loadde]]
 ; CHECK-NEXT:   store double %[[add]], double* %[[callp]], align 8
-; CHECK-NEXT:   call void @diffegep(double* %a, double* %"a'")
+; CHECK-NEXT:   call void @diffegep(double* %a, double* {{(undef|poison)}})
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-//include "mlir/Dialect/Linalg/IR/LinalgBase.td"
-
 #ifndef ENZYME_OPS
 #define ENZYME_OPS
+
+include "EnzymeEnums.td"
 
 include "Dialect.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -22,16 +22,13 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
-include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Dialect/Arith/IR/ArithBase.td"
+include "mlir/Dialect/Arith/IR/ArithOpsInterfaces.td"
 
-
-class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
-    : AttrDef<Enzyme_Dialect, name, traits> {
-  let mnemonic = attrMnemonic;
-}
 
 def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let summary = "A pseudo alias class represents a memory allocation passed into a function.";
@@ -93,22 +90,6 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
 
-def Activity : I32EnumAttr<"Activity",
-    "Possible activity states for variables",
-    [
-      I32EnumAttrCase<"enzyme_active",  0>,
-      I32EnumAttrCase<"enzyme_dup",  1>,
-      I32EnumAttrCase<"enzyme_const",2>,
-      I32EnumAttrCase<"enzyme_dupnoneed", 3>,
-      I32EnumAttrCase<"enzyme_activenoneed",  4>,
-      I32EnumAttrCase<"enzyme_constnoneed",  5>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
-
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
 
@@ -127,22 +108,144 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true, true,
+                                                      false>(*this);
+    }
+  }];
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, true,
+                                                      false>(*this);
+    }
+
+    /// Collect all output co-tangent values(for outputs with ret_activity
+    /// marked as `enzyme_active`/`enzyme_activenoneed`
+    ::llvm::SmallVector<::mlir::Value> getDifferentialReturns() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, false,
+                                                      true>(*this);
+    }
+  }];
+}
+
+def JacobianOp : Enzyme_Op<"jacobian",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Compute Jacobian for a function";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
+  let summary = "Perform reverse mode AD on a child region";
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add, OptionalAttr<StrAttr>:$fn);
+  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+  }];
+
+  let hasCanonicalizer=1;
+
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true,
+                                                      true, false>(*this);
+    }
+
+    /// Collect all output co-tangent values(for outputs with ret_activity
+    /// marked as `enzyme_active`/`enzyme_activenoneed`
+    ::llvm::SmallVector<::mlir::Value> getDifferentialReturns() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true,
+                                                      false, true>(*this);
+    }
+
+  }];
+}
+
+def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]> {
+  let summary = "Perform forward mode AD on a child region";
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
+  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+  }];
+  
+  let hasCanonicalizer = 1;
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffRegionOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffRegionOp, true,
+                                                      true, false>(*this);
+    }
+
+  }];
+}
+
+def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region";
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let assemblyFormat = [{
+    attr-dict ($operands^ `:` type($operands))?
+  }];
 }
 
 def BatchOp : Enzyme_Op<"batch",
@@ -156,23 +259,75 @@ def BatchOp : Enzyme_Op<"batch",
   }];
 }
 
-def PushOp : Enzyme_Op<"push"> {
-  let summary = "Push value to cache or ShadowedGradient";
-  let arguments = (ins AnyType : $cache, AnyType : $value);
-  let results = (outs );
+def PushOp : Enzyme_Op<"push", [
+    TypesMatchWith<"type of 'value' matches element type of 'cache'",
+                   "cache", "value",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
+  let summary = "Push value to cache";
+  let arguments = (ins Arg<AnyType, "the cache to push to", [MemWrite]>:$cache, AnyType:$value);
 }
 
-def PopOp : Enzyme_Op<"pop"> {
+def PopOp : Enzyme_Op<"pop", [
+    TypesMatchWith<"type of 'output' matches element type of 'cache'",
+                   "cache", "output",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
-  let arguments = (ins AnyType : $cache);
+  let arguments = (ins Arg<AnyType, "the cache to pop from", [MemRead, MemWrite]>:$cache);
   let results = (outs AnyType:$output);
+}
+
+def BinomialProgressScalarOrTensor : AnyTypeOf<[
+    AnySignlessIntegerOrIndex,
+    TensorOf<[AnySignlessInteger, Index]>],
+    "signless integer, index, or tensor thereof">;
+
+def BinomialProgressOp : Enzyme_Op<"binomial_progress",
+    [Pure, SameOperandsAndResultType]> {
+  let summary = "Revolve binomial checkpointing split";
+  let description = [{
+    Given `num_steps` remaining iterations and a `budget` of available
+    checkpoints, returns how many steps to advance before placing the next
+    checkpoint. This is the classic Revolve "split" function used for binomial
+    checkpointing of loops.
+
+    Writing `beta(s, t) = C(s + t, t)` for the longest chain reversible with `s`
+    checkpoints and at most `t` recomputations of each step, and taking `t`
+    minimal with `beta(budget, t) >= num_steps`, every advance in
+
+        [ num_steps - beta(budget-1, t) , beta(budget, t-1) ]
+
+    attains that optimal `t`, and the interval is non-empty by Pascal's rule
+    `beta(s,t) = beta(s-1,t) + beta(s,t-1)`. This op returns the lower edge,
+    clamped to `[1, num_steps-1]`, which also lands within a few percent of the
+    minimal *total* recomputation.
+
+    Two boundary cases matter to callers. `num_steps <= 1` returns `num_steps`
+    (so 0 or 1). `budget <= 1` returns `num_steps`: with one checkpoint left the
+    entire remaining stretch is replayed from it, so the advance covers all of
+    it. That is also what makes the advances chosen for successive slots sum to
+    exactly the trip count across `budget` slots, which lets a driver that
+    iterates once per checkpoint still reach the end of the primal.
+
+    The result is an advance *distance*, not a repetition count: it grows like
+    `num_steps`, not like `num_steps^(1/budget)`.
+
+    `num_steps` and `budget` may be an index, a signless integer of any
+    width, or a tensor thereof (with the result taking the same type). The
+    tensor forms carry the scalar computation for dialects whose scalars are
+    tensors: stablehlo callers use `tensor<i64>`, a rank-0 ranked tensor.
+  }];
+  let arguments = (ins BinomialProgressScalarOrTensor:$num_steps,
+                       BinomialProgressScalarOrTensor:$budget);
+  let results = (outs BinomialProgressScalarOrTensor:$result);
+  let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
+  let hasFolder = 1;
 }
 
 def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "Create enzyme.gradient and enzyme.cache";
   let arguments = (ins );
-  let results = (outs AnyType);
+  let results = (outs Res<AnyType, "", [MemAlloc<DefaultResource, 0, FullEffect>]>);
 }
 
 def Cache : Enzyme_Type<"Cache"> {
@@ -195,9 +350,54 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
+def LoadOp : Enzyme_Op<"load",
+    [TypesMatchWith<"type of 'result' matches element type of 'memref'",
+                    "memref", "result",
+                    "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Load from a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
+                           [MemRead]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
+}
+
+def StoreOp : Enzyme_Op<"store",
+    [TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Store to a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "the reference to store to",
+                           [MemWrite]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
+  let assemblyFormat = [{
+    $value `,` $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
+}
+
+def FillZeroOp : Enzyme_Op<"fill_zero", []> {
+  let summary = "Fill memory with zero values";
+  let arguments = (ins Arg<AnyMemRef, "the argument to fill", [MemWrite]>:$memref);
+  let assemblyFormat = [{
+    $memref attr-dict `:` type($memref)
+  }];
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'value' matches element type of 'gradient'",
+                    "gradient", "value",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Store the current value of the gradient";
   let arguments = (ins Arg<AnyType, "the reference to store to",
                            [MemWrite]>:$gradient, AnyType : $value);
@@ -206,11 +406,14 @@ def SetOp : Enzyme_Op<"set",
 
 def GetOp : Enzyme_Op<"get",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'result' matches element type of 'gradient'",
+                    "gradient", "result",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Load current value of gradient";
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
-  let results = (outs AnyType);
+  let results = (outs AnyType:$result);
 }
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
@@ -254,17 +457,6 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   ];
 }
 
-def SampleOp : Enzyme_Op<"sample",
-    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
-  let results = (outs Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
 def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
     [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
   let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
@@ -274,6 +466,118 @@ def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
   }];
+}
+
+def ConcatOp : Enzyme_Op<"concat"> {
+  let summary = "Concatenate list of input arguments into a single batched value";
+  let description = [{
+    Concat list of input arguments into a generic value
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$inputs);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+    `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def ExtractOp : Enzyme_Op<"extract"> {
+  let summary = "Extract value from batched operand at index";
+  let description = [{
+    Extract value from batched operand at index
+  }];
+
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+     $input `[` $index `]` attr-dict `:` functional-type($input, results)
+  }];
+}
+
+def DumpOp : Enzyme_Op<"dump"> {
+  let summary = "Debug operation to dump a tensor value at runtime";
+  let description = [{
+    Debug operation that dumps a tensor value with a label.
+  }];
+
+  let arguments = (ins
+    AnyType:$value,
+    StrAttr:$label
+  );
+
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = [{
+    $value attr-dict `:` functional-type($value, results)
+  }];
+}
+
+def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
+      AllTypesMatch<["value", "result"]>,
+      TypesMatchWith<"value type matches element type of memref",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+      DeclareOpInterfaceMethods<ArithFastMathInterface>,
+    ]> {
+  let summary = "atomic rmw operation with ordering";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AtomicOrdering:$ordering,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment,
+      DefaultValuedAttr<Arith_FastMathAttr,
+                        "::mlir::arith::FastMathFlags::none">:$fastmath);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `[` $indices `]` $ordering
+    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+
+  let hasCanonicalizeMethod = 1;
+
+  let extraClassDeclaration = [{
+    MemRefType getMemRefType() {
+      return ::llvm::cast<MemRefType>(getMemref().getType());
+    }
+  }];
+}
+
+def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
+      DeclareOpInterfaceMethods<ArithFastMathInterface>,
+    ]> {
+  let summary = "affine atomic rmw operation";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      AffineMapAttr:$map,
+      OptionalAttr<IntValidAlignment<I64Attr>>:$alignment,
+      DefaultValuedAttr<Arith_FastMathAttr,
+                        "::mlir::arith::FastMathFlags::none">:$fastmath);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]`
+    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+
+  let hasCanonicalizeMethod = 1;
 }
 
 #endif // ENZYME_OPS

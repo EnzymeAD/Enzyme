@@ -51,6 +51,11 @@ class ReturnOp<string dialect_, string opName_> {
   string opName = opName_;
 }
 
+class CallOp<string dialect_, string opName_> {
+  string dialect = dialect_;
+  string opName = opName_;
+}
+
 class BranchOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;
@@ -124,8 +129,8 @@ def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 def SelectIfComplex : StaticSelect<[{
   auto ty = imVal.getType();
   isa<ComplexType>(ty) ||
-    isa<TensorType>(ty) &&
-      isa<ComplexType>(cast<TensorType>(ty).getElementType());
+    (isa<TensorType>(ty) &&
+      isa<ComplexType>(cast<TensorType>(ty).getElementType()));
 }]>;
 
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
@@ -136,6 +141,12 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
 }
 
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
+def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
+  SmallVector<Type> shadowTypes(op->getResultTypes());
+  for (Type &ty : shadowTypes)
+    ty = cast<AutoDiffTypeInterface>(ty).getShadowType(gutils->width);
+  shadowTypes;
+}]>;
 
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
@@ -153,8 +164,12 @@ def DivF : ArithInst<"DivFOp">;
 def RemF : ArithInst<"RemFOp">;
 def CmpF : ArithInst<"CmpFOp">;
 def Arith_Select : ArithInst<"SelectOp">;
+def Llvm_Select : LlvmInst<"SelectOp">;
+
 
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
+def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
+def Arith_OLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OLT">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
                   (
@@ -173,9 +188,16 @@ def CheckedDivF : SubRoutine<(Op $diffret, $x),
 def LlvmCheckedMulF : LlvmInst<"FMulOp">;
 def LlvmExpF : LlvmInst<"ExpOp">;
 
+def ComplexCreate : ComplexInst<"CreateOp">;
+def ComplexRe : ComplexInst<"ReOp">;
+def ComplexIm : ComplexInst<"ImOp">;
+
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
 def SqrtF : MathInst<"SqrtOp">;
+def AbsF : MathInst<"AbsFOp">;
+def PowF : MathInst<"PowFOp">;
+def LogF : MathInst<"LogOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

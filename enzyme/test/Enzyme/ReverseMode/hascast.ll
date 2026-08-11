@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; double* cast(double *x) {
@@ -132,7 +132,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[loadcallp:.+]] = load double, double* %[[callp]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[callp]]
-; CHECK-NEXT:   call void @diffecast(double* %x, double* %"x'")
+; CHECK-NEXT:   call void @diffecast(double* %x, double* {{(undef|poison)}})
 ; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %[[loadcallp]], %y
 ; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %[[loadcallp]], %z
 ; CHECK-NEXT:   %[[toret0:.+]] = insertvalue { double, double } undef, double %[[m1diffey]], 0

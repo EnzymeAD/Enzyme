@@ -13,3 +13,6 @@ enzyme/benchmarks/ReverseMode/*/results.json
 .cache
 CMakeUserPresets.json
 /out
+_codeql_detected_source_root
+MODULE.bazel.lock
+bazel-*

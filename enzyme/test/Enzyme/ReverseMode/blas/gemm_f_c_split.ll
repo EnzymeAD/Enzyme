@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S -enzyme-detect-readthrow=0 | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S -enzyme-detect-readthrow=0 | FileCheck %s
 
 declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i64, i64) 
 
@@ -118,9 +118,13 @@ entry:
 ; CHECK-NEXT:   %27 = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %28 = load i64, i64* %27
 ; CHECK-NEXT:   %29 = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %[[i24]], %[[i25]]
-; CHECK-NEXT:   %30 = icmp eq i64 %mul.i, 0
-; CHECK-NEXT:   br i1 %30, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[a30:.+]] = icmp eq i64 %[[i24]], 0
+; CHECK-NEXT:   %[[a31:.+]] = icmp eq i64 %[[i25]], 0
+; CHECK-NEXT:   %[[a32:.+]] = or i1 %[[a30]], %[[a31]]
+; CHECK-NEXT:   br i1 %[[a32]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %entry
 ; CHECK-NEXT:   %j.i = phi i64 [ 0, %entry ], [ %j.next.i, %init.end.i ]
@@ -128,27 +132,27 @@ entry:
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
 ; CHECK-NEXT:   %i.i = phi i64 [ 0, %init.idx.i ], [ %i.next.i, %for.body.i ]
-; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %[[i24]]
-; CHECK-NEXT:   %32 = add nuw nsw i64 %i.i, %31
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %32
-; CHECK-NEXT:   %33 = mul nuw nsw i64 %j.i, %28
-; CHECK-NEXT:   %34 = add nuw nsw i64 %i.i, %33
-; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %29, i64 %34
+; CHECK-NEXT:   %[[i31:.+]] = mul nuw nsw i64 %j.i, %[[i24]]
+; CHECK-NEXT:   %[[i32:.+]] = add nuw nsw i64 %i.i, %[[i31]]
+; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %[[i32]]
+; CHECK-NEXT:   %[[i33:.+]] = mul nuw nsw i64 %j.i, %28
+; CHECK-NEXT:   %[[i34:.+]] = add nuw nsw i64 %i.i, %[[i33]]
+; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %29, i64 %[[i34]]
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %dst.i1.i
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %i.next.i = add nuw nsw i64 %i.i, 1
-; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %[[i24]]
-; CHECK-NEXT:   br i1 %35, label %init.end.i, label %for.body.i
+; CHECK-NEXT:   %[[i35:.+]] = icmp eq i64 %i.next.i, %[[i24]]
+; CHECK-NEXT:   br i1 %[[i35]], label %init.end.i, label %for.body.i
 
 ; CHECK: init.end.i:                                       ; preds = %for.body.i
 ; CHECK-NEXT:   %j.next.i = add nuw nsw i64 %j.i, 1
-; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %[[i25]]
-; CHECK-NEXT:   br i1 %36, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   %[[i36:.+]] = icmp eq i64 %j.next.i, %[[i25]]
+; CHECK-NEXT:   br i1 %[[i36]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_64.exit:               ; preds = %entry, %init.end.i
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %malloccall1, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1)
-; CHECK-NEXT:   %37 = load double*, double** %0
-; CHECK-NEXT:   ret double* %37
+; CHECK-NEXT:   %[[i37:.+]] = load double*, double** %0
+; CHECK-NEXT:   ret double* %[[i37]]
 ; CHECK-NEXT:  }
 
 ; CHECK: define internal void @diffef(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B, i8* %"B'", double* 

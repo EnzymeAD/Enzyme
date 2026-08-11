@@ -91,8 +91,7 @@ entry:
   ret i8* %trace
 }
 
-
-; CHECK: define internal double @trace_loss(double* %data, i32 %n, double* "enzyme_likelihood" %likelihood, i8* "enzyme_trace" %trace)
+; CHECK: define internal double @trace_loss(double* nocapture readonly %data, i32 %n, double* "enzyme_likelihood" %likelihood, i8* "enzyme_trace" %trace)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %insert_function.i = load void (i8*, i8*)*, void (i8*, i8*)** @insert_function_ptr
 ; CHECK-NEXT:   call void %insert_function.i(i8* %trace, i8* bitcast (double (double*, i32, double*, i8*)* @trace_loss to i8*))

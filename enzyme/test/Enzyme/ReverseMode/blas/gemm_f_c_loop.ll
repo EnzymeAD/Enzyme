@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S -enzyme-detect-readthrow=0 | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S -enzyme-detect-readthrow=0 | FileCheck %s
 
 declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i64, i64) 
 
@@ -96,12 +96,12 @@ entry:
 ; CHECK-NEXT:   %beta_p = bitcast double* %beta to i8*
 ; CHECK-NEXT:   %ldc = alloca i64, align 16
 ; CHECK-NEXT:   %ldc_p = bitcast i64* %ldc to i8*
-; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80), !enzyme_cache_alloc !0
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80), !enzyme_cache_alloc ![[MD_ALLOC_0:[0-9]+]]
 ; CHECK-NEXT:   %malloccall_malloccache = bitcast i8* %[[malloccall4]] to i8**
-; CHECK-NEXT:   store i8** %malloccall_malloccache, i8*** %malloccall_cache, align 8, !invariant.group !2
-; CHECK-NEXT:   %[[malloccall14:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80), !enzyme_cache_alloc !3
+; CHECK-NEXT:   store i8** %malloccall_malloccache, i8*** %malloccall_cache, align 8, !invariant.group ![[INV_2:[0-9]+]]
+; CHECK-NEXT:   %[[malloccall14:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80), !enzyme_cache_alloc ![[MD_ALLOC_3:[0-9]+]]
 ; CHECK-NEXT:   %lda_p_malloccache = bitcast i8* %[[malloccall14]] to i8**
-; CHECK-NEXT:   store i8** %lda_p_malloccache, i8*** %lda_p_cache, align 8, !invariant.group !5
+; CHECK-NEXT:   store i8** %lda_p_malloccache, i8*** %lda_p_cache, align 8, !invariant.group ![[INV_5:[0-9]+]]
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %__enzyme_memcpy_double_mat_64.exit, %entry
@@ -112,7 +112,7 @@ entry:
 ; CHECK-NEXT:   %m_p = call i8* @malloc(i64 8)
 ; CHECK-NEXT:   %m = bitcast i8* %m_p to i64*
 ; CHECK-NEXT:   store i64 4, i64* %m, align 16
-; CHECK-NEXT:   store i8* %m_p, i8** %m_p_cache, align 8, !invariant.group !6
+; CHECK-NEXT:   store i8* %m_p, i8** %m_p_cache, align 8, !invariant.group ![[INV_6:[0-9]+]]
 ; CHECK-NEXT:   store i64 8, i64* %k, align 16
 ; CHECK-NEXT:   %n_p = bitcast i64* %n to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %alpha, align 16
@@ -148,19 +148,22 @@ entry:
 ; CHECK-NEXT:   %[[z9:.+]] = mul i64 %[[i7]], %[[i8]]
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[z9]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; CHECK-NEXT:   %[[z10:.+]] = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable !15, !invariant.group !2
+; CHECK-NEXT:   %[[z10:.+]] = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable ![[deref:[0-9]+]], !invariant.group ![[INV_2]]
 ; CHECK-NEXT:   %[[z11:.+]] = getelementptr inbounds i8*, i8** %[[z10]], i64 %iv
-; CHECK-NEXT:   store i8* %malloccall, i8** %[[z11]], align 8, !invariant.group !16
-; CHECK-NEXT:   %[[z12:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable !15, !invariant.group !5
+; CHECK-NEXT:   store i8* %malloccall, i8** %[[z11]], align 8, !invariant.group ![[inv_grp1:[0-9]+]]
+; CHECK-NEXT:   %[[z12:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable ![[deref]], !invariant.group ![[INV_5]]
 ; CHECK-NEXT:   %[[z13:.+]] = getelementptr inbounds i8*, i8** %[[z12]], i64 %iv
-; CHECK-NEXT:   store i8* %lda_p, i8** %[[z13]], align 8, !invariant.group !17
+; CHECK-NEXT:   store i8* %lda_p, i8** %[[z13]], align 8, !invariant.group ![[inv_grp2:[0-9]+]]
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   %[[z14:.+]] = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %[[z15:.+]] = load i64, i64* %[[z14]]
 ; CHECK-NEXT:   %[[z16:.+]] = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %[[z17:.+]] = icmp eq i64 %mul.i, 0
-; CHECK-NEXT:   br i1 %[[z17]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[y18:.+]] = icmp eq i64 %[[i7]], 0
+; CHECK-NEXT:   %[[y19:.+]] = icmp eq i64 %[[i8]], 0
+; CHECK-NEXT:   %[[y20:.+]] = or i1 %[[y18]], %[[y19]]
+; CHECK-NEXT:   br i1 %[[y20]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %loop
 ; CHECK-NEXT:   %j.i = phi i64 [ 0, %loop ], [ %j.next.i, %init.end.i ]
@@ -196,20 +199,20 @@ entry:
 
 ; CHECK: invertentry:                                      ; preds = %invertloop
 ; CHECK-NEXT:   %[[i33:.+]] = load i64, i64* %"iv'ac"
-; CHECK-NEXT:   %forfree = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable !15, !invariant.group !2
+; CHECK-NEXT:   %forfree = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable ![[deref]], !invariant.group ![[INV_2]]
 ; CHECK-NEXT:   %[[i34:.+]] = bitcast i8** %forfree to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i34]]), !enzyme_cache_free !0
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i34]]), !enzyme_cache_free ![[MD_ALLOC_0]]
 ; CHECK-NEXT:   %[[i35:.+]] = load i64, i64* %"iv'ac"
-; CHECK-NEXT:   %[[forfree15:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable !15, !invariant.group !5
+; CHECK-NEXT:   %[[forfree15:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable ![[deref]], !invariant.group ![[INV_5]]
 ; CHECK-NEXT:   %[[i36:.+]] = bitcast i8** %[[forfree15]] to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i36]]), !enzyme_cache_free !3
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i36]]), !enzyme_cache_free ![[MD_ALLOC_3]]
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %remat_loop_loop, %remat_loop_loop
 ; CHECK-NEXT:   %[[i37:.+]] = load i64, i64* %"iv'ac"
-; CHECK-NEXT:   %[[i38:.+]] = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable !15, !invariant.group !2
+; CHECK-NEXT:   %[[i38:.+]] = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable ![[deref]], !invariant.group ![[INV_2]]
 ; CHECK-NEXT:   %[[i39:.+]] = getelementptr inbounds i8*, i8** %[[i38]], i64 %[[i37]]
-; CHECK-NEXT:   %[[i40:.+]] = load i8*, i8** %[[i39]], align 8, !invariant.group !16
+; CHECK-NEXT:   %[[i40:.+]] = load i8*, i8** %[[i39]], align 8, !invariant.group ![[inv_grp1]]
 ; CHECK-NEXT:   %cache.A_unwrap = bitcast i8* %[[i40]] to double*
 ; CHECK-NEXT:   %pcld.ldc_unwrap = bitcast i8* %ldc_p to i64*
 ; CHECK-NEXT:   %avld.ldc_unwrap = load i64, i64* %pcld.ldc_unwrap
@@ -217,9 +220,9 @@ entry:
 ; CHECK-NEXT:   %avld.beta_unwrap = load double, double* %pcld.beta_unwrap
 ; CHECK-NEXT:   %pcld.ldb_unwrap = bitcast i8* %ldb_p to i64*
 ; CHECK-NEXT:   %avld.ldb_unwrap = load i64, i64* %pcld.ldb_unwrap
-; CHECK-NEXT:   %[[i41:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable !15, !invariant.group !5
+; CHECK-NEXT:   %[[i41:.+]] = load i8**, i8*** %lda_p_cache, align 8, !dereferenceable ![[deref]], !invariant.group ![[INV_5]]
 ; CHECK-NEXT:   %[[i42:.+]] = getelementptr inbounds i8*, i8** %[[i41]], i64 %[[i37]]
-; CHECK-NEXT:   %[[i43:.+]] = load i8*, i8** %[[i42]], align 8, !invariant.group !17
+; CHECK-NEXT:   %[[i43:.+]] = load i8*, i8** %[[i42]], align 8, !invariant.group ![[inv_grp2]]
 ; CHECK-NEXT:   %pcld.lda_unwrap = bitcast i8* %[[i43]] to i64*
 ; CHECK-NEXT:   %avld.lda_unwrap = load i64, i64* %pcld.lda_unwrap
 ; CHECK-NEXT:   %pcld.alpha_unwrap = bitcast i8* %alpha_p to double*
@@ -244,7 +247,7 @@ entry:
 ; CHECK-NEXT:   %cast.ldc = bitcast i64* %byref.ldc to i8*
 ; CHECK-NEXT:   %[[r35:.+]] = bitcast double* %cache.A_unwrap to i8*
 ; CHECK-NEXT:   %[[r36:.+]] = load i64, i64* %"iv'ac"
-; CHECK-NEXT:   %[[r37:.+]] = load i8*, i8** %m_p_cache, align 8, !invariant.group !6
+; CHECK-NEXT:   %[[r37:.+]] = load i8*, i8** %m_p_cache, align 8, !invariant.group ![[INV_6]]
 ; CHECK-NEXT:   %[[r38:.+]] = load i64, i64* %"iv'ac"
 ; CHECK-NEXT:   %n_p_unwrap = bitcast i64* %n to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
@@ -319,9 +322,9 @@ entry:
 
 ; CHECK: remat_loop_loop:                                  ; preds = %remat_enter
 ; CHECK-NEXT:   %remat_m_p = call i8* @malloc(i64 8)
-; CHECK-NEXT:   store i8* %remat_m_p, i8** %m_p_cache, align 8, !invariant.group !6
+; CHECK-NEXT:   store i8* %remat_m_p, i8** %m_p_cache, align 8, !invariant.group ![[INV_6]]
 ; CHECK-NEXT:   %[[i74:.+]] = load i64, i64* %"iv'ac"
-; CHECK-NEXT:   %[[i75:.+]] = load i8*, i8** %m_p_cache, align 8, !invariant.group !6
+; CHECK-NEXT:   %[[i75:.+]] = load i8*, i8** %m_p_cache, align 8, !invariant.group ![[INV_6]]
 ; CHECK-NEXT:   %m_unwrap = bitcast i8* %[[i75]] to i64*
 ; CHECK-NEXT:   store i64 4, i64* %m_unwrap, align 16
 ; CHECK-NEXT:   %[[i76:.+]] = load i64, i64* %"iv'ac"
@@ -332,9 +335,10 @@ entry:
 
 ; CHECK: define internal void @__enzyme_memcpy_double_mat_64(double* noalias nocapture writeonly %dst, double* noalias nocapture readonly %src, i64 %M, i64 %N, i64 %LDA)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mul = add nuw nsw i64 %M, %N
-; CHECK-NEXT:   %0 = icmp eq i64 %mul, 0
-; CHECK-NEXT:   br i1 %0, label %for.end, label %init.idx
+; CHECK-NEXT:   %[[v0:.+]] = icmp eq i64 %M, 0
+; CHECK-NEXT:   %[[v1:.+]] = icmp eq i64 %N, 0
+; CHECK-NEXT:   %[[v2:.+]] = or i1 %[[v0]], %[[v1]]
+; CHECK-NEXT:   br i1 %[[v2]], label %for.end, label %init.idx
 
 ; CHECK: init.idx:                                         ; preds = %init.end, %entry
 ; CHECK-NEXT:   %j = phi i64 [ 0, %entry ], [ %j.next, %init.end ]
@@ -342,22 +346,22 @@ entry:
 
 ; CHECK: for.body:                                         ; preds = %for.body, %init.idx
 ; CHECK-NEXT:   %i = phi i64 [ 0, %init.idx ], [ %i.next, %for.body ]
-; CHECK-NEXT:   %1 = mul nuw nsw i64 %j, %M
-; CHECK-NEXT:   %2 = add nuw nsw i64 %i, %1
-; CHECK-NEXT:   %dst.i = getelementptr inbounds double, double* %dst, i64 %2
-; CHECK-NEXT:   %3 = mul nuw nsw i64 %j, %LDA
-; CHECK-NEXT:   %4 = add nuw nsw i64 %i, %3
-; CHECK-NEXT:   %dst.i1 = getelementptr inbounds double, double* %src, i64 %4
+; CHECK-NEXT:   %[[s1:.+]] = mul nuw nsw i64 %j, %M
+; CHECK-NEXT:   %[[s2:.+]] = add nuw nsw i64 %i, %[[s1]]
+; CHECK-NEXT:   %dst.i = getelementptr inbounds double, double* %dst, i64 %[[s2]]
+; CHECK-NEXT:   %[[s3:.+]] = mul nuw nsw i64 %j, %LDA
+; CHECK-NEXT:   %[[s4:.+]] = add nuw nsw i64 %i, %[[s3]]
+; CHECK-NEXT:   %dst.i1 = getelementptr inbounds double, double* %src, i64 %[[s4]]
 ; CHECK-NEXT:   %src.i.l = load double, double* %dst.i1
 ; CHECK-NEXT:   store double %src.i.l, double* %dst.i
 ; CHECK-NEXT:   %i.next = add nuw nsw i64 %i, 1
-; CHECK-NEXT:   %5 = icmp eq i64 %i.next, %M
-; CHECK-NEXT:   br i1 %5, label %init.end, label %for.body
+; CHECK-NEXT:   %[[s5:.+]] = icmp eq i64 %i.next, %M
+; CHECK-NEXT:   br i1 %[[s5]], label %init.end, label %for.body
 
 ; CHECK: init.end:                                         ; preds = %for.body
 ; CHECK-NEXT:   %j.next = add nuw nsw i64 %j, 1
-; CHECK-NEXT:   %6 = icmp eq i64 %j.next, %N
-; CHECK-NEXT:   br i1 %6, label %for.end, label %init.idx
+; CHECK-NEXT:   %[[s6:.+]] = icmp eq i64 %j.next, %N
+; CHECK-NEXT:   br i1 %[[s6]], label %for.end, label %init.idx
 
 ; CHECK: for.end:                                          ; preds = %init.end, %entry
 ; CHECK-NEXT:   ret void

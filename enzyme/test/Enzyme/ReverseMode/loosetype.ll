@@ -21,7 +21,7 @@ declare void @_Z17__enzyme_autodiffPvz(i8*, ...)
 
 declare void @llvm.memcpy.p0i8.p0i8.i64(i8* noalias nocapture, i8* noalias nocapture readonly, i64, i1)
 
-; CHECK: define internal void @diffe_Z9transposePK7tensor2([3 x double]* %A, [3 x double]* %"A'", [3 x double]* %ref.tmp, [3 x double]* %"ref.tmp'")
+; CHECK: define internal void @diffe_Z9transposePK7tensor2([3 x double]* nocapture readonly %A, [3 x double]* nocapture %"A'", [3 x double]* nocapture writeonly %ref.tmp, [3 x double]* nocapture %"ref.tmp'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"a0'ipc" = bitcast [3 x double]* %"ref.tmp'" to i8*
 ; CHECK-NEXT:   %a0 = bitcast [3 x double]* %ref.tmp to i8*

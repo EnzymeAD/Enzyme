@@ -11,6 +11,7 @@
 // a generic parallel for representation
 //===----------------------------------------------------------------------===//
 
+#include "Passes/EnzymeBatchPass.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
@@ -26,28 +27,19 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
-namespace {
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_BATCHPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
 
-struct BatchCacheKey {
-  FunctionOpInterface function;
-  SmallVector<int64_t> batchSizes;
+namespace mlir {
+namespace enzyme {
+namespace batchutils {
 
-  // for use in std::map:
-  bool operator<(const BatchCacheKey &other) const {
-    if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName())
-      return const_cast<FunctionOpInterface &>(function).getName() <
-             const_cast<FunctionOpInterface &>(other.function).getName();
-    return batchSizes < other.batchSizes;
-  }
-};
-
-static FunctionOpInterface batchCloneFunction(
-    FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
-    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
-
-static mlir::TensorType applyBatchSizes(mlir::Type Ty,
-                                        llvm::ArrayRef<int64_t> batchSizes) {
+mlir::TensorType applyBatchSizes(mlir::Type Ty,
+                                 llvm::ArrayRef<int64_t> batchSizes) {
   auto T = dyn_cast<TensorType>(Ty);
   if (!T) {
     return RankedTensorType::get(batchSizes, Ty);
@@ -59,7 +51,7 @@ static mlir::TensorType applyBatchSizes(mlir::Type Ty,
   return T2;
 }
 
-static LogicalResult handleCallOp(
+LogicalResult handleCallOp(
     func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
@@ -80,9 +72,9 @@ static LogicalResult handleCallOp(
   if (it != batchedFunctionCache.end()) {
     batchedFunc = it->second;
   } else {
-    batchedFunc =
-        batchCloneFunction(calledFunc, "batched_" + calledFunc.getName(),
-                           batchSizes, batchedFunctionCache);
+    std::string fnName = "batched_" + calledFunc.getName().str();
+    batchedFunc = batchCloneFunction(builder, calledFunc, fnName, batchSizes,
+                                     batchedFunctionCache);
     if (!batchedFunc)
       return failure();
     batchedFunctionCache[key] = batchedFunc;
@@ -94,8 +86,8 @@ static LogicalResult handleCallOp(
     newOperands.push_back(mapper.lookup(operand));
 
   auto newCall =
-      builder.create<func::CallOp>(callOp.getLoc(), batchedFunc.getName(),
-                                   batchedFunc.getResultTypes(), newOperands);
+      func::CallOp::create(builder, callOp.getLoc(), batchedFunc.getName(),
+                           batchedFunc.getResultTypes(), newOperands);
 
   // Map the results
   for (auto [oldResult, newResult] :
@@ -105,8 +97,71 @@ static LogicalResult handleCallOp(
   return success();
 }
 
-static void batchCloneRegion(
-    Region *src, Region *dest, IRMapping &mapper,
+void batchCloneBlock(
+    OpBuilder &builder, Block *blk, IRMapping &mapper,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator) {
+  for (auto &src : *blk) {
+    if (auto callOp = dyn_cast<func::CallOp>(&src)) {
+      if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes,
+                                 batchedFunctionCache)))
+        continue;
+    }
+
+    if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
+      auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
+      if (res.succeeded())
+        continue;
+    }
+
+    SmallVector<Value, 8> operands;
+    SmallVector<Block *, 2> successors;
+
+    // Remap the operands.
+    operands.reserve(src.getNumOperands());
+    for (auto opValue : src.getOperands())
+      operands.push_back(mapper.lookup(opValue));
+
+    if (withoutTerminator && src.hasTrait<OpTrait::IsTerminator>()) {
+      // map the operands and the results
+      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
+        mapper.map(src.getResult(i), operands[i]);
+      continue;
+    }
+
+    // Remap the successors.
+    successors.reserve(src.getNumSuccessors());
+    for (Block *successor : src.getSuccessors())
+      successors.push_back(mapper.lookup(successor));
+
+    SmallVector<Type> resultTypes(src.getResultTypes().begin(),
+                                  src.getResultTypes().end());
+    for (auto &Ty : resultTypes) {
+      Ty = applyBatchSizes(Ty, batchSizes);
+    }
+
+    Operation *newOp = Operation::create(
+        src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
+        mlir::PropertyRef(), successors, src.getNumRegions());
+
+    // Clone the regions.
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(src.getRegions(), newOp->getRegions())) {
+      batchCloneRegion(builder, &oldReg, &newReg, mapper, batchSizes,
+                       batchedFunctionCache);
+    }
+
+    // Remember the mapping of any results.
+    for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
+      mapper.map(src.getResult(i), newOp->getResult(i));
+
+    builder.insert(newOp);
+  }
+}
+
+void batchCloneRegion(
+    OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   // For each block in src, generate a corresponding block in the dest region.
@@ -124,62 +179,16 @@ static void batchCloneRegion(
   }
 
   for (auto &&[blk, newBlk] : llvm::zip(*src, *dest)) {
-    OpBuilder builder(&newBlk, newBlk.end());
-    for (auto &src : blk) {
-
-      if (auto callOp = dyn_cast<func::CallOp>(&src)) {
-        if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes,
-                                   batchedFunctionCache)))
-          continue;
-      }
-
-      if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
-        auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
-        if (res.succeeded())
-          continue;
-      }
-
-      SmallVector<Value, 8> operands;
-      SmallVector<Block *, 2> successors;
-
-      // Remap the operands.
-      operands.reserve(src.getNumOperands());
-      for (auto opValue : src.getOperands())
-        operands.push_back(mapper.lookup(opValue));
-
-      // Remap the successors.
-      successors.reserve(src.getNumSuccessors());
-      for (Block *successor : src.getSuccessors())
-        successors.push_back(mapper.lookup(successor));
-
-      SmallVector<Type> resultTypes(src.getResultTypes().begin(),
-                                    src.getResultTypes().end());
-      for (auto &Ty : resultTypes) {
-        Ty = applyBatchSizes(Ty, batchSizes);
-      }
-
-      Operation *newOp = Operation::create(
-          src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
-          OpaqueProperties(nullptr), successors, src.getNumRegions());
-
-      // Clone the regions.
-      for (auto &&[oldReg, newReg] :
-           llvm::zip(src.getRegions(), newOp->getRegions())) {
-        batchCloneRegion(&oldReg, &newReg, mapper, batchSizes,
-                         batchedFunctionCache);
-      }
-
-      // Remember the mapping of any results.
-      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
-        mapper.map(src.getResult(i), newOp->getResult(i));
-
-      builder.insert(newOp);
-    }
+    IRRewriter::InsertionGuard insertGuard(builder);
+    builder.setInsertionPointToEnd(&newBlk);
+    batchCloneBlock(builder, &blk, mapper, batchSizes, batchedFunctionCache,
+                    false);
   }
 }
 
-static FunctionOpInterface batchCloneFunction(
-    FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
+FunctionOpInterface batchCloneFunction(
+    OpBuilder &builder, FunctionOpInterface F, Twine name,
+    llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   assert(!F.getFunctionBody().empty());
 
@@ -199,7 +208,6 @@ static FunctionOpInterface batchCloneFunction(
     ArgTypes.push_back(applyBatchSizes(Ty, batchSizes));
   }
 
-  OpBuilder builder(FTy.getContext());
   FunctionType newFTy = builder.getFunctionType(ArgTypes, RetTypes);
 
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
@@ -221,50 +229,47 @@ static FunctionOpInterface batchCloneFunction(
   auto &newReg = NewF.getFunctionBody();
 
   IRMapping mapper;
-  batchCloneRegion(&origReg, &newReg, mapper, batchSizes, batchedFunctionCache);
+  batchCloneRegion(builder, &origReg, &newReg, mapper, batchSizes,
+                   batchedFunctionCache);
 
   return NewF;
 }
 
-struct BatchPass : public BatchPassBase<BatchPass> {
+template <typename T>
+FunctionOpInterface batchOperationWithoutInsertingCallOp(
+    OpBuilder &builder, T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  enzyme::batchutils::BatchCacheKey key{
+      fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
+                               CI.getBatchShape().end())};
+
+  // Check if we already have a batched version
+  auto it = batchedFunctionCache.find(key);
+  FunctionOpInterface newFunc;
+
+  if (it != batchedFunctionCache.end()) {
+    return it->second;
+  } else {
+    // Create new batched function and store in cache
+    std::string newFnName = "batched_" + fn.getName().str();
+    newFunc = batchCloneFunction(builder, fn, newFnName, CI.getBatchShape(),
+                                 batchedFunctionCache);
+    return newFunc;
+  }
+}
+
+} // namespace batchutils
+} // namespace enzyme
+} // namespace mlir
+
+namespace {
+
+struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function
-  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
-
-  template <typename T>
-  LogicalResult HandleBatch(SymbolTableCollection &symbolTable, T CI) {
-    SmallVector<mlir::Value, 2> args;
-
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
-
-    BatchCacheKey key{fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
-                                               CI.getBatchShape().end())};
-
-    // Check if we already have a batched version
-    auto it = batchedFunctionCache.find(key);
-    FunctionOpInterface newFunc;
-
-    if (it != batchedFunctionCache.end()) {
-      newFunc = it->second;
-    } else {
-      // Create new batched function and store in cache
-      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
-                                   CI.getBatchShape(), batchedFunctionCache);
-      if (!newFunc) {
-        return failure();
-      }
-    }
-
-    OpBuilder builder(CI);
-    auto dCI =
-        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                     newFunc.getResultTypes(), CI.getInputs());
-    CI.replaceAllUsesWith(dCI);
-    CI->erase();
-    return success();
-  }
+  std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
+      batchedFunctionCache;
 
   void lowerEnzymeBatchCalls(SymbolTableCollection &symbolTable,
                              FunctionOpInterface op) {
@@ -279,9 +284,12 @@ struct BatchPass : public BatchPassBase<BatchPass> {
         toLower.push_back(dop);
       });
 
+      OpBuilder builder(op);
+
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
-          auto res = HandleBatch(symbolTable, F);
+          auto res = enzyme::batchutils::batchOperation(symbolTable, builder, F,
+                                                        batchedFunctionCache);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
@@ -295,14 +303,6 @@ struct BatchPass : public BatchPassBase<BatchPass> {
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createBatchPass() {
-  return std::make_unique<BatchPass>();
-}
-} // namespace enzyme
-} // namespace mlir
 
 void BatchPass::runOnOperation() {
   SymbolTableCollection symbolTable;

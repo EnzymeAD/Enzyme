@@ -15,13 +15,21 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_SIMPLIFYMEMREFCACHEPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
 namespace {
 
 struct SimplifyMemrefCachePass
-    : public enzyme::SimplifyMemrefCachePassBase<SimplifyMemrefCachePass> {
+    : public enzyme::impl::SimplifyMemrefCachePassBase<
+          SimplifyMemrefCachePass> {
 
   void handlePushOp(enzyme::PushOp pushOp, Type newType, enzyme::CacheType c2) {
     auto v = pushOp.getValue();
@@ -31,8 +39,8 @@ struct SimplifyMemrefCachePass
       llvm_unreachable("Unknown user of memref<CacheType>");
     }
     OpBuilder allocBuilder(allocOp);
-    auto newAllocOp = allocBuilder.create<memref::AllocOp>(
-        allocOp.getLoc(), dyn_cast<MemRefType>(newType),
+    auto newAllocOp = memref::AllocOp::create(
+        allocBuilder, allocOp.getLoc(), dyn_cast<MemRefType>(newType),
         allocOp.getDynamicSizes(), allocOp.getSymbolOperands(),
         allocOp.getAlignmentAttr());
 
@@ -82,8 +90,8 @@ struct SimplifyMemrefCachePass
 
   void handlePopOp(enzyme::PopOp popOp, Type newType, enzyme::CacheType c2) {
     OpBuilder popBuilder(popOp);
-    auto newPopOp = popBuilder.create<enzyme::PopOp>(popOp.getLoc(), newType,
-                                                     popOp.getCache());
+    auto newPopOp = enzyme::PopOp::create(popBuilder, popOp.getLoc(), newType,
+                                          popOp.getCache());
 
     // TODO: handle all the stuff inside linalg.generic
     for (auto user : popOp->getUsers()) {
@@ -119,8 +127,8 @@ struct SimplifyMemrefCachePass
       }
       // Replace Subview Op
       OpBuilder subviewBuilder(subviewOp);
-      auto newSubviewOp = subviewBuilder.create<memref::SubViewOp>(
-          subviewOp.getLoc(), newPopOp, subviewOp.getOffsets(),
+      auto newSubviewOp = memref::SubViewOp::create(
+          subviewBuilder, subviewOp.getLoc(), newPopOp, subviewOp.getOffsets(),
           subviewOp.getSizes(), subviewOp.getStrides());
       subviewOp.replaceAllUsesWith((Value)newSubviewOp);
       subviewOp.erase();
@@ -164,7 +172,8 @@ struct SimplifyMemrefCachePass
       }
 
       OpBuilder builder(op);
-      auto newInit = builder.create<enzyme::InitOp>(op->getLoc(), newCacheType);
+      auto newInit =
+          enzyme::InitOp::create(builder, op->getLoc(), newCacheType);
       op->replaceAllUsesWith(newInit);
 
       op->erase();
@@ -172,11 +181,3 @@ struct SimplifyMemrefCachePass
   };
 };
 } // namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createSimplifyMemrefCachePass() {
-  return std::make_unique<SimplifyMemrefCachePass>();
-}
-} // namespace enzyme
-} // namespace mlir

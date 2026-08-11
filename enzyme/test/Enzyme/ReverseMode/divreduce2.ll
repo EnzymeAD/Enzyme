@@ -47,7 +47,7 @@ declare double @__enzyme_autodiff(i8*, double*, double*, i64, double)
 
 ; CHECK: define internal { double } @diffealldiv(double* nocapture readonly %A, double* nocapture %"A'", i64 %N, double %start, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = add nuw i64 %N, 1
+; CHECK-NEXT:   %0 = add nsw i64 %N, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %0, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %reduce_malloccache = bitcast i8* %malloccall to double*

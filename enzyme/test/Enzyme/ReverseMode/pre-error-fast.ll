@@ -77,7 +77,7 @@ exit:                                             ; preds = %end2
 !8 = !{!"any pointer", !4, i64 0}
 !9 = !{!"long", !4, i64 0}
 
-; CHECK: define internal void @augmented_subfn(double* %place, double* %"place'", i64* %m_rows)
+; CHECK: define internal void @augmented_subfn(double* nocapture %place, double* nocapture %"place'", i64* nocapture readonly %m_rows)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %rows = load i64, i64* %m_rows, align 8
 ; CHECK-NEXT:   br label %for1
@@ -109,7 +109,7 @@ exit:                                             ; preds = %end2
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesubfn(double* %place, double* %"place'", i64* %m_rows)
+; CHECK: define internal void @diffesubfn(double* nocapture %place, double* nocapture %"place'", i64* nocapture readonly %m_rows)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %rows = load i64, i64* %m_rows, align 8
 ; CHECK-NEXT:   %[[_unwrap:.+]] = add i64 %rows, -2

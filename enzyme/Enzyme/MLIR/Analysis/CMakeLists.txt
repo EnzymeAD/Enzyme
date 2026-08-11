@@ -8,8 +8,8 @@ add_mlir_library(MLIREnzymeAnalysis
   DEPENDS
   MLIRAutoDiffTypeInterfaceIncGen
   MLIRAutoDiffOpInterfaceIncGen
+  MLIREnzymeEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR
-  MLIRCopyOpInterface
 )

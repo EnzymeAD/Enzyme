@@ -174,7 +174,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[a12:.+]] = getelementptr inbounds i64, i64* %[[loopLimit_realloccast]], i64 %[[a11]]
 ; CHECK-NEXT:   %[[a13:.+]] = load i64, i64* %[[a12]], align 8, !invariant.group !0
 ; CHECK-NEXT:   %.phi.trans.insert = getelementptr inbounds double*, double** %[[phi_realloccast]], i64 %[[a11]]
-; CHECK-NEXT:   %[[pre6:.+]] = load double*, double** %.phi.trans.insert, align 8, !invariant.group !2
+; CHECK-NEXT:   %[[pre6:.+]] = load double*, double** %.phi.trans.insert, align 8, !invariant.group !
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertfor.body.ph:                                ; preds = %invertfor.body

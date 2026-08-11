@@ -178,7 +178,17 @@ void InstructionBatcher::visitSwitchInst(llvm::SwitchInst &inst) {
   return;
 }
 
+#if LLVM_VERSION_MAJOR >= 24
+void InstructionBatcher::visitCondBrInst(llvm::CondBrInst &branch) {
+  visitBranch(branch);
+}
+void InstructionBatcher::visitUncondBrInst(llvm::UncondBrInst &branch) {
+  visitBranch(branch);
+}
+void InstructionBatcher::visitBranch(llvm::Instruction &branch) {
+#else
 void InstructionBatcher::visitBranchInst(llvm::BranchInst &branch) {
+#endif
   // TODO: runtime check
   hasError = true;
   EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
@@ -204,7 +214,11 @@ void InstructionBatcher::visitReturnInst(llvm::ReturnInst &ret) {
   }
 
   if (ret.getNumOperands() != 0) {
+#if LLVM_VERSION_MAJOR > 22
+    auto ret = Builder2.CreateAggregateRet(rets);
+#else
     auto ret = Builder2.CreateAggregateRet(rets.data(), width);
+#endif
     ret->setDebugLoc(placeholder->getDebugLoc());
     placeholder->eraseFromParent();
   }

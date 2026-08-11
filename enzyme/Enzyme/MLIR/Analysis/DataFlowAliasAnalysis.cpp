@@ -30,9 +30,9 @@
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
-#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -41,6 +41,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 // TODO: remove this once aliasing interface is factored out.
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/SetOperations.h"
 
@@ -48,7 +49,7 @@ using namespace mlir;
 using namespace mlir::dataflow;
 
 static bool isPointerLike(Type type) {
-  return isa<MemRefType, LLVM::LLVMPointerType>(type);
+  return isa<MemRefType, LLVM::LLVMPointerType, enzyme::CacheType>(type);
 }
 
 //===----------------------------------------------------------------------===//
@@ -121,29 +122,6 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
       [&](DistinctAttr dest, AliasClassSet::State state) {
         assert(state == AliasClassSet::State::Defined &&
                "unknown must have been handled above");
-#ifndef NDEBUG
-        if (replace) {
-          auto it = map.find(dest);
-          if (it != map.end()) {
-            // Check that we are updating to a state that's >= in the
-            // lattice.
-            // TODO: consider a stricter check that we only replace unknown
-            // values or a value with itself, currently blocked by memalign.
-            AliasClassSet valuesCopy(values);
-            (void)valuesCopy.join(it->getSecond());
-            values.print(llvm::errs());
-            llvm::errs() << "\n";
-            it->getSecond().print(llvm::errs());
-            llvm::errs() << "\n";
-            valuesCopy.print(llvm::errs());
-            llvm::errs() << "\n";
-            assert(valuesCopy == values &&
-                   "attempting to replace a pointsTo entry with an alias class "
-                   "set that is ordered _before_ the existing one -> "
-                   "non-monotonous update ");
-          }
-        }
-#endif // NDEBUG
         return joinPotentiallyMissing(dest, values);
       });
 }
@@ -278,7 +256,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    if (isNoOp(op))
+    if (isNoOp(op) || isMemoryEffectFree(op))
       return success();
     propagateIfChanged(after, after->markAllPointToUnknown());
     return success();
@@ -340,7 +318,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
   return success();
 }
 
-constexpr static llvm::StringLiteral kLLVMMemoryAttrName = "memory";
+constexpr static llvm::StringLiteral kLLVMMemoryAttrName = "memory_effects";
 
 static bool modRefMayMod(std::optional<LLVM::ModRefInfo> modRef) {
   return modRef ? (*modRef == LLVM::ModRefInfo::Mod ||
@@ -476,6 +454,16 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
     if (!calleePointsTo)
       continue;
 
+    // A callee that could not say what this argument ends up pointing to says
+    // nothing narrower to the caller either.
+    if (calleePointsTo->isUnknown()) {
+      changed |= after->insert(arg->getAliasClassesObject(),
+                               AliasClassSet::getUnknown());
+      continue;
+    }
+    if (calleePointsTo->isUndefined())
+      continue;
+
     for (DistinctAttr ac : calleePointsTo->getElements()) {
       if (!isa<PseudoAliasClassAttr>(ac.getReferencedAttr())) {
         // Fresh classes go in directly
@@ -557,7 +545,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       std::optional<LLVM::ModRefInfo> otherModRef =
           getFunctionOtherModRef(callee);
 
-      SmallVector<int> pointerLikeOperands;
+      SmallVector<unsigned> pointerLikeOperands;
       for (auto &&[i, operand] : llvm::enumerate(call.getArgOperands())) {
         if (isPointerLike(operand.getType()))
           pointerLikeOperands.push_back(i);
@@ -575,7 +563,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
         // unknown alias sets into any writable pointer.
         (void)functionMayCapture.markUnknown();
       } else {
-        for (int pointerAsData : pointerLikeOperands) {
+        for (unsigned pointerAsData : pointerLikeOperands) {
           // If not captured, it cannot be stored in anything.
           if ((pointerAsData < numArguments &&
                !!callee.getArgAttr(pointerAsData,
@@ -593,7 +581,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       AliasClassSet writableClasses = AliasClassSet::getUndefined();
       AliasClassSet nonWritableOperandClasses = AliasClassSet::getUndefined();
       ChangeResult changed = ChangeResult::NoChange;
-      for (int pointerOperand : pointerLikeOperands) {
+      for (unsigned pointerOperand : pointerLikeOperands) {
         auto *destClasses = getOrCreateFor<AliasClassLattice>(
             getProgramPointAfter(call), call.getArgOperands()[pointerOperand]);
 
@@ -696,7 +684,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
           continue;
         }
 
-        for (int operandNo : pointerLikeOperands) {
+        for (unsigned operandNo : pointerLikeOperands) {
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
               getProgramPointAfter(call), call.getArgOperands()[operandNo]);
           if (mayReadArg(callee, operandNo, argModRef)) {
@@ -840,7 +828,9 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op);
+  return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+             affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
+             enzyme::PopOp>(op);
 }
 
 void enzyme::AliasAnalysis::transfer(
@@ -1214,4 +1204,66 @@ void enzyme::AliasAnalysis::visitExternalCall(
       propagateIfChanged(resultLattice, resultLattice->markUnknown());
     }
   }
+}
+
+void mlir::enzyme::markReadOnlyLoads(
+    CallableOpInterface funcOp, function_ref<void(Operation *op)> annotate) {
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  dataflow::loadBaselineAnalyses(solver);
+  solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
+  solver.load<enzyme::PointsToPointerAnalysis>();
+  if (failed(solver.initializeAndRun(funcOp))) {
+    assert(false && "dataflow analysis failed");
+    return;
+  }
+
+  // Determine all alias classes that were modified
+  AliasClassLattice modified(
+      nullptr, DistinctAttr::create(UnitAttr::get(funcOp.getContext())));
+  funcOp.walk([&](Operation *op) {
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    // If we can't reason about memory effects, conservatively assume that any
+    // pointer could be modified.
+    if (!memory) {
+      if (isMemoryEffectFree(op) ||
+          isa<FunctionOpInterface, RegionBranchOpInterface>(op) || isNoOp(op)) {
+        return WalkResult::advance();
+      }
+      (void)modified.markUnknown();
+      return WalkResult::interrupt();
+    }
+
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    for (const auto &effect : effects) {
+      if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        Value val = effect.getValue();
+        if (val) {
+          (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+        } else {
+          (void)modified.markUnknown();
+          return WalkResult::interrupt();
+        }
+      }
+    }
+    return WalkResult::advance();
+  });
+
+  funcOp.walk([&](MemoryEffectOpInterface memory) {
+    if (!hasSingleEffect<MemoryEffects::Read>(memory)) {
+      return;
+    }
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    assert(effects.size() == 1 &&
+           isa<MemoryEffects::Read>(effects.front().getEffect()));
+    Value ptr = effects.front().getValue();
+    auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
+    // TODO: in split mode, this check will no longer be sufficient because the
+    // caller may modify memory between function invocations even if the memory
+    // is not modified within the function body.
+    if (ptrClass->alias(modified).isNo()) {
+      annotate(memory);
+    }
+  });
 }
