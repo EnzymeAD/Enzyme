@@ -492,10 +492,12 @@ bool preserveNVVM(bool Begin, Module &M,
     }
 
   for (GlobalVariable &g : M.globals()) {
-    if (g.getName().contains(gradient_handler_name) ||
-        g.getName().contains(derivative_handler_name) ||
-        g.getName().contains(splitderivative_handler_name) ||
-        g.getName().contains("__enzyme_nofree") ||
+    bool customRule = g.getName().contains(gradient_handler_name) ||
+                      g.getName().contains(derivative_handler_name) ||
+                      g.getName().contains(splitderivative_handler_name);
+    if (customRule && !PreserveCustomRuleLinkage)
+      continue;
+    if (customRule || g.getName().contains("__enzyme_nofree") ||
         g.getName().contains("__enzyme_inactivefn") ||
         g.getName().contains("__enzyme_sparse_accumulate") ||
         g.getName().contains("__enzyme_function_like") ||
