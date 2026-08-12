@@ -738,7 +738,23 @@ bool preserveNVVM(bool Begin, Module &M,
     if (g.getName().contains("__enzyme_function_like")) {
       if (g.hasInitializer()) {
         auto CA = dyn_cast<ConstantAggregate>(g.getInitializer());
-        if (!CA || CA->getNumOperands() < 2) {
+        if (!CA) {
+          constexpr StringLiteral Marker = "__enzyme_function_like__";
+          auto MarkerPos = g.getName().rfind(Marker);
+          Value *Target = g.getInitializer()->stripPointerCasts();
+
+          // Ignore globals that are not Fortran function-like registrations.
+          if (MarkerPos == StringRef::npos || !isa<Function>(Target))
+            continue;
+
+          handleFunctionLike(
+              Begin, Target,
+              g.getName().substr(MarkerPos + Marker.size()));
+          toErase.push_back(&g);
+          changed = true;
+          continue;
+        }
+        if (CA->getNumOperands() < 2) {
           llvm::errs() << "Use of "
                        << "enzyme_function_like"
                        << " must be a "
