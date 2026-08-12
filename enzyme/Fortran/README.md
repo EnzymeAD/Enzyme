@@ -124,3 +124,51 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
+
+
+## Function-like hooks
+
+The `enzyme_function_like` hook tells Enzyme to differentiate a function as if
+it were a known mathematical function. For example, the following hook call
+makes Enzyme use the derivative of `log1p` for `log1p_like_function`, regardless
+of its implementation:
+
+```fortran
+use enzyme, only: enzyme_function_like, enzyme_log1p
+
+call enzyme_function_like(log1p_like_function, enzyme_log1p)
+```
+
+`enzyme_log1p` supplies the symbolic function name `log1p`; its value is not
+used. Functions passed to `enzyme_function_like` must have an LLVM-level
+signature compatible with the selected mathematical function. Scalar arguments
+must use the `value` attribute so that Flang lowers them as LLVM values rather
+than using Fortran's usual by-reference calling convention. This binding is
+currently supported with Flang.
+
+When running Enzyme separately with `opt`, `preserve-nvvm` must process the
+`enzyme_function_like` hook before differentiation:
+
+```console
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
+    -passes='preserve-nvvm,enzyme,preserve-nvvm-end' input.bc -o output.bc
+```
+
+When using this separate `opt` workflow, compile the Fortran source to LLVM
+ with `-O0`. Otherwise, Flang may inline calls to the function before
+`preserve-nvvm` processes the `enzyme_function_like` hook. The `FlangEnzyme`
+compiler plugin runs `preserve-nvvm` at the start of Flang's LLVM optimization
+pipeline and does not require this separate `opt` step.
+
+Additional symbolic function names can be declared in user code. The `bind(C)`
+name must use the `enzyme_math_` prefix followed by a function name recognized
+by Enzyme:
+
+```fortran
+module enzyme_math_names
+  use iso_c_binding, only: c_int
+  implicit none
+
+  integer(c_int), bind(C, name="enzyme_math_sin") :: enzyme_sin
+end module enzyme_math_names
+```
