@@ -119,6 +119,16 @@ static void handleFunctionLike(bool Begin, Value *Target,
     llvm_unreachable("enzyme_function_like");
   }
 
+  // Warn on conflicting registrations while preserving the existing
+  // last-registration-wins behavior.
+  Attribute Existing = F->getFnAttribute("enzyme_math");
+  if (Existing.isValid() && Existing.getValueAsString() != FunctionName) {
+    errs() << "warning: conflicting enzyme_function_like registrations for "
+              "function '"
+           << F->getName() << "': replacing '" << Existing.getValueAsString()
+           << "' with '" << FunctionName << "'\n";
+  }
+
   F->addAttribute(AttributeList::FunctionIndex,
                   Attribute::get(F->getContext(), "enzyme_math", FunctionName));
   preserveLinkage(Begin, *F);
