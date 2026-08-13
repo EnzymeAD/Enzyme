@@ -688,14 +688,16 @@ struct EnzymeNoTypeAnalysisAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    // For now enzyme::notypeanalysis corresponds to the internal attribute enzyme_ta_norecur
+    // For now enzyme::notypeanalysis corresponds to the internal attribute
+    // enzyme_ta_norecur
     return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_notypeanalysis",
-                                    /*FnAnnotation*/ "enzyme_ta_norecur",
-                                    /*VarAnnotation*/ "enzyme_ta_norecur");
+                                  /*FnAnnotation*/ "enzyme_ta_norecur",
+                                  /*VarAnnotation*/ "enzyme_ta_norecur");
   }
 };
 
-static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo> enzyme_notypeanalysis("enzyme_notypeanalysis", "");
+static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo>
+    enzyme_notypeanalysis("enzyme_notypeanalysis", "");
 
 } // namespace
 
