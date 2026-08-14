@@ -21,12 +21,10 @@ module {
 // CHECK-NEXT:    %c2 = arith.constant 2 : index
 // CHECK-NEXT:    %c3 = arith.constant 3 : index
 // CHECK-NEXT:    %c1 = arith.constant 1 : index
-// CHECK-NEXT:    %c9 = arith.constant 9 : index
 // CHECK-NEXT:    %c0 = arith.constant 0 : index
 // CHECK-NEXT:    %[[v0:.+]] = tensor.empty() : tensor<3xf32>
-// CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %arg2 = %c0 to %c9 step %c3 iter_args(%arg3 = %arg0, %[[arg5:.+]] = %[[v0]]) -> (f32, tensor<3xf32>) {
-// CHECK-NEXT:      %[[idx:.+]] = arith.divui %arg2, %c3 : index
-// CHECK-NEXT:      %inserted = tensor.insert %arg3 into %[[arg5]][%[[idx]]] : tensor<3xf32>
+// CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %arg2 = %c0 to %c3 step %c1 iter_args(%arg3 = %arg0, %[[arg5:.+]] = %[[v0]]) -> (f32, tensor<3xf32>) {
+// CHECK-NEXT:      %inserted = tensor.insert %arg3 into %[[arg5]][%arg2] : tensor<3xf32>
 // CHECK-NEXT:      %[[v3:.+]] = scf.for %[[arg6:.+]] = %c0 to %c3 step %c1 iter_args(%[[arg7:.+]] = %arg3) -> (f32) {
 // CHECK-NEXT:        %[[v5:.+]] = arith.mulf %[[arg7]], %[[arg7]] : f32
 // CHECK-NEXT:        %[[v6:.+]] = math.cos %[[v5]] : f32
