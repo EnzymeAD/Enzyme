@@ -84,9 +84,10 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
                             const llvm::PHINode *P0,
                             const llvm::Value *incomingVal);
 
+/// Collect the preheader-incoming values of V, if V is the header phi of a
+/// loopy reduction whose start value is needed in the reverse pass.
 void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
-                           llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo);
+                           llvm::SmallVectorImpl<llvm::Value *> &preheaderVals);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
