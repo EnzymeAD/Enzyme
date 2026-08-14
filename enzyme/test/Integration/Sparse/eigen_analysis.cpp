@@ -101,7 +101,7 @@ static T eigenstuffM(const T *__restrict__ pos0, size_t n, const int *__restrict
 // Calculate total energy for all faces in 3D
 template<typename T>
 __attribute__((always_inline))
-static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ pos0) {
+static T eigenstuffL(const T *__restrict__ pos0, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ x) {
     T sum = 0;
     __builtin_assume(num_faces != 0);
     for (size_t idx=0; idx<num_faces; idx++) {
@@ -143,7 +143,7 @@ template<typename T>
 __attribute__((always_inline))
 static void gradient_ip(const T *__restrict__ pos0, const size_t num_faces, const int* faces, const T *__restrict__ x, T *__restrict__ out)
 {
-    __enzyme_autodiff<void>((void *)eigenstuffM<T>,
+    __enzyme_autodiff<void>((void *)eigenstuffL<T>,
                             enzyme_const, pos0,
                             enzyme_const, num_faces,
                             enzyme_const, faces,
@@ -206,10 +206,10 @@ int main(int argc, char** argv) {
 
     // Call eigenstuffM_simple
     struct timeval start, end;
-    gettimeofday(&start, NULL);
-    const float resultM = eigenstuffM(pos0, num_faces, faces, x);
-    gettimeofday(&end, NULL);
-    printf("Result for eigenstuffM_simple: %f, runtime:%f\n", resultM, tdiff(&start, &end));
+    // gettimeofday(&start, NULL);
+    // const float resultM = eigenstuffM(pos0, num_faces, faces, x);
+    // gettimeofday(&end, NULL);
+    // printf("Result for eigenstuffM_simple: %f, runtime:%f\n", resultM, tdiff(&start, &end));
 
     // Call eigenstuffL_simple
     gettimeofday(&start, NULL);
@@ -222,10 +222,10 @@ int main(int argc, char** argv) {
         dx[i] = 0;
     gradient_ip(pos0, num_faces, faces, x, dx);
 
-    if (x_pts < 30) {
-    for (size_t i=0; i<sizeof(dx)/sizeof(dx[0]); i++)
-        printf("eigenstuffM grad_vert[%zu]=%f\n", i, dx[i]);
-    }
+    // if (x_pts < 30) {
+    // for (size_t i=0; i<sizeof(dx)/sizeof(dx[0]); i++)
+    //     printf("eigenstuffM grad_vert[%zu]=%f\n", i, dx[i]);
+    // }
 
     gettimeofday(&start, NULL);
     auto hess_x = hessian(pos0, num_faces, faces, x, x_pts);
@@ -235,10 +235,10 @@ int main(int argc, char** argv) {
   
     printf("Runtime %0.6f\n", tdiff(&start, &end));
 
-    if (x_pts <= 8)
-    for (auto &hess : hess_x) {
-        printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
-    }
+    // if (x_pts <= 8)
+    // for (auto &hess : hess_x) {
+    //     printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
+    // }
 
     return 0;
 }
