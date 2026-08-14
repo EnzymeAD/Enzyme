@@ -27,6 +27,64 @@ extern bool
 DetectPointerArgOfFn(llvm::Function &F,
                      llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
 
+// Whether `v` itself is stored into an enzymejl_returnRoots argument of the
+// function containing `arg`. The index of the returnRoots argument found is
+// added to `rootingArgs`.
+static bool isStoredToReturnRoots(llvm::Value *v, llvm::Argument *arg,
+                                  std::set<size_t> *rootingArgs) {
+  auto Attrs = arg->getParent()->getAttributes();
+  for (auto &U : v->uses()) {
+    // If we had a constant originally, it could have been used in another
+    // function. We can/should ignore those uses.
+    if (auto I = dyn_cast<Instruction>(U.getUser())) {
+      if (I->getParent()->getParent() != arg->getParent()) {
+        continue;
+      }
+    }
+
+    if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
+      if (SI->getValueOperand() == v) {
+        auto base = getBaseObject(SI->getPointerOperand());
+        if (base == arg) {
+          continue;
+        }
+        if (auto evi = dyn_cast<ExtractValueInst>(base)) {
+          base = evi->getAggregateOperand();
+        }
+        if (auto arg2 = dyn_cast<Argument>(base)) {
+          if (Attrs
+                  .getAttribute(AttributeList::FirstArgIndex + arg2->getArgNo(),
+                                "enzymejl_returnRoots")
+                  .isValid()) {
+            if (rootingArgs)
+              rootingArgs->insert(arg2->getArgNo());
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Fold a chain of extractvalues into the aggregate it starts from and the
+// full index path, so that `extractvalue (extractvalue %a, i), j` and
+// `extractvalue %a, i, j` are recognized as the same value.
+static std::pair<llvm::Value *, SmallVector<unsigned, 4>>
+flattenExtract(llvm::ExtractValueInst *EVI) {
+  SmallVector<unsigned, 4> path(EVI->getIndices().begin(),
+                                EVI->getIndices().end());
+  Value *base = EVI->getAggregateOperand();
+  while (auto inner = dyn_cast<ExtractValueInst>(base)) {
+    SmallVector<unsigned, 4> outer(inner->getIndices().begin(),
+                                   inner->getIndices().end());
+    outer.append(path.begin(), path.end());
+    path = std::move(outer);
+    base = inner->getAggregateOperand();
+  }
+  return std::make_pair(base, path);
+}
+
 // Determine whether the tracked pointers stored into the sret-like argument
 // `arg` need to be given fresh roots. They do not if every one of them is also
 // stored into an existing enzymejl_returnRoots argument; the indices of the
@@ -203,40 +261,34 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
       if (auto I = dyn_cast<Instruction>(sv)) {
         assert(I->getParent()->getParent() == arg->getParent());
       }
-      bool foundUse = false;
-      for (auto &U : sv->uses()) {
-        // If we had a constant originally, it could have been used in another
-        // function. We can/should ignore those uses.
-        if (auto I = dyn_cast<Instruction>(U.getUser())) {
-          if (I->getParent()->getParent() != arg->getParent()) {
-            continue;
-          }
-        }
+      bool foundUse = isStoredToReturnRoots(sv, arg, rootingArgs);
 
-        if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
-          if (SI->getValueOperand() == sv) {
-            auto base = getBaseObject(SI->getPointerOperand());
-            if (base == arg) {
-              continue;
-            }
-            if (auto evi = dyn_cast<ExtractValueInst>(base)) {
-              base = evi->getAggregateOperand();
-            }
-            if (auto arg2 = dyn_cast<Argument>(base)) {
-              if (Attrs
-                      .getAttribute(AttributeList::FirstArgIndex +
-                                        arg2->getArgNo(),
-                                    "enzymejl_returnRoots")
-                      .isValid()) {
-                if (rootingArgs)
-                  rootingArgs->insert(arg2->getArgNo());
+      // The value may be rooted through a different, but equivalent,
+      // extractvalue of the same aggregate: e.g. the sret store goes through
+      // `%e = extractvalue (extractvalue %a, 0), 3` while the returnRoots store
+      // uses `%r = extractvalue %a, 0, 3`. extractvalue is pure, so the same
+      // aggregate and index path yield the same value.
+      if (!foundUse) {
+        if (auto EVI = dyn_cast<ExtractValueInst>(sv)) {
+          auto key = flattenExtract(EVI);
+          for (auto &BB : *arg->getParent()) {
+            for (auto &I : BB) {
+              auto other = dyn_cast<ExtractValueInst>(&I);
+              if (!other || other == EVI)
+                continue;
+              if (flattenExtract(other) != key)
+                continue;
+              if (isStoredToReturnRoots(other, arg, rootingArgs)) {
                 foundUse = true;
                 break;
               }
             }
+            if (foundUse)
+              break;
           }
         }
       }
+
       if (!foundUse) {
         if (auto IVI = dyn_cast<InsertValueInst>(sv)) {
           // An undef/poison/zeroinitializer base has no live pointer in any of
@@ -263,7 +315,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           continue;
         }
         if (auto ST = dyn_cast<StructType>(sv->getType())) {
-          bool legal = true;
+          bool covered = true;
           for (size_t i = 0; i < ST->getNumElements(); i++) {
 
             CountTrackedPointers tracked(ST->getElementType(i));
@@ -359,13 +411,30 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             if (!fullyCovered) {
               llvm::errs() << " failed to find extracted pointer for " << *sv
                            << " at index " << i << "\n";
-              legal = false;
+              covered = false;
               break;
             }
           }
-          if (legal) {
+          if (covered) {
             continue;
           }
+          // Not every tracked pointer in this aggregate could be shown to be
+          // rooted separately. Report it and reroot conservatively rather than
+          // falling into the pointer-shaped handling below, which asserts on
+          // any non-pointer value.
+          if (hasUnassignedReturnRootingAfterArg) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Could not find use of stored value\n";
+            ss << " sv: " << *sv << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(ss.str().c_str(), wrap(sv),
+                                 ErrorType::GCRewrite, nullptr, wrap(arg),
+                                 nullptr);
+            }
+          }
+          legal = false;
+          break;
         }
         if (!isa<PointerType>(sv->getType()) ||
             !isSpecialPtr(cast<PointerType>(sv->getType()))) {
@@ -396,8 +465,10 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
           ss << " sv: " << *sv << "\n";
-          CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                             nullptr, wrap(arg), nullptr);
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+                               nullptr, wrap(arg), nullptr);
+          }
         }
         legal = false;
         break;
