@@ -1032,12 +1032,6 @@ def : IntrPattern<(Op $x),
                   >;
 
 def : IntrPattern<(Op $x),
-                  [["tan", "19", ""]],
-                  [(FMul (DiffeRet), (Intrinsic<"tan"> $x))],
-                  (ForwardFromSummedReverse)
-                  >;
-
-def : IntrPattern<(Op $x),
                   [["exp"]],
                   [(FMul (DiffeRet), (Call<(SameFunc)> $x))],
                   (ForwardFromSummedReverse)                  
