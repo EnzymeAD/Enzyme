@@ -871,6 +871,50 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #endif
 
+/// Which address space one side of a CUDA memory transfer lives in.
+enum class CudaMemSpace {
+  Host,
+  Device,
+  /// Only known from the cudaMemcpyKind argument of a runtime-API call.
+  FromKind,
+};
+
+/// A member of the CUDA memcpy family. Every such entry point -- both the
+/// driver API (cuMemcpy*) and the runtime API (cudaMemcpy*) -- takes
+/// (dst, src, size) as its leading arguments; the trailing arguments (transfer
+/// kind and/or stream) are replayed unchanged when differentiating.
+struct CudaMemTransferInfo {
+  /// Address space of the destination, as implied by the function name.
+  CudaMemSpace dstSpace;
+  /// Address space of the source, as implied by the function name.
+  CudaMemSpace srcSpace;
+  /// Argument index of the cudaMemcpyKind, or -1 for the driver API.
+  int kindIdx;
+  /// Argument index of the stream, or -1 if the transfer is synchronous.
+  int streamIdx;
+  /// True for the runtime API (cudaMemcpy*), false for the driver API.
+  bool isRuntimeAPI;
+  /// Whether the driver-API name carries the "_v2" ABI suffix, so that the
+  /// memset we emit alongside it targets the same ABI.
+  bool isV2;
+};
+
+/// If `in` names a member of the CUDA memcpy family, describe it.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in);
+#else
+llvm::Optional<CudaMemTransferInfo> extractCudaMemTransfer(llvm::StringRef in);
+#endif
+
+/// Values of the CUDA runtime API's cudaMemcpyKind enum.
+enum CudaMemcpyKind {
+  CudaMemcpyHostToHost = 0,
+  CudaMemcpyHostToDevice = 1,
+  CudaMemcpyDeviceToHost = 2,
+  CudaMemcpyDeviceToDevice = 3,
+  CudaMemcpyDefault = 4,
+};
+
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 
