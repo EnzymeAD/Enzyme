@@ -101,8 +101,13 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
     {"sin", Intrinsic::sin},
+#if LLVM_VERSION_MAJOR >= 19
+    {"tan", Intrinsic::tan},
+    {"acos", Intrinsic::acos},
+#else
     {"tan", Intrinsic::not_intrinsic},
     {"acos", Intrinsic::not_intrinsic},
+#endif
     {"__nv_frcp_rd", Intrinsic::not_intrinsic},
     {"__nv_frcp_rn", Intrinsic::not_intrinsic},
     {"__nv_frcp_ru", Intrinsic::not_intrinsic},
@@ -111,9 +116,17 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"__nv_drcp_rn", Intrinsic::not_intrinsic},
     {"__nv_drcp_ru", Intrinsic::not_intrinsic},
     {"__nv_drcp_rz", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"asin", Intrinsic::asin},
+#else
     {"asin", Intrinsic::not_intrinsic},
+#endif
     {"__nv_asin", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"atan", Intrinsic::atan},
+#else
     {"atan", Intrinsic::not_intrinsic},
+#endif
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 19
