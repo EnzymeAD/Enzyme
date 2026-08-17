@@ -376,9 +376,6 @@ struct DifferentiatePass
                                         enzyme::AutoDiffSplitModePrimalOp CI) {
     auto tape = CI.getTape();
 
-    auto &symbTable =
-        symbolTable.getSymbolTable(SymbolTable::getNearestSymbolTable(CI));
-
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
     assert(fn);
