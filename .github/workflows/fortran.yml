@@ -56,7 +56,10 @@ jobs:
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
         sudo python3 -m pip install --upgrade pip lit
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build
@@ -101,7 +104,10 @@ jobs:
         sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.versions.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
         source /opt/intel/oneapi/setvars.sh
         printenv >> $GITHUB_ENV
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build

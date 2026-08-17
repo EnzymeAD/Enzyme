@@ -34,7 +34,10 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
@@ -71,7 +74,10 @@ jobs:
           brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
@@ -107,7 +113,10 @@ jobs:
           brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake gcc
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake

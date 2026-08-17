@@ -9,11 +9,6 @@ on:
     - main
   merge_group:
 
-# needed to allow julia-actions/cache to delete old caches that it has created
-permissions:
-  actions: write
-  contents: read
-
 concurrency:
   # Skip intermediate builds: always.
   # Cancel intermediate builds: only if it is a pull request build.
@@ -24,6 +19,9 @@ jobs:
   build:
     name: Enzyme CI Julia ${{ matrix.version }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      actions: write
+      contents: read
     continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false
@@ -36,11 +34,16 @@ jobs:
           - ubuntu-latest
         arch:
           - 'default'
-    timeout-minutes: 60 
+    timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v5
-    - uses: actions/checkout@v5
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
+    - name: Checkout Enzyme.jl repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
         repository: 'EnzymeAD/Enzyme.jl'
         path: ./jl
         ref: main

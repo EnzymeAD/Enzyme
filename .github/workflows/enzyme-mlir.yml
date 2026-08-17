@@ -38,12 +38,16 @@ jobs:
           apt-get update
           apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         path: 'Enzyme'
 
-    - uses: actions/checkout@v4
+    - name: Checkout LLVM repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         repository: 'llvm/llvm-project'
         ref: '084f6484d76625b995c07f512a323ab7cdc5351d'
         path: 'llvm-project'
