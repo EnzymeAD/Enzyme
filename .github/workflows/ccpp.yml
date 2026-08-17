@@ -60,11 +60,22 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release view nightly >/dev/null 2>&1 || \
+        if gh release view nightly >/dev/null 2>&1; then
+          gh release edit nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
+        else
           gh release create nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
-        gh release edit nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
-        gh release upload nightly \
+        fi
+        artifacts=()
+        for pattern in \
           build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}* \
           build/Enzyme/ClangEnzyme-${{ matrix.llvm }}* \
-          build/Enzyme/LLDEnzyme-${{ matrix.llvm }}* \
-          --clobber
+          build/Enzyme/LLDEnzyme-${{ matrix.llvm }}*; do
+          for artifact in $pattern; do
+            [ -e "$artifact" ] && artifacts+=("$artifact")
+          done
+        done
+        if [ ${#artifacts[@]} -gt 0 ]; then
+          gh release upload nightly "${artifacts[@]}" --clobber
+        else
+          echo "No nightly artifacts found for LLVM ${{ matrix.llvm }}."
+        fi
