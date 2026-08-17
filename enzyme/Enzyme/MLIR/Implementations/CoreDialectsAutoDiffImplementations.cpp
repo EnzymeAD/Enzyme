@@ -630,8 +630,7 @@ static Operation *getCustomRule(FunctionOpInterface func) {
   if (!attr)
     return nullptr;
 
-  SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(func);
-  return symbolTable.lookup(attr.getRootReference());
+  return SymbolTable::lookupNearestSymbolFrom(func, attr);
 }
 
 // Split mode builds the callee's augmented primal and reverse out of a custom

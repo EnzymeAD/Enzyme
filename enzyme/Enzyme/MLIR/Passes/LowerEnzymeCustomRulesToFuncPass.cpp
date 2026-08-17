@@ -301,6 +301,13 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     return success();
   }
 
+  for (auto use : *uses) {
+    Operation *user = use.getUser();
+    auto ruleRef = user->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule");
+    if (ruleRef && ruleRef.getValue() == revRuleName)
+      user->removeAttr("enzyme.custom_rule");
+  }
+
   SmallVector<Value> tapes;
 
   SetVector<Operation *> toDelete;
