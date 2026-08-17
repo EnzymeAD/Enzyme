@@ -1197,12 +1197,22 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
          << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
          << ", tys, false);\n";
 
-      os << "    auto str_" << dfnc_name
-         << " = blas.prefix + blas.floatType + \"" << dfnc_name;
-      if (dfnc_name == "copy")
-        os << "\" + cublasv2 ? \"\" : blas.suffix;\n";
-      else
-        os << "\" + blas.suffix;\n";
+      // z{dot,ger} don't exist. complex versions are
+      // z{dot,ger}u or z{dot,ger}c for (un)conjugated versions
+      if (dfnc_name == "dot" || dfnc_name == "ger") {
+        os << "    auto str_" << dfnc_name
+           << " = blas.prefix + ((blas.floatType == \"c\" || blas.floatType "
+              "== \"z\") ? (blas.floatType + std::string(\""
+           << dfnc_name << "c\")) : (blas.floatType + std::string(\""
+           << dfnc_name << "\"))) + blas.suffix;\n";
+      } else {
+        os << "    auto str_" << dfnc_name
+           << " = blas.prefix + blas.floatType + \"" << dfnc_name;
+        if (dfnc_name == "copy")
+          os << "\" + cublasv2 ? \"\" : blas.suffix;\n";
+        else
+          os << "\" + blas.suffix;\n";
+      }
 
       os << "    auto derivcall_" << dfnc_name
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
@@ -1788,12 +1798,21 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
        << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
        << ", tys, false);\n";
 
-    os << "    auto str_" << dfnc_name << " = blas.prefix + blas.floatType + \""
-       << dfnc_name << "\" + ";
-    if (dfnc_name == "copy")
-      os << "(cublasv2 ? \"\" : blas.suffix);\n";
-    else
-      os << "blas.suffix;\n";
+    // see comment line 1200
+    if (dfnc_name == "dot" || dfnc_name == "ger") {
+      os << "    auto str_" << dfnc_name
+         << " = blas.prefix + ((blas.floatType == \"c\" || blas.floatType == "
+            "\"z\") ? (blas.floatType + std::string(\""
+         << dfnc_name << "c\")) : (blas.floatType + std::string(\""
+         << dfnc_name << "\"))) + blas.suffix;\n";
+    } else {
+      os << "    auto str_" << dfnc_name << " = blas.prefix + blas.floatType + \""
+         << dfnc_name << "\" + ";
+      if (dfnc_name == "copy")
+        os << "(cublasv2 ? \"\" : blas.suffix);\n";
+      else
+        os << "blas.suffix;\n";
+    }
 
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
@@ -2270,17 +2289,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   os << "  /* rev-rewrite */                                 \n"
      << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
-
-  os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
-        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-     << "      std::string s;\n"
-     << "      llvm::raw_string_ostream ss(s);\n"
-     << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
-     << "      ss << \"Complex inputs not yet supported in reverse mode for "
-        "BLAS calls\" << "
-        "\"\\n\";\n"
-     << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
-     << "    }\n";
 
   os << "    Value *alloc = nullptr;\n"
      << "    if (byRef && !cublas) {\n"
