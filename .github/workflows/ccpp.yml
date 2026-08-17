@@ -56,14 +56,15 @@ jobs:
       run: make -j `nproc` check-enzyme-integration
 
     - name: Update Nightly Release
-      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
-      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }} 
-      with:
-        tag: nightly
-        name: Nightly Release
-        body: "Latest nightly build of Enzyme."
-        artifacts: "build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}*,build/Enzyme/ClangEnzyme-${{ matrix.llvm }}*,build/Enzyme/LLDEnzyme-${{ matrix.llvm }}*"
-        allowUpdates: true
-        removeArtifacts: false
-        replacesArtifacts: true
-        token: ${{ secrets.GITHUB_TOKEN }}
+      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release view nightly >/dev/null 2>&1 || \
+          gh release create nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
+        gh release edit nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
+        gh release upload nightly \
+          build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}* \
+          build/Enzyme/ClangEnzyme-${{ matrix.llvm }}* \
+          build/Enzyme/LLDEnzyme-${{ matrix.llvm }}* \
+          --clobber
