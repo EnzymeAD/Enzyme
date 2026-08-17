@@ -129,9 +129,13 @@ for an example.
 ## Function-like hooks
 
 The `enzyme_function_like` hook tells Enzyme to differentiate a function as if
-it were a known mathematical function. For example, the following hook call
-makes Enzyme use the derivative of `log1p` for `log1p_like_function`, regardless
-of its implementation:
+it were a known mathematical function. For example, Enzyme can use the
+derivative of `log1p` for `log1p_like_function`, regardless of its
+implementation.
+
+### Call-style registration
+
+The call-style interface follows the same pattern as `enzyme_autodiff`:
 
 ```fortran
 use enzyme, only: enzyme_function_like, enzyme_log1p
@@ -172,3 +176,36 @@ module enzyme_math_names
   integer(c_int), bind(C, name="enzyme_math_sin") :: enzyme_sin
 end module enzyme_math_names
 ```
+
+This makes the call site simple, but every symbolic name needs a corresponding
+`enzyme_math_*` binding, either in the `enzyme` module or in user code.
+
+### Procedure-pointer registration
+
+Alternatively, a statically initialized procedure pointer can register the
+same relationship without a hook call or symbolic-name binding:
+
+```fortran
+module function_like_example
+  implicit none
+
+  procedure(log1p_like_function), pointer, private :: &
+    fn__enzyme_function_like__log1p => log1p_like_function
+
+contains
+
+  function log1p_like_function(x) result(y)
+    double precision, value :: x
+    double precision :: y
+
+    y = 2.0d0 * x
+  end function log1p_like_function
+end module function_like_example
+```
+
+Here, `procedure(log1p_like_function)` gives the pointer the target's interface,
+and `=> log1p_like_function` initializes it with the target. PreserveNVVM reads
+the mathematical name after the exact `__enzyme_function_like__` delimiter, so
+this example registers the target as `log1p`. The prefix before the delimiter
+can be any valid name but must be unique in its scope. `private` is optional; it
+keeps the registration marker out of the module's public API.
