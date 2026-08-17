@@ -937,7 +937,6 @@ mlir::ParseResult CustomReverseRuleReverseOp::parse(OpAsmParser &parser,
 }
 
 void CustomReverseRuleReverseOp::print(OpAsmPrinter &p) {
-  auto rule = cast<CustomReverseRuleOp>(this->getParentOp());
   printAugmentedFn(p, getFunctionType(), getBody());
 }
 
