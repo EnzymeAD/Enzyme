@@ -407,7 +407,8 @@ bool preserveNVVM(bool Begin, Module &M,
 
           auto *Hook =
               dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
-          if (!Hook || !Hook->getName().contains("f__enzyme_function_like"))
+          if (!Hook ||
+              !Hook->getName().starts_with("f__enzyme_function_like"))
             continue;
 
           if (Call->arg_size() != 2) {
