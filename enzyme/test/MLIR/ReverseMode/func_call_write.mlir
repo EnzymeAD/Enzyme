@@ -1,4 +1,8 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup,enzyme_active retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --lower-enzyme-custom-rules-to-func --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math | FileCheck %s
+// The callee writes through its dup memref argument. Split mode gets this
+// right without the overwritten-args caching the combined-mode call handler
+// would need (https://github.com/EnzymeAD/Enzyme/issues/3109): whatever the
+// reverse reads was put on the tape while the augmented primal ran.
 
 module {
   func.func @main(%a: memref<f32>, %b: f32) -> f32 {
@@ -29,7 +33,7 @@ module {
 // CHECK:  func.func private @f_reverse_rule_reverse(%arg0: f32, %arg1: memref<f32>) -> f32 {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %0 = memref.load %arg1[] : memref<f32>
-// CHECK-NEXT:    %1 = arith.addf %0, %arg0 : f32
+// CHECK-NEXT:    %1 = arith.addf %0, %arg0 fastmath<fast> : f32
 // CHECK-NEXT:    memref.store %1, %arg1[] : memref<f32>
 // CHECK-NEXT:    %2 = memref.load %arg1[] : memref<f32>
 // CHECK-NEXT:    memref.store %cst, %arg1[] : memref<f32>

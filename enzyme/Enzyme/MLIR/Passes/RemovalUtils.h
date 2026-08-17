@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -69,6 +70,41 @@ void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
                  PatternRewriter &rewriter, const IRMapping &fwdrevmap,
                  Operation *lastFwd = nullptr);
 
+// Perform a modified version of the loop invariant cache algorithm described in
+// Fig. 5 of https://dl.acm.org/doi/pdf/10.1145/3458817.3476165
+//
+// array = alloca
+// for i = 0 to N {
+//   idx = some_computation(%i)
+//   val = load array[idx]
+//   push(cache, val)
+// }
+// for ri = N to 0 {
+//   val = pop(cache)
+//   use(val)
+// }
+//
+// Becomes:
+// array = alloca
+// copy(cache, array)
+// for i = 0 to N {
+//   %idx = some_computation(%i)
+//   ...
+// }
+// for ri = N to 0 {
+//   idx = some_computation(i)
+//   val = cache[idx]
+//   use(val)
+// }
+//
+// The size of the cache goes from O(N) to O(sizeof(array)). This heuristically
+// only stores stack allocations with a statically-known number of elements
+// <= 'threshold'.
+void loopInvariantCache(SmallVectorImpl<CacheInfo> &caches,
+                        LoopLikeOpInterface fwdLoop,
+                        LoopLikeOpInterface revLoop, const IRMapping &mapping,
+                        int64_t threshold = 16);
+
 enum class LoopCacheType { TENSOR, MEMREF };
 
 static LoopCacheType getCacheType(Operation *op) {
@@ -80,11 +116,80 @@ static LoopCacheType getCacheType(Operation *op) {
 }
 
 static bool hasMinCut(Operation *op) {
-  return !op->hasAttr("enzyme.disable_mincut");
+  if (op->hasAttr("enzyme.disable_mincut"))
+    return false;
+
+  while (op = op->getParentOp())
+    if (op->hasAttr("enzyme.disable_mincut"))
+      return false;
+
+  return true;
 }
 
 static bool hasLICM(Operation *op) {
   return !op->hasAttr("enzyme.disable_licm");
+}
+
+static Value ensureIndexType(Value value, OpBuilder &builder) {
+  if (isa<IndexType>(value.getType())) {
+    return value;
+  }
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointAfterValue(value);
+  return arith::IndexCastOp::create(builder, value.getLoc(),
+                                    builder.getIndexType(), value);
+}
+
+static Value traceToNonBlockArgSource(Value value) {
+  while (!isa<BlockArgument>(value)) {
+    if (auto svOp = value.getDefiningOp<memref::SubViewOp>())
+      value = svOp.getSource();
+    else if (auto castOp = value.getDefiningOp<memref::CastOp>())
+      value = castOp.getSource();
+    else if (auto rcOp = value.getDefiningOp<memref::ReinterpretCastOp>())
+      value = rcOp.getSource();
+    else
+      break;
+  }
+  return isa<BlockArgument>(value) ? nullptr : value;
+}
+
+/// The pushed value may reach its allocation through casts that erase static
+/// extents: canonicalization rewrites `memref.alloc(%c) : memref<?xT>` into
+/// `memref.alloc() : memref<CxT>` + `memref.cast`. When the allocation itself
+/// becomes the multi-dimensional cache storage, its type is the accurate one --
+/// sizing the cache from the cast's dynamic type instead leaves dynamic
+/// dimensions that `appendDynamicDims` has no operand for, yielding an invalid
+/// cache allocation and row slices whose sizes don't match their operands.
+static ShapedType
+refineCacheShapeFromAlloc(ShapedType ST,
+                          MultidimensionalAllocInterface allocOp) {
+  if (!allocOp || allocOp->getNumResults() != 1)
+    return ST;
+  auto allocTy = dyn_cast<ShapedType>(allocOp->getResult(0).getType());
+  if (!allocTy || allocTy.getElementType() != ST.getElementType() ||
+      allocTy.getRank() != ST.getRank())
+    return ST;
+  // Only take the allocation's type when it strictly adds static information.
+  for (auto [a, s] : llvm::zip_equal(allocTy.getShape(), ST.getShape()))
+    if (!ShapedType::isDynamic(s) && a != s)
+      return ST;
+  return allocTy;
+}
+
+static MultidimensionalAllocInterface
+getMultiDimCacheAllocOp(Value pushedValue, LoopCacheType cacheType,
+                        ShapedType shapeTy, Operation *forOp) {
+  if (cacheType != LoopCacheType::MEMREF)
+    return nullptr;
+  Value source = traceToNonBlockArgSource(pushedValue);
+  if (!source)
+    return nullptr;
+  auto allocOp =
+      dyn_cast_or_null<MultidimensionalAllocInterface>(source.getDefiningOp());
+  if (!allocOp || !allocOp.hoistable(forOp))
+    return nullptr;
+  return allocOp;
 }
 
 template <typename FinalClass, typename OpName>
@@ -199,6 +304,7 @@ public:
           toDelete.push_back(info);
           return;
         }
+
         cachesMap[pushedValue] = info;
 
         if (isa<OpName>(info.popOp->getParentOp())) {
@@ -224,6 +330,24 @@ public:
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
       return success();
+
+    // What is left here is carried out of this loop, so removing it needs the
+    // loop the pops are in, and that is only found when a pop's parent is a
+    // loop of this same kind (see where otherForOp is set). Without one, every
+    // use of otherForOp below would be through a null op. Report it rather than
+    // leaving caches nothing further down can lower either. Checked before the
+    // gradient rewriting starts, so the loop is not left half-transformed.
+    if (!caches.empty() && !otherForOp) {
+      auto diag = forOp->emitError()
+                  << "cannot remove " << caches.size()
+                  << " cache(s) pushed in this loop: no " << forOp->getName()
+                  << " holding their pops to pair it with";
+      for (CacheInfo &info : caches)
+        diag.attachNote(info.popOp->getLoc())
+            << "pop is in " << info.popOp->getParentOp()->getName()
+            << ", pushed from " << info.pushOp->getParentOp()->getName();
+      return diag;
+    }
 
     DenseMap<Value, llvm::SmallVector<Operation *>> updatedGradientUsers;
 
@@ -307,7 +431,9 @@ public:
     Operation *lastFwd = nullptr;
     if (caches.size()) {
       rewriter.setInsertionPointToStart(forOp.getBody());
-      inductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, forOp);
+      inductionVariable = llvm::map_to_vector(
+          FinalClass::getCanonicalLoopIVs(rewriter, forOp),
+          [&rewriter](Value iv) { return ensureIndexType(iv, rewriter); });
       if (rewriter.getInsertionPoint() != forOp.getBody()->begin()) {
         lastFwd = rewriter.getInsertionPoint()->getPrevNode();
       }
@@ -350,6 +476,7 @@ public:
       mincut = true;
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter, fwdrevmap, lastFwd);
+      mlir::enzyme::loopInvariantCache(caches, forOp, otherForOp, fwdrevmap);
     }
     for (auto v : inductionVariable) {
       if (auto op = v.getDefiningOp()) {
@@ -403,32 +530,41 @@ public:
       for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
-          dynamicDims.push_back(dim.vval);
+          dynamicDims.push_back(ensureIndexType(dim.vval, rewriter));
         } else {
           newShape.push_back(dim.ival);
         }
       }
 
+      // Number of entries in `dynamicDims` describing the loop-iteration
+      // dimensions. Only *dynamic* iteration counts contribute an entry, so
+      // this is <= inductionVariable.size(); anything appended past this point
+      // (by appendDynamicDims below) describes the cached value's own shape.
+      size_t numLoopDynamicDims = dynamicDims.size();
+
       auto ET = info.cachedType();
       ShapedType NT;
 
       bool multiDim = false;
+      Attribute memorySpace = nullptr;
+      MultidimensionalAllocInterface allocOp;
+      // The cached value's shaped type, refined with whatever static extents
+      // its allocation knows about. Used in place of `info.cachedType()` below
+      // so the cache allocation and the row slices into it agree.
+      ShapedType cachedShapedTy;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
-        if (cacheType == LoopCacheType::MEMREF && allocOp &&
-            allocOp.getSymbolOperands().empty() &&
-            llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
-              return !forOp.getRegion().isAncestor(dynSize.getParentRegion());
-            })) {
-          multiDim = true;
-
-          dynamicDims.append(allocOp.getDynamicSizes().begin(),
-                             allocOp.getDynamicSizes().end());
-
-        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                     return dim != ShapedType::kDynamic;
-                   })) {
-          multiDim = true;
+        allocOp = getMultiDimCacheAllocOp(pushedValue, cacheType, ST, forOp);
+        ST = refineCacheShapeFromAlloc(ST, allocOp);
+        cachedShapedTy = ST;
+        bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
+          return dim != ShapedType::kDynamic;
+        });
+        multiDim =
+            allocOp || (fullyStatic && cacheType == LoopCacheType::TENSOR);
+        if (allocOp) {
+          if (auto MT = dyn_cast<MemRefType>(pushedValue.getType()))
+            memorySpace = MT.getMemorySpace();
+          allocOp.appendDynamicDims(dynamicDims);
         }
 
         if (multiDim) {
@@ -437,10 +573,20 @@ public:
         }
       }
 
+      if (!memorySpace) {
+        if (auto innerMT = dyn_cast<MemRefType>(ET))
+          memorySpace = innerMT.getMemorySpace();
+      }
+
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
 
+      // Replace the pushes in the forward pass
       if (cacheType == LoopCacheType::TENSOR) {
         {
           OpBuilder::InsertionGuard guard(rewriter);
@@ -493,9 +639,14 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          initValue =
-              memref::AllocOp::create(rewriter, info.initOp->getLoc(),
-                                      cast<MemRefType>(newType), dynamicDims);
+          if (allocOp) {
+            initValue = allocOp.allocate(rewriter, info.initOp->getLoc(),
+                                         newType, dynamicDims);
+          } else {
+            initValue =
+                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
+                                        cast<MemRefType>(newType), dynamicDims);
+          }
           newPushValues.push_back(initValue);
         }
 
@@ -503,7 +654,7 @@ public:
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(info.pushOp);
 
-          auto MT = dyn_cast<MemRefType>(info.cachedType());
+          auto MT = dyn_cast_or_null<MemRefType>(cachedShapedTy);
           if (multiDim && MT) {
             auto memref = info.pushOp.getValue();
             auto shape = MT.getShape();
@@ -516,8 +667,7 @@ public:
             }
 
             SmallVector<Value> dynSizes;
-            for (size_t i = inductionVariable.size(); i < dynamicDims.size();
-                 ++i) {
+            for (size_t i = numLoopDynamicDims; i < dynamicDims.size(); ++i) {
               dynSizes.push_back(dynamicDims[i]);
             }
 
@@ -529,25 +679,39 @@ public:
                 MT.getShape(), cast<MemRefType>(initValue.getType()), offsets,
                 sizes, strides);
 
-            rewriter.setInsertionPoint(memref.getDefiningOp());
-            rewriter.replaceOpWithNewOp<memref::SubViewOp>(
-                memref.getDefiningOp(), RT, initValue,
-                /*offsets*/ inductionVariable,
-                /*sizes*/ dynSizes,
-                /*strides*/ ValueRange(),
-                /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
-                /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
-                /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+            rewriter.setInsertionPointAfterValue(memref);
+            rewriter.replaceAllUsesWith(
+                memref,
+                memref::SubViewOp::create(
+                    rewriter, memref.getLoc(), RT, initValue,
+                    /*offsets*/ inductionVariable,
+                    /*sizes*/ dynSizes,
+                    /*strides*/ ValueRange(),
+                    /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+                    /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+                    /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides))
+                    .getResult());
 
+            if (auto defOp = memref.getDefiningOp())
+              rewriter.eraseOp(defOp);
           } else {
-            memref::StoreOp::create(rewriter, info.pushOp->getLoc(),
-                                    info.pushOp.getValue(), initValue,
-                                    inductionVariable);
+            if (dynamicDims.empty()) {
+              memref::StoreOp::create(rewriter, info.pushOp->getLoc(),
+                                      info.pushOp.getValue(), initValue,
+                                      inductionVariable);
+            } else {
+              auto memrefType = cast<MemRefType>(initValue.getType());
+              enzyme::StoreOp::create(rewriter, info.pushOp.getLoc(),
+                                      info.pushOp.getValue(), initValue,
+                                      inductionVariable, dynamicDims,
+                                      memrefType.getShape());
+            }
           }
         }
       }
     }
 
+    // Replace the reverse pass loop
     auto numInitArgs = FinalClass::getInits(forOp).size();
     rewriter.setInsertionPoint(forOp);
 
@@ -644,11 +808,16 @@ public:
         reversedIndex = FinalClass::computeReversedIndices(
             rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
+      reversedIndex = llvm::map_to_vector(reversedIndex, [&rewriter](Value iv) {
+        return ensureIndexType(iv, rewriter);
+      });
 
       SmallVector<int64_t> newShape;
+      SmallVector<Value> dynamicDims;
       for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
+          dynamicDims.push_back(ensureIndexType(dim.vval, rewriter));
         } else {
           newShape.push_back(dim.ival);
         }
@@ -658,15 +827,32 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      Attribute memorySpace = nullptr;
+      MultidimensionalAllocInterface allocOp;
+      // See the forward pass: kept in sync with the shape the cache allocation
+      // was actually built with.
+      ShapedType cachedShapedTy;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
-        if (cacheType == LoopCacheType::MEMREF && svOp) {
-          multiDim = true;
-        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-                     return dim != ShapedType::kDynamic;
-                   })) {
-          multiDim = true;
-        }
+        if (auto MT = dyn_cast<MemRefType>(ST))
+          memorySpace = MT.getMemorySpace();
+        allocOp =
+            getMultiDimCacheAllocOp(info.pushedValue(), cacheType, ST, forOp);
+        // The cache's element type can have lost the memory space -- what gets
+        // pushed may be a bare pointer-like memref<?xf32> while the allocation
+        // behind it lives in memory space 1. The pushed value is what names
+        // the space, and the forward pass reads it from exactly here; both
+        // sides must agree, or the reverse-pass subviews slice an allocation
+        // whose memory space their result type does not carry.
+        if (allocOp)
+          if (auto MT = dyn_cast<MemRefType>(info.pushedValue().getType()))
+            memorySpace = MT.getMemorySpace();
+        ST = refineCacheShapeFromAlloc(ST, allocOp);
+        cachedShapedTy = ST;
+        bool fullyStatic = llvm::all_of(ST.getShape(), [](int64_t dim) {
+          return dim != ShapedType::kDynamic;
+        });
+        multiDim =
+            allocOp || (fullyStatic && cacheType == LoopCacheType::TENSOR);
 
         if (multiDim) {
           newShape.append(ST.getShape().begin(), ST.getShape().end());
@@ -674,9 +860,18 @@ public:
         }
       }
 
+      if (!memorySpace) {
+        if (auto innerMT = dyn_cast<MemRefType>(ET))
+          memorySpace = innerMT.getMemorySpace();
+      }
+
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
+      if (memorySpace)
+        newType = cast<ShapedType>(cast<MemRefType>(newType)
+                                       .clonePtrWith(memorySpace, std::nullopt)
+                                       .value());
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
@@ -734,7 +929,7 @@ public:
         }
       } else if (cacheType == LoopCacheType::MEMREF) {
 
-        auto MT = dyn_cast<MemRefType>(info.cachedType());
+        auto MT = dyn_cast_or_null<MemRefType>(cachedShapedTy);
         if (multiDim && MT) {
           auto shape = MT.getShape();
 
@@ -759,7 +954,7 @@ public:
                                                  i)));
           }
 
-          SmallVector<int64_t> strides(shape.size() + 1, 1);
+          SmallVector<int64_t> strides(newShape.size(), 1);
 
           auto RT = memref::SubViewOp::inferRankReducedResultType(
               MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
@@ -776,17 +971,32 @@ public:
 
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (isa<memref::DeallocOp>(user))
+            if (allocOp ? allocOp.isDeallocation(user)
+                        : isa<memref::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
         } else {
-          popValue = memref::LoadOp::create(rewriter, info.popOp->getLoc(),
-                                            popNewValue, reversedIndex);
+          if (dynamicDims.empty()) {
+            popValue = memref::LoadOp::create(rewriter, info.popOp->getLoc(),
+                                              popNewValue, reversedIndex);
+          } else {
+            auto memrefType = cast<MemRefType>(popNewValue.getType());
+            popValue = enzyme::LoadOp::create(
+                rewriter, info.popOp.getLoc(),
+                cast<MemRefType>(popNewValue.getType()).getElementType(),
+                popNewValue.getResult(), reversedIndex, dynamicDims,
+                memrefType.getShape());
+          }
         }
 
         // this memref was allocated on push, dealloc it
         rewriter.setInsertionPointAfter(otherForOp);
-        memref::DeallocOp::create(rewriter, info.initOp->getLoc(), popNewValue);
+        if (allocOp) {
+          allocOp.deallocate(rewriter, info.initOp->getLoc(), popNewValue);
+        } else {
+          memref::DeallocOp::create(rewriter, info.initOp->getLoc(),
+                                    popNewValue);
+        }
       }
 
       rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);

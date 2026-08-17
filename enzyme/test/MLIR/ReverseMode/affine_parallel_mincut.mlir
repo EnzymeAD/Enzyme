@@ -94,25 +94,24 @@ func.func @dreproducer(%cond: i1, %src: memref<?xf32>, %dsrc: memref<?xf32>, %ds
 // CHECK:               %[[DIVF_1:.*]] = arith.divf %[[LOAD_4]], %[[LOAD_5]] : f32
 // CHECK:               %[[MULF_3:.*]] = arith.mulf %[[LOAD_5]], %[[CONSTANT_2]] : f32
 // CHECK:               %[[MULF_4:.*]] = arith.mulf %[[MULF_3]], %[[CONSTANT_2]] : f32
-// CHECK:               %[[MULF_5:.*]] = arith.mulf %[[LOAD_3]], %[[DIVF_1]] : f32
-// CHECK:               %[[MULF_6:.*]] = arith.mulf %[[LOAD_3]], %[[MULF_4]] : f32
-// CHECK:               %[[MULF_7:.*]] = arith.mulf %[[MULF_5]], %[[CONSTANT_2]] : f32
-// CHECK:               %[[MULF_8:.*]] = arith.mulf %[[MULF_7]], %[[CONSTANT_2]] : f32
-// CHECK:               %[[DIVF_2:.*]] = arith.divf %[[MULF_6]], %[[LOAD_5]] : f32
-// CHECK:               %[[DIVF_3:.*]] = arith.divf %[[MULF_6]], %[[LOAD_5]] : f32
-// CHECK:               %[[DIVF_4:.*]] = arith.divf %[[LOAD_4]], %[[LOAD_5]] : f32
-// CHECK:               %[[MULF_9:.*]] = arith.mulf %[[DIVF_3]], %[[DIVF_4]] : f32
-// CHECK:               %[[NEGF_0:.*]] = arith.negf %[[MULF_9]] : f32
-// CHECK:               %[[ADDF_5:.*]] = arith.addf %[[MULF_8]], %[[NEGF_0]] : f32
-// CHECK:               %[[ADDF_6:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_5]] : f32
-// CHECK:               %[[ADDF_7:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_6]] : f32
-// CHECK:               %[[ADDF_8:.*]] = arith.addf %[[LOAD_3]], %[[ADDF_7]] : f32
-// CHECK:               %[[ADDF_9:.*]] = arith.addf %[[ADDF_8]], %[[ADDF_7]] : f32
+// CHECK:               %[[MULF_5:.*]] = arith.mulf %[[LOAD_3]], %[[DIVF_1]] fastmath<fast> : f32
+// CHECK:               %[[MULF_6:.*]] = arith.mulf %[[LOAD_3]], %[[MULF_4]] fastmath<fast> : f32
+// CHECK:               %[[MULF_7:.*]] = arith.mulf %[[MULF_5]], %[[CONSTANT_2]] fastmath<fast> : f32
+// CHECK:               %[[MULF_8:.*]] = arith.mulf %[[MULF_7]], %[[CONSTANT_2]] fastmath<fast> : f32
+// CHECK:               %[[DIVF_2:.*]] = arith.divf %[[MULF_6]], %[[LOAD_5]] fastmath<fast> : f32
+// CHECK:               %[[DIVF_3:.*]] = arith.divf %[[MULF_6]], %[[LOAD_5]] fastmath<fast> : f32
+// CHECK:               %[[DIVF_4:.*]] = arith.divf %[[LOAD_4]], %[[LOAD_5]] fastmath<fast> : f32
+// CHECK:               %[[MULF_9:.*]] = arith.mulf %[[DIVF_3]], %[[DIVF_4]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_5:.*]] = arith.subf %[[MULF_8]], %[[MULF_9]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_6:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_5]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_7:.*]] = arith.addf %[[DIVF_2]], %[[ADDF_6]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_8:.*]] = arith.addf %[[LOAD_3]], %[[ADDF_7]] fastmath<fast> : f32
+// CHECK:               %[[ADDF_9:.*]] = arith.addf %[[ADDF_8]], %[[ADDF_7]] fastmath<fast> : f32
 // CHECK:               scf.yield %[[ADDF_9]], %[[ADDF_5]], %[[ADDF_6]] : f32, f32, f32
 // CHECK:             }
-// CHECK:             %[[ATOMIC_RMW_0:.*]] = memref.atomic_rmw addf %[[VAL_2:.*]]#1, %[[ARG2]]{{\[}}%[[ADDI_3]]] : (f32, memref<?xf32>) -> f32
-// CHECK:             %[[ATOMIC_RMW_1:.*]] = memref.atomic_rmw addf %[[VAL_2]]#2, %[[ARG2]]{{\[}}%[[ADDI_2]]] : (f32, memref<?xf32>) -> f32
-// CHECK:             %[[ATOMIC_RMW_2:.*]] = memref.atomic_rmw addf %[[VAL_2]]#0, %[[ARG2]]{{\[}}%[[VAL_1]]] : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[VAL_2:.*]]#1, %[[ARG2]]{{\[}}%[[ADDI_3]]] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_1:.*]] = enzyme.atomic_rmw addf %[[VAL_2]]#2, %[[ARG2]]{{\[}}%[[ADDI_2]]] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[ATOMIC_RMW_2:.*]] = enzyme.atomic_rmw addf %[[VAL_2]]#0, %[[ARG2]]{{\[}}%[[VAL_1]]] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_1]] : memref<100xf32>
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<100xf32>

@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme-wrap="infn=square_ip outfn= argTys=enzyme_dup,enzyme_const retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --canonicalize --cse | FileCheck %s
+// RUN: %eopt %s --enzyme-wrap="infn=square_ip outfn= argTys=enzyme_dup,enzyme_const retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --flatten-enzyme-caches --canonicalize --enzyme-simplify-math --canonicalize --cse | FileCheck %s
 
 func.func @square_ip(%arg0: memref<?xf32>, %ub: index) {
   affine.for %iv = 0 to %ub {
@@ -29,11 +29,11 @@ func.func @square_ip(%arg0: memref<?xf32>, %ub: index) {
 // CHECK-NEXT:       %[[a3:.+]] = affine.apply #map(%[[ridx]])
 // CHECK-NEXT:       %[[a4:.+]] = memref.load %arg1[%[[a3]]] : memref<?xf32>
 // CHECK-NEXT:       memref.store %cst, %arg1[%[[a3]]] : memref<?xf32>
-// CHECK-NEXT:       %[[a6:.+]] = arith.mulf %[[a4]], %[[a5]] : f32
-// CHECK-NEXT:       %[[a7:.+]] = arith.addf %[[a6]], %[[a6]] : f32
+// CHECK-NEXT:       %[[a6:.+]] = arith.mulf %[[a4]], %[[a5]] fastmath<fast> : f32
+// CHECK-NEXT:       %[[a7:.+]] = arith.addf %[[a6]], %[[a6]] fastmath<fast> : f32
 // CHECK-NEXT:       %[[a8:.+]] = affine.apply #map1(%[[ridx]])
 // CHECK-NEXT:       %[[a9:.+]] = memref.load %arg1[%[[a8]]] : memref<?xf32>
-// CHECK-NEXT:       %[[a10:.+]] = arith.addf %[[a9]], %[[a7]] : f32
+// CHECK-NEXT:       %[[a10:.+]] = arith.addf %[[a9]], %[[a7]] fastmath<fast> : f32
 // CHECK-NEXT:       memref.store %[[a10]], %arg1[%[[a8]]] : memref<?xf32>
 // CHECK-NEXT:     }
 // CHECK-NEXT:     memref.dealloc %[[alloc0]] : memref<?xf32>

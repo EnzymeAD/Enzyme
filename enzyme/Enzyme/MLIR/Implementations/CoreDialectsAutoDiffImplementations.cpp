@@ -12,17 +12,40 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "Passes/Utils.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
+
+#include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
+
+static llvm::cl::opt<bool> EnzymeMLIRFastMath(
+    "enzyme-mlir-fast-math", llvm::cl::init(true), llvm::cl::Hidden,
+    llvm::cl::desc("Build derivative expressions with fast-math enabled"));
+
+void mlir::enzyme::setDerivativeFastMath(Operation *op) {
+  if (!op || !EnzymeMLIRFastMath)
+    return;
+  if (auto iface = dyn_cast<arith::ArithFastMathInterface>(op))
+    op->setAttr(iface.getFastMathAttrName(),
+                arith::FastMathFlagsAttr::get(op->getContext(),
+                                              arith::FastMathFlags::fast));
+  else if (auto iface = dyn_cast<LLVM::FastmathFlagsInterface>(op))
+    op->setAttr(iface.getFastmathAttrName(),
+                LLVM::FastmathFlagsAttr::get(op->getContext(),
+                                             LLVM::FastmathFlags::fast));
+}
 
 mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                               llvm::StringRef value) {
@@ -75,8 +98,11 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   SmallVector<Value> newVals;
 
   SmallVector<int32_t> segSizes;
-  // Keep non-differentiated, non-forwarded operands
-  size_t non_forwarded = 0;
+  // Keep non-differentiated, non-forwarded operands. These are the ones ahead
+  // of the first operand any successor forwards -- a condition, a switch value.
+  // When no successor takes an operand there is no such boundary to find, and
+  // every operand the op has is one of these.
+  size_t non_forwarded = binst->getNumOperands();
   for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
     auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
     if (ops.empty())
@@ -171,15 +197,12 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
         if (contains(storedVals, operand.getOperandNumber()) ||
             contains(storedVals, -1)) {
-          if (auto iface =
-                  dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
-            if (!iface.isMutable()) {
-              Type retTy = iface.getShadowType(gutils->width);
-              auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
-                  builder, operand.get().getLoc());
-              newOperands.push_back(toret);
-              continue;
-            }
+          if (isa<AutoDiffTypeInterface>(operand.get().getType())) {
+            // Zero for an immutable value; for a mutable value -- an
+            // inactive pointer -- the primal is its own shadow.
+            newOperands.push_back(oputils::inactiveStoredValueShadow(
+                orig, *gutils, operand.get(), builder));
+            continue;
           }
         }
         orig->emitError()
@@ -217,6 +240,8 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     }
   }
   for (auto &&[i, oval] : llvm::enumerate(orig->getResults())) {
+    if (gutils->isConstantValue(oval))
+      continue;
     Value sval;
     if (gutils->width == 1) {
       sval = shadows[0]->getResult(i);
@@ -230,6 +255,13 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     gutils->setDiffe(oval, sval, builder);
   }
 
+  // A store into memory whose primal contents the caller declared unneeded
+  // (enzyme_dupnoneed) need not happen: the shadow store above is the whole
+  // of the derivative.
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(orig))
+    if (gutils->primalStoreElidable(store.getStoredPointer()))
+      gutils->erase(primal);
+
   return success();
 }
 
@@ -241,7 +273,7 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
 
   Value shadowRes = shadow->getResult(0);
 
-  gutils->setDiffe(orig->getResult(0), shadowRes, builder);
+  gutils->setInvertedPointer(orig->getResult(0), shadowRes);
   gutils->eraseIfUnused(orig);
 
   if (zero) {
@@ -483,22 +515,575 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   return success();
 }
 
-void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
-    DialectRegistry &registry) {
-  enzyme::registerAffineDialectAutoDiffInterface(registry);
-  enzyme::registerArithDialectAutoDiffInterface(registry);
-  enzyme::registerBuiltinDialectAutoDiffInterface(registry);
-  enzyme::registerComplexDialectAutoDiffInterface(registry);
-  enzyme::registerLLVMDialectAutoDiffInterface(registry);
-  enzyme::registerLLVMExtDialectAutoDiffInterface(registry);
-  enzyme::registerNVVMDialectAutoDiffInterface(registry);
-  enzyme::registerMathDialectAutoDiffInterface(registry);
-  enzyme::registerMemRefDialectAutoDiffInterface(registry);
-  enzyme::registerComplexDialectAutoDiffInterface(registry);
-  enzyme::registerSCFDialectAutoDiffInterface(registry);
-  enzyme::registerCFDialectAutoDiffInterface(registry);
-  enzyme::registerLinalgDialectAutoDiffInterface(registry);
-  enzyme::registerFuncDialectAutoDiffInterface(registry);
-  enzyme::registerTensorDialectAutoDiffInterface(registry);
-  enzyme::registerEnzymeDialectAutoDiffInterface(registry);
+namespace edetail = mlir::enzyme::detail;
+
+// The callee of `op`, or null where it is not a direct call to something this
+// can see the body of.
+static FunctionOpInterface getDirectCallee(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return nullptr;
+  auto sym = dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee());
+  if (!sym)
+    return nullptr;
+  return dyn_cast_or_null<FunctionOpInterface>(
+      SymbolTable::lookupNearestSymbolFrom(op, sym));
+}
+
+LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
+                                          MGradientUtils *gutils) {
+  DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  auto fn = getDirectCallee(orig);
+  if (!fn) {
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
+  }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
+  }
+
+  auto narg = orig->getNumOperands();
+  auto nret = orig->getNumResults();
+
+  std::vector<DIFFE_TYPE> RetActivity;
+  RetActivity.reserve(nret);
+  for (auto res : orig->getResults()) {
+    RetActivity.push_back(gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+                                                       : DIFFE_TYPE::DUP_ARG);
+  }
+
+  std::vector<DIFFE_TYPE> ArgActivity;
+  ArgActivity.reserve(narg);
+  for (auto arg : orig->getOperands()) {
+    if (gutils->isConstantValue(arg)) {
+      ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
+      continue;
+    }
+    // A pointer whose base the caller declared enzyme_dupnoneed keeps that
+    // declaration through the call: the callee is where the stores live,
+    // and it can only skip their primal halves if it is told.
+    ArgActivity.push_back(gutils->getDiffeTypeOfBase(arg) ==
+                                  DIFFE_TYPE::DUP_NONEED
+                              ? DIFFE_TYPE::DUP_NONEED
+                              : DIFFE_TYPE::DUP_ARG);
+  }
+
+  std::vector<bool> returnPrimal(nret, true);
+  std::vector<bool> returnShadow(nret, false);
+
+  auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+  bool freeMemory = true;
+  size_t width = gutils->width;
+
+  std::vector<bool> overwritten_args(narg, false);
+
+  auto forwardFn = gutils->Logic.CreateForwardDiff(
+      fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, mode, freeMemory,
+      width,
+      /* addedType */ nullptr, type_args, overwritten_args,
+      /* augmented */ nullptr, gutils->omp, gutils->postpasses,
+      gutils->verifyPostPasses, gutils->strongZero);
+
+  SmallVector<Value> fwdArguments;
+
+  for (auto &&[arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    fwdArguments.push_back(gutils->getNewFromOriginal(arg));
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+      fwdArguments.push_back(gutils->invertPointerM(arg, builder));
+  }
+
+  auto *fwdCallOp = cast<AutoDiffFunctionInterface>(forwardFn.getOperation())
+                        .createCall(builder, orig->getLoc(), fwdArguments);
+
+  SmallVector<Value> primals;
+  primals.reserve(nret);
+
+  int fwdIndex = 0;
+  for (auto &&[ret, act] : llvm::zip_equal(orig->getResults(), RetActivity)) {
+    auto fwdRet = fwdCallOp->getResult(fwdIndex);
+    primals.push_back(fwdRet);
+
+    fwdIndex++;
+
+    if (act == DIFFE_TYPE::DUP_ARG) {
+      gutils->setDiffe(ret, fwdCallOp->getResult(fwdIndex), builder);
+      fwdIndex++;
+    }
+  }
+
+  auto newOp = gutils->getNewFromOriginal(orig);
+  gutils->replaceOrigOpWith(orig, primals);
+  gutils->erase(newOp);
+
+  return success();
+}
+
+// A callee may already carry a hand-written reverse rule; that rule is used
+// as-is instead of one being derived for it.
+static Operation *getCustomRule(FunctionOpInterface func) {
+  auto attr = func->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule");
+  if (!attr)
+    return nullptr;
+
+  SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(func);
+  return symbolTable.lookup(attr.getRootReference());
+}
+
+// Split mode builds the callee's augmented primal and reverse out of a custom
+// reverse rule, whose signatures are spelled as builtin FunctionTypes (see
+// CreateSplitModeDiff). An llvm.func spells its signature as an
+// LLVMFunctionType, so a call to one still takes the combined-mode path
+// below.
+static bool splitModeSupported(FunctionOpInterface fn) {
+  return isa<FunctionType>(fn.getFunctionType());
+}
+
+// A call to a func-like callee is differentiated in split mode: the primal
+// becomes a call to the callee's augmented primal, which returns a tape, and
+// the adjoint becomes a call to the callee's reverse, which reads that tape.
+// Nothing the callee overwrote has to be reconstructed by the caller --
+// whatever the reverse needs was put on the tape while the primal ran.
+static LogicalResult callReverseHandlerSplit(Operation *orig,
+                                             OpBuilder &builder,
+                                             MGradientUtilsReverse *gutils,
+                                             SmallVector<Value> caches,
+                                             FunctionOpInterface fn) {
+  DerivativeMode mode = DerivativeMode::ReverseModeGradient;
+
+  auto narg = orig->getNumOperands();
+  auto nret = orig->getNumResults();
+
+  std::vector<DIFFE_TYPE> RetActivity;
+  for (auto res : orig->getResults()) {
+    RetActivity.push_back(
+        gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+        : cast<AutoDiffTypeInterface>(res.getType()).isMutable()
+            ? DIFFE_TYPE::DUP_ARG
+            : DIFFE_TYPE::OUT_DIFF);
+  }
+
+  // A custom reverse rule spells its argument activities as enzyme_dup /
+  // enzyme_active / enzyme_const, so dupnoneed is not distinguished here --
+  // a dupnoneed pointer is passed as plain dup, which is conservative.
+  std::vector<DIFFE_TYPE> ArgActivity;
+  for (auto arg : orig->getOperands()) {
+    ArgActivity.push_back(
+        gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
+        : cast<AutoDiffTypeInterface>(arg.getType()).isMutable()
+            ? DIFFE_TYPE::DUP_ARG
+            : DIFFE_TYPE::OUT_DIFF);
+  }
+
+  if (llvm::any_of(RetActivity,
+                   [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
+    return orig->emitError()
+           << "could not emit adjoint with mutable return types in: " << *orig
+           << "\n";
+  }
+
+  CallAugmentedPrimalOp primalCall;
+  CustomReverseRuleOp cr = nullptr;
+  if (Operation *crOp = getCustomRule(fn)) {
+    // The primal was already replaced by an augmented primal in cacheValues;
+    // point it at the rule the callee named.
+    cr = cast<CustomReverseRuleOp>(crOp);
+    primalCall = cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+  } else {
+    std::vector<bool> overwritten_args(narg, true);
+    std::vector<bool> returnShadow(nret, false);
+    std::vector<bool> returnPrimal(nret, false);
+
+    auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+    bool freeMemory = true;
+    size_t width = gutils->width;
+
+    auto myCr = gutils->Logic.CreateSplitModeDiff(
+        fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
+        mode, freeMemory, width, /*addedType*/ nullptr, type_args,
+        overwritten_args, /*augmented*/ nullptr, gutils->omp,
+        gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero);
+
+    SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
+
+    primalCall = cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+    primalCall.setFnAttr(myCr);
+
+    cr = cast<CustomReverseRuleOp>(symbolTable.lookup(myCr.getValue()));
+  }
+
+  {
+    auto crArgActivity = cr.getActivity();
+    auto crRetActivity = cr.getRetActivity();
+
+    if (crArgActivity.size() != ArgActivity.size())
+      return orig->emitError()
+             << "cannot apply custom rule for func " << fn.getNameAttr()
+             << " (wrong arg activity size)";
+
+    if (crRetActivity.size() != RetActivity.size())
+      return orig->emitError()
+             << "cannot apply custom rule to func " << fn.getNameAttr()
+             << " (wrong ret activity size)";
+
+    for (auto [act, crAct] : llvm::zip(ArgActivity, crArgActivity)) {
+      auto iattr = cast<ActivityAttr>(crAct);
+      auto val = iattr.getValue();
+
+      if ((val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF) ||
+          (val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG) ||
+          (val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT))
+        continue;
+
+      return orig->emitError(
+          "custom rule for function does not match operand activities");
+    }
+
+    for (auto [act, crAct] : llvm::zip(RetActivity, crRetActivity)) {
+      auto iattr = cast<ActivityAttr>(crAct);
+      auto val = iattr.getValue();
+
+      if ((val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF) ||
+          (val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG) ||
+          (val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT))
+        continue;
+
+      return orig->emitError(
+          "custom rule for function does not match result activities");
+    }
+  }
+
+  Value tape = gutils->popCache(caches[0], builder);
+
+  SmallVector<Value> operands;
+  SmallVector<Type> resultTypes;
+
+  for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
+    if (act == DIFFE_TYPE::OUT_DIFF) {
+      operands.push_back(gutils->diffe(res, builder));
+    }
+  }
+
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(primalCall);
+
+    int operandIndex = 0;
+    for (auto [act, operand] :
+         llvm::zip_equal(ArgActivity, orig->getOperands())) {
+      if (act == DIFFE_TYPE::OUT_DIFF) {
+        resultTypes.push_back(cast<AutoDiffTypeInterface>(operand.getType())
+                                  .getShadowType(/*width=*/1));
+      }
+      if (act == DIFFE_TYPE::DUP_ARG) {
+        operandIndex++;
+        primalCall->insertOperands(operandIndex,
+                                   gutils->invertPointerM(operand, builder));
+      }
+      operandIndex++;
+    }
+  }
+
+  auto revCall = CallCustomReverseOp::create(
+      builder, orig->getLoc(), resultTypes, cr.getSymName(), operands, tape);
+
+  int didx = 0;
+  for (auto [act, operand] :
+       llvm::zip_equal(ArgActivity, orig->getOperands())) {
+    if (act == DIFFE_TYPE::OUT_DIFF) {
+      Value diffe = revCall->getResult(didx);
+      gutils->addToDiffe(operand, diffe, builder);
+      didx++;
+    }
+  }
+
+  for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
+    if (act == DIFFE_TYPE::OUT_DIFF)
+      gutils->zeroDiffe(res, builder);
+  }
+
+  return success();
+}
+
+static SmallVector<Value> callCacheValuesSplit(Operation *orig,
+                                               MGradientUtilsReverse *gutils,
+                                               FunctionOpInterface fn) {
+  SmallVector<Value> cachedArguments;
+
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  OpBuilder cacheBuilder(newOp);
+
+  // The rule to call is only known once the adjoint has derived it; until
+  // then the augmented primal names a placeholder.
+  StringAttr symName = nullptr;
+  if (Operation *crOp = getCustomRule(fn)) {
+    symName = cast<CustomReverseRuleOp>(crOp).getSymNameAttr();
+  } else {
+    symName = StringAttr::get(orig->getContext(), "<placeholder>");
+  }
+
+  SmallVector<Value> operands(newOp->getOperands());
+
+  SmallVector<Type> resultTypes(newOp->getResultTypes());
+  resultTypes.push_back(enzyme::TapeType::get(orig->getContext()));
+
+  auto primal = CallAugmentedPrimalOp::create(cacheBuilder, orig->getLoc(),
+                                              resultTypes, symName, operands);
+
+  for (auto [oldRes, newRes] :
+       llvm::zip(newOp->getResults(), primal->getResults()))
+    oldRes.replaceAllUsesWith(newRes);
+
+  Value tape = primal.getTape();
+  cachedArguments.push_back(gutils->initAndPushCache(tape, cacheBuilder));
+
+  gutils->erase(newOp);
+  gutils->originalToNewFnOps[orig] = primal;
+
+  return cachedArguments;
+}
+
+// The combined-mode reverse call runs long after the forward one, against
+// whatever memory looks like by then -- even argument memory may have been
+// overwritten in between, and deciding which of it was is the overwritten-args
+// analysis Enzyme's LLVM side has and this side does not yet. Until it does,
+// only a callee that touches no memory at all is differentiable this way:
+// readnone, or every op in its body free of memory effects. (A func-like
+// callee sidesteps this entirely -- it goes through split mode above.)
+// Whether a memory-effects attribute -- later LLVM's spelling of
+// readnone -- rules out every kind of access.
+static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
+  return me && me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getOther() == LLVM::ModRefInfo::NoModRef &&
+         me.getErrnoMem() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem0() == LLVM::ModRefInfo::NoModRef &&
+         me.getTargetMem1() == LLVM::ModRefInfo::NoModRef;
+}
+
+static bool splitReverseMemoryOkImpl(Operation *orig, FunctionOpInterface fn,
+                                     SmallPtrSetImpl<Operation *> &visited) {
+  if (auto call = dyn_cast<LLVM::CallOp>(orig))
+    if (memoryEffectsNone(call.getMemoryEffectsAttr()))
+      return true;
+  if (auto llvmFn = dyn_cast<LLVM::LLVMFuncOp>(fn.getOperation())) {
+    if (memoryEffectsNone(llvmFn.getMemoryEffectsAttr()))
+      return true;
+    if (auto pass = llvmFn->getAttrOfType<ArrayAttr>("passthrough"))
+      for (Attribute a : pass)
+        if (auto s = dyn_cast<StringAttr>(a))
+          if (s.getValue() == "readnone")
+            return true;
+  }
+  if (fn.getFunctionBody().empty())
+    return false;
+  // A cycle contributes no effects beyond those already under check.
+  if (!visited.insert(fn.getOperation()).second)
+    return true;
+  WalkResult res = fn.getFunctionBody().walk([&](Operation *op) {
+    if (isMemoryEffectFree(op))
+      return WalkResult::advance();
+    // A call op answers conservatively for itself -- its effects are its
+    // callee's, so ask the callee.
+    if (auto callee = getDirectCallee(op))
+      if (splitReverseMemoryOkImpl(op, callee, visited))
+        return WalkResult::advance();
+    return WalkResult::interrupt();
+  });
+  return !res.wasInterrupted();
+}
+
+static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
+  SmallPtrSet<Operation *, 8> visited;
+  return splitReverseMemoryOkImpl(orig, fn, visited);
+}
+
+static LogicalResult checkSplitReverseMemory(Operation *orig,
+                                             FunctionOpInterface fn) {
+  if (splitReverseMemoryOk(orig, fn))
+    return success();
+  return orig->emitError()
+         << "cannot differentiate a call in reverse mode whose callee "
+            "touches memory; caching of overwritten arguments is not yet "
+            "implemented here: "
+         << fn.getNameAttr() << "\n";
+}
+
+static LogicalResult callReverseHandlerCombined(Operation *orig,
+                                                OpBuilder &builder,
+                                                MGradientUtilsReverse *gutils,
+                                                SmallVector<Value> caches,
+                                                FunctionOpInterface fn) {
+  DerivativeMode mode = DerivativeMode::ReverseModeGradient;
+
+  if (failed(checkSplitReverseMemory(orig, fn)))
+    return failure();
+
+  auto narg = orig->getNumOperands();
+  auto nret = orig->getNumResults();
+
+  std::vector<DIFFE_TYPE> RetActivity;
+  for (auto res : orig->getResults()) {
+    RetActivity.push_back(
+        gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+        : cast<AutoDiffTypeInterface>(res.getType()).isMutable()
+            ? DIFFE_TYPE::DUP_ARG
+            : DIFFE_TYPE::OUT_DIFF);
+  }
+
+  std::vector<DIFFE_TYPE> ArgActivity;
+  for (auto arg : orig->getOperands()) {
+    if (gutils->isConstantValue(arg)) {
+      ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
+      continue;
+    }
+    if (cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      // A pointer whose base the caller declared enzyme_dupnoneed keeps
+      // that declaration through the call: the callee is where the stores
+      // live, and it can only skip their primal halves if it is told.
+      ArgActivity.push_back(gutils->getDiffeTypeOfBase(arg) ==
+                                    DIFFE_TYPE::DUP_NONEED
+                                ? DIFFE_TYPE::DUP_NONEED
+                                : DIFFE_TYPE::DUP_ARG);
+      continue;
+    }
+    ArgActivity.push_back(DIFFE_TYPE::OUT_DIFF);
+  }
+
+  if (llvm::any_of(RetActivity,
+                   [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
+    return orig->emitError()
+           << "could not emit adjoint with mutable return types in: " << *orig
+           << "\n";
+  }
+
+  std::vector<bool> overwritten_args(narg, true);
+  std::vector<bool> returnShadow(nret, false);
+  std::vector<bool> returnPrimal(nret, false);
+
+  auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+  bool freeMemory = true;
+  size_t width = gutils->width;
+
+  auto revFn = gutils->Logic.CreateReverseDiff(
+      fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
+      mode, freeMemory, gutils->AtomicAdd, width, /*addedType*/ nullptr,
+      type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
+      gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
+      /*markReadonly=*/false);
+
+  SmallVector<Value> revArguments;
+
+  size_t cacheIdx = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+      revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+  }
+  assert(cacheIdx == caches.size());
+
+  for (auto result : orig->getResults()) {
+    if (gutils->isConstantValue(result))
+      continue;
+    revArguments.push_back(gutils->diffe(result, builder));
+  }
+
+  auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
+                        .createCall(builder, orig->getLoc(), revArguments);
+
+  int revIndex = 0, fwdIndex = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    fwdIndex++;
+
+    if (gutils->isConstantValue(arg))
+      continue;
+
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
+      cast<ClonableTypeInterface>(arg.getType())
+          .freeClonedValue(builder, revArguments[fwdIndex - 1]);
+      fwdIndex++;
+    } else {
+      auto diffe = revCallOp->getResult(revIndex);
+      gutils->addToDiffe(arg, diffe, builder);
+      revIndex++;
+    }
+  }
+
+  return success();
+}
+
+static SmallVector<Value> callCacheValuesCombined(Operation *orig,
+                                                  MGradientUtilsReverse *gutils,
+                                                  FunctionOpInterface fn) {
+  SmallVector<Value> cachedArguments;
+
+  // A callee the adjoint will refuse gets nothing cached: the caching of
+  // pointer arguments would already need the sizes and copies that the
+  // refusal is about.
+  if (!splitReverseMemoryOk(orig, fn))
+    return cachedArguments;
+
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  OpBuilder cacheBuilder(newOp);
+
+  for (auto arg : orig->getOperands()) {
+    Value toCache = gutils->getNewFromOriginal(arg);
+    if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
+      toCache = iface.cloneValue(cacheBuilder, toCache);
+    }
+    Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
+    cachedArguments.push_back(cache);
+    // A mutable shadow is a value of the forward pass -- a shadow of a
+    // pointer derived inside a loop body, say -- and the reverse pass
+    // cannot always rebuild it. Cache it beside its primal; the shadow
+    // buffer itself is shared, so it is the pointer that is put by, not a
+    // copy. (Groundwork: a memory-touching callee is refused until
+    // overwritten-args support lands, so this does not fire yet.)
+    if (!gutils->isConstantValue(arg) &&
+        cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      Value shadow = gutils->invertPointerM(arg, cacheBuilder);
+      cachedArguments.push_back(gutils->initAndPushCache(shadow, cacheBuilder));
+    }
+  }
+
+  return cachedArguments;
+}
+
+LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
+                                          MGradientUtilsReverse *gutils,
+                                          SmallVector<Value> caches) {
+  auto fn = getDirectCallee(orig);
+  if (!fn) {
+    return orig->emitError()
+           << "could not find the callee of: " << *orig << "\n";
+  }
+  if (fn.getFunctionBody().empty()) {
+    return orig->emitError()
+           << "cannot differentiate a call to a function without a body and "
+              "without a registered derivative: "
+           << fn.getNameAttr() << "\n";
+  }
+
+  if (splitModeSupported(fn))
+    return callReverseHandlerSplit(orig, builder, gutils, caches, fn);
+  return callReverseHandlerCombined(orig, builder, gutils, caches, fn);
+}
+
+SmallVector<Value> edetail::callCacheValues(Operation *orig,
+                                            MGradientUtilsReverse *gutils) {
+  // A callee the adjoint will refuse gets nothing cached, and the primal is
+  // left as the plain call it already is.
+  auto fn = getDirectCallee(orig);
+  if (!fn || fn.getFunctionBody().empty())
+    return SmallVector<Value>();
+
+  if (splitModeSupported(fn))
+    return callCacheValuesSplit(orig, gutils, fn);
+  return callCacheValuesCombined(orig, gutils, fn);
 }

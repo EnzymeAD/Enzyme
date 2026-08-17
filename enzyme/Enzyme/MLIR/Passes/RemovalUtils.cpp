@@ -13,10 +13,16 @@
 #include "Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include <cassert>
 #include <deque>
 
+// loop-invariant cache requires a copy, which is implemented using an scf.for
+#include "mlir/Dialect/SCF/IR/SCF.h"
+
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PointerIntPair.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -140,15 +146,101 @@ void mlir::enzyme::removalBlockExplore(
   }
 }
 
-typedef llvm::PointerUnion<Operation *, Value> Node;
+namespace {
+
+// A node in the compute/flow graph. It identifies either an operation or a
+// value, plus a one-bit "outgoing" side selector used by the node-split min-cut
+// (see minCutValues): a value is split into an incoming endpoint
+// (outgoing=false) and an outgoing endpoint (outgoing=true); an operation is
+// never split (outgoing is always false).
+//
+// The op-or-value pointer and the bit are packed into a PointerIntPair so that
+// Node stays pointer-sized and pointer-like -- usable directly in
+// SmallPtrSet/DenseMap/MapVector via the trait specializations below. Use the
+// isValue()/isOperation()/getValue()/getOperation() accessors to inspect it.
+struct Node {
+  using Base = llvm::PointerUnion<Operation *, Value>;
+  llvm::PointerIntPair<Base, 1, bool> pair;
+
+  Node() : pair(Base(), false) {}
+  Node(Operation *op) : pair(Base(op), false) {}
+  Node(Value v, bool outgoing = false) : pair(Base(v), outgoing) {}
+  Node(Base base, bool outgoing) : pair(base, outgoing) {
+    assert((base.isNull() || isa<Value>(base) || !outgoing) &&
+           "operations are never split: they have a single endpoint");
+  }
+
+  Base getBase() const { return pair.getPointer(); }
+  bool outgoing() const { return pair.getInt(); }
+  bool isNull() const { return getBase().isNull(); }
+
+  bool isValue() const {
+    Base b = getBase();
+    return isa<Value>(b);
+  }
+  bool isOperation() const {
+    Base b = getBase();
+    return isa<Operation *>(b);
+  }
+  Value getValue() const {
+    Base b = getBase();
+    return cast<Value>(b);
+  }
+  Operation *getOperation() const {
+    Base b = getBase();
+    return cast<Operation *>(b);
+  }
+  // The value if this node is one, otherwise a null Value.
+  Value dynValue() const {
+    Base b = getBase();
+    return dyn_cast_if_present<Value>(b);
+  }
+
+  bool operator==(const Node &o) const { return pair == o.pair; }
+  bool operator!=(const Node &o) const { return pair != o.pair; }
+
+  void *getOpaqueValue() const { return pair.getOpaqueValue(); }
+  static Node getFromOpaqueValue(void *p) {
+    Node n;
+    n.pair = llvm::PointerIntPair<Base, 1, bool>::getFromOpaqueValue(p);
+    return n;
+  }
+};
+
+} // namespace
+
+// Make Node usable as a pointer-like key/element (SmallPtrSet, DenseMap, ...)
+// by delegating to the packed PointerIntPair. DenseMap tracks empty/tombstone
+// buckets out-of-band, so only getHashValue/isEqual are required (matching the
+// DenseMapInfo LLVM provides for raw pointers and PointerIntPair).
+//
+// These name templates in namespace llvm, so they cannot sit inside the
+// anonymous namespace above; specializing on an internal-linkage type from
+// here is fine, and keeps the specializations internal too.
+template <> struct llvm::PointerLikeTypeTraits<Node> {
+  using Inner = llvm::PointerIntPair<Node::Base, 1, bool>;
+  static inline void *getAsVoidPointer(Node n) { return n.getOpaqueValue(); }
+  static inline Node getFromVoidPointer(void *p) {
+    return Node::getFromOpaqueValue(p);
+  }
+};
+
+template <> struct llvm::DenseMapInfo<Node> {
+  using Inner = llvm::PointerIntPair<Node::Base, 1, bool>;
+  static unsigned getHashValue(const Node &n) {
+    return llvm::DenseMapInfo<Inner>::getHashValue(n.pair);
+  }
+  static bool isEqual(const Node &a, const Node &b) { return a.pair == b.pair; }
+};
+
+namespace {
 
 void dump(const Node &n) {
-  if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", "
-                 << "Value"
-                 << "]\n";
-  else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
+  if (n.isValue())
+    llvm::errs() << "[" << n.getValue() << ", "
+                 << (n.outgoing() ? "Value(out)" : "Value(in)") << "]\n";
+  else if (n.isOperation())
+    llvm::errs() << "[" << *n.getOperation() << ", "
                  << "Operation"
                  << "]\n";
   else
@@ -159,8 +251,16 @@ void dump(const Node &n) {
                  << "]\n";
 }
 
-struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
-  const SmallPtrSet<Node, 2> &at(const Node &n) {
+// The adjacency sets are insertion-ordered rather than hashed. A Node wraps a
+// Value or Operation pointer, so iterating a SmallPtrSet of them visits
+// neighbours in address order, which varies run to run under ASLR. The max
+// flow below then explores augmenting paths in a different order and, whenever
+// several minimum cuts have the same capacity, settles on a different one --
+// producing correct but different caching decisions on every run.
+using NodeSet = llvm::SmallSetVector<Node, 2>;
+
+struct Graph : public llvm::MapVector<Node, NodeSet> {
+  const NodeSet &at(const Node &n) {
     auto found = find(n);
     assert(found != end());
     return found->second;
@@ -171,11 +271,12 @@ static void dumpGraphviz(Graph &G) {
   auto serialize = [&](Node n) -> std::string {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    if (isa<Value>(n)) {
-      auto v = cast<Value>(n);
+    if (n.isValue()) {
+      auto v = n.getValue();
+      const char *side = n.outgoing() ? "[val:out]" : "[val:in]";
       if (isa<OpResult>(v)) {
         auto res = cast<OpResult>(v);
-        ss << "[val](" << res.getResultNumber() << ")";
+        ss << side << "(" << res.getResultNumber() << ")";
         if (res.getOwner()->hasAttr("dbg")) {
           auto dbg = res.getOwner()->getAttrOfType<StringAttr>("dbg");
           ss << dbg.getValue();
@@ -183,10 +284,10 @@ static void dumpGraphviz(Graph &G) {
           ss << res.getOwner()->getName().getStringRef();
         }
       } else {
-        ss << "[val]" << v;
+        ss << side << v;
       }
-    } else if (isa<Operation *>(n)) {
-      auto op = cast<Operation *>(n);
+    } else if (n.isOperation()) {
+      auto op = n.getOperation();
       ss << "[op]";
       if (op->hasAttr("dbg")) {
         auto dbg = op->getAttrOfType<StringAttr>("dbg");
@@ -263,11 +364,46 @@ static inline void bfs(const Graph &G, const llvm::SetVector<Value> &Sources,
   }
 }
 
+static inline bool isLoadMovable(Operation *op) {
+  if (!hasSingleEffect<MemoryEffects::Read>(op)) {
+    return false;
+  }
+  return op->hasAttr("enzyme.readonly");
+}
+
+static inline bool isMovable(Operation *op);
+static inline bool isRegionBranchMovable(RegionBranchOpInterface regionBranch) {
+  // We can move region ops that only contain pure operations. As a heuristic,
+  // we only consider non-looping ops.
+  if (regionBranch.hasLoop())
+    return false;
+  for (auto &region : regionBranch->getRegions()) {
+    // Regions with multiple blocks potentially contain loops
+    if (!region.hasOneBlock())
+      return false;
+
+    for (auto &bodyOp : region.front()) {
+      if (auto bodyRegionBranch = dyn_cast<RegionBranchOpInterface>(&bodyOp)) {
+        if (!isRegionBranchMovable(bodyRegionBranch))
+          return false;
+        // Terminators are considered not movable, but do not impact our ability
+        // to move their enclosing region op.
+      } else if (&bodyOp != region.front().getTerminator() &&
+                 !isMovable(&bodyOp)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(Operation *op) {
+  if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(op))
+    return isRegionBranchMovable(regionBranch);
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
-         mlir::isPure(op);
+         (mlir::isPure(op) || isLoadMovable(op));
 }
 
 // Given a graph `G`, construct a new graph `G2`, where all paths must terminate
@@ -418,6 +554,196 @@ static void annotate_ops(Block *forward, Block *reverse) {
   });
 }
 
+// The node used when a graph node is the outgoing (tail) endpoint of an edge: a
+// value uses its outgoing endpoint (outgoing=true), an operation uses its
+// single node.
+static Node edgeTail(Node n) {
+  if (Value v = n.dynValue())
+    return Node(v, /*outgoing=*/true);
+  return n;
+}
+// The node used when a graph node is the incoming (head) endpoint of an edge: a
+// value uses its incoming endpoint (outgoing=false), an operation uses its
+// single node.
+static Node edgeHead(Node n) {
+  if (Value v = n.dynValue())
+    return Node(v, /*outgoing=*/false);
+  return n;
+}
+
+// Given the compute graph `Orig` (with `roots` the non-recomputable sources and
+// `Required` the operations that force a value to be live in reverse), return
+// the minimal set of values to cache.
+//
+// The cut is computed on a node-split version of the graph: every value V is
+// split into an incoming node (outgoing=false) and an outgoing node
+// (outgoing=true) joined by a single unit-capacity edge, so that all of V's
+// flow funnels through it and caching V costs exactly one regardless of how
+// many operations consume it. Operations are not split. Since the split graph
+// is a plain `Graph` over the same `Node` type, the existing bfs/dump utilities
+// apply to it directly.
+static SetVector<Value> minCutValues(const Graph &Orig,
+                                     const SetVector<Value> &roots,
+                                     const SetVector<Operation *> &Required) {
+  Graph G;
+  // Build the node-split graph. Each original edge is either operation->value
+  // (a definition) or value->operation (a use).
+  for (const auto &pair : Orig) {
+    Node A = pair.first;
+    // Internal split edge for the tail value (no-op for an operation).
+    if (Value va = A.dynValue())
+      G[Node(va, /*outgoing=*/false)].insert(Node(va, /*outgoing=*/true));
+    for (Node B : pair.second) {
+      G[edgeTail(A)].insert(edgeHead(B));
+      // Internal split edge for the head value (no-op for an operation).
+      if (Value vb = B.dynValue())
+        G[Node(vb, /*outgoing=*/false)].insert(Node(vb, /*outgoing=*/true));
+    }
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "node-split flow graph: \n";);
+  LLVM_DEBUG(dump(G));
+
+  // Save the original edges for cut extraction; the max-flow below mutates G
+  // into its residual graph. The flow sources are the incoming endpoints of the
+  // roots, which is exactly what bfs() seeds from a set of root values.
+  Graph Split = G;
+
+  // Edmonds-Karp: repeatedly augment along a shortest source->sink path in the
+  // residual graph until no augmenting path remains. All edges have unit
+  // capacity, represented by set membership.
+  while (true) {
+    DenseMap<Node, Node> parent;
+    bfs(G, roots, parent);
+    Node end;
+    for (Operation *req : Required) {
+      if (parent.count(Node(req))) {
+        end = Node(req);
+        break;
+      }
+    }
+    if (end.isNull())
+      break;
+    // Flip the residual edges along the found path, stopping at the source (a
+    // root's incoming endpoint).
+    Node v = end;
+    while (true) {
+      assert(parent.count(v));
+      Node u = parent.find(v)->second;
+      assert(!u.isNull());
+      G[u].remove(v);
+      G[v].insert(u);
+      if (u.isValue() && !u.outgoing() && roots.contains(u.getValue()))
+        break;
+      v = u;
+    }
+  }
+
+  // Reachable set from the sources in the residual graph.
+  DenseMap<Node, Node> parent;
+  bfs(G, roots, parent);
+
+  LLVM_DEBUG(llvm::dbgs() << "residual flow graph: \n";);
+  LLVM_DEBUG(dump(G));
+
+  // The min cut is the set of edges from a reachable node to a non-reachable
+  // node in the original graph. Each such edge names exactly one value to
+  // cache: the value being transported across it. Because values are split,
+  // this edge is one of
+  //   - the internal split edge V_in -> V_out  (=> cache V), or
+  //   - a use edge V_out -> op                 (=> cache V), or
+  //   - a def edge op -> V_in                  (=> cache the produced value).
+  // Operations are never split, so at least one endpoint of the cut edge is a
+  // value, and that value is the one to cache.
+  SetVector<Value> newCaches;
+  for (const auto &pair : Split) {
+    if (!parent.count(pair.first))
+      continue;
+    for (const Node &N : pair.second) {
+      if (parent.count(N))
+        continue;
+      assert((pair.first.isValue() || N.isValue()) &&
+             "min-cut edge must transport a value");
+      Value cache = pair.first.isValue() ? pair.first.getValue() : N.getValue();
+      newCaches.insert(cache);
+    }
+  }
+  return newCaches;
+}
+
+// When the min cut is ambiguous, prefer caching the LAST value in a computation
+// chain.
+//
+// Max flow fixes the *capacity* of the cut but not which of the equal-capacity
+// cuts is returned, and `minCutValues` extracts the one reachable from the
+// sources -- i.e. the cut nearest the roots, which caches the earliest value in
+// every chain and leaves the longest possible tail to recompute in reverse.
+// Sliding a cut edge downstream past an operation that has a single graph user
+// and a single result yields another cut of the same capacity (the slid edge is
+// the only way from that value to a required op), so this never costs an extra
+// cache; it just shrinks what the reverse pass rebuilds.
+//
+// The size guard keeps the slide from trading a small buffer for a larger one:
+// capacities here are unit, so the flow minimizes the NUMBER of cached values,
+// not their bytes, and two equal-capacity cuts can differ in size.
+//
+// This mirrors the "push to cache the last value in a computation chain"
+// heuristic in the LLVM Enzyme mincut (Enzyme/DifferentialUseAnalysis.cpp).
+static void pushCachesDownstream(const Graph &Orig,
+                                 const SetVector<Operation *> &Required,
+                                 SetVector<Value> &newCaches) {
+  SmallVector<Value> todo(newCaches.begin(), newCaches.end());
+
+  while (!todo.empty()) {
+    Value cur = todo.pop_back_val();
+    // May have been slid away already by an earlier iteration.
+    if (!newCaches.contains(cur))
+      continue;
+
+    // `cur` must feed exactly one operation; otherwise moving the cut past it
+    // would mean caching several values in place of one.
+    auto users = Orig.find(Node(cur));
+    if (users == Orig.end() || users->second.size() != 1)
+      continue;
+    Node userNode = *users->second.begin();
+    if (!userNode.isOperation())
+      continue;
+    Operation *user = userNode.getOperation();
+
+    // A required operation consumes `cur` itself in the reverse pass, so there
+    // is nothing downstream of it to slide to.
+    if (Required.contains(user))
+      continue;
+
+    // ... and that operation must produce exactly one value.
+    auto results = Orig.find(userNode);
+    if (results == Orig.end() || results->second.size() != 1)
+      continue;
+    Node resNode = *results->second.begin();
+    if (!resNode.isValue())
+      continue;
+    Value next = resNode.getValue();
+
+    // Never slide into a deeper region: a value defined inside a nested block
+    // is live more often than the one it would replace. (The LLVM mincut makes
+    // the same check by loop nest, and additionally slides *outwards*; here we
+    // only ever move within one block.)
+    if (next.getParentBlock() != cur.getParentBlock())
+      continue;
+
+    // Never trade a cached buffer for a larger one.
+    if (computeSizeOfType(cur) < computeSizeOfType(next))
+      continue;
+
+    newCaches.remove(cur);
+    newCaches.insert(next);
+    // Keep sliding down the chain.
+    todo.push_back(next);
+  }
+}
+
+} // namespace
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
@@ -523,11 +849,20 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       continue;
     }
 
-    auto &&[_, inserted] = G[Node(owner)].insert(Node(todo));
+    bool inserted = G[Node(owner)].insert(Node(todo));
     if (inserted) {
       for (Value operand : owner->getOperands()) {
         G[Node(operand)].insert(Node(owner));
         worklist.push_back(operand);
+      }
+    }
+    if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner)) {
+      SetVector<Value> valuesDefinedAbove;
+      mlir::getUsedValuesDefinedAbove(regionBranch->getRegions(),
+                                      valuesDefinedAbove);
+      for (Value val : valuesDefinedAbove) {
+        G[Node(val)].insert(Node(regionBranch));
+        worklist.push_back(val);
       }
     }
   }
@@ -579,7 +914,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       for (auto user : todo.getUsers()) {
         Node N(user);
-        auto &&[_, inserted] = G[Node(todo)].insert(N);
+        bool inserted = G[Node(todo)].insert(N);
         if (inserted) {
           for (Value res : user->getResults()) {
             G[N].insert(Node(res));
@@ -590,9 +925,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
 
     for (auto N : G) {
-      if (!isa<Operation *>(N.first))
+      if (!N.first.isOperation())
         continue;
-      auto op = cast<Operation *>(N.first);
+      auto op = N.first.getOperation();
       if (op->getBlock() != reverse)
         continue;
       for (auto v : op->getOperands()) {
@@ -623,77 +958,25 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   Graph Orig = G;
 
-  // Augment the flow while there is a path from source to sink
-  while (1) {
-    DenseMap<Node, Node> parent;
-    bfs(G, roots, parent);
-    Node end;
-    for (auto req : Required) {
-      if (parent.find(Node(req)) != parent.end()) {
-        end = Node(req);
-        break;
-      }
-    }
-    if (end.isNull())
-      break;
-    // update residual capacities of the edges and reverse edges
-    // along the path
-    Node v = end;
-    while (1) {
-      assert(parent.find(v) != parent.end());
-      Node u = parent.find(v)->second;
-      assert(!u.isNull());
-      assert(G[u].count(v) == 1);
-      assert(G[v].count(u) == 0);
-      G[u].erase(v);
-      G[v].insert(u);
-      if (isa<Value>(u) && roots.contains(cast<Value>(u)))
-        break;
-      v = u;
-    }
-  }
+  // Compute the values to cache via a minimum cut. The cut is computed on a
+  // node-split version of the graph (see minCutValues), so that caching a value
+  // costs exactly one regardless of how many operations consume it. Without the
+  // split, a value used by N operations is charged N (one per outgoing edge),
+  // which causes the mincut to prefer caching several downstream values over a
+  // single cheaper upstream one (e.g. an input reused many times). This mirrors
+  // the node-splitting done by the LLVM Enzyme mincut in
+  // DifferentialUseAnalysis.cpp.
+  SetVector<Value> newCaches = minCutValues(Orig, roots, Required);
+
+  // The cut above is only one of several equal-capacity min cuts; slide it as
+  // far downstream as is free so the reverse pass recomputes as little as
+  // possible.
+  pushCachesDownstream(Orig, Required, newCaches);
+
   assert(rewriter.getInsertionPoint()->getBlock() == reverse);
-  // Flow is maximum now, find vertices reachable from s
-
-  DenseMap<Node, Node> parent;
-  bfs(G, roots, parent);
-
-  LLVM_DEBUG(llvm::dbgs() << "residual graph: \n";);
-  LLVM_DEBUG(dump(G));
-
-  // Those are the new values to cache
-  SetVector<Value> newCaches;
-
-  // All edges that are from a reachable vertex to non-reachable vertex in
-  // the original graph are edges for the minimum cut. The set of values to
-  // cache are the values transported along those edges (either. Value ->
-  // Operation or Operation -> Value).
-  //
-  // Note: we could use more heuristics here to select the actual cached
-  // value
-  //       based on sizes, existing caches, number of users in the fwd as to
-  //       not duplicate work, etc...
-  for (auto &pair : Orig) {
-    if (parent.find(pair.first) != parent.end()) {
-      for (auto N : pair.second) {
-        if (parent.find(N) == parent.end()) {
-          Value newCache;
-          if (isa<Value>(pair.first)) {
-            assert(isa<Operation *>(N));
-            newCache = cast<Value>(pair.first);
-          } else {
-            assert(isa<Operation *>(pair.first));
-            assert(isa<Value>(N));
-            newCache = cast<Value>(N);
-          }
-          newCaches.insert(newCache);
-        }
-      }
-    }
-  }
 
   // compute path from new caches to required
-  parent.clear();
+  DenseMap<Node, Node> parent;
   bfs(Orig, newCaches, parent);
 
   LLVM_DEBUG({
@@ -732,8 +1015,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue;
 
       auto nextF = *next.begin();
-      assert(isa<Operation *>(nextF));
-      auto opNext = cast<Operation *>(nextF);
+      assert(nextF.isOperation());
+      auto opNext = nextF.getOperation();
 
       if (Required.count(opNext))
         continue;
@@ -952,8 +1235,172 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
           ->dump());
 
-  // Set new caches
   caches0 = std::move(newCacheInfos);
+}
+
+static LogicalResult loopInvariantCacheImpl(CacheInfo info,
+                                            LoopLikeOpInterface fwdLoop,
+                                            LoopLikeOpInterface revLoop,
+                                            IRMapping &mapping,
+                                            int64_t threshold) {
+  Operation *definingOp = info.pushedValue().getDefiningOp();
+  if (!definingOp)
+    return failure();
+  auto loadOp = dyn_cast<memref::LoadOp>(definingOp);
+  if (!loadOp)
+    return failure();
+  auto alloc = loadOp.getMemRef();
+  auto allocaOp = dyn_cast_if_present<memref::AllocaOp>(alloc.getDefiningOp());
+  if (!allocaOp)
+    return failure();
+  // This transformation will store the entire allocation, so only store when
+  // it has a known "small" size.
+  if (!(allocaOp.getType().hasStaticShape() &&
+        allocaOp.getType().getNumElements() <= threshold)) {
+    return failure();
+  }
+
+  // Check if the allocation is written to inside the loop body
+  // TODO: need alias analysis for full correctness
+  auto walkResult = fwdLoop->walk([&alloc](Operation *op) {
+    if (hasEffect<MemoryEffects::Write>(op, alloc) || hasUnknownEffects(op))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  if (walkResult.wasInterrupted())
+    return failure();
+
+  ImplicitLocOpBuilder builder(alloc.getLoc(), info.initOp);
+  // Find the values that are necessary to re-compute the indices
+  SmallVector<Value> pushedValues;
+  SmallVector<Operation *> toCopy;
+  std::queue<Value> worklist;
+  DenseSet<Value> visited;
+  for (Value idx : loadOp.getIndices()) {
+    worklist.push(idx);
+    visited.insert(idx);
+  }
+  while (!worklist.empty()) {
+    Value curr = worklist.front();
+    worklist.pop();
+
+    if (mapping.contains(curr))
+      continue;
+    DominanceInfo dom;
+    // Check if we can just re-use the same value in forward and reverse
+    if (dom.dominates(curr, revLoop))
+      continue;
+
+    if (Operation *definingOp = curr.getDefiningOp()) {
+      // Push values that are defined outside the fwd loop while copying ops
+      // defined inside
+      if (fwdLoop->isProperAncestor(definingOp)) {
+        toCopy.push_back(definingOp);
+        for (Value operand : definingOp->getOperands()) {
+          if (!visited.contains(operand)) {
+            visited.insert(operand);
+            worklist.push(operand);
+          }
+        }
+      } else {
+        pushedValues.push_back(curr);
+      }
+    } else {
+      return failure();
+    }
+  }
+
+  // Make new caches for the values needed to store the indices
+  builder.setInsertionPoint(info.initOp);
+  SmallVector<Value> newInits =
+      llvm::map_to_vector(pushedValues, [&](Value val) -> Value {
+        return enzyme::InitOp::create(
+            builder, CacheType::get(val.getContext(), val.getType()));
+      });
+  builder.setInsertionPoint(fwdLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    enzyme::PushOp::create(builder, cache, val);
+  }
+
+  builder.setInsertionPoint(revLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    Value popped = enzyme::PopOp::create(builder, val.getType(), cache);
+    mapping.map(val, popped);
+  }
+
+  // Clone the ops necessary to re-compute the load indices
+  builder.setInsertionPoint(info.popOp);
+  for (Operation *op : llvm::reverse(toCopy)) {
+    builder.clone(*op, mapping);
+  }
+
+  Value cachedMemRef;
+  if (mapping.contains(alloc)) {
+    cachedMemRef = mapping.lookup(alloc);
+  } else {
+    builder.setInsertionPoint(info.initOp);
+    Value newCache = enzyme::InitOp::create(
+        builder, enzyme::CacheType::get(builder.getContext(), alloc.getType()));
+
+    builder.setInsertionPoint(fwdLoop);
+    Value copyAlloc = memref::AllocOp::create(
+        builder, allocaOp.getType(), allocaOp.getDynamicSizes(),
+        allocaOp.getSymbolOperands(), allocaOp.getAlignmentAttr());
+    // Copy over the contents in a loop nest so any resulting subviews may be
+    // folded
+    Value zero = arith::ConstantIndexOp::create(builder, 0);
+    Value one = arith::ConstantIndexOp::create(builder, 1);
+
+    int64_t rank = loadOp.getMemRefType().getRank();
+    SmallVector<Value> lbs(rank, zero);
+    SmallVector<Value> steps(rank, one);
+    SmallVector<Value> ubs(rank);
+    for (int64_t i = 0; i < rank; i++)
+      ubs[i] = memref::DimOp::create(builder, alloc, i);
+
+    scf::buildLoopNest(
+        builder, builder.getLoc(), lbs, ubs, steps,
+        [&](OpBuilder &bodyBuilder, Location loc, ValueRange ivs) {
+          Value loaded = memref::LoadOp::create(bodyBuilder, loc, alloc, ivs);
+          memref::StoreOp::create(bodyBuilder, loc, loaded, copyAlloc, ivs);
+        });
+
+    enzyme::PushOp::create(builder, newCache, copyAlloc);
+
+    builder.setInsertionPoint(revLoop);
+    cachedMemRef = enzyme::PopOp::create(builder, alloc.getType(), newCache);
+    mapping.map(alloc, cachedMemRef);
+  }
+
+  builder.setInsertionPoint(info.popOp);
+  SmallVector<Value> revIndices =
+      llvm::map_to_vector(loadOp.getIndices(), [&](Value idx) -> Value {
+        return mapping.lookupOrDefault(idx);
+      });
+
+  Value newLoad = memref::LoadOp::create(builder, cachedMemRef, revIndices);
+  info.popOp.replaceAllUsesWith(newLoad);
+  return success();
+}
+
+void mlir::enzyme::loopInvariantCache(SmallVectorImpl<CacheInfo> &caches,
+                                      LoopLikeOpInterface fwdLoop,
+                                      LoopLikeOpInterface revLoop,
+                                      const IRMapping &fwdrevmap,
+                                      int64_t threshold) {
+  SmallVector<CacheInfo> newCaches;
+  IRMapping mapping = fwdrevmap;
+  for (auto info : caches) {
+    if (succeeded(loopInvariantCacheImpl(info, fwdLoop, revLoop, mapping,
+                                         threshold))) {
+      info.pushOp->erase();
+      info.popOp->erase();
+      info.initOp->erase();
+    } else {
+      newCaches.push_back(info);
+    }
+  }
+  caches = std::move(newCaches);
 }
 
 mlir::enzyme::CacheInfo

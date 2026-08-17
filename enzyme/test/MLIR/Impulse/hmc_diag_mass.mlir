@@ -10,35 +10,35 @@ module {
     return %t#0, %s#1, %t#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
-  func.func @hmc_diag_mass(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
+  func.func @hmc_diag_mass(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inv_mass
       step_size = %step_size
       { hmc_config = #impulse.hmc_config<trajectory_length = 1.0>,
         name = "hmc_diag", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
-    return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 
-  func.func @nuts_diag_mass(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
+  func.func @nuts_diag_mass(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inv_mass
       step_size = %step_size
       { nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_diag", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
-    return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
 
 // CHECK-LABEL: func.func @hmc_diag_mass
-// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
+// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
 // CHECK-DAG: %[[INV_MASS:.+]] = arith.constant dense<[2.000000e+00, 3.000000e+00]> : tensor<2xf64>
 // CHECK-DAG: %[[MASS_SQRT:.+]] = arith.constant dense<[0.70710678118654746, 0.57735026918962584]> : tensor<2xf64>
 // CHECK-DAG: %[[HALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
@@ -88,7 +88,7 @@ module {
 // CHECK-NEXT: impulse.select {{.*}} : (tensor<i1>, tensor<f64>, tensor<f64>)
 
 // CHECK-LABEL: func.func @nuts_diag_mass
-// CHECK-SAME: (%{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
+// CHECK-SAME: (%{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
 // CHECK-DAG: %[[N_INV_MASS:.+]] = arith.constant dense<[2.000000e+00, 3.000000e+00]> : tensor<2xf64>
 // CHECK-DAG: %[[N_MASS_SQRT:.+]] = arith.constant dense<[0.70710678118654746, 0.57735026918962584]> : tensor<2xf64>
 // CHECK: impulse.for

@@ -13,12 +13,12 @@ module {
 }
 
 // CHECK:   func.func private @fwddiffesincos(%arg0: tensor<2xf64>, %arg1: tensor<2xf64>) -> tensor<2xf64> {
-// CHECK-NEXT:     %[[cos0:.+]] = math.cos %arg0 : tensor<2xf64>
-// CHECK-NEXT:     %[[dsin:.+]] = arith.mulf %arg1, %[[cos0]] : tensor<2xf64>
+// CHECK-NEXT:     %[[cos0:.+]] = math.cos %arg0 fastmath<fast> : tensor<2xf64>
+// CHECK-NEXT:     %[[dsin:.+]] = arith.mulf %arg1, %[[cos0]] fastmath<fast> : tensor<2xf64>
 // CHECK-NEXT:     %[[sin0:.+]] = math.sin %arg0 : tensor<2xf64>
-// CHECK-NEXT:     %[[sin1:.+]] = math.sin %[[sin0]] : tensor<2xf64>
-// CHECK-NEXT:     %[[negsin:.+]] = arith.negf %[[sin1]] : tensor<2xf64>
-// CHECK-NEXT:     %[[dcos:.+]] = arith.mulf %[[dsin]], %[[negsin]] : tensor<2xf64>
+// CHECK-NEXT:     %[[sin1:.+]] = math.sin %[[sin0]] fastmath<fast> : tensor<2xf64>
+// CHECK-NEXT:     %[[negsin:.+]] = arith.negf %[[sin1]] fastmath<fast> : tensor<2xf64>
+// CHECK-NEXT:     %[[dcos:.+]] = arith.mulf %[[dsin]], %[[negsin]] fastmath<fast> : tensor<2xf64>
 // CHECK-NEXT:     %[[cos1:.+]] = math.cos %[[sin0]] : tensor<2xf64>
 // CHECK-NEXT:     return %[[dcos]] : tensor<2xf64>
 // CHECK-NEXT:   }

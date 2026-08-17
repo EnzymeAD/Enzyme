@@ -324,7 +324,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (!shadow)
-    if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
+    if (isa<CmpInst>(user) || isAnyBranch(user) || isa<ReturnInst>(user) ||
         isa<FPExtInst>(user) || isa<FPTruncInst>(user)
         // isa<ExtractElement>(use) ||
         // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
@@ -1343,6 +1343,11 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       return;
 
     while (Pstart) {
+      // Constants and arguments are always available in the reverse pass, and
+      // thus need not be added to the recompute graph (which only contains
+      // instructions).
+      if (!isa<Instruction>(Pstart))
+        break;
       Intermediates.insert(Pstart);
       todo.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {

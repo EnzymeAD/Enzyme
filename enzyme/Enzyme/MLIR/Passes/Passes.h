@@ -15,9 +15,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "Dialect/Dialect.h"
 
@@ -91,6 +93,13 @@ namespace enzyme {
 class AutoDiffOp;
 bool inlineAutodiffOp(enzyme::AutoDiffOp &op, RewriterBase &rewriter,
                       SymbolTableCollection &symbolTable);
+
+/// Moves allocation/deallocation pairs that are private to one iteration of
+/// `loop` out of it, so the buffer is allocated once for the whole loop.
+/// `maxHoistedBytes` bounds the size of a hoisted buffer; 0 means no bound.
+/// Returns whether anything moved.
+bool hoistLoopAllocations(LoopLikeOpInterface loop,
+                          uint64_t maxHoistedBytes = 0);
 } // namespace enzyme
 
 } // end namespace mlir

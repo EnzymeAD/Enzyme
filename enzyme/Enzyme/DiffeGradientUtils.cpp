@@ -915,8 +915,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   tbuild.setFastMathFlags(getFast());
 
   // ensure we are before the terminator if it exists
-  if (tbuild.GetInsertBlock()->size() &&
-      tbuild.GetInsertBlock()->getTerminator()) {
+  if (hasTerminator(tbuild.GetInsertBlock())) {
     tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getTerminator());
   }
 
@@ -1014,21 +1013,21 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       if (start != 0) {
         auto i8 = Type::getInt8Ty(ptr->getContext());
         ptr = BuilderM.CreatePointerCast(
-            ptr, PointerType::get(
+            ptr, getPointerType(
                      i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
         auto off = ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
         ptr = BuilderM.CreateInBoundsGEP(i8, ptr, off);
       }
       if (needsCast) {
         ptr = BuilderM.CreatePointerCast(
-            ptr, PointerType::get(
+            ptr, getPointerType(
                      addingType,
                      cast<PointerType>(ptr->getType())->getAddressSpace()));
       }
       return ptr;
     };
     ptr = applyChainRule(
-        PointerType::get(
+        getPointerType(
             addingType,
             isa<PointerType>(origptr->getType())
                 ? cast<PointerType>(origptr->getType())->getAddressSpace()
@@ -1091,14 +1090,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto TmpOrig = getBaseObject(origptr);
 
   // atomics
-  bool Atomic = AtomicAdd;
-  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-
+  bool Atomic = isAtomic(origptr);
+  auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+  auto Arch = TT.getArch();
   // No need to do atomic on local memory for CUDA since it can't be raced
   // upon
-  if (isa<AllocaInst>(TmpOrig) &&
-      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-       Arch == Triple::amd_target)) {
+  if (isa<AllocaInst>(TmpOrig) && isGPUArch(TT)) {
     Atomic = false;
   }
   // Moreover no need to do atomic on local shadows regardless since they are
@@ -1115,11 +1112,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     if (Arch == Triple::amd_target &&
         cast<PointerType>(origptr->getType())->getAddressSpace() == 4) {
       auto rule = [&](Value *ptr) {
-        return BuilderM.CreateAddrSpaceCast(ptr,
-                                            PointerType::get(addingType, 1));
+        return BuilderM.CreateAddrSpaceCast(ptr, getPointerType(addingType, 1));
       };
-      ptr =
-          applyChainRule(PointerType::get(addingType, 1), BuilderM, rule, ptr);
+      ptr = applyChainRule(getPointerType(addingType, 1), BuilderM, rule, ptr);
     }
 
     if (mask) {
@@ -1341,7 +1336,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
           if (start != 0) {
             tostore = Builder2.CreatePointerCast(
                 tostore,
-                PointerType::get(
+                getPointerType(
                     i8,
                     cast<PointerType>(tostore->getType())->getAddressSpace()));
             auto off = ConstantInt::get(Type::getInt64Ty(tostore->getContext()),
@@ -1350,10 +1345,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
           }
           auto AT = ArrayType::get(i8, nextStart - start);
           tostore = Builder2.CreatePointerCast(
-              tostore,
-              PointerType::get(
-                  AT,
-                  cast<PointerType>(tostore->getType())->getAddressSpace()));
+              tostore, getPointerType(AT, cast<PointerType>(tostore->getType())
+                                              ->getAddressSpace()));
           Builder2.CreateStore(Constant::getNullValue(AT), tostore);
         }
       }

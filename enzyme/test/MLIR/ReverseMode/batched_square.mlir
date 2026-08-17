@@ -19,9 +19,9 @@ module {
 
 // CHECK:  func.func private @diffe2square(%arg0: f64, %arg1: tensor<2xf64>) -> tensor<2xf64> {
 // CHECK-NEXT:    %0 = "enzyme.broadcast"(%arg0) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %1 = arith.mulf %arg1, %0 : tensor<2xf64>
+// CHECK-NEXT:    %1 = arith.mulf %arg1, %0 fastmath<fast> : tensor<2xf64>
 // CHECK-NEXT:    %2 = "enzyme.broadcast"(%arg0) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %3 = arith.mulf %arg1, %2 : tensor<2xf64>
-// CHECK-NEXT:    %4 = arith.addf %1, %3 : tensor<2xf64>
+// CHECK-NEXT:    %3 = arith.mulf %arg1, %2 fastmath<fast> : tensor<2xf64>
+// CHECK-NEXT:    %4 = arith.addf %1, %3 fastmath<fast> : tensor<2xf64>
 // CHECK-NEXT:    return %4 : tensor<2xf64>
 // CHECK-NEXT:  }

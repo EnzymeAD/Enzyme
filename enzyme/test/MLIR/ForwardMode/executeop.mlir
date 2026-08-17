@@ -40,21 +40,21 @@ module {
 // CHECK-NEXT:         113: ^bb1(%[[cst10]], %[[cst02]] : f64, f64)
 // CHECK-NEXT:       ]
 // CHECK-NEXT:     ^bb1(%[[a3:.+]]: f64, %[[da3:.+]]: f64):  // 2 preds: ^bb0, ^bb3
-// CHECK-NEXT:       %[[a4:.+]] = arith.mulf %[[dx]], %[[x]] : f64
-// CHECK-NEXT:       %[[a5:.+]] = arith.mulf %[[dx]], %[[x]] : f64
-// CHECK-NEXT:       %[[a6:.+]] = arith.addf %[[a4]], %[[a5]] : f64
+// CHECK-NEXT:       %[[a4:.+]] = arith.mulf %[[dx]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:       %[[a5:.+]] = arith.mulf %[[dx]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:       %[[a6:.+]] = arith.addf %[[a4]], %[[a5]] fastmath<fast> : f64
 // CHECK-NEXT:       %[[a7:.+]] = arith.mulf %[[x]], %[[x]] : f64
 // CHECK-NEXT:       scf.yield %[[a7]], %[[a6]], %[[a3]], %[[da3]] : f64, f64, f64, f64
 // CHECK-NEXT:     ^bb2:  // pred: ^bb0
-// CHECK-NEXT:       %[[b8:.+]] = arith.addf %[[dx]], %[[dx]] : f64
+// CHECK-NEXT:       %[[b8:.+]] = arith.addf %[[dx]], %[[dx]] fastmath<fast> : f64
 // CHECK-NEXT:       %[[b9:.+]] = arith.addf %[[x]], %[[x]] : f64
 // CHECK-NEXT:       scf.yield %[[b9]], %[[b8]], %[[cst2]], %[[cst0]] : f64, f64, f64, f64
 // CHECK-NEXT:     ^bb3:  // pred: ^bb0
 // CHECK-NEXT:       cf.br ^bb1(%[[x]], %[[dx]] : f64, f64)
 // CHECK-NEXT:     }
-// CHECK-NEXT:     %[[r1:.+]] = arith.mulf %[[r0]]#1, %[[r0]]#2 : f64
-// CHECK-NEXT:     %[[r2:.+]] = arith.mulf %[[r0]]#3, %[[r0]]#0 : f64
-// CHECK-NEXT:     %[[r3:.+]] = arith.addf %[[r1]], %[[r2]] : f64
+// CHECK-NEXT:     %[[r1:.+]] = arith.mulf %[[r0]]#1, %[[r0]]#2 fastmath<fast> : f64
+// CHECK-NEXT:     %[[r2:.+]] = arith.mulf %[[r0]]#3, %[[r0]]#0 fastmath<fast> : f64
+// CHECK-NEXT:     %[[r3:.+]] = arith.addf %[[r1]], %[[r2]] fastmath<fast> : f64
 // CHECK-NEXT:     %[[r4:.+]] = arith.mulf %[[r0]]#0, %[[r0]]#2 : f64
 // CHECK-NEXT:     return %[[r3]] : f64
 // CHECK-NEXT:   }

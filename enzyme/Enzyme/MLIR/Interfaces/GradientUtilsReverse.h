@@ -13,6 +13,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include "Analysis/DataFlowAliasAnalysis.h"
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"
 

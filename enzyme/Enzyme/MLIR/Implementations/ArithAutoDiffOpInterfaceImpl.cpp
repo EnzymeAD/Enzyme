@@ -94,11 +94,141 @@ struct ArithSubFSimplifyMathInterface
     }
 
     if (matchPattern(op.getLhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOpWithNewOp<arith::NegFOp>(op, op.getRhs());
+      rewriter.replaceOpWithNewOp<arith::NegFOp>(op, op.getRhs(),
+                                                 op.getFastmathAttr());
       return success();
     }
 
     return failure();
+  }
+};
+
+// An active operand contributes its shadow; a constant immutable operand a
+// zero. A constant mutable operand has no shadow of its own -- hand back the
+// primal and warn, pending proper runtime activity handling.
+static Value operandTangent(Value v, Operation *op, OpBuilder &builder,
+                            MGradientUtils *gutils) {
+  if (!gutils->isConstantValue(v))
+    return gutils->invertPointerM(v, builder);
+  auto iface = dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()));
+  if (iface && !iface.isMutable())
+    return iface.createNullValue(builder, op->getLoc());
+  op->emitWarning()
+      << "constant mutable operand of an active select is passed through "
+         "as its own shadow pending runtime activity handling";
+  return gutils->getNewFromOriginal(v);
+}
+
+// The condition carries no tangent; the result's tangent follows the same
+// choice between the branch tangents, a constant branch contributing zero.
+// Reverse-generated adjoints are full of these selects, and forward-over-
+// reverse differentiates them again.
+struct SelectOpFwdInterface
+    : public AutoDiffOpInterface::ExternalModel<SelectOpFwdInterface,
+                                                arith::SelectOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    gutils->eraseIfUnused(op);
+    if (gutils->isConstantInstruction(op))
+      return success();
+    // The same rule serves values and pointers: a value's tangent and a
+    // pointer's shadow both follow the choice the primal made.
+    Value cond = gutils->getNewFromOriginal(selectOp.getCondition());
+    Value dTrue = operandTangent(selectOp.getTrueValue(), op, builder, gutils);
+    Value dFalse =
+        operandTangent(selectOp.getFalseValue(), op, builder, gutils);
+    Value tangent =
+        arith::SelectOp::create(builder, op->getLoc(), cond, dTrue, dFalse);
+    gutils->setDiffe(selectOp.getResult(), tangent, builder);
+    return success();
+  }
+};
+
+struct SelectOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<SelectOpInterfaceReverse,
+                                                       arith::SelectOp> {
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    // TODO: ideally make part of tablegen, handling both float and pointer
+    // values
+    if (!gutils->isConstantValue(selectOp.getResult())) {
+      auto iface =
+          dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+      if (iface && iface.isMutable()) {
+        return success();
+      }
+
+      Value condition = gutils->popCache(caches.front(), builder);
+
+      auto siface =
+          cast<AutoDiffTypeInterface>(getShadowType(selectOp.getType()));
+      Value zero = siface.createNullValue(builder, selectOp.getLoc());
+      Value dret = gutils->diffe(selectOp.getResult(), builder);
+      gutils->zeroDiffe(selectOp.getResult(), builder);
+      if (!gutils->isConstantValue(selectOp.getTrueValue())) {
+        Value trueSelect = arith::SelectOp::create(builder, selectOp.getLoc(),
+                                                   condition, dret, zero);
+
+        gutils->addToDiffe(selectOp.getTrueValue(), trueSelect, builder);
+      }
+      if (!gutils->isConstantValue(selectOp.getFalseValue())) {
+        Value falseSelect = arith::SelectOp::create(builder, selectOp.getLoc(),
+                                                    condition, zero, dret);
+        gutils->addToDiffe(selectOp.getFalseValue(), falseSelect, builder);
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    SmallVector<Value> caches;
+    if (!gutils->isConstantValue(selectOp.getResult())) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+      auto iface =
+          dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+      if (iface && iface.isMutable()) {
+        return caches;
+      }
+
+      caches.push_back(gutils->initAndPushCache(
+          gutils->getNewFromOriginal(selectOp.getCondition()), cacheBuilder));
+    }
+    return caches;
+  }
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    if (gutils->isConstantValue(selectOp.getResult()))
+      return success();
+
+    auto iface =
+        dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+    if (iface && iface.isMutable()) {
+      auto shadowOp = arith::SelectOp::create(
+          builder, selectOp.getLoc(),
+          gutils->getNewFromOriginal(selectOp.getCondition()),
+          gutils->invertPointerM(selectOp.getTrueValue(), builder),
+          gutils->invertPointerM(selectOp.getFalseValue(), builder));
+      gutils->setInvertedPointer(selectOp.getResult(), shadowOp.getResult());
+    }
+    return success();
+  }
+};
+
+struct SelectActivityInterface
+    : public ActivityOpInterface::ExternalModel<SelectActivityInterface,
+                                                arith::SelectOp> {
+  bool isInactive(Operation *op) const { return false; }
+  bool isArgInactive(Operation *op, size_t idx) const {
+    // arith.select is not inactive in general, but the condition is always
+    // inactive.
+    return idx == 0;
   }
 };
 
@@ -109,6 +239,9 @@ void mlir::enzyme::registerArithDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     registerInterfaces(context);
+    arith::SelectOp::attachInterface<SelectActivityInterface>(*context);
+    arith::SelectOp::attachInterface<SelectOpFwdInterface>(*context);
+    arith::SelectOp::attachInterface<SelectOpInterfaceReverse>(*context);
     arith::ConstantOp::attachInterface<ArithConstantOpBatchInterface>(*context);
     arith::AddFOp::attachInterface<ArithAddFSimplifyMathInterface>(*context);
     arith::SubFOp::attachInterface<ArithSubFSimplifyMathInterface>(*context);

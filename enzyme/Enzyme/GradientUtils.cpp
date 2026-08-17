@@ -48,6 +48,7 @@
 #include "llvm/IR/Value.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -505,7 +506,7 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     One = ConstantVector::getSplat(VTy->getElementCount(), One);
   }
   PN->addIncoming(One, lc.preheader);
-  lbuilder.SetInsertPoint(lc.header->getFirstNonPHI());
+  lbuilder.SetInsertPoint(getFirstNonPHI(lc.header));
   if (auto inst = dyn_cast<Instruction>(val)) {
     if (DT.dominates(PN, inst))
       lbuilder.SetInsertPoint(inst->getNextNode());
@@ -1904,18 +1905,20 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             goto rnextpair;
 
           {
-            auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+            auto bi1 = (isAnyBranch(block->getTerminator())
+                            ? cast<Instruction>(block->getTerminator())
+                            : nullptr);
             if (!bi1) {
               goto endCheck;
             }
 
-            auto cond1 = getOp(bi1->getCondition());
+            auto cond1 = getOp(getBranchCondition(bi1));
             if (cond1 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
-            auto bi2 = cast<BranchInst>(subblock->getTerminator());
-            auto cond2 = getOp(bi2->getCondition());
+            auto bi2 = cast<Instruction>(subblock->getTerminator());
+            auto cond2 = getOp(getBranchCondition(bi2));
             if (cond2 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
@@ -2203,9 +2206,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                        ConstantInt::get(prevIdx->getType(), 0));
 
         if (blocks[0]->size() == 1 && blocks[1]->size() == 1) {
-          if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-            if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-              if (B1->isUnconditional() && B2->isUnconditional() &&
+          if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                             ? cast<Instruction>(blocks[0]->getTerminator())
+                             : nullptr))
+            if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                               ? cast<Instruction>(blocks[1]->getTerminator())
+                               : nullptr))
+              if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                   B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
                 eraseBlocks(blocks, bret);
                 Value *toret = BuilderM.CreateSelect(
@@ -2279,14 +2286,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   fast:;
     assert(equivalentTerminator);
 
-    if (isa<BranchInst>(equivalentTerminator) ||
+    if (isAnyBranch(equivalentTerminator) ||
         isa<SwitchInst>(equivalentTerminator)) {
       BasicBlock *oldB = BuilderM.GetInsertBlock();
 
       SmallVector<BasicBlock *, 2> predBlocks;
       Value *cond = nullptr;
-      if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
-        cond = branch->getCondition();
+      if (auto branch = (isAnyBranch(equivalentTerminator)
+                             ? cast<Instruction>(equivalentTerminator)
+                             : nullptr)) {
+        cond = getBranchCondition(branch);
         predBlocks.push_back(branch->getSuccessor(0));
         predBlocks.push_back(branch->getSuccessor(1));
       } else {
@@ -2373,11 +2382,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
       // Fast path to not make a split block if no additional instructions
       // were made in the two blocks
-      if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
+      if (isAnyBranch(equivalentTerminator) && blocks[0]->size() == 1 &&
           blocks[1]->size() == 1) {
-        if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-          if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-            if (B1->isUnconditional() && B2->isUnconditional() &&
+        if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                           ? cast<Instruction>(blocks[0]->getTerminator())
+                           : nullptr))
+          if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                             ? cast<Instruction>(blocks[1]->getTerminator())
+                             : nullptr))
+            if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                 B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
               eraseBlocks(blocks, bret);
               Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
@@ -2400,7 +2413,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
 
       bret->moveAfter(last);
-      if (isa<BranchInst>(equivalentTerminator)) {
+      if (isAnyBranch(equivalentTerminator)) {
         BuilderM.CreateCondBr(cond, blocks[0], blocks[1]);
       } else {
         auto SI = cast<SwitchInst>(equivalentTerminator);
@@ -3177,7 +3190,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   SmallPtrSet<Instruction *, 1> loopRematerializations;
   SmallPtrSet<Instruction *, 1> loopReallocations;
   SmallPtrSet<Instruction *, 1> loopShadowReallocations;
-  SmallPtrSet<Instruction *, 1> loopShadowZeroInits;
+  SmallSetVector<Instruction *, 1> loopShadowZeroInits;
   SmallPtrSet<Instruction *, 1> loopShadowRematerializations;
   Loop *origLI = nullptr;
   for (auto pair : rematerializableAllocations) {
@@ -3708,8 +3721,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       assert(TI);
       if (notForAnalysis.count(B)) {
         NB.CreateUnreachable();
-      } else if (auto BI = dyn_cast<BranchInst>(TI)) {
-        if (BI->isUnconditional()) {
+      } else if (auto BI =
+                     (isAnyBranch(TI) ? cast<Instruction>(TI) : nullptr)) {
+        if (isUnconditionalBranch(BI)) {
           if (notForAnalysis.count(BI->getSuccessor(0)))
             NB.CreateUnreachable();
           else
@@ -3724,9 +3738,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           } else if (notForAnalysis.count(BI->getSuccessor(1))) {
             NB.CreateBr(remap(BI->getSuccessor(0)));
           } else {
-            NB.CreateCondBr(
-                lookupM(getNewFromOriginal(BI->getCondition()), NB, available),
-                remap(BI->getSuccessor(0)), remap(BI->getSuccessor(1)));
+            NB.CreateCondBr(lookupM(getNewFromOriginal(getBranchCondition(BI)),
+                                    NB, available),
+                            remap(BI->getSuccessor(0)),
+                            remap(BI->getSuccessor(1)));
           }
         }
       } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
@@ -4158,8 +4173,8 @@ bool GradientUtils::legalRecompute(const Value *val,
               bool failed = false;
 
               allInstructionsBetween(
-                  const_cast<GradientUtils *>(this)->LI, origStart,
-                  const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
+                  *OrigLI, origStart, const_cast<Instruction *>(orig),
+                  [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
                             &TR, *OrigAA, TLI,
@@ -4675,14 +4690,10 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       return gvemd->getValue();
     }
 
-    auto Arch = llvm::Triple(arg->getParent()->getTargetTriple()).getArch();
-    int SharedAddrSpace = Arch == Triple::amd_target
-                              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-                              : 3;
+    auto TT = llvm::Triple(arg->getParent()->getTargetTriple());
+    int SharedAddrSpace = getGPUSharedAddrSpace(TT);
     int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
-    if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-         Arch == Triple::amd_target) &&
-        AddrSpace == SharedAddrSpace) {
+    if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
       assert(0 && "shared memory not handled in meta global");
     }
 
@@ -4824,6 +4835,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     }
   }
 
+  std::vector<bool> nowrite_shadows(fn->arg_size(), false);
+
   switch (mode) {
   case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode: {
@@ -4860,7 +4873,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
         /*shadowReturnUsed*/ false, type_args, subsequent_calls_may_write,
-        overwritten_args,
+        overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
         AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
@@ -4905,7 +4918,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     auto &augdata = Logic.CreateAugmentedPrimal(
         context, fn, retType, /*constant_args*/ types, TA, returnUsed,
         shadowReturnUsed, type_args, subsequent_calls_may_write,
-        overwritten_args,
+        overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
         AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
@@ -5074,7 +5087,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         if (start != 0) {
           ptr = BuilderM.CreatePointerCast(
               ptr,
-              PointerType::get(
+              getPointerType(
                   i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
           auto off =
               ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
@@ -5082,7 +5095,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
           valptr = BuilderM.CreatePointerCast(
               valptr,
-              PointerType::get(
+              getPointerType(
                   i8, cast<PointerType>(valptr->getType())->getAddressSpace()));
           valptr = BuilderM.CreateInBoundsGEP(i8, valptr, off);
         }
@@ -5101,11 +5114,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
           ty = ArrayType::get(i8, size);
 
         ptr = BuilderM.CreatePointerCast(
-            ptr, PointerType::get(
+            ptr, getPointerType(
                      ty, cast<PointerType>(ptr->getType())->getAddressSpace()));
         valptr = BuilderM.CreatePointerCast(
             valptr,
-            PointerType::get(
+            getPointerType(
                 ty, cast<PointerType>(valptr->getType())->getAddressSpace()));
         newval = BuilderM.CreateLoad(ty, valptr);
       }
@@ -5116,7 +5129,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
       if (invertedBarrier) {
         auto T_jlvalue = StructType::get(ptr->getContext(), {});
-        auto T_prjlvalue = PointerType::get(T_jlvalue, 10);
+        auto T_prjlvalue = getPointerType(T_jlvalue, 10);
 
         if (invertedBarrier->getType() != T_prjlvalue) {
           invertedBarrier =
@@ -5430,6 +5443,10 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
+}
+
+bool GradientUtils::isAtomic(Value *origptr) const {
+  return ::isAtomic(origptr, AtomicAdd, newFunc);
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5758,16 +5775,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
       }
 
-      auto Arch =
-          llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-      int SharedAddrSpace =
-          Arch == Triple::amd_target
-              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-              : 3;
+      auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+      int SharedAddrSpace = getGPUSharedAddrSpace(TT);
       int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
-      if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-           Arch == Triple::amd_target) &&
-          AddrSpace == SharedAddrSpace) {
+      if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         Type *type = arg->getValueType();
         // TODO this needs initialization by entry
@@ -6108,6 +6119,22 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         subTT = TT;
       } else {
         subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+        if (auto MD = hasMetadata(arg, "enzyme_truetype")) {
+          for (size_t i = 0; i < MD->getNumOperands(); i += 2) {
+            ConcreteType base(
+                llvm::cast<llvm::MDString>(MD->getOperand(i))->getString(),
+                MD->getContext());
+            auto offset =
+                llvm::cast<llvm::ConstantInt>(
+                    llvm::cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1))
+                        ->getValue())
+                    ->getSExtValue();
+            if (offset < Off || offset >= Off + ObjSize) {
+              continue;
+            }
+            subTT.insert({(int)(offset - Off)}, base);
+          }
+        }
         subTT.CanonicalizeInPlace(ObjSize, DL);
       }
 
@@ -6125,7 +6152,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
                     wrap(op), wrap(&bb)));
               else
-                EmitWarning("MixedActivityError", *arg, ss.str());
+                EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                                  MixedActivityHint);
             }
           }
         }
@@ -6239,7 +6267,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                             ErrorType::MixedActivityError, this,
                                             wrap(tval), wrap(&bb)));
         else
-          EmitWarning("MixedActivityError", *arg, ss.str());
+          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                            MixedActivityHint);
       }
       if (!itval) {
         itval = invertPointerM(tval, bb, TT);
@@ -6259,7 +6288,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                             ErrorType::MixedActivityError, this,
                                             wrap(fval), wrap(&bb)));
         else
-          EmitWarning("MixedActivityError", *arg, ss.str());
+          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
+                            MixedActivityHint);
       }
       if (!ifval) {
         ifval = invertPointerM(fval, bb, TT);
@@ -6509,7 +6539,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             return li;
           },
           invertPointerM(II->getArgOperand(0), bb));
-    case Intrinsic::masked_load:
+    case Intrinsic::masked_load: {
+      auto invDefault = invertPointerM(II->getArgOperand(3), bb, TT);
+      auto invPtr = invertPointerM(II->getArgOperand(0), bb);
       return applyChainRule(
           II->getType(), bb,
           [&](Value *ptr, Value *defaultV) {
@@ -6523,8 +6555,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
             return li;
           },
-          invertPointerM(II->getArgOperand(0), bb),
-          invertPointerM(II->getArgOperand(3), bb, TT));
+          invPtr, invDefault);
+    }
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
@@ -6557,7 +6589,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             }
             ++cnt;
          }
-         auto result = BuilderM.CreateSelect(which, invertPointerM(vals[1], BuilderM, TT), invertPointerM(vals[0], BuilderM, TT));
+         auto inv0 = invertPointerM(vals[0], BuilderM, TT);
+         auto inv1 = invertPointerM(vals[1], BuilderM, TT);
+         auto result = BuilderM.CreateSelect(which, inv1, inv0);
          return result;
      }
 #endif
@@ -6577,7 +6611,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
-        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        IRBuilder<> postPhi(getFirstNonPHI(NewV->getParent()));
         Type *shadowTy = getShadowType(phi->getType());
         PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 
@@ -6607,7 +6641,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
-              EmitWarning("MixedActivityError", *phi, ss.str());
+              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
+                                MixedActivityHint);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);
@@ -6680,7 +6715,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
-              EmitWarning("MixedActivityError", *phi, ss.str());
+              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
+                                MixedActivityHint);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);
@@ -6817,12 +6853,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       reduceRegister = true;
     }
     if (auto LI = dyn_cast<LoadInst>(inst)) {
-      auto Arch =
-          llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-      unsigned int SharedAddrSpace =
-          Arch == Triple::amd_target
-              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-              : 3;
+      auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+      unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
       if (cast<PointerType>(LI->getPointerOperand()->getType())
               ->getAddressSpace() == SharedAddrSpace) {
         reduceRegister |= tryLegalRecomputeCheck &&
@@ -7172,12 +7204,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
         auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
 
-        auto Arch =
-            llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-        unsigned int SharedAddrSpace =
-            Arch == Triple::amd_target
-                ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
-                : 3;
+        auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+        unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
         if (EnzymeSharedForward && scev1 != OrigSE->getCouldNotCompute() &&
             cast<PointerType>(orig_liobj->getType())->getAddressSpace() ==
                 SharedAddrSpace) {
@@ -7959,13 +7987,13 @@ void GradientUtils::branchToCorrespondingTarget(
   if (targetToPreds.size() == 1) {
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << *oldFunc << "\n";
         llvm::errs() << *newFunc << "\n";
         llvm::errs() << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateBr(targetToPreds.begin()->first);
     } else {
       for (auto pair : *replacePHIs) {
@@ -8090,7 +8118,9 @@ void GradientUtils::branchToCorrespondingTarget(
         // Only handle cases where the split was due to a conditional
         // branch. This branch, `bi`, splits off uniqueTargets[0] from
         // the remainder of foundTargets.
-        auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+        auto bi1 = (isAnyBranch(block->getTerminator())
+                        ? cast<Instruction>(block->getTerminator())
+                        : nullptr);
         if (!bi1)
           goto rnextpair;
 
@@ -8163,17 +8193,19 @@ void GradientUtils::branchToCorrespondingTarget(
 
           // This branch, `bi2`, splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
+          auto bi2 = (isAnyBranch(subblock->getTerminator())
+                          ? cast<Instruction>(subblock->getTerminator())
+                          : nullptr);
           if (!bi2)
             goto rnextpair;
 
           // Condition cond1 splits off uniqueTargets[0] from
           // the remainder of foundTargets.
-          auto cond1 = lookupM(bi1->getCondition(), BuilderM);
+          auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
 
           // Condition cond2 splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto cond2 = lookupM(bi2->getCondition(), BuilderM);
+          auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
 
           if (replacePHIs == nullptr) {
             BasicBlock *staging =
@@ -8295,27 +8327,29 @@ void GradientUtils::branchToCorrespondingTarget(
 fast:;
   assert(equivalentTerminator);
 
-  if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
+  if (auto branch = (isAnyBranch(equivalentTerminator)
+                         ? cast<Instruction>(equivalentTerminator)
+                         : nullptr)) {
     BasicBlock *block = equivalentTerminator->getParent();
-    assert(branch->getCondition());
+    assert(getBranchCondition(branch));
 
-    assert(branch->getCondition()->getType() == T);
+    assert(getBranchCondition(branch)->getType() == T);
 
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << "newFunc : " << *newFunc << "\n";
         llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(
-          lookupM(branch->getCondition(), BuilderM),
+          lookupM(getBranchCondition(branch), BuilderM),
           *done[std::make_pair(block, branch->getSuccessor(0))].begin(),
           *done[std::make_pair(block, branch->getSuccessor(1))].begin());
     } else {
       for (auto pair : *replacePHIs) {
-        Value *phi = lookupM(branch->getCondition(), BuilderM);
+        Value *phi = lookupM(getBranchCondition(branch), BuilderM);
         Value *val = nullptr;
         if (pair.first ==
             *done[std::make_pair(block, branch->getSuccessor(0))].begin()) {
@@ -8426,7 +8460,7 @@ nofast:;
     for (const auto &pair : storing) {
       IRBuilder<> pbuilder(pair.first);
 
-      if (pair.first->getTerminator())
+      if (hasTerminator(pair.first))
         pbuilder.SetInsertPoint(pair.first->getTerminator());
 
       pbuilder.setFastMathFlags(getFast());
@@ -8458,7 +8492,7 @@ nofast:;
   if (replacePHIs == nullptr) {
     if (targetToPreds.size() == 2) {
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(which, /*true*/ targets[1], /*false*/ targets[0]);
     } else {
       assert(targets.size() > 0);
@@ -9218,8 +9252,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           }
         }
         if (mode != DerivativeMode::ForwardModeSplit)
-          dsto = Builder2.CreatePointerCast(
-              dsto, PointerType::get(secretty, dstaddr));
+          dsto = Builder2.CreatePointerCast(dsto,
+                                            getPointerType(secretty, dstaddr));
         if (srco->getType()->isIntegerTy())
           srco =
               Builder2.CreateIntToPtr(srco, getInt8PtrTy(srco->getContext()));
@@ -9230,8 +9264,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               Type::getInt8Ty(srco->getContext()), srco, offset);
         }
         if (mode != DerivativeMode::ForwardModeSplit)
-          srco = Builder2.CreatePointerCast(
-              srco, PointerType::get(secretty, srcaddr));
+          srco = Builder2.CreatePointerCast(srco,
+                                            getPointerType(secretty, srcaddr));
 
         if (mode == DerivativeMode::ForwardModeSplit) {
           MaybeAlign dalign;
@@ -9249,9 +9283,9 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         } else {
           SmallVector<Value *, 5> args = {
               Builder2.CreatePointerCast(dsto,
-                                         PointerType::get(secretty, dstaddr)),
+                                         getPointerType(secretty, dstaddr)),
               Builder2.CreatePointerCast(srco,
-                                         PointerType::get(secretty, srcaddr)),
+                                         getPointerType(secretty, srcaddr)),
               Builder2.CreateUDiv(
                   gutils->lookupM(length, Builder2),
                   ConstantInt::get(length->getType(),
@@ -9273,7 +9307,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
               srcalign, dstaddr, srcaddr,
               cast<IntegerType>(length->getType())->getBitWidth(),
-              gutils->runtimeActivity);
+              gutils->runtimeActivity, gutils->isAtomic(primal_src));
           Builder2.CreateCall(dmemcpy, args);
         }
       }
@@ -9689,8 +9723,8 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
                          ErrorType::InternalError, nullptr, nullptr, nullptr);
     } else {
       DebugLoc loc;
-      if (auto term = found->second->getTerminator()) {
-        loc = term->getDebugLoc();
+      if (hasTerminator(found->second)) {
+        loc = found->second->getTerminator()->getDebugLoc();
       }
       EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
                   ss.str());

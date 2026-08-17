@@ -35,9 +35,9 @@ module {
   // CHECK:   %[[x0:.+]]:2 = scf.parallel (%[[arg2:.+]]) = (%[[c0]]) to (%dim) step (%[[c1]]) init (%[[cst_0]], %[[cst]]) -> (f64, f64) {
   // CHECK:     %[[x1:.+]] = memref.load %[[arg1]][%[[arg2]]] : memref<?xf64>
   // CHECK:     %[[x2:.+]] = memref.load %[[arg0]][%[[arg2]]] : memref<?xf64>
-  // CHECK:     %[[x3:.+]] = arith.mulf %[[x1]], %[[x2]] : f64
-  // CHECK:     %[[x4:.+]] = arith.mulf %[[x1]], %[[x2]] : f64
-  // CHECK:     %[[x5:.+]] = arith.addf %[[x3]], %[[x4]] : f64
+  // CHECK:     %[[x3:.+]] = arith.mulf %[[x1]], %[[x2]] fastmath<fast> : f64
+  // CHECK:     %[[x4:.+]] = arith.mulf %[[x1]], %[[x2]] fastmath<fast> : f64
+  // CHECK:     %[[x5:.+]] = arith.addf %[[x3]], %[[x4]] fastmath<fast> : f64
   // CHECK:     %[[x6:.+]] = arith.mulf %[[x2]], %[[x2]] : f64
   // CHECK:     scf.reduce(%[[x6]], %[[x5]] : f64, f64) {
   // CHECK:     ^bb0(%[[arg3:.+]]: f64, %[[arg4:.+]]: f64):
@@ -45,7 +45,7 @@ module {
   // CHECK:       scf.reduce.return %[[x7]] : f64
   // CHECK:     }, {
   // CHECK:     ^bb0(%[[arg3:.+]]: f64, %[[arg4:.+]]: f64):
-  // CHECK:       %[[x7:.+]] = arith.addf %[[arg3]], %[[arg4]] : f64
+  // CHECK:       %[[x7:.+]] = arith.addf %[[arg3]], %[[arg4]] fastmath<fast> : f64
   // CHECK:       scf.reduce.return %[[x7]] : f64
   // CHECK:     }
   // CHECK:   }

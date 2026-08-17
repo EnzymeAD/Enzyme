@@ -5,6 +5,7 @@ add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
 add_mlir_dialect_library(MLIREnzymeTransforms
     LowerAffineAtomicRmwPass.cpp
+    LowerBinomialProgressPass.cpp
     EnzymeMLIRPass.cpp
     EnzymeActivityOpt.cpp
     ExpandImpulsePass.cpp
@@ -12,20 +13,24 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeBatchDiffPass.cpp
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
+    FlattenEnzymeCaches.cpp
     InlineEnzymeRegions.cpp
     HoistEnzymeRegions.cpp
+    HoistLoopAllocations.cpp
     LowerLLVMExtPass.cpp
     LowerEnzymeCustomRulesToFuncPass.cpp
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp
     SimplifyMath.cpp
+    SplitMultiResults.cpp
     AddToOpToIndexAndLoad.cpp
     AddToOpToSplit.cpp
     RaiseLLVMExtPass.cpp
     RemovalUtils.cpp
     RemoveUnusedEnzymeOps.cpp
     SimplifyMemrefCache.cpp
+    SinkCheckpointViewsPass.cpp
     Utils.cpp
   
   ADDITIONAL_HEADER_DIRS

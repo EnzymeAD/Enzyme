@@ -757,7 +757,8 @@ public:
 
     AutoDiffOp newOp = AutoDiffOp::create(
         rewriter, op->getLoc(), out_ty, op.getFnAttr(), in_args, newInActivity,
-        newOutActivity, op.getWidthAttr(), op.getStrongZeroAttr());
+        newOutActivity, op.getWidthAttr(), op.getStrongZeroAttr(),
+        op.getAtomicAddAttr());
 
     // Map old uses of op to newOp
     auto oldIdx = 0;

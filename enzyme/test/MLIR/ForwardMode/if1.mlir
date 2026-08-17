@@ -25,17 +25,17 @@ module {
 // CHECK-DAG:    %[[cst2:.+]] = arith.constant 2.000000e+00 : f64
 // CHECK-DAG:    %[[cst10:.+]] = arith.constant 1.000000e+01 : f64
 // CHECK-NEXT:    %[[r0:.+]]:3 = scf.if %[[arg2]] -> (f64, f64, f64) {
-// CHECK-NEXT:      %[[t3:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:      %[[t4:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
-// CHECK-NEXT:      %[[t5:.+]] = arith.addf %[[t3]], %[[t4]] : f64
+// CHECK-NEXT:      %[[t3:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:      %[[t4:.+]] = arith.mulf %[[arg1]], %[[arg0]] fastmath<fast> : f64
+// CHECK-NEXT:      %[[t5:.+]] = arith.addf %[[t3]], %[[t4]] fastmath<fast> : f64
 // CHECK-NEXT:      %[[t6:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
 // CHECK-NEXT:      scf.yield %[[t6]], %[[t5]], %[[cst2]] : f64, f64, f64
 // CHECK-NEXT:    } else {
-// CHECK-NEXT:      %[[e3:.+]] = arith.addf %arg1, %arg1 : f64
+// CHECK-NEXT:      %[[e3:.+]] = arith.addf %arg1, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:      %[[e4:.+]] = arith.addf %arg0, %arg0 : f64
 // CHECK-NEXT:      scf.yield %[[e4]], %[[e3]], %[[cst10]] : f64, f64, f64
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[r1:.+]] = arith.mulf %[[r0]]#1, %[[r0]]#2 : f64
+// CHECK-NEXT:    %[[r1:.+]] = arith.mulf %[[r0]]#1, %[[r0]]#2 fastmath<fast> : f64
 // CHECK-NEXT:    %[[r2:.+]] = arith.mulf %[[r0]]#0, %[[r0]]#2 : f64
 // CHECK-NEXT:    return %[[r1]] : f64
 // CHECK-NEXT:  }

@@ -47,20 +47,20 @@ llvm.func @extract(%s: !llvm.struct<(f64, f64)>, %seed: f64)
 // CHECK-NEXT:   cf.br ^bb1
 // CHECK-NEXT: ^bb1:
 // CHECK-NEXT:   %[[GETM:.+]] = "enzyme.get"(%[[GMUL]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:   %[[SUM:.+]] = arith.addf %[[GETM]], %arg1 : f64
+// CHECK-NEXT:   %[[SUM:.+]] = arith.addf %[[GETM]], %arg1 fastmath<fast> : f64
 // CHECK-NEXT:   "enzyme.set"(%[[GMUL]], %[[SUM]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK-NEXT:   %[[DRES:.+]] = "enzyme.get"(%[[GMUL]]) : (!enzyme.Gradient<f64>) -> f64
 // CHECK-NEXT:   %[[CST5:.+]] = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:   "enzyme.set"(%[[GMUL]], %[[CST5]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK-NEXT:   %[[POP0:.+]] = "enzyme.pop"(%[[C1]]) : (!enzyme.Cache<f64>) -> f64
 // CHECK-NEXT:   %[[POP1:.+]] = "enzyme.pop"(%[[C0]]) : (!enzyme.Cache<f64>) -> f64
-// CHECK-NEXT:   %[[MUL0:.+]] = arith.mulf %[[DRES]], %[[POP1]] : f64
+// CHECK-NEXT:   %[[MUL0:.+]] = arith.mulf %[[DRES]], %[[POP1]] fastmath<fast> : f64
 // CHECK-NEXT:   %[[GET1:.+]] = "enzyme.get"(%[[G1]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:   %[[ADD0:.+]] = arith.addf %[[GET1]], %[[MUL0]] : f64
+// CHECK-NEXT:   %[[ADD0:.+]] = arith.addf %[[GET1]], %[[MUL0]] fastmath<fast> : f64
 // CHECK-NEXT:   "enzyme.set"(%[[G1]], %[[ADD0]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:   %[[MUL1:.+]] = arith.mulf %[[DRES]], %[[POP0]] : f64
+// CHECK-NEXT:   %[[MUL1:.+]] = arith.mulf %[[DRES]], %[[POP0]] fastmath<fast> : f64
 // CHECK-NEXT:   %[[GET0:.+]] = "enzyme.get"(%[[G0]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:   %[[ADD1:.+]] = arith.addf %[[GET0]], %[[MUL1]] : f64
+// CHECK-NEXT:   %[[ADD1:.+]] = arith.addf %[[GET0]], %[[MUL1]] fastmath<fast> : f64
 // CHECK-NEXT:   "enzyme.set"(%[[G0]], %[[ADD1]]) : (!enzyme.Gradient<f64>, f64) -> ()
 // CHECK:        return %{{.+}} : !llvm.struct<(f64, f64)>
 // CHECK-NEXT: }
@@ -115,11 +115,11 @@ llvm.func @insert(%x: f64, %seed: !llvm.struct<(f64, f64)>) -> f64 {
 // CHECK-NEXT:   %[[P2:.+]] = llvm.mlir.poison : !llvm.struct<(f64, f64)>
 // CHECK-NEXT:   %[[EV0:.+]] = llvm.extractvalue %[[GETS1]][0] : !llvm.struct<(f64, f64)>
 // CHECK-NEXT:   %[[EV1:.+]] = llvm.extractvalue %arg1[0] : !llvm.struct<(f64, f64)>
-// CHECK-NEXT:   %[[ADD0:.+]] = arith.addf %[[EV0]], %[[EV1]] : f64
+// CHECK-NEXT:   %[[ADD0:.+]] = arith.addf %[[EV0]], %[[EV1]] fastmath<fast> : f64
 // CHECK-NEXT:   %[[INS0:.+]] = llvm.insertvalue %[[ADD0]], %[[P2]][0] : !llvm.struct<(f64, f64)>
 // CHECK-NEXT:   %[[EV2:.+]] = llvm.extractvalue %[[GETS1]][1] : !llvm.struct<(f64, f64)>
 // CHECK-NEXT:   %[[EV3:.+]] = llvm.extractvalue %arg1[1] : !llvm.struct<(f64, f64)>
-// CHECK-NEXT:   %[[ADD1:.+]] = arith.addf %[[EV2]], %[[EV3]] : f64
+// CHECK-NEXT:   %[[ADD1:.+]] = arith.addf %[[EV2]], %[[EV3]] fastmath<fast> : f64
 // CHECK-NEXT:   %[[INS1:.+]] = llvm.insertvalue %[[ADD1]], %[[INS0]][1] : !llvm.struct<(f64, f64)>
 // CHECK-NEXT:   "enzyme.set"(%[[GS1]], %[[INS1]]) : (!enzyme.Gradient<!llvm.struct<(f64, f64)>>, !llvm.struct<(f64, f64)>) -> ()
 // CHECK:        return %{{.+}} : f64

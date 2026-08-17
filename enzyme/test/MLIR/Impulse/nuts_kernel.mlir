@@ -9,20 +9,20 @@ module {
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
-  func.func @nuts(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
+  func.func @nuts(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
       { nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
-    return %res#0, %res#1, %res#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
 
 // CHECK-LABEL: func.func @nuts
-// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>)
+// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
 // CHECK-DAG: %[[CKPT_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<3x1xf64>
 // CHECK-DAG: %[[C3:.+]] = arith.constant dense<3> : tensor<i64>
 // CHECK-DAG: %[[TRUE:.+]] = arith.constant dense<true> : tensor<i1>
@@ -30,6 +30,8 @@ module {
 // CHECK-DAG: %[[HALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
 // CHECK-DAG: %[[ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[C1:.+]] = arith.constant dense<1> : tensor<i64>
+// CHECK-DAG: %[[INIT_LOGDENS:.+]] = arith.constant dense<0.000000e+00> : tensor<1xf64>
+// CHECK-DAG: %[[INIT_DIAG:.+]] = arith.constant dense<true> : tensor<1x2xi1>
 // CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<0.000000e+00> : tensor<1x1xf64>
@@ -48,10 +50,10 @@ module {
 // CHECK: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
 //
 // --- Sampling loop ---
-// CHECK: %[[SLOOP:.+]]:6 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>)
-// CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[INIT_TRACE]], %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>)
-// CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>
-// CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %[[S_Q:.+]]: tensor<1x1xf64>, %[[S_GRAD:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1xi1>):
+// CHECK: %[[SLOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>)
+// CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[INIT_TRACE]], %[[INIT_DIAG]], %[[INIT_LOGDENS]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>)
+// CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>
+// CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %[[S_Q:.+]]: tensor<1x1xf64>, %[[S_GRAD:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x2xi1>, %{{.+}}: tensor<1xf64>):
 //
 // --- Momentum sampling ---
 // CHECK: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
@@ -173,15 +175,24 @@ module {
 // CHECK: impulse.yield {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i1>, tensor<i1>, tensor<f64>, tensor<i64>, tensor<1x1xf64>, tensor<2xui64>
 // CHECK: }
 //
-// --- Store sample ---
+// --- Store sample and diagnostics ---
 // CHECK: arith.cmpi sge, %[[S_ITER]], %[[C0]]
 // CHECK: impulse.dynamic_update_slice {{.*}} : (tensor<1x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>
 // CHECK: impulse.select
+// CHECK: impulse.reshape {{.*}} : (tensor<i1>) -> tensor<1x1xi1>
+// CHECK: impulse.reshape {{.*}} : (tensor<i1>) -> tensor<1x1xi1>
+// CHECK: impulse.dynamic_update_slice {{.*}} : (tensor<1x2xi1>, tensor<1x1xi1>, tensor<i64>, tensor<i64>) -> tensor<1x2xi1>
+// CHECK: impulse.dynamic_update_slice {{.*}} : (tensor<1x2xi1>, tensor<1x1xi1>, tensor<i64>, tensor<i64>) -> tensor<1x2xi1>
+// CHECK: impulse.select {{.*}} : (tensor<i1>, tensor<1x2xi1>, tensor<1x2xi1>)
+// CHECK: arith.negf {{.*}} : tensor<f64>
+// CHECK: impulse.reshape {{.*}} : (tensor<f64>) -> tensor<1xf64>
+// CHECK: impulse.dynamic_update_slice {{.*}} : (tensor<1xf64>, tensor<1xf64>, tensor<i64>) -> tensor<1xf64>
+// CHECK: impulse.select {{.*}} : (tensor<i1>, tensor<1xf64>, tensor<1xf64>)
 //
 // --- Sampling loop yield ---
-// CHECK: impulse.yield %[[TREE]]#6, %[[TREE]]#7, %[[TREE]]#8, {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>
+// CHECK: impulse.yield %[[TREE]]#6, %[[TREE]]#7, %[[TREE]]#8, {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>
 // CHECK: }
-// CHECK: return %[[SLOOP]]#4, %[[SLOOP]]#5, %[[SLOOP]]#3 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
+// CHECK: return %[[SLOOP]]#4, %[[SLOOP]]#5, %[[SLOOP]]#6, %[[SLOOP]]#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
 // CHECK: }
 //
 // --- Generated function: test.generate ---

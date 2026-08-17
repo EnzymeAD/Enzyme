@@ -54,6 +54,7 @@ add_mlir_library(MLIREnzymeImplementations
   AffineAutoDiffOpInterfaceImpl.cpp
   ArithAutoDiffOpInterfaceImpl.cpp
   CoreDialectsAutoDiffImplementations.cpp
+  CoreDialectsAutoDiffRegistration.cpp
   LLVMAutoDiffOpInterfaceImpl.cpp
   LLVMExtAutoDiffOpInterfaceImpl.cpp
   NVVMAutoDiffOpInterfaceImpl.cpp
@@ -65,6 +66,7 @@ add_mlir_library(MLIREnzymeImplementations
   SCFAutoDiffOpInterfaceImpl.cpp
   CFAutoDiffOpInterfaceImpl.cpp
   MathAutoDiffOpInterfaceImpl.cpp
+  GPUAutoDiffOpInterfaceImpl.cpp
   EnzymeAutoDiffOpInterfaceImpl.cpp
 
   DEPENDS
@@ -90,6 +92,7 @@ add_mlir_library(MLIREnzymeImplementations
   MLIRComplexDialect
   MLIRLLVMDialect
   MLIRMemRefDialect
+  MLIRGPUDialect
   MLIREnzymeAutoDiffInterface
   MLIRIR
   MLIRSCFDialect

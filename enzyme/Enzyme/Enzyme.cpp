@@ -75,6 +75,7 @@
 
 #include "ActivityAnalysis.h"
 #include "DiffeGradientUtils.h"
+#include "EnzymeCallMarkers.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "PassUtils.h"
@@ -137,8 +138,8 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
 #if LLVM_VERSION_MAJOR < 17
         if (CI->getContext().supportsTypedPointers()) {
           res = Builder.CreateAddrSpaceCast(
-              res, PointerType::get(ptr->getPointerElementType(),
-                                    PT->getAddressSpace()));
+              res, getPointerType(ptr->getPointerElementType(),
+                                  PT->getAddressSpace()));
         } else {
           res = Builder.CreateAddrSpaceCast(res, PT);
         }
@@ -347,7 +348,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
       ((mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeError) &&
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
-    IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
+    IRBuilder<> EB(getFirstNonPHI(&CI->getFunction()->getEntryBlock()));
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret,
                         Builder.CreatePointerCast(AL, getUnqual(diffretType)));
@@ -614,7 +615,7 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         PointerType *pty = cast<PointerType>(sretPt->getType());
         primal = Builder.CreatePointerCast(
-            sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+            sretPt, getPointerType(Ty, pty->getAddressSpace()));
       } else {
         AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
                                              nullptr, DL.getPrefTypeAlign(Ty));
@@ -631,14 +632,14 @@ public:
           Value *sretPt = CI->getArgOperand(0);
           PointerType *pty = cast<PointerType>(sretPt->getType());
           auto shadowPtr = Builder.CreatePointerCast(
-              sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+              sretPt, getPointerType(Ty, pty->getAddressSpace()));
           if (width == 1) {
             if (primalReturn)
               shadowPtr = Builder.CreateConstGEP1_64(Ty, shadowPtr, 1);
             shadow = shadowPtr;
           } else {
             Value *acc = UndefValue::get(ArrayType::get(
-                PointerType::get(Ty, pty->getAddressSpace()), width));
+                getPointerType(Ty, pty->getAddressSpace()), width));
             for (size_t i = 0; i < width; ++i) {
               Value *elem =
                   Builder.CreateConstGEP1_64(Ty, shadowPtr, i + primalReturn);
@@ -705,10 +706,36 @@ public:
 
       // handle metadata
       while (metaString && startsWith(*metaString, "enzyme_")) {
+        // What a marker names and what it takes for itself are described once,
+        // in EnzymeCallMarkers.h, so that the MLIR raising of the same call
+        // reads it the same way. Only what a marker then does with what it
+        // took is particular to it.
+        auto marker = enzyme_markers::lookupEnzymeMarker(*metaString);
+        if (!marker) {
+          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
+                      "illegal enzyme metadata classification ", *CI,
+                      *metaString);
+          return {};
+        }
+
+        if (marker->activity)
+          opt_ty = *marker->activity;
+
+        if (marker->extraOperands) {
+          if ((size_t)i + marker->extraOperands >= CI->arg_size()) {
+            EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                        "Too few arguments to Enzyme call ", *CI);
+            return {};
+          }
+          i += marker->extraOperands;
+        }
+
+        // A flag configures the call; nothing after it is an argument.
+        skipArg = marker->role == enzyme_markers::MarkerRole::CallFlag;
+
         if (*metaString == "enzyme_not_overwritten") {
           overwritten = false;
         } else if (*metaString == "enzyme_byref") {
-          ++i;
           if (!isa<ConstantInt>(CI->getArgOperand(i))) {
             EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
                         "illegal enzyme byref size ", *CI->getArgOperand(i),
@@ -717,13 +744,8 @@ public:
           }
           byRefSize = cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
           assert(byRefSize > 0);
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_dup") {
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-        } else if (*metaString == "enzyme_dupv") {
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-          ++i;
+        } else if (*metaString == "enzyme_dupv" ||
+                   *metaString == "enzyme_dupnoneedv") {
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
             batchOffset = offset_arg;
@@ -734,31 +756,8 @@ public:
                         *CI->getArgOperand(i), " in", *CI);
             return {};
           }
-        } else if (*metaString == "enzyme_dupnoneed") {
-          opt_ty = DIFFE_TYPE::DUP_NONEED;
-        } else if (*metaString == "enzyme_dupnoneedv") {
-          opt_ty = DIFFE_TYPE::DUP_NONEED;
-          ++i;
-          Value *offset_arg = CI->getArgOperand(i);
-          if (offset_arg->getType()->isIntegerTy()) {
-            batchOffset = offset_arg;
-          } else {
-            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
-                        "enzyme_batch must be followd by an integer "
-                        "offset.",
-                        *CI->getArgOperand(i), " in", *CI);
-            return {};
-          }
-        } else if (*metaString == "enzyme_out") {
-          opt_ty = DIFFE_TYPE::OUT_DIFF;
-        } else if (*metaString == "enzyme_const") {
-          opt_ty = DIFFE_TYPE::CONSTANT;
-        } else if (*metaString == "enzyme_noret") {
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_allocated") {
           assert(!sizeOnly);
-          ++i;
           if (!isa<ConstantInt>(CI->getArgOperand(i))) {
             EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
                         "illegal enzyme allocated size ", *CI->getArgOperand(i),
@@ -767,78 +766,33 @@ public:
           }
           allocatedTapeSize =
               cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_tape") {
           assert(!sizeOnly);
-          ++i;
           tape = CI->getArgOperand(i);
           tapeIsPointer = true;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_nofree") {
           assert(!sizeOnly);
           freeMemory = false;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_runtime_activity") {
           runtimeActivity = true;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_strong_zero") {
           strongZero = true;
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_primal_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_const_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_active_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_dup_return") {
-          skipArg = true;
-          break;
-        } else if (*metaString == "enzyme_width") {
-          ++i;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_interface") {
-          ++i;
           dynamic_interface = CI->getArgOperand(i);
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_trace") {
-          trace = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          trace = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_duptrace") {
-          trace = CI->getArgOperand(++i);
+          trace = CI->getArgOperand(i);
           diffeTrace = true;
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
         } else if (*metaString == "enzyme_likelihood") {
-          likelihood = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          likelihood = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_duplikelihood") {
-          likelihood = CI->getArgOperand(++i);
-          diffeLikelihood = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-          skipArg = true;
-          break;
+          likelihood = CI->getArgOperand(i - 1);
+          diffeLikelihood = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_observations") {
-          observations = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::CONSTANT;
-          skipArg = true;
-          break;
+          observations = CI->getArgOperand(i);
         } else if (*metaString == "enzyme_active_rand_var") {
-          Value *string = CI->getArgOperand(++i);
+          Value *string = CI->getArgOperand(i);
           StringRef const_string;
           if (getConstantStringInfo(string, const_string)) {
             ActiveRandomVariables.insert(const_string);
@@ -848,14 +802,13 @@ public:
                 "active variable address must be a compile-time constant", *CI,
                 *metaString);
           }
-          skipArg = true;
-          break;
-        } else {
-          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
-                      "illegal enzyme metadata classification ", *CI,
-                      *metaString);
-          return {};
         }
+        // The rest -- the activities, enzyme_interleave, enzyme_width and the
+        // *_return flags -- are wholly described by the table.
+
+        if (skipArg)
+          break;
+
         if (sizeOnly) {
           assert(opt_ty);
           constants.push_back(*opt_ty);
@@ -903,7 +856,7 @@ public:
         }
         res = Builder.CreateBitCast(
             res,
-            PointerType::get(
+            getPointerType(
                 subTy, cast<PointerType>(res->getType())->getAddressSpace()));
         res = Builder.CreateLoad(subTy, res);
         byRefSize = 0;
@@ -977,8 +930,8 @@ public:
 #if LLVM_VERSION_MAJOR < 17
               if (CI->getContext().supportsTypedPointers()) {
                 res = Builder.CreateAddrSpaceCast(
-                    res, PointerType::get(ptr->getPointerElementType(),
-                                          PT->getAddressSpace()));
+                    res, getPointerType(ptr->getPointerElementType(),
+                                        PT->getAddressSpace()));
               } else {
                 res = Builder.CreateAddrSpaceCast(res, PT);
               }
@@ -1051,8 +1004,8 @@ public:
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
-                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
-                                            elementPtrTy->getAddressSpace()));
+                  element, getPointerType(Type::getInt8Ty(CI->getContext()),
+                                          elementPtrTy->getAddressSpace()));
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
@@ -1371,8 +1324,8 @@ public:
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
-                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
-                                            elementPtrTy->getAddressSpace()));
+                  element, getPointerType(Type::getInt8Ty(CI->getContext()),
+                                          elementPtrTy->getAddressSpace()));
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
@@ -1457,12 +1410,13 @@ public:
     auto primalReturn = options.primalReturn;
     auto subsequent_calls_may_write = options.subsequent_calls_may_write;
 
-    auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
-    bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                     Arch == Triple::amd_target;
+    auto TT = Triple(CI->getModule()->getTargetTriple());
+    bool AtomicAdd = isGPUArch(TT);
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
+
+    std::vector<bool> nowrite_shadows(fn->arg_size(), false);
 
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
@@ -1493,9 +1447,9 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
-          options.runtimeActivity, options.strongZero, width,
-          /*atomicAdd*/ AtomicAdd);
+          subsequent_calls_may_write, overwritten_args, nowrite_shadows,
+          forceAnonymousTape, options.runtimeActivity, options.strongZero,
+          width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1572,9 +1526,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
-          forceAnonymousTape, options.runtimeActivity, options.strongZero,
-          width,
-          /*atomicAdd*/ AtomicAdd);
+          nowrite_shadows, forceAnonymousTape, options.runtimeActivity,
+          options.strongZero, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1678,7 +1631,7 @@ public:
       auto &DL = fn->getParent()->getDataLayout();
       if (tapeIsPointer) {
         tape = Builder.CreateBitCast(
-            tape, PointerType::get(
+            tape, getPointerType(
                       tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
         tape = Builder.CreateLoad(tapeType, tape);
@@ -1751,12 +1704,10 @@ public:
                              ? diffret
                              : Builder.CreateExtractValue(diffret, idxs);
         Builder.CreateStore(
-            tapeRes,
-            Builder.CreateBitCast(
-                tape,
-                PointerType::get(
-                    tapeRes->getType(),
-                    cast<PointerType>(tape->getType())->getAddressSpace())));
+            tapeRes, Builder.CreateBitCast(
+                         tape, getPointerType(tapeRes->getType(),
+                                              cast<PointerType>(tape->getType())
+                                                  ->getAddressSpace())));
         if (tapeIdx != -1) {
           auto ST = cast<StructType>(diffret->getType());
           SmallVector<Type *, 2> tys(ST->elements().begin(),
@@ -1893,7 +1844,7 @@ public:
     assert(!sampleFunctions.empty() || !observeFunctions.empty());
 
     bool autodiff = dtrace || dlikelihood;
-    IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
+    IRBuilder<> AllocaBuilder(getFirstNonPHI(CI->getParent()));
 
     if (!likelihood) {
       likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
@@ -2082,9 +2033,15 @@ public:
         SmallVector<OperandBundleDef, 1> OpBundles;
         II->getOperandBundlesAsDefs(OpBundles);
         // Insert a normal call instruction...
+#if LLVM_VERSION_MAJOR >= 24
+        CallInst *NewCall =
+            CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
+                             CallArgs, OpBundles, "", II->getIterator());
+#else
         CallInst *NewCall =
             CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
                              CallArgs, OpBundles, "", II);
+#endif
         NewCall->takeName(II);
         NewCall->setCallingConv(II->getCallingConv());
         NewCall->setAttributes(II->getAttributes());
@@ -2092,7 +2049,11 @@ public:
         II->replaceAllUsesWith(NewCall);
 
         // Insert an unconditional branch to the normal destination.
-        BranchInst::Create(II->getNormalDest(), II);
+#if LLVM_VERSION_MAJOR >= 24
+        createUnconditionalBranch(II->getNormalDest(), II->getIterator());
+#else
+        createUnconditionalBranch(II->getNormalDest(), II);
+#endif
 
         // Remove any PHI node entries from the exception destination.
         II->getUnwindDest()->removePredecessor(&BB);
@@ -2513,7 +2474,7 @@ public:
             CI->moveBefore(B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
-              IRBuilder<> P(post->getFirstNonPHI());
+              IRBuilder<> P(getFirstNonPHI(post));
               auto merge = P.CreatePHI(CI->getType(), 2);
               merge->addIncoming(cloned, sel1);
               merge->addIncoming(CI, sel2);
@@ -2602,13 +2563,10 @@ public:
       }
       TypeAnalysis TA(Logic);
 
-      auto Arch =
-          llvm::Triple(
-              CI->getParent()->getParent()->getParent()->getTargetTriple())
-              .getArch();
+      auto TT = llvm::Triple(
+          CI->getParent()->getParent()->getParent()->getTargetTriple());
 
-      bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-                       Arch == Triple::amd_target;
+      bool AtomicAdd = isGPUArch(TT);
 
       IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(

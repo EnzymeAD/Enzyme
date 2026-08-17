@@ -36,7 +36,7 @@ option(ENZYME_ENABLE_BENCHMARKS "Enable benchmarks" OFF)
 option(ENZYME_BC_LOADER "Enable bitcode loader" ON)
 option(ENZYME_FORTRAN "Build Enzyme Fortran bindings" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
-option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
+option(ENZYME_FLANG "Build enzyme flang plugin" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
@@ -334,40 +334,35 @@ export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
   FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
 if (${Clang_FOUND})
-export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
-    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
-export(TARGETS ClangEnzymeFlags
-    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+  export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
+      APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+  export(TARGETS ClangEnzymeFlags
+      APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
-file(GLOB_RECURSE ENZYME_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
-set(bundled_includes "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/bundled_includes.h")
-list(APPEND ENZYME_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh)
-add_custom_command(OUTPUT ${bundled_includes}
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/enzyme/enzyme
-  ${bundled_includes}
-  DEPENDS ${ENZYME_INCLUDES}
-  COMMENT "Bundling includes"
-  VERBATIM
-)
-add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
-add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
-target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
-endif()
-endif()
-
-if (${ENZYME_FLANG} AND ${Clang_FOUND})
-	add_custom_target(link_target ALL
-  COMMAND ${CMAKE_COMMAND} -E create_symlink
-	  ClangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
-	  ${PROJECT_BINARY_DIR}/Enzyme/FlangEnzyme-${LLVM_VERSION_MAJOR}${LLVM_SHLIBEXT}
+  file(GLOB_RECURSE ENZYME_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
+  set(bundled_includes "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/bundled_includes.h")
+  list(APPEND ENZYME_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh)
+  add_custom_command(OUTPUT ${bundled_includes}
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/enzyme/enzyme
+    ${bundled_includes}
+    DEPENDS ${ENZYME_INCLUDES}
+    COMMENT "Bundling includes"
+    VERBATIM
   )
+  add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
+  add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
+  target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
 endif()
 
-if (ENZYME_ENABLE_PLUGINS)
+if (${ENZYME_FLANG})
+  export(TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
+
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
-endif()
+endif() #ENZYME_ENABLE_PLUGINS
 
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")

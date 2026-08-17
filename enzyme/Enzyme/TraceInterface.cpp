@@ -368,7 +368,7 @@ Function *DynamicTraceInterface::MaterializeInterfaceFunction(
                                 dynamicInterface, Builder.getInt32(index));
   auto load =
       Builder.CreateLoad(getInt8PtrTy(dynamicInterface->getContext()), ptr);
-  auto pty = PointerType::get(FTy, load->getPointerAddressSpace());
+  auto pty = getPointerType(FTy, load->getPointerAddressSpace());
   auto cast = Builder.CreatePointerCast(load, pty);
 
   auto global =

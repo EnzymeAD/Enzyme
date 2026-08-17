@@ -10,6 +10,7 @@
 // ops.
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -21,6 +22,8 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -65,7 +68,7 @@ struct DifferentiateWrapperPass
   using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
-    MEnzymeLogic Logic;
+    MEnzymeLogic Logic(dataflowActivity);
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(getOperation());
 
@@ -92,7 +95,6 @@ struct DifferentiateWrapperPass
     bool omp = false;
     std::string postpasses = "";
     bool verifyPostPasses = true;
-    bool strongZero = false;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
@@ -126,10 +128,11 @@ struct DifferentiateWrapperPass
     bool freeMemory = true;
     size_t width = 1;
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc;
@@ -137,14 +140,17 @@ struct DifferentiateWrapperPass
       newFunc = Logic.CreateForwardDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
           width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+      if (!newFunc)
+        return signalPassFailure();
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
-          freeMemory, width,
-          /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+          freeMemory, atomicAdd, width,
+          /*addedType*/ nullptr, type_args, overwritten_args,
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
+          markReadonly);
     }
     if (!newFunc) {
       signalPassFailure();
@@ -160,6 +166,8 @@ struct DifferentiateWrapperPass
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)outfn);
     }
+
+    getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
   }
 };
 

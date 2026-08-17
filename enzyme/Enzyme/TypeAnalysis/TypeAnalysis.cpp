@@ -39,6 +39,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
+#include "llvm/ProfileData/InstrProf.h"
+
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -99,8 +101,13 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
     {"sin", Intrinsic::sin},
+#if LLVM_VERSION_MAJOR >= 19
+    {"tan", Intrinsic::tan},
+    {"acos", Intrinsic::acos},
+#else
     {"tan", Intrinsic::not_intrinsic},
     {"acos", Intrinsic::not_intrinsic},
+#endif
     {"__nv_frcp_rd", Intrinsic::not_intrinsic},
     {"__nv_frcp_rn", Intrinsic::not_intrinsic},
     {"__nv_frcp_ru", Intrinsic::not_intrinsic},
@@ -109,9 +116,17 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"__nv_drcp_rn", Intrinsic::not_intrinsic},
     {"__nv_drcp_ru", Intrinsic::not_intrinsic},
     {"__nv_drcp_rz", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"asin", Intrinsic::asin},
+#else
     {"asin", Intrinsic::not_intrinsic},
+#endif
     {"__nv_asin", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"atan", Intrinsic::atan},
+#else
     {"atan", Intrinsic::not_intrinsic},
+#endif
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 19
@@ -128,7 +143,11 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"atanh", Intrinsic::not_intrinsic},
     {"exp", Intrinsic::exp},
     {"exp2", Intrinsic::exp2},
+#if LLVM_VERSION_MAJOR >= 18
+    {"exp10", Intrinsic::exp10},
+#else
     {"exp10", Intrinsic::not_intrinsic},
+#endif
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
     {"expm1", Intrinsic::not_intrinsic},
@@ -872,6 +891,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (auto MD = GV->getMetadata("enzyme_type")) {
+      analysis[Val] |= TypeTree::fromMD(MD);
+      return;
+    }
 
     if (GV->getName() == "__cxa_thread_atexit_impl") {
       analysis[Val] = TypeTree(BaseType::Pointer).Only(-1, nullptr);
@@ -887,15 +910,37 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+    // A fixed constant global is a pointer to its initializer
+    if (GV->isConstant() && GV->hasInitializer()) {
+      // Record that this global is a pointer before analyzing its initializer.
+      // An initializer which refers back to its own global (such as a relative
+      // pointer jump table) would otherwise recurse forever, as the type of a
+      // global is only recorded once its initializer has been fully analyzed.
+      // Seeding with the fact that a global is a pointer is always correct, so
+      // any type deduced from it remains sound, and the seed is refined into
+      // the full type below once the initializer has been analyzed.
+      TypeTree seed;
+      seed.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", seed.toMD(GV->getContext()));
+
+      getConstantAnalysis(GV->getInitializer(), TA, analysis);
+      TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
+      constTT.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", constTT.toMD(GV->getContext()));
+      analysis[Val] |= constTT;
+      return;
+    }
+
     TypeTree &Result = analysis[Val];
     Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
-    // A fixed constant global is a pointer to its initializer
-    if (GV->isConstant() && GV->hasInitializer()) {
-      getConstantAnalysis(GV->getInitializer(), TA, analysis);
-      Result |= analysis[GV->getInitializer()].Only(-1, nullptr);
-      return;
-    }
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
       auto globalSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
@@ -1204,6 +1249,24 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
+
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (!isa<StructType>(GV->getValueType()) ||
+        !cast<StructType>(GV->getValueType())->isOpaque()) {
+      auto allocSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
+      if (EnzymePrintType) {
+        llvm::errs() << " pre global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+      Data = Data.Lookup(allocSize, DL)
+                 .Only(-1, dyn_cast_or_null<Instruction>(Origin));
+      if (EnzymePrintType) {
+        llvm::errs() << " post global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+    }
+  }
+
   bool Changed =
       analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 
@@ -4098,6 +4161,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 18
+  case Intrinsic::exp10:
+#endif
 #if LLVM_VERSION_MAJOR >= 19
   case Intrinsic::sinh:
   case Intrinsic::cosh:
@@ -5534,8 +5600,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (isDeallocationFunction(funcName, TLI)) {
+      bool cudaFree = isCudaDeallocationFunction(funcName);
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
+        // The allocation freed by the CUDA driver API is a CUdeviceptr, an
+        // integer at the LLVM level, but still a pointer.
+        if (Idx == 0 && cudaFree) {
+          updateAnalysis(call.getOperand(Idx),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          Idx++;
+          continue;
+        }
         if (Arg.getType()->isIntegerTy()) {
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);

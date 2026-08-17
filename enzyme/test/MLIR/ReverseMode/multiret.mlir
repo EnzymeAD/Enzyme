@@ -30,10 +30,10 @@ module {
 // CHECK-NEXT:  }
 
 // CHECK:  func.func private @diffesquare(%arg0: f64, %arg1: i32, %arg2: f32, %arg3: f64, %arg4: f32) -> (f64, f32) {
-// CHECK-NEXT:    %0 = arith.mulf %arg4, %arg2 : f32
-// CHECK-NEXT:    %1 = arith.addf %0, %0 : f32
-// CHECK-NEXT:    %2 = arith.mulf %arg3, %arg0 : f64
-// CHECK-NEXT:    %3 = arith.addf %2, %2 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg4, %arg2 fastmath<fast> : f32
+// CHECK-NEXT:    %1 = arith.addf %0, %0 fastmath<fast> : f32
+// CHECK-NEXT:    %2 = arith.mulf %arg3, %arg0 fastmath<fast> : f64
+// CHECK-NEXT:    %3 = arith.addf %2, %2 fastmath<fast> : f64
 // CHECK-NEXT:    return %3, %1 : f64, f32
 // CHECK-NEXT:  }
 
@@ -41,9 +41,9 @@ module {
 // CHECK:  func.func private @diffesquare_0(%arg0: f64, %arg1: i32, %arg2: f32, %arg3: f64, %arg4: f32) -> (f64, i32, f64, f32) {
 // CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    %1 = arith.muli %arg1, %arg1 : i32
-// CHECK-NEXT:    %2 = arith.mulf %arg4, %arg2 : f32
-// CHECK-NEXT:    %3 = arith.addf %2, %2 : f32
-// CHECK-NEXT:    %4 = arith.mulf %arg3, %arg0 : f64
-// CHECK-NEXT:    %5 = arith.addf %4, %4 : f64
+// CHECK-NEXT:    %2 = arith.mulf %arg4, %arg2 fastmath<fast> : f32
+// CHECK-NEXT:    %3 = arith.addf %2, %2 fastmath<fast> : f32
+// CHECK-NEXT:    %4 = arith.mulf %arg3, %arg0 fastmath<fast> : f64
+// CHECK-NEXT:    %5 = arith.addf %4, %4 fastmath<fast> : f64
 // CHECK-NEXT:    return %0, %1, %5, %3 : f64, i32, f64, f32
 // CHECK-NEXT:  }

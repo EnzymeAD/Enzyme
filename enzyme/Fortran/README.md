@@ -3,7 +3,40 @@
 Source files in this subdirectory provides Fortran bindings for Enzyme, as
 detailed in the following.
 
-## Function hooks
+## Note on compilers
+
+Before providing details on the Fortran bindings, it is worth noting that Enzyme
+only supports the `2023.0.0` and `2023.2.4` versions of the Intel
+IFX Fortran compiler. We strongly recommend using the
+[Flang](https://flang.llvm.org) compiler, which is available as part of the
+[LLVM project](https://github.com/llvm/llvm-project).
+
+## Running Enzyme from flang
+
+Configuring Enzyme with `-DENZYME_FLANG=ON` builds `FlangEnzyme-<LLVM version>`, a
+pass plugin that flang can load with `-fpass-plugin`. Enzyme then runs as part of
+the flang optimization pipeline, so a single command differentiates and compiles:
+
+```console
+$ flang -fpass-plugin=/path/to/FlangEnzyme-21.so -I /path/to/enzyme/modules program.f90 -o program
+```
+
+The `-I` flag points at the directory holding the `enzyme.mod` module file, which is
+built by `-DENZYME_FORTRAN=ON` (see the sections below).
+
+Without the plugin the derivative has to be produced out of line, by emitting LLVM IR
+from flang and running the Enzyme pass over it with `opt`:
+
+```console
+$ flang -flto -c -I /path/to/enzyme/modules program.f90 -o program.bc
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so -passes=enzyme program.bc -o program-enzyme.bc
+$ flang -flto program-enzyme.bc -o program
+```
+
+Both routes are exercised by the tests in `enzyme/test/Fortran`. The plugin route is
+flang-only; with ifx use the `opt` pipeline above.
+
+## Function hooks for differentiation
 
 We provide bindings for the `__enzyme_fwddiff` and `__enzyme_autodiff` function
 hooks using implicit interfaces. Some Fortran compilers disallow procedure names
@@ -72,3 +105,22 @@ then you can make use of activity descriptors like so:
   call enzyme_autodiff(my_subroutine, enzyme_const, n, &
                        enzyme_dup, x, dx, enzyme_dup, y, dy
 ```
+
+## Function hook for batching
+
+We do not currently provide bindings for the `__enzyme_batch` function hook
+because it requires `enzyme_width` to be passed-by-value as an integer and this
+is not supported by the implicit interfacing approach used for the other
+function hooks. As such, you will need to write your own explicit `interface`
+block to handle the batching. See the Fortran
+[batching test ](../test/Fortran/BatchMode/square_with_explicit_interface.f90)
+for an example.
+
+> [!NOTE]
+> In C, the batched output is provided using a simple `struct`. The required
+> syntax is different in Fortran - you should instead provide each entry of the
+> output batch individually.
+
+> [!NOTE]
+> You will likely find that batching works more straightforwardly with
+> subroutines than with Fortran functions.

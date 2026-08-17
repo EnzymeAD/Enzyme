@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/CloneFunction.h"
+#include "Interfaces/Utils.h"
 
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
@@ -23,6 +24,10 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
+
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -49,7 +54,15 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
       postpasses(postpasses), strongZero(strongZero),
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
-      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {}
+      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {
+  if (Logic.solver) {
+    dataflowSolver = std::make_unique<DataFlowSolver>(
+        DataFlowConfig().setInterprocedural(false));
+    dataflowActivityAnalyzer =
+        std::make_unique<enzyme::DataFlowActivityAnalyzer>(
+            *dataflowSolver, oldFunc_, ArgDiffeTypes_, ReturnActivity);
+  }
+}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {
@@ -108,9 +121,13 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantInstruction(Operation *op) const {
+  if (dataflowActivityAnalyzer)
+    return dataflowActivityAnalyzer->isInactiveOperation(op);
   return activityAnalyzer->isConstantOperation(TR, op);
 }
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
+  if (dataflowActivityAnalyzer)
+    return dataflowActivityAnalyzer->isInactiveValue(v);
   return activityAnalyzer->isConstantValue(TR, v);
 }
 
@@ -307,10 +324,18 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
+    // An op with side effects may still need to touch shadow memory even when
+    // it is constant: a store of an inactive value into active memory has to
+    // zero the shadow, or a later load reads a stale tangent. Only skip it if
+    // it is pure, or if every operand is constant and there is no shadow to
+    // write through.
     if ((op->getBlock()->getTerminator() != op) &&
         llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
-        /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
+        (isPure(op) ||
+         llvm::all_of(op->getOperands(),
+                      [this](Value v) { return isConstantValue(v); })) &&
+        isConstantInstruction(op)) {
       return success();
     }
     // }
@@ -322,4 +347,22 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
   }
   return op->emitError() << "could not compute the adjoint for this operation "
                          << *op;
+}
+
+Value MGradientUtils::getBaseObject(Value v) {
+  return mlir::enzyme::oputils::getBaseObject(v);
+}
+
+DIFFE_TYPE MGradientUtils::getDiffeTypeOfBase(Value ptr) {
+  Value base = getBaseObject(ptr);
+  auto blockArg = dyn_cast<BlockArgument>(base);
+  if (!blockArg)
+    return DIFFE_TYPE::DUP_ARG;
+  Block *owner = blockArg.getOwner();
+  if (owner != &oldFunc.getFunctionBody().front())
+    return DIFFE_TYPE::DUP_ARG;
+  unsigned idx = blockArg.getArgNumber();
+  if (idx >= ArgDiffeTypes.size())
+    return DIFFE_TYPE::DUP_ARG;
+  return ArgDiffeTypes[idx];
 }

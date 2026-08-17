@@ -17,15 +17,31 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
+
+static mlir::Value allocaExtent(mlir::OpBuilder &builder,
+                                mlir::LLVM::AllocaOp alloca);
 #include "Implementations/LLVMDerivatives.inc"
+
+// Lets activity analysis treat llvm.store generically via StoreLikeInterface.
+struct LLVMStoreLike
+    : public StoreLikeInterface::ExternalModel<LLVMStoreLike, LLVM::StoreOp> {
+  Value getStoredValue(Operation *op) const {
+    return cast<LLVM::StoreOp>(op).getValue();
+  }
+  Value getStoredPointer(Operation *op) const {
+    return cast<LLVM::StoreOp>(op).getAddr();
+  }
+};
 
 struct InlineAsmActivityInterface
     : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
@@ -36,6 +52,94 @@ struct InlineAsmActivityInterface
     return str.contains("cpuid") || str.contains("exit");
   }
   bool isArgInactive(Operation *op, size_t) const { return isInactive(op); }
+};
+
+struct SelectActivityInterface
+    : public ActivityOpInterface::ExternalModel<SelectActivityInterface,
+                                                LLVM::SelectOp> {
+  bool isInactive(Operation *op) const { return false; }
+  bool isArgInactive(Operation *op, size_t idx) const {
+    // llvm.select is not inactive in general, but the condition is always
+    // inactive.
+    return idx == 0;
+  }
+};
+
+class ArrayTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<ArrayTypeInterface,
+                                                  LLVM::LLVMArrayType> {
+public:
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    llvm::errs() << " unsupported: createNullAttribute of LLVMArrayType\n";
+    return nullptr;
+  }
+
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
+    auto arrayTy = cast<LLVM::LLVMArrayType>(self);
+    Type elemTy = arrayTy.getElementType();
+    auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    if (!elemIface)
+      return LLVM::ZeroOp::create(builder, loc, arrayTy);
+
+    Value nullElem = elemIface.createNullValue(builder, loc);
+    Value result = LLVM::PoisonOp::create(builder, loc, arrayTy);
+    for (uint64_t i = 0; i < arrayTy.getNumElements(); ++i) {
+      result = LLVM::InsertValueOp::create(builder, loc, result, nullElem, i);
+    }
+    return result;
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto arrayTy = cast<LLVM::LLVMArrayType>(self);
+    Type elemTy = arrayTy.getElementType();
+    Value result = LLVM::PoisonOp::create(builder, loc, arrayTy);
+    auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    for (uint64_t i = 0; i < arrayTy.getNumElements(); ++i) {
+      Value aElem = LLVM::ExtractValueOp::create(builder, loc, a, i);
+      Value bElem = LLVM::ExtractValueOp::create(builder, loc, b, i);
+      Value sum;
+      if (elemIface) {
+        sum = elemIface.createAddOp(builder, loc, aElem, bElem);
+      } else {
+        sum = aElem;
+      }
+      result = LLVM::InsertValueOp::create(builder, loc, result, sum, i);
+    }
+    return result;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
+
+  int64_t getApproxSize(Type self) const {
+    auto arrayType = cast<LLVM::LLVMArrayType>(self);
+    if (auto elemType =
+            dyn_cast<AutoDiffTypeInterface>(arrayType.getElementType())) {
+      int64_t elSize = elemType.getApproxSize();
+      if (elSize != INT64_MAX)
+        return arrayType.getNumElements() * elSize;
+    }
+    return INT64_MAX;
+  }
 };
 
 class PointerTypeInterface
@@ -71,12 +175,130 @@ public:
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
-    // TODO inspect val and memset corresponding size
+    if (auto allocaOp = val.getDefiningOp<LLVM::AllocaOp>()) {
+      Value size = allocaExtent(builder, allocaOp);
+      if (!size)
+        return failure();
+      Value zero =
+          LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
+      LLVM::MemsetOp::create(builder, loc, val, zero, size,
+                             /*isVolatile=*/false);
+      return success();
+    }
     return failure();
   }
 
   bool isZero(Type self, Value val) const { return false; }
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
+};
+
+// A lifetime marker says when the memory it names is live. The shadow is
+// memory too and lives exactly as long, so the tangent is the same marker said
+// again of the shadow. The op is declared inactive, which is about what it
+// makes active and not about whether the derivative needs it said: a barrier is
+// inactive too and still has to be there.
+template <typename OpTy>
+struct LifetimeForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<LifetimeForwardInterface<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto ltOp = cast<OpTy>(op);
+    // Memory nothing differentiates has no shadow whose lifetime this could be.
+    if (gutils->isConstantValue(ltOp.getPtr()))
+      return success();
+
+    Value shadow = gutils->invertPointerM(ltOp.getPtr(), builder);
+    auto newOp = cast<OpTy>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<OpTy>(builder.clone(*newOp));
+    shadowOp.getPtrMutable().assign(shadow);
+    return success();
+  }
+};
+
+// A debug intrinsic narrates the primal: it names which source variable a
+// value stands for, and computes nothing. The primal copy in the generated
+// function keeps saying it; the derivative has nothing to add -- there is no
+// variable metadata under which a shadow could honestly be described. Like the
+// lifetime markers, the op is declared inactive, and this interface exists
+// because inactivity alone answers "what does it make active", not "what is
+// its tangent": an op whose operand is active is still asked for one.
+template <typename OpTy>
+struct NoTangentForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<NoTangentForwardInterface<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return success();
+  }
+};
+
+// The reverse-mode side of the same statement. The activity tables say these
+// ops are inactive, but not every analyzer consults that when deciding what
+// to skip; owning the answer here keeps -g working regardless of which one
+// ran.
+template <typename OpTy>
+struct NoAdjointReverseInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          NoAdjointReverseInterface<OpTy>, OpTy> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
+};
+
+// After a memset the memory holds a fixed byte pattern, which depends on no
+// input, so its tangent is zero everywhere the memset reached. Forward mode
+// says that by clearing the shadow over the same range -- whatever derivative
+// the memory carried before is gone along with the value it belonged to.
+//
+// llvm.intr.memset is declared inactive, which is about what it makes active
+// and not about whether the derivative needs it said.
+struct MemsetForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<MemsetForwardInterface,
+                                                LLVM::MemsetOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memset = cast<LLVM::MemsetOp>(op);
+    // Memory nothing differentiates has no shadow to clear.
+    if (gutils->isConstantValue(memset.getDst()))
+      return success();
+
+    // A byte something differentiates is splatted across the memory, and its
+    // tangent would have to be splatted across the shadow. Nothing produces
+    // that today, and guessing at it would quietly zero a derivative.
+    if (!gutils->isConstantValue(memset.getVal()))
+      return op->emitError()
+             << "could not compute the tangent of a memset whose value is "
+                "differentiated "
+             << *op;
+
+    Value shadow = gutils->invertPointerM(memset.getDst(), builder);
+    auto newOp = cast<LLVM::MemsetOp>(gutils->getNewFromOriginal(op));
+    Value zero = LLVM::ConstantOp::create(builder, op->getLoc(),
+                                          newOp.getVal().getType(),
+                                          builder.getI8IntegerAttr(0));
+    auto shadowOp = cast<LLVM::MemsetOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(shadow);
+    shadowOp.getValMutable().assign(zero);
+
+    // A memset into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not write the primal half at all.
+    if (gutils->primalStoreElidable(memset.getDst()))
+      gutils->erase(newOp);
+    return success();
+  }
 };
 
 struct GEPOpInterfaceReverse
@@ -93,8 +315,8 @@ struct GEPOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto gep = cast<LLVM::GEPOp>(op);
     auto newGep = cast<LLVM::GEPOp>(gutils->getNewFromOriginal(op));
     auto base = gep.getBase();
@@ -104,6 +326,41 @@ struct GEPOpInterfaceReverse
       shadowGep.getBaseMutable().assign(baseShadow);
       gutils->setInvertedPointer(gep.getRes(), shadowGep->getResult(0));
     }
+    return success();
+  }
+};
+
+// Renaming a pointer into another address space moves nothing, so there is no
+// adjoint to accumulate; the shadow is the same rename of the shadow pointer,
+// as for llvm.getelementptr above. Needed because these sit in front of active
+// memory: raise-llvm-ext emits one for a size hint that annotates the memory
+// space of a pointer whose type cannot name it.
+struct AddrSpaceCastOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AddrSpaceCastOpInterfaceReverse, LLVM::AddrSpaceCastOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto asCast = cast<LLVM::AddrSpaceCastOp>(op);
+    auto arg = asCast.getArg();
+    if (gutils->isConstantValue(arg))
+      return success();
+
+    auto newCast = cast<LLVM::AddrSpaceCastOp>(gutils->getNewFromOriginal(op));
+    auto shadowCast = cast<LLVM::AddrSpaceCastOp>(builder.clone(*newCast));
+    shadowCast.getArgMutable().assign(gutils->invertPointerM(arg, builder));
+    gutils->setInvertedPointer(asCast.getRes(), shadowCast.getRes());
+    return success();
   }
 };
 
@@ -117,18 +374,24 @@ struct LoadOpInterfaceReverse
     Value addr = loadOp.getAddr();
 
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
-      if (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr)) {
+      // A mutable type's derivative is a shadow, not a value to add into: there
+      // is nothing to accumulate here, the same way the store adjoint below has
+      // nothing to take back out. Loading a pointer is the case in hand.
+      if (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr) &&
+          !iface.isMutable()) {
         Value gradient = gutils->diffe(loadOp, builder);
         Value addrGradient = gutils->popCache(caches.front(), builder);
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient = LLVM::LoadOp::create(builder, loadOp.getLoc(),
-                                                      iface, addrGradient);
+          Value loadedGradient = LLVM::LoadOp::create(
+              builder, loadOp.getLoc(), iface, addrGradient,
+              loadOp.getAlignment().value_or(0));
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                   loadedGradient, gradient);
 
           LLVM::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
-                                addrGradient);
+                                addrGradient,
+                                loadOp.getAlignment().value_or(0));
         } else {
           LLVM::AtomicRMWOp::create(builder, loadOp.getLoc(),
                                     LLVM::AtomicBinOp::fadd, addrGradient,
@@ -152,10 +415,126 @@ struct LoadOpInterfaceReverse
                                      cacheBuilder)};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-    // auto loadOp = cast<LLVM::LoadOp>(op);
-    // Value ptr = loadOp.getAddr();
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<LLVM::LoadOp>(op);
+    Value addr = loadOp.getAddr();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
+    // What a load of a mutable type reads is itself a handle on active memory,
+    // so what stands for it is the handle held at the same place in the shadow:
+    // the same load, off the shadow address. Reading it out is the whole of the
+    // derivative -- see the adjoint above, which leaves it alone.
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a load of a type without "
+                "autodiff semantics "
+             << *op;
+    // An immutable load's derivative is the adjoint's to accumulate.
+    if (!iface.isMutable())
+      return success();
+    if (gutils->isConstantValue(loadOp))
+      return success();
+    // Cannot load a non-constant value out of a constant address: there is no
+    // shadow to read the handle from, so the claimed activity cannot be
+    // honored.
+    if (gutils->isConstantValue(addr))
+      return op->emitError()
+             << "cannot load a non-constant value out of a constant address "
+             << *op;
+    Value addrShadow = gutils->invertPointerM(addr, builder);
+    auto newLoad = cast<LLVM::LoadOp>(gutils->getNewFromOriginal(op));
+    auto shadowLoad = cast<LLVM::LoadOp>(builder.clone(*newLoad));
+    shadowLoad.getAddrMutable().assign(addrShadow);
+    gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
+    return success();
+  }
+};
+
+// A memcpy moves whatever bytes sit at the source, so its adjoint depends on
+// what those bytes are. When the destination provably holds no floating point
+// data -- its underlying object is an alloca of a float-free type, as for the
+// capture structs a kernel launch packs its arguments into -- the copy only
+// relocates pointers and integers. Their derivative story is entirely
+// structural: the shadow object must hold the shadow pointers at the same
+// offsets, which one copy of the shadow bytes in the forward sweep provides,
+// and the reverse sweep has nothing to accumulate. Bytes that do hold floats
+// need the classic adjoint (dsrc += ddst; ddst = 0) instead, which needs to
+// know where the floats are; without that knowledge we still refuse.
+static Type getUnderlyingAllocaType(Value ptr) {
+  if (auto alloca = oputils::getBaseObject(ptr).getDefiningOp<LLVM::AllocaOp>())
+    return alloca.getElemType();
+  return nullptr;
+}
+
+static bool typeContainsFloat(Type type) {
+  if (isa<FloatType>(type))
+    return true;
+  if (auto structType = dyn_cast<LLVM::LLVMStructType>(type))
+    return llvm::any_of(structType.getBody(), typeContainsFloat);
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(type))
+    return typeContainsFloat(arrayType.getElementType());
+  if (auto vecType = dyn_cast<VectorType>(type))
+    return typeContainsFloat(vecType.getElementType());
+  return false;
+}
+
+// In forward mode the tangent of a memcpy is a memcpy of the shadows: float
+// bytes carry their tangents, pointer bytes carry their shadow pointers, and
+// one copy serves both. A source nothing differentiates has no shadow to copy
+// from: its float bytes have a zero tangent, while a float-free copy (see
+// above) wants the primal bytes themselves so structural fields stay usable
+// through the shadow object.
+struct MemcpyForwardInterface
+    : public AutoDiffOpInterface::ExternalModel<MemcpyForwardInterface,
+                                                LLVM::MemcpyOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memcpy = cast<LLVM::MemcpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return success();
+    Value dstShadow = gutils->invertPointerM(memcpy.getDst(), builder);
+    auto newOp = cast<LLVM::MemcpyOp>(gutils->getNewFromOriginal(op));
+    if (gutils->isConstantValue(memcpy.getSrc())) {
+      // A source nothing differentiates has no shadow to copy from; what
+      // the destination's tangent should hold depends on what the bytes
+      // are, which only the destination's type can say.
+      Type dstType = getUnderlyingAllocaType(memcpy.getDst());
+      if (!dstType)
+        return op->emitError()
+               << "could not compute the tangent of a memcpy from an "
+                  "undifferentiated source without knowing the copied type "
+               << *op;
+      if (typeContainsFloat(dstType)) {
+        // TODO: without type analysis saying where the floats sit, zeroing
+        // is right for them but also nulls any structural fields (sizes,
+        // inactive pointers) the copy carried.
+        op->emitWarning()
+            << "assuming the bytes copied from an undifferentiated source "
+               "are floating point and zeroing their tangent "
+            << *op;
+        Value zero =
+            LLVM::ConstantOp::create(builder, op->getLoc(), builder.getI8Type(),
+                                     builder.getI8IntegerAttr(0));
+        LLVM::MemsetOp::create(builder, op->getLoc(), dstShadow, zero,
+                               newOp.getLen(), newOp.getIsVolatile());
+        return success();
+      }
+      // Float-free: the shadow's structural fields (sizes, inactive
+      // pointers) must read as the primal's.
+    }
+    Value srcShadow = gutils->isConstantValue(memcpy.getSrc())
+                          ? oputils::inactiveStoredValueShadow(
+                                op, *gutils, memcpy.getSrc(), builder)
+                          : gutils->invertPointerM(memcpy.getSrc(), builder);
+    auto shadowOp = cast<LLVM::MemcpyOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(dstShadow);
+    shadowOp.getSrcMutable().assign(srcShadow);
+
+    // A copy into memory whose primal contents the caller declared unneeded
+    // (enzyme_dupnoneed) need not write the primal half at all.
+    if (gutils->primalStoreElidable(memcpy.getDst()))
+      gutils->erase(newOp);
+    return success();
   }
 };
 
@@ -177,7 +556,8 @@ struct StoreOpInterfaceReverse
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
           Value loadedGradient = LLVM::LoadOp::create(
-              builder, storeOp.getLoc(), val.getType(), addrGradient);
+              builder, storeOp.getLoc(), val.getType(), addrGradient,
+              storeOp.getAlignment().value_or(0));
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -185,10 +565,16 @@ struct StoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        LLVM::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient);
+        LLVM::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient,
+                              storeOp.getAlignment().value_or(0));
       }
     }
 
+    // A store into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not happen in the augmented
+    // forward pass either.
+    if (gutils->primalStoreElidable(storeOp.getAddr()))
+      gutils->erase(gutils->getNewFromOriginal(op));
     return success();
   }
 
@@ -203,8 +589,41 @@ struct StoreOpInterfaceReverse
                                      cacheBuilder)};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  // A store of a mutable value -- a pointer -- has no float adjoint to
+  // accumulate; its derivative story is structural, like llvm.getelementptr
+  // above: the shadow memory must hold the shadow pointer at the same spot,
+  // so shadow loads traverse shadow structures. A pointer nothing
+  // differentiates is its own shadow, keeping inactive fields readable
+  // through the shadow object.
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<LLVM::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value addr = storeOp.getAddr();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a store of a type without "
+                "autodiff semantics "
+             << *op;
+    if (gutils->isConstantValue(addr))
+      return success();
+    // Immutable values' shadows live in the reverse sweep's adjoint, which
+    // accumulates and zeroes the slot; only mutable values need the forward
+    // sweep to place their shadow.
+    if (!iface.isMutable())
+      return success();
+    Value addrShadow = gutils->invertPointerM(addr, builder);
+    Value valShadow =
+        gutils->isConstantValue(val)
+            ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
+            : gutils->invertPointerM(val, builder);
+    auto newOp = cast<LLVM::StoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<LLVM::StoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getAddrMutable().assign(addrShadow);
+    return success();
+  }
 };
 
 struct ExtractValueOpInterfaceReverse
@@ -241,8 +660,10 @@ struct ExtractValueOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct InsertValueOpInterfaceReverse
@@ -293,44 +714,193 @@ struct InsertValueOpInterfaceReverse
     return {};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
-std::optional<Value> findPtrSize(Value ptr) {
-  if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
-    return allocOp.getSize();
+// What is recorded about the allocation a pointer names: how many bytes are
+// reachable from it, and the pointer that says so. The second is not redundant.
+// A clone is allocated and copied in the address space of the pointer it is
+// made from -- which is what decides between host malloc/memcpy and the device
+// runtime -- and the pointer carrying the extent is not always the one asked
+// about: a size hint annotated with a memory space is attached to an
+// llvm.addrspacecast of it (see raise-llvm-ext), which is how memory a frontend
+// could only type as a host pointer still gets cloned on the device.
+struct PtrExtent {
+  Value size; // null when nothing records the extent
+  Value ptr;  // pointer the extent was found on; the queried one by default
+};
 
+static Value normalizeToI64(OpBuilder &builder, Location loc, Value size);
+
+// An alloca says how much it is: the size of the element type, that many times.
+// Nothing has to have annotated it, and `builder` is only used to say the
+// product, next to the copy that wants it.
+static Value allocaExtent(OpBuilder &builder, LLVM::AllocaOp alloca) {
+  auto dl = DataLayout::closest(alloca);
+  uint64_t elemBytes = dl.getTypeSize(alloca.getElemType());
+  auto i64Ty = builder.getIntegerType(64);
+  Value bytes = LLVM::ConstantOp::create(builder, alloca.getLoc(), i64Ty,
+                                         builder.getI64IntegerAttr(elemBytes));
+  Value count = normalizeToI64(builder, alloca.getLoc(), alloca.getArraySize());
+  if (!count)
+    return nullptr;
+  Value size = LLVM::MulOp::create(builder, alloca.getLoc(), bytes, count);
+  return size;
+}
+
+// `builder` may be null where the caller has nowhere to put an op; the extent
+// of an alloca is the one that has to be said rather than found, so that is the
+// case it gives up on.
+static PtrExtent findPtrExtent(Value ptr, OpBuilder *builder = nullptr) {
+  if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
+    return {allocOp.getSize(), ptr};
+
+  for (auto user : ptr.getUsers())
+    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user))
+      return {psh.getSize(), ptr};
+
+  // A hint on a cast of `ptr` describes the same bytes, in the space the cast
+  // names. Looked for after the direct hints, so an unannotated one still wins.
   for (auto user : ptr.getUsers()) {
-    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
-      return psh.getSize();
-    }
+    auto cast = dyn_cast<LLVM::AddrSpaceCastOp>(user);
+    if (!cast)
+      continue;
+    for (auto castUser : cast.getRes().getUsers())
+      if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(castUser))
+        return {psh.getSize(), cast.getRes()};
   }
 
-  return std::nullopt;
+  // Last, since a hint is what someone meant and this is only what the type
+  // says.
+  if (builder)
+    if (auto alloca = ptr.getDefiningOp<LLVM::AllocaOp>())
+      if (Value size = allocaExtent(*builder, alloca))
+        return {size, ptr};
+
+  return {nullptr, ptr};
+}
+
+// Names `ptr` in the address space `inSpaceOf` is in, so that both ends of a
+// copy agree on the space it is made in. Emits nothing when they already do.
+static Value castLikeSpaceOf(OpBuilder &builder, Value ptr, Value inSpaceOf) {
+  if (ptr.getType() == inSpaceOf.getType())
+    return ptr;
+  return LLVM::AddrSpaceCastOp::create(builder, ptr.getLoc(),
+                                       inSpaceOf.getType(), ptr);
+}
+
+static Value normalizeToI64(OpBuilder &builder, Location loc, Value val) {
+  auto i64Ty = builder.getI64Type();
+  if (val.getType() == i64Ty)
+    return val;
+
+  if (val.getType().isIndex())
+    return arith::IndexCastOp::create(builder, loc, i64Ty, val);
+
+  auto srcTy = dyn_cast<IntegerType>(val.getType());
+  if (!srcTy) {
+    llvm::errs() << "ptr size hint is not an integer: " << val << "\n";
+    return nullptr;
+  }
+  // Sizes are non-negative, so zero-extend when widening.
+  if (srcTy.getWidth() < 64)
+    return LLVM::ZExtOp::create(builder, loc, i64Ty, val);
+  return LLVM::TruncOp::create(builder, loc, i64Ty, val);
 }
 
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
-    auto ptrSize = findPtrSize(value);
-    if (!ptrSize) {
+    PtrExtent extent = findPtrExtent(value, &builder);
+    if (!extent.size) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;
     }
 
-    auto clone = llvm_ext::AllocOp::create(
-        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
-        *ptrSize);
-    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, *ptrSize,
-                           /*isVolatile*/ false);
+    Value size = normalizeToI64(builder, value.getLoc(), extent.size);
+    if (!size)
+      return nullptr;
+
+    // Clone from the pointer that carries the extent, so the allocation and the
+    // copy land in the memory space that pointer names, and picking the
+    // allocator and the copy is left to lower-llvm-ext: emitting host
+    // malloc/memcpy here would silently produce a host read of device memory (a
+    // segfault at runtime) whenever what is being checkpointed is device
+    // memory.
+    Value clone = llvm_ext::AllocOp::create(builder, value.getLoc(),
+                                            extent.ptr.getType(), size);
+    llvm_ext::MemcpyOp::create(builder, value.getLoc(), clone, extent.ptr,
+                               size);
 
     return clone;
   }
 
+  void copyValue(Type self, OpBuilder &builder, Value dst, Value src) const {
+    // Prefer `src`: taking a checkpoint copies from the live ref, whose alloc
+    // (or size hint) is visible. Restoring one copies *out of* a clone buffer,
+    // where only `dst` -- a direct clone -- is traceable.
+    PtrExtent extent = findPtrExtent(src);
+    if (!extent.size)
+      extent = findPtrExtent(dst);
+    if (!extent.size) {
+      llvm::errs() << "cannot find size of ptr to copy: " << src << "\n";
+      return;
+    }
+
+    Value size = normalizeToI64(builder, src.getLoc(), extent.size);
+    if (!size)
+      return;
+
+    Value dstInSpace = castLikeSpaceOf(builder, dst, extent.ptr);
+    Value srcInSpace = castLikeSpaceOf(builder, src, extent.ptr);
+    llvm_ext::MemcpyOp::create(builder, src.getLoc(), dstInSpace, srcInSpace,
+                               size);
+  }
+
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
     llvm_ext::FreeOp::create(builder, value.getLoc(), value);
+  }
+
+  bool implementsBatchAllocation(Type self, Value base,
+                                 OpFoldResult size) const {
+    return true;
+  }
+
+  Value deriveSubElement(Type self, OpBuilder &builder, Location loc,
+                         Value base, Value multiel, Value index) const {
+    PtrExtent extent = findPtrExtent(base);
+    Value size = normalizeToI64(builder, loc, extent.size);
+    index = normalizeToI64(builder, loc, index);
+
+    Value offset = arith::MulIOp::create(builder, loc, size, index);
+    Value gep =
+        LLVM::GEPOp::create(builder, loc, multiel.getType(),
+                            builder.getI8Type(), multiel, ValueRange{offset});
+
+    return gep;
+  }
+
+  Value batchAllocate(Type self, OpBuilder &builder, Location loc, Value base,
+                      OpFoldResult size) const {
+    PtrExtent extent = findPtrExtent(base);
+
+    Value numel = dyn_cast<Value>(size);
+    if (auto attr = dyn_cast<Attribute>(size)) {
+      numel = arith::ConstantOp::materialize(builder, attr,
+                                             builder.getI64Type(), loc);
+    }
+
+    Value baseSize = normalizeToI64(builder, loc, extent.size);
+    Value totalSize = arith::MulIOp::create(builder, loc, numel, baseSize);
+
+    Value ptr = llvm_ext::AllocOp::create(builder, loc, extent.ptr.getType(),
+                                          totalSize);
+
+    return ptr;
   }
 };
 
@@ -417,6 +987,48 @@ class AutoDiffLLVMFuncOpFunctionInterface
     : public AutoDiffFunctionInterface::ExternalModel<
           AutoDiffLLVMFuncOpFunctionInterface, LLVM::LLVMFuncOp> {
 public:
+  // A comdat says which of the identical copies of a symbol the linker should
+  // keep, and it keeps or discards the whole group at once. The derivative is
+  // cloned from the primal and so arrives holding the primal's comdat, which
+  // puts it in that group -- but only the translation units that differentiate
+  // the primal put a derivative in it. A unit that merely calls the primal
+  // offers a group of one under the same key, and if that is the copy the
+  // linker keeps, the derivative goes with the copy it discarded and every call
+  // to it is left undefined.
+  //
+  // The derivative is its own symbol and wants its own group: keyed on its own
+  // name, it still dedupes against the other units that built the same
+  // derivative, and nothing else can take it away.
+  void detachFromPrimalDefinition(Operation *self) const {
+    auto fn = cast<LLVM::LLVMFuncOp>(self);
+    SymbolRefAttr comdat = fn.getComdatAttr();
+    if (!comdat)
+      return;
+
+    // Follow the primal's selector to the table holding it, and to the kind of
+    // deduplication it asked for.
+    auto selector =
+        SymbolTable::lookupNearestSymbolFrom<LLVM::ComdatSelectorOp>(self,
+                                                                     comdat);
+    if (!selector)
+      return;
+    auto table = dyn_cast<LLVM::ComdatOp>(selector->getParentOp());
+    if (!table)
+      return;
+
+    StringRef name = fn.getSymName();
+    SymbolTable selectors(table);
+    if (!selectors.lookup(name)) {
+      OpBuilder builder(table.getContext());
+      builder.setInsertionPointToEnd(&table.getBody().back());
+      LLVM::ComdatSelectorOp::create(builder, selector.getLoc(), name,
+                                     selector.getComdat());
+    }
+    fn.setComdatAttr(
+        SymbolRefAttr::get(table.getSymNameAttr(),
+                           {FlatSymbolRefAttr::get(fn.getContext(), name)}));
+  }
+
   void transformResultTypes(Operation *self,
                             SmallVectorImpl<Type> &resultTypes) const {
     auto fn = cast<mlir::FunctionOpInterface>(self);
@@ -460,9 +1072,33 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
     LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
+    LLVM::LLVMArrayType::attachInterface<ArrayTypeInterface>(*context);
+
+    LLVM::LifetimeStartOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeStartOp>>(*context);
+    LLVM::LifetimeEndOp::attachInterface<
+        LifetimeForwardInterface<LLVM::LifetimeEndOp>>(*context);
+    LLVM::DbgValueOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgValueOp>>(*context);
+    LLVM::DbgDeclareOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgDeclareOp>>(*context);
+    LLVM::DbgLabelOp::attachInterface<
+        NoTangentForwardInterface<LLVM::DbgLabelOp>>(*context);
+    LLVM::DbgValueOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgValueOp>>(*context);
+    LLVM::DbgDeclareOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgDeclareOp>>(*context);
+    LLVM::DbgLabelOp::attachInterface<
+        NoAdjointReverseInterface<LLVM::DbgLabelOp>>(*context);
+    LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
+    LLVM::MemcpyOp::attachInterface<MemcpyForwardInterface>(*context);
+    LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
+    LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
+    LLVM::AddrSpaceCastOp::attachInterface<AddrSpaceCastOpInterfaceReverse>(
+        *context);
     LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
         *context);
     LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(

@@ -1,4 +1,4 @@
-// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math)" --split-input-file | FileCheck %s
+// RUN: %eopt %s --pass-pipeline="builtin.module(enzyme,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math,flatten-enzyme-caches,canonicalize)" --split-input-file | FileCheck %s
 
 func.func private @some_res_inactive(%x: f32, %ub: index) -> (f32) {
   %lb = arith.constant 0 : index
@@ -41,9 +41,9 @@ func.func @dsome_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
 // CHECK:             %[[SUBI_0:.*]] = arith.subi %[[ARG1]], %[[CONSTANT_1]] : index
 // CHECK:             %[[SUBI_1:.*]] = arith.subi %[[SUBI_0]], %[[VAL_3]] : index
 // CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[SUBI_1]]] : memref<?xf32>
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_4]], %[[ARG0]] : f32
-// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_4]], %[[LOAD_0]] : f32
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_5]], %[[MULF_2]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_4]], %[[ARG0]] fastmath<fast> : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_4]], %[[LOAD_0]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_5]], %[[MULF_2]] fastmath<fast> : f32
 // CHECK:             scf.yield %[[MULF_1]], %[[ADDF_1]] : f32, f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>
@@ -89,9 +89,9 @@ func.func @daffine_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
 // CHECK:             %[[SUBI_0:.*]] = arith.subi %[[ARG1]], %[[CONSTANT_0]] : index
 // CHECK:             %[[SUBI_1:.*]] = arith.subi %[[SUBI_0]], %[[VAL_3]] : index
 // CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[SUBI_1]]] : memref<?xf32>
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_4]], %[[ARG0]] : f32
-// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_4]], %[[LOAD_0]] : f32
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_5]], %[[MULF_2]] : f32
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_4]], %[[ARG0]] fastmath<fast> : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_4]], %[[LOAD_0]] fastmath<fast> : f32
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_5]], %[[MULF_2]] fastmath<fast> : f32
 // CHECK:             affine.yield %[[MULF_1]], %[[ADDF_1]] : f32, f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?xf32>

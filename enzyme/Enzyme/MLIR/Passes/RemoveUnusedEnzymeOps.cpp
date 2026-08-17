@@ -237,6 +237,48 @@ struct PopSimplify : public OpRewritePattern<enzyme::PopOp> {
   }
 };
 
+// A pop nobody reads is worth keeping only for what it does to the cache: it
+// moves the stack on for whatever pops next. When it is the one pop its cache
+// has, there is no next, and the whole cache is dead -- so the pushes go with
+// it, in the one rewrite. Taking the pop alone would leave a cache pushed and
+// never popped, which is worse than what was there before.
+//
+// PopSimplify cannot reach these: it pairs a pop with the push that dominates
+// it and gives up when the two are in different blocks, which is exactly the
+// shape reverse mode leaves behind for a branch whose adjoint turned out empty.
+struct DeadPopSimplify : public OpRewritePattern<enzyme::PopOp> {
+  using OpRewritePattern<enzyme::PopOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::PopOp pop,
+                                PatternRewriter &rewriter) const final {
+    if (!pop.getResult().use_empty())
+      return failure();
+
+    auto init = pop.getCache().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    // Anything else holding the cache could be reading the stack in a way this
+    // cannot see; only a cache that is nothing but pushed and popped is known.
+    SmallVector<enzyme::PushOp> pushes;
+    for (Operation *user : init.getResult().getUsers()) {
+      if (user == pop)
+        continue;
+      if (auto push = dyn_cast<enzyme::PushOp>(user)) {
+        pushes.push_back(push);
+        continue;
+      }
+      return failure();
+    }
+
+    rewriter.eraseOp(pop);
+    for (enzyme::PushOp push : pushes)
+      rewriter.eraseOp(push);
+    rewriter.eraseOp(init);
+    return success();
+  }
+};
+
 struct GetSimplify : public OpRewritePattern<enzyme::GetOp> {
   using OpRewritePattern<enzyme::GetOp>::OpRewritePattern;
 
@@ -331,8 +373,8 @@ struct IgnoreDerivativesSimplifyPattern
 
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
-  patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                  InitSimplify, IgnoreDerivativesSimplifyPattern>(
+  patterns.insert<PopSimplify, DeadPopSimplify, GetSimplify, PushSimplify,
+                  SetSimplify, InitSimplify, IgnoreDerivativesSimplifyPattern>(
       op->getContext());
 
   GreedyRewriteConfig config;
@@ -340,16 +382,80 @@ static void applyPatterns(Operation *op) {
   (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
 
+// Same patterns, for an op that is not IsolatedFromAbove: the greedy driver
+// only takes those, so the enzyme ops inside are handed to it individually.
+static void applyPatternsToEnzymeOps(Operation *op,
+                                     RewriterBase::Listener *listener) {
+  SmallVector<Operation *> ops;
+  op->walk([&](Operation *nested) {
+    if (isa<enzyme::InitOp, enzyme::PushOp, enzyme::PopOp, enzyme::GetOp,
+            enzyme::SetOp>(nested))
+      ops.push_back(nested);
+  });
+  if (ops.empty())
+    return;
+
+  RewritePatternSet patterns(op->getContext());
+  patterns.insert<PopSimplify, DeadPopSimplify, GetSimplify, PushSimplify,
+                  SetSimplify, InitSimplify>(op->getContext());
+
+  GreedyRewriteConfig config;
+  config.enableFolding();
+  if (listener)
+    config.setListener(listener);
+  (void)applyOpPatternsGreedily(ops, std::move(patterns), config);
+}
+
+static bool hasInitInRegions(Operation *op) {
+  return op->walk([](enzyme::InitOp) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
 static void annotateRegionOpsInLoops(Operation *op) {
   // When we have non-looping region branch ops (e.g. scf.if) inside of a loop,
   // we want the pushes/pops to be removed by the outer loop remover, not the
   // inner op remover. This helps mincut reduce the overall caching overhead.
+  //
+  // Only for caches the loop remover can take. One it can is initialized
+  // outside the loop, so that it outlives an iteration and its pushes can be
+  // paired with pops in the reverse loop. An init inside the loop belongs to
+  // that iteration alone; removal stops at the init's parent and never reaches
+  // the loop, so standing the region op down for it leaves nothing to remove it
+  // at all. Inlining a differentiated function into a loop body brings in
+  // exactly those, along with the ifs it cached across.
   op->walk([](LoopLikeOpInterface loop) {
-    loop->walk([](RegionBranchOpInterface regionBranch) {
-      if (!regionBranch.hasLoop()) {
-        regionBranch->setAttr(kPreserveCacheAttrName,
-                              UnitAttr::get(regionBranch.getContext()));
-      }
+    loop->walk([&](RegionBranchOpInterface regionBranch) {
+      if (regionBranch.hasLoop())
+        return;
+
+      // The attribute covers the whole region op, so one loop-local cache in it
+      // is enough to have to keep removing them here. Both ends count: the
+      // push and the pop of such a cache sit in different region ops, and
+      // standing either of them down strands it.
+      bool anyLoopLocal = false;
+      auto checkCache = [&](Value cache) {
+        Operation *init = cache.getDefiningOp();
+        if (!init || loop->isProperAncestor(init))
+          anyLoopLocal = true;
+      };
+      regionBranch->walk([&](Operation *nested) {
+        // A cache under a nested loop is that loop's to pair, and its own
+        // region ops are annotated when the walk above reaches it.
+        if (nested != regionBranch.getOperation() &&
+            isa<LoopLikeOpInterface>(nested))
+          return WalkResult::skip();
+
+        if (auto push = dyn_cast<enzyme::PushOp>(nested))
+          checkCache(push.getCache());
+        else if (auto pop = dyn_cast<enzyme::PopOp>(nested))
+          checkCache(pop.getCache());
+        return WalkResult::advance();
+      });
+      if (anyLoopLocal)
+        return;
+
+      regionBranch->setAttr(kPreserveCacheAttrName,
+                            UnitAttr::get(regionBranch.getContext()));
     });
   });
 }
@@ -510,6 +616,10 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
     auto op = worklist.pop();
     auto iface = cast<EnzymeOpsRemoverOpInterface>(op);
     current = op;
+
+    if (hasInitInRegions(op))
+      applyPatternsToEnzymeOps(op, this);
+
     rewriter.setInsertionPoint(current);
     result &= iface.removeEnzymeOps(rewriter).succeeded();
     current = nullptr;

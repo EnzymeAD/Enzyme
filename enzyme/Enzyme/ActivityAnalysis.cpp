@@ -247,6 +247,12 @@ const StringSet<> KnownInactiveFunctions = {
     "__nv_isinff",
     "__nv_isfinitel",
     "__nv_isfinited",
+    "air.isnan.f32",
+    "air.isnan.f64",
+    "air.isinf.f32",
+    "air.isinf.f64",
+    "air.isfinite.f32",
+    "air.isfinite.f64",
     "cublasCreate_v2",
     "cublasSetMathMode",
     "cublasSetStream_v2",
@@ -257,6 +263,7 @@ const StringSet<> KnownInactiveFunctions = {
     "cuStreamDestroy",
     "cuStreamQuery",
     "cuCtxGetCurrent",
+    "cuStreamGetCaptureInfo",
     "enzyme_zerotype",
     "abort",
     "time",
@@ -836,7 +843,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
 
   // Branch, unreachable, and previously computed constants are inactive
-  if (isa<UnreachableInst>(I) || isa<BranchInst>(I) ||
+  if (isa<UnreachableInst>(I) || isAnyBranch(I) ||
       (ConstantInstructions.find(I) != ConstantInstructions.end())) {
     return true;
   }

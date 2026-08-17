@@ -1,4 +1,4 @@
-// RUN: %eopt %s  --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math | FileCheck %s
+// RUN: %eopt %s  --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math --flatten-enzyme-caches --canonicalize | FileCheck %s
 
 module {
   func.func @reduce(%x: f32, %n : index) -> (f32) {
@@ -28,9 +28,9 @@ module {
 // CHECK-NEXT:      %[[nm1:.+]] = arith.subi %arg1, %c1 : index
 // CHECK-NEXT:      %[[ridx:.+]] = arith.subi %[[nm1]], %arg3 : index
 // CHECK-NEXT:      %[[a2:.+]] = memref.load %alloc[%[[ridx]]] : memref<?xf32>
-// CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg4, %arg0 : f32
-// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %[[a2]] : f32
-// CHECK-NEXT:      %[[a5:.+]] = arith.addf %arg5, %[[a4]] : f32
+// CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg4, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %[[a2]] fastmath<fast> : f32
+// CHECK-NEXT:      %[[a5:.+]] = arith.addf %arg5, %[[a4]] fastmath<fast> : f32
 // CHECK-NEXT:      affine.yield %[[a3]], %[[a5]] : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>

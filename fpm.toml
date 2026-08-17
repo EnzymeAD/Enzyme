@@ -1,0 +1,19 @@
+name = "enzyme"
+license = "Apache-2.0 WITH LLVM-exception"
+description = "Fortran bindings for Enzyme (the enzyme module)"
+homepage = "https://enzyme.mit.edu"
+
+# Exposes enzyme/Fortran as an fpm library, so a Fortran project can pull the
+# bindings in with
+#
+#   [dependencies]
+#   enzyme = { git = "https://github.com/EnzymeAD/Enzyme.git" }
+#
+
+[build]
+auto-executables = false
+auto-examples = false
+auto-tests = false
+
+[library]
+source-dir = "enzyme/Fortran"

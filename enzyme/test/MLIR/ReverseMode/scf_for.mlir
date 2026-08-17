@@ -36,9 +36,9 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 
 // CHECK-NEXT:      %extracted = tensor.extract %[[a1]]#1[%[[ridx]]] : tensor<?xf32>
 // CHECK-NEXT:      %extracted_1 = tensor.extract %[[a1]]#2[%[[ridx]]] : tensor<?xf32>
-// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %extracted_1 : f32
-// CHECK-NEXT:      %[[a6:.+]] = arith.mulf %arg4, %extracted : f32
-// CHECK-NEXT:      %[[a7:.+]] = arith.addf %arg5, %[[a6]] : f32
+// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %extracted_1 fastmath<fast> : f32
+// CHECK-NEXT:      %[[a6:.+]] = arith.mulf %arg4, %extracted fastmath<fast> : f32
+// CHECK-NEXT:      %[[a7:.+]] = arith.addf %arg5, %[[a6]] fastmath<fast> : f32
 // CHECK-NEXT:      scf.yield %[[a4]], %[[a7]] : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return %[[a3]]#1 : f32

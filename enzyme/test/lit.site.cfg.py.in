@@ -6,7 +6,11 @@ import os
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_obj_root = "@LLVM_BINARY_DIR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
-if len("@ENZYME_BINARY_DIR@") == 0:
+# The bazel build leaves ENZYME_BINARY_DIR empty and used to substitute a
+# workspace-relative tools dir, which only resolved against the test's cwd.
+# It now substitutes an absolute path; prefixing that with cwd would corrupt
+# it (and leave bare FileCheck off PATH), so only relative paths get fixed up.
+if len("@ENZYME_BINARY_DIR@") == 0 and not os.path.isabs(config.llvm_tools_dir):
   config.llvm_tools_dir = os.getcwd() + "/" + config.llvm_tools_dir
 config.llvm_libs_dir = "@LLVM_LIBS_DIR@"
 config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
@@ -126,6 +130,13 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+
+# Built by ENZYME_FLANG=ON; lets flang run Enzyme itself instead of piping IR to opt.
+config.substitutions.append(('%loadFlangEnzyme',
+                             ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext))
+if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
+    config.available_features.add('flangenzyme')
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"

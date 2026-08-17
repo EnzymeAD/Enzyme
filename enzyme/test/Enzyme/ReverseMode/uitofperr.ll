@@ -194,7 +194,7 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[gphi:.+]] = phi i8* [ %[[growalloc]], %grow.i ], [ %[[phibc]], %while ]
 ; CHECK-NEXT:   %[[_realloccast:.+]] = bitcast i8* %[[gphi]] to double*
 ; CHECK-NEXT:   %[[gep:.+]] = getelementptr inbounds double, double* %[[_realloccast]], i64 %iv
-; CHECK-NEXT:   store double %[[phi1:.+]], double* %[[gep]], align 8, !invariant.group !8
+; CHECK-NEXT:   store double %[[phi1:.+]], double* %[[gep]], align 8, !invariant.group ![[IG:[0-9]+]]
 ; CHECK-NEXT:   %[[trunc:.+]] = trunc i64 %iv to i32
 ; CHECK-NEXT:   %mul2 = fmul fast double %mul, %[[phi1]]
 ; CHECK-NEXT:   %add = fadd fast double %mul2, %[[phi1]]
@@ -220,7 +220,7 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   %"add'de.0" = phi double [ %differeturn, %exit ], [ %[[dad:.+]], %incinvertwhile ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %exit ], [ %[[sub:.+]], %incinvertwhile ]
 ; CHECK-NEXT:   %[[igep:.+]] = getelementptr inbounds double, double* %[[_realloccast]], i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[il:.+]] = load double, double* %[[igep]], align 8, !invariant.group !8
+; CHECK-NEXT:   %[[il:.+]] = load double, double* %[[igep]], align 8, !invariant.group ![[IG]]
 ; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %"add'de.0", %[[il]]
 ; CHECK-NEXT:   %[[fadd]] = fadd fast double %"mul'de.0", %[[m0diffemul]]
 ; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %"add'de.0", %mul
