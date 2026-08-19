@@ -65,7 +65,7 @@ TypeTree parseDIType(DICompositeType &Type, Instruction &I, DataLayout &DL) {
     size_t pos = 0;
     for (auto r : Subranges) {
       DISubrange *Subrange = dyn_cast<DISubrange>(r);
-      if (auto Count = Subrange->getCount().get<ConstantInt *>()) {
+      if (auto Count = cast<ConstantInt*>(Subrange->getCount())) {
         int64_t count = Count->getSExtValue();
         if (count == -1) {
           break;
