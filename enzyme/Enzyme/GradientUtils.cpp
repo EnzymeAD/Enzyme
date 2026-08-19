@@ -7922,6 +7922,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Value *result =
       lookupValueFromCache(inst->getType(), /*isForwardPass*/ false, BuilderM,
                            found->second, found->first, isi1, available);
+  if (auto *resultInst = dyn_cast<Instruction>(result)) {
+    auto *origInst = isOriginal(inst);
+    if (!origInst)
+      origInst = isOriginal(prelcssaInst);
+    if (origInst) {
+      TypeTree TT = TR.query(origInst);
+      if (TT.isKnown())
+        resultInst->setMetadata("enzyme_type",
+                                TT.toMD(resultInst->getContext()));
+    }
+  }
   if (auto LI2 = dyn_cast<LoadInst>(result))
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
