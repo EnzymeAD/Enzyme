@@ -35,6 +35,18 @@ void my_dsymv(char layout, char uplo, int N, double alpha,
   cblas_dsymv(layout, uplo, N, alpha, A, lda, X, incx, beta, Y, incy);
 }
 
+void my_dtrsv(char layout, char uplo, char trans, char diag, int N,
+              double *__restrict__ A, int lda, double *__restrict__ X,
+              int incx) {
+  cblas_dtrsv(layout, uplo, trans, diag, N, A, lda, X, incx);
+}
+
+void my_dtrsm(char layout, char side, char uplo, char trans, char diag, int M,
+              int N, double alpha, double *__restrict__ A, int lda,
+              double *__restrict__ B, int ldb) {
+  cblas_dtrsm(layout, side, uplo, trans, diag, M, N, alpha, A, lda, B, ldb);
+}
+
 double my_ddot(int N, double *__restrict__ X, int incx, double *__restrict__ Y,
                int incy) {
   double res = cblas_ddot(N, X, incx, Y, incy);
@@ -73,6 +85,13 @@ void my_dsyrk(char layout, char uplo, char trans,
 void my_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
     int info;
     cblas_dpotrf(layout, uplo, N, A, lda, nullptr); //&info);
+}
+
+void my_potrs(char layout, char uplo, int N, int Nrhs,
+              double *__restrict__ A, int lda, double *__restrict__ B,
+              int ldb) {
+  int info;
+  cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, B, ldb, &info);
 }
 
 static void dotTests() {
@@ -554,6 +573,218 @@ static void symvTests() {
   }
 }
 
+static void trsvTests() {
+  int N = 17;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+      for (auto diag : {'U', 'u', 'N', 'n'})
+        for (auto transA :
+             {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, N, N, lda),
+              /*B*/ BlasInfo(B, N, incB),
+              /*C*/ BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+          };
+          {
+            std::string Test = "TRSV active A, x";
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            assert(calls.size() == 1);
+            assert(calls[0].type == CallType::TRSV);
+            assert(calls[0].pout_arg1 == B);
+            assert(calls[0].pin_arg1 == A);
+            assert(calls[0].layout == layout);
+            assert(calls[0].targ1 == (char)transA);
+            assert(calls[0].iarg1 == N);
+            assert(calls[0].iarg4 == lda);
+            assert(calls[0].iarg5 == incB);
+            assert(calls[0].uplo == uplo);
+            assert(calls[0].diag == diag);
+
+            checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+            init();
+            __enzyme_fwddiff<void>(
+                (void *)my_dtrsv, enzyme_const, layout, enzyme_const, uplo,
+                enzyme_const, (char)transA, enzyme_const, diag, enzyme_const,
+                N, enzyme_dup, A, dA, enzyme_const, lda, enzyme_dup, B, dB,
+                enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            assert(foundCalls.size() >= 2);
+            assert(foundCalls[1].type == CallType::COPY);
+            double *tmp = (double *)foundCalls[1].pout_arg1;
+            inputs[4] = BlasInfo(tmp, N, 1);
+
+            cblas_dcopy(N, B, incB, tmp, 1);
+            cblas_dtrmv(layout, uplo, (char)transA, diag, N, dA, lda, tmp, 1);
+            cblas_daxpy(N, -1.0, tmp, 1, dB, incB);
+            cblas_daxpy((diag == 'U' || diag == 'u') ? N : 0, 1.0, B, incB,
+                        dB, incB);
+            cblas_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, dB, incB);
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+          {
+            std::string Test = "TRSV active x";
+
+            init();
+            __enzyme_fwddiff<void>(
+                (void *)my_dtrsv, enzyme_const, layout, enzyme_const, uplo,
+                enzyme_const, (char)transA, enzyme_const, diag, enzyme_const,
+                N, enzyme_const, A, enzyme_const, lda, enzyme_dup, B, dB,
+                enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+            cblas_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, dB, incB);
+
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+          {
+            std::string Test = "TRSV active A";
+
+            init();
+            __enzyme_fwddiff<void>(
+                (void *)my_dtrsv, enzyme_const, layout, enzyme_const, uplo,
+                enzyme_const, (char)transA, enzyme_const, diag, enzyme_const,
+                N, enzyme_dup, A, dA, enzyme_const, lda, enzyme_const, B,
+                enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+        }
+  }
+}
+
+static void trsmTests() {
+  int M = 5;
+  int N = 4;
+  for (char layout : {CblasColMajor, CblasRowMajor})
+    for (auto side : {'L', 'R'})
+      for (auto uplo : {'U', 'L'})
+        for (auto diag : {'U', 'N'})
+          for (auto transA :
+               {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+            int aN = is_left(side) ? M : N;
+            int tmpLD = mat_ld(layout, M, N);
+            int localLDA = aN;
+            int localLDB = tmpLD;
+            double Abuf[64], dAbuf[64], Bbuf[64], dBbuf[64];
+            for (int i = 0; i < 64; i++) {
+              Abuf[i] = i + 1;
+              dAbuf[i] = 0.01 * (i + 1);
+              Bbuf[i] = 0.02 * (i + 1);
+              dBbuf[i] = 0.03 * (i + 1);
+            }
+            double *pA = Abuf;
+            double *pdA = dAbuf;
+            double *pB = Bbuf;
+            double *pdB = dBbuf;
+            BlasInfo inputs[6] = {
+                /*A*/ BlasInfo(pA, layout, aN, aN, localLDA),
+                /*B*/ BlasInfo(pB, layout, M, N, localLDB),
+                /*C*/ BlasInfo(),
+                BlasInfo(),
+                BlasInfo(),
+                BlasInfo(),
+            };
+            {
+              std::string Test = "TRSM active A, B";
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, pA,
+                       localLDA, pB, localLDB);
+
+              assert(calls.size() == 1);
+              assert(calls[0].type == CallType::TRSM);
+              assert(calls[0].pout_arg1 == pB);
+              assert(calls[0].pin_arg1 == pA);
+              assert(calls[0].layout == layout);
+              assert(calls[0].side == side);
+              assert(calls[0].uplo == uplo);
+              assert(calls[0].diag == diag);
+              assert(calls[0].targ1 == (char)transA);
+              assert(calls[0].iarg1 == M);
+              assert(calls[0].iarg2 == N);
+              assert(calls[0].iarg4 == localLDA);
+              assert(calls[0].iarg5 == localLDB);
+              assert(calls[0].farg1 == alpha);
+
+              init();
+              __enzyme_fwddiff<void>(
+                  (void *)my_dtrsm, enzyme_const, layout, enzyme_const, side,
+                  enzyme_const, uplo, enzyme_const, (char)transA, enzyme_const,
+                  diag, enzyme_const, M, enzyme_const, N, enzyme_const, alpha,
+                  enzyme_dup, pA, pdA, enzyme_const, localLDA, enzyme_dup, pB,
+                  pdB, enzyme_const, localLDB);
+              foundCalls = calls;
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, pA,
+                       localLDA, pB, localLDB);
+
+              assert(foundCalls.size() >= 3);
+              assert(foundCalls[2].type == CallType::LACPY);
+              double *tmp = (double *)foundCalls[2].pout_arg1;
+              inputs[3] = BlasInfo(tmp, layout, M, N, tmpLD);
+
+              cblas_dlascl(layout, 'G', 0, 0, 1.0, alpha, M, N, pdB, localLDB,
+                           0);
+              cblas_dlacpy(layout, 'G', M, N, pB, localLDB, tmp, tmpLD);
+              cblas_dtrmm(layout, side, uplo, (char)transA, diag, M, N, 1.0,
+                          pdA, localLDA, tmp, tmpLD);
+              cblas_dlascl(layout, 'G', 0, 0, 1.0, -1.0, M, N, tmp, tmpLD,
+                           0);
+              cblas_dtrsm(layout, side, uplo, (char)transA, diag, M, N, 1.0,
+                          pA, localLDA, pdB, localLDB);
+
+              checkTest(Test);
+            }
+            {
+              std::string Test = "TRSM active B";
+              init();
+              __enzyme_fwddiff<void>(
+                  (void *)my_dtrsm, enzyme_const, layout, enzyme_const, side,
+                  enzyme_const, uplo, enzyme_const, (char)transA, enzyme_const,
+                  diag, enzyme_const, M, enzyme_const, N, enzyme_const, alpha,
+                  enzyme_const, pA, enzyme_const, localLDA, enzyme_dup, pB,
+                  pdB, enzyme_const, localLDB);
+              foundCalls = calls;
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, pA,
+                       localLDA, pB, localLDB);
+              cblas_dlascl(layout, 'G', 0, 0, 1.0, alpha, M, N, pdB, localLDB,
+                           0);
+              cblas_dtrsm(layout, side, uplo, (char)transA, diag, M, N, 1.0,
+                          pA, localLDA, pdB, localLDB);
+
+              checkTest(Test);
+            }
+          }
+}
+
 static void gemmTests() {
   // N means normal matrix, T means transposed
   for (char layout : {CblasRowMajor, CblasColMajor}) {
@@ -955,6 +1186,98 @@ static void potrfTests() {
   }
 }
 
+static void potrsTests() {
+  int N = 5;
+  int Nrhs = 3;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'}) {
+      int tmpLD = mat_ld(layout, N, Nrhs);
+      int localLDA = N;
+      int localLDB = tmpLD;
+      double Abuf[64], dAbuf[64], Bbuf[64], dBbuf[64];
+      for (int i = 0; i < 64; i++) {
+        Abuf[i] = i + 1;
+        dAbuf[i] = 0.01 * (i + 1);
+        Bbuf[i] = 0.02 * (i + 1);
+        dBbuf[i] = 0.03 * (i + 1);
+      }
+      double *pA = Abuf;
+      double *pdA = dAbuf;
+      double *pB = Bbuf;
+      double *pdB = dBbuf;
+      {
+        std::string Test = "POTRS active A, B";
+        init();
+
+        my_potrs(layout, uplo, N, Nrhs, pA, localLDA, pB, localLDB);
+
+        assert(calls.size() == 1);
+        assert(calls[0].type == CallType::POTRS);
+        assert(calls[0].pout_arg1 == pB);
+        assert(calls[0].pin_arg1 == pA);
+        assert(calls[0].layout == layout);
+        assert(calls[0].uplo == uplo);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg2 == Nrhs);
+        assert(calls[0].iarg4 == localLDA);
+        assert(calls[0].iarg5 == localLDB);
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_potrs, enzyme_const, layout, enzyme_const, uplo,
+            enzyme_const, N, enzyme_const, Nrhs, enzyme_dup, pA, pdA,
+            enzyme_const, localLDA, enzyme_dup, pB, pdB, enzyme_const,
+            localLDB);
+        foundCalls = calls;
+        init();
+
+        assert(foundCalls.size() >= 10);
+        assert(foundCalls[1].type == CallType::LACPY);
+        double *tmp = (double *)foundCalls[1].pout_arg1;
+        assert(foundCalls[5].type == CallType::LACPY);
+        double *tmp2 = (double *)foundCalls[5].pout_arg1;
+
+        my_potrs(layout, uplo, N, Nrhs, pA, localLDA, pB, localLDB);
+        cblas_dlacpy(layout, 'G', N, Nrhs, pB, localLDB, tmp, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo, uplo_to_trans(uplo), 'N', N, Nrhs,
+                    1.0, pA, localLDA, tmp, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo, uplo_to_normal(uplo), 'N', N, Nrhs,
+                    1.0, pdA, localLDA, tmp, tmpLD);
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, -1.0, N, Nrhs, tmp, tmpLD, 0);
+
+        cblas_dlacpy(layout, 'G', N, Nrhs, pB, localLDB, tmp2, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo, uplo_to_trans(uplo), 'N', N, Nrhs,
+                    1.0, pdA, localLDA, tmp2, tmpLD);
+        cblas_dtrmm(layout, 'L', uplo, uplo_to_normal(uplo), 'N', N, Nrhs,
+                    1.0, pA, localLDA, tmp2, tmpLD);
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, -1.0, N, Nrhs, tmp2, tmpLD, 0);
+        cblas_dpotrs(layout, uplo, N, Nrhs, pA, localLDA, pdB, localLDB,
+                     nullptr);
+
+        checkTest(Test);
+      }
+      {
+        std::string Test = "POTRS active B";
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_potrs, enzyme_const, layout, enzyme_const, uplo,
+            enzyme_const, N, enzyme_const, Nrhs, enzyme_const, pA,
+            enzyme_const, localLDA, enzyme_dup, pB, pdB, enzyme_const,
+            localLDB);
+        foundCalls = calls;
+        init();
+
+        my_potrs(layout, uplo, N, Nrhs, pA, localLDA, pB, localLDB);
+        cblas_dpotrs(layout, uplo, N, Nrhs, pA, localLDA, pdB, localLDB,
+                     nullptr);
+
+        checkTest(Test);
+      }
+    }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -968,5 +1291,11 @@ int main() {
 
   potrfTests();
 
+  potrsTests();
+
   symvTests();
+
+  trsvTests();
+
+  trsmTests();
 }
