@@ -6,6 +6,7 @@ add_subdirectory(OptimizeAD)
 add_subdirectory(Passes)
 add_subdirectory(Impulse)
 add_subdirectory(ReverseMode)
+add_subdirectory(FIR)
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzymemlir "Running MLIR regression tests"
