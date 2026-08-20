@@ -5449,6 +5449,7 @@ public:
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
   }
+  // TODO Is there a possibility we GEP a const and get a FP value?
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
   void visitPHINode(llvm::PHINode &phi) { return; }
   void visitCastInst(llvm::CastInst &CI) {
@@ -5599,11 +5600,20 @@ public:
     newI->eraseFromParent();
     return true;
   }
+
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
     handleIntrinsic(II, II.getIntrinsicID());
   }
 
-  void visitReturnInst(llvm::ReturnInst &I) { return; }
+  void visitReturnInst(llvm::ReturnInst &I) {
+    auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
+    if (newI->getNumOperands() == 0)
+      return;
+    IRBuilder<> B(newI);
+    if (isa<ConstantFP>(newI->getOperand(0)))
+      newI->setOperand(0, createFPRTConstCall(B, newI->getReturnValue()));
+    return;
+  }
 
 #if LLVM_VERSION_MAJOR >= 24
   void visitCondBrInst(llvm::CondBrInst &I) { return; }
