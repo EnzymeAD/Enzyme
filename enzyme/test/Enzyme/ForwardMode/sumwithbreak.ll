@@ -44,7 +44,7 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*, i64)
 attributes #0 = { noinline nounwind uwtable }
 
 
-; CHECK: define internal double @fwddiffef(double* nocapture readonly %x, double* nocapture %"x'", i64 %n)
+; CHECK: define internal double @fwddiffef({{ptr|double\*}} {{readonly captures\(none\)|nocapture readonly}} %x, {{ptr|double\*}} {{captures\(none\)|nocapture}} %"x'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %for.body
 
@@ -57,16 +57,16 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br i1 %cmp2, label %if.then, label %if.end
 
 ; CHECK: if.then:                                          ; preds = %for.body
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 %n
-; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, {{ptr|double\*}} %"x'", i64 %n
+; CHECK-NEXT:   %[[i0:.+]] = load double, {{ptr|double\*}} %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[i0]], %[[data016]]
 ; CHECK-NEXT:   br label %cleanup
 
 ; CHECK: if.end:                                           ; preds = %for.body
-; CHECK-NEXT:   %"arrayidx4'ipg" = getelementptr inbounds double, double* %"x'", i64 %iv
-; CHECK-NEXT:   %arrayidx4 = getelementptr inbounds double, double* %x, i64 %iv
-; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"arrayidx4'ipg", align 8
-; CHECK-NEXT:   %[[i2:.+]] = load double, double* %arrayidx4, align 8
+; CHECK-NEXT:   %"arrayidx4'ipg" = getelementptr inbounds double, {{ptr|double\*}} %"x'", i64 %iv
+; CHECK-NEXT:   %arrayidx4 = getelementptr inbounds double, {{ptr|double\*}} %x, i64 %iv
+; CHECK-NEXT:   %[[i3:.+]] = load double, {{ptr|double\*}} %"arrayidx4'ipg", align 8
+; CHECK-NEXT:   %[[i2:.+]] = load double, {{ptr|double\*}} %arrayidx4, align 8
 ; CHECK-NEXT:   %add5 = fadd fast double %[[i2]], %data.016
 ; CHECK-NEXT:   %[[i4]] = fadd fast double %[[i3]], %[[data016]]
 ; CHECK-NEXT:   %cmp = icmp ult i64 %iv, %n
