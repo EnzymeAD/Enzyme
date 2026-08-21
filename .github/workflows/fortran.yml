@@ -62,7 +62,7 @@ jobs:
         rm -rf build && mkdir build && cd build
         CMAKE_FORTRAN_FLAGS_ARG=()
         FLAG_CHECK_SRC=$(mktemp /tmp/flang-flag-check-XXXXXX.f90)
-        FLAG_CHECK_OBJ=$(mktemp /tmp/flang-flag-check-XXXXXX)
+        FLAG_CHECK_OBJ="${FLAG_CHECK_SRC%.f90}.o"
         trap 'rm -f "${FLAG_CHECK_SRC}" "${FLAG_CHECK_OBJ}"' EXIT
         printf 'end\n' > "${FLAG_CHECK_SRC}"
         if ${{ matrix.compiler }}-${{ matrix.llvm }} -fintrinsic-modules-path=. -c "${FLAG_CHECK_SRC}" -o "${FLAG_CHECK_OBJ}" >/dev/null 2>&1; then
