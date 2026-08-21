@@ -61,11 +61,12 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
-        FLANG_INTRINSIC_MODULES_PATH=$(find "${FLANG_RESOURCE_DIR}/finclude" -name iso_c_binding.mod -print -quit | xargs -r dirname)
-        if [ -z "${FLANG_INTRINSIC_MODULES_PATH}" ]; then
+        FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" -name iso_c_binding.mod | head -n1)
+        if [ -z "${FLANG_ISO_C_BINDING_MOD}" ]; then
           echo "Failed to find iso_c_binding.mod under ${FLANG_RESOURCE_DIR}/finclude"
           exit 1
         fi
+        FLANG_INTRINSIC_MODULES_PATH=$(dirname "${FLANG_ISO_C_BINDING_MOD}")
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} -DCMAKE_Fortran_FLAGS="-fintrinsic-modules-path=${FLANG_INTRINSIC_MODULES_PATH}"
     - name: build enzyme
       working-directory: 'build'
