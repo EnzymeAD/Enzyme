@@ -2101,36 +2101,20 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
         DenseElementsAttr::get(resultType1D,
                                builder.getFloatAttr(elemType, 0.0)));
 
+    // The slices tile [0, outSize) exactly, so the zero init is never read.
     auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
     int64_t offset = 0;
     for (size_t i = 0; i < slices.size(); ++i) {
       auto sliceType = cast<RankedTensorType>(slices[i].getType());
       int64_t sliceSize = sliceType.getShape()[0];
 
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced = impulse::ReshapeOp::create(
-            builder, loc, RankedTensorType::get({1}, elemType), elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, i64ScalarType,
+          DenseElementsAttr::get(i64ScalarType,
+                                 builder.getI64IntegerAttr(offset)));
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slices[i],
+          ValueRange{resultIdx});
 
       offset += sliceSize;
     }
@@ -2196,35 +2180,18 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
                                builder.getFloatAttr(elemType, 0.0)));
 
     auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
     int64_t offset = 0;
     for (size_t i = 0; i < slices.size(); ++i) {
       auto sliceType = cast<RankedTensorType>(slices[i].getType());
       int64_t sliceSize = sliceType.getShape()[0];
 
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced =
-            impulse::ReshapeOp::create(builder, loc, elemType1DSlice, elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, i64ScalarType,
+          DenseElementsAttr::get(i64ScalarType,
+                                 builder.getI64IntegerAttr(offset)));
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slices[i],
+          ValueRange{resultIdx});
 
       offset += sliceSize;
     }

@@ -34,20 +34,14 @@ module {
 // CHECK: %[[FLATTENED:.+]] = impulse.reshape %[[EXTRACTED_POS]] : (tensor<1x2xf64>) -> tensor<2xf64>
 
 // CHECK: %[[SAMPLE1:.+]] = impulse.slice %[[FLATTENED]] <start_indices = [0], limit_indices = [1], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
-// CHECK: %[[LOG1:.+]] = math.log %[[SAMPLE1]] : tensor<1xf64>
-// CHECK: %[[SAMPLE2:.+]] = impulse.slice %[[FLATTENED]] <start_indices = [1], limit_indices = [2], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
-// CHECK: %[[LOG2:.+]] = math.log %[[SAMPLE2]] : tensor<1xf64>
+// CHECK-NEXT: %[[LOG1:.+]] = math.log %[[SAMPLE1]] : tensor<1xf64>
+// CHECK-NEXT: %[[SAMPLE2:.+]] = impulse.slice %[[FLATTENED]] <start_indices = [1], limit_indices = [2], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[LOG2:.+]] = math.log %[[SAMPLE2]] : tensor<1xf64>
 
-// CHECK: %[[ELEM1_SLICED:.+]] = impulse.dynamic_slice %[[LOG1]], %{{.+}} <slice_sizes = [1]> : (tensor<1xf64>, tensor<i64>) -> tensor<1xf64>
-// CHECK: %[[ELEM1:.+]] = impulse.reshape %[[ELEM1_SLICED]] : (tensor<1xf64>) -> tensor<f64>
-// CHECK: %[[ELEM1_1D:.+]] = impulse.reshape %[[ELEM1]] : (tensor<f64>) -> tensor<1xf64>
-// CHECK: %[[POS1:.+]] = impulse.dynamic_update_slice %{{.+}}, %[[ELEM1_1D]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
-// CHECK: %[[ELEM2_SLICED:.+]] = impulse.dynamic_slice %[[LOG2]], %{{.+}} <slice_sizes = [1]> : (tensor<1xf64>, tensor<i64>) -> tensor<1xf64>
-// CHECK: %[[ELEM2:.+]] = impulse.reshape %[[ELEM2_SLICED]] : (tensor<1xf64>) -> tensor<f64>
-// CHECK: %[[ELEM2_1D:.+]] = impulse.reshape %[[ELEM2]] : (tensor<f64>) -> tensor<1xf64>
-// CHECK: %[[UNCONSTRAINED_POS:.+]] = impulse.dynamic_update_slice %[[POS1]], %[[ELEM2_1D]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
-
-// CHECK: %[[UNCONSTRAINED_POS_2D:.+]] = impulse.reshape %[[UNCONSTRAINED_POS]] : (tensor<2xf64>) -> tensor<1x2xf64>
+// One whole-slice dynamic_update_slice per site, not a per-element scatter.
+// CHECK-NEXT: %[[POS1:.+]] = impulse.dynamic_update_slice %{{.+}}, %[[LOG1]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT: %[[UNCONSTRAINED_POS:.+]] = impulse.dynamic_update_slice %[[POS1]], %[[LOG2]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT: %[[UNCONSTRAINED_POS_2D:.+]] = impulse.reshape %[[UNCONSTRAINED_POS]] : (tensor<2xf64>) -> tensor<1x2xf64>
 //
 // --- Constrain position for initial generate ---
 // CHECK: impulse.dynamic_slice
@@ -70,21 +64,14 @@ module {
 // CHECK: %[[AUTODIFF:.+]] = enzyme.autodiff_region(%[[UNCONSTRAINED_POS_2D]], %{{.+}}) {
 // CHECK: ^bb0(%[[ARG:.+]]: tensor<1x2xf64>):
 // CHECK: %[[ARG_1D:.+]] = impulse.reshape %[[ARG]] : (tensor<1x2xf64>) -> tensor<2xf64>
-// CHECK: %[[Z_SAMPLE1:.+]] = impulse.slice %[[ARG_1D]] <start_indices = [0], limit_indices = [1], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
-// CHECK: %[[EXP1:.+]] = math.exp %[[Z_SAMPLE1]] : tensor<1xf64>
-// CHECK: %[[Z_SAMPLE2:.+]] = impulse.slice %[[ARG_1D]] <start_indices = [1], limit_indices = [2], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
-// CHECK: %[[EXP2:.+]] = math.exp %[[Z_SAMPLE2]] : tensor<1xf64>
+// CHECK-NEXT: %[[Z_SAMPLE1:.+]] = impulse.slice %[[ARG_1D]] <start_indices = [0], limit_indices = [1], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[EXP1:.+]] = math.exp %[[Z_SAMPLE1]] : tensor<1xf64>
+// CHECK-NEXT: %[[Z_SAMPLE2:.+]] = impulse.slice %[[ARG_1D]] <start_indices = [1], limit_indices = [2], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[EXP2:.+]] = math.exp %[[Z_SAMPLE2]] : tensor<1xf64>
 
-// CHECK: %[[C_ELEM1_S:.+]] = impulse.dynamic_slice %[[EXP1]], %{{.+}} <slice_sizes = [1]> : (tensor<1xf64>, tensor<i64>) -> tensor<1xf64>
-// CHECK: %[[C_ELEM1:.+]] = impulse.reshape %[[C_ELEM1_S]] : (tensor<1xf64>) -> tensor<f64>
-// CHECK: %[[C_ELEM1_1D:.+]] = impulse.reshape %[[C_ELEM1]] : (tensor<f64>) -> tensor<1xf64>
-// CHECK: %[[C_POS1:.+]] = impulse.dynamic_update_slice %{{.+}}, %[[C_ELEM1_1D]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
-// CHECK: %[[C_ELEM2_S:.+]] = impulse.dynamic_slice %[[EXP2]], %{{.+}} <slice_sizes = [1]> : (tensor<1xf64>, tensor<i64>) -> tensor<1xf64>
-// CHECK: %[[C_ELEM2:.+]] = impulse.reshape %[[C_ELEM2_S]] : (tensor<1xf64>) -> tensor<f64>
-// CHECK: %[[C_ELEM2_1D:.+]] = impulse.reshape %[[C_ELEM2]] : (tensor<f64>) -> tensor<1xf64>
-// CHECK: %[[CONSTRAINED_POS:.+]] = impulse.dynamic_update_slice %[[C_POS1]], %[[C_ELEM2_1D]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
-
-// CHECK: impulse.reshape %[[CONSTRAINED_POS]]
+// CHECK-NEXT: %[[C_POS1:.+]] = impulse.dynamic_update_slice %{{.+}}, %[[EXP1]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT: %[[CONSTRAINED_POS:.+]] = impulse.dynamic_update_slice %[[C_POS1]], %[[EXP2]], %{{.+}} : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT: impulse.reshape %[[CONSTRAINED_POS]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK: %[[GEN_RES:.+]]:4 = func.call @test.generate{{.*}}
 // CHECK: %[[NEG_GEN_WEIGHT:.+]] = arith.negf %[[GEN_RES]]#1 : tensor<f64>
 

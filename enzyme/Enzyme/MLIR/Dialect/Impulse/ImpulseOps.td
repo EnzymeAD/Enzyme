@@ -197,7 +197,14 @@ def RegenerateOp : Impulse_Op<"regenerate",
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
     OptionalAttr<AddressArrayAttr>:$constrained_addresses,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    DefaultValuedStrAttr<StrAttr, "">:$name,
+    // Delta-weight mode: the `weight` result is the accept-ratio delta
+    // sum_dirty(logp_new - logp_old) rather than the full joint. A density
+    // term is dirty iff its site is regenerated or its parameters are
+    // dataflow-reachable from a regenerated site's value; clean terms cancel
+    // in the Metropolis--Hastings ratio and are never emitted. The caller
+    // maintains the carried weight as `w + delta` on accept.
+    UnitAttr:$delta_weight
   );
 
   let results = (outs

@@ -2393,11 +2393,13 @@ struct ExpandImpulsePass
       return {newTrace, newWeight, curRng};
     }
 
-    // Flat-form proposal: delegate to `impulse.regenerate` on the model symbol.
+    // symbol. When `delta` is set, the regenerate is emitted in delta-weight
+    // mode: its weight result is the accept-ratio delta over the dirty density
+    // terms only (clean terms cancel in the MH ratio and are never computed).
     std::tuple<Value, Value, Value>
     proposeFlat(OpBuilder &b, Location loc, OpT op, FunctionOpInterface fn,
                 ArrayRef<Type> fnResultTypes, Value trace, Value rng,
-                ArrayAttr selection, ArrayAttr allAddresses) const {
+                ArrayAttr selection, ArrayAttr allAddresses, bool delta) const {
       auto weightType = RankedTensorType::get({}, b.getF64Type());
       SmallVector<Type> regenResultTypes{trace.getType(), weightType};
       for (Type t : fnResultTypes)
@@ -2409,6 +2411,8 @@ struct ExpandImpulsePass
           op.getConstraint(), /*selection=*/allAddresses,
           /*regenerate_addresses=*/selection, op.getConstrainedAddressesAttr(),
           b.getStringAttr(""));
+      if (delta)
+        regen->setAttr("delta_weight", b.getUnitAttr());
       return {regen.getNewTrace(), regen.getWeight(), regen.getOutputs()[0]};
     }
 
@@ -2460,6 +2464,14 @@ struct ExpandImpulsePass
           fnResultTypes.push_back(t);
       }
 
+      // Flat path: use delta-weight regenerate whenever the model body is a
+      // straight line of distribution sites (the common case). The accept
+      // ratio is then the regenerate result directly, and the carried weight
+      // advances by that delta on accept.
+      bool deltaFlat = false;
+      if constexpr (!isRegionForm)
+        deltaFlat = deltaWeightFeasible(fn);
+
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
         Value newTrace, newWeight, stepRng;
@@ -2469,9 +2481,16 @@ struct ExpandImpulsePass
         else
           std::tie(newTrace, newWeight, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
-                          allAddresses);
+                          allAddresses, deltaFlat);
 
-        Value logAlpha = arith::SubFOp::create(b, loc, newWeight, weight);
+        Value logAlpha =
+            deltaFlat
+                ? newWeight
+                : arith::SubFOp::create(b, loc, newWeight, weight).getResult();
+        Value acceptWeight =
+            deltaFlat
+                ? arith::AddFOp::create(b, loc, weight, newWeight).getResult()
+                : newWeight;
         Value zero = arith::ConstantOp::create(
             b, loc, weightType, DenseElementsAttr::get(weightType, 0.0));
         Value one = arith::ConstantOp::create(
@@ -2487,7 +2506,7 @@ struct ExpandImpulsePass
         Value selTrace = impulse::SelectOp::create(b, loc, traceType, accepted,
                                                    newTrace, trace);
         Value selWeight =
-            arith::SelectOp::create(b, loc, accepted, newWeight, weight);
+            arith::SelectOp::create(b, loc, accepted, acceptWeight, weight);
         return {selTrace, selWeight, finalRng, accepted};
       };
 
@@ -3132,6 +3151,81 @@ struct ExpandImpulsePass
     }
   };
 
+  // Delta weight: sum over dirty terms (regenerated or dependent on one) of
+  // logp_new - logp_old; clean terms cancel in the MH ratio.
+
+  static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
+    for (auto addr : addresses) {
+      auto address = cast<ArrayAttr>(addr);
+      if (!address.empty() && address[0] == sampleOp.getSymbolAttr())
+        return true;
+    }
+    return false;
+  }
+
+  // constraint regardless of its (possibly tainted) parameters.
+  static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
+                                                ArrayAttr regenerateAddresses) {
+    DenseSet<Value> tainted;
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      fn.getFunctionBody().walk([&](Operation *op) {
+        if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+          if (addressInList(sampleOp, regenerateAddresses))
+            for (Value r : llvm::drop_begin(op->getResults()))
+              changed |= tainted.insert(r).second;
+          return;
+        }
+        for (Value operand : op->getOperands())
+          if (tainted.contains(operand)) {
+            for (Value r : op->getResults())
+              changed |= tainted.insert(r).second;
+            return;
+          }
+      });
+    }
+    return tainted;
+  }
+
+  // The simple delta lowering handles straight-line bodies of distribution
+  // sites only: no impulse.if and no nested generative calls.
+  static bool deltaWeightFeasible(FunctionOpInterface fn) {
+    bool feasible = true;
+    fn.getFunctionBody().walk([&](Operation *op) {
+      if (isa<impulse::IfOp>(op))
+        feasible = false;
+      if (auto s = dyn_cast<impulse::SampleOp>(op))
+        if (!s.getDistAttr() && !s.getLogpdfAttr())
+          feasible = false;
+    });
+    return feasible;
+  }
+
+  // Re-materialize `v` at the OLD state: regenerated draws map to their
+  // previous-trace reads (seeded in oldMap); the tainted slice between them
+  // and a dirty term's parameters is cloned on demand; untainted values are
+  // shared as-is.
+  static Value materializeOldValue(Value v, IRMapping &oldMap,
+                                   const DenseSet<Value> &tainted,
+                                   PatternRewriter &rewriter) {
+    if (Value m = oldMap.lookupOrNull(v))
+      return m;
+    if (!tainted.contains(v))
+      return v;
+    Operation *def = v.getDefiningOp();
+    assert(def && "tainted value must have a defining op");
+    SmallVector<Value> oldOperands;
+    for (Value operand : def->getOperands())
+      oldOperands.push_back(
+          materializeOldValue(operand, oldMap, tainted, rewriter));
+    Operation *cloned = rewriter.clone(*def);
+    cloned->setOperands(oldOperands);
+    for (auto [newR, oldR] : llvm::zip(def->getResults(), cloned->getResults()))
+      oldMap.map(newR, oldR);
+    return oldMap.lookup(v);
+  }
+
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
     using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
@@ -3200,6 +3294,20 @@ struct ExpandImpulsePass
       Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
       int64_t currentTraceOffset = 0;
 
+      // created). oldMap seeds regenerated draws with their previous-trace
+      // reads so dirty terms can be re-materialized at the old state.
+      bool deltaMode = CI.getDeltaWeight();
+      DenseSet<Value> tainted;
+      IRMapping oldMap;
+      if (deltaMode) {
+        if (!deltaWeightFeasible(NewF)) {
+          CI.emitError("Impulse: delta_weight regenerate requires a "
+                       "straight-line body of distribution sites");
+          return failure();
+        }
+        tainted = computeRegenerateTaint(NewF, CI.getRegenerateAddressesAttr());
+      }
+
       SmallVector<Operation *> toErase;
       BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset};
       auto processSample = [&](impulse::SampleOp sampleOp,
@@ -3239,14 +3347,20 @@ struct ExpandImpulsePass
           sampledValues.resize(sampleOp.getNumResults());
           if (isSelected) {
             if (!impulse::distSamplerEmittable(dist)) {
-              sampleOp.emitError("Impulse: distribution sampler is not "
-                                 "emittable; it cannot be a regenerate target");
-              return WalkResult::interrupt();
+              auto distFn =
+                  cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                      sampleOp, sampleOp.getFnAttr()));
+              auto distCall = func::CallOp::create(
+                  rewriter, loc, distFn.getName(), distFn.getResultTypes(),
+                  sampleOp.getInputs());
+              for (unsigned i = 0; i < distCall.getNumResults(); ++i)
+                sampledValues[i] = distCall.getResult(i);
+            } else {
+              auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
+                                                 distArgs, distSampleType);
+              for (unsigned i = 0; i < sv.size(); ++i)
+                sampledValues[i] = sv[i];
             }
-            auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
-                                               distArgs, distSampleType);
-            for (unsigned i = 0; i < sv.size(); ++i)
-              sampledValues[i] = sv[i];
           } else {
             bool isConstrained = false;
             int64_t constrainedOffset = -1;
@@ -3296,10 +3410,55 @@ struct ExpandImpulsePass
             }
           }
 
-          Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                 sampledValues[1], distArgs);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+          bool termDirty = isSelected;
+          if (deltaMode && !termDirty)
+            for (Value arg : distArgs)
+              if (tainted.contains(arg)) {
+                termDirty = true;
+                break;
+              }
+
+          if (deltaMode && isSelected) {
+            // Seed oldMap: the regenerated draw's previous value lives in the
+            // old trace at this site's offset.
+            int64_t oldOffset = sampleOffset;
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto resultType =
+                  cast<RankedTensorType>(sampledValues[i].getType());
+              int64_t numElements = computeTensorElementCount(resultType);
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = impulse::SliceOp::create(
+                  rewriter, loc, sliceType, prevTrace,
+                  rewriter.getDenseI64ArrayAttr({0, oldOffset}),
+                  rewriter.getDenseI64ArrayAttr({1, oldOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              Value oldValue =
+                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
+                      .getResult();
+              oldMap.map(sampledValues[i], oldValue);
+              tainted.insert(sampledValues[i]);
+              oldOffset += numElements;
+            }
+          }
+
+          if (!deltaMode || termDirty) {
+            Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
+                                                   sampledValues[1], distArgs);
+            if (deltaMode) {
+              SmallVector<Value> oldArgs;
+              for (Value arg : distArgs)
+                oldArgs.push_back(
+                    materializeOldValue(arg, oldMap, tainted, rewriter));
+              Value oldValue = isSelected ? oldMap.lookup(sampledValues[1])
+                                          : sampledValues[1];
+              Value logpdfOld = impulse::emitDistLogpdf(rewriter, loc, dist,
+                                                        oldValue, oldArgs);
+              logpdf = arith::SubFOp::create(rewriter, loc, logpdf, logpdfOld);
+            }
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+          }
 
           bool inSelection = false;
           for (auto addr : selection) {
@@ -3450,12 +3609,61 @@ struct ExpandImpulsePass
             return WalkResult::interrupt();
           }
 
-          auto logpdf = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-              logpdfFn.getResultTypes(), logpdfOperands);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                    weightAccumulator, logpdf.getResult(0));
+          bool termDirty = isSelected;
+          if (deltaMode && !termDirty)
+            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
+              if (tainted.contains(sampleOp.getOperand(i))) {
+                termDirty = true;
+                break;
+              }
+
+          if (deltaMode && isSelected) {
+            int64_t oldOffset = sampleOffset;
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto resultType =
+                  cast<RankedTensorType>(sampledValues[i].getType());
+              int64_t numElements = computeTensorElementCount(resultType);
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = impulse::SliceOp::create(
+                  rewriter, sampleOp.getLoc(), sliceType, prevTrace,
+                  rewriter.getDenseI64ArrayAttr({0, oldOffset}),
+                  rewriter.getDenseI64ArrayAttr({1, oldOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              Value oldValue =
+                  impulse::ReshapeOp::create(rewriter, sampleOp.getLoc(),
+                                             resultType, sliced)
+                      .getResult();
+              oldMap.map(sampledValues[i], oldValue);
+              tainted.insert(sampledValues[i]);
+              oldOffset += numElements;
+            }
+          }
+
+          if (!deltaMode || termDirty) {
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+                logpdfFn.getResultTypes(), logpdfOperands);
+            Value contribution = logpdf.getResult(0);
+            if (deltaMode) {
+              SmallVector<Value> oldOperands;
+              for (unsigned i = 1; i < sampledValues.size(); ++i)
+                oldOperands.push_back(isSelected
+                                          ? oldMap.lookup(sampledValues[i])
+                                          : sampledValues[i]);
+              for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
+                oldOperands.push_back(materializeOldValue(
+                    sampleOp.getOperand(i), oldMap, tainted, rewriter));
+              auto logpdfOld = func::CallOp::create(
+                  rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+                  logpdfFn.getResultTypes(), oldOperands);
+              contribution =
+                  arith::SubFOp::create(rewriter, sampleOp.getLoc(),
+                                        contribution, logpdfOld.getResult(0));
+            }
+            weightAccumulator = arith::AddFOp::create(
+                rewriter, sampleOp.getLoc(), weightAccumulator, contribution);
+          }
 
           bool inSelection = false;
           for (auto addr : selection) {
