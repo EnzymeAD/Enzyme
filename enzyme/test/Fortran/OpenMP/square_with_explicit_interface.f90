@@ -10,27 +10,32 @@ module squareOMP
   implicit none
   public
   interface
-    subroutine square__enzyme_autodiff(sr, n, x, dx, y, dy)
+    subroutine square__enzyme_autodiff(sr, n_desc, n, &
+                                       x_desc, x, dx, &
+                                       y_desc, y, dy)
       implicit none
       interface
         subroutine sr_decal(n, a, b)
           implicit none
-          integer, value, intent(in) :: n
+          integer, intent(in) :: n
           real, intent(in) :: a(n)
           real, intent(out) :: b(n)
         end subroutine sr_decal
       end interface
       procedure(sr_decal) :: sr
-      integer, value, intent(in) :: n
+      integer, intent(in) :: n_desc
+      integer, intent(in) :: n
+      integer, intent(in) :: x_desc
       real, intent(in) :: x(n)
       real, intent(inout) :: dx(n)
+      integer, intent(in) :: y_desc
       real, intent(out) :: y(n)
       real, intent(inout) :: dy(n)
     end subroutine square__enzyme_autodiff
   end interface
 contains
   subroutine square(n, x, y)
-    integer, value, intent(in) :: n
+    integer, intent(in) :: n
     real, intent(in) :: x(n)
     real, intent(out) :: y(n)
     integer :: i
@@ -43,6 +48,7 @@ end module squareOMP
 
 program main
   use squareOMP, only: square, square__enzyme_autodiff
+  use enzyme, only: enzyme_const, enzyme_dup
   use omp_lib, only: omp_get_max_threads
   implicit none
 
@@ -62,7 +68,9 @@ program main
 
   dx(:) = 0.0
   dy(:) = 1.0
-  call square__enzyme_autodiff(square, n, x, dx, y, dy)
+  call square__enzyme_autodiff(square, enzyme_const, n, &
+                               enzyme_dup, x, dx, &
+                               enzyme_dup, y, dy)
 
   write(*,"(f0.2)") dx(1)
   write(*,"(f0.2)") dx(2)
