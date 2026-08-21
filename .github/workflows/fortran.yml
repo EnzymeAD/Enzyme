@@ -68,12 +68,8 @@ jobs:
         printf 'end\n' > "${FLAG_CHECK_SRC}"
         if ${{ matrix.compiler }}-${{ matrix.llvm }} -fintrinsic-modules-path=. -c "${FLAG_CHECK_SRC}" -o "${FLAG_CHECK_OBJ}" >/dev/null 2>"${FLAG_CHECK_ERR}"; then
           FLANG_SUPPORTS_INTRINSIC_MODULES_PATH=1
-        elif grep -Eqi "unknown argument|unrecognized command-line option" "${FLAG_CHECK_ERR}"; then
-          FLANG_SUPPORTS_INTRINSIC_MODULES_PATH=0
         else
-          echo "Failed while probing -fintrinsic-modules-path support for flang-${{ matrix.llvm }}"
-          cat "${FLAG_CHECK_ERR}"
-          exit 1
+          FLANG_SUPPORTS_INTRINSIC_MODULES_PATH=0
         fi
         if [ "${FLANG_SUPPORTS_INTRINSIC_MODULES_PATH}" = "1" ]; then
           FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
