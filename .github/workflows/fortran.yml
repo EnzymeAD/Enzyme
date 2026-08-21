@@ -43,24 +43,54 @@ jobs:
       fail-fast: false
       matrix:
         build: [Release, Debug]
-        os: [ubuntu-22.04]
+        os: [ubuntu-26.04]
         compiler: [flang]
-        llvm: [21]
+        llvm: [21, 22, 23]
         mpi: [2021.7.1]
     timeout-minutes: 60
     steps:
     - name: add llvm with clang and flang
       run: |
         set -eo pipefail
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm-snapshot.gpg
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
-        sudo python3 -m pip install --upgrade pip lit
+        sudo python3 -m pip install lit
     - uses: actions/checkout@v4
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build
-        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }}
+        CMAKE_FORTRAN_FLAGS_ARG=()
+        FLAG_CHECK_SRC=$(mktemp /tmp/flang-flag-check-XXXXXX.f90)
+        FLAG_CHECK_OBJ="${FLAG_CHECK_SRC%.f90}.o"
+        FLAG_CHECK_ERR="${FLAG_CHECK_SRC%.f90}.err"
+        trap 'rm -f "${FLAG_CHECK_SRC}" "${FLAG_CHECK_OBJ}" "${FLAG_CHECK_ERR}"' EXIT
+        printf 'end\n' > "${FLAG_CHECK_SRC}"
+        if ${{ matrix.compiler }}-${{ matrix.llvm }} -fintrinsic-modules-path=. -c "${FLAG_CHECK_SRC}" -o "${FLAG_CHECK_OBJ}" >/dev/null 2>"${FLAG_CHECK_ERR}"; then
+          FLANG_SUPPORTS_INTRINSIC_MODULES_PATH=1
+        else
+          FLANG_SUPPORTS_INTRINSIC_MODULES_PATH=0
+        fi
+        if [ "${FLANG_SUPPORTS_INTRINSIC_MODULES_PATH}" = "1" ]; then
+          FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
+          FLANG_ISO_C_BINDING_MOD=$( (dpkg -L libflang-${{ matrix.llvm }}-dev 2>/dev/null; dpkg -L flang-${{ matrix.llvm }} 2>/dev/null) | grep '/iso_c_binding.mod$' | head -n1 )
+          if [ -n "${FLANG_ISO_C_BINDING_MOD}" ] && [ ! -f "${FLANG_ISO_C_BINDING_MOD}" ]; then
+            FLANG_ISO_C_BINDING_MOD=""
+          fi
+          if [ -z "${FLANG_ISO_C_BINDING_MOD}" ]; then
+            FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" "${FLANG_RESOURCE_DIR}" "/usr/lib/llvm-${{ matrix.llvm }}" -name iso_c_binding.mod 2>/dev/null | head -n1)
+          fi
+          if [ -n "${FLANG_ISO_C_BINDING_MOD}" ]; then
+            FLANG_INTRINSIC_MODULES_PATH=$(dirname "${FLANG_ISO_C_BINDING_MOD}")
+            CMAKE_FORTRAN_FLAGS_ARG=("-DCMAKE_Fortran_FLAGS=-fintrinsic-modules-path=${FLANG_INTRINSIC_MODULES_PATH}")
+          else
+            echo "Failed to find iso_c_binding.mod for flang-${{ matrix.llvm }}"
+            exit 1
+          fi
+        else
+          echo "Warning: flang-${{ matrix.llvm }} does not support -fintrinsic-modules-path, continuing without explicit intrinsic module path"
+        fi
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} "${CMAKE_FORTRAN_FLAGS_ARG[@]}"
     - name: build enzyme
       working-directory: 'build'
       run: ninja LLVMEnzyme-${{ matrix.llvm }} FlangEnzyme-${{ matrix.llvm }}
@@ -87,7 +117,7 @@ jobs:
     - name: add llvm without clang and flang
       run: |
         set -eo pipefail
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm-snapshot.gpg
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.versions.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.versions.llvm }}-dev ninja-build pip
         sudo python3 -m pip install --upgrade pip lit
@@ -95,7 +125,7 @@ jobs:
       run: |
         set -eo pipefail
         wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
-        sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+        sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/intel-oneapi.gpg GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
         sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.versions.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
