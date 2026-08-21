@@ -60,14 +60,21 @@ jobs:
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build
-        FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
-        FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" "${FLANG_RESOURCE_DIR}" "/usr/lib/llvm-${{ matrix.llvm }}" -name iso_c_binding.mod 2>/dev/null | head -n1)
-        if [ -z "${FLANG_ISO_C_BINDING_MOD}" ]; then
-          echo "Failed to find iso_c_binding.mod under ${FLANG_RESOURCE_DIR} or /usr/lib/llvm-${{ matrix.llvm }}"
-          exit 1
+        CMAKE_FORTRAN_FLAGS_ARG=""
+        if [ "${{ matrix.llvm }}" != "21" ]; then
+          FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
+          FLANG_ISO_C_BINDING_MOD=$(dpkg -L libflang-${{ matrix.llvm }}-dev 2>/dev/null | grep '/iso_c_binding.mod$' | head -n1)
+          if [ -z "${FLANG_ISO_C_BINDING_MOD}" ]; then
+            FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" "${FLANG_RESOURCE_DIR}" "/usr/lib/llvm-${{ matrix.llvm }}" -name iso_c_binding.mod 2>/dev/null | head -n1)
+          fi
+          if [ -n "${FLANG_ISO_C_BINDING_MOD}" ]; then
+            FLANG_INTRINSIC_MODULES_PATH=$(dirname "${FLANG_ISO_C_BINDING_MOD}")
+            CMAKE_FORTRAN_FLAGS_ARG="-DCMAKE_Fortran_FLAGS=-fintrinsic-modules-path=${FLANG_INTRINSIC_MODULES_PATH}"
+          else
+            echo "Warning: could not find iso_c_binding.mod for flang-${{ matrix.llvm }}, continuing without explicit intrinsic module path"
+          fi
         fi
-        FLANG_INTRINSIC_MODULES_PATH=$(dirname "${FLANG_ISO_C_BINDING_MOD}")
-        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} -DCMAKE_Fortran_FLAGS="-fintrinsic-modules-path=${FLANG_INTRINSIC_MODULES_PATH}"
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} ${CMAKE_FORTRAN_FLAGS_ARG}
     - name: build enzyme
       working-directory: 'build'
       run: ninja LLVMEnzyme-${{ matrix.llvm }} FlangEnzyme-${{ matrix.llvm }}
