@@ -9,12 +9,17 @@
 
 program main
   use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
+  use omp_lib, only: omp_get_max_threads
   implicit none
 
   integer, parameter :: n = 4
   real :: x(n), dx(n)
   real :: y(n), dy(n)
   integer :: i
+
+  if (omp_get_max_threads() < 2) then
+    error stop "This test requires OMP_NUM_THREADS >= 2"
+  end if
 
   x(1) = 23.1
   x(2) = 10.0
