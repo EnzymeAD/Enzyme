@@ -61,9 +61,9 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         FLANG_RESOURCE_DIR=$(${{ matrix.compiler }}-${{ matrix.llvm }} -print-resource-dir)
-        FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" -name iso_c_binding.mod | head -n1)
+        FLANG_ISO_C_BINDING_MOD=$(find "${FLANG_RESOURCE_DIR}/finclude" "${FLANG_RESOURCE_DIR}" "/usr/lib/llvm-${{ matrix.llvm }}" -name iso_c_binding.mod 2>/dev/null | head -n1)
         if [ -z "${FLANG_ISO_C_BINDING_MOD}" ]; then
-          echo "Failed to find iso_c_binding.mod under ${FLANG_RESOURCE_DIR}/finclude"
+          echo "Failed to find iso_c_binding.mod under ${FLANG_RESOURCE_DIR} or /usr/lib/llvm-${{ matrix.llvm }}"
           exit 1
         fi
         FLANG_INTRINSIC_MODULES_PATH=$(dirname "${FLANG_ISO_C_BINDING_MOD}")
