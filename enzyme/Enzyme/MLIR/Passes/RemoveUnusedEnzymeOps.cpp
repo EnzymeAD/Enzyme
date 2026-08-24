@@ -378,6 +378,8 @@ static void applyPatterns(Operation *op) {
       op->getContext());
 
   GreedyRewriteConfig config;
+  config.setRegionSimplificationLevel(
+      GreedySimplifyRegionLevel::Normal);
   config.enableFolding();
   (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
@@ -400,6 +402,8 @@ static void applyPatternsToEnzymeOps(Operation *op,
                   SetSimplify, InitSimplify>(op->getContext());
 
   GreedyRewriteConfig config;
+  config.setRegionSimplificationLevel(
+      GreedySimplifyRegionLevel::Normal);
   config.enableFolding();
   if (listener)
     config.setListener(listener);

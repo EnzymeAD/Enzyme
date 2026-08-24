@@ -109,6 +109,8 @@ struct SplitMultiResultsPass
     patterns.insert<SplitMultiIf>(&getContext());
 
     GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(
+        GreedySimplifyRegionLevel::Normal);
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   }
 };
