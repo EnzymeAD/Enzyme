@@ -1658,7 +1658,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      llvm::ArrayRef<llvm::Value *> args,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
                      bool byRef, bool cublas, bool julia_decl) {
-  assert(fpTy->isFloatingPointTy());
+  // relax to receive complex values.
+  bool isComplex = (blas.floatType == "c" || blas.floatType == "z");
+  assert(fpTy->isFloatingPointTy() || isComplex);
 
   // add inner_prod call if not already present
   std::string prod_name = "__enzyme_inner_prod" + blas.floatType + blas.suffix;
@@ -1670,8 +1672,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   if (!F->empty())
     return B.CreateCall(F, args, bundles);
 
-  // add dot call if not already present
-  std::string dot_name = blas.prefix + blas.floatType + "dot" + blas.suffix;
+  // for the complex varient use `dotc`.
+  std::string dot_name = blas.prefix + blas.floatType +
+                         (isComplex ? "dotc" : "dot") + blas.suffix;
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   auto FDot = M.getOrInsertFunction(dot_name, FDotT);
