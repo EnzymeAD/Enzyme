@@ -1,6 +1,8 @@
+#!/bin/bash
+
 set -x
 
-compiler=`echo $1|sed -e 's/\//\\\\\//g'`
+compiler=$(echo "${1}" | sed -e 's/\//\\\//g')
 
 sed "s/compiler_name = .*/compiler_name = \"$compiler\";/g" -i c_check
 sed "s/flags = .*/flags = \"\";/g" -i c_check
@@ -12,4 +14,4 @@ sed "s/# GEMM_MULTI/GEMM_MULTI/g" -i Makefile.rule
 sed "s/COMMON_OPT = -O2/COMMON_OPT =/g" -i Makefile.system
 sed "/#define GEMM_P/d" -i common_param.h
 sed "/#define GEMM_Q/d" -i common_param.h
-echo > exports/gensymbol
+echo >exports/gensymbol
