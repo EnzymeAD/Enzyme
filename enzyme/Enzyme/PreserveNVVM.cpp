@@ -113,7 +113,8 @@ bool isTargetNVPTX(llvm::Module &M) {
 template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
-                       SmallVectorImpl<GlobalVariable *> &globalsToErase) {
+                       SmallVectorImpl<GlobalVariable *> &globalsToErase,
+                       bool PreserveCustomRuleLinkage) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
       if (CA->getNumOperands() < numargs) {
@@ -291,31 +292,36 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               Fs[fn] = NewF;
             }
 
-          preserveLinkage(true, *Fs[1], false);
+          if (PreserveCustomRuleLinkage)
+            preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-          preserveLinkage(true, *Fs[2], false);
+          if (PreserveCustomRuleLinkage)
+            preserveLinkage(true, *Fs[2], false);
           Fs[0]->setMetadata(
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
         } else if (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
-          preserveLinkage(true, *Fs[1], false);
+          if (PreserveCustomRuleLinkage)
+            preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
         } else if (Mode == DerivativeMode::ForwardModeSplit) {
           assert(numargs == 3);
-          preserveLinkage(true, *Fs[1], false);
+          if (PreserveCustomRuleLinkage)
+            preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-          preserveLinkage(true, *Fs[2], false);
+          if (PreserveCustomRuleLinkage)
+            preserveLinkage(true, *Fs[2], false);
           Fs[0]->setMetadata(
               "enzyme_splitderivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -342,7 +348,8 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
-bool preserveNVVM(bool Begin, Module &M) {
+bool preserveNVVM(bool Begin, Module &M,
+                  bool PreserveCustomRuleLinkage = true) {
   bool changed = false;
   constexpr static const char gradient_handler_name[] =
       "__enzyme_register_gradient";
@@ -485,10 +492,12 @@ bool preserveNVVM(bool Begin, Module &M) {
     }
 
   for (GlobalVariable &g : M.globals()) {
-    if (g.getName().contains(gradient_handler_name) ||
-        g.getName().contains(derivative_handler_name) ||
-        g.getName().contains(splitderivative_handler_name) ||
-        g.getName().contains("__enzyme_nofree") ||
+    bool customRule = g.getName().contains(gradient_handler_name) ||
+                      g.getName().contains(derivative_handler_name) ||
+                      g.getName().contains(splitderivative_handler_name);
+    if (customRule && !PreserveCustomRuleLinkage)
+      continue;
+    if (customRule || g.getName().contains("__enzyme_nofree") ||
         g.getName().contains("__enzyme_inactivefn") ||
         g.getName().contains("__enzyme_sparse_accumulate") ||
         g.getName().contains("__enzyme_function_like") ||
@@ -515,17 +524,18 @@ bool preserveNVVM(bool Begin, Module &M) {
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
-                             DerivativeMode::ReverseModeGradient, 3>(M, g,
-                                                                     toErase);
+                             DerivativeMode::ReverseModeGradient, 3>(
+          M, g, toErase, PreserveCustomRuleLinkage);
       changed = true;
     } else if (g.getName().contains(derivative_handler_name)) {
       handleCustomDerivative<derivative_handler_name,
-                             DerivativeMode::ForwardMode, 2>(M, g, toErase);
+                             DerivativeMode::ForwardMode, 2>(
+          M, g, toErase, PreserveCustomRuleLinkage);
       changed = true;
     } else if (g.getName().contains(splitderivative_handler_name)) {
       handleCustomDerivative<splitderivative_handler_name,
-                             DerivativeMode::ForwardModeSplit, 3>(M, g,
-                                                                  toErase);
+                             DerivativeMode::ForwardModeSplit, 3>(
+          M, g, toErase, PreserveCustomRuleLinkage);
       changed = true;
     }
     if (g.getName().contains("__enzyme_inactive_global")) {
@@ -1066,7 +1076,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = preserveNVVM(Begin, M);
+  bool changed = preserveNVVM(Begin, M, PreserveCustomRuleLinkage);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;

@@ -37,27 +37,41 @@ namespace enzyme {
 template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // How the trip count is decomposed for periodic checkpointing: `nOuter`
   // segments of `nInner` iterations, plus a shorter trailing segment of
-  // `trailingIters`. When the trip count is only known at runtime the same
-  // decomposition is described by `numItersV` / `nOuterV` instead, and the
-  // static segment count is -1 to mark that nothing beyond the period is known
-  // at compile time.
+  // `trailingIters`.
+  //
+  // A stated period budgets the *outer* half of that: it is the number of
+  // segments, hence of checkpoints, hence both the trip count of the scaffold's
+  // outer loops and the size of the one allocation that outlives the forward
+  // pass. The segment length is what is derived from it, as
+  // ceil(numIters / nOuter). Reading the period as the segment length instead
+  // would leave the checkpoint storage growing with the trip count --
+  // ceil(numIters / period) live checkpoints -- which is the opposite of what
+  // stating a budget is for.
+  //
+  // Every dialect's outer loops therefore count segments, one iteration per
+  // checkpoint, and derive the segment's base iteration as nInner * index.
   struct PeriodicSchedule {
+    // Iterations per full segment, or -1 when only `nInnerV` knows it.
     int64_t nInner = 0;
+    // Number of full segments. Always known at compile time.
     int64_t nOuter = -1;
+    // Iterations in the short trailing segment, 0 when the full segments
+    // divide the trip count evenly -- and always 0 for a dynamic trip count,
+    // where every segment is instead clamped against the trip count at
+    // runtime. That clamp covers both the short segment and the empty ones
+    // that a rounded-up segment length can leave at the end.
     int64_t trailingIters = 0;
 
     // Non-null exactly when the trip count is dynamic. numIters/start/step are
     // materialized before the scaffold (and cached for the reverse pass);
-    // nOuterV is ceil(numIters / nInner), i.e. the total segment count.
-    Value numItersV, nOuterV, startV, stepV;
+    // nOuterV is the segment count as a value, which only the dynamic schedule
+    // needs (a static one has numSegments() for that).
+    Value numItersV, nOuterV, nInnerV, startV, stepV;
 
     bool isDynamic() const { return numItersV != nullptr; }
     bool hasTrailing() const { return trailingIters > 0; }
     // Total number of segments, the trailing one included.
-    int64_t numSegments() const {
-      assert(!isDynamic() && "segment count is only known at runtime");
-      return nOuter + hasTrailing();
-    }
+    int64_t numSegments() const { return nOuter + hasTrailing(); }
   };
 
   // Names of the attributes the checkpointing directives are read from. A
@@ -72,6 +86,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     return "enzyme.binomial_checkpointing";
   }
 
+  // Both schemes read the period as a budget on the number of live
+  // checkpoints: the size of the binomial checkpoint table, or the number of
+  // segments a periodic decomposition is cut into. See PeriodicSchedule.
   static StringRef checkpointPeriodAttrName() {
     return "enzyme.checkpoint_period";
   }
@@ -113,9 +130,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     if (FinalClass::getConstantNumberOfIterations(forOp).has_value())
       return true;
     // A dynamic trip count has no compile-time N to take the square root of,
-    // so the period cannot be defaulted: it has to be stated.
-    return FinalClass::supportsDynamicPeriodic() &&
-           FinalClass::getCheckpointBudget(forOp).has_value();
+    // so the period cannot be defaulted: it has to be stated, and (being the
+    // segment count, which the scaffold divides by) it has to be positive.
+    if (!FinalClass::supportsDynamicPeriodic())
+      return false;
+    auto period = FinalClass::getCheckpointBudget(forOp);
+    return period.has_value() && *period > 0;
   }
 
   static bool needsBinomialCheckpointing(OpName forOp) {
@@ -541,8 +561,16 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     return llvm::to_vector(state);
   }
 
-  static Value cloneSlot(OpBuilder &b, Location loc, Value buf, Value slot) {
-    return memref::LoadOp::create(b, loc, buf, ValueRange{slot});
+  static Value cloneSlot(OpBuilder &builder, Location loc, Value base,
+                         Value buf, Value slot, int64_t budget) {
+    auto iface = cast<ClonableTypeInterface>(base.getType());
+    if (iface.implementsBatchAllocation(
+            base, OpFoldResult(builder.getI64IntegerAttr(budget)))) {
+      Value loaded = iface.deriveSubElement(builder, loc, base, buf, slot);
+      return loaded;
+    }
+
+    return memref::LoadOp::create(builder, loc, buf, ValueRange{slot});
   }
 
   // A `budget`-slot buffer of clone *handles* for one mutable ref, with a
@@ -563,34 +591,60 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // make all slots alias.
   static Value allocCloneSlots(OpBuilder &b, Location loc, int64_t budget,
                                Value proto, ClonableTypeInterface iface) {
-    SmallVector<Value> clones;
-    for (int64_t j = 0; j < budget; ++j)
-      clones.push_back(iface.cloneValue(b, proto));
+    OpFoldResult size = OpFoldResult(b.getI64IntegerAttr(budget));
+
+    if (iface.implementsBatchAllocation(proto, size)) {
+      Value batchAlloc = iface.batchAllocate(b, loc, proto, size);
+      return batchAlloc;
+    }
 
     Value buf = memref::AllocOp::create(
-        b, loc, MemRefType::get({budget}, clones.front().getType()));
-    for (auto &&[j, clone] : llvm::enumerate(clones)) {
-      Value slot = arith::ConstantIndexOp::create(b, loc, j);
-      memref::StoreOp::create(b, loc, clone, buf, ValueRange{slot});
+        b, loc, MemRefType::get({budget}, proto.getType()));
+
+    Value lb = arith::ConstantIndexOp::create(b, loc, 0);
+    Value ub = arith::ConstantIndexOp::create(b, loc, budget);
+    Value step = arith::ConstantIndexOp::create(b, loc, 1);
+    auto loop = scf::ForOp::create(b, loc, lb, ub, step);
+
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPoint(loop.getBody()->getTerminator());
+      Value clone = iface.cloneValue(b, proto);
+      memref::StoreOp::create(b, loc, clone, buf,
+                              ValueRange{loop.getInductionVar()});
     }
+
     return buf;
   }
 
   // Free each slot's clone, then the handle buffer itself. A loop is fine
   // here: a free has side effects so it cannot be hoisted, and nothing can
   // alias.
-  static void freeCloneSlots(OpBuilder &b, Location loc, int64_t budget,
-                             Value buf, ClonableTypeInterface iface) {
-    Value lb = arith::ConstantIndexOp::create(b, loc, 0);
-    Value ub = arith::ConstantIndexOp::create(b, loc, budget);
-    Value step = arith::ConstantIndexOp::create(b, loc, 1);
-    auto loop = scf::ForOp::create(b, loc, lb, ub, step);
-    {
-      OpBuilder::InsertionGuard g(b);
-      b.setInsertionPointToStart(loop.getBody());
-      iface.freeClonedValue(b, cloneSlot(b, loc, buf, loop.getInductionVar()));
+  static void freeCloneSlots(OpBuilder &builder, Value ref, Value buf,
+                             int64_t budget) {
+    ClonableTypeInterface iface = cast<ClonableTypeInterface>(ref.getType());
+    OpFoldResult numel = builder.getI64IntegerAttr(budget);
+
+    if (iface.implementsBatchAllocation(ref, numel)) {
+      iface.freeClonedValue(builder, buf);
+      return;
     }
-    memref::DeallocOp::create(b, loc, buf);
+
+    Value lb = arith::ConstantIndexOp::create(builder, ref.getLoc(), 0);
+    Value ub = arith::ConstantIndexOp::create(builder, ref.getLoc(), budget);
+    Value step = arith::ConstantIndexOp::create(builder, ref.getLoc(), 1);
+    auto loop = scf::ForOp::create(builder, ref.getLoc(), lb, ub, step);
+
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(loop.getBody()->getTerminator());
+
+      Value val = memref::LoadOp::create(builder, buf.getLoc(), buf,
+                                         loop.getInductionVar());
+      iface.freeClonedValue(builder, val);
+    }
+
+    memref::DeallocOp::create(builder, buf.getLoc(), buf);
   }
 
   // Forward augmentation for binomial (Revolve) checkpointing. Builds an
@@ -721,7 +775,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // advance.
     for (auto &&[ref, buf] : llvm::zip_equal(mutableRefs, mutBufs)) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
-      iface.copyValue(builder, cloneSlot(builder, loc, buf, k),
+      iface.copyValue(builder,
+                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                buf, k, budget),
                       gutils->getNewFromOriginal(ref));
     }
 
@@ -973,10 +1029,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // Re-prime each working clone from the snapshot paired with slot `capo`,
     // so the replay below starts from the mutable memory as it was at
     // ckptStep.
-    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-      cast<ClonableTypeInterface>(ref.getType())
-          .copyValue(builder, workClones[r],
-                     cloneSlot(builder, loc, mutBufs[r], capo));
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      iface.copyValue(builder, workClones[r],
+                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                mutBufs[r], capo, budget));
+    }
 
     // Inner remat loop: reconstruct state at (currentRevStep - 1), carrying
     // (pos, capo, state..., [stores...]).
@@ -1025,10 +1083,14 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
             FinalClass::storeSlot(builder, loc, wStores[i], acapo, val);
       wStores[idxStore] =
           FinalClass::storeSlot(builder, loc, wStores[idxStore], acapo, pos);
-      for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-        cast<ClonableTypeInterface>(ref.getType())
-            .copyValue(builder, cloneSlot(builder, loc, mutBufs[r], acapo),
-                       workClones[r]);
+
+      for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        iface.copyValue(builder,
+                        cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                  mutBufs[r], acapo, budget),
+                        workClones[r]);
+      }
 
       Value posPlusSplit = FinalClass::emitAdd(builder, loc, pos, split);
       Value isLast =
@@ -1244,7 +1306,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
       auto iface = cast<ClonableTypeInterface>(ref.getType());
       iface.freeClonedValue(builder, workClones[r]);
-      freeCloneSlots(builder, loc, budget, mutBufs[r], iface);
+      freeCloneSlots(builder, ref, mutBufs[r], budget);
     }
 
     return success(valid);
@@ -1253,30 +1315,54 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   //===--------------------------------------------------------------------===//
   // Periodic (sqrt-decomposition) checkpointing: decompose the N-iteration
   // loop into ~sqrt(N) outer segments, each holding down ~sqrt(N) primal
-  // steps in a checkpoint; the reverse pass replays one segment at a time.
+  // steps in a checkpoint; the reverse pass replays one segment at a time. A
+  // stated period replaces the sqrt(N) segment count with one the caller
+  // budgets for, and the segment length grows to match.
   //===--------------------------------------------------------------------===//
 
-  // The compile-time half of the decomposition. An explicit period is honoured
-  // as `nInner`; without one the classic sqrt(N) split is used, which -- unlike
-  // N/period -- deliberately keeps nOuter == nInner and lets the remainder
-  // spill into a trailing segment that may be as long as nInner itself.
+  // The compile-time half of the decomposition. A stated period is a budget on
+  // the *segment* count -- see PeriodicSchedule -- so it is the segment length
+  // that is derived from it, as ceil(numIters / period). Without one the
+  // classic sqrt(N) split is used, which deliberately keeps nOuter == nInner
+  // and lets the remainder spill into a trailing segment that may be as long as
+  // nInner itself.
   static PeriodicSchedule getStaticPeriodicSchedule(OpName forOp) {
     PeriodicSchedule sched;
     auto period = FinalClass::getCheckpointBudget(forOp);
     auto numIters = FinalClass::getConstantNumberOfIterations(forOp);
     if (!numIters) {
-      // FinalClass::needsCheckpointing() only admits a dynamic trip count with
-      // a period.
-      sched.nInner = *period;
+      // Same reading of the period, with the division left to the runtime:
+      // nInnerV ends up holding ceil(numIters / nOuter).
+      // needsCheckpointing() only admits a dynamic trip count with a positive
+      // period.
+      sched.nInner = -1;
+      sched.nOuter = *period;
+      return sched;
+    }
+    if (*numIters <= 0) {
+      // Nothing to segment. Spelled out because both splits below divide by a
+      // quantity derived from the trip count, and because a zero-length segment
+      // would give the scaffold loop a zero step.
+      sched.nInner = 1;
+      sched.nOuter = 0;
       return sched;
     }
     if (period && *period > 0) {
-      sched.nInner = *period;
-      sched.nOuter = *numIters / sched.nInner;
+      // Rounding the length up is what holds the segment count to the budget:
+      // numSegments() then lands at or below `period`, never above.
+      sched.nInner = (*numIters + *period - 1) / *period;
     } else {
-      sched.nInner = sched.nOuter = (int64_t)std::sqrt(*numIters);
+      sched.nInner = (int64_t)std::sqrt(*numIters);
     }
-    sched.trailingIters = *numIters - sched.nInner * sched.nOuter;
+    // Whole segments, plus a remainder shorter than one of them. The remainder
+    // has to be the shorter part: a dialect whose segment bound is
+    // min(nInner, remaining) -- affine.for's boundary-tile map, stablehlo's
+    // runtime clamp -- silently truncates a trailing segment longer than
+    // nInner, and the tail of the loop is then never replayed at all. Splitting
+    // sqrt(N) as nOuter == nInner and letting the remainder run on up to
+    // 2*sqrt(N), which is what this did, is what made that reachable.
+    sched.nOuter = *numIters / sched.nInner;
+    sched.trailingIters = *numIters % sched.nInner;
     return sched;
   }
 
@@ -1359,16 +1445,64 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     }
   }
 
-  // ceil(numIters / nInner), the segment count in the dynamic case. Split out
-  // because the reverse pass recomputes it from the popped trip count rather
-  // than transporting the forward pass's own value.
-  static void computeDynamicSegmentCount(OpBuilder &builder, Location loc,
-                                         PeriodicSchedule &sched) {
-    Value nInnerV = FinalClass::emitConst(builder, loc, sched.nInner);
+  // The segment length as a value, which every segment bound and replayed
+  // induction variable is derived from. Split out (rather than transported from
+  // the forward pass) because the reverse pass recomputes it from the popped
+  // trip count, by the very same formula: it is a pure function of the
+  // schedule.
+  static void materializeSegmentValues(OpBuilder &builder, Location loc,
+                                       PeriodicSchedule &sched) {
+    if (!sched.isDynamic()) {
+      sched.nInnerV = FinalClass::emitConst(builder, loc, sched.nInner);
+      return;
+    }
+    // nInner = ceil(numIters / nOuter). Rounding *up* is what keeps the
+    // statically-many segments covering the whole trip count; it is also what
+    // lets the last segments start past the end of the loop, so each segment's
+    // length has to be clamped against the trip count where it is built.
+    sched.nOuterV = FinalClass::emitConst(builder, loc, sched.nOuter);
     Value roundUp = FinalClass::emitAdd(
         builder, loc, sched.numItersV,
-        FinalClass::emitConst(builder, loc, sched.nInner - 1));
-    sched.nOuterV = FinalClass::emitDivU(builder, loc, roundUp, nInnerV);
+        FinalClass::emitConst(builder, loc, sched.nOuter - 1));
+    sched.nInnerV = FinalClass::emitDivU(builder, loc, roundUp, sched.nOuterV);
+  }
+
+  // How many iterations the segment based at `base` covers: nInner, except for
+  // the trailing one. Which segment that is, and how short, is the one thing
+  // the two trip counts disagree on, so it is decided here rather than in each
+  // direction's hook -- both directions ask this the same question, about a
+  // base they derived the same way.
+  static Value segmentLength(OpBuilder &builder, Location loc,
+                             const PeriodicSchedule &sched, Value base) {
+    if (!sched.isDynamic()) {
+      if (!sched.hasTrailing())
+        return sched.nInnerV;
+      // The trailing segment is the one based just past the last full one.
+      Value isTrailing = FinalClass::emitCmpEQ(
+          builder, loc, base,
+          FinalClass::emitConst(builder, loc, sched.nInner * sched.nOuter));
+      return FinalClass::emitSelect(
+          builder, loc, isTrailing,
+          FinalClass::emitConst(builder, loc, sched.trailingIters),
+          sched.nInnerV);
+    }
+
+    // A runtime trip count cannot say which segment is short, so every one of
+    // them is clamped: min(nInner, numIters - base). The subtraction saturates
+    // rather than wrapping, which is the other half of rounding the segment
+    // length up -- the last segments can then start at or past the end of the
+    // loop, and an unsigned wrap there would turn an empty segment into a full
+    // one running off the end.
+    Value inBounds = FinalClass::emitMin(builder, loc, base, sched.numItersV);
+    return FinalClass::emitMin(
+        builder, loc, sched.nInnerV,
+        FinalClass::emitSub(builder, loc, sched.numItersV, inBounds));
+  }
+
+  // The base iteration of segment `index`, counted from the start of the loop.
+  static Value segmentBase(OpBuilder &builder, Location loc,
+                           const PeriodicSchedule &sched, Value index) {
+    return FinalClass::emitMul(builder, loc, index, sched.nInnerV);
   }
 
   // Materialize trip count / lower bound / step for a dynamic trip count, at
@@ -1385,7 +1519,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         builder, loc,
         FinalClass::getNumIterationsValue(builder, loc, forOp, gutils),
         FinalClass::getIndexLikeType(builder));
-    computeDynamicSegmentCount(builder, loc, sched);
+    FinalClass::materializeSegmentValues(builder, loc, sched);
   }
 
   static SmallVector<Value> cachePeriodic(OpName forOp, Operation *op,
@@ -1397,6 +1531,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     PeriodicSchedule sched = FinalClass::getStaticPeriodicSchedule(forOp);
     if (!FinalClass::getConstantNumberOfIterations(forOp).has_value())
       materializeDynamicSchedule(cacheBuilder, loc, forOp, gutils, sched);
+    else
+      FinalClass::materializeSegmentValues(cacheBuilder, loc, sched);
 
     SmallVector<Value> immutableRefs, mutableRefs;
     FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
@@ -1410,9 +1546,14 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                                        newForOpInits);
     FinalClass::preserveAttributesButCheckpointing(outerFwd, forOp);
 
-    Value outerFwdIV = FinalClass::getInductionVar(outerFwd);
     Block *outerFwdBody = FinalClass::getBodyBlock(outerFwd);
     cacheBuilder.setInsertionPointToStart(outerFwdBody);
+
+    // A segment index, in every dialect and whether or not the trip count is
+    // known: the outer loops run one iteration per checkpoint. Recovering the
+    // segment's base iteration from it (nInner * index) is left to the hooks,
+    // which is what `fwdHint` carries.
+    Value outerFwdIV = FinalClass::getInductionVar(outerFwd);
 
     IRMapping mapping;
 
@@ -1537,8 +1678,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       sched.numItersV = gutils->popCache(caches[base], builder);
       sched.startV = gutils->popCache(caches[base + 1], builder);
       sched.stepV = gutils->popCache(caches[base + 2], builder);
-      computeDynamicSegmentCount(builder, loc, sched);
     }
+    FinalClass::materializeSegmentValues(builder, loc, sched);
 
     auto revOuter = FinalClass::createReverseOuterLoop(builder, loc, sched,
                                                        incomingGradients);
@@ -1546,6 +1687,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     OpBuilder::InsertionGuard guard(builder);
     Block *revOuterBody = FinalClass::getBodyBlock(revOuter);
+    // The same segment index as the forward direction, counted from the end:
+    // segment numSegments() - 1 is replayed first. `revHint` carries whatever
+    // the hooks derive from it.
     Value revOuterIV = FinalClass::getInductionVar(revOuter);
     FinalClass::setInsertionPointToBodyEnd(builder, revOuterBody);
 

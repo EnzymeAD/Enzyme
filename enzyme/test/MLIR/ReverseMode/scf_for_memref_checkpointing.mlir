@@ -23,22 +23,20 @@ module {
 // CHECK-NEXT:    %c2 = arith.constant 2 : index
 // CHECK-NEXT:    %c3 = arith.constant 3 : index
 // CHECK-NEXT:    %c1 = arith.constant 1 : index
-// CHECK-NEXT:    %c9 = arith.constant 9 : index
 // CHECK-NEXT:    %c0 = arith.constant 0 : index
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<3xf32>
 // CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c9 step %c3 iter_args(%arg4 = %cst) -> (f32) {
-// CHECK-NEXT:      %2 = arith.divui %arg3, %c3 : index
-// CHECK-NEXT:      memref.store %arg4, %alloc_0[%2] : memref<3xf32>
-// CHECK-NEXT:      %subview = memref.subview %alloc[%2] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
+// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %cst) -> (f32) {
+// CHECK-NEXT:      memref.store %arg4, %alloc_0[%arg3] : memref<3xf32>
+// CHECK-NEXT:      %subview = memref.subview %alloc[%arg3] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
 // CHECK-NEXT:      memref.copy %arg0, %subview : memref<f32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      %3 = scf.for %arg5 = %c0 to %c3 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
-// CHECK-NEXT:        %4 = memref.load %arg0[] : memref<f32>
-// CHECK-NEXT:        %5 = arith.mulf %4, %arg6 : f32
-// CHECK-NEXT:        scf.yield %5 : f32
+// CHECK-NEXT:      %2 = scf.for %arg5 = %c0 to %c3 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
+// CHECK-NEXT:        %3 = memref.load %arg0[] : memref<f32>
+// CHECK-NEXT:        %4 = arith.mulf %3, %arg6 : f32
+// CHECK-NEXT:        scf.yield %4 : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      scf.yield %3 : f32
+// CHECK-NEXT:      scf.yield %2 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %arg2) -> (f32) {
 // CHECK-NEXT:      %2 = arith.subi %c2, %arg3 : index
