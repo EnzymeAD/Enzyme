@@ -31,6 +31,12 @@ void ow_dgemv(char layout, char trans, int M, int N, double alpha, double* A, in
     inDerivative = true;
 }
 
+// complex alpha and beta are passed as pointers
+void my_zgemv(char layout, char trans, int M, int N, double* alpha, double* __restrict__ A, int lda, double* __restrict__ X, int incx, double* beta, double* __restrict__ Y, int incy) {
+    cblas_zgemv(layout, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
+    inDerivative = true;
+}
+
 
 void my_dsymv(char layout, char uplo, int N, double alpha, double* __restrict__ A, int lda, double* __restrict__ X, int incx, double beta, double* __restrict__ Y, int incy) {
     cblas_dsymv(layout, uplo, N, alpha, A, lda, X, incx, beta, Y, incy);
@@ -410,6 +416,112 @@ static void gemvTests() {
   }
 }
 
+// overwrite case needs A/B caching via lacpy/copy and is not covered here.
+static void zgemvTests() {
+  double calpha[2] = {1.3, -0.4};
+  double cbeta[2]  = {-0.7, 0.2};
+  double cone[2]   = {1.0, 0.0};
+  constexpr size_t CE = 2 * sizeof(double);
+
+  for (char layout : { CblasRowMajor, CblasColMajor }) {
+  for (auto transA : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasConjTrans}) {
+
+    bool trans = !is_normal(transA);
+    BlasInfo inputs[6] = {
+        BlasInfo(A, layout, M, N, lda, 0, 0, CE),
+        BlasInfo(B, trans ? M : N, incB, 0, CE),
+        BlasInfo(C, trans ? N : M, incC, 0, CE),
+        BlasInfo(),
+        BlasInfo(),
+        BlasInfo()
+    };
+
+    {
+    std::string Test = "ZGEMV active A, C ";
+
+    init();
+    cblas_zgemv(layout, (char)transA, M, N, calpha, A, lda, B, incB, cbeta, C, incC);
+
+    assert(calls.size() == 1);
+    assert(calls[0].inDerivative == false);
+    assert(calls[0].type == CallType::GEMV);
+    assert(calls[0].pout_arg1 == C);
+    assert(calls[0].pin_arg1 == A);
+    assert(calls[0].pin_arg2 == B);
+    assert(calls[0].farg1 == calpha[0]);
+    assert(calls[0].farg1_im == calpha[1]);
+    assert(calls[0].farg2 == cbeta[0]);
+    assert(calls[0].farg2_im == cbeta[1]);
+    assert(calls[0].layout == layout);
+    assert(calls[0].targ1 == (char)transA);
+
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    __enzyme_autodiff((void*) my_zgemv,
+                            enzyme_const, layout,
+                            enzyme_const, transA,
+                            enzyme_const, M,
+                            enzyme_const, N,
+                            enzyme_const, calpha,
+                            enzyme_dup, A, dA,
+                            enzyme_const, lda,
+                            enzyme_const, B,
+                            enzyme_const, incB,
+                            enzyme_const, cbeta,
+                            enzyme_dup, C, dC,
+                            enzyme_const, incC);
+    foundCalls = calls;
+    init();
+
+    cblas_zgemv(layout, (char)transA, M, N, calpha, A, lda, B, incB, cbeta, C, incC);
+
+    inDerivative = true;
+    // dA = calpha * dC (x) conj(x)^T -- gerc conjugates the second arg.
+    cblas_zgerc(layout, M, N, calpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
+    // dC = cbeta * dC
+    cblas_zscal(trans ? N : M, cbeta, dC, incC);
+
+    checkTest(Test);
+    checkMemoryTrace(inputs, "Expected " + Test, calls);
+    checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+    }
+
+    {
+    std::string Test = "ZGEMV active A, B, C ";
+
+    init();
+    __enzyme_autodiff((void*) my_zgemv,
+                            enzyme_const, layout,
+                            enzyme_const, transA,
+                            enzyme_const, M,
+                            enzyme_const, N,
+                            enzyme_const, calpha,
+                            enzyme_dup, A, dA,
+                            enzyme_const, lda,
+                            enzyme_dup, B, dB,
+                            enzyme_const, incB,
+                            enzyme_const, cbeta,
+                            enzyme_dup, C, dC,
+                            enzyme_const, incC);
+    foundCalls = calls;
+    init();
+
+    cblas_zgemv(layout, (char)transA, M, N, calpha, A, lda, B, incB, cbeta, C, incC);
+
+    inDerivative = true;
+    cblas_zgerc(layout, M, N, calpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
+    // dB = calpha * transpose(A) * dC + dB
+    cblas_zgemv(layout, (char)ctranspose(transA), M, N, calpha, A, lda, dC, incC, cone, dB, incB);
+    cblas_zscal(trans ? N : M, cbeta, dC, incC);
+
+    checkTest(Test);
+    checkMemoryTrace(inputs, "Expected " + Test, calls);
+    checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+    }
+  }
+  }
+}
 
 static void symvTests() {
   int N = 17;
@@ -2210,6 +2322,8 @@ int main() {
   nrm2Tests();
 
   gemvTests();
+
+  zgemvTests();
 
   gemmTests();
 

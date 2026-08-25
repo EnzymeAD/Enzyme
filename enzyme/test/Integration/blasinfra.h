@@ -124,6 +124,11 @@ bool is_normal(char c) {
     return true;
   case (char)CBLAS_TRANSPOSE::CblasTrans:
     return false;
+  case (char)CBLAS_TRANSPOSE::CblasConjTrans:
+    // Conjugate transpose has the same shape/length semantics as plain
+    // transpose -- only the values differ (conjugation), not the
+    // dimensions this function is used to determine.
+    return false;
   default:
     printf("Illegal isnormal of '%c' %d\n", c, c);
     exit(1);
@@ -147,6 +152,8 @@ bool is_normal(CBLAS_TRANSPOSE v) {
   case CBLAS_TRANSPOSE::CblasNoTrans:
     return true;
   case CBLAS_TRANSPOSE::CblasTrans:
+    return false;
+  case CBLAS_TRANSPOSE::CblasConjTrans:
     return false;
   default:
     printf("Illegal is_normal of '%c'\n", (char)v);
@@ -282,6 +289,19 @@ CBLAS_TRANSPOSE transpose(CBLAS_TRANSPOSE v) {
   }
 }
 
+// Complex analogue of transpose(CBLAS_TRANSPOSE).
+CBLAS_TRANSPOSE ctranspose(CBLAS_TRANSPOSE v) {
+  switch (v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    return CBLAS_TRANSPOSE::CblasConjTrans;
+  case CBLAS_TRANSPOSE::CblasConjTrans:
+    return CBLAS_TRANSPOSE::CblasNoTrans;
+  default:
+    printf("Illegal ctranspose of '%c'\n", (char)v);
+    exit(1);
+  }
+}
+
 enum class cublasStatus_t {
   CUBLAS_STATUS_SUCCESS,
   CUBLAS_STATUS_NOT_INITIALIZED,
@@ -385,6 +405,11 @@ struct BlasCall {
   char side;
   char uplo;
   char diag;
+  // Imaginary parts of farg1/farg2 (alpha/beta), for complex calls only.
+  // Added to the end allowing all the existing positional aggregate
+  // initialiser to get compiled
+  double farg1_im;
+  double farg2_im;
   bool operator==(const BlasCall &rhs) const {
 #define CHECK(A)                                                               \
   if (A != rhs.A)                                                              \
@@ -411,6 +436,8 @@ struct BlasCall {
     CHECK(side)
     CHECK(uplo)
     CHECK(diag)
+    CHECK(farg1_im)
+    CHECK(farg2_im)
     return true;
   }
   bool operator!=(const BlasCall &rhs) const { return !(operator==(rhs)); }
@@ -1265,6 +1292,8 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(side);
   MAKEASSERT(uplo);
   MAKEASSERT(diag);
+  MAKEASSERT(farg1_im);
+  MAKEASSERT(farg2_im);
 }
 
 vector<BlasCall> calls;
@@ -1623,6 +1652,100 @@ __attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
                              UNUSED_TRANS,
                              UNUSED_TRANS,
                              UNUSED_TRANS});
+}
+
+// Y = alpha * op(A) * X + beta * Y
+__attribute__((noinline)) void cblas_zgemv(char layout, char trans, int M,
+                                           int N, double *alpha, double *A,
+                                           int lda, double *X, int incx,
+                                           double *beta, double *Y, int incy) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GEMV,
+                   Y,
+                   A,
+                   X,
+                   alpha[0],
+                   beta[0],
+                   layout,
+                   trans,
+                   UNUSED_TRANS,
+                   M,
+                   N,
+                   UNUSED_INT,
+                   lda,
+                   incx,
+                   incy,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   alpha[1],
+                   beta[1]};
+  calls.push_back(call);
+}
+
+// A += alpha * X * conj(Y)^T
+__attribute__((noinline)) void cblas_zgerc(char layout, int M, int N,
+                                           double *alpha, double *X, int incX,
+                                           double *Y, int incY, double *A,
+                                           int lda) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GER,
+                   A,
+                   X,
+                   Y,
+                   alpha[0],
+                   UNUSED_DOUBLE,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   M,
+                   N,
+                   UNUSED_INT,
+                   incX,
+                   incY,
+                   lda,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   alpha[1],
+                   0.0};
+  calls.push_back(call);
+}
+
+// X = alpha * X
+__attribute__((noinline)) void cblas_zscal(int N, double *alpha, double *X,
+                                           int incX) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::SCAL,
+                   X,
+                   UNUSED_POINTER,
+                   UNUSED_POINTER,
+                   alpha[0],
+                   UNUSED_DOUBLE,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incX,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   alpha[1],
+                   0.0};
+  calls.push_back(call);
 }
 
 __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p,
@@ -2285,7 +2408,13 @@ struct BlasInfo {
   int mat_ld;
   int row_offset;
   int col_offset;
-  BlasInfo(void *v_ptr, int length, int increment, int _vec_offset = 0) {
+  // Byte size of one element -- sizeof(double) for real, 2*sizeof(double)
+  // for complex (a {re, im} pair). Defaults to real so every existing call
+  // site is unaffected; pointer_to_index uses this instead of a hardcoded
+  // sizeof(double) to convert a raw byte offset into an element offset.
+  size_t elem_size;
+  BlasInfo(void *v_ptr, int length, int increment, int _vec_offset = 0,
+           size_t _elem_size = sizeof(double)) {
     ptr = v_ptr;
     ty = ValueType::Vector;
     vec_length = length;
@@ -2297,8 +2426,10 @@ struct BlasInfo {
     vec_offset = _vec_offset;
     row_offset = -1;
     col_offset = -1;
+    elem_size = _elem_size;
   }
-  BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld, int _row_offset=0, int _col_offset=0) {
+  BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld, int _row_offset=0, int _col_offset=0,
+           size_t _elem_size = sizeof(double)) {
     ptr = v_ptr;
     ty = ValueType::Matrix;
     vec_length = -1;
@@ -2310,6 +2441,7 @@ struct BlasInfo {
     vec_offset = -1;
     row_offset = _row_offset;
     col_offset = _col_offset;
+    elem_size = _elem_size;
   }
   BlasInfo() {
     ptr = (void *)(-1);
@@ -2323,6 +2455,7 @@ struct BlasInfo {
     vec_offset = -1;
     row_offset = -1;
     col_offset = -1;
+    elem_size = sizeof(double);
   }
 };
 
@@ -2342,9 +2475,10 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   for (int i = 3; i < 6; i++) {
     if (inputs[i].ptr == UNUSED_POINTER)
         continue;
-    if (inputs[i].ty == ValueType::Matrix && v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+    auto elem_size = inputs[i].elem_size;
+    if (inputs[i].ty == ValueType::Matrix && v >= inputs[i].ptr && v < (void*)((char*)inputs[i].ptr + (inputs[i].mat_ld * MIN_SIZE + MIN_SIZE) * elem_size)) {
       auto res = inputs[i];
-      auto off = ((size_t)v - (size_t)inputs[i].ptr) / sizeof(double);
+      auto off = ((size_t)v - (size_t)inputs[i].ptr) / elem_size;
       auto off1 = off / inputs[i].mat_ld;
       off %= inputs[i].mat_ld;
       auto off2 = off;
@@ -2359,9 +2493,9 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
       if (res.col_offset >= inputs[i].mat_cols) continue;
       return res;
     }
-    if (inputs[i].ty == ValueType::Vector && v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].vec_increment * MIN_SIZE]) {
+    if (inputs[i].ty == ValueType::Vector && v >= inputs[i].ptr && v < (void*)((char*)inputs[i].ptr + (inputs[i].vec_increment * MIN_SIZE) * elem_size)) {
       auto res = inputs[i];
-      auto off = ((size_t)v - (size_t)inputs[i].ptr) / sizeof(double);
+      auto off = ((size_t)v - (size_t)inputs[i].ptr) / elem_size;
       off /= inputs[i].vec_increment;
       off %= inputs[i].mat_ld;
       res.vec_offset = off;
@@ -2377,10 +2511,11 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   };
 
   for (int i = 0; i < 3; i++) {
+    auto elem_size = inputs[i].elem_size;
     for (auto ptr : ptrs[i]) {
-    if (inputs[i].ty == ValueType::Matrix && v >= ptr && v < &((double*)ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+    if (inputs[i].ty == ValueType::Matrix && v >= ptr && v < (void*)((char*)ptr + (inputs[i].mat_ld * MIN_SIZE + MIN_SIZE) * elem_size)) {
       auto res = inputs[i];
-      auto off = ((size_t)v - (size_t)ptr) / sizeof(double);
+      auto off = ((size_t)v - (size_t)ptr) / elem_size;
       auto off1 = off / inputs[i].mat_ld;
       off %= inputs[i].mat_ld;
       auto off2 = off;
@@ -2395,9 +2530,9 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
       if (res.col_offset >= inputs[i].mat_cols) continue;
       return res;
     }
-    if (inputs[i].ty == ValueType::Vector && v >= ptr && v < &((double*)ptr)[inputs[i].vec_increment * MIN_SIZE]) {
+    if (inputs[i].ty == ValueType::Vector && v >= ptr && v < (void*)((char*)ptr + (inputs[i].vec_increment * MIN_SIZE) * elem_size)) {
       auto res = inputs[i];
-      auto off = ((size_t)v - (size_t)ptr) / sizeof(double);
+      auto off = ((size_t)v - (size_t)ptr) / elem_size;
       off /= inputs[i].vec_increment;
       off %= inputs[i].mat_ld;
       res.vec_offset = off;
