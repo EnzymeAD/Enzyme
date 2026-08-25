@@ -167,7 +167,6 @@ cc_library(
 cc_library(
     name = "EnzymeTypeAnalysis",
     srcs = [
-        "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
         "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
         "Enzyme/TypeAnalysis/TypeTree.cpp",
     ],
@@ -288,8 +287,7 @@ cc_library(
             "Enzyme/eopt.cpp",
             "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
             "Enzyme/TypeAnalysis/TypeTree.cpp",
-            "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
-            "Enzyme/CacheUtility.cpp",
+                "Enzyme/CacheUtility.cpp",
             "Enzyme/MustExitScalarEvolution.cpp",
             "Enzyme/ActivityAnalysis.cpp",
             "Enzyme/EnzymeLogic.cpp",
