@@ -3347,6 +3347,38 @@ public:
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
+    // When TypeAnalysis cannot determine the element type of the region, the
+    // !secretty branch below zeroes the shadow only in the forward sweep. That
+    // is correct for zeroing a freshly allocated buffer, but wrong for a memset
+    // that re-initialises a buffer inside a loop: the shadow is then never
+    // re-zeroed between reverse iterations, and any gradient accumulated into
+    // it grows with the trip count.
+    //
+    // This is reachable from any frontend whose allocas are untyped byte
+    // arrays. Rust is the motivating case: its memory model is untyped, so it
+    // must run with EnzymeStrictAliasing=false, and a stack accumulator
+    // declared as
+    //     let mut acc = [0.0f32; 8];
+    // lowers to exactly this pattern.
+    //
+    // A zeroing memset kills every prior value in the region, so no adjoint can
+    // flow past it, and zeroing the shadow in the reverse sweep is correct
+    // whatever the element type turns out to be. Restricted to stack slots,
+    // whose shadow the caller cannot observe, so that a shadow pointer held
+    // elsewhere is never clobbered.
+    bool zeroShadowInReverse = false;
+    if (auto *fill = dyn_cast<ConstantInt>(MS.getArgOperand(1)))
+      if (fill->isZero()) {
+        auto *base = getBaseObject(MS.getArgOperand(0));
+        // Enzyme's preprocessing rewrites allocas it may need to keep alive
+        // into heap allocations tagged !enzyme_fromstack, so check both
+        // spellings.
+        zeroShadowInReverse =
+            isa<AllocaInst>(base) ||
+            (isa<CallInst>(base) &&
+             hasMetadata(cast<CallInst>(base), "enzyme_fromstack"));
+      }
+
     for (auto &&[secretty_ref, seg_start_ref, seg_size_ref] : toIterate) {
       auto secretty = secretty_ref;
       auto seg_start = seg_start_ref;
@@ -3414,8 +3446,9 @@ public:
 
         applyChainRule(BuilderZ, rule, shadow_dst);
       }
-      if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
-                       Mode == DerivativeMode::ReverseModeCombined)) {
+      if ((secretty || zeroShadowInReverse) &&
+          (Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ReverseModeCombined)) {
 
         auto Defs =
             gutils->getInvertedBundles(&MS,
