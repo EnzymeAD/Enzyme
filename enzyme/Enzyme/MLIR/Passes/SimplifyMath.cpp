@@ -55,8 +55,7 @@ struct MathematicSimplification
     patterns.insert<ApplySimplificationPattern>(&getContext());
 
     GreedyRewriteConfig config;
-    config.setRegionSimplificationLevel(
-        GreedySimplifyRegionLevel::Normal);
+    config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
     config.enableFolding();
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   };
