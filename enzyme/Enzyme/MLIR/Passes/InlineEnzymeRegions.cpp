@@ -424,11 +424,6 @@ struct InlineEnzymeIntoRegion
         &getContext());
 
     GreedyRewriteConfig config;
-    // The default aggressive region simplification merges structurally
-    // identical blocks module-wide -- including a host function's cold
-    // error tails that differ only in constants. LLVM cannot split such
-    // shared tails back apart, and its machine passes then hoist the
-    // merged tail's setup into the hot path.
     config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   }
