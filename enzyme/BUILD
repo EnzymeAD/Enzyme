@@ -287,7 +287,7 @@ cc_library(
             "Enzyme/eopt.cpp",
             "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
             "Enzyme/TypeAnalysis/TypeTree.cpp",
-                "Enzyme/CacheUtility.cpp",
+            "Enzyme/CacheUtility.cpp",
             "Enzyme/MustExitScalarEvolution.cpp",
             "Enzyme/ActivityAnalysis.cpp",
             "Enzyme/EnzymeLogic.cpp",
@@ -323,7 +323,7 @@ cc_library(
         "Enzyme/Clang",  # for bundled_includes.h
     ],
     visibility = ["//visibility:public"],
-        deps = [
+    deps = [
         ":EnzymeCacheUtility",
         ":EnzymeDiffCore",
         ":EnzymeTypeAnalysis",
@@ -449,10 +449,10 @@ td_library(
     includes = ["."],
     deps = [
         ":EnzymeDialectTdFiles",
-        "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
         "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
@@ -506,8 +506,8 @@ gentbl_cc_library(
     td_file = "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.td",
     deps = [
         ":LLVMExtDialectTdFiles",
-        "@llvm-project//mlir:SideEffectInterfacesTdFiles"
-    ]
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -944,7 +944,6 @@ gentbl_cc_library(
     td_file = "Enzyme/MLIR/Implementations/EnzymeDerivatives.td",
     deps = [":ImplementationsCommonTdFiles"],
 )
-
 
 cc_library(
     name = "EnzymeMLIR",
