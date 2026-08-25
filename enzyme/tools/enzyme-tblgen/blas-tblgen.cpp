@@ -1359,7 +1359,8 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       os << "{mat_" << name << "}";
     } else if (Def->isSubClassOf("Constant")) {
       auto val = Def->getValueAsString("value");
-      os << "{to_blas_fp_callconv(Builder2, ConstantFP::get(fpType, " << val
+      os << "{to_blas_fp_callconv(Builder2, getRealValuedConstant(fpType, "
+         << val
          << "), byRefFloat, blasFPType, allocationBuilder, \"constant.fp."
          << val << "\")}";
     } else if (Def->isSubClassOf("Char")) {

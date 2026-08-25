@@ -1652,6 +1652,15 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   return;
 }
 
+llvm::Constant *getRealValuedConstant(llvm::Type *fpType, double val) {
+  if (auto VT = dyn_cast<VectorType>(fpType)) {
+    auto elTy = VT->getElementType();
+    return ConstantVector::get(
+        {ConstantFP::get(elTy, val), ConstantFP::get(elTy, 0.0)});
+  }
+  return ConstantFP::get(fpType, val);
+}
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
