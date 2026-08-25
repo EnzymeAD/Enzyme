@@ -206,6 +206,11 @@ def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, S
   let assemblyFormat = [{
     $sym_name $body attr-dict-with-keyword
   }];
+
+  let extraClassDeclaration = [{
+    llvm::LogicalResult activityMatch(llvm::ArrayRef<enzyme::Activity> ArgActivity,
+                                      llvm::ArrayRef<enzyme::Activity> RetActivity);
+  }];
 }
 
 def CustomReverseRuleAugmentedPrimalOp : Enzyme_Op<"custom_reverse_rule.augmented_primal", [

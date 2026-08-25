@@ -692,6 +692,33 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
     // point it at the rule the callee named.
     cr = cast<CustomReverseRuleOp>(crOp);
     primalCall = cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+
+    auto diffeTypeToActivity = [](DIFFE_TYPE act) {
+      switch (act) {
+      case DIFFE_TYPE::CONSTANT:
+        return Activity::enzyme_const;
+      case DIFFE_TYPE::OUT_DIFF:
+        return Activity::enzyme_active;
+      case DIFFE_TYPE::DUP_ARG:
+        return Activity::enzyme_dup;
+      case DIFFE_TYPE::DUP_NONEED:
+        return Activity::enzyme_dupnoneed;
+      default:
+        llvm_unreachable("cannot handle act");
+      }
+    };
+
+    SmallVector<enzyme::Activity> ArgActivityAct =
+        llvm::map_to_vector(ArgActivity, diffeTypeToActivity);
+    SmallVector<enzyme::Activity> RetActivityAct =
+        llvm::map_to_vector(RetActivity, diffeTypeToActivity);
+
+    if (failed(cr.activityMatch(ArgActivityAct, RetActivityAct)))
+      return orig->emitError()
+             << "could not find a rule with the right activity (rule activity="
+             << cr.getActivity() << ", ret_activity=" << cr.getRetActivity()
+             << ")";
+
   } else {
     std::vector<bool> overwritten_args(narg, true);
     std::vector<bool> returnShadow(nret, false);

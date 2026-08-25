@@ -914,6 +914,39 @@ static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
 }
 
 //===----------------------------------------------------------------------===//
+// CustomReverseRuleOp
+//===----------------------------------------------------------------------===//
+
+llvm::LogicalResult CustomReverseRuleOp::activityMatch(
+    llvm::ArrayRef<enzyme::Activity> argActivity,
+    llvm::ArrayRef<enzyme::Activity> retActivity) {
+  auto selfArgActivity = getActivity();
+  auto selfRetActivity = getRetActivity();
+
+  if (selfArgActivity.size() != argActivity.size() ||
+      selfRetActivity.size() != retActivity.size())
+    return failure();
+
+  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity)) {
+    auto iattr = cast<ActivityAttr>(attr);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_const && act != Activity::enzyme_const)
+      return failure();
+  }
+
+  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity)) {
+    auto iattr = cast<ActivityAttr>(attr);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_const && act != Activity::enzyme_const)
+      return failure();
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // CustomReverseRuleAugmentedPrimalOp
 //===----------------------------------------------------------------------===//
 

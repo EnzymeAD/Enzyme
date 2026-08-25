@@ -331,13 +331,41 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   SymbolTable symbolTable(SymbolTable::getNearestSymbolTable(fn));
 
+  SmallVector<mlir::Attribute> argAttrs;
+  if (auto prevArgAttrs = fn.getAllArgAttrs())
+    argAttrs.assign(prevArgAttrs.begin(), prevArgAttrs.end());
+
+  SmallVector<Attribute> argActivityAttrs;
+  for (auto [i, act] : llvm::enumerate(constants)) {
+    argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
+
+    if (!argAttrs.empty() && act == DIFFE_TYPE::DUP_ARG)
+      argAttrs.insert(argAttrs.begin() + i + 1 -
+                          (argAttrs.size() - fn.getNumArguments()),
+                      nullptr);
+  }
+
+  SmallVector<Attribute> retActivityAttrs;
+  for (auto act : retType)
+    retActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
+
   if (auto existingCustomRule =
           fn->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule")) {
     auto CR = symbolTable.lookup<enzyme::CustomReverseRuleOp>(
         existingCustomRule.getValue());
 
     if (CR) {
-      return existingCustomRule;
+      auto getAttrActivity = [](auto attr) {
+        return cast<ActivityAttr>(attr).getValue();
+      };
+
+      SmallVector<Activity> ArgActivity =
+          llvm::map_to_vector(argActivityAttrs, getAttrActivity);
+      SmallVector<Activity> RetActivity =
+          llvm::map_to_vector(retActivityAttrs, getAttrActivity);
+
+      if (!failed(CR.activityMatch(ArgActivity, RetActivity)))
+        return existingCustomRule;
     }
   }
 
@@ -359,24 +387,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
 
   auto name = fn.getName();
-
-  SmallVector<mlir::Attribute> argAttrs;
-  if (auto prevArgAttrs = fn.getAllArgAttrs())
-    argAttrs.assign(prevArgAttrs.begin(), prevArgAttrs.end());
-
-  SmallVector<Attribute> argActivityAttrs;
-  for (auto [i, act] : llvm::enumerate(constants)) {
-    argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
-
-    if (!argAttrs.empty() && act == DIFFE_TYPE::DUP_ARG)
-      argAttrs.insert(argAttrs.begin() + i + 1 -
-                          (argAttrs.size() - fn.getNumArguments()),
-                      nullptr);
-  }
-
-  SmallVector<Attribute> retActivityAttrs;
-  for (auto act : retType)
-    retActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
 
   auto argActivityAttr = ArrayAttr::get(fn.getContext(), argActivityAttrs);
   auto retActivityAttr = ArrayAttr::get(fn.getContext(), retActivityAttrs);
