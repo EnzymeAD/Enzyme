@@ -588,6 +588,11 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       /* augmented */ nullptr, gutils->omp, gutils->postpasses,
       gutils->verifyPostPasses, gutils->strongZero);
 
+  if (!forwardFn)
+    return orig->emitError()
+           << "failed to create forward-mode derivative for callee "
+           << fn.getNameAttr() << "\n";
+
   SmallVector<Value> fwdArguments;
 
   for (auto &&[arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
@@ -759,6 +764,11 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
       type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
       gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
       /*markReadonly=*/false);
+
+  if (!revFn)
+    return orig->emitError()
+           << "failed to create reverse-mode adjoint for callee "
+           << fn.getNameAttr() << "\n";
 
   SmallVector<Value> revArguments;
 
