@@ -2763,11 +2763,11 @@ bool overwritesToMemoryReadByLoop(
     if (scope && L->contains(scope))
       return false;
 
-    // `L->contains(anc)` matters because the legality gates below walk *outward*
-    // from `anc` towards `scope`.  Without it a proper ancestor of `anc` can
-    // never be marked visited, so those gates could only ever pass when
-    // `anc->getParentLoop() == scope` -- sound, but needlessly pessimistic for a
-    // strided access whose outer loop is genuinely accounted for.
+    // `L->contains(anc)` matters because the legality gates below walk
+    // *outward* from `anc` towards `scope`.  Without it a proper ancestor of
+    // `anc` can never be marked visited, so those gates could only ever pass
+    // when `anc->getParentLoop() == scope` -- sound, but needlessly pessimistic
+    // for a strided access whose outer loop is genuinely accounted for.
     if (anc && (anc == L || anc->contains(L) || L->contains(anc))) {
       visitedAncestors.insert(L);
       return true;
