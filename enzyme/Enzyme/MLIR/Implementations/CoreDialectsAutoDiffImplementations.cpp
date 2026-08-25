@@ -333,15 +333,23 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
           successor.isOperation()
               ? parentOp->getResults()
               : regionBranchOp.getSuccessorInputs(successor);
-      assert(operandRange.size() == targetValues.size());
-      for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+      // The parent may carry more results than the terminator forwards to it
+      // (a gpu wrapper's token-like result has no yield operand); only the
+      // paired prefix can be shadowed.
+      size_t numPaired = std::min(operandRange.size(), targetValues.size());
+      for (auto &&[i, target] :
+           llvm::enumerate(targetValues.take_front(numPaired))) {
         if (!gutils->isConstantValue(target))
           operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       }
     }
   } else {
-    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
-    for (auto res : parentOp->getResults()) {
+    // The parent may carry more results than its terminator forwards (a gpu
+    // wrapper's token-like result has no yield operand); only the paired
+    // results can be shadowed.
+    size_t numPaired = std::min<size_t>(parentOp->getNumResults(),
+                                        origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults().take_front(numPaired)) {
       if (!gutils->isConstantValue(res))
         operandsToShadow.insert(res.getResultNumber());
     }
