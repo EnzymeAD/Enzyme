@@ -30,7 +30,7 @@ contains
   real function square(x)
     real, intent(in) :: x
     square = x**2
-  end function
+  end function square
 
 end program main
 

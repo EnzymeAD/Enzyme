@@ -32,3 +32,19 @@ jobs:
     - name: Check for direct LLVM API calls that Utils.h wraps
       run: |
         python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme
+
+  fortran-lint:
+    name: Linting for Fortran source
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Fortitude
+      run: |
+        python3 -m venv enzyme_venv
+        . enzyme_venv/bin/activate
+        pip install fortitude-lint
+    - name: Run Fortitude check
+      run: |
+        . enzyme_venv/bin/activate
+        fortitude check
