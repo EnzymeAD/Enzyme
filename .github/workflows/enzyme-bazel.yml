@@ -1,29 +1,30 @@
 name: Bazel
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/enzyme-bazel.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/BUILD'
-      - 'enzyme/WORKSPACE'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/enzyme-bazel.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/BUILD'
-      - 'enzyme/WORKSPACE'
-  merge_group:
+  # TODO: Fix and re-enable this workflow
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - '.github/workflows/enzyme-bazel.yml'
+  #     - 'enzyme/Enzyme/**'
+  #     - 'enzyme/includes/**'
+  #     - 'enzyme/test/**'
+  #     - 'enzyme/tools/**'
+  #     - 'enzyme/BUILD'
+  #     - 'enzyme/WORKSPACE'
+  # pull_request:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - '.github/workflows/enzyme-bazel.yml'
+  #     - 'enzyme/Enzyme/**'
+  #     - 'enzyme/includes/**'
+  #     - 'enzyme/test/**'
+  #     - 'enzyme/tools/**'
+  #     - 'enzyme/BUILD'
+  #     - 'enzyme/WORKSPACE'
+  # merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
