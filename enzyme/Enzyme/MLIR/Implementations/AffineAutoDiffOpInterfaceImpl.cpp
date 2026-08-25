@@ -225,40 +225,41 @@ struct AffineForOpInterfaceReverse
     return affine::AffineForOp::create(builder, loc, lb, ub, step, inits);
   }
 
-  // Unlike scf.for (a plain sequential reverse-iteration counter), the reverse
-  // outer loop steps by nInner, matching the forward one exactly -- see
-  // computeReverseSegmentBound for what that buys.
+  // Both outer loops count segments: one iteration per checkpoint, so the trip
+  // count is the stated period. Every bound and index below is an affine
+  // expression in that segment index.
   static affine::AffineForOp
   createForwardOuterLoop(OpBuilder &builder, Location loc,
                          const PeriodicSchedule &sched, ValueRange inits) {
-    return createConstantScaffoldLoop(builder, loc, 0,
-                                      sched.nInner * sched.numSegments(),
-                                      sched.nInner, inits);
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
   }
 
   static affine::AffineForOp
   createReverseOuterLoop(OpBuilder &builder, Location loc,
                          const PeriodicSchedule &sched, ValueRange inits) {
-    return createConstantScaffoldLoop(builder, loc, 0,
-                                      sched.nInner * sched.numSegments(),
-                                      sched.nInner, inits);
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
   }
 
-  // Nothing to precompute: the bound below is a compile-time AffineMap
-  // attached directly to the loop op, not a separately-emitted runtime
-  // Value, so there is nothing to hoist relative to the mutable-ref cloning
-  // loop the way scf.for's cmpi+select needs to be.
+  static void materializeSegmentValues(OpBuilder &, Location,
+                                       PeriodicSchedule &sched) {
+    assert(!sched.isDynamic() &&
+           "affine.for has no dynamic periodic path -- see "
+           "supportsDynamicPeriodic");
+  }
+
   static SmallVector<Value>
   computeForwardSegmentHint(OpBuilder &, Location, Value,
                             const PeriodicSchedule &) {
     return {};
   }
 
-  // Bound = min(nInner, numIters - outerIV): the standard affine-tiling idiom
-  // for a boundary tile, expressed as a multi-result upper-bound map (the
-  // "min" keyword documented on affine.for). Provably equivalent to
-  // scf.for's cmpi+select formula in every case: the two only disagree where
-  // neither formula's boundary case is active.
+  // Bound = min(nInner, numIters - nInner * j), for segment index j: the
+  // standard affine-tiling idiom for a boundary tile, expressed as a
+  // multi-result upper-bound map (the "min" keyword documented on affine.for).
+  // Equivalent to scf.for's cmpi+select formula in every case: the two only
+  // disagree where neither formula's boundary case is active.
   static affine::AffineForOp
   createForwardSegmentLoop(OpBuilder &builder, Location loc, Value outerIV,
                            ArrayRef<Value> /*fwdHint*/,
@@ -267,9 +268,10 @@ struct AffineForOpInterfaceReverse
             trailingIters = sched.trailingIters;
     int64_t numIters = nInner * nOuter + trailingIters;
     MLIRContext *ctx = builder.getContext();
-    AffineExpr d0 = builder.getAffineDimExpr(0);
+    AffineExpr j = builder.getAffineDimExpr(0);
     AffineExpr nInnerExpr = builder.getAffineConstantExpr(nInner);
-    AffineExpr remainingExpr = builder.getAffineConstantExpr(numIters) - d0;
+    AffineExpr remainingExpr =
+        builder.getAffineConstantExpr(numIters) - nInnerExpr * j;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
     return affine::AffineForOp::create(
         builder, loc, /*lbOperands=*/ValueRange{},
@@ -277,18 +279,16 @@ struct AffineForOpInterfaceReverse
         /*step=*/1, inits);
   }
 
-  // Reverse counterpart. `outerIV` (call it j') is the *reverse* outer
-  // loop's own induction variable; per createReverseOuterLoop, that
-  // loop steps by nInner, so j' = j * nInner where j = 0 (last forward
-  // segment), 1, 2, .... The forward segment index being replayed is
-  // k = (nOuter + hasTrailing - 1) - j, so its base is
-  // segmentBase = k * nInner = (nOuter + hasTrailing - 1) * nInner - j' (no
-  // division needed, since j' is already j * nInner), and the bound is
-  // min(nInner, numIters - segmentBase), expanded into one affine map of j'.
-  // (scf.for's analogous formula uses k = nOuter - j instead, which omits
-  // the "+ hasTrailing - 1" term -- a pre-existing defect, not reproduced
-  // here since this is new code with no existing behavior to preserve; see
-  // the LoopCheckpointing.h doc comment.)
+  // Reverse counterpart. `outerIV` (call it j) is the reverse outer loop's own
+  // segment counter, so the forward segment being replayed is
+  // k = (numSegments - 1) - j, its base is segmentBase = k * nInner, and the
+  // bound is min(nInner, numIters - segmentBase), expanded into one affine map
+  // of j.
+  //
+  // A min bound cannot express a trailing segment longer than nInner -- it
+  // would clamp it to nInner and leave the tail of the loop unreplayed -- which
+  // is why getStaticPeriodicSchedule keeps the remainder the shorter part of
+  // the split.
   static affine::AffineForOp
   createReverseSegmentLoop(OpBuilder &builder, Location loc, Value outerIV,
                            ArrayRef<Value> /*revHint*/,
@@ -297,13 +297,14 @@ struct AffineForOpInterfaceReverse
             trailingIters = sched.trailingIters;
     int64_t numIters = nInner * nOuter + trailingIters;
     int64_t s = nOuter + (trailingIters > 0 ? 1 : 0);
-    // numIters - segmentBase, segmentBase = (s-1)*nInner - j'
-    //   = numIters - (s-1)*nInner + j' = constOffset + j'
+    // numIters - segmentBase, segmentBase = ((s-1) - j) * nInner
+    //   = numIters - (s-1)*nInner + nInner*j = constOffset + nInner*j
     int64_t constOffset = numIters - (s - 1) * nInner;
     MLIRContext *ctx = builder.getContext();
-    AffineExpr d0 = builder.getAffineDimExpr(0);
+    AffineExpr j = builder.getAffineDimExpr(0);
     AffineExpr nInnerExpr = builder.getAffineConstantExpr(nInner);
-    AffineExpr remainingExpr = builder.getAffineConstantExpr(constOffset) + d0;
+    AffineExpr remainingExpr =
+        builder.getAffineConstantExpr(constOffset) + nInnerExpr * j;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
     return affine::AffineForOp::create(
         builder, loc, /*lbOperands=*/ValueRange{},
@@ -320,30 +321,29 @@ struct AffineForOpInterfaceReverse
         templateLoop.getUpperBoundMap(), templateLoop.getStepAsInt(), inits);
   }
 
-  // (outerIV + localIV) * step + start, as one affine.apply -- the whole
+  // (nInner * j + localIV) * step + start, as one affine.apply -- the whole
   // chain must be built as a single affine expression (not the generic
   // arith ops scf.for's implementation uses) so the result is itself a valid
   // affine dimension, usable as an index by any affine.load/affine.store
   // cloned with it substituted in for forOp's own induction variable.
   static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
                                        affine::AffineForOp forOp, Value outerIV,
-                                       Value localIV, const PeriodicSchedule &,
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
                                        ArrayRef<Value> /*fwdHint*/) {
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
     MLIRContext *ctx = builder.getContext();
-    AffineExpr d0 = builder.getAffineDimExpr(0),
-               d1 = builder.getAffineDimExpr(1);
-    AffineExpr expr = (d0 + d1) * step + start;
+    AffineExpr j = builder.getAffineDimExpr(0),
+               localIdx = builder.getAffineDimExpr(1);
+    AffineExpr expr = (j * sched.nInner + localIdx) * step + start;
     AffineMap map = AffineMap::get(2, 0, {expr}, ctx);
     return affine::AffineApplyOp::create(builder, loc, map,
                                          ValueRange{outerIV, localIV});
   }
 
-  // (segmentBase + localIV) * step + start, segmentBase = (nOuter +
-  // hasTrailing - 1) * nInner - outerIV -- see createReverseSegmentLoop for
-  // why this differs from scf.for's formula, and for why `outerIV` (j' =
-  // j * nInner) needs no division here to recover segmentBase = k * nInner.
+  // (segmentBase + localIV) * step + start, with segmentBase = nInner *
+  // ((numSegments - 1) - j) -- see createReverseSegmentLoop.
   static SmallVector<Value>
   computeReverseSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
                             const PeriodicSchedule &) {
@@ -361,9 +361,9 @@ struct AffineForOpInterfaceReverse
     int64_t step = getConstantStep(forOp);
     int64_t start = getConstantStart(forOp);
     MLIRContext *ctx = builder.getContext();
-    AffineExpr jPrime = builder.getAffineDimExpr(0),
+    AffineExpr j = builder.getAffineDimExpr(0),
                localIdx = builder.getAffineDimExpr(1);
-    AffineExpr segmentBase = lastSegmentBase - jPrime;
+    AffineExpr segmentBase = lastSegmentBase - j * nInner;
     AffineExpr flatIV = segmentBase + localIdx;
     AffineExpr expr = flatIV * step + start;
     AffineMap map = AffineMap::get(2, 0, {expr}, ctx);
@@ -1177,18 +1177,34 @@ public:
            forOp.getStepAsInt();
   }
 
+  // A bound map with several results is a min (upper bound) or a max (lower
+  // bound) -- affine.for's own reading of one, and the shape the periodic
+  // checkpointing scaffold gives a segment that may be short:
+  // `min(nInner, remaining)`. affine.apply cannot express it, since it requires
+  // a single-result map, so materialize it with the op that can.
+  static Value materializeBound(OpBuilder &builder, Location loc, AffineMap map,
+                                ValueRange operands, bool isUpper) {
+    if (map.getNumResults() == 1)
+      return AffineApplyOp::create(builder, loc, map, operands);
+    if (isUpper)
+      return affine::AffineMinOp::create(builder, loc, map, operands);
+    return affine::AffineMaxOp::create(builder, loc, map, operands);
+  }
+
   static SmallVector<IntOrValue, 1>
   getDimensionBounds(OpBuilder &builder, affine::AffineForOp forOp) {
     auto iters = getConstantNumberOfIterations(forOp);
     if (iters) {
       return {IntOrValue(*iters)};
     } else {
-      auto lb = AffineApplyOp::create(builder, forOp.getLoc(),
-                                      forOp.getLowerBoundMap(),
-                                      forOp.getLowerBoundOperands());
-      auto ub = AffineApplyOp::create(builder, forOp.getLoc(),
-                                      forOp.getUpperBoundMap(),
-                                      forOp.getUpperBoundOperands());
+      Value lb =
+          materializeBound(builder, forOp.getLoc(), forOp.getLowerBoundMap(),
+                           forOp.getLowerBoundOperands(),
+                           /*isUpper=*/false);
+      Value ub =
+          materializeBound(builder, forOp.getLoc(), forOp.getUpperBoundMap(),
+                           forOp.getUpperBoundOperands(),
+                           /*isUpper=*/true);
 
       Value diff = arith::SubIOp::create(builder, forOp->getLoc(), ub, lb);
       if (forOp.getStepAsInt() != 1) {
@@ -1209,9 +1225,10 @@ public:
                                                 affine::AffineForOp forOp) {
     Value val = forOp.getBody()->getArgument(0);
     if (!forOp.hasConstantLowerBound() || forOp.getConstantLowerBound() != 0) {
-      auto lb = AffineApplyOp::create(builder, forOp.getLoc(),
-                                      forOp.getLowerBoundMap(),
-                                      forOp.getLowerBoundOperands());
+      Value lb =
+          materializeBound(builder, forOp.getLoc(), forOp.getLowerBoundMap(),
+                           forOp.getLowerBoundOperands(),
+                           /*isUpper=*/false);
       val = arith::SubIOp::create(builder, forOp->getLoc(), val, lb);
     }
 
