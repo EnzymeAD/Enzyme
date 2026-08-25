@@ -32,3 +32,19 @@ jobs:
     - name: Check for direct LLVM API calls that Utils.h wraps
       run: |
         python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme
+
+  cmake-lint:
+    name: Linting for CMakeLists.txt files
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install cmakefmt
+      run: |
+        python3 -m venv enzyme_venv
+        . enzyme_venv/bin/activate
+        pip install cmakefmt
+    - name: Run cmakefmt --check
+      run: |
+        . enzyme_venv/bin/activate
+        cmakefmt --check
