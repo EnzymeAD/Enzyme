@@ -2763,7 +2763,12 @@ bool overwritesToMemoryReadByLoop(
     if (scope && L->contains(scope))
       return false;
 
-    if (anc && (anc == L || anc->contains(L))) {
+    // `L->contains(anc)` matters because the legality gates below walk *outward*
+    // from `anc` towards `scope`.  Without it a proper ancestor of `anc` can
+    // never be marked visited, so those gates could only ever pass when
+    // `anc->getParentLoop() == scope` -- sound, but needlessly pessimistic for a
+    // strided access whose outer loop is genuinely accounted for.
+    if (anc && (anc == L || anc->contains(L) || L->contains(anc))) {
       visitedAncestors.insert(L);
       return true;
     }
@@ -2868,7 +2873,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -2883,7 +2888,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
