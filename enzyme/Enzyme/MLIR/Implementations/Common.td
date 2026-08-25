@@ -195,6 +195,7 @@ def ComplexIm : ComplexInst<"ImOp">;
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
+def Exp2F : MathInst<"Exp2Op">;
 def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
 def PowF : MathInst<"PowFOp">;
