@@ -32,3 +32,16 @@ jobs:
     - name: Check for direct LLVM API calls that Utils.h wraps
       run: |
         python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme
+
+  shell-lint:
+    name: Linting for shell scripts
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Shellcheck
+      run: |
+        sudo apt update
+        sudo apt install shellcheck
+    - name: Run Shellcheck
+      run: shellcheck -x $(find enzyme -name '*.sh')
