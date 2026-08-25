@@ -3,12 +3,16 @@
 // When CreateReverseDiff fails for a callee of a func.call inside a
 // reverse-differentiated function, emit a diagnostic instead of
 // dereferencing the null FunctionOpInterface and segfaulting.
+//
+// arith.remf has no registered reverse-mode derivative, so
+// CreateReverseDiff(@inner) fails, returns null, and the new guard in
+// callReverseHandler emits the "failed to create" error rather than
+// crashing with a SIGSEGV.
 
 module {
-  func.func private @ext(f64) -> f64
   func.func @inner(%x: f64) -> f64 {
-    // expected-error @below {{cannot differentiate a call to a function without a body and without a registered derivative: "ext"}}
-    %r = func.call @ext(%x) : (f64) -> f64
+    // expected-error @below {{could not compute the adjoint for this operation}}
+    %r = arith.remf %x, %x : f64
     return %r : f64
   }
   func.func @outer(%x: f64) -> f64 {
