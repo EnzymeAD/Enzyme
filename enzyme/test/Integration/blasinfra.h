@@ -1809,6 +1809,68 @@ __attribute__((noinline)) void cblas_zlascl(char layout, char type, int KL,
   calls.push_back(call);
 }
 
+// COPY/LACPY have no alpha/beta scalars at all, so no complex-specific
+// value tracking is needed here -- these are structurally identical to
+// their real counterparts, just under the "z"-prefixed symbol name
+// Enzyme's generated adjoint actually calls for complex.
+__attribute__((noinline)) void cblas_zcopy(int N, double *X, int incX,
+                                           double *Y, int incY) {
+  calls.push_back((BlasCall){ABIType::CBLAS,
+                             UNUSED_HANDLE,
+                             inDerivative,
+                             CallType::COPY,
+                             Y,
+                             X,
+                             UNUSED_POINTER,
+                             alpha,
+                             UNUSED_DOUBLE,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS,
+                             N,
+                             UNUSED_INT,
+                             UNUSED_INT,
+                             incX,
+                             incY,
+                             UNUSED_INT,
+                             UNUSED_INT,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS});
+  if (REALCOPY) {
+      for (int i=0; i<N; i++) {
+        Y[i*incY] = X[i*incX];
+      }
+    }
+}
+
+__attribute__((noinline)) void cblas_zlacpy(char layout, char uplo, int M,
+                                            int N, double *A, int lda,
+                                            double *B, int ldb) {
+  calls.push_back((BlasCall){ABIType::CBLAS,
+                             UNUSED_HANDLE,
+                             inDerivative,
+                             CallType::LACPY,
+                             B,
+                             A,
+                             UNUSED_POINTER,
+                             UNUSED_DOUBLE,
+                             UNUSED_DOUBLE,
+                             layout,
+                             uplo,
+                             UNUSED_TRANS,
+                             M,
+                             N,
+                             UNUSED_INT,
+                             lda,
+                             ldb,
+                             UNUSED_INT,
+                             UNUSED_INT,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS,
+                             UNUSED_TRANS});
+}
+
 __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p,
                                       double *A, int *lda_p, double *B,
                                       int *ldb_p) {
