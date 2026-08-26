@@ -71,6 +71,12 @@ void ow_dgemm(char layout, char transA, char transB, int M, int N, int K, double
     inDerivative = true;
 }
 
+// complex alpha and beta are passed as pointers
+void my_zgemm(char layout, char transA, char transB, int M, int N, int K, double* alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double* beta, double* __restrict__ C, int ldc) {
+    cblas_zgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+    inDerivative = true;
+}
+
 void my_dtrmv(char layout, char uplo, char trans,
                char diag, int N, double * __restrict__ A, int lda,
                double *__restrict__ X, int incx) {
@@ -899,6 +905,109 @@ static void gemmTests() {
     }
 
 
+  }
+  }
+  }
+}
+
+// overwrite case needs A/B caching via lacpy not covered here.
+static void zgemmTests() {
+  double calpha[2] = {1.3, -0.4};
+  double cbeta[2]  = {-0.7, 0.2};
+  double cone[2]   = {1.0, 0.0};
+  constexpr size_t CE = 2 * sizeof(double);
+
+  for (char layout : { CblasRowMajor, CblasColMajor }) {
+  for (auto transA : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasConjTrans}) {
+  for (auto transB : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasConjTrans}) {
+
+    bool transA_bool = !is_normal(transA);
+    bool transB_bool = !is_normal(transB);
+    std::string Test = "ZGEMM";
+    BlasInfo inputs[6] = {
+        BlasInfo(A, layout, transA_bool ? K : M, transA_bool ? M : K, lda, 0, 0, CE),
+        BlasInfo(B, layout, transB_bool ? N : K, transB_bool ? K : N, incB, 0, 0, CE),
+        BlasInfo(C, layout, M, N, incC, 0, 0, CE),
+        BlasInfo(),
+        BlasInfo(),
+        BlasInfo()
+    };
+
+    init();
+    my_zgemm(layout, (char)transA, (char)transB, M, N, K, calpha, A, lda, B, incB, cbeta, C, incC);
+
+    assert(calls.size() == 1);
+    assert(calls[0].inDerivative == false);
+    assert(calls[0].type == CallType::GEMM);
+    assert(calls[0].pout_arg1 == C);
+    assert(calls[0].pin_arg1 == A);
+    assert(calls[0].pin_arg2 == B);
+    assert(calls[0].farg1 == calpha[0]);
+    assert(calls[0].farg1_im == calpha[1]);
+    assert(calls[0].farg2 == cbeta[0]);
+    assert(calls[0].farg2_im == cbeta[1]);
+    assert(calls[0].layout == layout);
+    assert(calls[0].targ1 == (char)transA);
+    assert(calls[0].targ2 == (char)transB);
+
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    __enzyme_autodiff((void*) my_zgemm,
+                            enzyme_const, layout,
+                            enzyme_const, transA,
+                            enzyme_const, transB,
+                            enzyme_const, M,
+                            enzyme_const, N,
+                            enzyme_const, K,
+                            enzyme_const, calpha,
+                            enzyme_dup, A, dA,
+                            enzyme_const, lda,
+                            enzyme_dup, B, dB,
+                            enzyme_const, incB,
+                            enzyme_const, cbeta,
+                            enzyme_dup, C, dC,
+                            enzyme_const, incC);
+    foundCalls = calls;
+    init();
+
+    my_zgemm(layout, (char)transA, (char)transB, M, N, K, calpha, A, lda, B, incB, cbeta, C, incC);
+
+    inDerivative = true;
+
+    // dA
+    my_zgemm(layout,
+                transA_bool ? (char)transB : (char)CBLAS_TRANSPOSE::CblasNoTrans,
+                transA_bool ? (char)CBLAS_TRANSPOSE::CblasConjTrans : (char)ctranspose(transB),
+                transA_bool ? K : M,
+                transA_bool ? M : K,
+                N,
+                calpha,
+                transA_bool ? B : dC,
+                transA_bool ? incB : incC,
+                transA_bool ? dC : B,
+                transA_bool ? incC : incB,
+                cone, dA, lda);
+
+    // dB
+    my_zgemm(layout,
+                transB_bool ? (char)CBLAS_TRANSPOSE::CblasConjTrans : (char)ctranspose(transA),
+                transB_bool ? (char)transA : (char)CBLAS_TRANSPOSE::CblasNoTrans,
+                transB_bool ? N : K,
+                transB_bool ? K : N,
+                M,
+                calpha,
+                transB_bool ? dC : A,
+                transB_bool ? incC : lda,
+                transB_bool ? A : dC,
+                transB_bool ? lda : incC,
+                cone, dB, incB);
+
+    cblas_zlascl(layout, 'G', 0, 0, cone, cbeta, M, N, dC, incC, 0);
+
+    checkTest(Test);
+    checkMemoryTrace(inputs, "Expected " + Test, calls);
+    checkMemoryTrace(inputs, "Found " + Test, foundCalls);
   }
   }
   }
@@ -2324,6 +2433,8 @@ int main() {
   gemvTests();
 
   zgemvTests();
+
+  zgemmTests();
 
   gemmTests();
 

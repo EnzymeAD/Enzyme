@@ -125,9 +125,6 @@ bool is_normal(char c) {
   case (char)CBLAS_TRANSPOSE::CblasTrans:
     return false;
   case (char)CBLAS_TRANSPOSE::CblasConjTrans:
-    // Conjugate transpose has the same shape/length semantics as plain
-    // transpose -- only the values differ (conjugation), not the
-    // dimensions this function is used to determine.
     return false;
   default:
     printf("Illegal isnormal of '%c' %d\n", c, c);
@@ -1748,6 +1745,70 @@ __attribute__((noinline)) void cblas_zscal(int N, double *alpha, double *X,
   calls.push_back(call);
 }
 
+// C = alpha * A^transA * B^transB + beta * C
+__attribute__((noinline)) void cblas_zgemm(char layout, char transA,
+                                           char transB, int M, int N, int K,
+                                           double *alpha, double *A, int lda,
+                                           double *B, int ldb, double *beta,
+                                           double *C, int ldc) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GEMM,
+                   C,
+                   A,
+                   B,
+                   alpha[0],
+                   beta[0],
+                   layout,
+                   transA,
+                   transB,
+                   M,
+                   N,
+                   K,
+                   lda,
+                   ldb,
+                   ldc,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   alpha[1],
+                   beta[1]};
+  calls.push_back(call);
+}
+
+__attribute__((noinline)) void cblas_zlascl(char layout, char type, int KL,
+                                            int KU, double *cfrom, double *cto,
+                                            int M, int N, double *A, int lda,
+                                            int info) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::LASCL,
+                   A,
+                   UNUSED_POINTER,
+                   UNUSED_POINTER,
+                   cfrom[0],
+                   cto[0],
+                   layout,
+                   type,
+                   UNUSED_TRANS,
+                   M,
+                   N,
+                   UNUSED_INT,
+                   lda,
+                   KL,
+                   KU,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   cfrom[1],
+                   cto[1]};
+  calls.push_back(call);
+}
+
 __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p,
                                       double *A, int *lda_p, double *B,
                                       int *ldb_p) {
@@ -2408,10 +2469,9 @@ struct BlasInfo {
   int mat_ld;
   int row_offset;
   int col_offset;
-  // Byte size of one element -- sizeof(double) for real, 2*sizeof(double)
-  // for complex (a {re, im} pair). Defaults to real so every existing call
-  // site is unaffected; pointer_to_index uses this instead of a hardcoded
-  // sizeof(double) to convert a raw byte offset into an element offset.
+  // Byte size of one element. For complex values we need to consider 2*sizeof(double)
+  // elem_size defaults to real so every existing call site is unaffected. `pointer_to_index`
+  // elem_size instead of a hardcoded sizeof(double).
   size_t elem_size;
   BlasInfo(void *v_ptr, int length, int increment, int _vec_offset = 0,
            size_t _elem_size = sizeof(double)) {
