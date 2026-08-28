@@ -2775,4 +2775,8 @@ static bool hasTerminator(llvm::BasicBlock *BB) {
 #endif
 }
 
+llvm::SmallVector<std::pair<llvm::Value *, size_t>, 1>
+getAllLoadedValuesFrom(llvm::Value *ptr0, size_t offset, size_t valSz,
+                       bool &legal);
+
 #endif // ENZYME_UTILS_H
