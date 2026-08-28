@@ -109,6 +109,8 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
     cl::desc("Disable caching of integers which are not a power of 2"));
 }
 
+#include "llvm/Demangle/Demangle.h"
+
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 bool attributeKnownFunctions(llvm::Function &F) {
@@ -407,6 +409,21 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+
+  const char *DemangledNoTAFunctionsStartingWith[] = {
+
+  };
+
+  std::string demangledName = llvm::demangle(fname.str());
+  auto dName = StringRef(demangledName);
+  for (auto FuncName : DemangledNoTAFunctionsStartingWith) {
+    if (startsWith(dName, FuncName)) {
+      changed = true;
+      F.addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(F.getContext(), "enzyme_ta_norecur"));
+      break;
+    }
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
