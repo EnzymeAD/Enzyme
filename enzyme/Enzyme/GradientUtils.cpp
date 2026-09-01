@@ -5731,8 +5731,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               AllocaInst *antialloca = bb.CreateAlloca(
                   allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
                   arg->getName() + "'ipa");
-              if (arg->getAlignment()) {
-                antialloca->setAlignment(Align(arg->getAlignment()));
+              if (arg->getAlign()) {
+                antialloca->setAlignment(*arg->getAlign());
               }
               return antialloca;
             };
@@ -5758,10 +5758,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
                   getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
-              if (arg->getAlignment()) {
+              if (arg->getAlign()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
-                                                   Align(arg->getAlignment())));
+                                                   *arg->getAlign()));
               }
               memset->addParamAttr(0, Attribute::NonNull);
               assert((width > 1 && antialloca->getType() ==
