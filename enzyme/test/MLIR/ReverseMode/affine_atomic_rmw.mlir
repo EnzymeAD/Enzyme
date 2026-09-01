@@ -11,7 +11,7 @@ module {
   func.func @f(%a: f64, %m: memref<?xf64>) {
     affine.parallel (%i) = (0) to (4) {
       %v = arith.mulf %a, %a : f64
-      %old = "enzyme.affine_atomic_rmw"(%v, %m) <{alignment = 8 : i64, fastmath = #arith.fastmath<fast>, kind = 0 : i64, map = affine_map<() -> (0)>}> : (f64, memref<?xf64>) -> f64
+      %old = "enzyme.affine_atomic_rmw"(%v, %m) <{ordering = 2 : i32, alignment = 8 : i64, fastmath = #arith.fastmath<fast>, kind = 0 : i64, map = affine_map<() -> (0)>}> : (f64, memref<?xf64>) -> f64
     }
     return
   }
@@ -22,7 +22,7 @@ module {
 // CHECK-SAME: %[[a:.+]]: f64, %[[m:[^ :]+]]: memref<?xf64>, %[[dm:[^ :]+]]: memref<?xf64>) -> f64
 // CHECK: %[[sq:.+]] = arith.mulf %[[a]], %[[a]] : f64
 // CHECK: affine.parallel
-// CHECK: enzyme.affine_atomic_rmw addf %[[sq]], %[[m]], (#[[$MAP]]) [] fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
+// CHECK: enzyme.affine_atomic_rmw addf %[[sq]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
 // CHECK: %[[red:.+]] = affine.parallel (%{{.+}}) = (0) to (4) reduce ("addf") -> (f64)
 // CHECK: %[[g:.+]] = affine.load %[[dm]][0] {alignment = 8 : i64} : memref<?xf64>
 // CHECK: %[[t0:.+]] = arith.mulf %[[g]], %[[a]] fastmath<fast> : f64
