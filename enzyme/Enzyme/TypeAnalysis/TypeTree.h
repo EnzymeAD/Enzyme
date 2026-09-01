@@ -31,7 +31,9 @@
 #ifndef ENZYME_TYPE_ANALYSIS_TYPE_TREE_H
 #define ENZYME_TYPE_ANALYSIS_TYPE_TREE_H 1
 
+#include "llvm/ADT/RadixTree.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <algorithm>
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <set>
@@ -64,7 +66,119 @@ static inline std::string to_string(const std::vector<int> x) {
 class TypeTree;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
-typedef std::map<const std::vector<int>, ConcreteType> ConcreteTypeMapType;
+
+/// RadixTree does not provide exact lookup or removal. TypeTree needs both,
+/// so provide these operations on top of its RadixTree-backed storage.
+class ConcreteTypeMapType {
+  using RadixTreeType = llvm::RadixTree<std::vector<int>, ConcreteType>;
+  RadixTreeType Storage;
+
+public:
+  using key_type = std::vector<int>;
+  using value_type = RadixTreeType::value_type;
+  using iterator = RadixTreeType::iterator;
+  using const_iterator = RadixTreeType::const_iterator;
+
+  ConcreteTypeMapType() = default;
+  ConcreteTypeMapType(const ConcreteTypeMapType &Other) {
+    for (const auto &Entry : Other)
+      emplace(Entry.first, Entry.second);
+  }
+
+  ConcreteTypeMapType &operator=(const ConcreteTypeMapType &Other) {
+    if (this == &Other)
+      return *this;
+    clear();
+    for (const auto &Entry : Other)
+      emplace(Entry.first, Entry.second);
+    return *this;
+  }
+
+  ConcreteTypeMapType(ConcreteTypeMapType &&) = default;
+  ConcreteTypeMapType &operator=(ConcreteTypeMapType &&) = default;
+
+  iterator begin() { return Storage.begin(); }
+  const_iterator begin() const { return Storage.begin(); }
+  iterator end() { return Storage.end(); }
+  const_iterator end() const { return Storage.end(); }
+
+  bool empty() const { return Storage.empty(); }
+  size_t size() const { return Storage.size(); }
+
+  std::vector<const value_type *> ordered() const {
+    std::vector<const value_type *> Entries;
+    Entries.reserve(size());
+    for (const auto &Entry : *this)
+      Entries.push_back(&Entry);
+    std::sort(Entries.begin(), Entries.end(),
+              [](const value_type *LHS, const value_type *RHS) {
+                return LHS->first < RHS->first;
+              });
+    return Entries;
+  }
+
+  iterator find(const key_type &Key) {
+    return std::find_if(begin(), end(), [&](const value_type &Entry) {
+      return Entry.first == Key;
+    });
+  }
+  const_iterator find(const key_type &Key) const {
+    return std::find_if(begin(), end(), [&](const value_type &Entry) {
+      return Entry.first == Key;
+    });
+  }
+
+  template <typename... Ts>
+  std::pair<iterator, bool> emplace(key_type Key, Ts &&...Args) {
+    return Storage.emplace(std::move(Key), std::forward<Ts>(Args)...);
+  }
+  std::pair<iterator, bool> emplace(const value_type &Entry) {
+    return emplace(Entry.first, Entry.second);
+  }
+
+  template <typename First, typename Second>
+  std::pair<iterator, bool> insert(const std::pair<First, Second> &Entry) {
+    return emplace(Entry.first, Entry.second);
+  }
+
+  size_t erase(const key_type &Key) {
+    if (find(Key) == end())
+      return 0;
+
+    ConcreteTypeMapType Replacement;
+    for (const auto &Entry : *this)
+      if (Entry.first != Key)
+        Replacement.emplace(Entry.first, Entry.second);
+    *this = std::move(Replacement);
+    return 1;
+  }
+
+  void clear() { Storage = RadixTreeType(); }
+
+  friend bool operator==(const ConcreteTypeMapType &LHS,
+                         const ConcreteTypeMapType &RHS) {
+    if (LHS.size() != RHS.size())
+      return false;
+    for (const auto &Entry : LHS) {
+      auto Found = RHS.find(Entry.first);
+      if (Found == RHS.end() || Found->second != Entry.second)
+        return false;
+    }
+    return true;
+  }
+
+  friend bool operator<(const ConcreteTypeMapType &LHS,
+                        const ConcreteTypeMapType &RHS) {
+    const auto LHSEntries = LHS.ordered();
+    const auto RHSEntries = RHS.ordered();
+    return std::lexicographical_compare(
+        LHSEntries.begin(), LHSEntries.end(), RHSEntries.begin(),
+        RHSEntries.end(), [](const value_type *LHS, const value_type *RHS) {
+          return *LHS < *RHS;
+        });
+  }
+};
+
 typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
@@ -279,7 +393,8 @@ public:
     // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
     // [-1, 8, -1]
     {
-      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
+      std::vector<std::vector<int>> keysToErase;
+      for (const auto &pair : mapping) {
         if (pair.first.size() == SeqSize) {
           // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
           // as general as the existing map val (e.g. [0, 0]).
@@ -336,7 +451,7 @@ public:
               // previous equivalent values or values overwritten by
               // an anything are removed
               changed = true;
-              mapping.erase(pair.first);
+              keysToErase.push_back(pair.first);
               continue;
             }
 
@@ -348,7 +463,7 @@ public:
                   (CT == BaseType::Integer &&
                    pair.second == BaseType::Pointer)) {
                 changed = true;
-                mapping.erase(pair.first);
+                keysToErase.push_back(pair.first);
                 continue;
               }
 
@@ -366,6 +481,8 @@ public:
           }
         }
       }
+      for (const auto &Key : keysToErase)
+        mapping.erase(Key);
     }
 
     bool possibleDeletion = false;
@@ -386,7 +503,8 @@ public:
     }
 
     if (possibleDeletion) {
-      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
+      std::vector<std::vector<int>> keysToErase;
+      for (const auto &pair : mapping) {
         size_t i = 0;
         bool mustKeep = false;
         bool considerErase = false;
@@ -401,10 +519,12 @@ public:
           ++i;
         }
         if (!mustKeep && considerErase) {
-          mapping.erase(pair.first);
+          keysToErase.push_back(pair.first);
           changed = true;
         }
       }
+      for (const auto &Key : keysToErase)
+        mapping.erase(Key);
     }
 
     size_t i = 0;
@@ -765,7 +885,9 @@ public:
 
     // Non-combined ones do not conflict, since they were already in
     // a TT which we can assume contained no conflicts.
-    mapping = std::move(unCombinedToAdd);
+    mapping.clear();
+    for (const auto &Entry : unCombinedToAdd)
+      mapping.emplace(Entry.first, Entry.second);
     if (minIndices.size() > 0) {
       minIndices[0] = -1;
     }
@@ -1204,7 +1326,8 @@ public:
       // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
       // [-1, 8, -1]
       {
-        for (const auto &pair : llvm::make_early_inc_range(mapping)) {
+        std::vector<std::vector<int>> keysToErase;
+        for (const auto &pair : mapping) {
           if (pair.first.size() == SeqSize) {
             // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
             // as general as the existing map val (e.g. [0, 0]).
@@ -1249,7 +1372,7 @@ public:
               if (CT == BaseType::Anything) {
                 // If both at same index, remove old index
                 if (newMoreGeneralThanOld)
-                  mapping.erase(pair.first);
+                  keysToErase.push_back(pair.first);
                 continue;
               }
 
@@ -1264,7 +1387,7 @@ public:
               if (CT == BaseType::Anything || CT == pair.second) {
                 // previous equivalent values or values overwritten by
                 // an anything are removed
-                mapping.erase(pair.first);
+                keysToErase.push_back(pair.first);
                 continue;
               }
 
@@ -1275,7 +1398,7 @@ public:
                      pair.second == BaseType::Integer) ||
                     (CT == BaseType::Integer &&
                      pair.second == BaseType::Pointer)) {
-                  mapping.erase(pair.first);
+                  keysToErase.push_back(pair.first);
                   continue;
                 }
 
@@ -1292,6 +1415,8 @@ public:
             }
           }
         }
+        for (const auto &Key : keysToErase)
+          mapping.erase(Key);
       }
     }
 
@@ -1363,7 +1488,8 @@ public:
   bool andIn(const TypeTree &RHS) {
     bool changed = false;
 
-    for (auto &pair : llvm::make_early_inc_range(mapping)) {
+    std::vector<std::vector<int>> keysToErase;
+    for (auto &pair : mapping) {
       ConcreteType other = BaseType::Unknown;
       auto fd = RHS.mapping.find(pair.first);
       if (fd != RHS.mapping.end()) {
@@ -1371,9 +1497,11 @@ public:
       }
       changed = (pair.second &= other);
       if (pair.second == BaseType::Unknown) {
-        mapping.erase(pair.first);
+        keysToErase.push_back(pair.first);
       }
     }
+    for (const auto &Key : keysToErase)
+      mapping.erase(Key);
 
     return changed;
   }
@@ -1390,13 +1518,14 @@ public:
                llvm::BinaryOperator::BinaryOps Op) {
     bool changed = false;
 
-    for (auto &pair : llvm::make_early_inc_range(mapping)) {
+    std::vector<std::vector<int>> keysToErase;
+    for (auto &pair : mapping) {
       // TODO propagate non-first level operands:
       // Special handling is necessary here because a pointer to an int
       // binop with something should not apply the binop rules to the
       // underlying data but instead a different rule
       if (pair.first.size() > 0) {
-        mapping.erase(pair.first);
+        keysToErase.push_back(pair.first);
         continue;
       }
 
@@ -1415,11 +1544,13 @@ public:
         return changed;
       }
       if (CT == BaseType::Unknown) {
-        mapping.erase(pair.first);
+        keysToErase.push_back(pair.first);
       } else {
         pair.second = CT;
       }
     }
+    for (const auto &Key : keysToErase)
+      mapping.erase(Key);
 
     // mapings just on the right
     for (auto &pair : RHS.mapping) {
@@ -1452,7 +1583,8 @@ public:
   std::string str() const {
     std::string out = "{";
     bool first = true;
-    for (auto &pair : mapping) {
+    for (const auto *Entry : mapping.ordered()) {
+      const auto &pair = *Entry;
       if (!first) {
         out += ", ";
       }
@@ -1473,7 +1605,8 @@ public:
     llvm::SmallVector<llvm::Metadata *, 1> subMD;
     std::map<int, TypeTree> todo;
     ConcreteType base(BaseType::Unknown);
-    for (auto &pair : mapping) {
+    for (const auto *Entry : mapping.ordered()) {
+      const auto &pair = *Entry;
       if (pair.first.size() == 0) {
         base = pair.second;
         continue;
