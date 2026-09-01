@@ -7,7 +7,7 @@ module {
   func.func @f(%a: f64, %m: memref<?xf64>) {
     affine.for %i = 0 to 4 {
       %v = arith.mulf %a, %a : f64
-      %old = "enzyme.affine_atomic_rmw"(%v, %m) <{alignment = 8 : i64, fastmath = #arith.fastmath<fast>, kind = 0 : i64, map = affine_map<() -> (0)>}> : (f64, memref<?xf64>) -> f64
+      %old = "enzyme.affine_atomic_rmw"(%v, %m) <{ordering = 2 : i32, alignment = 8 : i64, fastmath = #arith.fastmath<fast>, kind = 0 : i64, map = affine_map<() -> (0)>}> : (f64, memref<?xf64>) -> f64
     }
     return
   }
@@ -21,5 +21,5 @@ module {
 // CHECK: %[[t1:.+]] = arith.mulf %[[da]], %[[a]] fastmath<fast> : f64
 // CHECK: %[[dv:.+]] = arith.addf %[[t0]], %[[t1]] fastmath<fast> : f64
 // CHECK: %[[v:.+]] = arith.mulf %[[a]], %[[a]] : f64
-// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[dv]], %[[dm]], (#[[$MAP]]) [] fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
-// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[v]], %[[m]], (#[[$MAP]]) [] fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
+// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[dv]], %[[dm]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
+// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[v]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
