@@ -529,7 +529,7 @@ static const SCEV *getUnsignedOverflowLimitForStep(const SCEV *Step,
 namespace {
 
 struct ExtendOpTraitsBase {
-  typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(const SCEV *, Type *,
+  typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(SCEVUse, Type *,
                                                           unsigned);
 };
 

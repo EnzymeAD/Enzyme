@@ -6989,7 +6989,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           continue;
         for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
              iter++) {
-          (*iter)->moveBefore(br);
+          (*iter)->moveBefore(br->getIterator());
         }
         auto sel = pushcse(B.CreateSelect(
             getBranchCondition(br), PN->getIncomingValueForBlock(prev),

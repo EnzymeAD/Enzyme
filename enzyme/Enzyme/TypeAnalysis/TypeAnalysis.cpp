@@ -871,7 +871,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     auto I = CE->getAsInstruction();
-    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator());
+    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator()->getIterator());
 
     // Just analyze this new "instruction" and none of the others
     {
@@ -1931,7 +1931,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
     return;
   }
   auto I = CE.getAsInstruction();
-  I->insertBefore(fntypeinfo.Function->getEntryBlock().getTerminator());
+  I->insertBefore(fntypeinfo.Function->getEntryBlock().getTerminator()->getIterator());
   analysis[I] = analysis[&CE];
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);

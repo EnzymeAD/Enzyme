@@ -1805,7 +1805,7 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
   while (gutils->inversionAllocs->size() > 0) {
     Instruction *inst = &gutils->inversionAllocs->back();
     if (isa<AllocaInst>(inst))
-      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
+      inst->moveBefore(gutils->newFunc->getEntryBlock().getFirstInsertionPt());
     else
       inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
   }
@@ -5224,7 +5224,7 @@ private:
       for (unsigned It = 0; It < Args.size(); It++)
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
-      ClonedI->insertBefore(Return);
+      ClonedI->insertBefore(Return->getIterator());
     }
   }
 

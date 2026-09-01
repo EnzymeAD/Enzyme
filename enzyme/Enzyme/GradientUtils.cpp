@@ -38,6 +38,7 @@
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Dominators.h"
@@ -10126,9 +10127,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
-    bool res = TLI.getLibFunc(allocationfn, libfunc);
-    (void)res;
-    assert(res && "ought find known allocation fn");
+    libfunc = TLI.getLibFunc(allocationfn);
+    assert(libfunc != NotLibFunc && "ought find known allocation fn");
   }
 
   llvm::LibFunc freefunc;

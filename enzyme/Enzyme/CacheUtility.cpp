@@ -26,6 +26,7 @@
 
 #include "CacheUtility.h"
 #include "FunctionUtils.h"
+#include "Utils.h"
 
 using namespace llvm;
 
@@ -195,7 +196,7 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
     if (!Inc)
       continue;
     if (Inc != getFirstNonPHIOrDbg(Header))
-      Inc->moveBefore(getFirstNonPHIOrDbg(Header));
+      Inc->moveBefore(Header->getFirstNonPHIOrDbg());
     return std::make_pair(PN, Inc);
   }
   llvm::errs() << *Header << "\n";

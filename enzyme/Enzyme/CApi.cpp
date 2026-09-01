@@ -1014,7 +1014,7 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
           BR.SetInsertPoint(I1->getNextNode());
       }
     }
-    I1->moveBefore(I2);
+    I1->moveBefore(I2->getIterator());
   }
 }
 
