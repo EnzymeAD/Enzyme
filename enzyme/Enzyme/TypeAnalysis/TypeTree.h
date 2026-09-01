@@ -69,15 +69,92 @@ typedef std::shared_ptr<const TypeTree> TypeResult;
 
 /// RadixTree does not provide exact lookup or removal. TypeTree needs both,
 /// so provide these operations on top of its RadixTree-backed storage.
-class ConcreteTypeMapType {
+class ConcreteTypeMapType
+    : public llvm::RadixTree<std::vector<int>, ConcreteType> {
   using RadixTreeType = llvm::RadixTree<std::vector<int>, ConcreteType>;
-  RadixTreeType Storage;
 
 public:
   using key_type = std::vector<int>;
   using value_type = RadixTreeType::value_type;
-  using iterator = RadixTreeType::iterator;
-  using const_iterator = RadixTreeType::const_iterator;
+
+  class const_iterator;
+  class iterator {
+    RadixTreeType::iterator Current;
+    RadixTreeType::iterator End;
+    value_type *Value = nullptr;
+
+    iterator(RadixTreeType::iterator Current, RadixTreeType::iterator End)
+        : Current(Current), End(End),
+          Value(Current == End ? nullptr : &*Current) {}
+    explicit iterator(value_type *Value) : Value(Value) {}
+
+    friend class ConcreteTypeMapType;
+    friend class const_iterator;
+
+  public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = ConcreteTypeMapType::value_type;
+    using pointer = value_type *;
+    using reference = value_type &;
+    using iterator_category = std::forward_iterator_tag;
+
+    iterator() = default;
+    reference operator*() const { return *Value; }
+    pointer operator->() const { return Value; }
+    iterator &operator++() {
+      if (Value && Current != End) {
+        ++Current;
+        Value = Current == End ? nullptr : &*Current;
+      } else {
+        Value = nullptr;
+      }
+      return *this;
+    }
+    bool operator==(const iterator &Other) const { return Value == Other.Value; }
+    bool operator!=(const iterator &Other) const { return !(*this == Other); }
+  };
+
+  class const_iterator {
+    RadixTreeType::const_iterator Current;
+    RadixTreeType::const_iterator End;
+    const value_type *Value = nullptr;
+
+    const_iterator(RadixTreeType::const_iterator Current,
+                   RadixTreeType::const_iterator End)
+        : Current(Current), End(End),
+          Value(Current == End ? nullptr : &*Current) {}
+    explicit const_iterator(const value_type *Value) : Value(Value) {}
+
+    friend class ConcreteTypeMapType;
+
+  public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = ConcreteTypeMapType::value_type;
+    using pointer = const value_type *;
+    using reference = const value_type &;
+    using iterator_category = std::forward_iterator_tag;
+
+    const_iterator() = default;
+    const_iterator(const iterator &Other)
+        : Value(Other.Value) {}
+    reference operator*() const { return *Value; }
+    pointer operator->() const { return Value; }
+    const_iterator &operator++() {
+      if (Value && Current != End) {
+        ++Current;
+        Value = Current == End ? nullptr : &*Current;
+      } else {
+        Value = nullptr;
+      }
+      return *this;
+    }
+    bool operator==(const const_iterator &Other) const {
+      return Value == Other.Value;
+    }
+    bool operator!=(const const_iterator &Other) const {
+      return !(*this == Other);
+    }
+  };
 
   ConcreteTypeMapType() = default;
   ConcreteTypeMapType(const ConcreteTypeMapType &Other) {
@@ -97,13 +174,17 @@ public:
   ConcreteTypeMapType(ConcreteTypeMapType &&) = default;
   ConcreteTypeMapType &operator=(ConcreteTypeMapType &&) = default;
 
-  iterator begin() { return Storage.begin(); }
-  const_iterator begin() const { return Storage.begin(); }
-  iterator end() { return Storage.end(); }
-  const_iterator end() const { return Storage.end(); }
+  iterator begin() {
+    return iterator(RadixTreeType::begin(), RadixTreeType::end());
+  }
+  const_iterator begin() const {
+    return const_iterator(RadixTreeType::begin(), RadixTreeType::end());
+  }
+  iterator end() { return iterator(); }
+  const_iterator end() const { return const_iterator(); }
 
-  bool empty() const { return Storage.empty(); }
-  size_t size() const { return Storage.size(); }
+  bool empty() const { return RadixTreeType::empty(); }
+  size_t size() const { return RadixTreeType::size(); }
 
   std::vector<const value_type *> ordered() const {
     std::vector<const value_type *> Entries;
@@ -118,19 +199,23 @@ public:
   }
 
   iterator find(const key_type &Key) {
-    return std::find_if(begin(), end(), [&](const value_type &Entry) {
-      return Entry.first == Key;
-    });
+    for (const auto &Entry : RadixTreeType::find_prefixes(Key))
+      if (Entry.first == Key)
+        return iterator(const_cast<value_type *>(&Entry));
+    return end();
   }
   const_iterator find(const key_type &Key) const {
-    return std::find_if(begin(), end(), [&](const value_type &Entry) {
-      return Entry.first == Key;
-    });
+    for (const auto &Entry : RadixTreeType::find_prefixes(Key))
+      if (Entry.first == Key)
+        return const_iterator(&Entry);
+    return end();
   }
 
   template <typename... Ts>
   std::pair<iterator, bool> emplace(key_type Key, Ts &&...Args) {
-    return Storage.emplace(std::move(Key), std::forward<Ts>(Args)...);
+    auto Result =
+        RadixTreeType::emplace(std::move(Key), std::forward<Ts>(Args)...);
+    return {iterator(Result.first, RadixTreeType::end()), Result.second};
   }
   std::pair<iterator, bool> emplace(const value_type &Entry) {
     return emplace(Entry.first, Entry.second);
@@ -153,7 +238,7 @@ public:
     return 1;
   }
 
-  void clear() { Storage = RadixTreeType(); }
+  void clear() { RadixTreeType::operator=(RadixTreeType()); }
 
   friend bool operator==(const ConcreteTypeMapType &LHS,
                          const ConcreteTypeMapType &RHS) {
@@ -1562,7 +1647,7 @@ public:
         continue;
       }
 
-      if (mapping.find(pair.first) == RHS.mapping.end()) {
+      if (mapping.find(pair.first) == mapping.end()) {
         ConcreteType CT = BaseType::Unknown;
         bool SubLegal = true;
         changed |= CT.binopIn(SubLegal, pair.second, Op);

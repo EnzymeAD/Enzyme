@@ -33,6 +33,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
 option(ENZYME_ENABLE_BENCHMARKS "Enable benchmarks" OFF)
+option(ENZYME_BUILD_TYPETREE_BENCHMARK
+  "Build the Google Benchmark TypeTree storage comparison" OFF)
 option(ENZYME_BC_LOADER "Enable bitcode loader" ON)
 option(ENZYME_FORTRAN "Build Enzyme Fortran bindings" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
