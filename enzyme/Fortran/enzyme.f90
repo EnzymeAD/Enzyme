@@ -23,7 +23,9 @@
 module enzyme
   use iso_c_binding, only: c_int
   use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
-                                   enzyme_fwddiff  => f__enzyme_fwddiff
+                                   enzyme_fwddiff  => f__enzyme_fwddiff, &
+                                   enzyme_function_like => &
+                                     f__enzyme_function_like
   implicit none
   private
 
@@ -36,7 +38,11 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
 
+  ! Symbolic function names for enzyme_function_like
+  integer(c_int), public, bind(C, name="enzyme_math_log1p") :: enzyme_log1p
+
   ! Bindings for function hooks
   public :: enzyme_autodiff
   public :: enzyme_fwddiff
+  public :: enzyme_function_like
 end module enzyme

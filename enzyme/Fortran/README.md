@@ -124,3 +124,88 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
+
+
+## Function-like hooks
+
+The `enzyme_function_like` hook tells Enzyme to differentiate a function as if
+it were a known mathematical function. For example, Enzyme can use the
+derivative of `log1p` for `log1p_like_function`, regardless of its
+implementation.
+
+### Call-style registration
+
+The call-style interface follows the same pattern as `enzyme_autodiff`:
+
+```fortran
+use enzyme, only: enzyme_function_like, enzyme_log1p
+
+call enzyme_function_like(log1p_like_function, enzyme_log1p)
+```
+
+`enzyme_log1p` supplies the symbolic function name `log1p`; its value is not
+used. Functions passed to `enzyme_function_like` must have an LLVM-level
+signature compatible with the selected mathematical function. Scalar arguments
+must use the `value` attribute so that Flang lowers them as LLVM values rather
+than using Fortran's usual by-reference calling convention. This binding is
+currently supported with Flang.
+
+When running Enzyme separately with `opt`, `preserve-nvvm` must process the
+`enzyme_function_like` hook before differentiation:
+
+```console
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
+    -passes='preserve-nvvm,enzyme,preserve-nvvm-end' input.bc -o output.bc
+```
+
+When using this separate `opt` workflow, compile the Fortran source to LLVM
+ with `-O0`. Otherwise, Flang may inline calls to the function before
+`preserve-nvvm` processes the `enzyme_function_like` hook. The `FlangEnzyme`
+compiler plugin runs `preserve-nvvm` at the start of Flang's LLVM optimization
+pipeline and does not require this separate `opt` step.
+
+Additional symbolic function names can be declared in user code. The `bind(C)`
+name must use the `enzyme_math_` prefix followed by a function name recognized
+by Enzyme:
+
+```fortran
+module enzyme_math_names
+  use iso_c_binding, only: c_int
+  implicit none
+
+  integer(c_int), bind(C, name="enzyme_math_sin") :: enzyme_sin
+end module enzyme_math_names
+```
+
+This makes the call site simple, but every symbolic name needs a corresponding
+`enzyme_math_*` binding, either in the `enzyme` module or in user code.
+
+### Procedure-pointer registration
+
+Alternatively, a statically initialized procedure pointer can register the
+same relationship without a hook call or symbolic-name binding:
+
+```fortran
+module function_like_example
+  implicit none
+
+  procedure(log1p_like_function), pointer, private :: &
+    fn__enzyme_function_like__log1p => log1p_like_function
+
+contains
+
+  function log1p_like_function(x) result(y)
+    double precision, value :: x
+    double precision :: y
+
+    y = 2.0d0 * x
+  end function log1p_like_function
+end module function_like_example
+```
+
+Here, `procedure(log1p_like_function)` gives the pointer the target's interface,
+and `=> log1p_like_function` initializes it with the target. PreserveNVVM reads
+the mathematical name after the exact `__enzyme_function_like__` delimiter, so
+this example registers the target as `log1p`. The prefix before the delimiter
+can be any valid name but must be unique in its scope. `private` is optional; it
+keeps the registration marker out of the module's public API.
