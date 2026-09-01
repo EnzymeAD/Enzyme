@@ -9,8 +9,11 @@ jobs:
   build:
     name: Enzyme Tag CI
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
-    - uses: actions/create-github-app-token@v2
+    - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
       id: generate_token
       with:
         app-id: ${{ secrets.APP_ID }}
@@ -18,15 +21,21 @@ jobs:
         owner: JuliaPackaging
         repositories: |
           Yggdrasil
+        permission-contents: write
+        permission-pull-requests: write
 
-    - uses: actions/checkout@v5
+    - name: Checkout JuliaPackaging repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
-          repository: 'JuliaPackaging/Yggdrasil'
-          path: ygg
+        persist-credentials: false
+        repository: 'JuliaPackaging/Yggdrasil'
+        path: ygg
 
-    - uses: actions/checkout@v5
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
         path: enz
+        persist-credentials: false
     - name: replace
       run: |
           cd ygg
@@ -39,7 +48,7 @@ jobs:
           git add .
     - name: Create Pull Request
       id: cpr
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
       with:
         path: ygg
         commit-message: "Upgrade enzyme to ${{ github.ref }}"
