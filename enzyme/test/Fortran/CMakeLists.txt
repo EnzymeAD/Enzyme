@@ -4,6 +4,7 @@ add_subdirectory(BatchMode)
 add_subdirectory(ForwardMode)
 add_subdirectory(OpenMP)
 add_subdirectory(ReverseMode)
+add_subdirectory(TypeAnalysis)
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme-fortran "Running enzyme fortran integration tests"

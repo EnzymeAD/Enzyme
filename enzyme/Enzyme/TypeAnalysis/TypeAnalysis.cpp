@@ -2131,8 +2131,17 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       }
     }
 
+    // An index is an offset rather than a pointer if the GEP promises not to
+    // wrap. `nusw` suffices; `inbounds` also guarantees the result stays within
+    // the object, which this rule does not need. flang emits `nusw nuw`, never
+    // `inbounds`, for array element addresses.
+    bool indexCannotWrap = gep.isInBounds();
+#if LLVM_VERSION_MAJOR >= 19
+    indexCannotWrap |= gep.hasNoUnsignedSignedWrap();
+#endif
+
     if (has_non_const_idx &&
-        (gep.isInBounds() ||
+        (indexCannotWrap ||
          (!EnzymeStrictAliasing &&
           pointerAnalysis.Inner0() == BaseType::Pointer &&
           getAnalysis(&gep).Inner0() == BaseType::Pointer))) {
