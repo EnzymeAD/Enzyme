@@ -33,7 +33,6 @@
 
 #include "llvm/ADT/RadixTree.h"
 #include "llvm/Support/ErrorHandling.h"
-#include <algorithm>
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <set>
@@ -67,8 +66,8 @@ class TypeTree;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
 
-/// RadixTree does not provide exact lookup or removal. TypeTree needs both,
-/// so provide these operations on top of its RadixTree-backed storage.
+/// RadixTree does not provide removal. TypeTree needs this operation, so
+/// provide it on top of its RadixTree-backed storage.
 class ConcreteTypeMapType
     : public llvm::RadixTree<std::vector<int>, ConcreteType> {
   using RadixTreeType = llvm::RadixTree<std::vector<int>, ConcreteType>;
@@ -186,29 +185,11 @@ public:
   bool empty() const { return RadixTreeType::empty(); }
   size_t size() const { return RadixTreeType::size(); }
 
-  std::vector<const value_type *> ordered() const {
-    std::vector<const value_type *> Entries;
-    Entries.reserve(size());
-    for (const auto &Entry : *this)
-      Entries.push_back(&Entry);
-    std::sort(Entries.begin(), Entries.end(),
-              [](const value_type *LHS, const value_type *RHS) {
-                return LHS->first < RHS->first;
-              });
-    return Entries;
-  }
-
   iterator find(const key_type &Key) {
-    for (const auto &Entry : RadixTreeType::find_prefixes(Key))
-      if (Entry.first == Key)
-        return iterator(const_cast<value_type *>(&Entry));
-    return end();
+    return iterator(RadixTreeType::find(Key), RadixTreeType::end());
   }
   const_iterator find(const key_type &Key) const {
-    for (const auto &Entry : RadixTreeType::find_prefixes(Key))
-      if (Entry.first == Key)
-        return const_iterator(&Entry);
-    return end();
+    return const_iterator(RadixTreeType::find(Key), RadixTreeType::end());
   }
 
   template <typename... Ts>
@@ -227,15 +208,24 @@ public:
   }
 
   size_t erase(const key_type &Key) {
-    if (find(Key) == end())
+    return erase(std::vector<key_type>{Key});
+  }
+
+  size_t erase(const std::vector<key_type> &Keys) {
+    std::set<key_type> KeysToErase(Keys.begin(), Keys.end());
+    if (KeysToErase.empty())
       return 0;
 
     ConcreteTypeMapType Replacement;
+    size_t Erased = 0;
     for (const auto &Entry : *this)
-      if (Entry.first != Key)
+      if (KeysToErase.erase(Entry.first))
+        ++Erased;
+      else
         Replacement.emplace(Entry.first, Entry.second);
-    *this = std::move(Replacement);
-    return 1;
+    if (Erased)
+      *this = std::move(Replacement);
+    return Erased;
   }
 
   void clear() { RadixTreeType::operator=(RadixTreeType()); }
@@ -254,17 +244,19 @@ public:
 
   friend bool operator<(const ConcreteTypeMapType &LHS,
                         const ConcreteTypeMapType &RHS) {
-    const auto LHSEntries = LHS.ordered();
-    const auto RHSEntries = RHS.ordered();
-    return std::lexicographical_compare(
-        LHSEntries.begin(), LHSEntries.end(), RHSEntries.begin(),
-        RHSEntries.end(), [](const value_type *LHS, const value_type *RHS) {
-          return *LHS < *RHS;
-        });
+    auto LHSIt = LHS.lexicographic_begin();
+    auto RHSIt = RHS.lexicographic_begin();
+    const auto LHSEnd = LHS.lexicographic_end();
+    const auto RHSEnd = RHS.lexicographic_end();
+    for (; LHSIt != LHSEnd && RHSIt != RHSEnd; ++LHSIt, ++RHSIt) {
+      if (*LHSIt < *RHSIt)
+        return true;
+      if (*RHSIt < *LHSIt)
+        return false;
+    }
+    return LHSIt == LHSEnd && RHSIt != RHSEnd;
   }
 };
-
-typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
 /// sequences of offsets to a ConcreteType
@@ -566,8 +558,7 @@ public:
           }
         }
       }
-      for (const auto &Key : keysToErase)
-        mapping.erase(Key);
+      mapping.erase(keysToErase);
     }
 
     bool possibleDeletion = false;
@@ -608,8 +599,7 @@ public:
           changed = true;
         }
       }
-      for (const auto &Key : keysToErase)
-        mapping.erase(Key);
+      mapping.erase(keysToErase);
     }
 
     size_t i = 0;
@@ -1500,8 +1490,7 @@ public:
             }
           }
         }
-        for (const auto &Key : keysToErase)
-          mapping.erase(Key);
+        mapping.erase(keysToErase);
       }
     }
 
@@ -1585,8 +1574,7 @@ public:
         keysToErase.push_back(pair.first);
       }
     }
-    for (const auto &Key : keysToErase)
-      mapping.erase(Key);
+    mapping.erase(keysToErase);
 
     return changed;
   }
@@ -1634,8 +1622,7 @@ public:
         pair.second = CT;
       }
     }
-    for (const auto &Key : keysToErase)
-      mapping.erase(Key);
+    mapping.erase(keysToErase);
 
     // mapings just on the right
     for (auto &pair : RHS.mapping) {
@@ -1668,8 +1655,10 @@ public:
   std::string str() const {
     std::string out = "{";
     bool first = true;
-    for (const auto *Entry : mapping.ordered()) {
-      const auto &pair = *Entry;
+    for (auto It = mapping.lexicographic_begin(),
+              End = mapping.lexicographic_end();
+         It != End; ++It) {
+      const auto &pair = *It;
       if (!first) {
         out += ", ";
       }
@@ -1686,12 +1675,14 @@ public:
     return out;
   }
 
-  llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
+  llvm::MDNode *toMD(llvm::LLVMContext &ctx) const {
     llvm::SmallVector<llvm::Metadata *, 1> subMD;
     std::map<int, TypeTree> todo;
     ConcreteType base(BaseType::Unknown);
-    for (const auto *Entry : mapping.ordered()) {
-      const auto &pair = *Entry;
+    for (auto It = mapping.lexicographic_begin(),
+              End = mapping.lexicographic_end();
+         It != End; ++It) {
+      const auto &pair = *It;
       if (pair.first.size() == 0) {
         base = pair.second;
         continue;
@@ -1701,7 +1692,7 @@ public:
       todo[pair.first[0]].mapping.insert(std::make_pair(next, pair.second));
     }
     subMD.push_back(llvm::MDString::get(ctx, base.str()));
-    for (auto pair : todo) {
+    for (const auto &pair : todo) {
       // Offsets may be negative (e.g. -1 to denote any offset), so the
       // constant must be created as a signed value.
       subMD.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
