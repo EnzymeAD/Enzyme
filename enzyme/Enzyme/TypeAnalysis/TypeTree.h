@@ -34,9 +34,12 @@
 #include "llvm/ADT/RadixTree.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "../Utils.h"
@@ -155,6 +158,47 @@ public:
     }
   };
 
+  template <typename ValuePtr> class LexicographicIterator {
+    std::shared_ptr<std::vector<ValuePtr>> Values;
+    size_t Index = 0;
+
+    bool isEnd() const { return !Values || Index == Values->size(); }
+
+    explicit LexicographicIterator(std::shared_ptr<std::vector<ValuePtr>> Values)
+        : Values(std::move(Values)) {}
+
+    friend class ConcreteTypeMapType;
+
+  public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = ConcreteTypeMapType::value_type;
+    using pointer = ValuePtr;
+    using reference =
+        std::conditional_t<std::is_const_v<std::remove_pointer_t<ValuePtr>>,
+                           const value_type &, value_type &>;
+    using iterator_category = std::forward_iterator_tag;
+
+    LexicographicIterator() = default;
+    reference operator*() const { return *(*Values)[Index]; }
+    pointer operator->() const { return (*Values)[Index]; }
+    LexicographicIterator &operator++() {
+      ++Index;
+      return *this;
+    }
+    bool operator==(const LexicographicIterator &Other) const {
+      if (isEnd() || Other.isEnd())
+        return isEnd() && Other.isEnd();
+      return (*Values)[Index] == (*Other.Values)[Other.Index];
+    }
+    bool operator!=(const LexicographicIterator &Other) const {
+      return !(*this == Other);
+    }
+  };
+
+  using lexicographic_iterator = LexicographicIterator<value_type *>;
+  using lexicographic_const_iterator =
+      LexicographicIterator<const value_type *>;
+
   ConcreteTypeMapType() = default;
   ConcreteTypeMapType(const ConcreteTypeMapType &Other) {
     for (const auto &Entry : Other)
@@ -182,14 +226,51 @@ public:
   iterator end() { return iterator(); }
   const_iterator end() const { return const_iterator(); }
 
+  lexicographic_iterator lexicographic_begin() {
+    auto Values = std::make_shared<std::vector<value_type *>>();
+    Values->reserve(size());
+    for (auto &Entry : *this)
+      Values->push_back(&Entry);
+    std::sort(Values->begin(), Values->end(),
+              [](const value_type *LHS, const value_type *RHS) {
+                return LHS->first < RHS->first;
+              });
+    return lexicographic_iterator(std::move(Values));
+  }
+  lexicographic_const_iterator lexicographic_begin() const {
+    auto Values = std::make_shared<std::vector<const value_type *>>();
+    Values->reserve(size());
+    for (const auto &Entry : *this)
+      Values->push_back(&Entry);
+    std::sort(Values->begin(), Values->end(),
+              [](const value_type *LHS, const value_type *RHS) {
+                return LHS->first < RHS->first;
+              });
+    return lexicographic_const_iterator(std::move(Values));
+  }
+  lexicographic_iterator lexicographic_end() { return lexicographic_iterator(); }
+  lexicographic_const_iterator lexicographic_end() const {
+    return lexicographic_const_iterator();
+  }
+
   bool empty() const { return RadixTreeType::empty(); }
   size_t size() const { return RadixTreeType::size(); }
 
   iterator find(const key_type &Key) {
-    return iterator(RadixTreeType::find(Key), RadixTreeType::end());
+    auto Current = RadixTreeType::begin();
+    const auto End = RadixTreeType::end();
+    for (; Current != End; ++Current)
+      if (Current->first == Key)
+        break;
+    return iterator(Current, End);
   }
   const_iterator find(const key_type &Key) const {
-    return const_iterator(RadixTreeType::find(Key), RadixTreeType::end());
+    auto Current = RadixTreeType::begin();
+    const auto End = RadixTreeType::end();
+    for (; Current != End; ++Current)
+      if (Current->first == Key)
+        break;
+    return const_iterator(Current, End);
   }
 
   template <typename... Ts>
@@ -208,24 +289,14 @@ public:
   }
 
   size_t erase(const key_type &Key) {
-    return erase(std::vector<key_type>{Key});
-  }
-
-  size_t erase(const std::vector<key_type> &Keys) {
-    std::set<key_type> KeysToErase(Keys.begin(), Keys.end());
-    if (KeysToErase.empty())
-      return 0;
-
     ConcreteTypeMapType Replacement;
-    size_t Erased = 0;
     for (const auto &Entry : *this)
-      if (KeysToErase.erase(Entry.first))
-        ++Erased;
-      else
+      if (Entry.first != Key)
         Replacement.emplace(Entry.first, Entry.second);
-    if (Erased)
-      *this = std::move(Replacement);
-    return Erased;
+    if (Replacement.size() == size())
+      return 0;
+    *this = std::move(Replacement);
+    return 1;
   }
 
   void clear() { RadixTreeType::operator=(RadixTreeType()); }
@@ -558,7 +629,8 @@ public:
           }
         }
       }
-      mapping.erase(keysToErase);
+      for (const auto &Key : keysToErase)
+        mapping.erase(Key);
     }
 
     bool possibleDeletion = false;
@@ -599,7 +671,8 @@ public:
           changed = true;
         }
       }
-      mapping.erase(keysToErase);
+      for (const auto &Key : keysToErase)
+        mapping.erase(Key);
     }
 
     size_t i = 0;
@@ -1490,7 +1563,8 @@ public:
             }
           }
         }
-        mapping.erase(keysToErase);
+        for (const auto &Key : keysToErase)
+          mapping.erase(Key);
       }
     }
 
@@ -1574,7 +1648,8 @@ public:
         keysToErase.push_back(pair.first);
       }
     }
-    mapping.erase(keysToErase);
+    for (const auto &Key : keysToErase)
+      mapping.erase(Key);
 
     return changed;
   }
@@ -1622,7 +1697,8 @@ public:
         pair.second = CT;
       }
     }
-    mapping.erase(keysToErase);
+    for (const auto &Key : keysToErase)
+      mapping.erase(Key);
 
     // mapings just on the right
     for (auto &pair : RHS.mapping) {

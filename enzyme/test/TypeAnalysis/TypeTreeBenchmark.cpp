@@ -104,15 +104,6 @@ static void BM_Erase(benchmark::State &State) {
   }
 }
 
-static void BM_BatchErase(benchmark::State &State) {
-  const auto Keys = makeKeys(State.range(0));
-  for (auto _ : State) {
-    auto Map = makeMap<ConcreteTypeMapType>(Keys);
-    benchmark::DoNotOptimize(Map.erase(Keys));
-    benchmark::ClobberMemory();
-  }
-}
-
 BENCHMARK_TEMPLATE(BM_Insert, OldConcreteTypeMapType)->Range(64, 4096);
 BENCHMARK_TEMPLATE(BM_Insert, ConcreteTypeMapType)->Range(64, 4096);
 BENCHMARK_TEMPLATE(BM_Find, OldConcreteTypeMapType)->Range(64, 4096);
@@ -129,6 +120,5 @@ BENCHMARK_TEMPLATE(BM_LexicographicCompare, ConcreteTypeMapType)
   ->Range(64, 4096);
 BENCHMARK_TEMPLATE(BM_Erase, OldConcreteTypeMapType)->Range(64, 4096);
 BENCHMARK_TEMPLATE(BM_Erase, ConcreteTypeMapType)->Range(64, 4096);
-BENCHMARK(BM_BatchErase)->Range(64, 4096);
 
 BENCHMARK_MAIN();
