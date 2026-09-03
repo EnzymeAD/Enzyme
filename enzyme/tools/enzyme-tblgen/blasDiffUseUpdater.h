@@ -20,14 +20,7 @@ inline void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   os << "if (blas.function == \"" << name << "\") {\n";
 
-  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
-        "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
-  os << "(void)byRefFloat;\n";
-  if (lv23)
-    os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
-        "\"cublas\";\n";
+  emit_blas_abi_flags(os);
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
   os << "  const int offset = (";
   if (lv23) {
@@ -106,6 +99,9 @@ inline void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
              << nameVec[derivOp.getHandledArgIdx()] << ") return true;\n";
         }
       }
+    } else if (typeMap[argPos] == ArgType::fpret) {
+      // the shadow of the result pointer provides the derivative of the result
+      os << "    if (shadow && active_" << argname << ") return true;\n";
     }
 
     os << "    if (!shadow && need_" << argname
@@ -124,7 +120,7 @@ inline void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     hasDiffeRetVal |= hasDiffeRet(derivOp.getRuleDag());
   }
 
-  if (hasDiffeRetVal) {
+  if (hasDiffeRetVal && pattern.getRetPtrArgIdx() < 0) {
     size_t ptrRetArg = typeMap.size();
     auto retarg =
         "CI->getArgOperand(" + std::to_string(ptrRetArg) + " + offset)";

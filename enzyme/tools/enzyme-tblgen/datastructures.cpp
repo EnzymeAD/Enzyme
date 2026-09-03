@@ -34,7 +34,25 @@ bool is_char_arg(ArgType ty) {
 bool has_active_return(StringRef dfnc_name) {
   return dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
          dfnc_name == "iamax" || dfnc_name == "iamin" ||
-         dfnc_name == "inner_prod";
+         dfnc_name == "inner_prod" || returns_via_ptr(dfnc_name);
+}
+
+bool returns_via_ptr(StringRef dfnc_name) {
+  return dfnc_name.size() > 4 &&
+         dfnc_name.substr(dfnc_name.size() - 4) == "_sub";
+}
+
+void emit_blas_abi_flags(raw_ostream &os) {
+  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
+        "\"cublas_\";\n";
+  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
+        "\"cublas\";\n";
+  // Complex scalars (alpha, beta, results) are always passed by pointer under
+  // the cblas ABI, real ones by value.
+  os << "  const bool byRefFloat = byRef || blas.prefix == \"cublas\" || "
+        "(cblas && (blas.floatType == \"c\" || blas.floatType == \"z\"));\n";
+  os << "  (void)byRef; (void)cblas; (void)cublas; (void)byRefFloat;\n";
 }
 
 const char *TyToString(ArgType ty) {
@@ -65,6 +83,8 @@ const char *TyToString(ArgType ty) {
     return "side";
   case ArgType::info:
     return "info";
+  case ArgType::fpret:
+    return "fpret";
   default:
     return "unknown";
   }
@@ -320,6 +340,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
         argTypes.insert(std::make_pair(pos, ArgType::info));
       } else if (name == "fp") {
         argTypes.insert(std::make_pair(pos, ArgType::fp));
+      } else if (name == "fpret") {
+        argTypes.insert(std::make_pair(pos, ArgType::fpret));
       } else if (name == "cblas_layout") {
         assert(pos == 0);
         argTypes.insert(std::make_pair(pos, ArgType::cblas_layout));
@@ -518,4 +540,15 @@ ArgType TGPattern::getTypeOfArg(StringRef argName) const {
 
 const DagInit *TGPattern::getDuals() const {
   return record->getValueAsDag("ArgDuals");
+}
+
+ssize_t TGPattern::getRetPtrArgIdx() const {
+  for (size_t i = 0; i < args.size(); i++)
+    if (argTypes.lookup(i) == ArgType::fpret)
+      return i;
+  return -1;
+}
+
+bool TGPattern::supportsComplex() const {
+  return record->getValueAsBit("supportsComplex");
 }

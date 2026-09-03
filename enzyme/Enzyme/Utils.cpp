@@ -3695,9 +3695,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
-      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "dot",  "scal",  "axpy",  "gemv",     "gemm",  "spmv",  "syrk",
+      "nrm2", "trmm",  "trmv",  "symm",     "potrf", "potrs", "copy",
+      "spmv", "syr2k", "potrs", "getrf",    "getrs", "trtrs", "getri",
+      "symv", "lacpy", "trsv",  "dotc_sub", "dotu_sub",
   };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -4215,6 +4216,42 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
         V, getPointerType(intType,
                           cast<PointerType>(V->getType())->getAddressSpace()));
   return B.CreateLoad(intType, V);
+}
+
+llvm::Value *complex_conjugate(llvm::IRBuilder<> &B, llvm::Value *V) {
+  auto VT = dyn_cast<VectorType>(V->getType());
+  if (!VT)
+    return V;
+  assert(VT->getElementCount().getKnownMinValue() == 2 &&
+         "complex blas scalars are 2-element vectors");
+  Value *im = B.CreateExtractElement(V, (uint64_t)1);
+  return B.CreateInsertElement(V, B.CreateFNeg(im), (uint64_t)1);
+}
+
+static llvm::Value *blas_scalar_ptr(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                                    llvm::Value *ptr) {
+  if (ptr->getType()->isIntegerTy())
+    return B.CreateIntToPtr(ptr, getUnqual(fpType));
+  return B.CreatePointerCast(
+      ptr, getPointerType(
+               fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
+}
+
+static llvm::Align blas_scalar_align(llvm::IRBuilder<> &B, llvm::Type *fpType) {
+  auto &DL = B.GetInsertBlock()->getModule()->getDataLayout();
+  return DL.getABITypeAlign(fpType->getScalarType());
+}
+
+llvm::Value *load_blas_scalar(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                              llvm::Value *ptr) {
+  return B.CreateAlignedLoad(fpType, blas_scalar_ptr(B, fpType, ptr),
+                             blas_scalar_align(B, fpType));
+}
+
+void store_blas_scalar(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                       llvm::Value *ptr, llvm::Value *val) {
+  B.CreateAlignedStore(val, blas_scalar_ptr(B, fpType, ptr),
+                       blas_scalar_align(B, fpType));
 }
 
 SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,

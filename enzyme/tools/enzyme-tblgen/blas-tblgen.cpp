@@ -291,13 +291,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   bool lv23 = pattern.isBLASLevel2or3();
   const auto mutArgSet = pattern.getMutableArgs();
 
-  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
-        "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
-  os << "(void)byRefFloat;\n";
-  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
-        "\"cublas\";\n";
+  emit_blas_abi_flags(os);
   os << "const bool cublasv2 = blas.prefix == "
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
   os << "  Value *cacheval = nullptr;\n\n";
@@ -1018,6 +1012,26 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
               "allocationBuilder, \"isnonunit\")}";
         return;
       }
+      if (Def->getName() == "BConj") {
+        // complex conjugate of an fp scalar (identity for real types)
+        if (Dag->getNumArgs() != 1)
+          PrintFatalError(pattern.getLoc(),
+                          "only 1-arg Conj operands supported");
+        os << "({";
+        os << "SmallVector<Value*, 1> carg;\n";
+        os << " for (auto tmp : ";
+        rev_call_arg(forward, Dag, pattern, 0, os, vars);
+        os << " ) carg.push_back(tmp);\n";
+        os << "SmallVector<Value*, 1> vals;\n";
+        os << "for (auto cv : carg) {\n";
+        os << "  Value *cval = load_if_ref(Builder2, fpType, cv, "
+              "byRefFloat);\n";
+        os << "  cval = complex_conjugate(Builder2, cval);\n";
+        os << "  vals.push_back(to_blas_fp_callconv(Builder2, cval, "
+              "byRefFloat, blasFPType, allocationBuilder, \"conj\"));\n";
+        os << "}\n vals; })";
+        return;
+      }
     } else if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (Dag->getNumArgs() != 1)
         PrintFatalError(pattern.getLoc(), "only single op shadow supported");
@@ -1192,7 +1206,10 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       os << "    SmallVector<Type*, 1> tys; for (auto arg : marg) "
             "tys.push_back(arg->getType());\n";
 
-      std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
+      std::string dfnc_ret_ty =
+          returns_via_ptr(dfnc_name)
+              ? std::string("Type::getVoidTy(fpType->getContext())")
+              : get_blas_ret_ty(dfnc_name);
       os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get("
          << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
          << ", tys, false);\n";
@@ -1219,9 +1236,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
-      os << "         SmallVector<Value*, 1> resvec(1, cublasv2 ? "
-         << " (Value*)Builder2.CreateLoad(fpType, marg[marg.size()-1]) : "
-            "(Value*)cubcall);\n"
+      os << "         Value *blasres = cubcall;\n"
+         << "         if (cublasv2) blasres = Builder2.CreateLoad(fpType, "
+            "marg[marg.size()-1]);\n"
+         << "         if (marg_retptr) blasres = Builder2.CreateLoad(fpType, "
+            "marg_retptr);\n"
+         << "         SmallVector<Value*, 1> resvec(1, blasres);\n"
          << "         resvec[0] = to_blas_fp_callconv(Builder2, resvec[0], "
             "byRefFloat, blasFPType, allocationBuilder, \"blascall\");\n"
          << "         resvec;\n";
@@ -1529,8 +1549,21 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
   os << "        }\n";
   if (ty == ArgType::fp) {
+    os << "        Value *" << argName << "_retptr = nullptr;\n";
     os << "           if (cublasv2) " << argName
        << ".push_back(Builder2.CreateAlloca(fpType));\n";
+    if (returns_via_ptr(func)) {
+      // The result is written through a pointer passed as the last argument.
+      os << "        " << argName
+         << "_retptr = allocationBuilder.CreateAlloca(fpType, nullptr, \""
+         << func << ".ret\");\n";
+      os << "        " << argName
+         << ".push_back(type_vec_like->isIntegerTy() ? "
+            "(Value*)Builder2.CreatePtrToInt("
+         << argName << "_retptr, type_vec_like) : "
+         << "(Value*)Builder2.CreatePointerCast(" << argName
+         << "_retptr, type_vec_like));\n";
+    }
   }
 }
 
@@ -1783,7 +1816,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
        << ") "
           "tys.push_back(arg->getType());\n";
 
-    std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
+    std::string dfnc_ret_ty =
+        returns_via_ptr(dfnc_name)
+            ? std::string("Type::getVoidTy(fpType->getContext())")
+            : get_blas_ret_ty(dfnc_name);
     os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get("
        << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
        << ", tys, false);\n";
@@ -1815,6 +1851,8 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
       os << "         if (cublasv2) " << resultVarName
          << " = Builder2.CreateLoad(fpType, " << argPrefix << "[" << argPrefix
          << ".size()-1]);\n";
+      os << "         if (" << argPrefix << "_retptr) " << resultVarName
+         << " = Builder2.CreateLoad(fpType, " << argPrefix << "_retptr);\n";
     }
 
     if (!forward && !runtimeChecked)
@@ -2186,7 +2224,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   const auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
     auto ty = inputType.second;
-    if (isVecLikeArg(ty)) {
+    if (isVecLikeArg(ty) || ty == ArgType::fpret) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
@@ -2231,6 +2269,18 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   emit_dag(/*forward*/ true, "dres", duals, "args", os, "",
            /*actArg*/ -1, pattern, /*runtimeChecked*/ false, vars);
 
+  const ssize_t retPtrIdx = pattern.getRetPtrArgIdx();
+  if (retPtrIdx >= 0) {
+    // The result is returned through a pointer argument: write the derivative
+    // of the result into its shadow instead of returning it.
+    const auto retName = nameVec[retPtrIdx];
+    os << "      if (d_" << retName << ") {\n"
+       << "        if (!dres) dres = Constant::getNullValue(fpType);\n"
+       << "        store_blas_scalar(Builder2, fpType, d_" << retName
+       << ", dres);\n"
+       << "      }\n"
+       << "      dres = nullptr;\n";
+  }
   os << "      if (!dres && !call.getType()->isVoidTy()) dres = "
         "Constant::getNullValue(call.getType());\n";
   os << "      return dres;\n"
@@ -2259,6 +2309,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   const auto rules = pattern.getRules();
   const auto activeArgs = pattern.getActiveArgs();
   const bool lv23 = pattern.isBLASLevel2or3();
+  // If >= 0, the result is returned through this (pointer) argument and its
+  // shadow takes the role of the derivative of the return value.
+  const ssize_t retPtrIdx = pattern.getRetPtrArgIdx();
 
   // If any of the rule uses DiffeRet, the primary function has a ret val
   // and we should emit the code for handling it.
@@ -2271,24 +2324,26 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
      << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
 
-  os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
-        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-     << "      std::string s;\n"
-     << "      llvm::raw_string_ostream ss(s);\n"
-     << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
-     << "      ss << \"Complex inputs not yet supported in reverse mode for "
-        "BLAS calls\" << "
-        "\"\\n\";\n"
-     << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
-     << "    }\n";
+  if (!pattern.supportsComplex()) {
+    os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
+          "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
+       << "      std::string s;\n"
+       << "      llvm::raw_string_ostream ss(s);\n"
+       << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
+       << "      ss << \"Complex inputs not yet supported in reverse mode for "
+          "BLAS calls\" << "
+          "\"\\n\";\n"
+       << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
+       << "    }\n";
+  }
 
   os << "    Value *alloc = nullptr;\n"
-     << "    if (byRef && !cublas) {\n"
+     << "    if (byRefFloat && !cublas) {\n"
      << "      alloc = allocationBuilder.CreateAlloca(fpType, nullptr, "
         "\"ret\");\n"
      << "    }\n\n";
 
-  if (hasDiffeRetVal) {
+  if (hasDiffeRetVal && retPtrIdx < 0) {
     os << "    Value *dif = cublasv2 ? "
           "gutils->invertPointerM(call.getArgOperand("
        << typeMap.size() << " + offset), Builder2) : diffe(&call, Builder2);\n";
@@ -2304,7 +2359,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (size_t i = 0; i < nameVec.size(); i++) {
     const auto name = nameVec[i];
     const auto ty = typeMap.lookup(i);
-    if (isVecLikeArg(ty)) {
+    if (isVecLikeArg(ty) || ty == ArgType::fpret) {
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? lookup(gutils->invertPointerM(orig_" << name
          << ", Builder2), Builder2)\n"
@@ -2367,11 +2422,28 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     first = false;
   }
 
-  if (hasDiffeRetVal) {
+  if (hasDiffeRetVal && retPtrIdx < 0) {
     os << ((first) ? "" : ", ") << "Value *dif) {\n"
-       << "        if (byRef && !cublasv2) {\n"
+       << "        if (byRefFloat && !cublas) {\n"
        << "          Builder2.CreateStore(dif, alloc);\n"
        << "          dif = alloc;\n"
+       << "        }\n";
+  } else if (hasDiffeRetVal) {
+    // The result was written through a pointer argument, whose shadow holds
+    // the derivative of the result. Consume it and reset it, as the primal
+    // call overwrote the result.
+    const auto retName = nameVec[retPtrIdx];
+    os << ") {\n"
+       << "        Value *dif = nullptr;\n"
+       << "        if (d_" << retName << ") {\n"
+       << "          dif = load_blas_scalar(Builder2, fpType, d_" << retName
+       << ");\n"
+       << "          store_blas_scalar(Builder2, fpType, d_" << retName
+       << ", Constant::getNullValue(fpType));\n"
+       << "          if (byRefFloat && !cublas) {\n"
+       << "            Builder2.CreateStore(dif, alloc);\n"
+       << "            dif = alloc;\n"
+       << "          }\n"
        << "        }\n";
   } else {
     os << ") {\n";
@@ -2387,7 +2459,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     // trtrs do in reversed arg order.
     size_t i = (pattern.getName() != "trtrs") ? iteri
                                               : (activeArgs.size() - 1 - iteri);
-    StringRef extraCond;
+    std::string extraCond;
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
@@ -2400,6 +2472,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       if (name == "B") {
         extraCond = "!active_A";
       }
+    }
+    if (retPtrIdx >= 0 && hasDiffeRet(ruleDag)) {
+      // no derivative of the result available if its pointer is inactive
+      extraCond += (extraCond.empty() ? "" : " && ");
+      extraCond += "dif";
     }
 
     emit_if_rule_condition(pattern, ruleDag, name, "      ", os, extraCond);
@@ -2433,7 +2510,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
     os << "      }\n";
   }
-  if (hasDiffeRetVal) {
+  if (hasDiffeRetVal && retPtrIdx < 0) {
     os << "    if (cublasv2) {\n";
     os << "      auto mod = gutils->oldFunc->getParent();\n";
     os << "      auto DL = mod->getDataLayout();\n";
@@ -2463,7 +2540,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     os << ((first) ? "" : ", ") << "d_" + name;
     first = false;
   }
-  if (hasDiffeRetVal) {
+  if (hasDiffeRetVal && retPtrIdx < 0) {
     os << ((first) ? "" : ", ") << "dif);\n";
     os << "  if (!cublasv2)\n"
        << "    setDiffe(\n"

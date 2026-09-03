@@ -4,14 +4,7 @@
 #include "datastructures.h"
 
 inline void emit_BLASTypes(raw_ostream &os) {
-  os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
-        "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == "
-        "\"cublas\";\n";
-  os << "(void)byRefFloat;\n";
-  os << "const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
-        "\"cublas\";\n";
+  emit_blas_abi_flags(os);
   os << "const bool cublasv2 = blas.prefix == "
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
@@ -146,6 +139,10 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       os << "  updateAnalysis(call.getArgOperand(" << i
          << " + offset), ttFloat, &call);\n";
       break;
+    case ArgType::fpret:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << " + offset), ttPtr, &call);\n";
+      break;
     case ArgType::ap:
       // TODO
       break;
@@ -163,7 +160,9 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
-  if (has_active_return(name)) {
+  if (returns_via_ptr(name)) {
+    // the result is typed through its fpret argument above
+  } else if (has_active_return(name)) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
     os << "  if (cublasv2) {\n"

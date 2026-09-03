@@ -26,13 +26,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "  if (!F->empty())\n";
   os << "    return F;\n";
   os << "  llvm::Type *fpType = blas.fpType(F->getContext());\n";
-  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
-        "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
-  os << "(void)byRefFloat;\n";
-  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
-        "\"cublas\";\n";
+  emit_blas_abi_flags(os);
   os << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
      << "#else\n"
@@ -118,7 +112,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "  }\n";
 
-  if (has_active_return(name)) {
+  if (has_active_return(name) && !returns_via_ptr(name)) {
     os << "const bool cublasv2 = blas.prefix == "
           "\"cublas\" && llvm::StringRef(blas.suffix).contains(\"v2\");\n";
     os << "  if (cublasv2) argTys.push_back(getUnqual(fpType));\n";
@@ -180,7 +174,10 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "  addFunctionNoCapture(F, " << i << " + offset);\n";
+      // (pointers may be passed as integers, e.g. by julia)
+      os << "  if (F->getFunctionType()->getParamType(" << i
+         << " + offset)->isPointerTy())\n"
+         << "    addFunctionNoCapture(F, " << i << " + offset);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
         os << "  F->removeParamAttr(" << i << " + offset"
@@ -191,9 +188,20 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }
+    if (typeOfArg == ArgType::fpret) {
+      // The result is only written through this pointer. It is deliberately
+      // not marked WriteOnly: the unused-value analysis would then consider a
+      // local result buffer (e.g. a Ref/alloca) unneeded and drop it, while the
+      // primal call writing to it is kept.
+      os << "  F->removeParamAttr(" << i << " + offset"
+         << ", llvm::Attribute::ReadNone);\n"
+         << "  if (F->getFunctionType()->getParamType(" << i
+         << " + offset)->isPointerTy())\n"
+         << "    addFunctionNoCapture(F, " << i << " + offset);\n";
+    }
   }
 
-  if (has_active_return(name)) {
+  if (has_active_return(name) && !returns_via_ptr(name)) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
     os << "  if (cublas) {\n"

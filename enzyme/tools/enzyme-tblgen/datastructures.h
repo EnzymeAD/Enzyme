@@ -27,7 +27,10 @@ enum class ArgType {
   trans,
   diag,
   side,
-  info
+  info,
+  // pointer through which a scalar fp result is returned instead of a return
+  // value, e.g. the last argument of cblas_zdotc_sub
+  fpret
 };
 
 bool is_char_arg(ArgType ty);
@@ -44,6 +47,15 @@ bool isVecLikeArg(ArgType ty);
 
 // Whether the blas function returns an active value
 bool has_active_return(StringRef str);
+
+// Whether the blas function returns its (active) result through a pointer
+// passed as the last argument rather than as return value (the cblas `_sub`
+// variants of the complex dot products, e.g. cblas_zdotc_sub).
+bool returns_via_ptr(StringRef str);
+
+/// Emit the C++ declarations describing the calling convention of the blas
+/// call being handled (Fortran/cblas/cublas, scalars by reference or value).
+void emit_blas_abi_flags(raw_ostream &os);
 
 class TGPattern;
 
@@ -138,6 +150,11 @@ public:
   ArrayRef<SMLoc> getLoc() const;
   ArgType getTypeOfArg(StringRef name) const;
   const DagInit *getDuals() const;
+  /// Position of the fpret argument (result returned through a pointer),
+  /// or -1 if the function returns its result by value / has none.
+  ssize_t getRetPtrArgIdx() const;
+  /// Whether the reverse-mode rules are valid for complex (c/z) inputs.
+  bool supportsComplex() const;
 };
 
 #endif
