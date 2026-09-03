@@ -2323,6 +2323,19 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
 
+/// Complex conjugate of a blas scalar: complex values are represented as
+/// 2-element fp vectors, real values are returned unchanged.
+llvm::Value *complex_conjugate(llvm::IRBuilder<> &B, llvm::Value *V);
+
+/// Load/store a blas scalar of type fpType through a pointer argument, which
+/// may be passed as an integer (julia) or as a pointer to another element
+/// type. Complex scalars are only assumed to be aligned to their component
+/// type, like the C/Fortran complex types they represent.
+llvm::Value *load_blas_scalar(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                              llvm::Value *ptr);
+void store_blas_scalar(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                       llvm::Value *ptr, llvm::Value *val);
+
 void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
                          BlasInfo blas, bool byRef, llvm::Value *layout,
                          llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,

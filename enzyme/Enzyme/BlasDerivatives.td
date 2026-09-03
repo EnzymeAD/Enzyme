@@ -12,6 +12,9 @@ def len   : BLASType<1, 0>; // num of elements
 def hbw   : BLASType<1, 0>; // half matrix-bandwith}
 def bw    : BLASType<1, 0>; // matrix-bandwith}
 def fp    : BLASType<1, 1>;  // floating point
+// pointer through which a scalar fp result is returned, taking the place of
+// the return value (e.g. the last arg of cblas_zdotc_sub)
+def fpret : BLASType<1, 1>;
 
 // packed array of size ( n * (n  + 1) / 2 )
 class ap<list<string> _args> : BLASType<1, 1> {
@@ -48,6 +51,8 @@ class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> 
   list<dag> ArgDerivatives = resultOps;
   list<string> mutable = mutables;
   dag ArgDuals = forwardOps;
+  // Whether the reverse-mode rules are valid for complex (c, z) inputs.
+  bit supportsComplex = 0;
 }
 
 
@@ -56,6 +61,7 @@ def Rows : MagicInst; // given a transpose, normal rows, normal cols get the tru
 def Concat : MagicInst;
 
 def ShadowNoInc : MagicInst;
+def BConj : MagicInst; // complex conjugate of an fp scalar (identity for reals)
 
 class Binop<string _s, list<string> _tys> {
   string s = _s;
@@ -244,6 +250,38 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   ],
                   (FAdd<""> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
+
+// res = x^H * y = sum(conj(x_i) * y_i), written through the res pointer
+// (the cblas `_sub` calling convention used for the complex dot products).
+// REV: dx += conj(dres) * y ; dy += dres * x
+// FWD: dres = dotc(dx, y) + dotc(x, dy)
+def dotc_sub : CallBlasPattern<(Op $n, $x, $incx, $y, $incy, $res),
+                  ["res"],[len, vinc<["n"]>, vinc<["n"]>, fpret],
+                  [
+                  (BlasCall<"axpy"> $n, (BConj DiffeRet), $y, (Shadow $x)),
+                  (BlasCall<"axpy"> $n, DiffeRet, $x, (Shadow $y)),
+                  (InactiveArg) // res is overwritten; its shadow is consumed as DiffeRet
+                  ],
+                  (FAdd<""> (BlasCall<"dotc_sub"> $n, (Shadow $x), $y), (BlasCall<"dotc_sub"> $n, $x, (Shadow $y)))
+                  > {
+  let supportsComplex = 1;
+}
+
+// res = x^T * y = sum(x_i * y_i), written through the res pointer
+// (unconjugated complex dot product, cblas `_sub` calling convention).
+// REV: dx += dres * y ; dy += dres * x
+// FWD: dres = dotu(dx, y) + dotu(x, dy)
+def dotu_sub : CallBlasPattern<(Op $n, $x, $incx, $y, $incy, $res),
+                  ["res"],[len, vinc<["n"]>, vinc<["n"]>, fpret],
+                  [
+                  (BlasCall<"axpy"> $n, DiffeRet, $y, (Shadow $x)),
+                  (BlasCall<"axpy"> $n, DiffeRet, $x, (Shadow $y)),
+                  (InactiveArg) // res is overwritten; its shadow is consumed as DiffeRet
+                  ],
+                  (FAdd<""> (BlasCall<"dotu_sub"> $n, (Shadow $x), $y), (BlasCall<"dotu_sub"> $n, $x, (Shadow $y)))
+                  > {
+  let supportsComplex = 1;
+}
 
 def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [],[len, vinc<["n"]>],
