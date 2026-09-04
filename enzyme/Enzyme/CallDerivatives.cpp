@@ -1130,6 +1130,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *orig_root = call.getOperand(5);
       Value *orig_comm = call.getOperand(6);
 
+      // The Fortran MPI ABI ("mpi_reduce_", "mpi_reduce__", ...) passes all
+      // arguments by reference and appends an `ierr` argument.
+      bool fortranABI = isFortranMPICall(called->getName());
+
       bool isSum = false;
       if (Constant *C = dyn_cast<Constant>(orig_op)) {
         while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
@@ -1138,6 +1142,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         if (auto GV = dyn_cast<GlobalVariable>(C)) {
           if (GV->getName() == "ompi_mpi_op_sum") {
             isSum = true;
+          } else if (fortranABI && GV->isConstant() &&
+                     GV->hasDefinitiveInitializer()) {
+            // The Fortran ABI passes the operator as a reference to an
+            // integer handle
+            if (auto *CI = dyn_cast<ConstantInt>(GV->getInitializer())) {
+              // MPICH
+              if (CI->getValue() == 1476395011) {
+                isSum = true;
+              }
+            }
           }
         }
         // MPICH
@@ -1148,12 +1162,20 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         }
       }
       if (!isSum) {
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << " call: " << call << "\n";
-        ss << " unhandled mpi_reduce op: " << *orig_op << "\n";
-        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
-        return;
+        if (fortranABI) {
+          // Integer MPI operator handles of the Fortran ABI are
+          // implementation-defined and cannot be mapped portably at compile
+          // time; warn and assume the common case of MPI_SUM.
+          llvm::errs() << "warning: cannot determine MPI op used in `" << call
+                       << "`, assuming MPI_SUM\n";
+        } else {
+          std::string s;
+          llvm::raw_string_ostream ss(s);
+          ss << " call: " << call << "\n";
+          ss << " unhandled mpi_reduce op: " << *orig_op << "\n";
+          EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+          return;
+        }
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -1170,13 +1192,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         shadow_sendbuf = Builder2.CreateIntToPtr(
             shadow_sendbuf, getInt8PtrTy(call.getContext()));
 
-      // Need to preserve the shadow send/recv buffers.
-      auto BufferDefs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal, ValueType::Primal,
-           ValueType::Primal},
-          Builder2, /*lookup*/ !forwardMode);
+      // Need to preserve the shadow send/recv buffers. The Fortran ABI call
+      // has an extra `ierr` argument, so build the bundle to match the actual
+      // call arity: shadow send/recv buffers, primal everything else.
+      std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                               ValueType::Primal);
+      BufferBundleTypes[0] = ValueType::Shadow;
+      BufferBundleTypes[1] = ValueType::Shadow;
+      auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
+                                                   Builder2,
+                                                   /*lookup*/ !forwardMode);
 
       Value *count = gutils->getNewFromOriginal(orig_count);
       if (!forwardMode)
@@ -1198,25 +1223,27 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      // The Fortran ABI passes the count and root arguments by reference;
+      // load them where their value is needed.
+      Type *i32Ty = Type::getInt32Ty(call.getContext());
+      Value *countVal = fortranABI ? Builder2.CreateLoad(i32Ty, count) : count;
+      Value *rootVal = fortranABI ? Builder2.CreateLoad(i32Ty, root) : root;
+
+      Value *rank = MPI_COMM_RANK(comm, Builder2, rootVal->getType(), called);
 
       if (forwardMode) {
-        Value *args[] = {
+        SmallVector<Value *, 8> args = {
             /*sendbuf*/ shadow_sendbuf,
             /*recvbuf*/ shadow_recvbuf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*op*/ op,
-            /*root*/ root,
-            /*comm*/ comm,
         };
+        for (size_t i = 2, e = call.arg_size(); i < e; i++)
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal},
-            Builder2, /*lookup*/ false);
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        BundleTypes[1] = ValueType::Shadow;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ false);
 
         auto callval = call.getCalledOperand();
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
@@ -1227,7 +1254,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
-          count, Type::getInt64Ty(call.getContext()));
+          countVal, Type::getInt64Ty(call.getContext()));
       len_arg =
           Builder2.CreateMul(len_arg,
                              Builder2.CreateZExtOrTrunc(
@@ -1248,7 +1275,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         BasicBlock *mergeBlock = gutils->addReverseBlock(
             rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, rootVal), rootBlock,
                               mergeBlock);
 
         Builder2.SetInsertPoint(rootBlock);
@@ -1277,18 +1304,28 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         // int MPI_Bcast( void *buffer, int count, MPI_Datatype datatype, int
         // root,
         //     MPI_Comm comm )
-        Value *args[] = {
+        // The Fortran ABI passes count/datatype/root/comm by reference (as
+        // held here) and appends an `ierr` argument.
+        SmallVector<Value *, 8> args = {
             /*buf*/ buf,
             /*count*/ count,
             /*datatype*/ datatype,
             /*int root*/ root,
             /*comm*/ comm,
         };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
+        if (fortranABI) {
+          args.push_back(
+              IRBuilder<>(gutils->inversionAllocs)
+                  .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+        }
+        SmallVector<Type *, 8> types;
+        for (auto *arg : args) {
+          types.push_back(arg->getType());
+        }
 
-        FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        FunctionType *FT = FunctionType::get(
+            fortranABI ? Type::getVoidTy(call.getContext()) : call.getType(),
+            types, false);
         Builder2.CreateCall(
             called->getParent()->getOrInsertFunction(
                 getRenamedPerCallingConv(called->getName(), "MPI_Bcast"), FT),
@@ -1303,7 +1340,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         BasicBlock *mergeBlock = gutils->addReverseBlock(
             rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, rootVal), rootBlock,
                               mergeBlock);
 
         Builder2.SetInsertPoint(rootBlock);
@@ -2164,8 +2201,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
       auto callval = call.getCalledOperand();
-      Value *args[] = {
-          lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
+      // Copy all arguments to match the call's arity: Fortran ABI manglings
+      // of MPI_Barrier (e.g. "mpi_barrier_") take an extra `ierr` argument.
+      SmallVector<Value *, 4> args;
+      for (unsigned i = 0; i < call.arg_size(); i++)
+        args.push_back(
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(i)), Builder2));
       Builder2.CreateCall(call.getFunctionType(), callval, args);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -2198,6 +2239,81 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           called->getParent()->getOrInsertFunction(
               getRenamedPerCallingConv(called->getName(), "MPI_Comm_free"), FT),
           args);
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // Simple MPI functions that don't affect differentiation - just duplicate
+  // them in both forward and reverse passes. These functions query MPI
+  // state (communicator size, rank, processor name, etc.) but don't
+  // participate in the computation being differentiated.
+  if (funcName == "MPI_Comm_size" || funcName == "PMPI_Comm_size" ||
+      funcName == "MPI_Comm_rank" || funcName == "PMPI_Comm_rank" ||
+      funcName == "MPI_Get_processor_name" ||
+      funcName == "PMPI_Get_processor_name") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModePrimal) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      SmallVector<Value *, 8> args;
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
+        args.push_back(lookup(gutils->getNewFromOriginal(call.getArgOperand(i)),
+                              Builder2));
+      }
+      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
+                          args);
+    }
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+      SmallVector<Value *, 8> args;
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+      }
+      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
+                          args);
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // MPI_Init / MPI_Finalize don't participate in the computation being
+  // differentiated - just duplicate them as-is in both passes.
+  if (funcName == "MPI_Init" || funcName == "PMPI_Init" ||
+      funcName == "MPI_Init_thread" || funcName == "PMPI_Init_thread" ||
+      funcName == "MPI_Finalize" || funcName == "PMPI_Finalize" ||
+      funcName == "MPI_Test" || funcName == "PMPI_Test" ||
+      funcName == "MPI_Probe" || funcName == "PMPI_Probe") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModePrimal) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      SmallVector<Value *, 8> args;
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
+        args.push_back(lookup(gutils->getNewFromOriginal(call.getArgOperand(i)),
+                              Builder2));
+      }
+      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
+                          args);
+    }
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+      SmallVector<Value *, 8> args;
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+      }
+      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
+                          args);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -2241,12 +2357,27 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
   }
 
-  if ((startsWith(funcName, "MPI_") || startsWith(funcName, "PMPI_")) &&
-      (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
-       funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
-       MPIInactiveCommAllocators.find(funcName) !=
+  // Canonicalize MPI routine names across calling conventions: the C
+  // convention ("MPI_Recv", "PMPI_Recv") as well as Fortran ABI manglings
+  // ("mpi_recv_", "mpi_comm_rank__", ...) all map to the canonical C name
+  // (without profiling prefix) used throughout handleMPI.
+  llvm::StringRef CanonicalMPIName = canonicalizeMPIName(funcName);
+  if (!CanonicalMPIName.empty() &&
+      (!gutils->isConstantInstruction(&call) ||
+       CanonicalMPIName == "MPI_Barrier" ||
+       CanonicalMPIName == "MPI_Comm_free" ||
+       CanonicalMPIName == "MPI_Comm_disconnect" ||
+       CanonicalMPIName == "MPI_Comm_size" ||
+       CanonicalMPIName == "MPI_Comm_rank" ||
+       CanonicalMPIName == "MPI_Init" ||
+       CanonicalMPIName == "MPI_Init_thread" ||
+       CanonicalMPIName == "MPI_Finalize" ||
+       CanonicalMPIName == "MPI_Get_processor_name" ||
+       CanonicalMPIName == "MPI_Test" ||
+       CanonicalMPIName == "MPI_Probe" ||
+       MPIInactiveCommAllocators.find(CanonicalMPIName) !=
            MPIInactiveCommAllocators.end())) {
-    handleMPI(call, called, funcName);
+    handleMPI(call, called, CanonicalMPIName);
     return true;
   }
 

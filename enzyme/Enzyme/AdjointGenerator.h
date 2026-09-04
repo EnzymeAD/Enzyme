@@ -136,6 +136,28 @@ public:
                              llvm::Type *intType, llvm::Function *caller) {
     using namespace llvm;
 
+    // Fortran ABI ("mpi_type_size_"): all arguments are passed by reference
+    // and the call takes an extra trailing `ierr` argument.
+    if (isFortranMPICall(caller->getName())) {
+      Type *i32 = Type::getInt32Ty(DT->getContext());
+      Type *pargs[] = {getInt8PtrTy(DT->getContext()), getUnqual(i32),
+                       getUnqual(i32)};
+      auto FT = FunctionType::get(Type::getVoidTy(DT->getContext()), pargs,
+                                  false);
+      IRBuilder<> AllocaBuilder(gutils->inversionAllocs);
+      auto alloc = AllocaBuilder.CreateAlloca(i32);
+      auto ierr = AllocaBuilder.CreateAlloca(i32);
+      llvm::Value *args[] = {DT, alloc, ierr};
+      if (DT->getType() != pargs[0])
+        args[0] = B.CreateBitCast(args[0], pargs[0]);
+      B.CreateCall(
+          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(caller->getName(), "MPI_Type_size"),
+              FT),
+          args);
+      return B.CreateLoad(i32, alloc);
+    }
+
     if (DT->getType()->isIntegerTy())
       DT = B.CreateIntToPtr(DT, getInt8PtrTy(DT->getContext()));
 
@@ -199,6 +221,28 @@ public:
   llvm::Value *MPI_COMM_RANK(llvm::Value *comm, llvm::IRBuilder<> &B,
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
+
+    // Fortran ABI ("mpi_comm_rank_"): all arguments are passed by reference
+    // and the call takes an extra trailing `ierr` argument.
+    if (isFortranMPICall(caller->getName())) {
+      Type *i32 = Type::getInt32Ty(comm->getContext());
+      Type *pargs[] = {getInt8PtrTy(comm->getContext()), getUnqual(i32),
+                       getUnqual(i32)};
+      auto FT = FunctionType::get(Type::getVoidTy(comm->getContext()), pargs,
+                                  false);
+      IRBuilder<> AllocaBuilder(gutils->inversionAllocs);
+      auto alloc = AllocaBuilder.CreateAlloca(i32);
+      auto ierr = AllocaBuilder.CreateAlloca(i32);
+      llvm::Value *args[] = {comm, alloc, ierr};
+      if (comm->getType() != pargs[0])
+        args[0] = B.CreateBitCast(args[0], pargs[0]);
+      B.CreateCall(
+          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(caller->getName(), "MPI_Comm_rank"),
+              FT),
+          args);
+      return B.CreateLoad(i32, alloc);
+    }
 
     Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
@@ -4934,15 +4978,57 @@ public:
                    .Only(0, &call);
           goto knownF;
         }
+        // Handle LoadInst (common for the Fortran ABI where arguments are
+        // passed by reference: the buffer argument is a load of the array's
+        // address from an alloca'd variable)
+        if (auto LI = dyn_cast<LoadInst>(origArg)) {
+          auto *PT = dyn_cast<PointerType>(LI->getType());
+          if (PT && PT->getPointerElementType()->isFPOrFPVectorTy()) {
+            vd = TypeTree(ConcreteType(
+                   PT->getPointerElementType()->getScalarType()))
+                   .Only(0, &call);
+            goto knownF;
+          }
+        }
+        // Handle pointer arguments directly (Fortran MPI routines pass all
+        // arguments by reference, so the buffer argument may be a pointer to
+        // real data)
+        if (origArg->getType()->isPointerTy() &&
+            origArg->getType()->getPointerElementType()->isFPOrFPVectorTy()) {
+          vd = TypeTree(ConcreteType(
+                   origArg->getType()->getPointerElementType()->getScalarType()))
+                   .Only(0, &call);
+          goto knownF;
+        }
       }
 #endif
+      // With opaque pointers (LLVM >= 17) the pointee type of a pointer is
+      // not available from its type. Fall back to the element type when the
+      // buffer argument is an alloca or a GEP thereof, which is ground truth
+      // even with opaque pointers. This covers the Fortran ABI,
+      // where every argument is passed by reference and the buffer may be
+      // the address of a local variable that is only ever accessed by MPI
+      // routines (so TypeAnalysis never observes its contents).
+      if (auto AI = dyn_cast<AllocaInst>(origArg)) {
+        if (AI->getAllocatedType()->isFPOrFPVectorTy()) {
+          vd = TypeTree(ConcreteType(AI->getAllocatedType()->getScalarType()))
+                   .Only(0, &call);
+          goto knownF;
+        }
+      }
+      if (auto GEP = dyn_cast<GetElementPtrInst>(origArg)) {
+        if (GEP->getSourceElementType()->isFPOrFPVectorTy()) {
+          vd = TypeTree(
+                   ConcreteType(GEP->getSourceElementType()->getScalarType()))
+                   .Only(0, &call);
+          goto knownF;
+        }
+      }
       TR.dump();
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
     }
-#if LLVM_VERSION_MAJOR < 17
   knownF:
-#endif
     unsigned start = 0;
     while (1) {
       unsigned nextStart = size;

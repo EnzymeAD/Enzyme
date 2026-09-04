@@ -2610,6 +2610,91 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::Value *op0, llvm::Value *op1,
                              bool offsetAllowed = false);
 
+/// MPI routines recognized by Enzyme, keyed by their lowercase,
+/// underscore-free base name and mapped to the canonical C name (without the
+/// profiling "P" prefix).
+static const std::pair<const char *, const char *> KnownMPIFunctions[] = {
+    {"abort", "MPI_Abort"},
+    {"allgather", "MPI_Allgather"},
+    {"allreduce", "MPI_Allreduce"},
+    {"barrier", "MPI_Barrier"},
+    {"bcast", "MPI_Bcast"},
+    {"brecv", "MPI_Brecv"},
+    {"bsend", "MPI_Bsend"},
+    {"comm_accept", "MPI_Comm_accept"},
+    {"comm_call_errhandler", "MPI_Comm_call_errhandler"},
+    {"comm_compare", "MPI_Comm_compare"},
+    {"comm_connect", "MPI_Comm_connect"},
+    {"comm_create", "MPI_Comm_create"},
+    {"comm_create_errhandler", "MPI_Comm_create_errhandler"},
+    {"comm_create_group", "MPI_Comm_create_group"},
+    {"comm_disconnect", "MPI_Comm_disconnect"},
+    {"comm_dup", "MPI_Comm_dup"},
+    {"comm_free", "MPI_Comm_free"},
+    {"comm_get_info", "MPI_Comm_get_info"},
+    {"comm_get_name", "MPI_Comm_get_name"},
+    {"comm_get_parent", "MPI_Comm_get_parent"},
+    {"comm_idup", "MPI_Comm_idup"},
+    {"comm_join", "MPI_Comm_join"},
+    {"comm_rank", "MPI_Comm_rank"},
+    {"comm_remote_size", "MPI_Comm_remote_size"},
+    {"comm_set_info", "MPI_Comm_set_info"},
+    {"comm_set_name", "MPI_Comm_set_name"},
+    {"comm_size", "MPI_Comm_size"},
+    {"comm_spawn", "MPI_Comm_spawn"},
+    {"comm_spawn_multiple", "MPI_Comm_spawn_multiple"},
+    {"comm_split", "MPI_Comm_split"},
+    {"finalize", "MPI_Finalize"},
+    {"gather", "MPI_Gather"},
+    {"get_count", "MPI_Get_count"},
+    {"get_processor_name", "MPI_Get_processor_name"},
+    {"graph_create", "MPI_Graph_create"},
+    {"init", "MPI_Init"},
+    {"intercomm_create", "MPI_Intercomm_create"},
+    {"irecv", "MPI_Irecv"},
+    {"isend", "MPI_Isend"},
+    {"op_create", "MPI_Op_create"},
+    {"probe", "MPI_Probe"},
+    {"recv", "MPI_Recv"},
+    {"reduce", "MPI_Reduce"},
+    {"reduce_scatter_block", "MPI_Reduce_scatter_block"},
+    {"scatter", "MPI_Scatter"},
+    {"send", "MPI_Send"},
+    {"ssend", "MPI_Ssend"},
+    {"test", "MPI_Test"},
+    {"type_size", "MPI_Type_size"},
+    {"wait", "MPI_Wait"},
+    {"waitall", "MPI_Waitall"},
+    {"wtime", "MPI_Wtime"},
+};
+
+/// Canonicalize the name of an MPI routine across calling conventions: both
+/// the C convention ("MPI_Recv", "PMPI_Recv") and common Fortran ABI
+/// manglings ("mpi_recv_", "mpi_recv__", "pmpi_recv_", "MPI_RECV", ...) map
+/// to the canonical C name without profiling prefix (e.g. "MPI_Recv").
+/// Returns an empty StringRef if the name is not a known MPI routine.
+static inline llvm::StringRef canonicalizeMPIName(llvm::StringRef Name) {
+  llvm::StringRef Base = Name;
+  if (!Base.consume_front_insensitive("pmpi_") &&
+      !Base.consume_front_insensitive("mpi_"))
+    return "";
+  while (Base.consume_back("_")) {
+  }
+  if (Base.empty())
+    return "";
+  for (const auto &E : KnownMPIFunctions)
+    if (Base.equals_insensitive(E.first))
+      return E.second;
+  return "";
+}
+
+/// True if `Name` uses a Fortran ABI mangling of an MPI routine (trailing
+/// underscore(s), e.g. "mpi_recv_", "mpi_comm_rank__"). Such calls pass all
+/// arguments by reference and take an extra trailing `ierr` argument.
+static inline bool isFortranMPICall(llvm::StringRef Name) {
+  return Name.ends_with("_") && !canonicalizeMPIName(Name).empty();
+}
+
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
   if (!startsWith(caller, "ejl")) {
@@ -2631,6 +2716,20 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
   if (startsWith(caller, "PMPI_")) {
     assert(startsWith(callee, "MPI"));
     return ("P" + callee).str();
+  }
+  // A caller using a Fortran MPI ABI convention (e.g. "mpi_reduce_") needs
+  // the callee mangled the same way so that the call resolves against the
+  // MPI library's Fortran bindings (e.g. "mpi_bcast_").
+  if (startsWith(callee, "MPI_") && isFortranMPICall(caller)) {
+    bool profiling = caller.substr(0, 5).equals_insensitive("pmpi_");
+    size_t underscores = 0;
+    while (underscores < caller.size() &&
+           caller[caller.size() - 1 - underscores] == '_')
+      underscores++;
+    std::string result = profiling ? "pmpi_" : "mpi_";
+    result += callee.drop_front(strlen("MPI_")).lower();
+    result.append(underscores, '_');
+    return result;
   }
   return callee.str();
 }

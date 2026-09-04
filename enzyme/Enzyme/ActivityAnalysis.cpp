@@ -594,7 +594,22 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     return true;
   }
 
+  // Also recognize Fortran ABI manglings of MPI routines (e.g. "mpi_init_",
+  // "mpi_comm_rank_") by their canonical C name.
+  StringRef CanonicalMPIName = canonicalizeMPIName(Name);
+
+  if (!CanonicalMPIName.empty() &&
+      KnownInactiveFunctions.count(CanonicalMPIName)) {
+    return true;
+  }
+
   if (MPIInactiveCommAllocators.find(Name) != MPIInactiveCommAllocators.end()) {
+    return true;
+  }
+
+  if (!CanonicalMPIName.empty() &&
+      MPIInactiveCommAllocators.find(CanonicalMPIName) !=
+          MPIInactiveCommAllocators.end()) {
     return true;
   }
   Intrinsic::ID ID;
@@ -712,23 +727,44 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
     return true;
 
+  // Canonicalize MPI names across calling conventions (C "MPI_Recv",
+  // "PMPI_Recv" and Fortran "mpi_recv_" etc.): the leading argument indices
+  // match between the ABIs, the Fortran ABI only appends an `ierr` argument.
+  StringRef CanonicalMPIName = canonicalizeMPIName(Name);
+
   // only the buffer is active for mpi send/recv
-  if (Name == "MPI_Recv" || Name == "MPI_Send" || Name == "PMPI_Recv" ||
-      Name == "PMPI_Send") {
+  if (CanonicalMPIName == "MPI_Recv" || CanonicalMPIName == "MPI_Send") {
     return val != CI->getOperand(0);
   }
   // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "PMPI_Irecv" ||
-      Name == "PMPI_Isend") {
+  if (CanonicalMPIName == "MPI_Irecv" || CanonicalMPIName == "MPI_Isend") {
     return val != CI->getOperand(0) && val != CI->getOperand(6);
   }
 
   // only request is active
-  if (Name == "MPI_Wait" || Name == "PMPI_Wait")
+  if (CanonicalMPIName == "MPI_Wait")
     return val != CI->getOperand(0);
 
-  if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
+  if (CanonicalMPIName == "MPI_Waitall")
     return val != CI->getOperand(1);
+
+  // only the send/recv buffers are active for mpi reduce/allreduce
+  if (CanonicalMPIName == "MPI_Reduce" ||
+      CanonicalMPIName == "MPI_Allreduce" ||
+      CanonicalMPIName == "MPI_Reduce_scatter_block") {
+    return val != CI->getOperand(0) && val != CI->getOperand(1);
+  }
+
+  // only the buffer is active for mpi bcast
+  if (CanonicalMPIName == "MPI_Bcast") {
+    return val != CI->getOperand(0);
+  }
+
+  // mpi init/finalize and rank/size queries have no active arguments
+  if (CanonicalMPIName == "MPI_Init" || CanonicalMPIName == "MPI_Finalize" ||
+      CanonicalMPIName == "MPI_Comm_rank" ||
+      CanonicalMPIName == "MPI_Comm_size" || CanonicalMPIName == "MPI_Barrier")
+    return true;
 
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
