@@ -3688,66 +3688,97 @@ Function *getFirstFunctionDefinition(Module &M) {
   return nullptr;
 }
 
+/// Decompose `in` as `prefix + floatType + stem + suffix` using the supplied
+/// tables, setting the out-parameters to the entries that matched.
+///
+/// No name the tables in `extractBLAS` can spell decomposes in more than one
+/// way, so peeling the fixed parts off either end of `in` and looking up what
+/// remains is equivalent to comparing `in` against every name the tables can
+/// generate -- but it allocates nothing. That matters: `extractBLAS` runs for
+/// every call instruction visited by type analysis and by
+/// `is_use_directly_needed_in_reverse`, and materialising the ~1200 candidate
+/// `std::string`s per query dominated compile time on call-heavy modules that
+/// contain no BLAS at all.
+static bool matchBLASName(StringRef in, ArrayRef<const char *> prefixes,
+                          ArrayRef<const char *> floatTypes,
+                          ArrayRef<const char *> stems,
+                          ArrayRef<const char *> suffixes,
+                          const char *&prefixOut, const char *&floatTypeOut,
+                          const char *&stemOut, const char *&suffixOut) {
+  for (const char *p : prefixes) {
+    StringRef afterPrefix = in;
+    if (!afterPrefix.consume_front(p))
+      continue;
+    for (const char *t : floatTypes) {
+      StringRef afterType = afterPrefix;
+      if (!afterType.consume_front(t))
+        continue;
+      for (const char *s : suffixes) {
+        StringRef stem = afterType;
+        if (!stem.consume_back(s))
+          continue;
+        for (const char *f : stems) {
+          if (stem != f)
+            continue;
+          prefixOut = p;
+          floatTypeOut = t;
+          stemOut = f;
+          suffixOut = s;
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {
+  static const char *extractable[] = {
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
   };
-  const char *floatType[] = {"s", "d", "c", "z"};
-  const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
-  const char *suffixes[] = {"", "_", "64_", "_64_"};
-  for (auto t : floatType) {
-    for (auto f : extractable) {
-      for (auto p : prefixes) {
-        for (auto s : suffixes) {
-          if (in == (Twine(p) + t + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t, p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *floatType[] = {"s", "d", "c", "z"};
+  static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
+  static const char *suffixes[] = {"", "_", "64_", "_64_"};
+
+  const char *p = nullptr, *t = nullptr, *f = nullptr, *s = nullptr;
+  if (matchBLASName(in, prefixes, floatType, extractable, suffixes, p, t, f,
+                    s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
-  const char *cuFFloatType[] = {"s", "d", "c", "z"};
-  const char *cuCPrefixes[] = {"cublas"};
-  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
-  for (auto t : llvm::enumerate(cuCFloatType)) {
-    for (auto f : extractable) {
-      for (auto p : cuCPrefixes) {
-        for (auto s : cuSuffixes) {
-          if (in == (Twine(p) + t.value() + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t.value(), p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  static const char *cuCPrefixes[] = {"cublas"};
+  static const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
+  if (matchBLASName(in, cuCPrefixes, cuCFloatType, extractable, cuSuffixes, p,
+                    t, f, s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // Fortran interface to cublas
-  const char *cuFPrefixes[] = {"cublas_"};
-  for (auto t : cuFFloatType) {
-    for (auto f : extractable) {
-      for (auto p : cuFPrefixes) {
-        if (in == (Twine(p) + t + f).str()) {
-          return BlasInfo{
-              t, p, "", f, false,
-          };
-        }
-      }
-    }
+  static const char *cuFFloatType[] = {"s", "d", "c", "z"};
+  static const char *cuFPrefixes[] = {"cublas_"};
+  static const char *cuFSuffixes[] = {""};
+  if (matchBLASName(in, cuFPrefixes, cuFFloatType, extractable, cuFSuffixes, p,
+                    t, f, s)) {
+    return BlasInfo{
+        t, p, "", f, false,
+    };
   }
+
   return {};
 }
 
