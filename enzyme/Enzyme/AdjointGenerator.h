@@ -4553,6 +4553,38 @@ public:
             available[&*subarg] = pre_args[i];
             subarg++;
           }
+          // At optimization levels ≥O2 the compiler may outline the OMP
+          // parallel region in a way that produces intermediate instructions
+          // (loads, GEPs, casts, ...) as tape-store operands rather than bare
+          // captured arguments.  `unwrapM`/`lookupM` require every instruction
+          // it encounters to belong to `gutils->newFunc`, so we pre-populate
+          // `available` with caller-context clones of any such cross-function
+          // instructions before calling `unwrapM`.
+          SmallPtrSet<Value *, 8> remapVisited;
+          std::function<Value *(Value *)> remapFromOutlined;
+          remapFromOutlined = [&](Value *v) -> Value * {
+            if (auto found = available.find(v); found != available.end())
+              return found->second;
+            if (isa<Constant>(v) || isa<BasicBlock>(v) || isa<Function>(v) ||
+                isa<MetadataAsValue>(v) || isa<InlineAsm>(v) ||
+                isa<Argument>(v))
+              return v;
+            auto inst = cast<Instruction>(v);
+            if (inst->getParent()->getParent() == gutils->newFunc)
+              return v;
+            // Guard against cycles (shouldn't occur in SSA, but be safe).
+            if (!remapVisited.insert(v).second)
+              return v;
+            auto newInst = inst->clone();
+            newInst->setName(inst->getName() + ".omprem");
+            for (unsigned i = 0; i < newInst->getNumOperands(); ++i)
+              newInst->setOperand(i, remapFromOutlined(inst->getOperand(i)));
+            BuilderZ.Insert(newInst);
+            available[inst] = newInst;
+            return newInst;
+          };
+          for (auto &gpair : geps)
+            remapFromOutlined(gpair.second);
           for (auto pair : geps) {
             Value *op = pair.second;
             Value *alloc = op;
