@@ -4,6 +4,41 @@ else()
   set(ENZYME_FLANG_ENABLED 0)
 endif()
 
+# Locate an MPI implementation for the Fortran MPI regression tests
+# (enzyme/test/Fortran/MPI); the tests are marked unsupported if none is
+# found. The include and link flags are serialized into lit substitutions
+# %mpi_include and %mpi_libs.
+set(ENZYME_MPI_FORTRAN_ENABLED 0)
+set(ENZYME_MPI_INCLUDE_FLAGS "")
+set(ENZYME_MPI_LINK_FLAGS "")
+if (ENZYME_FORTRAN)
+  # enable_language(Fortran) in ../Fortran only covers that directory scope.
+  enable_language(Fortran)
+  find_package(MPI COMPONENTS Fortran QUIET)
+  if (MPI_Fortran_FOUND)
+    set(ENZYME_MPI_FORTRAN_ENABLED 1)
+    foreach(dir IN LISTS MPI_Fortran_INCLUDE_DIRS MPI_Fortran_MODULE_DIR)
+      string(APPEND ENZYME_MPI_INCLUDE_FLAGS " -I${dir}")
+    endforeach()
+    foreach(dir IN LISTS MPI_Fortran_LIBRARY_DIRS)
+      string(APPEND ENZYME_MPI_LINK_FLAGS " -L${dir}")
+    endforeach()
+    if (MPI_Fortran_LINK_FLAGS)
+      string(APPEND ENZYME_MPI_LINK_FLAGS " ${MPI_Fortran_LINK_FLAGS}")
+    endif()
+    foreach(lib IN LISTS MPI_Fortran_LIBRARIES)
+      if (EXISTS "${lib}")
+        string(APPEND ENZYME_MPI_LINK_FLAGS " ${lib}")
+      else()
+        string(APPEND ENZYME_MPI_LINK_FLAGS " -l${lib}")
+      endif()
+    endforeach()
+    message(STATUS "Enzyme Fortran MPI tests enabled: ${ENZYME_MPI_INCLUDE_FLAGS} / ${ENZYME_MPI_LINK_FLAGS}")
+  else()
+    message(STATUS "MPI Fortran bindings not found: MPI Fortran tests unsupported")
+  endif()
+endif()
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
