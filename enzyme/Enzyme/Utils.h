@@ -2688,6 +2688,13 @@ static inline llvm::StringRef canonicalizeMPIName(llvm::StringRef Name) {
   return "";
 }
 
+/// True if `Name` uses a Fortran ABI mangling of an MPI routine (trailing
+/// underscore(s), e.g. "mpi_recv_", "mpi_comm_rank__"). Such calls pass all
+/// arguments by reference and take an extra trailing `ierr` argument.
+static inline bool isFortranMPICall(llvm::StringRef Name) {
+  return Name.ends_with("_") && !canonicalizeMPIName(Name).empty();
+}
+
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
   if (!startsWith(caller, "ejl")) {
@@ -2709,6 +2716,20 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
   if (startsWith(caller, "PMPI_")) {
     assert(startsWith(callee, "MPI"));
     return ("P" + callee).str();
+  }
+  // A caller using a Fortran MPI ABI convention (e.g. "mpi_reduce_") needs
+  // the callee mangled the same way so that the call resolves against the
+  // MPI library's Fortran bindings (e.g. "mpi_bcast_").
+  if (startsWith(callee, "MPI_") && isFortranMPICall(caller)) {
+    bool profiling = caller.substr(0, 5).equals_insensitive("pmpi_");
+    size_t underscores = 0;
+    while (underscores < caller.size() &&
+           caller[caller.size() - 1 - underscores] == '_')
+      underscores++;
+    std::string result = profiling ? "pmpi_" : "mpi_";
+    result += callee.drop_front(strlen("MPI_")).lower();
+    result.append(underscores, '_');
+    return result;
   }
   return callee.str();
 }
