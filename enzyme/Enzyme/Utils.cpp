@@ -172,7 +172,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
   }
-  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+  // Canonical MPI name across calling conventions (C "MPI_Recv", "PMPI_Recv"
+  // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
+  // ABIs; the Fortran ABI only appends a trailing `ierr` argument.
+  StringRef canonMPIName = canonicalizeMPIName(F.getName());
+  if (canonMPIName == "MPI_Irecv") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -205,7 +209,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     }
   }
   auto name = getFuncName(&F);
-  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+  if (canonMPIName == "MPI_Isend") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -237,8 +241,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
-      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+  if (canonMPIName == "MPI_Comm_rank" || canonMPIName == "MPI_Comm_size") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -267,7 +270,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+  if (canonMPIName == "MPI_Wait") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -282,7 +285,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+  if (canonMPIName == "MPI_Waitall") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -311,7 +314,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 
       {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
   {
-    auto found = MPI_TYPE_ARGS.find(name.str());
+    auto found = MPI_TYPE_ARGS.find(canonMPIName.str());
     if (found != MPI_TYPE_ARGS.end()) {
       for (auto user : F.users()) {
         if (auto CI = dyn_cast<CallBase>(user))

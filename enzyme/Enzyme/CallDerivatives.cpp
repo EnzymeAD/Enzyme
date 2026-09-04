@@ -2241,12 +2241,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
   }
 
-  if ((startsWith(funcName, "MPI_") || startsWith(funcName, "PMPI_")) &&
-      (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
-       funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
-       MPIInactiveCommAllocators.find(funcName) !=
+  // Canonicalize MPI routine names across calling conventions: the C
+  // convention ("MPI_Recv", "PMPI_Recv") as well as Fortran ABI manglings
+  // ("mpi_recv_", "mpi_comm_rank__", ...) all map to the canonical C name
+  // (without profiling prefix) used throughout handleMPI.
+  llvm::StringRef CanonicalMPIName = canonicalizeMPIName(funcName);
+  if (!CanonicalMPIName.empty() &&
+      (!gutils->isConstantInstruction(&call) ||
+       CanonicalMPIName == "MPI_Barrier" ||
+       CanonicalMPIName == "MPI_Comm_free" ||
+       CanonicalMPIName == "MPI_Comm_disconnect" ||
+       MPIInactiveCommAllocators.find(CanonicalMPIName) !=
            MPIInactiveCommAllocators.end())) {
-    handleMPI(call, called, funcName);
+    handleMPI(call, called, CanonicalMPIName);
     return true;
   }
 
