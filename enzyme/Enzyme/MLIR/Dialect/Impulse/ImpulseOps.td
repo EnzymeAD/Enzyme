@@ -183,9 +183,21 @@ def RegenerateOp : Impulse_Op<"regenerate",
     site that was previously not taken (its trace slot is stale) is refreshed
     from the constraint instead of the stale slot.
 
+    The trace TYPE selects the weight semantics. A bare trace
+    (tensor<1 x position_size x f64>) yields the full joint log probability.
+    A score-tail trace (width = position_size + one memoized score scalar per
+    site) yields the accept-ratio DELTA sum_dirty(logp_new - stored_score): a
+    density term is dirty iff its site is regenerated or its parameters are
+    dataflow-reachable from a regenerated site's value; clean terms cancel in
+    the Metropolis--Hastings ratio and are never emitted, and old scores are
+    read from the tail instead of recomputed. The caller maintains the carried
+    weight as `w + delta` on accept, and the returned trace carries refreshed
+    scores.
+
     Returns: (new_trace, weight, retvals...)
-    - new_trace: tensor<1 x position_size x f64> - flattened samples
-    - weight: tensor<f64> - accumulated log probability
+    - new_trace: same type as the given trace - flattened samples
+      (plus refreshed site scores for score-tail traces)
+    - weight: tensor<f64> - full joint or delta, per the trace type
     - retvals: original function return values
   }];
 
@@ -197,14 +209,7 @@ def RegenerateOp : Impulse_Op<"regenerate",
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
     OptionalAttr<AddressArrayAttr>:$constrained_addresses,
-    DefaultValuedStrAttr<StrAttr, "">:$name,
-    // Delta-weight mode: the `weight` result is the accept-ratio delta
-    // sum_dirty(logp_new - logp_old) rather than the full joint. A density
-    // term is dirty iff its site is regenerated or its parameters are
-    // dataflow-reachable from a regenerated site's value; clean terms cancel
-    // in the Metropolis--Hastings ratio and are never emitted. The caller
-    // maintains the carried weight as `w + delta` on accept.
-    UnitAttr:$delta_weight
+    DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs

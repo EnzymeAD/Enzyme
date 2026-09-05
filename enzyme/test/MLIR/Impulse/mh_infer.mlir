@@ -1,8 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// engine) in DELTA-WEIGHT mode: the regenerate result is the accept-ratio
-// delta over the dirty density terms only, the accept compares log(u) against
-// that delta directly, and the carried weight advances by the delta on accept.
+// engine) and does the accept/reject, matching the legacy `impulse.mh` path.
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
@@ -35,12 +33,12 @@ module {
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<{{.*}}> : tensor<1x2xf64>
 // CHECK-DAG: %[[INIT_WEIGHT:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
 // CHECK: %[[REGEN:.+]]:4 = call @test.regenerate(%[[INIT_TRACE]], %[[RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT: %[[WACC:.+]] = arith.addf %[[REGEN]]#1, %[[INIT_WEIGHT]] : tensor<f64>
+// CHECK-NEXT: %[[WDIFF:.+]] = arith.subf %[[REGEN]]#1, %[[INIT_WEIGHT]] : tensor<f64>
 // CHECK-NEXT: %[[NEWRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
-// CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[REGEN]]#1 : tensor<f64>
+// CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[WDIFF]] : tensor<f64>
 // CHECK-NEXT: %[[SELTR:.+]] = impulse.select %[[ACC]], %[[REGEN]]#0, %[[INIT_TRACE]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
-// CHECK-NEXT: %[[SELWT:.+]] = arith.select %[[ACC]], %[[WACC]], %[[INIT_WEIGHT]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: %[[SELWT:.+]] = arith.select %[[ACC]], %[[REGEN]]#1, %[[INIT_WEIGHT]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: return %[[SELTR]], %[[ACC]], %[[NEWRNG]], %[[SELWT]] : tensor<1x2xf64>, tensor<i1>, tensor<2xui64>, tensor<f64>
 
 // CHECK-LABEL: func.func @test.regenerate

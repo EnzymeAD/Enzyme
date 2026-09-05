@@ -125,6 +125,7 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
   //    per-site logpdf, evaluated at the site's (position or pinned) value.
   OpBuilder builder(lpBlock, lpBlock->end());
   Value total;
+  SmallVector<Value> contributions;
   for (Operation &op : samplerEntry.without_terminator()) {
     auto site = dyn_cast<SampleRegionOp>(&op);
     if (!site) {
@@ -152,12 +153,16 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
       builder.clone(siteOp, siteMap);
     Value contribution =
         siteMap.lookupOrDefault(siteLogpdf.getTerminator()->getOperand(0));
+    contributions.push_back(contribution);
     total =
         total ? Value(arith::AddFOp::create(builder, loc, total, contribution))
               : contribution;
   }
 
-  YieldOp::create(builder, loc, ValueRange{total});
+  // Yields the joint density, then per-site terms in score-tail order.
+  SmallVector<Value> yields{total};
+  yields.append(contributions.begin(), contributions.end());
+  YieldOp::create(builder, loc, yields);
 
   // random/randomSplit are effect-free in a density though not marked Pure.
   bool sweptAny = true;

@@ -670,8 +670,12 @@ struct ExpandImpulsePass
         return failure();
       }
 
+      int64_t declaredWidth =
+          cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
+      int64_t scoreTailSize = declaredWidth - positionSize;
+      SmallVector<Value> siteScores;
       auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Simulate,
-                                                  positionSize);
+                                                  declaredWidth);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -728,6 +732,8 @@ struct ExpandImpulsePass
               rewriter, sampleOp.getLoc(), dist, sampledValues[1], distArgs);
           weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                     weightAccumulator, logpdf);
+          if (scoreTailSize > 0)
+            siteScores.push_back(logpdf);
 
           bool inSelection = false;
           for (auto addr : selection) {
@@ -813,6 +819,8 @@ struct ExpandImpulsePass
           weightAccumulator =
               arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                     weightAccumulator, logpdf.getResult(0));
+          if (scoreTailSize > 0)
+            siteScores.push_back(logpdf.getResult(0));
 
           // A3. Check if this sample is in the selection and insert into trace
           bool inSelection = false;
@@ -856,6 +864,11 @@ struct ExpandImpulsePass
           }
         } else {
           // B. Generative function: recursively simulate the nested function
+          if (scoreTailSize > 0) {
+            sampleOp.emitError("Impulse: score-tail traces do not support "
+                               "nested generative sites");
+            return WalkResult::interrupt();
+          }
           auto genFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getFnAttr()));
@@ -959,7 +972,37 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
+        Value outTrace = currTrace;
+        if (scoreTailSize > 0) {
+          auto fullType =
+              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
+          auto zeroFull =
+              arith::ConstantOp::create(rewriter, retOp.getLoc(), fullType,
+                                        DenseElementsAttr::get(fullType, 0.0));
+          auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+          auto c0 = arith::ConstantOp::create(
+              rewriter, retOp.getLoc(), i64S,
+              DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+          Value acc = impulse::DynamicUpdateSliceOp::create(
+                          rewriter, retOp.getLoc(), fullType, zeroFull,
+                          currTrace, ValueRange{c0, c0})
+                          .getResult();
+          for (auto [i, s] : llvm::enumerate(siteScores)) {
+            auto s11 = impulse::ReshapeOp::create(
+                rewriter, retOp.getLoc(),
+                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
+            auto cOff = arith::ConstantOp::create(
+                rewriter, retOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(
+                                                 positionSize + (int64_t)i)));
+            acc = impulse::DynamicUpdateSliceOp::create(
+                      rewriter, retOp.getLoc(), fullType, acc, s11,
+                      ValueRange{c0, cOff})
+                      .getResult();
+          }
+          outTrace = acc;
+        }
+        newRetVals.push_back(outTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
@@ -2306,6 +2349,7 @@ struct ExpandImpulsePass
           offset += computeTensorElementCount(
               cast<RankedTensorType>(site.getResult(i).getType()));
       }
+      const int64_t positionSize = offset;
 
       DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
 
@@ -2387,19 +2431,36 @@ struct ExpandImpulsePass
           lpMap.map(lpBlock.getArgument(argIdx++), v);
       for (Operation &lo : lpBlock.without_terminator())
         b.clone(lo, lpMap);
-      Value newWeight =
-          lpMap.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+      Operation *lpTerm = lpBlock.getTerminator();
+      Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
+
+      // through region-form MH steps.
+      if (traceType.getShape()[1] > positionSize) {
+        Value row0 = arith::ConstantOp::create(
+            b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(0)));
+        auto s11 = RankedTensorType::get({1, 1}, traceType.getElementType());
+        for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
+          Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
+          Value flat = impulse::ReshapeOp::create(b, loc, s11, score);
+          Value col = arith::ConstantOp::create(
+              b, loc, i64S,
+              DenseElementsAttr::get(
+                  i64S, b.getI64IntegerAttr(positionSize + (int64_t)j - 1)));
+          newTrace =
+              impulse::DynamicUpdateSliceOp::create(b, loc, traceType, newTrace,
+                                                    flat, ValueRange{row0, col})
+                  .getResult();
+        }
+      }
 
       return {newTrace, newWeight, curRng};
     }
 
-    // symbol. When `delta` is set, the regenerate is emitted in delta-weight
-    // mode: its weight result is the accept-ratio delta over the dirty density
-    // terms only (clean terms cancel in the MH ratio and are never computed).
+    // yields the full joint.
     std::tuple<Value, Value, Value>
     proposeFlat(OpBuilder &b, Location loc, OpT op, FunctionOpInterface fn,
                 ArrayRef<Type> fnResultTypes, Value trace, Value rng,
-                ArrayAttr selection, ArrayAttr allAddresses, bool delta) const {
+                ArrayAttr selection, ArrayAttr allAddresses) const {
       auto weightType = RankedTensorType::get({}, b.getF64Type());
       SmallVector<Type> regenResultTypes{trace.getType(), weightType};
       for (Type t : fnResultTypes)
@@ -2411,8 +2472,6 @@ struct ExpandImpulsePass
           op.getConstraint(), /*selection=*/allAddresses,
           /*regenerate_addresses=*/selection, op.getConstrainedAddressesAttr(),
           b.getStringAttr(""));
-      if (delta)
-        regen->setAttr("delta_weight", b.getUnitAttr());
       return {regen.getNewTrace(), regen.getWeight(), regen.getOutputs()[0]};
     }
 
@@ -2464,13 +2523,17 @@ struct ExpandImpulsePass
           fnResultTypes.push_back(t);
       }
 
-      // Flat path: use delta-weight regenerate whenever the model body is a
-      // straight line of distribution sites (the common case). The accept
-      // ratio is then the regenerate result directly, and the carried weight
-      // advances by that delta on accept.
+      // Flat path: a score-tail trace (width beyond the position size, one
+      // memoized score scalar per site) makes regenerate return the weight
+      // DELTA of the dirty terms; the accept ratio is then the regenerate
+      // result directly, and the carried weight advances by that delta on
+      // accept. Bare traces keep full-joint semantics.
       bool deltaFlat = false;
-      if constexpr (!isRegionForm)
-        deltaFlat = deltaWeightFeasible(fn);
+      if constexpr (!isRegionForm) {
+        int64_t fullPositionSize =
+            computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
+        deltaFlat = traceType.getShape()[1] > fullPositionSize;
+      }
 
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
@@ -2481,7 +2544,7 @@ struct ExpandImpulsePass
         else
           std::tie(newTrace, newWeight, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
-                          allAddresses, deltaFlat);
+                          allAddresses);
 
         Value logAlpha =
             deltaFlat
@@ -2603,6 +2666,12 @@ struct ExpandImpulsePass
 
       auto regenerateAddresses = mhOp.getRegenerateAddressesAttr();
 
+      // On a score-tail trace, regenerate returns the dirty-term weight delta.
+      int64_t fullPositionSize =
+          computePositionSizeForSelection(mhOp, fn, selection, symbolTable);
+      bool delta =
+          cast<RankedTensorType>(traceType).getShape()[1] > fullPositionSize;
+
       SmallVector<Type> regenResultTypes;
       regenResultTypes.push_back(traceType);
       regenResultTypes.push_back(weightType);
@@ -2625,9 +2694,16 @@ struct ExpandImpulsePass
       Value newWeight = regenerateOp.getWeight();
       Value newRng = regenerateOp.getOutputs()[0];
 
-      // 2. Compute log_alpha = new_weight - old_weight
-      auto logAlpha =
-          arith::SubFOp::create(rewriter, loc, newWeight, oldWeight);
+      // 2. Compute log_alpha = new_weight - old_weight (the regenerate result
+      // IS the delta in delta-weight mode).
+      Value logAlpha =
+          delta ? newWeight
+                : arith::SubFOp::create(rewriter, loc, newWeight, oldWeight)
+                      .getResult();
+      Value acceptWeight =
+          delta ? arith::AddFOp::create(rewriter, loc, oldWeight, newWeight)
+                      .getResult()
+                : newWeight;
 
       // 3. Sample uniform random in (0, 1) and compute log
       auto zeroConst = arith::ConstantOp::create(
@@ -2651,7 +2727,7 @@ struct ExpandImpulsePass
       auto selectedTrace = impulse::SelectOp::create(
           rewriter, loc, traceType, accepted, newTrace, oldTrace);
       auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
-                                                    newWeight, oldWeight);
+                                                    acceptWeight, oldWeight);
 
       rewriter.replaceOp(mhOp,
                          {selectedTrace, selectedWeight, accepted, finalRng});
@@ -2687,15 +2763,16 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      int64_t constraintSize = computePositionSizeForSelection(
-          CI, fn, CI.getConstrainedAddressesAttr(), symbolTable);
-      if (constraintSize < 0) {
-        CI.emitError("Impulse: failed to compute constraint size for generate");
-        return failure();
-      }
+      // Operand width, not the packed size: extra columns are simply ignored.
+      int64_t constraintSize =
+          cast<RankedTensorType>(CI.getConstraint().getType()).getShape()[1];
 
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Generate,
-                                                  positionSize, constraintSize);
+      int64_t declaredWidth =
+          cast<RankedTensorType>(CI.getTrace().getType()).getShape()[1];
+      int64_t scoreTailSize = declaredWidth - positionSize;
+      SmallVector<Value> siteScores;
+      auto putils = ImpulseUtils::CreateFromClone(
+          fn, ImpulseMode::Generate, declaredWidth, constraintSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -2796,6 +2873,8 @@ struct ExpandImpulsePass
                                                  sampledValues[1], distArgs);
           weightAccumulator =
               arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+          if (scoreTailSize > 0)
+            siteScores.push_back(logpdf);
 
           bool inSelection = false;
           for (auto addr : selection) {
@@ -2919,6 +2998,8 @@ struct ExpandImpulsePass
             weightAccumulator =
                 arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                       weightAccumulator, logpdf.getResult(0));
+            if (scoreTailSize > 0)
+              siteScores.push_back(logpdf.getResult(0));
           } else {
             // Unconstrained: call the distribution function
             auto distFn =
@@ -2957,6 +3038,8 @@ struct ExpandImpulsePass
             weightAccumulator =
                 arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                       weightAccumulator, logpdf.getResult(0));
+            if (scoreTailSize > 0)
+              siteScores.push_back(logpdf.getResult(0));
           }
 
           bool inSelection = false;
@@ -3000,6 +3083,11 @@ struct ExpandImpulsePass
           }
         } else {
           // B. Generative function: recursively generate the nested function
+          if (scoreTailSize > 0) {
+            sampleOp.emitError("Impulse: score-tail traces do not support "
+                               "nested generative sites");
+            return WalkResult::interrupt();
+          }
           auto genFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getFnAttr()));
@@ -3127,7 +3215,37 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
+        Value outTrace = currTrace;
+        if (scoreTailSize > 0) {
+          auto fullType =
+              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
+          auto zeroFull =
+              arith::ConstantOp::create(rewriter, retOp.getLoc(), fullType,
+                                        DenseElementsAttr::get(fullType, 0.0));
+          auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+          auto c0 = arith::ConstantOp::create(
+              rewriter, retOp.getLoc(), i64S,
+              DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+          Value acc = impulse::DynamicUpdateSliceOp::create(
+                          rewriter, retOp.getLoc(), fullType, zeroFull,
+                          currTrace, ValueRange{c0, c0})
+                          .getResult();
+          for (auto [i, s] : llvm::enumerate(siteScores)) {
+            auto s11 = impulse::ReshapeOp::create(
+                rewriter, retOp.getLoc(),
+                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
+            auto cOff = arith::ConstantOp::create(
+                rewriter, retOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(
+                                                 positionSize + (int64_t)i)));
+            acc = impulse::DynamicUpdateSliceOp::create(
+                      rewriter, retOp.getLoc(), fullType, acc, s11,
+                      ValueRange{c0, cOff})
+                      .getResult();
+          }
+          outTrace = acc;
+        }
+        newRetVals.push_back(outTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
@@ -3202,30 +3320,6 @@ struct ExpandImpulsePass
     return feasible;
   }
 
-  // Re-materialize `v` at the OLD state: regenerated draws map to their
-  // previous-trace reads (seeded in oldMap); the tainted slice between them
-  // and a dirty term's parameters is cloned on demand; untainted values are
-  // shared as-is.
-  static Value materializeOldValue(Value v, IRMapping &oldMap,
-                                   const DenseSet<Value> &tainted,
-                                   PatternRewriter &rewriter) {
-    if (Value m = oldMap.lookupOrNull(v))
-      return m;
-    if (!tainted.contains(v))
-      return v;
-    Operation *def = v.getDefiningOp();
-    assert(def && "tainted value must have a defining op");
-    SmallVector<Value> oldOperands;
-    for (Value operand : def->getOperands())
-      oldOperands.push_back(
-          materializeOldValue(operand, oldMap, tainted, rewriter));
-    Operation *cloned = rewriter.clone(*def);
-    cloned->setOperands(oldOperands);
-    for (auto [newR, oldR] : llvm::zip(def->getResults(), cloned->getResults()))
-      oldMap.map(newR, oldR);
-    return oldMap.lookup(v);
-  }
-
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
     using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
@@ -3256,21 +3350,19 @@ struct ExpandImpulsePass
 
       ArrayAttr constrainedAddresses = CI.getConstrainedAddressesAttr();
       bool hasConstraint = static_cast<bool>(CI.getConstraint());
-      int64_t constraintSize = -1;
-      if (hasConstraint) {
-        ArrayAttr cAddrs = constrainedAddresses ? constrainedAddresses
-                                                : rewriter.getArrayAttr({});
-        constraintSize =
-            computePositionSizeForSelection(CI, fn, cAddrs, symbolTable);
-        if (constraintSize < 0) {
-          CI.emitError(
-              "Impulse: failed to compute constraint size for regenerate");
-          return failure();
-        }
-      }
+      // Operand width, not the packed size, as in generate.
+      int64_t constraintSize =
+          hasConstraint ? cast<RankedTensorType>(CI.getConstraint().getType())
+                              .getShape()[1]
+                        : -1;
 
-      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Regenerate,
-                                                  positionSize, constraintSize);
+      int64_t declaredWidth =
+          cast<RankedTensorType>(CI.getNewTrace().getType()).getShape()[1];
+      int64_t scoreTailSize = declaredWidth - positionSize;
+      SmallVector<Value> siteScores;
+      int64_t siteOrdinal = 0;
+      auto putils = ImpulseUtils::CreateFromClone(
+          fn, ImpulseMode::Regenerate, declaredWidth, constraintSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -3294,18 +3386,27 @@ struct ExpandImpulsePass
       Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
       int64_t currentTraceOffset = 0;
 
-      // created). oldMap seeds regenerated draws with their previous-trace
-      // reads so dirty terms can be re-materialized at the old state.
-      bool deltaMode = CI.getDeltaWeight();
+      // Taint is computed up front; fresh draws are added as they are created.
+      bool deltaMode = scoreTailSize > 0;
       DenseSet<Value> tainted;
-      IRMapping oldMap;
       if (deltaMode) {
         if (!deltaWeightFeasible(NewF)) {
-          CI.emitError("Impulse: delta_weight regenerate requires a "
-                       "straight-line body of distribution sites");
+          CI.emitError("Impulse: regenerate over a score-tail trace requires "
+                       "a straight-line body of distribution sites");
           return failure();
         }
         tainted = computeRegenerateTaint(NewF, CI.getRegenerateAddressesAttr());
+        // Non-regenerated values are unchanged: start from the previous trace.
+        {
+          auto valueSliceType = RankedTensorType::get(
+              {1, positionSize}, entryBuilder.getF64Type());
+          currTrace = impulse::SliceOp::create(
+                          entryBuilder, initLoc, valueSliceType, prevTrace,
+                          entryBuilder.getDenseI64ArrayAttr({0, 0}),
+                          entryBuilder.getDenseI64ArrayAttr({1, positionSize}),
+                          entryBuilder.getDenseI64ArrayAttr({1, 1}))
+                          .getResult();
+        }
       }
 
       SmallVector<Operation *> toErase;
@@ -3418,47 +3519,43 @@ struct ExpandImpulsePass
                 break;
               }
 
-          if (deltaMode && isSelected) {
-            // Seed oldMap: the regenerated draw's previous value lives in the
-            // old trace at this site's offset.
-            int64_t oldOffset = sampleOffset;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampledValues[i].getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, loc, sliceType, prevTrace,
-                  rewriter.getDenseI64ArrayAttr({0, oldOffset}),
-                  rewriter.getDenseI64ArrayAttr({1, oldOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              Value oldValue =
-                  impulse::ReshapeOp::create(rewriter, loc, resultType, sliced)
-                      .getResult();
-              oldMap.map(sampledValues[i], oldValue);
+          if (deltaMode && isSelected)
+            for (unsigned i = 1; i < sampledValues.size(); ++i)
               tainted.insert(sampledValues[i]);
-              oldOffset += numElements;
-            }
+
+          Value oldScore;
+          if (scoreTailSize > 0) {
+            auto s11 = RankedTensorType::get({1, 1}, rewriter.getF64Type());
+            auto sliced = impulse::SliceOp::create(
+                rewriter, loc, s11, prevTrace,
+                rewriter.getDenseI64ArrayAttr({0, positionSize + siteOrdinal}),
+                rewriter.getDenseI64ArrayAttr(
+                    {1, positionSize + siteOrdinal + 1}),
+                rewriter.getDenseI64ArrayAttr({1, 1}));
+            oldScore =
+                impulse::ReshapeOp::create(
+                    rewriter, loc,
+                    RankedTensorType::get({}, rewriter.getF64Type()), sliced)
+                    .getResult();
           }
 
           if (!deltaMode || termDirty) {
             Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
                                                    sampledValues[1], distArgs);
             if (deltaMode) {
-              SmallVector<Value> oldArgs;
-              for (Value arg : distArgs)
-                oldArgs.push_back(
-                    materializeOldValue(arg, oldMap, tainted, rewriter));
-              Value oldValue = isSelected ? oldMap.lookup(sampledValues[1])
-                                          : sampledValues[1];
-              Value logpdfOld = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                        oldValue, oldArgs);
-              logpdf = arith::SubFOp::create(rewriter, loc, logpdf, logpdfOld);
+              Value d = arith::SubFOp::create(rewriter, loc, logpdf, oldScore);
+              weightAccumulator =
+                  arith::AddFOp::create(rewriter, loc, weightAccumulator, d);
+            } else {
+              weightAccumulator = arith::AddFOp::create(
+                  rewriter, loc, weightAccumulator, logpdf);
             }
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+            if (scoreTailSize > 0)
+              siteScores.push_back(logpdf);
+          } else {
+            siteScores.push_back(oldScore);
           }
+          ++siteOrdinal;
 
           bool inSelection = false;
           for (auto addr : selection) {
@@ -3478,22 +3575,26 @@ struct ExpandImpulsePass
                     "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleTy.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, loc, flatSampleType, sampleValue);
-              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-              auto row0 = arith::ConstantOp::create(
-                  rewriter, loc, i64S,
-                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-              auto colOff = arith::ConstantOp::create(
-                  rewriter, loc, i64S,
-                  DenseElementsAttr::get(
-                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, loc, traceType, currTrace, flatSample,
-                              ValueRange{row0, colOff})
-                              .getResult();
+              // The offset advances even when the value is not rewritten.
+              if (!deltaMode || isSelected) {
+                auto flatSampleType = RankedTensorType::get(
+                    {1, numElements}, sampleTy.getElementType());
+                auto flatSample = impulse::ReshapeOp::create(
+                    rewriter, loc, flatSampleType, sampleValue);
+                auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+                auto row0 = arith::ConstantOp::create(
+                    rewriter, loc, i64S,
+                    DenseElementsAttr::get(i64S,
+                                           rewriter.getI64IntegerAttr(0)));
+                auto colOff = arith::ConstantOp::create(
+                    rewriter, loc, i64S,
+                    DenseElementsAttr::get(
+                        i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+                currTrace = impulse::DynamicUpdateSliceOp::create(
+                                rewriter, loc, traceType, currTrace, flatSample,
+                                ValueRange{row0, colOff})
+                                .getResult();
+              }
               currentTraceOffset += numElements;
             }
           }
@@ -3617,27 +3718,24 @@ struct ExpandImpulsePass
                 break;
               }
 
-          if (deltaMode && isSelected) {
-            int64_t oldOffset = sampleOffset;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              auto resultType =
-                  cast<RankedTensorType>(sampledValues[i].getType());
-              int64_t numElements = computeTensorElementCount(resultType);
-              auto sliceType = RankedTensorType::get(
-                  {1, numElements}, resultType.getElementType());
-              auto sliced = impulse::SliceOp::create(
-                  rewriter, sampleOp.getLoc(), sliceType, prevTrace,
-                  rewriter.getDenseI64ArrayAttr({0, oldOffset}),
-                  rewriter.getDenseI64ArrayAttr({1, oldOffset + numElements}),
-                  rewriter.getDenseI64ArrayAttr({1, 1}));
-              Value oldValue =
-                  impulse::ReshapeOp::create(rewriter, sampleOp.getLoc(),
-                                             resultType, sliced)
-                      .getResult();
-              oldMap.map(sampledValues[i], oldValue);
+          if (deltaMode && isSelected)
+            for (unsigned i = 1; i < sampledValues.size(); ++i)
               tainted.insert(sampledValues[i]);
-              oldOffset += numElements;
-            }
+
+          Value oldScore;
+          if (scoreTailSize > 0) {
+            auto s11 = RankedTensorType::get({1, 1}, rewriter.getF64Type());
+            auto sliced = impulse::SliceOp::create(
+                rewriter, sampleOp.getLoc(), s11, prevTrace,
+                rewriter.getDenseI64ArrayAttr({0, positionSize + siteOrdinal}),
+                rewriter.getDenseI64ArrayAttr(
+                    {1, positionSize + siteOrdinal + 1}),
+                rewriter.getDenseI64ArrayAttr({1, 1}));
+            oldScore =
+                impulse::ReshapeOp::create(
+                    rewriter, sampleOp.getLoc(),
+                    RankedTensorType::get({}, rewriter.getF64Type()), sliced)
+                    .getResult();
           }
 
           if (!deltaMode || termDirty) {
@@ -3646,24 +3744,17 @@ struct ExpandImpulsePass
                 logpdfFn.getResultTypes(), logpdfOperands);
             Value contribution = logpdf.getResult(0);
             if (deltaMode) {
-              SmallVector<Value> oldOperands;
-              for (unsigned i = 1; i < sampledValues.size(); ++i)
-                oldOperands.push_back(isSelected
-                                          ? oldMap.lookup(sampledValues[i])
-                                          : sampledValues[i]);
-              for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
-                oldOperands.push_back(materializeOldValue(
-                    sampleOp.getOperand(i), oldMap, tainted, rewriter));
-              auto logpdfOld = func::CallOp::create(
-                  rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                  logpdfFn.getResultTypes(), oldOperands);
-              contribution =
-                  arith::SubFOp::create(rewriter, sampleOp.getLoc(),
-                                        contribution, logpdfOld.getResult(0));
+              contribution = arith::SubFOp::create(rewriter, sampleOp.getLoc(),
+                                                   contribution, oldScore);
             }
             weightAccumulator = arith::AddFOp::create(
                 rewriter, sampleOp.getLoc(), weightAccumulator, contribution);
+            if (scoreTailSize > 0)
+              siteScores.push_back(logpdf.getResult(0));
+          } else {
+            siteScores.push_back(oldScore);
           }
+          ++siteOrdinal;
 
           bool inSelection = false;
           for (auto addr : selection) {
@@ -3684,23 +3775,25 @@ struct ExpandImpulsePass
                     "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
-
-              auto flatSampleType = RankedTensorType::get(
-                  {1, numElements}, sampleType.getElementType());
-              auto flatSample = impulse::ReshapeOp::create(
-                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
-              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
-              auto row0 = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
-              auto colOff = arith::ConstantOp::create(
-                  rewriter, sampleOp.getLoc(), i64S,
-                  DenseElementsAttr::get(
-                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = impulse::DynamicUpdateSliceOp::create(
-                              rewriter, sampleOp.getLoc(), traceType, currTrace,
-                              flatSample, ValueRange{row0, colOff})
-                              .getResult();
+              if (!deltaMode || isSelected) {
+                auto flatSampleType = RankedTensorType::get(
+                    {1, numElements}, sampleType.getElementType());
+                auto flatSample = impulse::ReshapeOp::create(
+                    rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
+                auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+                auto row0 = arith::ConstantOp::create(
+                    rewriter, sampleOp.getLoc(), i64S,
+                    DenseElementsAttr::get(i64S,
+                                           rewriter.getI64IntegerAttr(0)));
+                auto colOff = arith::ConstantOp::create(
+                    rewriter, sampleOp.getLoc(), i64S,
+                    DenseElementsAttr::get(
+                        i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+                currTrace = impulse::DynamicUpdateSliceOp::create(
+                                rewriter, sampleOp.getLoc(), traceType,
+                                currTrace, flatSample, ValueRange{row0, colOff})
+                                .getResult();
+              }
               currentTraceOffset += numElements;
             }
           }
@@ -3846,7 +3939,37 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(retOp);
 
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
+        Value outTrace = currTrace;
+        if (scoreTailSize > 0) {
+          auto fullType =
+              RankedTensorType::get({1, declaredWidth}, rewriter.getF64Type());
+          auto zeroFull =
+              arith::ConstantOp::create(rewriter, retOp.getLoc(), fullType,
+                                        DenseElementsAttr::get(fullType, 0.0));
+          auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+          auto c0 = arith::ConstantOp::create(
+              rewriter, retOp.getLoc(), i64S,
+              DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+          Value acc = impulse::DynamicUpdateSliceOp::create(
+                          rewriter, retOp.getLoc(), fullType, zeroFull,
+                          currTrace, ValueRange{c0, c0})
+                          .getResult();
+          for (auto [i, s] : llvm::enumerate(siteScores)) {
+            auto s11 = impulse::ReshapeOp::create(
+                rewriter, retOp.getLoc(),
+                RankedTensorType::get({1, 1}, rewriter.getF64Type()), s);
+            auto cOff = arith::ConstantOp::create(
+                rewriter, retOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(
+                                                 positionSize + (int64_t)i)));
+            acc = impulse::DynamicUpdateSliceOp::create(
+                      rewriter, retOp.getLoc(), fullType, acc, s11,
+                      ValueRange{c0, cOff})
+                      .getResult();
+          }
+          outTrace = acc;
+        }
+        newRetVals.push_back(outTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
