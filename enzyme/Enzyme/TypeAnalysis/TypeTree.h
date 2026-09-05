@@ -33,6 +33,8 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -64,7 +66,25 @@ static inline std::string to_string(const std::vector<int> x) {
 class TypeTree;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
-typedef std::map<const std::vector<int>, ConcreteType> ConcreteTypeMapType;
+/// Orders offset sequences by length first, then lexicographically.
+///
+/// `insert` and `checkedOrIn` need to examine every entry whose offset
+/// sequence has the same length as the one being inserted. Under plain
+/// lexicographic order those entries are scattered through the map ([0] <
+/// [0,0] < [1]), so finding them means walking the whole map on every
+/// insertion. Ordering by length first makes each length class a contiguous
+/// range that can be found with a single lower_bound.
+struct SeqLess {
+  bool operator()(const std::vector<int> &lhs,
+                  const std::vector<int> &rhs) const {
+    if (lhs.size() != rhs.size())
+      return lhs.size() < rhs.size();
+    return lhs < rhs;
+  }
+};
+
+typedef std::map<const std::vector<int>, ConcreteType, SeqLess>
+    ConcreteTypeMapType;
 typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
@@ -279,8 +299,14 @@ public:
     // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
     // [-1, 8, -1]
     {
-      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
-        if (pair.first.size() == SeqSize) {
+      // SeqLess keeps every sequence of length SeqSize contiguous, so only
+      // that range can match.
+      const std::vector<int> lowerKey(SeqSize, std::numeric_limits<int>::min());
+      for (auto it = mapping.lower_bound(lowerKey);
+           it != mapping.end() && it->first.size() == SeqSize;) {
+        const auto &pair = *it;
+        ++it;
+        {
           // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
           // as general as the existing map val (e.g. [0, 0]).
           bool newMoreGeneralThanOld = true;
@@ -704,10 +730,13 @@ public:
       staging[next][pair.second].insert(pair.first[0]);
     }
 
-    // TypeTree mappings which did not get combined
-    std::map<const std::vector<int>, ConcreteType> unCombinedToAdd;
+    // TypeTree mappings which did not get combined. This is moved into
+    // `mapping` below, so it must use the same ordering.
+    ConcreteTypeMapType unCombinedToAdd;
 
-    // TypeTree mappings which did get combined into an outer -1
+    // TypeTree mappings which did get combined into an outer -1. Only iterated
+    // to re-insert, so it keeps plain lexicographic order to leave the
+    // resulting sequence of insertions unchanged.
     std::map<const std::vector<int>, ConcreteType> combinedToAdd;
 
     for (const auto &pair : staging) {
@@ -1204,8 +1233,15 @@ public:
       // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
       // [-1, 8, -1]
       {
-        for (const auto &pair : llvm::make_early_inc_range(mapping)) {
-          if (pair.first.size() == SeqSize) {
+        // SeqLess keeps every sequence of length SeqSize contiguous, so only
+        // that range can match.
+        const std::vector<int> lowerKey(SeqSize,
+                                        std::numeric_limits<int>::min());
+        for (auto it = mapping.lower_bound(lowerKey);
+             it != mapping.end() && it->first.size() == SeqSize;) {
+          const auto &pair = *it;
+          ++it;
+          {
             // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
             // as general as the existing map val (e.g. [0, 0]).
             bool newMoreGeneralThanOld = true;
@@ -1450,19 +1486,32 @@ public:
 
   /// Returns a string representation of this TypeTree
   std::string str() const {
+    // Print in lexicographic offset order rather than the map's own order, so
+    // that the textual form does not depend on how `mapping` is sorted
+    // internally (see SeqLess).
+    std::vector<const ConcreteTypeMapType::value_type *> entries;
+    entries.reserve(mapping.size());
+    for (auto &pair : mapping)
+      entries.push_back(&pair);
+    std::sort(entries.begin(), entries.end(),
+              [](const ConcreteTypeMapType::value_type *lhs,
+                 const ConcreteTypeMapType::value_type *rhs) {
+                return lhs->first < rhs->first;
+              });
+
     std::string out = "{";
     bool first = true;
-    for (auto &pair : mapping) {
+    for (const auto *pair : entries) {
       if (!first) {
         out += ", ";
       }
       out += "[";
-      for (unsigned i = 0; i < pair.first.size(); ++i) {
+      for (unsigned i = 0; i < pair->first.size(); ++i) {
         if (i != 0)
           out += ",";
-        out += std::to_string(pair.first[i]);
+        out += std::to_string(pair->first[i]);
       }
-      out += "]:" + pair.second.str();
+      out += "]:" + pair->second.str();
       first = false;
     }
     out += "}";
