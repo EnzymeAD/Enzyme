@@ -767,19 +767,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                       7) /
                      8;
 
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(Val->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
-      };
-      auto g2 = GetElementPtrInst::Create(
-          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, Val->getType(), i);
       if (auto VT = dyn_cast<VectorType>(Val->getType()))
         if (VT->getElementType()->isIntegerTy(1))
           Off = i / 8;
@@ -819,19 +807,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                       7) /
                      8;
 
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(Val->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
-      };
-      auto g2 = GetElementPtrInst::Create(
-          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, Val->getType(), i);
 
       getConstantAnalysis(Op, TA, analysis);
       auto mid = analysis[Op];
@@ -2892,16 +2868,8 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
   for (size_t i = 0; i < mask.size(); ++i) {
     int newOff;
     {
-      Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-                       ConstantInt::get(Type::getInt64Ty(I.getContext()), i)};
-      auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-      auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-      APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(dl, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-      newOff = (int)ai.getLimitedValue();
+      newOff =
+          (int)getAggregateElementOffset(dl, I.getOperand(0)->getType(), i);
       // there is a bug in LLVM, this is the correct offset
       if (cast<VectorType>(I.getOperand(lhs)->getType())
               ->getElementType()
@@ -2924,24 +2892,14 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
       }
     } else {
       if ((size_t)mask[i] < numFirst) {
-        Value *vec[2] = {
-            ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-            ConstantInt::get(Type::getInt64Ty(I.getContext()), mask[i])};
-        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-        auto g2 =
-            GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(dl, ai);
-        // Using destructor rather than eraseFromParent
-        //   as g2 has no parent
-        int oldOff = (int)ai.getLimitedValue();
+        int oldOff = (int)getAggregateElementOffset(
+            dl, I.getOperand(0)->getType(), mask[i]);
         // there is a bug in LLVM, this is the correct offset
         if (cast<VectorType>(I.getOperand(lhs)->getType())
                 ->getElementType()
                 ->isIntegerTy(1)) {
           oldOff = mask[i] / 8;
         }
-        delete g2;
         if (direction & UP) {
           updateAnalysis(I.getOperand(lhs),
                          getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
@@ -2952,24 +2910,14 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
                         .ShiftIndices(dl, oldOff, size, newOff);
         }
       } else {
-        Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-                         ConstantInt::get(Type::getInt64Ty(I.getContext()),
-                                          mask[i] - numFirst)};
-        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-        auto g2 =
-            GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(dl, ai);
-        // Using destructor rather than eraseFromParent
-        //   as g2 has no parent
-        int oldOff = (int)ai.getLimitedValue();
+        int oldOff = (int)getAggregateElementOffset(
+            dl, I.getOperand(0)->getType(), mask[i] - numFirst);
         // there is a bug in LLVM, this is the correct offset
         if (cast<VectorType>(I.getOperand(lhs)->getType())
                 ->getElementType()
                 ->isIntegerTy(1)) {
           oldOff = (mask[i] - numFirst) / 8;
         }
-        delete g2;
         if (direction & UP) {
           updateAnalysis(I.getOperand(rhs),
                          getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
@@ -2990,20 +2938,9 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
 
 void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
-  SmallVector<Value *, 4> vec;
-  vec.push_back(ConstantInt::get(Type::getInt64Ty(I.getContext()), 0));
-  for (auto ind : I.indices()) {
-    vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
-  }
-  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-  auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, ai);
-  // Using destructor rather than eraseFromParent
-  //   as g2 has no parent
-  delete g2;
 
-  int off = (int)ai.getLimitedValue();
+  int off = (int)getAggregateElementOffset(dl, I.getOperand(0)->getType(),
+                                           I.getIndices());
   int size = dl.getTypeSizeInBits(I.getType()) / 8;
 
   if (direction & DOWN)
@@ -3019,56 +2956,32 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
 
 void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
-  SmallVector<Value *, 4> vec = {
-      ConstantInt::get(Type::getInt64Ty(I.getContext()), 0)};
-  for (auto ind : I.indices()) {
-    vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
-  }
-  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-  auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, ai);
-  delete g2;
-  // Using destructor rather than eraseFromParent
-  //   as g2 has no parent
+  auto AggTy = I.getOperand(0)->getType();
+
+  int off = (int)getAggregateElementOffset(dl, AggTy, I.getIndices());
 
   // Compute the offset at the next logical element [e.g. adding 1 to the last
-  // index, carrying the value on overflow]
-  for (ssize_t i = vec.size() - 1; i >= 0; i--) {
-    auto CI = cast<ConstantInt>(vec[i]);
-    auto val = CI->getZExtValue();
-    if (i == 0) {
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
+  // index, carrying the value on overflow]. Carrying past the outermost index
+  // lands one past the aggregate itself.
+  SmallVector<unsigned, 4> next(I.getIndices().begin(), I.getIndices().end());
+  size_t endOff = dl.getTypeAllocSize(AggTy);
+  for (ssize_t i = next.size() - 1; i >= 0; i--) {
+    auto subTy = ExtractValueInst::getIndexedType(
+        AggTy, ArrayRef<unsigned>(next).slice(0, i));
+    unsigned numElements = isa<StructType>(subTy)
+                               ? cast<StructType>(subTy)->getNumElements()
+                               : cast<ArrayType>(subTy)->getNumElements();
+    if (next[i] + 1 == numElements) {
+      next.truncate(i);
+      continue;
     }
-    auto subTy = GetElementPtrInst::getIndexedType(
-        I.getOperand(0)->getType(), ArrayRef<Value *>(vec).slice(0, i));
-    if (auto ST = dyn_cast<StructType>(subTy)) {
-      if (val + 1 == ST->getNumElements()) {
-        vec.erase(vec.begin() + i, vec.end());
-        continue;
-      }
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
-    } else {
-      auto AT = cast<ArrayType>(subTy);
-      if (val + 1 == AT->getNumElements()) {
-        vec.erase(vec.begin() + i, vec.end());
-        continue;
-      }
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
-    }
+    next[i]++;
+    endOff = getAggregateElementOffset(dl, AggTy, next);
+    break;
   }
-  g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt aiend(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, aiend);
-  delete g2;
-
-  int off = (int)ai.getLimitedValue();
 
   int agg_size = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
-  int ins_size = (int)(aiend - ai).getLimitedValue();
+  int ins_size = (int)(endOff - off);
   int ins2_size =
       (dl.getTypeSizeInBits(I.getInsertedValueOperand()->getType()) + 7) / 8;
 
@@ -5834,30 +5747,13 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           auto T = ST->getTypeAtIndex(i);
           ConcreteType CT(BaseType::Unknown);
 
-          Value *vec[2] = {
-              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
-              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
-          auto ud = UndefValue::get(getUnqual(ST));
-          auto g2 = GetElementPtrInst::Create(ST, ud, vec);
-          APInt ai(DL.getIndexSizeInBits(0), 0);
-          g2->accumulateConstantOffset(DL, ai);
-          delete g2;
-          size_t Offset = ai.getZExtValue();
+          size_t Offset = getAggregateElementOffset(DL, ST, i);
 
           size_t nextOffset;
           if (i + 1 == ST->getNumElements())
             nextOffset = (DL.getTypeSizeInBits(ST) + 7) / 8;
-          else {
-            Value *vec[2] = {
-                ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
-                ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
-            auto ud = UndefValue::get(getUnqual(ST));
-            auto g2 = GetElementPtrInst::Create(ST, ud, vec);
-            APInt ai(DL.getIndexSizeInBits(0), 0);
-            g2->accumulateConstantOffset(DL, ai);
-            delete g2;
-            nextOffset = ai.getZExtValue();
-          }
+          else
+            nextOffset = getAggregateElementOffset(DL, ST, i + 1);
 
           if (T->isFloatingPointTy()) {
             CT = T;
@@ -6567,20 +6463,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     for (size_t i = 0; i < ST->getNumElements(); i++) {
       auto SubT =
           defaultTypeTreeForLLVM(ST->getElementType(i), I, intIsPointer);
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(ST, UndefValue::get(getUnqual(ST)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
       auto size = (DL.getTypeSizeInBits(ST->getElementType(i)) + 7) / 8;
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, ST, i);
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }
     return Out;
@@ -6591,19 +6475,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < AT->getNumElements(); i++) {
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, AT, i);
       auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }
@@ -6621,19 +6493,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < numElems; i++) {
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, AT, i);
       auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }

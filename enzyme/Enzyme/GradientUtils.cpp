@@ -6056,18 +6056,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(newi->getNextNode());
 
     auto AggTy = arg->getAggregateOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(arg->getType()) + 7) / 8;
     auto AggSize = (DL.getTypeSizeInBits(AggTy) + 7) / 8;
 
@@ -6098,18 +6088,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     auto AggTy = arg->getAggregateOperand()->getType();
     auto InsertedTy = arg->getInsertedValueOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(InsertedTy) + 7) / 8;
 
     for (int i = 0; i < 2; i++) {
