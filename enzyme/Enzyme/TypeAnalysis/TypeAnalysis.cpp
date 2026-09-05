@@ -1033,32 +1033,22 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(T)) {
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), 1));
-      auto ud = UndefValue::get(getUnqual(AT));
-      auto g2 = GetElementPtrInst::Create(T, ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      delete g2;
+      // Array elements are laid out at successive multiples of the element's
+      // alloc size, which is what a gep [0, 1] into the array would compute.
+      size_t stride = DL.getTypeAllocSize(AT->getElementType());
       for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.emplace_back(AT->getElementType(),
-                          offset + i * ai.getLimitedValue());
+        todo.emplace_back(AT->getElementType(), offset + i * stride);
       }
 
       continue;
     }
     if (auto ST = dyn_cast<StructType>(T)) {
-      auto ud = UndefValue::get(getUnqual(ST));
+      // The struct layout already records each field's offset, which is what a
+      // gep [0, i] into the struct would compute.
+      auto SL = DL.getStructLayout(ST);
       for (size_t i = 0; i < ST->getNumElements(); i++) {
-        SmallVector<Value *, 4> vec;
-        vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
-        vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), i));
-        auto g2 = GetElementPtrInst::Create(T, ud, vec);
-        APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(DL, ai);
-        delete g2;
-        todo.emplace_back(ST->getElementType(i), offset + ai.getLimitedValue());
+        todo.emplace_back(ST->getElementType(i),
+                          offset + (size_t)SL->getElementOffset(i));
       }
 
       continue;
