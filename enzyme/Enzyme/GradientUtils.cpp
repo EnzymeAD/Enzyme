@@ -6725,6 +6725,24 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                       phi->getIncomingBlock(i))));
         }
+        // Inverting an incoming value can emit instructions into this block
+        // above `which` (e.g. materializing the shadow of a value defined in
+        // the header), which leaves the phis no longer contiguous at the block
+        // start and produces IR the verifier rejects. Restore the invariant.
+        {
+          BasicBlock *PB = which->getParent();
+          SmallVector<PHINode *, 4> phis;
+          for (auto &I : *PB)
+            if (auto *P = dyn_cast<PHINode>(&I))
+              phis.push_back(P);
+          Instruction *at = &*PB->begin();
+          for (auto *P : phis) {
+            if (P != at)
+              P->moveBefore(at);
+            else
+              at = P->getNextNode();
+          }
+        }
         return which;
       }
     }
