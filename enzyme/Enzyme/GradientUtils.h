@@ -326,6 +326,10 @@ private:
            llvm::ValueMap<llvm::Value *, llvm::WeakTrackingVH>>
       lookup_cache;
 
+  // Number of recompute attempts lookupM has made for this function, bounded
+  // by EnzymeLookupRecomputeBudget.
+  int64_t lookupRecomputeCount = 0;
+
 public:
   void replaceAndRemoveUnwrapCacheFor(llvm::Value *A, llvm::Value *B);
 
