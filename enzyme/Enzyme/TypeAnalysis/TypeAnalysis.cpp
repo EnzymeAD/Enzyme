@@ -3644,7 +3644,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     TT.insert({-1}, BaseType::Pointer);
     TT.insert({-1, 0}, Type::getFloatTy(I.getContext()));
     updateAnalysis(I.getOperand(0), TT, &I);
-    for (int i = 1; i <= 9; i++)
+    for (int i = 1; i <= 8; i++)
       updateAnalysis(
           I.getOperand(i),
           TypeTree(ConcreteType(Type::getFloatTy(I.getContext()))).Only(-1, &I),
@@ -3668,7 +3668,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     TT.insert({-1}, BaseType::Pointer);
     TT.insert({-1, 0}, Type::getHalfTy(I.getContext()));
     updateAnalysis(I.getOperand(0), TT, &I);
-    for (int i = 1; i <= 9; i++)
+    for (int i = 1; i <= 4; i++)
       updateAnalysis(
           I.getOperand(i),
           TypeTree(ConcreteType(Type::getHalfTy(I.getContext()))).Only(-1, &I),
