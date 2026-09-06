@@ -3483,10 +3483,23 @@ public:
                            isVolatile);
   }
 
+  /// Hook for emitting the shadow of a memory transfer which cannot be
+  /// expressed as an LLVM memcpy -- notably a CUDA host<->device copy, whose
+  /// shadow has to go back through the CUDA API because one or both sides live
+  /// in memory the host cannot address directly. `ddst`/`dsrc` are the shadow
+  /// (or, when inactive, primal) pointers of the segment being transferred,
+  /// already advanced to the segment start. `dsrc` is null when `zero` is set,
+  /// meaning the source is inactive float data and the `len` bytes at `ddst`
+  /// must be zeroed rather than copied.
+  using MemTransferEmitter =
+      llvm::function_ref<void(llvm::IRBuilder<> &B, llvm::Value *ddst,
+                              llvm::Value *dsrc, llvm::Value *len, bool zero)>;
+
   void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
                               llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
                               llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile) {
+                              llvm::Value *new_size, llvm::Value *isVolatile,
+                              MemTransferEmitter customEmit = {}) {
     using namespace llvm;
 
     if (gutils->isConstantValue(MTI.getOperand(0))) {
@@ -3808,9 +3821,24 @@ public:
           ddst = BuilderZ.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(ddst->getContext()), ddst, seg_start);
         }
-        CallInst *call;
         // TODO add gutils->runtimeActivity (correctness)
-        if (floatTy && gutils->isConstantValue(orig_src)) {
+        bool zero = floatTy && gutils->isConstantValue(orig_src);
+
+        if (customEmit) {
+          if (!zero) {
+            if (dsrc->getType()->isIntegerTy())
+              dsrc = BuilderZ.CreateIntToPtr(dsrc,
+                                             getInt8PtrTy(dsrc->getContext()));
+            if (seg_start != 0)
+              dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
+                  Type::getInt8Ty(ddst->getContext()), dsrc, seg_start);
+          }
+          customEmit(BuilderZ, ddst, zero ? nullptr : dsrc, length, zero);
+          return;
+        }
+
+        CallInst *call;
+        if (zero) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
               length, dalign, isVolatile);
@@ -6377,6 +6405,12 @@ public:
 
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
+
+  /// Differentiate a member of the CUDA memcpy family. Returns false if the
+  /// transfer is not handled in the current mode, leaving the caller to report
+  /// the missing derivative.
+  bool handleCudaMemTransfer(llvm::CallInst &call, llvm::Function *called,
+                             const CudaMemTransferInfo &CMT);
 
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,

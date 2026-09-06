@@ -406,7 +406,12 @@ public:
   void visitCallBase(llvm::CallBase &call);
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI);
-  void visitMemTransferCommon(llvm::CallBase &MTI);
+  /// Propagate the pointee type between the two sides of a memory transfer.
+  /// Arguments from index 2 up to `intArgsEnd` are marked as integers; the
+  /// bound exists because a CUDA transfer carries a stream pointer after its
+  /// integer arguments, where a memcpy carries only the length and volatility.
+  void visitMemTransferCommon(llvm::CallBase &MTI,
+                              unsigned intArgsEnd = (unsigned)-1);
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II);
 
