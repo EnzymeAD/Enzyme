@@ -248,6 +248,51 @@ static bool isNoOp(Operation *op) {
              LLVM::LifetimeEndOp, LLVM::AssumeOp, LLVM::UnreachableOp>(op);
 }
 
+static bool isAliasRelevantEffect(const MemoryEffects::EffectInstance &effect) {
+  Value v = effect.getValue();
+  if (v)
+    return true;
+
+  if (const auto *resource = effect.getResource())
+    return resource->isAddressable();
+
+  return true;
+}
+
+static Value getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(
+    Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects) {
+  Value allocatedValue = nullptr;
+  bool sawAllocate = false;
+
+  for (const auto &effect : effects) {
+    Value v = effect.getValue();
+
+    if (isa<MemoryEffects::Allocate>(effect.getEffect()) && v &&
+        v.getDefiningOp() == op && isPointerLike(v.getType())) {
+      sawAllocate = true;
+
+      // Single-result helper: reject multiple allocated pointer-like results.
+      if (!allocatedValue)
+        allocatedValue = v;
+      else
+        return nullptr;
+
+      continue;
+    }
+
+    // Ignore non-alias-relevant effects, e.g. runtime/comm effects on
+    // non-addressable resources.
+    if (!isAliasRelevantEffect(effect))
+      continue;
+
+    // Any other alias-relevant effect means this op is not "pure alloc-like"
+    // for our purposes.
+    return nullptr;
+  }
+
+  return sawAllocate ? allocatedValue : nullptr;
+}
+
 LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
     Operation *op, const PointsToSets &before, PointsToSets *after) {
   join(after, before);
@@ -267,11 +312,11 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
 
   // If the operation allocates fresh memory and doesn't write into it, that
   // memory is known not to point to any known alias class.
-  if (effects.size() == 1 &&
-      isa<MemoryEffects::Allocate>(effects.front().getEffect()) &&
-      effects.front().getValue()) {
+  if (Value allocatedValue =
+          getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(
+              op, effects)) {
     const auto *destClasses = getOrCreateFor<AliasClassLattice>(
-        getProgramPointAfter(op), effects.front().getValue());
+        getProgramPointAfter(op), allocatedValue);
     propagateIfChanged(
         after, after->setPointingToEmpty(destClasses->getAliasClassesObject()));
     return success();
@@ -820,7 +865,8 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
 // would need additional processing.
 //
 // TODO: turn this into an interface.
-static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
+static bool isAliasTransferFullyDescribedByMemoryEffects(
+    Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects) {
   if (auto call = dyn_cast<CallOpInterface>(op)) {
     if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
       StringRef name = symbol.getLeafReference().getValue();
@@ -829,9 +875,15 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
     }
   }
 
-  return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-             affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
-             enzyme::PopOp>(op);
+  if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+          affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
+          enzyme::PopOp>(op))
+    return true;
+
+  // Generic alloc-like op: fresh pointer-like result, no alias-relevant
+  // effects other than the allocation itself.
+  return getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(
+             op, effects) != nullptr;
 }
 
 void enzyme::AliasAnalysis::transfer(
@@ -843,7 +895,8 @@ void enzyme::AliasAnalysis::transfer(
     // If the effect is global read, record that.
     Value value = effect.getValue();
     if (!value) {
-      globalRead |= isa<MemoryEffects::Read>(effect.getEffect());
+      globalRead |= isa<MemoryEffects::Read>(effect.getEffect()) &&
+                    isAliasRelevantEffect(effect);
       continue;
     }
 
@@ -914,7 +967,8 @@ void enzyme::AliasAnalysis::transfer(
   }
 
   // If it was enough to reason about effects, exit here.
-  if (!effects.empty() && isAliasTransferFullyDescribedByMemoryEffects(op))
+  if (!effects.empty() &&
+      isAliasTransferFullyDescribedByMemoryEffects(op, effects))
     return;
 
   // Conservatively assume all results alias all operands.
