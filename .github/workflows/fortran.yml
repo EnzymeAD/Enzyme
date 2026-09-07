@@ -65,6 +65,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: generate build system
       run: |
+        . spack/share/spack/setup-env.sh
         spack load openmpi
         rm -rf build && mkdir build && cd build
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }}
@@ -117,6 +118,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: generate build system
       run: |
+        . spack/share/spack/setup-env.sh
         spack load openmpi
         rm -rf build && mkdir build && cd build
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.versions.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}
