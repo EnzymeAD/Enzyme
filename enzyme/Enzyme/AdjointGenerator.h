@@ -413,17 +413,24 @@ public:
 
     IRBuilder<> BuilderZ(newi);
     if (!vd.isKnown()) {
-      std::string str;
-      raw_string_ostream ss(str);
-      ss << "Cannot deduce type of load " << I;
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        ss << ", assumed " << vd.str() << "\n";
-        EmitWarning("CannotDeduceType", I, ss.str());
+        if (EmitWarningEnabled(I.getContext())) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str()
+             << "\n";
+          EmitWarning("CannotDeduceType", I, ss.str());
+        }
         goto known;
       }
-      EmitNoTypeError(str, I, gutils, BuilderZ);
+      {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of load " << I;
+        EmitNoTypeError(str, I, gutils, BuilderZ);
+      }
     known:;
     }
 
@@ -982,16 +989,23 @@ public:
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
     if (!vd.isKnown()) {
-      std::string str;
-      raw_string_ostream ss(str);
-      ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
-        ss << ", assumed " << vd.str() << "\n";
-        EmitWarning("CannotDeduceType", I, ss.str());
+        if (EmitWarningEnabled(I.getContext())) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of store " << I << ", assumed " << vd.str()
+             << "\n";
+          EmitWarning("CannotDeduceType", I, ss.str());
+        }
         goto known;
       }
-      EmitNoTypeError(str, I, gutils, BuilderZ);
+      {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of store " << I;
+        EmitNoTypeError(str, I, gutils, BuilderZ);
+      }
       return;
     known:;
     }

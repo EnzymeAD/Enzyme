@@ -227,6 +227,11 @@ extern llvm::StringMap<std::function<llvm::Value *(
     GradientUtils *)>>
     shadowHandlers;
 
+static inline bool EmitWarningEnabled(const llvm::LLVMContext &Ctx) {
+  return EnzymePrintPerf ||
+         Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme");
+}
+
 template <typename... Args>
 void EmitWarning(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
