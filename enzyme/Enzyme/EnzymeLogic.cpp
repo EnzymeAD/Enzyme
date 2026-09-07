@@ -6429,7 +6429,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     return F;
 
   // clang-format off
-  StringSet<> NoFreeDemangles = {
+  static const StringSet<> NoFreeDemangles = {
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::~basic_istream()",
       "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::~basic_filebuf()",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>::~basic_ostream()",
@@ -6639,7 +6639,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::io::stdio::_eprint",
   };
 
-  StringSet<> NoFrees = {"mpfr_greater_p",
+  static const StringSet<> NoFrees = {"mpfr_greater_p",
                         "vprintf",
                         "fprintf",
                         "fputc",

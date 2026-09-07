@@ -1552,7 +1552,7 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
+          static const StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
                                          "jl_alloc_array_1d",
                                          "jl_alloc_array_2d",
                                          "jl_alloc_array_3d",
