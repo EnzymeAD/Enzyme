@@ -1899,7 +1899,7 @@ public:
               8;
 
         unsigned start = 0;
-        auto vd = TR.query(&EVI);
+        const auto &vd = TR.query(&EVI);
 
         while (1) {
           unsigned nextStart = storeSize;
@@ -2064,7 +2064,7 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_inserted)) {
-        auto TT = TR.query(orig_inserted);
+        const auto &TT = TR.query(orig_inserted);
 
         unsigned start = 0;
         Value *dindex = nullptr;
@@ -2127,8 +2127,6 @@ public:
                                       prediff);
             }
 
-            auto TT = TR.query(orig_inserted);
-
             ((DiffeGradientUtils *)gutils)
                 ->addToDiffe(orig_inserted, dindex, Builder2, flt, start,
                              nextStart - start);
@@ -2149,7 +2147,7 @@ public:
 
       if (!gutils->isConstantValue(orig_agg)) {
 
-        auto TT = TR.query(orig_agg);
+        const auto &TT = TR.query(orig_agg);
         const MDNode *MD = hasMetadata(&IVI, "enzyme_truetype");
 
         unsigned start = 0;

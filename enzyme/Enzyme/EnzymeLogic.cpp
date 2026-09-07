@@ -3396,7 +3396,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               7) /
              8;
 
-    auto PNtypeT = gutils->TR.query(orig);
+    const auto &PNtypeT = gutils->TR.query(orig);
     auto PNtype = PNtypeT[{-1}];
 
     // TODO remove explicit type check and only use PNtype

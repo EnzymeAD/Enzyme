@@ -1032,12 +1032,15 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
   }
 }
 
-TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
+const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
   // Integers with fewer than 16 bits (size of half)
   // must be integral, since it cannot possibly represent a float or pointer
   if (!isa<UndefValue>(Val) && Val->getType()->isIntegerTy() &&
-      cast<IntegerType>(Val->getType())->getBitWidth() < 16)
-    return TypeTree(BaseType::Integer).Only(-1, nullptr);
+      cast<IntegerType>(Val->getType())->getBitWidth() < 16) {
+    static const TypeTree SmallInt =
+        TypeTree(BaseType::Integer).Only(-1, nullptr);
+    return SmallInt;
+  }
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
     if (EnzymeJuliaAddrLoad)
@@ -2771,7 +2774,7 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
 
   } else {
     if (direction & DOWN) {
-      TypeTree vecAnalysis = getAnalysis(I.getVectorOperand());
+      const TypeTree &vecAnalysis = getAnalysis(I.getVectorOperand());
       // TODO merge of anythings (see selectinst)
       TypeTree res = vecAnalysis.Lookup(size, dl);
       updateAnalysis(&I, res.Only(-1, &I), &I);
@@ -6211,7 +6214,7 @@ FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
   return analyzer->getCallInfo(CI, fn);
 }
 
-TypeTree TypeResults::query(Value *val) const {
+const TypeTree &TypeResults::query(Value *val) const {
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val)) {
     assert(inst->getParent()->getParent() == analyzer->fntypeinfo.Function);
@@ -6246,7 +6249,7 @@ size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
 bool TypeResults::allFloat(Value *val) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt.isFloat();
@@ -6275,7 +6278,7 @@ bool TypeResults::allFloat(Value *val) const {
 bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (!anythingIsFloat && dt == BaseType::Anything)
     return false;
@@ -6314,7 +6317,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
 bool TypeResults::anyPointer(Value *val) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt == BaseType::Pointer;
@@ -6352,7 +6355,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
                                   bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{0}];
   /*
   size_t ObjSize = 1;
@@ -6382,7 +6385,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
 Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   Type *ty = q[{-1}].isFloat();
   for (size_t i = start; i < num; ++i) {
     auto ty2 = q[{(int)i}].isFloat();
