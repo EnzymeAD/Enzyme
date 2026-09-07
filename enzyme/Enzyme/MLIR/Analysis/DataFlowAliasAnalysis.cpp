@@ -1061,9 +1061,64 @@ LogicalResult getEffectsForExternalCall(
   return failure();
 }
 
+// Whether an `llvm.mlir.addressof` of this symbol has to fall back on the
+// shared entry class, or can be given its own. Symbols that may be defined
+// outside the module can be aliased by an incoming pointer, so they share the
+// entry class; symbols whose definition the module owns get a unique class.
+static bool shouldUseEntryClassForAddressOf(Operation *symbol) {
+  if (isa<LLVM::GlobalOp>(symbol)) {
+    // A global's storage is a distinct object even when the definition is
+    // external: taking its address cannot produce a pointer into some other
+    // global. Give every global its own alias class.
+    //
+    // TODO: this ignores unnamed_addr. A global marked unnamed_addr has no
+    // meaningful identity and may be merged with an equivalent constant, so
+    // strictly it should not get a unique class of its own.
+    return false;
+  }
+
+  if (auto f = dyn_cast<LLVM::LLVMFuncOp>(symbol)) {
+    auto linkage = f.getLinkage();
+    return linkage == LLVM::Linkage::External ||
+           linkage == LLVM::Linkage::ExternWeak ||
+           linkage == LLVM::Linkage::AvailableExternally;
+  }
+
+  if (auto a = dyn_cast<LLVM::AliasOp>(symbol)) {
+    auto linkage = a.getLinkage();
+    return linkage == LLVM::Linkage::External ||
+           linkage == LLVM::Linkage::ExternWeak ||
+           linkage == LLVM::Linkage::AvailableExternally;
+  }
+
+  // Conservative fallback.
+  return true;
+}
+
 LogicalResult enzyme::AliasAnalysis::visitOperation(
     Operation *op, ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
+  if (auto addr = dyn_cast<LLVM::AddressOfOp>(op)) {
+    AliasClassLattice *resultLattice = results[0];
+
+    Operation *symbol =
+        SymbolTable::lookupNearestSymbolFrom(op, addr.getGlobalNameAttr());
+
+    DistinctAttr cls = nullptr;
+    if (!symbol || shouldUseEntryClassForAddressOf(symbol)) {
+      cls = entryClass;
+    } else {
+      // Keyed on the symbol, not on this result: two `llvm.mlir.addressof` of
+      // the same global must land in the same alias class.
+      cls = originalClasses.getSymbolClass(symbol, addr.getGlobalNameAttr());
+    }
+
+    propagateIfChanged(resultLattice,
+                       resultLattice->join(AliasClassLattice::single(
+                           resultLattice->getAnchor(), cls)));
+
+    return success();
+  }
 
   // If we don't have memory effect information, don't assume anything about
   // values.
