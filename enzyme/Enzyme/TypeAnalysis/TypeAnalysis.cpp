@@ -5370,18 +5370,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Gather" || funcName == "MPI_Scatter") {
+    if (canonicalizeMPIName(funcName) == "MPI_Gather" ||
+        canonicalizeMPIName(funcName) == "MPI_Scatter") {
+      bool fortranABI = isFortranMPICall(funcName);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(3),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(4),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(6),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        // The C ABI passes the count and root arguments by value and returns
+        // an error code. The Fortran ABI passes them all by reference (with
+        // an extra trailing `ierr` argument) and is void, so those operands
+        // keep just their pointer classification; their pointee types are
+        // deduced from the stores that initialize them.
+        updateAnalysis(call.getOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(4),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(6),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
+      // The data copied between the send and receive buffers has the same
+      // underlying element type. Propagate type information between the two
+      // buffers so that a buffer whose contents are otherwise unobserved
+      // (e.g. a dummy argument that is only referenced by the MPI call)
+      // inherits it.
+      if (direction & UP) {
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree res = getAnalysis(call.getOperand(0))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, 1, 0);
+        TypeTree res2 = getAnalysis(call.getOperand(3))
+                            .PurgeAnything()
+                            .Data0()
+                            .ShiftIndices(dl, 0, 1, 0);
+        bool Legal = true;
+        res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+        if (Legal) {
+          res.insert({}, BaseType::Pointer);
+          res = res.Only(-1, &call);
+          updateAnalysis(call.getOperand(0), res, &call);
+          updateAnalysis(call.getOperand(3), res, &call);
+        }
+      }
       return;
     }
     if (funcName == "MPI_Allgather") {

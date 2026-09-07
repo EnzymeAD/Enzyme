@@ -1869,48 +1869,61 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      bool fortranABI = isFortranMPICall(called->getName());
+
+      Type *i32Ty = Type::getInt32Ty(call.getContext());
+      Value *sendcountVal =
+          fortranABI ? Builder2.CreateLoad(i32Ty, sendcount) : sendcount;
+      Value *recvcountVal =
+          fortranABI ? Builder2.CreateLoad(i32Ty, recvcount) : recvcount;
+      Value *rootVal = fortranABI ? Builder2.CreateLoad(i32Ty, root) : root;
+
+      Value *rank = MPI_COMM_RANK(comm, Builder2, rootVal->getType(), called);
       Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
-        Value *args[] = {
+        // Account for extra `ierr` argument in Fortran ABI
+        SmallVector<Value *, 8> args_vec = {
             /*sendbuf*/ shadow_sendbuf,
-            /*sendcount*/ sendcount,
+            /*sendcount*/ gutils->getNewFromOriginal(orig_sendcount),
             /*sendtype*/ sendtype,
             /*recvbuf*/ shadow_recvbuf,
-            /*recvcount*/ recvcount,
+            /*recvcount*/ gutils->getNewFromOriginal(orig_recvcount),
             /*recvtype*/ recvtype,
-            /*root*/ root,
+            /*root*/ gutils->getNewFromOriginal(orig_root),
             /*comm*/ comm,
         };
+        for (size_t i = 8, e = call.arg_size(); i < e; i++)
+          args_vec.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        BundleTypes[3] = ValueType::Shadow;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ false);
 
         auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        Builder2.CreateCall(call.getFunctionType(), callval, args_vec, Defs);
         return;
       }
       // Get the length for the allocation of the intermediate buffer
       auto recvlen_arg = Builder2.CreateZExtOrTrunc(
-          recvcount, Type::getInt64Ty(call.getContext()));
+          recvcountVal, Type::getInt64Ty(call.getContext()));
       recvlen_arg =
           Builder2.CreateMul(recvlen_arg,
                              Builder2.CreateZExtOrTrunc(
                                  tysize, Type::getInt64Ty(call.getContext())),
                              "", true, true);
 
-      // Need to preserve the shadow send/recv buffers.
-      auto BufferDefs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-           ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal},
-          Builder2, /*lookup*/ true);
+      // Need to preserve the shadow send/recv buffers. The Fortran ABI call
+      // has an extra `ierr` argument, so size the bundle to match the actual
+      // call arity: shadow send/recv buffers, primal everything else.
+      std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                               ValueType::Primal);
+      BufferBundleTypes[0] = ValueType::Shadow;
+      BufferBundleTypes[3] = ValueType::Shadow;
+      auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
+                                                   Builder2, /*lookup*/ true);
 
       // 1. if root, malloc intermediate buffer, else undef
       PHINode *buf;
@@ -1923,13 +1936,13 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         BasicBlock *mergeBlock = gutils->addReverseBlock(
             rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, rootVal), rootBlock,
                               mergeBlock);
 
         Builder2.SetInsertPoint(rootBlock);
 
         auto sendlen_arg = Builder2.CreateZExtOrTrunc(
-            sendcount, Type::getInt64Ty(call.getContext()));
+            sendcountVal, Type::getInt64Ty(call.getContext()));
         sendlen_arg =
             Builder2.CreateMul(sendlen_arg,
                                Builder2.CreateZExtOrTrunc(
@@ -1938,7 +1951,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         sendlen_arg = Builder2.CreateMul(
             sendlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType(), called),
+                MPI_COMM_SIZE(comm, Builder2, rootVal->getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
@@ -1966,19 +1979,24 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         // sendtype,
         //     void *recvbuf, int recvcount, MPI_Datatype recvtype,
         //     int root, MPI_Comm comm)
-        Value *args[] = {
-            /*sendbuf*/ shadow_recvbuf,
-            /*sendcount*/ recvcount,
-            /*sendtype*/ recvtype,
-            /*recvbuf*/ buf,
-            /*recvcount*/ sendcount,
-            /*recvtype*/ sendtype,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
+        //
+        // The Fortran MPI ABI passes all arguments by reference and appends
+        // an `ierr` argument, so the generated call must match the convention
+        // of the caller.
+        SmallVector<Value *, 10> args;
+        if (fortranABI) {
+          args = {shadow_recvbuf, recvcount, recvtype, buf,
+                  sendcount,      sendtype,  root,     comm};
+          for (size_t i = 8, e = call.arg_size(); i < e; i++)
+            args.push_back(lookup(
+                gutils->getNewFromOriginal(call.getArgOperand(i)), Builder2));
+        } else {
+          args = {shadow_recvbuf, recvcountVal, recvtype, buf,
+                  sendcountVal,   sendtype,     rootVal,  comm};
+        }
+        SmallVector<Type *, 10> types;
+        for (auto *arg : args)
+          types.push_back(arg->getType());
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
@@ -2010,7 +2028,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         BasicBlock *mergeBlock = gutils->addReverseBlock(
             rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, rootVal), rootBlock,
                               mergeBlock);
 
         Builder2.SetInsertPoint(rootBlock);
