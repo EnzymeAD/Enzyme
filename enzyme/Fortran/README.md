@@ -158,9 +158,12 @@ $ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
     -passes='preserve-nvvm,enzyme,preserve-nvvm-end' input.bc -o output.bc
 ```
 
-When using this separate `opt` workflow, compile the Fortran source to LLVM
- with `-O0`. Otherwise, Flang may inline calls to the function before
-`preserve-nvvm` processes the `enzyme_function_like` hook. The `FlangEnzyme`
+> [!WARNING]
+> When using this separate `opt` workflow, compile the Fortran source to LLVM
+> with `-O0`. Otherwise, Flang may inline calls to the function before
+> `preserve-nvvm` processes the `enzyme_function_like` hook.
+
+The `FlangEnzyme`
 compiler plugin runs `preserve-nvvm` at the start of Flang's LLVM optimization
 pipeline and does not require this separate `opt` step.
 
