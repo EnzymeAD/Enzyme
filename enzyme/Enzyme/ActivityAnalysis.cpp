@@ -749,8 +749,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return val != CI->getOperand(1);
 
   // only the send/recv buffers are active for mpi reduce/allreduce
-  if (CanonicalMPIName == "MPI_Reduce" ||
-      CanonicalMPIName == "MPI_Allreduce" ||
+  if (CanonicalMPIName == "MPI_Reduce" || CanonicalMPIName == "MPI_Allreduce" ||
       CanonicalMPIName == "MPI_Reduce_scatter_block") {
     return val != CI->getOperand(0) && val != CI->getOperand(1);
   }
