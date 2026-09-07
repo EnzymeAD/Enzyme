@@ -2282,43 +2282,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     return;
   }
 
-  // Simple MPI functions that don't affect differentiation - just duplicate
-  // them in both forward and reverse passes. These functions query MPI
-  // state (communicator size, rank, processor name, etc.) but don't
-  // participate in the computation being differentiated.
-  if (canonicalizeMPIName(funcName) == "MPI_Comm_size" ||
-      canonicalizeMPIName(funcName) == "MPI_Comm_rank" ||
-      canonicalizeMPIName(funcName) == "MPI_Get_processor_name") {
-    if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ReverseModePrimal) {
-      IRBuilder<> Builder2(&call);
-      getReverseBuilder(Builder2);
-      SmallVector<Value *, 8> args;
-      for (unsigned i = 0; i < call.arg_size(); ++i) {
-        args.push_back(lookup(gutils->getNewFromOriginal(call.getArgOperand(i)),
-                              Builder2));
-      }
-      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                          args);
-    }
-    if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeError ||
-        Mode == DerivativeMode::ForwardModeSplit) {
-      IRBuilder<> Builder2(&call);
-      getForwardBuilder(Builder2);
-      SmallVector<Value *, 8> args;
-      for (unsigned i = 0; i < call.arg_size(); ++i) {
-        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-      }
-      Builder2.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                          args);
-    }
-    if (Mode == DerivativeMode::ReverseModeGradient)
-      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-    return;
-  }
-
   // MPI_Init / MPI_Finalize don't participate in the computation being
   // differentiated - just duplicate them as-is in both passes.
   if (funcName == "MPI_Init" || funcName == "PMPI_Init" ||
@@ -2403,12 +2366,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
        CanonicalMPIName == "MPI_Barrier" ||
        CanonicalMPIName == "MPI_Comm_free" ||
        CanonicalMPIName == "MPI_Comm_disconnect" ||
-       CanonicalMPIName == "MPI_Comm_size" ||
-       CanonicalMPIName == "MPI_Comm_rank" || CanonicalMPIName == "MPI_Init" ||
+       CanonicalMPIName == "MPI_Init" ||
        CanonicalMPIName == "MPI_Init_thread" ||
-       CanonicalMPIName == "MPI_Finalize" ||
-       CanonicalMPIName == "MPI_Get_processor_name" ||
-       CanonicalMPIName == "MPI_Test" || CanonicalMPIName == "MPI_Probe" ||
+       CanonicalMPIName == "MPI_Finalize" || CanonicalMPIName == "MPI_Test" ||
+       CanonicalMPIName == "MPI_Probe" ||
        MPIInactiveCommAllocators.find(CanonicalMPIName) !=
            MPIInactiveCommAllocators.end())) {
     handleMPI(call, called, CanonicalMPIName);
