@@ -823,11 +823,12 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
 static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
   if (auto call = dyn_cast<CallOpInterface>(op)) {
     if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
-      if (symbol.getLeafReference().getValue() == "malloc") {
+      StringRef name = symbol.getLeafReference().getValue();
+      if (name == "malloc" || name == "calloc" || name == "_Znwm")
         return true;
-      }
     }
   }
+
   return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
              affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
              enzyme::PopOp>(op);
