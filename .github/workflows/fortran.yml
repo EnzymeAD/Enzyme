@@ -109,13 +109,13 @@ jobs:
         sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.versions.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
         source /opt/intel/oneapi/setvars.sh
         printenv >> $GITHUB_ENV
+    - uses: actions/checkout@v4
     - name: install openmpi
       run: |
         git clone https://github.com/spack/spack.git
         . spack/share/spack/setup-env.sh
         spack compiler find
         spack install openmpi ^intel-oneapi-compilers
-    - uses: actions/checkout@v4
     - name: generate build system
       run: |
         . spack/share/spack/setup-env.sh
