@@ -142,8 +142,8 @@ public:
       Type *i32 = Type::getInt32Ty(DT->getContext());
       Type *pargs[] = {getInt8PtrTy(DT->getContext()), getUnqual(i32),
                        getUnqual(i32)};
-      auto FT = FunctionType::get(Type::getVoidTy(DT->getContext()), pargs,
-                                  false);
+      auto FT =
+          FunctionType::get(Type::getVoidTy(DT->getContext()), pargs, false);
       IRBuilder<> AllocaBuilder(gutils->inversionAllocs);
       auto alloc = AllocaBuilder.CreateAlloca(i32);
       auto ierr = AllocaBuilder.CreateAlloca(i32);
@@ -152,8 +152,7 @@ public:
         args[0] = B.CreateBitCast(args[0], pargs[0]);
       B.CreateCall(
           B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-              getRenamedPerCallingConv(caller->getName(), "MPI_Type_size"),
-              FT),
+              getRenamedPerCallingConv(caller->getName(), "MPI_Type_size"), FT),
           args);
       return B.CreateLoad(i32, alloc);
     }
@@ -228,8 +227,8 @@ public:
       Type *i32 = Type::getInt32Ty(comm->getContext());
       Type *pargs[] = {getInt8PtrTy(comm->getContext()), getUnqual(i32),
                        getUnqual(i32)};
-      auto FT = FunctionType::get(Type::getVoidTy(comm->getContext()), pargs,
-                                  false);
+      auto FT =
+          FunctionType::get(Type::getVoidTy(comm->getContext()), pargs, false);
       IRBuilder<> AllocaBuilder(gutils->inversionAllocs);
       auto alloc = AllocaBuilder.CreateAlloca(i32);
       auto ierr = AllocaBuilder.CreateAlloca(i32);
@@ -238,8 +237,7 @@ public:
         args[0] = B.CreateBitCast(args[0], pargs[0]);
       B.CreateCall(
           B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-              getRenamedPerCallingConv(caller->getName(), "MPI_Comm_rank"),
-              FT),
+              getRenamedPerCallingConv(caller->getName(), "MPI_Comm_rank"), FT),
           args);
       return B.CreateLoad(i32, alloc);
     }
@@ -4984,9 +4982,9 @@ public:
         if (auto LI = dyn_cast<LoadInst>(origArg)) {
           auto *PT = dyn_cast<PointerType>(LI->getType());
           if (PT && PT->getPointerElementType()->isFPOrFPVectorTy()) {
-            vd = TypeTree(ConcreteType(
-                   PT->getPointerElementType()->getScalarType()))
-                   .Only(0, &call);
+            vd = TypeTree(
+                     ConcreteType(PT->getPointerElementType()->getScalarType()))
+                     .Only(0, &call);
             goto knownF;
           }
         }
@@ -4995,8 +4993,9 @@ public:
         // real data)
         if (origArg->getType()->isPointerTy() &&
             origArg->getType()->getPointerElementType()->isFPOrFPVectorTy()) {
-          vd = TypeTree(ConcreteType(
-                   origArg->getType()->getPointerElementType()->getScalarType()))
+          vd = TypeTree(ConcreteType(origArg->getType()
+                                         ->getPointerElementType()
+                                         ->getScalarType()))
                    .Only(0, &call);
           goto knownF;
         }
