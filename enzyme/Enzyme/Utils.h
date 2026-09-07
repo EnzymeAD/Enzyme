@@ -2692,7 +2692,7 @@ static inline llvm::StringRef canonicalizeMPIName(llvm::StringRef Name) {
 /// underscore(s), e.g. "mpi_recv_", "mpi_comm_rank__"). Such calls pass all
 /// arguments by reference and take an extra trailing `ierr` argument.
 static inline bool isFortranMPICall(llvm::StringRef Name) {
-  return Name.ends_with("_") && !canonicalizeMPIName(Name).empty();
+  return endsWith(Name, "_") && !canonicalizeMPIName(Name).empty();
 }
 
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
