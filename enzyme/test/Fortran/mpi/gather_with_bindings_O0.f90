@@ -15,7 +15,7 @@ program main
                  mpi_comm_world, mpi_gather, mpi_real
   implicit none
 
-  real :: x, dxl, dxg(2), y(2), dyl, dgy(2), seed(2)
+  real :: x, dxl, dxg(2), y(2), dyl, dy(2), seed(2)
   integer :: ierr, rank, numprocs
 
   call mpi_init(ierr)
@@ -30,12 +30,12 @@ program main
   ! Here the gathered array of derivatives is produced directly by the
   ! differentiated gather on the root process.
   x = 2.0
-  dyl = 1.0
-  dgy = 0.0
-  call enzyme_fwddiff(power, enzyme_dup, x, dyl, enzyme_dup, y, dgy)
+  seed = 1.0
+  dy = 0.0
+  call enzyme_fwddiff(power, enzyme_dup, x, seed, enzyme_dup, y, dy)
   if (rank == 0) then
-    write(*,"(f0.1)") dgy(1)
-    write(*,"(f0.1)") dgy(2)
+    write(*,"(f0.1)") dy(1)
+    write(*,"(f0.1)") dy(2)
   end if
 
   ! Do the same thing with reverse mode: 1 (rank 0), 6 (rank 1)
