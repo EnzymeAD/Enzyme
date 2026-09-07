@@ -143,7 +143,7 @@ use enzyme, only: enzyme_function_like, enzyme_log1p
 call enzyme_function_like(log1p_like_function, enzyme_log1p)
 ```
 
-`enzyme_log1p` supplies the symbolic function name `log1p`; its value is not
+Here `enzyme_log1p` supplies the symbolic function name `log1p`; its value is not
 used. Functions passed to `enzyme_function_like` must have an LLVM-level
 signature compatible with the selected mathematical function. Scalar arguments
 must use the `value` attribute so that Flang lowers them as LLVM values rather
