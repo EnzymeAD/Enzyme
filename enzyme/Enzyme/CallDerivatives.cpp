@@ -2266,10 +2266,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // them in both forward and reverse passes. These functions query MPI
   // state (communicator size, rank, processor name, etc.) but don't
   // participate in the computation being differentiated.
-  if (funcName == "MPI_Comm_size" || funcName == "PMPI_Comm_size" ||
-      funcName == "MPI_Comm_rank" || funcName == "PMPI_Comm_rank" ||
-      funcName == "MPI_Get_processor_name" ||
-      funcName == "PMPI_Get_processor_name") {
+  if (canonicalizeMPIName(funcName) == "MPI_Comm_size" ||
+      canonicalizeMPIName(funcName) == "MPI_Comm_rank" ||
+      canonicalizeMPIName(funcName) == "MPI_Get_processor_name") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModePrimal) {
