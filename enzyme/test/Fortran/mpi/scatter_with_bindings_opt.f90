@@ -1,4 +1,4 @@
-! Test differentiation through mpi_comm_gather
+! Test differentiation through mpi_comm_scatter
 !
 ! REQUIRES: fortran, mpi
 ! RUN: %fc -flto -O1 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
@@ -12,7 +12,7 @@ program main
                  mpi_comm_world, mpi_gather, mpi_real
   implicit none
 
-  real :: xl, dxl, dxg(2), yg(2), dyl, dyg(2), seed(2)
+  real :: xg(2), dxg(2), yl, dyl, dyg(2), seed(2)
   integer :: ierr, rank, numprocs
 
   call mpi_init(ierr)
@@ -24,26 +24,25 @@ program main
   end if
 
   ! Compute the derivatives with forward mode: 1 (rank 0), 4 (rank 1)
-  ! Here the gathered array of derivatives is produced directly by the
-  ! differentiated gather on the root process.
-  xl = 2.0
+  ! The tangent of mpi_scatter still scatters the tangents, so we need to
+  ! gather them back to the root process for testing.
+  xg = [2.0, 3.0]
   seed = 1.0
-  dyg = 0.0
-  call enzyme_fwddiff(power, enzyme_dup, xl, seed, enzyme_dup, yg, dyg)
+  dyl = 0.0
+  call enzyme_fwddiff(power, enzyme_dup, xg, seed, enzyme_dup, yl, dyl)
+  call mpi_gather(dyl, 1, mpi_real, dyg, 1, mpi_real, 0, mpi_comm_world, ierr)
   if (rank == 0) then
     write(*,"(f0.1)") dyg(1)
     write(*,"(f0.1)") dyg(2)
   end if
 
   ! Do the same thing with reverse mode: 1 (rank 0), 6 (rank 1)
-  ! The adjoint of mpi_gather scatters the adjoints of the gathered array, so
-  ! each process obtains the derivative of its own contribution to the gather;
-  ! collect these local derivatives on the root process.
-  xl = 3.0
-  dxl = 0.0
+  ! The adjoint of mpi_scatter gathers the adjoints of the gathered array, so
+  ! the root process obtains the derivatives it needs for testing.
+  xg = [4.0, 5.0]
+  dxg = 0.0
   seed = 1.0
-  call enzyme_autodiff(power, enzyme_dup, xl, dxl, enzyme_dup, yg, seed)
-  call mpi_gather(dxl, 1, mpi_real, dxg, 1, mpi_real, 0, mpi_comm_world, ierr)
+  call enzyme_autodiff(power, enzyme_dup, xg, dxg, enzyme_dup, yl, seed)
   if (rank == 0) then
     write(*,"(f0.1)") dxg(1)
     write(*,"(f0.1)") dxg(2)
@@ -53,23 +52,23 @@ program main
 
 contains
 
-  ! Compute the power (rank + 1) of a real and gather the local values
-  subroutine power(xl, yg)
-    use mpi, only: mpi_comm_rank, mpi_comm_world, mpi_gather, mpi_real
-    real, intent(in) :: xl
-    real, intent(out) :: yg(2)
-    real :: yl
+  ! Scatter the input argument then compute its power numprocs
+  subroutine power(x, y)
+    use mpi, only: mpi_comm_size, mpi_comm_world, mpi_scatter, mpi_real
+    real, intent(in) :: x(2)
+    real, intent(out) :: y
+    real :: xl
     integer :: ierr
-    integer :: rank
+    integer :: numprocs
 
-    call mpi_comm_rank(mpi_comm_world, rank, ierr)
-    yl = xl**(rank + 1)
-    call mpi_gather(yl, 1, mpi_real, yg, 1, mpi_real, 0, mpi_comm_world, ierr)
+    call mpi_comm_size(mpi_comm_world, numprocs, ierr)
+    call mpi_scatter(x, 1, mpi_real, xl, 1, mpi_real, 0, mpi_comm_world, ierr)
+    y = xl**numprocs
   end subroutine power
 
 end program main
 
-! CHECK: 1.0
-! CHECK-NEXT: 4.0
-! CHECK-NEXT: 1.0
+! CHECK: 4.0
 ! CHECK-NEXT: 6.0
+! CHECK-NEXT: 8.0
+! CHECK-NEXT: 10.0
