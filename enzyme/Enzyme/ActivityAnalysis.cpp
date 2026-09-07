@@ -731,6 +731,8 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // "PMPI_Recv" and Fortran "mpi_recv_" etc.): the leading argument indices
   // match between the ABIs, the Fortran ABI only appends an `ierr` argument.
   StringRef CanonicalMPIName = canonicalizeMPIName(Name);
+  if (CanonicalMPIName.empty())
+    return false;
 
   // only the buffer is active for mpi send/recv
   if (CanonicalMPIName == "MPI_Recv" || CanonicalMPIName == "MPI_Send") {
