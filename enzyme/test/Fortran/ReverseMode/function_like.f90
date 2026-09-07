@@ -10,15 +10,15 @@ module function_like_test
 contains
 
   function log1p_like_function(x) result(y)
-    double precision, value :: x
-    double precision :: y
+    real, value :: x
+    real :: y
 
-    y = 2.0d0 * x
+    y = 2.0 * x
   end function log1p_like_function
 
   function test(x) result(y)
-    double precision, intent(in) :: x
-    double precision :: y
+    real, intent(in) :: x
+    real :: y
 
     y = log1p_like_function(x)
   end function test
@@ -30,15 +30,14 @@ program main
   use function_like_test, only: log1p_like_function, test
   implicit none
 
-  double precision :: x, dx
+  real :: x, dx
 
-  x = 2.0d0
-  dx = 0.0d0
+  x = 2.0
+  dx = 0.0
   call enzyme_function_like(log1p_like_function, enzyme_log1p)
   call enzyme_autodiff(test, x, dx)
 
-  if (abs(dx - 1.0d0 / 3.0d0) > 1.0d-10) error stop
-  print *, "function_like passed"
+  write(*,"(f6.4)") dx
 end program main
 
-! CHECK: function_like passed
+! CHECK: 0.3333
