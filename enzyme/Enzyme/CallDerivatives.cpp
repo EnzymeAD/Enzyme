@@ -1147,25 +1147,45 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             // The Fortran ABI passes the operator as a reference to an
             // integer handle
             if (auto *CI = dyn_cast<ConstantInt>(GV->getInitializer())) {
-              // MPICH
+              // MPICH native ABI (also covers the MPICH ABI Compatibility
+              // Initiative: Intel MPI, MVAPICH, Cray MPICH)
               if (CI->getValue() == 1476395011) {
+                isSum = true;
+              }
+              // MPI 5.0 standard ABI (Chapter 20), where predefined op
+              // handles are fixed compile-time constants, identical in C
+              // and Fortran: MPI_SUM == 33.
+              if (CI->getValue() == 33) {
                 isSum = true;
               }
             }
           }
         }
-        // MPICH
+        // MPICH native ABI
         if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
           if (CI->getValue() == 1476395011) {
+            isSum = true;
+          }
+        }
+        // MPI 5.0 standard ABI: predefined op handles are small-integer
+        // pointer constants (inttoptr), with MPI_SUM == 33.
+        if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+          if (CI->getValue() == 33) {
             isSum = true;
           }
         }
       }
       if (!isSum) {
         if (fortranABI) {
-          // Integer MPI operator handles of the Fortran ABI are
+          // Integer MPI operator handles of a native Fortran ABI are
           // implementation-defined and cannot be mapped portably at compile
-          // time; warn and assume the common case of MPI_SUM.
+          // time; warn and assume the common case of MPI_SUM. This remains
+          // true with MPI 5.0: although its standard ABI (Chapter 20) does
+          // fix handle values as portable compile-time constants (MPI_SUM
+          // == 33, recognized above), supporting that ABI is optional and
+          // neither Open MPI nor MPICH use it by default, so code compiled
+          // against the default/native ABIs still carries
+          // implementation-defined handle values.
           llvm::errs() << "warning: cannot determine MPI op used in `" << call
                        << "`, assuming MPI_SUM\n";
         } else {
