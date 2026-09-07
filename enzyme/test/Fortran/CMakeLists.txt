@@ -1,6 +1,8 @@
 message("Building Fortran tests")
 
+add_subdirectory(BatchMode)
 add_subdirectory(ForwardMode)
+add_subdirectory(OpenMP)
 add_subdirectory(ReverseMode)
 
 # Run regression and unit tests

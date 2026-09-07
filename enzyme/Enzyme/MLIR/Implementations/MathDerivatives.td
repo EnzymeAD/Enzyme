@@ -10,6 +10,17 @@ def : MLIRDerivative<"math", "ExpOp", (Op $x),
                       (CheckedMulF (DiffeRet), (ExpF $x))
                     ]
                   >;
+def : MLIRDerivative<"math", "Exp2Op", (Op $x),
+                    [
+                      (CheckedMulF
+                        (DiffeRet),
+                        (MulF
+                          (Exp2F $x),
+                          (LogF 
+                            (ConstantFP<"2","arith","ConstantOp"> $x)
+                            )))
+                    ]
+                  >;
 def : MLIRDerivative<"math", "FmaOp", (Op $x, $y, $z),
                     [
                       (CheckedMulF (DiffeRet), $y),
@@ -39,6 +50,15 @@ def : MLIRDerivative<"math", "PowFOp", (Op $x, $y),
 def : MLIRDerivative<"math", "LogOp", (Op $x),
                     [
                       (CheckedDivF (DiffeRet), $x)
+                    ]
+                  >;
+def : MLIRDerivative<"math", "Log2Op", (Op $x),
+                    [
+                      (CheckedDivF
+                        (DiffeRet),
+                        (MulF
+                          $x,
+                          (LogF (ConstantFP<"2","arith", "ConstantOp"> $x))))
                     ]
                   >;
 def : MLIRDerivative<"math", "AtanOp", (Op $x),

@@ -333,15 +333,23 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
           successor.isOperation()
               ? parentOp->getResults()
               : regionBranchOp.getSuccessorInputs(successor);
-      assert(operandRange.size() == targetValues.size());
-      for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+      // The parent may carry more results than the terminator forwards to it
+      // (a gpu wrapper's token-like result has no yield operand); only the
+      // paired prefix can be shadowed.
+      size_t numPaired = std::min(operandRange.size(), targetValues.size());
+      for (auto &&[i, target] :
+           llvm::enumerate(targetValues.take_front(numPaired))) {
         if (!gutils->isConstantValue(target))
           operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       }
     }
   } else {
-    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
-    for (auto res : parentOp->getResults()) {
+    // The parent may carry more results than its terminator forwards (a gpu
+    // wrapper's token-like result has no yield operand); only the paired
+    // results can be shadowed.
+    size_t numPaired = std::min<size_t>(parentOp->getNumResults(),
+                                        origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults().take_front(numPaired)) {
       if (!gutils->isConstantValue(res))
         operandsToShadow.insert(res.getResultNumber());
     }
@@ -588,6 +596,11 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       /* augmented */ nullptr, gutils->omp, gutils->postpasses,
       gutils->verifyPostPasses, gutils->strongZero);
 
+  if (!forwardFn)
+    return orig->emitError()
+           << "failed to create forward-mode derivative for callee "
+           << fn.getNameAttr() << "\n";
+
   SmallVector<Value> fwdArguments;
 
   for (auto &&[arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
@@ -759,6 +772,11 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
       type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
       gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
       /*markReadonly=*/false);
+
+  if (!revFn)
+    return orig->emitError()
+           << "failed to create reverse-mode adjoint for callee "
+           << fn.getNameAttr() << "\n";
 
   SmallVector<Value> revArguments;
 

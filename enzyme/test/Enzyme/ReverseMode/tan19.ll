@@ -1,12 +1,12 @@
 ; RUN: if [ %llvmver -ge 19 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
 ; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
-declare double @llvm.tanh.f64(double) #14
+declare double @llvm.tan.f64(double) #14
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {
 entry:
-  %0 = call double @llvm.tanh.f64(double %x)
+  %0 = call double @llvm.tan.f64(double %x)
   ret double %0
 }
 
@@ -21,9 +21,9 @@ declare double @__enzyme_autodiff(ptr, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:  %0 = call fast double @llvm.tanh.f64(double %x)
+; CHECK-NEXT:  %0 = call fast double @llvm.tan.f64(double %x)
 ; CHECK-NEXT:  %1 = fmul fast double %0, %0
-; CHECK-NEXT:  %2 = fsub fast double 1.000000e+00, %1
+; CHECK-NEXT:  %2 = fadd fast double 1.000000e+00, %1
 ; CHECK-NEXT:  %3 = fmul fast double %differeturn, %2
 ; CHECK-NEXT:  %4 = insertvalue { double } undef, double %3, 0
 ; CHECK-NEXT:  ret { double } %4
