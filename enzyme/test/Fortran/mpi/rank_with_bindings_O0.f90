@@ -1,3 +1,5 @@
+! Test differentiation through mpi_comm_rank
+!
 ! REQUIRES: fortran, mpi
 ! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s

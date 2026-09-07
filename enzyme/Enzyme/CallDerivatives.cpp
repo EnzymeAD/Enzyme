@@ -1199,9 +1199,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                                ValueType::Primal);
       BufferBundleTypes[0] = ValueType::Shadow;
       BufferBundleTypes[1] = ValueType::Shadow;
-      auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
-                                                   Builder2,
-                                                   /*lookup*/ !forwardMode);
+      auto BufferDefs =
+          gutils->getInvertedBundles(&call, BufferBundleTypes, Builder2,
+                                     /*lookup*/ !forwardMode);
 
       Value *count = gutils->getNewFromOriginal(orig_count);
       if (!forwardMode)
@@ -1314,9 +1314,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             /*comm*/ comm,
         };
         if (fortranABI) {
-          args.push_back(
-              IRBuilder<>(gutils->inversionAllocs)
-                  .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
         }
         SmallVector<Type *, 8> types;
         for (auto *arg : args) {
@@ -2205,8 +2204,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       // of MPI_Barrier (e.g. "mpi_barrier_") take an extra `ierr` argument.
       SmallVector<Value *, 4> args;
       for (unsigned i = 0; i < call.arg_size(); i++)
-        args.push_back(
-            lookup(gutils->getNewFromOriginal(call.getArgOperand(i)), Builder2));
+        args.push_back(lookup(gutils->getNewFromOriginal(call.getArgOperand(i)),
+                              Builder2));
       Builder2.CreateCall(call.getFunctionType(), callval, args);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -2368,13 +2367,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
        CanonicalMPIName == "MPI_Comm_free" ||
        CanonicalMPIName == "MPI_Comm_disconnect" ||
        CanonicalMPIName == "MPI_Comm_size" ||
-       CanonicalMPIName == "MPI_Comm_rank" ||
-       CanonicalMPIName == "MPI_Init" ||
+       CanonicalMPIName == "MPI_Comm_rank" || CanonicalMPIName == "MPI_Init" ||
        CanonicalMPIName == "MPI_Init_thread" ||
        CanonicalMPIName == "MPI_Finalize" ||
        CanonicalMPIName == "MPI_Get_processor_name" ||
-       CanonicalMPIName == "MPI_Test" ||
-       CanonicalMPIName == "MPI_Probe" ||
+       CanonicalMPIName == "MPI_Test" || CanonicalMPIName == "MPI_Probe" ||
        MPIInactiveCommAllocators.find(CanonicalMPIName) !=
            MPIInactiveCommAllocators.end())) {
     handleMPI(call, called, CanonicalMPIName);
