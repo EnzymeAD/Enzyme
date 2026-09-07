@@ -276,6 +276,27 @@ public:
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
+    // Fortran ABI ("mpi_comm_size_"): all arguments are passed by reference
+    // and the call takes an extra trailing `ierr` argument.
+    if (isFortranMPICall(caller->getName())) {
+      Type *i32 = Type::getInt32Ty(comm->getContext());
+      Type *pargs[] = {getInt8PtrTy(comm->getContext()), getUnqual(i32),
+                       getUnqual(i32)};
+      auto FT =
+          FunctionType::get(Type::getVoidTy(comm->getContext()), pargs, false);
+      IRBuilder<> AllocaBuilder(gutils->inversionAllocs);
+      auto alloc = AllocaBuilder.CreateAlloca(i32);
+      auto ierr = AllocaBuilder.CreateAlloca(i32);
+      llvm::Value *args[] = {comm, alloc, ierr};
+      if (comm->getType() != pargs[0])
+        args[0] = B.CreateBitCast(args[0], pargs[0]);
+      B.CreateCall(
+          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(caller->getName(), "MPI_Comm_size"), FT),
+          args);
+      return B.CreateLoad(i32, alloc);
+    }
+
     Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
