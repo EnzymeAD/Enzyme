@@ -1318,6 +1318,39 @@ static inline llvm::PointerType *changePointerAddrSpace(llvm::PointerType *PT,
   return llvm::PointerType::get(PT->getContext(), AddressSpace);
 }
 
+/// The byte offset of the aggregate element addressed by `Idxs` within `T`,
+/// that is, what `gep T, ptr, 0, Idxs...` would compute. The data layout
+/// already records this, so read it off directly rather than materializing a
+/// throwaway GEP and folding it: callers run this once per field of every
+/// aggregate they walk.
+static inline uint64_t
+getAggregateElementOffset(const llvm::DataLayout &DL, llvm::Type *T,
+                          llvm::ArrayRef<unsigned> Idxs) {
+  uint64_t Offset = 0;
+  for (unsigned Idx : Idxs) {
+    llvm::Type *ElTy =
+        llvm::GetElementPtrInst::getTypeAtIndex(T, (uint64_t)Idx);
+    assert(ElTy && "index out of range of aggregate type");
+    if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+      Offset += DL.getStructLayout(ST)->getElementOffset(Idx);
+    } else {
+      // Array and vector elements sit at successive multiples of the element's
+      // alloc size, which is the stride a gep applies to a sequential index.
+      uint64_t Stride = DL.getTypeAllocSize(ElTy);
+      Offset += Idx * Stride;
+    }
+    T = ElTy;
+  }
+  return Offset;
+}
+
+/// The byte offset of element `Idx` of the aggregate type `T`.
+static inline uint64_t getAggregateElementOffset(const llvm::DataLayout &DL,
+                                                 llvm::Type *T, uint64_t Idx) {
+  unsigned Idxs[1] = {(unsigned)Idx};
+  return getAggregateElementOffset(DL, T, Idxs);
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);

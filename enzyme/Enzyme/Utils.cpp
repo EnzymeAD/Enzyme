@@ -3567,22 +3567,8 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
       auto offset = preOffset;
 
       auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(EVI->getContext()), 0));
-      for (auto ind : EVI->getIndices()) {
-        vec.push_back(
-            ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
-      }
-      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
-      auto g2 =
-          GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      offset += (size_t)ai.getLimitedValue();
+      offset += (size_t)getAggregateElementOffset(
+          DL, EVI->getOperand(0)->getType(), EVI->getIndices());
 
       if (valSz == 0) {
         auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
