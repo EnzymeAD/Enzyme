@@ -1,19 +1,20 @@
-! REQUIRES: fortran
-! REQUIRES: ifx
+! REQUIRES: fortran, ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o /dev/stdout | %opt -O0 -S -o %t.ll && %fc -flto -O0 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O1 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o /dev/stdout | %opt -O1 -S -o %t.ll && %fc -flto -O1 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O2 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o /dev/stdout | %opt -O2 -S -o %t.ll && %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O3 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o /dev/stdout | %opt -O3 -S -o %t.ll && %fc -flto -O3 %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
+! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 ! NOTE: This test is only configured to run with the ifx compiler
 !       For it to work with the flang compiler we will need to address
 !       https://github.com/EnzymeAD/Enzyme/issues/2822
 
-module normReverse
+module normForward
   implicit none
   public
   interface
-    subroutine norm__enzyme_autodiff(sr, x_desc, x, dx, y_desc, y, dy)
+    subroutine norm__enzyme_fwddiff(sr, x_desc, x, dx, y_desc, y, dy)
       implicit none
       interface
         subroutine sr_decal(a, b)
@@ -29,7 +30,7 @@ module normReverse
       integer, intent(in) :: y_desc
       real, dimension(:), intent(inout) :: y
       real, dimension(:), intent(inout) :: dy
-    end subroutine norm__enzyme_autodiff
+    end subroutine norm__enzyme_fwddiff
   end interface
 contains
   subroutine norm(x, y)
@@ -37,11 +38,11 @@ contains
     real, dimension(:), intent(out) :: y
     y(:) = x / sum(x)
   end subroutine norm
-end module normReverse
+end module normForward
 
 program main
-  use normReverse, only: norm, norm__enzyme_autodiff
-  use enzyme, only: enzyme_dup
+  use normForward, only: norm, norm__enzyme_fwddiff
+  use enzyme, only: enzyme_const, enzyme_dup
   implicit none
   integer, parameter :: n = 1000000
   integer, parameter :: initial_value = 20
@@ -49,7 +50,7 @@ program main
   real :: y(n), dy(n), yp
 
   x(:) = initial_value
-  dy(:) = 1.0
+  dx(:) = 1.0
 
   call norm(x, y)
 
@@ -57,8 +58,8 @@ program main
   yp = y(n) * 1.0e+06
   write(*,"(f6.4)") yp
 
-  dx(:) = 0.0
-  call norm__enzyme_autodiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  dy(:) = 0.0
+  call norm__enzyme_fwddiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
   write(*,"(f6.4)") dy(n)
 end program main
 
