@@ -5288,27 +5288,33 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
+    if (canonicalizeMPIName(funcName) == "MPI_Allreduce") {
+      bool fortranABI = isFortranMPICall(funcName);
       TypeTree buf = TypeTree(BaseType::Pointer);
 
-      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
-        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-          C = CE->getOperand(0);
-        }
-        if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_double") {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_float") {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
-            buf.insert({0}, BaseType::Integer);
+      // The C ABI passes the datatype handle by value, allowing the buffer
+      // element type to be deduced from it. The Fortran ABI passes it by
+      // reference, where its classification remains a pointer.
+      if (!fortranABI) {
+        if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+            C = CE->getOperand(0);
           }
-        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
-          // MPICH
-          if (CI->getValue() == 1275070475) {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (CI->getValue() == 1275069450) {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          if (auto GV = dyn_cast<GlobalVariable>(C)) {
+            if (GV->getName() == "ompi_mpi_double") {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_float") {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+              buf.insert({0}, BaseType::Integer);
+            }
+          } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+            // MPICH
+            if (CI->getValue() == 1275070475) {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (CI->getValue() == 1275069450) {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            }
           }
         }
       }
@@ -5318,14 +5324,46 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
       updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
-      // count
-      updateAnalysis(call.getOperand(2),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      // datatype
-      // op
-      // comm
-      // result
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        // The C ABI passes the count argument by value and returns an error
+        // code. The Fortran ABI passes it by reference (with an extra
+        // trailing `ierr` argument) and is void, so the operand keeps just
+        // its pointer classification; the pointee type is deduced from the
+        // stores that initialize it.
+        // count
+        updateAnalysis(call.getOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        // datatype
+        // op
+        // comm
+        // result
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
+      // The data copied between the send and receive buffers has the same
+      // underlying element type. Propagate type information between the two
+      // buffers so that a buffer whose contents are otherwise unobserved
+      // (e.g. a dummy argument that is only referenced by the MPI call)
+      // inherits it.
+      if (direction & UP) {
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree res = getAnalysis(call.getOperand(0))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, 1, 0);
+        TypeTree res2 = getAnalysis(call.getOperand(1))
+                            .PurgeAnything()
+                            .Data0()
+                            .ShiftIndices(dl, 0, 1, 0);
+        bool Legal = true;
+        res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+        if (Legal) {
+          res.insert({}, BaseType::Pointer);
+          res = res.Only(-1, &call);
+          updateAnalysis(call.getOperand(0), res, &call);
+          updateAnalysis(call.getOperand(1), res, &call);
+        }
+      }
       return;
     }
     if (funcName == "MPI_Sendrecv_replace") {

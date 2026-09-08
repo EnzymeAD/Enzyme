@@ -1420,13 +1420,17 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         getReverseBuilder(Builder2);
       }
 
-      // Get the operations from MPI_Receive
+      // Get the operations from MPI_Allreduce
       Value *orig_sendbuf = call.getOperand(0);
       Value *orig_recvbuf = call.getOperand(1);
       Value *orig_count = call.getOperand(2);
       Value *orig_datatype = call.getOperand(3);
       Value *orig_op = call.getOperand(4);
       Value *orig_comm = call.getOperand(5);
+
+      // The Fortran MPI ABI ("mpi_allreduce_", "mpi_allreduce__", ...) passes
+      // all arguments by reference and appends an `ierr` argument.
+      bool fortranABI = isFortranMPICall(called->getName());
 
       bool isSum = false;
       if (Constant *C = dyn_cast<Constant>(orig_op)) {
@@ -1436,22 +1440,60 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         if (auto GV = dyn_cast<GlobalVariable>(C)) {
           if (GV->getName() == "ompi_mpi_op_sum") {
             isSum = true;
+          } else if (fortranABI && GV->isConstant() &&
+                     GV->hasDefinitiveInitializer()) {
+            // The Fortran ABI passes the operator as a reference to an
+            // integer handle
+            if (auto *CI = dyn_cast<ConstantInt>(GV->getInitializer())) {
+              // MPICH native ABI (also covers the MPICH ABI Compatibility
+              // Initiative: Intel MPI, MVAPICH, Cray MPICH)
+              if (CI->getValue() == 1476395011) {
+                isSum = true;
+              }
+              // MPI 5.0 standard ABI (Chapter 20), where predefined op
+              // handles are fixed compile-time constants, identical in C
+              // and Fortran: MPI_SUM == 33.
+              if (CI->getValue() == 33) {
+                isSum = true;
+              }
+            }
           }
         }
-        // MPICH
+        // MPICH native ABI
         if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
           if (CI->getValue() == 1476395011) {
             isSum = true;
           }
         }
+        // MPI 5.0 standard ABI: predefined op handles are small-integer
+        // pointer constants (inttoptr), with MPI_SUM == 33.
+        if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+          if (CI->getValue() == 33) {
+            isSum = true;
+          }
+        }
       }
       if (!isSum) {
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << " call: " << call << "\n";
-        ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
-        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
-        return;
+        if (fortranABI) {
+          // Integer MPI operator handles of a native Fortran ABI are
+          // implementation-defined and cannot be mapped portably at compile
+          // time; warn and assume the common case of MPI_SUM. This remains
+          // true with MPI 5.0: although its standard ABI (Chapter 20) does
+          // fix handle values as portable compile-time constants (MPI_SUM
+          // == 33, recognized above), supporting that ABI is optional and
+          // neither Open MPI nor MPICH use it by default, so code compiled
+          // against the default/native ABIs still carries
+          // implementation-defined handle values.
+          llvm::errs() << "warning: cannot determine MPI op used in `" << call
+                       << "`, assuming MPI_SUM\n";
+        } else {
+          std::string s;
+          llvm::raw_string_ostream ss(s);
+          ss << " call: " << call << "\n";
+          ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
+          EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+          return;
+        }
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -1468,12 +1510,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         shadow_sendbuf = Builder2.CreateIntToPtr(
             shadow_sendbuf, getInt8PtrTy(call.getContext()));
 
-      // Need to preserve the shadow send/recv buffers.
-      auto BufferDefs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal, ValueType::Primal},
-          Builder2, /*lookup*/ !forwardMode);
+      // Need to preserve the shadow send/recv buffers. The Fortran ABI call
+      // has an extra `ierr` argument, so build the bundle to match the actual
+      // call arity: shadow send/recv buffers, primal everything else.
+      std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                               ValueType::Primal);
+      BufferBundleTypes[0] = ValueType::Shadow;
+      BufferBundleTypes[1] = ValueType::Shadow;
+      auto BufferDefs =
+          gutils->getInvertedBundles(&call, BufferBundleTypes, Builder2,
+                                     /*lookup*/ !forwardMode);
 
       Value *count = gutils->getNewFromOriginal(orig_count);
       if (!forwardMode)
@@ -1491,18 +1537,27 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         op = lookup(op, Builder2);
 
+      // The Fortran ABI passes the count argument by reference; load it
+      // where its value is needed.
+      Type *i32Ty = Type::getInt32Ty(call.getContext());
+      Value *countVal = fortranABI ? Builder2.CreateLoad(i32Ty, count) : count;
+
       if (forwardMode) {
-        Value *args[] = {
+        SmallVector<Value *, 8> args = {
             /*sendbuf*/ shadow_sendbuf,
             /*recvbuf*/ shadow_recvbuf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*op*/ op,
-            /*comm*/ comm,
         };
+        for (size_t i = 2, e = call.arg_size(); i < e; i++)
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        BundleTypes[1] = ValueType::Shadow;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ false);
 
         auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, BufferDefs);
+        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
 
         return;
       }
@@ -1511,7 +1566,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
-          count, Type::getInt64Ty(call.getContext()));
+          countVal, Type::getInt64Ty(call.getContext()));
       len_arg =
           Builder2.CreateMul(len_arg,
                              Builder2.CreateZExtOrTrunc(
@@ -1527,7 +1582,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       {
         // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
         //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
-        Value *args[] = {
+        // The Fortran ABI passes count/datatype/op/comm by reference (as
+        // held here) and appends an `ierr` argument.
+        SmallVector<Value *, 8> args = {
             /*sendbuf*/ shadow_recvbuf,
             /*recvbuf*/ buf,
             /*count*/ count,
@@ -1535,11 +1592,17 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             /*op*/ op,
             /*comm*/ comm,
         };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
+        if (fortranABI) {
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+        }
+        SmallVector<Type *, 8> types;
+        for (auto *arg : args)
+          types.push_back(arg->getType());
 
-        FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        FunctionType *FT = FunctionType::get(
+            fortranABI ? Type::getVoidTy(call.getContext()) : call.getType(),
+            types, false);
         Builder2.CreateCall(
             called->getParent()->getOrInsertFunction(
                 getRenamedPerCallingConv(called->getName(), "MPI_Allreduce"),
