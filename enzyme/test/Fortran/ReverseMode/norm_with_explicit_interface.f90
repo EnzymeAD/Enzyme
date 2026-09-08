@@ -7,7 +7,6 @@
 
 ! NOTE: This test is only configured to run with the ifx compiler
 !       For it to work with the flang compiler we will need to address
-!       https://github.com/EnzymeAD/Enzyme/issues/2820
 !       https://github.com/EnzymeAD/Enzyme/issues/2822
 
 module normReverse
