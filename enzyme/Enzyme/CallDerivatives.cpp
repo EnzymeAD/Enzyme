@@ -1103,7 +1103,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // MPI_Datatype datatype,
   //                      MPI_Op op, int root, MPI_Comm comm)
 
-  if (canonicalizeMPIName(funcName) == "MPI_Reduce") {
+  llvm::StringRef canonMPIName = canonicalizeMPIName(funcName);
+
+  if (canonMPIName == "MPI_Reduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1402,7 +1404,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
   //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 
-  if (canonicalizeMPIName(funcName) == "MPI_Allreduce") {
+  if (canonMPIName == "MPI_Allreduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1869,7 +1871,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // sendtype,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype, int root,
   //           MPI_Comm comm)
-  if (canonicalizeMPIName(funcName) == "MPI_Scatter") {
+  if (canonMPIName == "MPI_Scatter") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -2441,19 +2443,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   // convention ("MPI_Recv", "PMPI_Recv") as well as Fortran ABI manglings
   // ("mpi_recv_", "mpi_comm_rank__", ...) all map to the canonical C name
   // (without profiling prefix) used throughout handleMPI.
-  llvm::StringRef CanonicalMPIName = canonicalizeMPIName(funcName);
-  if (!CanonicalMPIName.empty() &&
-      (!gutils->isConstantInstruction(&call) ||
-       CanonicalMPIName == "MPI_Barrier" ||
-       CanonicalMPIName == "MPI_Comm_free" ||
-       CanonicalMPIName == "MPI_Comm_disconnect" ||
-       CanonicalMPIName == "MPI_Init" ||
-       CanonicalMPIName == "MPI_Init_thread" ||
-       CanonicalMPIName == "MPI_Finalize" || CanonicalMPIName == "MPI_Test" ||
-       CanonicalMPIName == "MPI_Probe" ||
-       MPIInactiveCommAllocators.find(CanonicalMPIName) !=
+  llvm::StringRef canonMPIName = canonicalizeMPIName(funcName);
+  if (!canonMPIName.empty() &&
+      (!gutils->isConstantInstruction(&call) || canonMPIName == "MPI_Barrier" ||
+       canonMPIName == "MPI_Comm_free" ||
+       canonMPIName == "MPI_Comm_disconnect" || canonMPIName == "MPI_Init" ||
+       canonMPIName == "MPI_Init_thread" || canonMPIName == "MPI_Finalize" ||
+       canonMPIName == "MPI_Test" || canonMPIName == "MPI_Probe" ||
+       MPIInactiveCommAllocators.find(canonMPIName) !=
            MPIInactiveCommAllocators.end())) {
-    handleMPI(call, called, CanonicalMPIName);
+    handleMPI(call, called, canonMPIName);
     return true;
   }
 
