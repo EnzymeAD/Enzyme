@@ -27,12 +27,12 @@ entry:
 
 ; CHECK: define internal { float, float, float } @fwddiffesquare(<4 x float> %x, <4 x float> %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:    %sq = fmul <4 x float> %x, %x
-; CHECK-NEXT:    %0 = fmul fast <4 x float> %"x'", %x
-; CHECK-NEXT:    %1 = fadd fast <4 x float> %0, %0
-; CHECK-NEXT:    %2 = fmul fast <4 x float> %1, %x
-; CHECK-NEXT:    %3 = fmul fast <4 x float> %sq, %"x'"
-; CHECK-NEXT:    %4 = fadd fast <4 x float> %2, %3
+; CHECK-NEXT:    %sq = fmul{{( nnan)?( ninf)?}} <4 x float> %x, %x
+; CHECK-NEXT:    %[[i0:.+]] = fmul fast <4 x float> %"x'", %x
+; CHECK-NEXT:    %[[i1:.+]] = fadd fast <4 x float> %[[i0]], %[[i0]]
+; CHECK-NEXT:    %[[i2:.+]] = fmul fast <4 x float> %[[i1]], %x
+; CHECK-NEXT:    %[[i3:.+]] = fmul fast <4 x float> {{%sq, %"x'"|%"x'", %sq}}
+; CHECK-NEXT:    %[[i4:.+]] = fadd fast <4 x float> %[[i2]], %[[i3]]
 ; CHECK-NEXT:    %[[i5:.+]] = extractelement <4 x float> %1, {{(i32|i64)}} 1
 ; CHECK-NEXT:    %[[i6:.+]] = extractelement <4 x float> %4, {{(i32|i64)}} 0
 ; CHECK-NEXT:    %[[i7:.+]] = extractelement <4 x float> %4, {{(i32|i64)}} 1

@@ -1,5 +1,6 @@
-; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s ; fi
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s ; fi
+; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s -check-prefixes LL16,CHECK; fi
+; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -le 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s -check-prefixes LL16,CHECK; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s -check-prefixes LL24,CHECK; fi
 
 ; #include <stdio.h>
 ; #include <array>
@@ -73,27 +74,28 @@ attributes #5 = { argmemonly nofree nosync nounwind willreturn }
 attributes #6 = { nounwind }
 
 
-; CHECK: define dso_local void @_Z7dsquared(%"struct.std::array"* noalias sret(%"struct.std::array") align 8 %agg.result, double %x)
+; CHECK: define dso_local void @_Z7dsquared({{ptr|%"struct\.std::array"\*}} noalias sret(%"struct.std::array") align 8 %agg.result, double %x)
 ; CHECK-NEXT: entry:  
 ; CHECK-NEXT:   %0 = alloca %"struct.std::array"
-; CHECK-NEXT:   call void @fwddiffe_Z6squared(%"struct.std::array"* %0, %"struct.std::array"* %agg.result, double %x, double 1.000000e+00)
+; CHECK-NEXT:   call void @fwddiffe_Z6squared({{ptr|%"struct\.std::array"\*}} %0, {{ptr|%"struct\.std::array"\*}} %agg.result, double %x, double 1.000000e+00)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal void @fwddiffe_Z6squared(%"struct.std::array"* noalias nocapture writeonly align 8 "enzyme_sret"="{{[0-9]+}}" %agg.result, %"struct.std::array"* nocapture align 8 "enzyme_sret"="{{[0-9]+}}" %"agg.result'", double %x, double %"x'") 
+; CHECK: define internal void @fwddiffe_Z6squared({{ptr|%"struct\.std::array"\*}} noalias{{( nocapture)?}} writeonly align 8{{( captures\(none\))?}} "enzyme_sret"="{{[0-9]+}}" %agg.result, {{ptr|%"struct\.std::array"\*}}{{( nocapture)?}} align 8{{( captures\(none\))?}} "enzyme_sret"="{{[0-9]+}}" %"agg.result'", double %x, double %"x'") 
 ; CHECK-NEXT: entry:  
-; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
+; LL16-NEXT:    %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
 ; CHECK-NEXT:   %1 = fadd fast double %0, %0
-; CHECK-NEXT:   store double %1, double* %"arrayinit.begin'ipg", align 8
-; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 1
+; LL16-NEXT:    store double %1, double* %"arrayinit.begin'ipg", align 8
+; LL24-NEXT:    store double %1, ptr %"agg.result'", align 8{{.*}}
+; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", {{ptr|%"struct\.std::array"\*}} %"agg.result'", i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %2 = fmul fast double %1, %x
 ; CHECK-NEXT:   %3 = fmul fast double %"x'", %mul
 ; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   store double %4, double* %"arrayinit.element'ipg", align 8
-; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 2
-; CHECK-NEXT:   store double %"x'", double* %"arrayinit.element3'ipg", align 8
+; CHECK-NEXT:   store double %4, {{ptr|double\*}} %"arrayinit.element'ipg", align 8{{.*}}
+; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", {{ptr|%"struct\.std::array"\*}} %"agg.result'", i64 0, i32 0, i64 2
+; CHECK-NEXT:   store double %"x'", {{ptr|double\*}} %"arrayinit.element3'ipg", align 8
 ; CHECK-NEXT:  ret void
 ; CHECK-NEXT: }
