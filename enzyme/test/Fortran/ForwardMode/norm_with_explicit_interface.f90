@@ -53,15 +53,14 @@ program main
   x(:) = initial_value
   dx(:) = 1.0
 
-  call norm(n, x, y)
+  call norm(x, y)
 
   ! Rescale the output to avoid compiler-specific output formatting
   yp = y(n) * 1.0e+06
   write(*,"(f6.4)") yp
 
   dy(:) = 0.0
-  call norm__enzyme_fwddiff(norm, enzyme_const, n, &
-                            enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call norm__enzyme_fwddiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
   write(*,"(f6.4)") dy(n)
 end program main
 
