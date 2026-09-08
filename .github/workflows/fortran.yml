@@ -71,10 +71,16 @@ jobs:
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }}
     - name: build enzyme
       working-directory: 'build'
-      run: ninja LLVMEnzyme-${{ matrix.llvm }} FlangEnzyme-${{ matrix.llvm }}
+      run: |
+        . spack/share/spack/setup-env.sh
+        spack load openmpi
+        ninja LLVMEnzyme-${{ matrix.llvm }} FlangEnzyme-${{ matrix.llvm }}
     - name: run Fortran tests
       working-directory: 'build'
-      run: ninja check-enzyme-fortran
+      run: |
+        . spack/share/spack/setup-env.sh
+        spack load openmpi
+        ninja check-enzyme-fortran
   build-and-test-fortran-ifx:
     name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
     runs-on: ${{matrix.os}}
@@ -124,7 +130,13 @@ jobs:
         cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.versions.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}
     - name: build enzyme
       working-directory: 'build'
-      run: ninja LLVMEnzyme-${{ matrix.versions.llvm }}
+      run: |
+        . spack/share/spack/setup-env.sh
+        spack load openmpi
+        ninja LLVMEnzyme-${{ matrix.versions.llvm }}
     - name: run Fortran tests
       working-directory: 'build'
-      run: ninja check-enzyme-fortran
+      run: |
+        . spack/share/spack/setup-env.sh
+        spack load openmpi
+        ninja check-enzyme-fortran
