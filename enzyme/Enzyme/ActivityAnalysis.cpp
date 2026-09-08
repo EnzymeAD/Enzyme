@@ -227,6 +227,7 @@ bool isInactiveCall(CallBase &CI) {
   // clang-format off
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    "_FortranAio", // LLVM flang's I/O runtime (modern equivalent of f90io)
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -240,6 +241,8 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 const StringSet<> KnownInactiveFunctions = {
+    "_FortranAClassIs", // Fortran runtime queries
+    "_FortranATrim", // Fortran character handling
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
