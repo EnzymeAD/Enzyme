@@ -183,6 +183,12 @@ FnTypeInfo eunwrap(CFnTypeInfo CTI, llvm::Function *F) {
   return FTI;
 }
 
+// Defined in FixupJuliaCallingConvention.cpp
+void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
+                                       llvm::Function *F, bool sret_jlvalue);
+void EnzymeFixupBatchedJuliaCallingConvention(EnzymeContextRef ExternalContext,
+                                              llvm::Function *F);
+
 extern "C" {
 
 void EnzymeSetCLBool(void *ptr, uint8_t val) {
@@ -220,6 +226,27 @@ void EnzymeLogicSetExternalContext(EnzymeLogicRef Ref, void *ExternalContext) {
 
 void *EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
   return eunwrap(Ref).ExternalContext;
+}
+
+void EnzymeFixupJuliaCallingConventionModule(LLVMModuleRef M,
+                                             uint8_t sret_jlvalue,
+                                             void *ExternalContext) {
+  SmallVector<Function *, 16> Functions;
+  for (auto &F : *unwrap(M))
+    if (!F.empty())
+      Functions.push_back(&F);
+  for (auto *F : Functions)
+    EnzymeFixupJuliaCallingConvention(ExternalContext, F, (bool)sret_jlvalue);
+}
+
+void EnzymeFixupBatchedJuliaCallingConventionModule(LLVMModuleRef M,
+                                                    void *ExternalContext) {
+  SmallVector<Function *, 16> Functions;
+  for (auto &F : *unwrap(M))
+    if (!F.empty())
+      Functions.push_back(&F);
+  for (auto *F : Functions)
+    EnzymeFixupBatchedJuliaCallingConvention(ExternalContext, F);
 }
 
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {

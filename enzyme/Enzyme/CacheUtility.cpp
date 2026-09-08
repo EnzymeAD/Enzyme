@@ -76,8 +76,8 @@ void CacheUtility::erase(Instruction *I) {
     ss << *newFunc << "\n";
     ss << *I << "\n";
     if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
-                         nullptr, nullptr, nullptr);
+      CustomErrorHandler(externalContext(), str.c_str(), wrap(I),
+                         ErrorType::InternalError, nullptr, nullptr, nullptr);
     } else {
       EmitFailure("GetIndexError", I->getDebugLoc(), I, ss.str());
     }
@@ -826,10 +826,10 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
       CallInst *malloccall;
       Instruction *Zero;
-      allocType = cast<PointerType>(CreateAllocation(B, types.back(), P,
-                                                     "tmpfortypecalc",
-                                                     &malloccall, &Zero)
-                                        ->getType());
+      allocType = cast<PointerType>(
+          CreateAllocation(externalContext(), B, types.back(), P,
+                           "tmpfortypecalc", &malloccall, &Zero)
+              ->getType());
       malloctypes.push_back(cast<PointerType>(malloccall->getType()));
       for (auto &I : make_early_inc_range(reverse(*BB)))
         I.eraseFromParent();
@@ -853,7 +853,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
     alloc->setAlignment(Align(align));
   }
-  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+  auto undef_v = getUndefinedValueForType(externalContext(),
+                                          *newFunc->getParent(), types.back(),
                                           /*forceZero*/ false);
   if (!isa<UndefValue>(undef_v))
     scopeInstructions[alloc].push_back(
@@ -912,9 +913,10 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       // Statically allocate memory for all iterations if possible
       if (sublimits[i].second.back().first.maxLimit) {
         Instruction *ZeroInst = nullptr;
-        Value *firstallocation = CreateAllocation(
-            allocationBuilder, myType, size, name + "_malloccache", &malloccall,
-            /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
+        Value *firstallocation =
+            CreateAllocation(externalContext(), allocationBuilder, myType, size,
+                             name + "_malloccache", &malloccall,
+                             /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
 
         if (malloccall) {
           auto ident = MDNode::getDistinct(
@@ -962,7 +964,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             LLVMContext::MD_invariant_group,
             CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
         scopeInstructions[alloc].push_back(storealloc);
-        for (auto post : PostCacheStore(storealloc, allocationBuilder)) {
+        for (auto post :
+             PostCacheStore(externalContext(), storealloc, allocationBuilder)) {
           scopeInstructions[alloc].push_back(post);
         }
       } else {
@@ -973,7 +976,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // TODO change this to a power-of-two allocation strategy
 
         auto zerostore = allocationBuilder.CreateStore(
-            getUndefinedValueForType(*newFunc->getParent(), allocType,
+            getUndefinedValueForType(externalContext(), *newFunc->getParent(),
+                                     allocType,
                                      /*forceZero*/ true),
             storeInto);
         scopeInstructions[alloc].push_back(zerostore);
@@ -990,8 +994,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         CallInst *realloccall = nullptr;
         auto reallocation = CreateReAllocation(
-            build, allocation, myType, containedloops.back().first.incvar, size,
-            name + "_realloccache", &realloccall, EnzymeZeroCache && i == 0);
+            externalContext(), build, allocation, myType,
+            containedloops.back().first.incvar, size, name + "_realloccache",
+            &realloccall, EnzymeZeroCache && i == 0);
 
         scopeInstructions[alloc].push_back(cast<Instruction>(reallocation));
 
@@ -1009,7 +1014,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // since we are reloading/storing based off the number of loop
         // iterations
         scopeInstructions[alloc].push_back(storealloc);
-        for (auto post : PostCacheStore(storealloc, build)) {
+        for (auto post : PostCacheStore(externalContext(), storealloc, build)) {
           scopeInstructions[alloc].push_back(post);
         }
       }
@@ -1473,7 +1478,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   storeinst->setMetadata(LLVMContext::MD_tbaa, TBAA);
   storeinst->setAlignment(Align(align));
   scopeInstructions[cache].push_back(storeinst);
-  for (auto post : PostCacheStore(storeinst, v)) {
+  for (auto post : PostCacheStore(externalContext(), storeinst, v)) {
     scopeInstructions[cache].push_back(post);
   }
 }
@@ -1535,10 +1540,10 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
 
       CallInst *malloccall;
       Instruction *Zero;
-      allocType = cast<PointerType>(CreateAllocation(B, types.back(), P,
-                                                     "tmpfortypecalc",
-                                                     &malloccall, &Zero)
-                                        ->getType());
+      allocType = cast<PointerType>(
+          CreateAllocation(externalContext(), B, types.back(), P,
+                           "tmpfortypecalc", &malloccall, &Zero)
+              ->getType());
       for (auto &I : make_early_inc_range(reverse(*BB)))
         I.eraseFromParent();
 

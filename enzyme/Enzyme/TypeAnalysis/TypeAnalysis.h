@@ -274,6 +274,9 @@ public:
   /// functions
   TypeAnalysis &interprocedural;
 
+  /// The frontend state of the request this analysis is part of.
+  EnzymeContextRef externalContext() const;
+
   /// Directionality of checks
   uint8_t direction;
 

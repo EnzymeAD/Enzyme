@@ -164,8 +164,8 @@ GradientUtils::GradientUtils(
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
     DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
     bool omp)
-    : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
-      invertedPointers(),
+    : CacheUtility(TLI_, newFunc_, Logic.ExternalContext), Logic(Logic),
+      mode(mode), oldFunc(oldFunc_), invertedPointers(),
       OrigDT(oldFunc_->empty()
                  ? ((DominatorTree *)nullptr)
                  : &Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(
@@ -462,8 +462,9 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
         ss << " fn: " << *lc.header->getParent() << "\n";
 
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
-                             nullptr, nullptr, nullptr);
+          CustomErrorHandler(externalContext(), str.c_str(), wrap(PN),
+                             ErrorType::InternalError, nullptr, nullptr,
+                             nullptr);
         } else {
           EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
         }
@@ -2862,7 +2863,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           ss << "ret: " << *ret << " - " << *ret->getType() << "\n";
           ss << "malloc: " << *malloc << "\n";
           if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(malloc),
+            CustomErrorHandler(externalContext(), str.c_str(), wrap(malloc),
                                ErrorType::InternalError, nullptr, nullptr,
                                nullptr);
           } else {
@@ -3110,8 +3111,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         IRBuilder<> entryBuilder(inversionAllocs);
 
         auto firstallocation =
-            CreateAllocation(entryBuilder, malloc->getType(), numThreads,
-                             malloc->getName() + "_malloccache");
+            CreateAllocation(externalContext(), entryBuilder, malloc->getType(),
+                             numThreads, malloc->getName() + "_malloccache");
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
         if (auto inst = dyn_cast<Instruction>(malloc)) {
@@ -4002,8 +4003,8 @@ bool GradientUtils::legalRecompute(const Value *val,
       ss << "phi: " << *phi << "\n";
       ss << "Invalid legalRecompute query on ficticious phi\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(phi), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
+        CustomErrorHandler(externalContext(), str.c_str(), wrap(phi),
+                           ErrorType::InternalError, nullptr, nullptr, nullptr);
       } else {
         EmitFailure("InvalidLegalRecompute", phi->getDebugLoc(), phi, ss.str());
       }
@@ -5857,9 +5858,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             "shadow global\n";
       ss << *arg << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        return unwrap(CustomErrorHandler(externalContext(), ss.str().c_str(),
+                                         wrap(arg), ErrorType::NoShadow, this,
+                                         nullptr, wrap(&BuilderM)));
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -5877,9 +5878,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ss << *arg << "\n";
       ss << " md: " << *md << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        return unwrap(CustomErrorHandler(externalContext(), ss.str().c_str(),
+                                         wrap(arg), ErrorType::NoShadow, this,
+                                         nullptr, wrap(&BuilderM)));
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -6129,8 +6130,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                  << " const val: " << *op;
               if (CustomErrorHandler)
                 ivops[i] = unwrap(CustomErrorHandler(
-                    str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
+                    externalContext(), str.c_str(), wrap(arg),
+                    ErrorType::MixedActivityError, this, wrap(op), wrap(&bb)));
               else
                 EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                                   MixedActivityHint);
@@ -6243,9 +6244,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
         if (CustomErrorHandler)
-          itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(tval), wrap(&bb)));
+          itval = unwrap(CustomErrorHandler(
+              externalContext(), str.c_str(), wrap(arg),
+              ErrorType::MixedActivityError, this, wrap(tval), wrap(&bb)));
         else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
@@ -6264,9 +6265,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
         if (CustomErrorHandler)
-          ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(fval), wrap(&bb)));
+          ifval = unwrap(CustomErrorHandler(
+              externalContext(), str.c_str(), wrap(arg),
+              ErrorType::MixedActivityError, this, wrap(fval), wrap(&bb)));
         else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
@@ -6617,7 +6618,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
             if (CustomErrorHandler)
-              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+              val = unwrap(CustomErrorHandler(externalContext(), str.c_str(),
+                                              wrap(phi),
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
@@ -6691,7 +6693,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
             if (CustomErrorHandler)
-              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+              val = unwrap(CustomErrorHandler(externalContext(), str.c_str(),
+                                              wrap(phi),
                                               ErrorType::MixedActivityError,
                                               this, wrap(preval), wrap(&pre)));
             else
@@ -6755,9 +6758,9 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    auto iv =
-        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
-                                  this, nullptr, wrap(&BuilderM)));
+    auto iv = unwrap(CustomErrorHandler(externalContext(), str.c_str(),
+                                        wrap(oval), ErrorType::NoShadow, this,
+                                        nullptr, wrap(&BuilderM)));
     if (iv) {
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
@@ -7519,7 +7522,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       st->setAlignment(Align(bsize));
                     }
                     scopeInstructions[cache].push_back(st);
-                    for (auto post : PostCacheStore(st, v)) {
+                    for (auto post : PostCacheStore(externalContext(), st, v)) {
                       scopeInstructions[cache].push_back(post);
                     }
                   }
@@ -7635,9 +7638,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                        << ") during unwrap of SCEV: " << *ar1->getStart()
                        << "\n";
                     if (CustomErrorHandler) {
-                      CustomErrorHandler(str.c_str(), wrap(li),
-                                         ErrorType::InternalError, nullptr,
-                                         nullptr, nullptr);
+                      CustomErrorHandler(externalContext(), str.c_str(),
+                                         wrap(li), ErrorType::InternalError,
+                                         nullptr, nullptr, nullptr);
                     } else {
                       EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
                                   ss.str());
@@ -8816,7 +8819,7 @@ void GradientUtils::computeMinCache() {
           raw_string_ostream ss(str);
           ss << "Illegal cached pointer: " << *V << "\n";
           if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap((Value *)V),
+            CustomErrorHandler(externalContext(), str.c_str(), wrap((Value *)V),
                                ErrorType::InternalError, nullptr, nullptr,
                                nullptr);
           } else {
@@ -8868,8 +8871,8 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement =
-          getUndefinedValueForType(*oldFunc->getParent(), P->getType());
+      Value *replacement = getUndefinedValueForType(
+          externalContext(), *oldFunc->getParent(), P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
@@ -8898,15 +8901,16 @@ void GradientUtils::eraseFictiousPHIs() {
           ss << "  user: " << *U << "\n";
         }
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(pp), ErrorType::InternalError,
-                             nullptr, nullptr, nullptr);
+          CustomErrorHandler(externalContext(), str.c_str(), wrap(pp),
+                             ErrorType::InternalError, nullptr, nullptr,
+                             nullptr);
         } else {
           ss << " newFunc:\n" << *newFunc << "\n";
           EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
         }
       }
-      Value *replacement =
-          getUndefinedValueForType(*oldFunc->getParent(), pp->getType());
+      Value *replacement = getUndefinedValueForType(
+          externalContext(), *oldFunc->getParent(), pp->getType());
       pp->replaceAllUsesWith(replacement);
     }
     erase(pp);
@@ -9699,8 +9703,9 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
     ss << "currentBlock: " << *currentBlock << "\n";
     ss << "vec.back(): " << *vec.back() << "\n";
     if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap((Value *)currentBlock),
-                         ErrorType::InternalError, nullptr, nullptr, nullptr);
+      CustomErrorHandler(externalContext(), str.c_str(),
+                         wrap((Value *)currentBlock), ErrorType::InternalError,
+                         nullptr, nullptr, nullptr);
     } else {
       DebugLoc loc;
       if (hasTerminator(found->second)) {
@@ -9865,7 +9870,7 @@ int GradientUtils::getIndex(
     ss << "idx: " << *idx.first << ", " << idx.second << "\n";
     ss << " could not find index in mapping\n";
     if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
+      CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(idx.first),
                          ErrorType::GetIndexError, this, nullptr, wrap(&B));
     } else {
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,

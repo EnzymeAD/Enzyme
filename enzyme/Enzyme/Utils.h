@@ -188,6 +188,16 @@ enum class ErrorType {
   NoAccumulate = 13,
 };
 
+/// An opaque handle on the frontend state that the differentiation request
+/// currently being served belongs to. Enzyme never inspects it: the frontend
+/// installs it on its EnzymeLogic with EnzymeLogicSetExternalContext, and
+/// Enzyme hands it back unchanged to every frontend callback it invokes. A
+/// callback can therefore recover the state of the request that reached it
+/// (for Enzyme.jl: the Julia world age the code is being compiled in, and the
+/// method instances of the functions in it) instead of consulting global or
+/// thread-local state. It is fixed for the lifetime of an EnzymeLogic.
+typedef void *EnzymeContextRef;
+
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
@@ -195,31 +205,34 @@ extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
-extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                          const void *, LLVMValueRef,
-                                          LLVMBuilderRef);
+extern LLVMValueRef (*CustomErrorHandler)(EnzymeContextRef, const char *,
+                                          LLVMValueRef, ErrorType, const void *,
+                                          LLVMValueRef, LLVMBuilderRef);
 }
 
-llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
-                                                         llvm::IRBuilder<> &B);
+llvm::SmallVector<llvm::Instruction *, 2>
+PostCacheStore(EnzymeContextRef ExternalContext, llvm::StoreInst *SI,
+               llvm::IRBuilder<> &B);
 
-llvm::Value *CreateAllocation(llvm::IRBuilder<> &B, llvm::Type *T,
+llvm::Value *CreateAllocation(EnzymeContextRef ExternalContext,
+                              llvm::IRBuilder<> &B, llvm::Type *T,
                               llvm::Value *Count, const llvm::Twine &Name = "",
                               llvm::CallInst **caller = nullptr,
                               llvm::Instruction **ZeroMem = nullptr,
                               bool isDefault = false);
-llvm::CallInst *CreateDealloc(llvm::IRBuilder<> &B, llvm::Value *ToFree);
-void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
-                bool isTape);
+llvm::CallInst *CreateDealloc(EnzymeContextRef ExternalContext,
+                              llvm::IRBuilder<> &B, llvm::Value *ToFree);
+void ZeroMemory(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &Builder,
+                llvm::Type *T, llvm::Value *obj, bool isTape);
 
-llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
-                                llvm::Type *T, llvm::Value *OuterCount,
-                                llvm::Value *InnerCount,
-                                const llvm::Twine &Name = "",
-                                llvm::CallInst **caller = nullptr,
-                                bool ZeroMem = false);
+llvm::Value *
+CreateReAllocation(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
+                   llvm::Value *prev, llvm::Type *T, llvm::Value *OuterCount,
+                   llvm::Value *InnerCount, const llvm::Twine &Name = "",
+                   llvm::CallInst **caller = nullptr, bool ZeroMem = false);
 
-llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C);
+llvm::PointerType *getDefaultAnonymousTapeType(EnzymeContextRef ExternalContext,
+                                               llvm::LLVMContext &C);
 
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(
@@ -372,7 +385,8 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils, llvm::IRBuilder<> &B,
                                    llvm::Value *condition = nullptr);
-bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+bool EmitNoDerivativeError(EnzymeContextRef ExternalContext,
+                           const std::string &message, llvm::Value *todiff,
                            RequestContext &ctx);
 
 void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
@@ -1578,12 +1592,12 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   return vinds;
 }
 
-llvm::Function *
-getOrInsertDifferentialWaitallSave(llvm::Module &M,
-                                   llvm::ArrayRef<llvm::Type *> T,
-                                   llvm::PointerType *reqType);
+llvm::Function *getOrInsertDifferentialWaitallSave(
+    EnzymeContextRef ExternalContext, llvm::Module &M,
+    llvm::ArrayRef<llvm::Type *> T, llvm::PointerType *reqType);
 
-void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+void ErrorIfRuntimeInactive(EnzymeContextRef ExternalContext,
+                            llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
@@ -2224,10 +2238,12 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
 
 bool attributeKnownFunctions(llvm::Function &F);
 
-llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
+                                         llvm::Module &M, llvm::Type *T,
                                          bool forceZero = false);
 
-llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
+                                 llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask = nullptr);
 
@@ -2408,12 +2424,13 @@ llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
                                 llvm::Value *col);
 
 // first one assume V is an Integer
-llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
-                       llvm::Value *V, bool cublas);
+llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+                       llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
-                       llvm::Value *V, bool byRef, bool cublas,
-                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+                       llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       bool cublas, llvm::IntegerType *IT,
+                       llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
@@ -2761,16 +2778,17 @@ enum class SRetRootMovement {
   NullifySRetValue = 4,
 };
 
-llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
+                                 llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction);
 
-void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
-                        llvm::Type *dstType, llvm::Value *dst,
-                        llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType,
-                        llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix,
-                        bool shouldZero);
+void copyNonJLValueInto(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
+                        llvm::Type *curType, llvm::Type *dstType,
+                        llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix,
+                        llvm::Type *srcType, llvm::Value *src,
+                        llvm::ArrayRef<unsigned> srcPrefix, bool shouldZero);
 
 static bool anyJuliaObjects(llvm::Type *T) {
   if (isSpecialPtr(T))

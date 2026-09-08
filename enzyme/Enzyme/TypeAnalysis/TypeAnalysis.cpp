@@ -259,6 +259,10 @@ bool dontAnalyze(StringRef str) {
   return false;
 }
 
+EnzymeContextRef TypeAnalyzer::externalContext() const {
+  return interprocedural.Logic.externalContext();
+}
+
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
     : MST(EnzymePrintType ? new ModuleSlotTracker(fn.Function->getParent())
@@ -1269,8 +1273,9 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       ss << " origin=" << *Origin;
 
     if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
-                         (void *)this, wrap(Origin), nullptr);
+      CustomErrorHandler(externalContext(), str.c_str(), wrap(Val),
+                         ErrorType::IllegalTypeAnalysis, (void *)this,
+                         wrap(Origin), nullptr);
     }
     if (auto I = dyn_cast<Instruction>(Val)) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
@@ -2137,9 +2142,9 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
     if (!legal) {
       if (CustomErrorHandler)
-        CustomErrorHandler("Could not keep minus one", wrap(&gep),
-                           ErrorType::IllegalTypeAnalysis, this, nullptr,
-                           nullptr);
+        CustomErrorHandler(externalContext(), "Could not keep minus one",
+                           wrap(&gep), ErrorType::IllegalTypeAnalysis, this,
+                           nullptr, nullptr);
       else {
         dump();
         llvm::errs() << " could not perform minus one for gep'd: " << gep
@@ -2417,7 +2422,7 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
                    << " lhs: " << PhiTypes.str()
                    << " rhs: " << getAnalysis(BO->getOperand(0)).str() << "\n";
                 if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(BO),
+                  CustomErrorHandler(externalContext(), str.c_str(), wrap(BO),
                                      ErrorType::IllegalTypeAnalysis,
                                      (void *)this, wrap(BO), nullptr);
                 }
@@ -2444,7 +2449,7 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
                    << " lhs: " << PhiTypes.str() << " rhs: " << otherData.str()
                    << "\n";
                 if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(BO),
+                  CustomErrorHandler(externalContext(), str.c_str(), wrap(BO),
                                      ErrorType::IllegalTypeAnalysis,
                                      (void *)this, wrap(BO), nullptr);
                 }
@@ -2513,7 +2518,7 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
         ss << "Illegal binopIn(consts): " << *bo << " lhs: " << vd1.str()
            << " rhs: " << vd2.str() << "\n";
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(bo),
+          CustomErrorHandler(externalContext(), str.c_str(), wrap(bo),
                              ErrorType::IllegalTypeAnalysis, (void *)this,
                              wrap(bo), nullptr);
         }
@@ -3126,7 +3131,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
            << " new: " << Data.str() << "\n";
         ss << "val: " << *Args[0];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[0]),
+        CustomErrorHandler(externalContext(), str.c_str(), wrap(Args[0]),
                            ErrorType::IllegalTypeAnalysis, (void *)this,
                            wrap(origin), nullptr);
       }
@@ -3138,7 +3143,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
            << " new: " << Data.str() << "\n";
         ss << "val: " << *Args[1];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[1]),
+        CustomErrorHandler(externalContext(), str.c_str(), wrap(Args[1]),
                            ErrorType::IllegalTypeAnalysis, (void *)this,
                            wrap(origin), nullptr);
       }
@@ -3210,7 +3215,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                  << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
                  << "\n";
               if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(origin),
+                CustomErrorHandler(externalContext(), str.c_str(), wrap(origin),
                                    ErrorType::IllegalTypeAnalysis, (void *)this,
                                    wrap(origin), nullptr);
               }
@@ -3366,7 +3371,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         ss << "Illegal binopIn(down): " << Opcode << " lhs: " << Result.str()
            << " rhs: " << AnalysisRHS.str() << "\n";
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(origin),
+          CustomErrorHandler(externalContext(), str.c_str(), wrap(origin),
                              ErrorType::IllegalTypeAnalysis, (void *)this,
                              wrap(origin), nullptr);
         }
@@ -3654,7 +3659,7 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
        << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
 
     if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap(&MTI),
+      CustomErrorHandler(externalContext(), str.c_str(), wrap(&MTI),
                          ErrorType::IllegalTypeAnalysis, (void *)this,
                          wrap(&MTI), nullptr);
     }
@@ -4275,7 +4280,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       ss << "Illegal binopIn(intr): " << I << " lhs: " << vd.str()
          << " rhs: " << getAnalysis(I.getOperand(1)).str() << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I),
+        CustomErrorHandler(externalContext(), str.c_str(), wrap(&I),
                            ErrorType::IllegalTypeAnalysis, (void *)this,
                            wrap(&I), nullptr);
       }
@@ -4541,9 +4546,9 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
     if (!legal) {
       if (CustomErrorHandler)
-        CustomErrorHandler("Could not keep minus one", wrap(&II),
-                           ErrorType::IllegalTypeAnalysis, &TA, nullptr,
-                           nullptr);
+        CustomErrorHandler(TA.externalContext(), "Could not keep minus one",
+                           wrap(&II), ErrorType::IllegalTypeAnalysis, &TA,
+                           nullptr, nullptr);
       else {
         TA.dump();
         llvm::errs()
@@ -6419,8 +6424,9 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
       ss << "Illegal firstPointer, num: " << num << " q: " << q.str() << "\n";
       ss << " at " << *val << " from " << *I << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(I), ErrorType::IllegalFirstPointer,
-                           &analyzer, nullptr, nullptr);
+        CustomErrorHandler(analyzer->externalContext(), str.c_str(), wrap(I),
+                           ErrorType::IllegalFirstPointer, &analyzer, nullptr,
+                           nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       llvm_unreachable("Illegal firstPointer");

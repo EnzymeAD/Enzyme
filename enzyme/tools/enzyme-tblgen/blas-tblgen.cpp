@@ -211,7 +211,8 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        {\n"
-         << "          CallInst *freecall = CreateDealloc(Builder2, free_"
+         << "          CallInst *freecall = "
+            "CreateDealloc(gutils->externalContext(), Builder2, free_"
          << name << ");\n"
          << "          if (freecall) {\n"
          << "            auto ident = "
@@ -1401,8 +1402,9 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       auto name = Def->getValueAsString("name");
       os << "{(arg_transposed_" << name << " = arg_transposed_" << name
          << " ? arg_transposed_" << name << " : "
-         << "transpose(blas.floatType, Builder2, arg_" << name
-         << ", byRef, cublas, charType, allocationBuilder, \"" << name
+         << "transpose(gutils->externalContext(), blas.floatType, Builder2, "
+            "arg_"
+         << name << ", byRef, cublas, charType, allocationBuilder, \"" << name
          << "\"))}";
     } else {
       errs() << Def->getName() << "\n";
@@ -1542,8 +1544,9 @@ void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   os << "    {\n"
-     << "      CallInst *freecall = CreateDealloc(" << builder << ", true_"
-     << allocName << ");\n"
+     << "      CallInst *freecall = "
+        "CreateDealloc(gutils->externalContext(), "
+     << builder << ", true_" << allocName << ");\n"
      << "      if (freecall && ident_" << allocName << ") {\n"
      << "        freecall->setMetadata(\"enzyme_cache_free\", "
         "MDNode::get(freecall->getContext(), {ident_"
@@ -1621,7 +1624,8 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   os << "    CallInst * malloccall_" << allocName << " = nullptr;\n";
-  os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
+  os << "    Value * true_" << allocName
+     << " = CreateAllocation(gutils->externalContext(), " << builder
      << ", fpType, size_" << matName << ", \"" << allocName
      << "\", &malloccall_" << allocName << ");\n";
   os << "    MDNode *ident_" << allocName << " = nullptr;\n"

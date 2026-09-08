@@ -75,9 +75,20 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
 
+class EnzymeLogic;
+
 class PreProcessCache {
 public:
   PreProcessCache();
+
+  /// The logic that owns this cache, set by its constructor. Preprocessing
+  /// runs before any GradientUtils exists, so this is the only route from here
+  /// back to the frontend state of the request being served.
+  EnzymeLogic *Logic = nullptr;
+
+  /// The frontend state of the request being preprocessed, if known.
+  EnzymeContextRef externalContext() const;
+
   PreProcessCache(PreProcessCache &) = delete;
   // Using the default move constructor will botch the FAM/MAM proxy passes
   // since now the new location of FAM/MAM will not be used. Therefore, use a
@@ -86,6 +97,7 @@ public:
   PreProcessCache(PreProcessCache &&prev) : PreProcessCache() {
     cache = std::move(prev.cache);
     CloneOrigin = std::move(prev.CloneOrigin);
+    Logic = prev.Logic;
   };
 
   llvm::LoopAnalysisManager LAM;
@@ -404,7 +416,8 @@ static inline void calculateUnusedStores(
   }
 }
 
-void RecursivelyReplaceAddressSpace(llvm::Value *AI, llvm::Value *rep,
+void RecursivelyReplaceAddressSpace(EnzymeContextRef ExternalContext,
+                                    llvm::Value *AI, llvm::Value *rep,
                                     bool legal);
 
 void ReplaceFunctionImplementation(llvm::Module &M);
@@ -413,9 +426,10 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 
 llvm::FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
-    llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow);
+    EnzymeContextRef ExternalContext, llvm::FunctionType *FTy,
+    DerivativeMode mode, unsigned width, llvm::Type *additionalArg,
+    llvm::ArrayRef<DIFFE_TYPE> constant_args, bool diffeReturnArg,
+    bool returnTape, bool returnPrimal, bool returnShadow);
 
 /// Lower __enzyme_todense, returning if changed.
 bool LowerSparsification(llvm::Function *F, bool replaceAll = true);

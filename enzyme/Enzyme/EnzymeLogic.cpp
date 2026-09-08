@@ -122,7 +122,8 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
     "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
     cl::desc("Assume unknown instructions are nofree as needed"));
 
-LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
+LLVMValueRef (*EnzymeFixupReturn)(EnzymeContextRef, LLVMBuilderRef,
+                                  LLVMValueRef) = nullptr;
 }
 
 struct CacheAnalysis {
@@ -2045,7 +2046,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     } else {
       ss << *todiff << "\n";
     }
-    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
+    if (EmitNoDerivativeError(externalContext(), ss.str(), todiff, context)) {
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
       returnMapping[AugmentedStruct::Return] = -1;
@@ -2450,12 +2451,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
     DeleteDeadBlock(gutils->inversionAllocs);
     clearFunctionAttributes(gutils->newFunc);
-    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
+    if (EmitNoDerivativeError(externalContext(), ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       IRBuilder<> b(&*newFunc->getEntryBlock().begin());
       RequestContext context2{nullptr, &b};
-      EmitNoDerivativeError(ss.str(), todiff, context2);
+      EmitNoDerivativeError(externalContext(), ss.str(), todiff, context2);
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
@@ -2649,8 +2650,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    << " const val: " << *orig_oldval;
                 if (CustomErrorHandler)
                   invertri = unwrap(CustomErrorHandler(
-                      str.c_str(), wrap(ri), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_oldval), wrap(&BuilderZ)));
+                      externalContext(), str.c_str(), wrap(ri),
+                      ErrorType::MixedActivityError, gutils, wrap(orig_oldval),
+                      wrap(&BuilderZ)));
                 else
                   EmitWarningAlways("MixedActivityError", *ri, ss.str(),
                                     MixedActivityHint);
@@ -2775,7 +2777,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
               tapeType);
       if (size != 0) {
         RetTypes[returnMapping.find(AugmentedStruct::Tape)->second] =
-            getDefaultAnonymousTapeType(gutils->newFunc->getContext());
+            getDefaultAnonymousTapeType(externalContext(),
+                                        gutils->newFunc->getContext());
       }
     }
   }
@@ -2929,12 +2932,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         CallInst *malloccall = nullptr;
         Instruction *zero = nullptr;
         tapeMemory = CreateAllocation(
-            ib, tapeType, ConstantInt::get(i64, 1), "tapemem", &malloccall,
-            EnzymeZeroCache ? &zero : nullptr, /*isDefault*/ true);
+            externalContext(), ib, tapeType, ConstantInt::get(i64, 1),
+            "tapemem", &malloccall, EnzymeZeroCache ? &zero : nullptr,
+            /*isDefault*/ true);
         memory = malloccall;
       } else {
         memory = ConstantPointerNull::get(
-            getDefaultAnonymousTapeType(NewF->getContext()));
+            getDefaultAnonymousTapeType(externalContext(), NewF->getContext()));
       }
       Value *Idxs[] = {
           ib.getInt32(0),
@@ -2948,7 +2952,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
       auto storeinst = ib.CreateStore(memory, gep);
-      PostCacheStore(storeinst, ib);
+      PostCacheStore(externalContext(), storeinst, ib);
     } else if (omp) {
       j->setName("tape");
       tapeMemory = j;
@@ -2967,7 +2971,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
       }
       if (EnzymeZeroCache) {
-        ZeroMemory(ib, tapeType, tapeMemory,
+        ZeroMemory(externalContext(), ib, tapeType, tapeMemory,
                    /*isTape*/ true);
       }
     }
@@ -2990,7 +2994,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           cast<GetElementPtrInst>(gep)->setIsInBounds(true);
         }
         auto storeinst = ib.CreateStore(VMap[v], gep);
-        PostCacheStore(storeinst, ib);
+        PostCacheStore(externalContext(), storeinst, ib);
       }
       ++i;
     }
@@ -3038,9 +3042,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ggep->setIsInBounds(true);
       }
       if (EnzymeFixupReturn)
-        actualrv = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(actualrv)));
+        actualrv = unwrap(
+            EnzymeFixupReturn(externalContext(), wrap(&ib), wrap(actualrv)));
       auto storeinst = ib.CreateStore(actualrv, gep);
-      PostCacheStore(storeinst, ib);
+      PostCacheStore(externalContext(), storeinst, ib);
     }
 
     if (shadowReturnUsed) {
@@ -3067,9 +3072,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           shadowRV = found->second;
         }
         if (EnzymeFixupReturn)
-          shadowRV = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(shadowRV)));
+          shadowRV = unwrap(
+              EnzymeFixupReturn(externalContext(), wrap(&ib), wrap(shadowRV)));
         auto storeinst = ib.CreateStore(shadowRV, gep);
-        PostCacheStore(storeinst, ib);
+        PostCacheStore(externalContext(), storeinst, ib);
       }
     }
     if (noReturn)
@@ -3235,9 +3241,10 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
             ss << "Mismatched activity for: " << *inst
                << " const val: " << *ret;
             if (CustomErrorHandler)
-              invertedPtr = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(inst), ErrorType::MixedActivityError,
-                  gutils, wrap(ret), wrap(&nBuilder)));
+              invertedPtr = unwrap(
+                  CustomErrorHandler(gutils->externalContext(), str.c_str(),
+                                     wrap(inst), ErrorType::MixedActivityError,
+                                     gutils, wrap(ret), wrap(&nBuilder)));
             else
               EmitWarningAlways("MixedActivityError", *inst, ss.str(),
                                 MixedActivityHint);
@@ -3764,7 +3771,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (context.req) {
         ss << " at context: " << *context.req;
       }
-      if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
+      if (EmitNoDerivativeError(externalContext(), ss.str(), key.todiff,
+                                context)) {
         return nullptr;
       }
     }
@@ -3834,7 +3842,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           auto size = NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(
               aug.tapeType);
           if (size != 0) {
-            CreateDealloc(bb, tape);
+            CreateDealloc(externalContext(), bb, tape);
           }
         }
         tape = truetape;
@@ -4009,9 +4017,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
       size_t pa = 0;
       if (nextRetType != key.retType) {
-        revargs.push_back(getUndefinedValueForType(*revfn->getParent(),
-                                                   key.todiff->getReturnType(),
-                                                   /*forceZero*/ true));
+        revargs.push_back(getUndefinedValueForType(
+            externalContext(), *revfn->getParent(), key.todiff->getReturnType(),
+            /*forceZero*/ true));
       }
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
@@ -4109,7 +4117,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         auto context2 = context;
         if (!context2.ip)
           context2.ip = &bb;
-        if (!EmitNoDerivativeError(ss.str(), key.todiff, context2)) {
+        if (!EmitNoDerivativeError(externalContext(), ss.str(), key.todiff,
+                                   context2)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
@@ -4265,12 +4274,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
+    if (EmitNoDerivativeError(externalContext(), ss.str(), key.todiff,
+                              context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       IRBuilder<> b(&*newFunc->getEntryBlock().begin());
       RequestContext context2{nullptr, &b};
-      EmitNoDerivativeError(ss.str(), key.todiff, context2);
+      EmitNoDerivativeError(externalContext(), ss.str(), key.todiff, context2);
       return newFunc;
     }
     llvm::errs() << "mod: " << *key.todiff->getParent() << "\n";
@@ -4368,12 +4378,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                               MDNode::get(truetape->getContext(), {}));
 
         if (!omp && gutils->FreeMemory) {
-          CreateDealloc(BuilderZ, additionalValue);
+          CreateDealloc(externalContext(), BuilderZ, additionalValue);
         }
         additionalValue = truetape;
       } else {
         if (gutils->FreeMemory) {
-          CreateDealloc(BuilderZ, additionalValue);
+          CreateDealloc(externalContext(), BuilderZ, additionalValue);
         }
         additionalValue = UndefValue::get(augmenteddata->tapeType);
       }
@@ -4946,7 +4956,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
+    if (EmitNoDerivativeError(externalContext(), ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return newFunc;
@@ -5044,7 +5054,7 @@ Function *EnzymeLogic::CreateForwardDiff(
                                 MDNode::get(truetape->getContext(), {}));
 
           if (!omp && gutils->FreeMemory) {
-            CreateDealloc(BuilderZ, additionalValue);
+            CreateDealloc(externalContext(), BuilderZ, additionalValue);
           }
           additionalValue = truetape;
         } else {
@@ -5053,7 +5063,7 @@ Function *EnzymeLogic::CreateForwardDiff(
                             ->getDataLayout()
                             .getTypeAllocSizeInBits(augmenteddata->tapeType);
             if (size != 0) {
-              CreateDealloc(BuilderZ, additionalValue);
+              CreateDealloc(externalContext(), BuilderZ, additionalValue);
             }
           }
           additionalValue = UndefValue::get(augmenteddata->tapeType);
@@ -5395,8 +5405,8 @@ public:
     ss << "cannot handle unknown instruction\n" << I;
     if (CustomErrorHandler) {
       IRBuilder<> Builder2(getNewFromOriginal(&I));
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
-                         this, nullptr, wrap(&Builder2));
+      CustomErrorHandler(Logic.externalContext(), ss.str().c_str(), wrap(&I),
+                         ErrorType::NoTruncate, this, nullptr, wrap(&Builder2));
       return;
     } else {
       EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
@@ -5778,7 +5788,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
       ss << *totrunc << "\n";
     }
     if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+      CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(totrunc),
                          wrap(context.ip));
       return NewF;
@@ -5867,7 +5877,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       ss << *tobatch << "\n";
     }
     if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+      CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(tobatch),
                          wrap(context.ip));
       return NewF;
@@ -6162,7 +6172,7 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
       ss << *totrace << "\n";
     }
     if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+      CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(totrace),
                          wrap(context.ip));
       auto newFunc = tutils->newFunc;
@@ -6406,7 +6416,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     }
     ss << " within func " << fname << " (" << demangledName << ")\n";
   }
-  if (EmitNoDerivativeError(ss.str(), todiff, context)) {
+  if (EmitNoDerivativeError(externalContext(), ss.str(), todiff, context)) {
     return todiff;
   }
 
@@ -6727,7 +6737,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     } else {
       ss << *F << "\n";
     }
-    if (EmitNoDerivativeError(ss.str(), F, context)) {
+    if (EmitNoDerivativeError(externalContext(), ss.str(), F, context)) {
       return F;
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F

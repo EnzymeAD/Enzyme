@@ -59,26 +59,28 @@
 using namespace llvm;
 
 extern "C" {
-LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                   const void *, LLVMValueRef,
+LLVMValueRef (*CustomErrorHandler)(EnzymeContextRef, const char *, LLVMValueRef,
+                                   ErrorType, const void *, LLVMValueRef,
                                    LLVMBuilderRef) = nullptr;
-LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
+LLVMValueRef (*CustomAllocator)(EnzymeContextRef, LLVMBuilderRef, LLVMTypeRef,
                                 /*Count*/ LLVMValueRef,
                                 /*Align*/ LLVMValueRef, uint8_t,
                                 LLVMValueRef *) = nullptr;
-void (*CustomZero)(LLVMBuilderRef, LLVMTypeRef,
+void (*CustomZero)(EnzymeContextRef, LLVMBuilderRef, LLVMTypeRef,
                    /*Ptr*/ LLVMValueRef, uint8_t) = nullptr;
-LLVMValueRef (*CustomDeallocator)(LLVMBuilderRef, LLVMValueRef) = nullptr;
-void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
-                                   LLVMValueRef) = nullptr;
-LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
-                                      uint64_t *size) = nullptr;
-LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
-LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMModuleRef, LLVMTypeRef,
-                                            uint8_t) = nullptr;
+LLVMValueRef (*CustomDeallocator)(EnzymeContextRef, LLVMBuilderRef,
+                                  LLVMValueRef) = nullptr;
+void (*CustomRuntimeInactiveError)(EnzymeContextRef, LLVMBuilderRef,
+                                   LLVMValueRef, LLVMValueRef) = nullptr;
+LLVMValueRef *(*EnzymePostCacheStore)(EnzymeContextRef, LLVMValueRef,
+                                      LLVMBuilderRef, uint64_t *size) = nullptr;
+LLVMTypeRef (*EnzymeDefaultTapeType)(EnzymeContextRef,
+                                     LLVMContextRef) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(EnzymeContextRef, LLVMModuleRef,
+                                            LLVMTypeRef, uint8_t) = nullptr;
 
-LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
-                                          LLVMBuilderRef,
+LLVMValueRef (*EnzymeSanitizeDerivatives)(EnzymeContextRef, LLVMValueRef,
+                                          LLVMValueRef toset, LLVMBuilderRef,
                                           LLVMValueRef) = nullptr;
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
@@ -411,21 +413,22 @@ bool attributeKnownFunctions(llvm::Function &F) {
   return changed;
 }
 
-void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
-                bool isTape) {
+void ZeroMemory(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &Builder,
+                llvm::Type *T, llvm::Value *obj, bool isTape) {
   if (CustomZero) {
-    CustomZero(wrap(&Builder), wrap(T), wrap(obj), isTape);
+    CustomZero(ExternalContext, wrap(&Builder), wrap(T), wrap(obj), isTape);
   } else {
     Builder.CreateStore(Constant::getNullValue(T), obj);
   }
 }
 
-llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
-                                                         llvm::IRBuilder<> &B) {
+llvm::SmallVector<llvm::Instruction *, 2>
+PostCacheStore(EnzymeContextRef ExternalContext, llvm::StoreInst *SI,
+               llvm::IRBuilder<> &B) {
   SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
     uint64_t size = 0;
-    auto ptr = EnzymePostCacheStore(wrap(SI), wrap(&B), &size);
+    auto ptr = EnzymePostCacheStore(ExternalContext, wrap(SI), wrap(&B), &size);
     for (size_t i = 0; i < size; i++) {
       res.push_back(cast<Instruction>(unwrap(ptr[i])));
     }
@@ -434,13 +437,16 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
   return res;
 }
 
-llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C) {
+llvm::PointerType *getDefaultAnonymousTapeType(EnzymeContextRef ExternalContext,
+                                               llvm::LLVMContext &C) {
   if (EnzymeDefaultTapeType)
-    return cast<PointerType>(unwrap(EnzymeDefaultTapeType(wrap(&C))));
+    return cast<PointerType>(
+        unwrap(EnzymeDefaultTapeType(ExternalContext, wrap(&C))));
   return getInt8PtrTy(C);
 }
 
-Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
+Function *getOrInsertExponentialAllocator(EnzymeContextRef ExternalContext,
+                                          Module &M, Function *newFunc,
                                           bool ZeroInit, llvm::Type *RT) {
   bool custom = true;
   llvm::PointerType *allocType;
@@ -451,7 +457,9 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     auto P = B.CreatePHI(i64, 1);
     CallInst *malloccall;
     Instruction *SubZero = nullptr;
-    CreateAllocation(B, RT, P, "tapemem", &malloccall, &SubZero)->getType();
+    CreateAllocation(ExternalContext, B, RT, P, "tapemem", &malloccall,
+                     &SubZero)
+        ->getType();
     if (auto F = getFunctionFromCall(malloccall)) {
       custom = F->getName() != "malloc";
     }
@@ -539,7 +547,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
         newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(RT) / 8);
     auto elSize = B.CreateUDiv(next, tsize, "", /*isExact*/ true);
     Instruction *SubZero = nullptr;
-    gVal = CreateAllocation(B, RT, elSize, "", nullptr, &SubZero);
+    gVal =
+        CreateAllocation(ExternalContext, B, RT, elSize, "", nullptr, &SubZero);
 
     Type *bTy =
         getPointerType(Type::getInt8Ty(gVal->getContext()),
@@ -588,7 +597,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   return F;
 }
 
-llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
+llvm::Value *CreateReAllocation(EnzymeContextRef ExternalContext,
+                                llvm::IRBuilder<> &B, llvm::Value *prev,
                                 llvm::Type *T, llvm::Value *OuterCount,
                                 llvm::Value *InnerCount,
                                 const llvm::Twine &Name,
@@ -608,18 +618,19 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
       B.CreateMul(tsize, InnerCount, "", /*NUW*/ true,
                   /*NSW*/ true)};
 
-  auto realloccall =
-      B.CreateCall(getOrInsertExponentialAllocator(*newFunc->getParent(),
-                                                   newFunc, ZeroMem, T),
-                   idxs, Name);
+  auto realloccall = B.CreateCall(
+      getOrInsertExponentialAllocator(ExternalContext, *newFunc->getParent(),
+                                      newFunc, ZeroMem, T),
+      idxs, Name);
   if (caller)
     *caller = realloccall;
   return realloccall;
 }
 
-Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
-                        const Twine &Name, CallInst **caller,
-                        Instruction **ZeroMem, bool isDefault) {
+Value *CreateAllocation(EnzymeContextRef ExternalContext, IRBuilder<> &Builder,
+                        llvm::Type *T, Value *Count, const Twine &Name,
+                        CallInst **caller, Instruction **ZeroMem,
+                        bool isDefault) {
   Value *res;
   auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
   auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
@@ -650,8 +661,8 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
-    res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
-                                 wrap(Align), isDefault,
+    res = unwrap(CustomAllocator(ExternalContext, wrap(&Builder), wrap(T),
+                                 wrap(Count), wrap(Align), isDefault,
                                  ZeroMem ? &wzeromem : nullptr));
     if (isa<UndefValue>(res))
       return res;
@@ -772,12 +783,13 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   return res;
 }
 
-CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
+CallInst *CreateDealloc(EnzymeContextRef ExternalContext,
+                        llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   CallInst *res = nullptr;
 
   if (CustomDeallocator) {
-    res = dyn_cast_or_null<CallInst>(
-        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
+    res = dyn_cast_or_null<CallInst>(unwrap(
+        CustomDeallocator(ExternalContext, wrap(&Builder), wrap(ToFree))));
   } else {
 
     ToFree =
@@ -932,7 +944,8 @@ void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss) {
   }
 }
 
-void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+void ErrorIfRuntimeInactive(EnzymeContextRef ExternalContext,
+                            llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig) {
   Module &M = *B.GetInsertBlock()->getParent()->getParent();
@@ -973,7 +986,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
+      CustomRuntimeInactiveError(ExternalContext, wrap(&EB), wrap(msg),
+                                 wrap(orig));
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -2327,9 +2341,10 @@ llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   return V;
 }
 
-llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
-                                                   ArrayRef<llvm::Type *> T,
-                                                   PointerType *reqType) {
+llvm::Function *
+getOrInsertDifferentialWaitallSave(EnzymeContextRef ExternalContext,
+                                   llvm::Module &M, ArrayRef<llvm::Type *> T,
+                                   PointerType *reqType) {
   std::string name = "__enzyme_differential_waitall_save";
   FunctionType *FT = FunctionType::get(getUnqual(reqType), T, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -2354,7 +2369,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   IRBuilder<> B(entry);
   count = B.CreateZExtOrTrunc(count, Type::getInt64Ty(entry->getContext()));
 
-  auto ret = CreateAllocation(B, reqType, count);
+  auto ret = CreateAllocation(ExternalContext, B, reqType, count);
 
   BasicBlock *loopBlock = BasicBlock::Create(M.getContext(), "loop", F);
   BasicBlock *endBlock = BasicBlock::Create(M.getContext(), "end", F);
@@ -3768,18 +3783,20 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   return {};
 }
 
-llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
+                                         llvm::Module &M, llvm::Type *T,
                                          bool forceZero) {
   if (EnzymeUndefinedValueForType)
-    return cast<Constant>(
-        unwrap(EnzymeUndefinedValueForType(wrap(&M), wrap(T), forceZero)));
+    return cast<Constant>(unwrap(EnzymeUndefinedValueForType(
+        ExternalContext, wrap(&M), wrap(T), forceZero)));
   else if (EnzymeZeroCache || forceZero)
     return Constant::getNullValue(T);
   else
     return UndefValue::get(T);
 }
 
-llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
+                                 llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask) {
   if (EnzymeCheckDerivativeNaN && toset->getType()->isFPOrFPVectorTy()) {
@@ -3834,8 +3851,9 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 
       B.SetInsertPoint(bad);
       if (CustomErrorHandler) {
-        CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
-                           wrap(msg_ptr), wrap(&B));
+        CustomErrorHandler(ExternalContext, "NaN Error", wrap(inp),
+                           ErrorType::NaNError, nullptr, wrap(msg_ptr),
+                           wrap(&B));
       } else {
         llvm::FunctionType *PutsFT = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
@@ -3871,8 +3889,8 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
   }
 
   if (EnzymeSanitizeDerivatives)
-    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
-                                            wrap(&BuilderM), wrap(mask)));
+    return unwrap(EnzymeSanitizeDerivatives(
+        ExternalContext, wrap(val), wrap(toset), wrap(&BuilderM), wrap(mask)));
   return toset;
 }
 
@@ -4092,8 +4110,8 @@ llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
 // However, if we ask openBlas c ABI,
 // it is one of the following 32 bit integers values:
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
-llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
-                       bool cublas) {
+llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+                       IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
     auto isT1 = B.CreateICmpEQ(V, ConstantInt::get(T, 1));
@@ -4147,8 +4165,8 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
     llvm::raw_string_ostream ss(s);
     ss << "cannot handle unknown trans blas value\n" << V;
     if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
-                         nullptr, nullptr, nullptr);
+      CustomErrorHandler(ExternalContext, ss.str().c_str(), nullptr,
+                         ErrorType::NoDerivative, nullptr, nullptr, nullptr);
     } else {
       EmitFailure("unknown trans blas value", B.getCurrentDebugLocation(),
                   B.GetInsertBlock()->getParent(), ss.str());
@@ -4179,9 +4197,9 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   return width;
 }
 
-llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
-                       llvm::Value *V, bool byRef, bool cublas,
-                       llvm::IntegerType *julia_decl,
+llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+                       llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       bool cublas, llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
 
@@ -4214,7 +4232,7 @@ llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = transpose(floatType, B, V, cublas);
+  V = transpose(ExternalContext, floatType, B, V, cublas);
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);
@@ -4449,9 +4467,9 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::IRBuilder<> &Builder2,
                                    llvm::Value *condition) {
   if (CustomErrorHandler) {
-    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils,
-                                     wrap(condition), wrap(&Builder2)));
+    return unwrap(CustomErrorHandler(gutils->externalContext(), message.c_str(),
+                                     wrap(&inst), ErrorType::NoDerivative,
+                                     gutils, wrap(condition), wrap(&Builder2)));
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4482,15 +4500,17 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
   }
 }
 
-bool EmitNoDerivativeError(const std::string &message, Value *todiff,
+bool EmitNoDerivativeError(EnzymeContextRef ExternalContext,
+                           const std::string &message, Value *todiff,
                            RequestContext &context) {
   Value *toshow = todiff;
   if (context.req) {
     toshow = context.req;
   }
   if (CustomErrorHandler) {
-    CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
+    CustomErrorHandler(ExternalContext, message.c_str(), wrap(toshow),
+                       ErrorType::NoDerivative, nullptr, wrap(todiff),
+                       wrap(context.ip));
     return true;
   } else if (context.ip && EnzymeRuntimeError) {
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
@@ -4528,8 +4548,9 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
 void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
   if (CustomErrorHandler) {
-    CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
-                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+    CustomErrorHandler(gutils->externalContext(), message.c_str(), wrap(&inst),
+                       ErrorType::NoType, gutils->TR.analyzer, nullptr,
+                       wrap(&Builder2));
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4950,7 +4971,8 @@ static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
   return B.CreateInBoundsGEP(type, value, vals);
 }
 
-llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
+                                 llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction) {
@@ -5002,7 +5024,8 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       }
       case SRetRootMovement::NullifySRetValue: {
         loc = getUndefinedValueForType(
-            *B.GetInsertBlock()->getParent()->getParent(), ty, false);
+            ExternalContext, *B.GetInsertBlock()->getParent()->getParent(), ty,
+            false);
         val = B.CreateInsertValue(val, loc, path);
         break;
       }
@@ -5073,9 +5096,9 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
   return val;
 }
 
-void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
-                        llvm::Type *dstType, llvm::Value *dst,
-                        llvm::ArrayRef<unsigned> dstPrefix0,
+void copyNonJLValueInto(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
+                        llvm::Type *curType, llvm::Type *dstType,
+                        llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix0,
                         llvm::Type *srcType, llvm::Value *src,
                         llvm::ArrayRef<unsigned> srcPrefix0, bool shouldZero) {
   std::deque<
@@ -5100,7 +5123,7 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
           Value *out = dst;
           if (dstPrefix.size() > 0)
             out = constantInBoundsGEPHelper(B, dstType, out, dstPrefix);
-          B.CreateStore(getUndefinedValueForType(M, ty), out);
+          B.CreateStore(getUndefinedValueForType(ExternalContext, M, ty), out);
         }
       }
       // We don't actually need pointers either here

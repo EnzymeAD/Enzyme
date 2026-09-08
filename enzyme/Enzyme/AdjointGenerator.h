@@ -1038,9 +1038,10 @@ public:
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
             if (CustomErrorHandler) {
-              diff = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
-                  wrap(orig_val), wrap(&BuilderZ)));
+              diff = unwrap(
+                  CustomErrorHandler(gutils->externalContext(), str.c_str(),
+                                     wrap(&I), ErrorType::MixedActivityError,
+                                     gutils, wrap(orig_val), wrap(&BuilderZ)));
               if (diff)
                 needs_writebarrier = true;
             } else
@@ -1302,8 +1303,9 @@ public:
                      << " const val: " << *orig_val;
                   if (CustomErrorHandler) {
                     valueop = unwrap(CustomErrorHandler(
-                        str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                        gutils, wrap(orig_val), wrap(&BuilderZ)));
+                        gutils->externalContext(), str.c_str(), wrap(&I),
+                        ErrorType::MixedActivityError, gutils, wrap(orig_val),
+                        wrap(&BuilderZ)));
                     if (valueop)
                       needs_writebarrier = true;
                   } else
@@ -4895,7 +4897,7 @@ public:
 
         if (tape && shouldFree()) {
           for (auto idx : subdata->tapeIndiciesToFree) {
-            CreateDealloc(Builder2,
+            CreateDealloc(gutils->externalContext(), Builder2,
                           idx == -1 ? tape
                                     : Builder2.CreateExtractValue(tape, idx));
           }
@@ -5120,7 +5122,8 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          argi = getUndefinedValueForType(M, argi->getType());
+          argi = getUndefinedValueForType(gutils->externalContext(), M,
+                                          argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -5238,18 +5241,20 @@ public:
           newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
         }
 
-        ErrorIfRuntimeInactive(
-            BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
-            "Attempting to call an indirect active function "
-            "whose runtime value is inactive",
-            gutils->getNewFromOriginal(call.getDebugLoc()), &call);
+        ErrorIfRuntimeInactive(gutils->externalContext(), BuilderZ,
+                               gutils->getNewFromOriginal(callval), newcalled,
+                               "Attempting to call an indirect active function "
+                               "whose runtime value is inactive",
+                               gutils->getNewFromOriginal(call.getDebugLoc()),
+                               &call);
 
         auto ft = call.getFunctionType();
         bool retActive = subretType != DIFFE_TYPE::CONSTANT;
 
         FT = getFunctionTypeForClone(
-            ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
-            argsInverted, false, /*returnTape*/ false,
+            gutils->externalContext(), ft, Mode, gutils->getWidth(),
+            tape ? tape->getType() : nullptr, argsInverted, false,
+            /*returnTape*/ false,
             /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
         PointerType *fptype = getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
@@ -5416,7 +5421,8 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        prearg = getUndefinedValueForType(M, argi->getType());
+        prearg = getUndefinedValueForType(gutils->externalContext(), M,
+                                          argi->getType());
         preType = ValueType::None;
       }
       pre_args.push_back(prearg);
@@ -5434,7 +5440,8 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          argi = getUndefinedValueForType(M, argi->getType());
+          argi = getUndefinedValueForType(gutils->externalContext(), M,
+                                          argi->getType());
           revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
@@ -5511,7 +5518,8 @@ public:
                gutils->isConstantInstruction(&call)) &&
               !replaceFunction) {
             darg = getUndefinedValueForType(
-                M, gutils->getShadowType(argi->getType()));
+                gutils->externalContext(), M,
+                gutils->getShadowType(argi->getType()));
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
@@ -5548,7 +5556,8 @@ public:
 
         if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
           nowrite_shadows.back() = true;
-          pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
+          pre_args.push_back(getUndefinedValueForType(gutils->externalContext(),
+                                                      M, argi->getType()));
         } else {
           pre_args.push_back(
               gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
@@ -5566,9 +5575,9 @@ public:
              << " expected DUP_ARG or CONSTANT found " << wt
              << ", call = " << call << "\n";
           if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(&call),
-                               ErrorType::InternalError, nullptr, nullptr,
-                               nullptr);
+            CustomErrorHandler(gutils->externalContext(), str.c_str(),
+                               wrap(&call), ErrorType::InternalError, nullptr,
+                               nullptr, nullptr);
           } else {
             EmitFailure("MismatchArgType", call.getDebugLoc(), &call, ss.str());
           }
@@ -5636,7 +5645,8 @@ public:
 
         if (Mode != DerivativeMode::ReverseModeGradient)
           ErrorIfRuntimeInactive(
-              BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+              gutils->externalContext(), BuilderZ,
+              gutils->getNewFromOriginal(callval), newcalled,
               "Attempting to call an indirect active function "
               "whose runtime value is inactive",
               gutils->getNewFromOriginal(call.getDebugLoc()), &call);
@@ -5916,9 +5926,9 @@ public:
                 ss << "Failed to compute consistent cache index for operation: "
                    << call << "\n";
                 if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(&call),
-                                     ErrorType::InternalError, nullptr, nullptr,
-                                     nullptr);
+                  CustomErrorHandler(gutils->externalContext(), str.c_str(),
+                                     wrap(&call), ErrorType::InternalError,
+                                     nullptr, nullptr, nullptr);
                 } else {
                   EmitFailure("GetIndexError", call.getDebugLoc(), &call,
                               ss.str());
@@ -5983,9 +5993,9 @@ public:
               ss << " call" << call << "\n";
               ss << " augmentcall" << *augmentcall << "\n";
               if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&call),
-                                   ErrorType::InternalError, nullptr, nullptr,
-                                   nullptr);
+                CustomErrorHandler(gutils->externalContext(), str.c_str(),
+                                   wrap(&call), ErrorType::InternalError,
+                                   nullptr, nullptr, nullptr);
               } else {
                 EmitFailure("GetIndexError", call.getDebugLoc(), &call,
                             ss.str());
@@ -6043,7 +6053,7 @@ public:
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        CreateDealloc(BuilderZ, tape);
+        CreateDealloc(gutils->externalContext(), BuilderZ, tape);
         tape = truetape;
       }
     } else {

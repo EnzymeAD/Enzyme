@@ -239,9 +239,9 @@ public:
     if (SeqSize > EnzymeMaxTypeDepth) {
       if (EnzymeTypeWarning) {
         if (CustomErrorHandler) {
-          CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
-                             ErrorType::TypeDepthExceeded, this, nullptr,
-                             nullptr);
+          CustomErrorHandler(
+              /*ExternalContext=*/nullptr, "TypeAnalysisDepthLimit", nullptr,
+              ErrorType::TypeDepthExceeded, this, nullptr, nullptr);
         } else
           llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
                        << " pointer lookups deep dt:" << str()
@@ -481,9 +481,9 @@ public:
       Result.minIndices.pop_back();
       if (EnzymeTypeWarning) {
         if (CustomErrorHandler) {
-          CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
-                             ErrorType::TypeDepthExceeded, this, nullptr,
-                             nullptr);
+          CustomErrorHandler(
+              /*ExternalContext=*/nullptr, "TypeAnalysisDepthLimit", wrap(orig),
+              ErrorType::TypeDepthExceeded, this, nullptr, nullptr);
         } else if (orig) {
           EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
                       " not handling more than ", EnzymeMaxTypeDepth,

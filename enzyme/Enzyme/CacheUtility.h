@@ -146,6 +146,11 @@ public:
   /// The function whose instructions we are caching
   llvm::Function *const newFunc;
 
+  /// The frontend state this differentiation request belongs to, as installed
+  /// on the EnzymeLogic that created us. Passed to every frontend callback
+  /// reached from here, notably the allocation and caching hooks.
+  const EnzymeContextRef ExternalContext;
+
   /// Various analysis results of newFunc
   llvm::TargetLibraryInfo &TLI;
   llvm::DominatorTree DT;
@@ -161,14 +166,18 @@ public:
   llvm::BasicBlock *inversionAllocs;
 
 protected:
-  CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc)
-      : newFunc(newFunc), TLI(TLI), DT(*newFunc), LI(DT), AC(*newFunc),
-        SE(*newFunc, TLI, AC, DT, LI) {
+  CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc,
+               EnzymeContextRef ExternalContext)
+      : newFunc(newFunc), ExternalContext(ExternalContext), TLI(TLI),
+        DT(*newFunc), LI(DT), AC(*newFunc), SE(*newFunc, TLI, AC, DT, LI) {
     inversionAllocs = llvm::BasicBlock::Create(newFunc->getContext(),
                                                "allocsForInversion", newFunc);
   }
 
 public:
+  /// The frontend state this differentiation request belongs to.
+  EnzymeContextRef externalContext() const { return ExternalContext; }
+
   virtual ~CacheUtility();
 
 protected:

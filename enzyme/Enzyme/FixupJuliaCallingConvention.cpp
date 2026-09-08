@@ -27,8 +27,8 @@ extern bool
 DetectPointerArgOfFn(llvm::Function &F,
                      llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
 
-bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
-                    llvm::Type *SRetType = nullptr) {
+bool needsReRooting(EnzymeContextRef ExternalContext, llvm::Argument *arg,
+                    bool &anyJLStore, llvm::Type *SRetType = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
 
   if (!SRetType)
@@ -176,8 +176,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "Unknown user of sret-like argument\n";
-    CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
-                       wrap(cur), wrap(arg), nullptr);
+    CustomErrorHandler(ExternalContext, ss.str().c_str(), wrap(I),
+                       ErrorType::GCRewrite, wrap(cur), wrap(arg), nullptr);
     legal = false;
     anyJLStore = true;
     break;
@@ -373,8 +373,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
           ss << " sv: " << *sv << "\n";
-          CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                             nullptr, wrap(arg), nullptr);
+          CustomErrorHandler(ExternalContext, ss.str().c_str(), wrap(sv),
+                             ErrorType::GCRewrite, nullptr, wrap(arg), nullptr);
         }
         legal = false;
         break;
@@ -541,7 +541,8 @@ static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
 
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
 // sret If so, confirm that those values are saved elsewhere in a returnroot
-void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
+void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
+                                       Function *F, bool sret_jlvalue) {
   if (F->empty())
     return;
 
@@ -572,7 +573,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")) {
       bool anyJLStore = false;
       enzyme_srets.insert(i);
-      if (needsReRooting(F->getArg(i), anyJLStore)) {
+      if (needsReRooting(ExternalContext, F->getArg(i), anyJLStore)) {
         // Case 1: jlvalue_t's were stored into the sret, but were not stored
         // into an existing rooted argument.
         reroot_enzyme_srets.insert(i);
@@ -622,7 +623,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     }
 
     bool anyJLStore = false;
-    bool rerooting = needsReRooting(F->getArg(0), anyJLStore, SRetType);
+    bool rerooting =
+        needsReRooting(ExternalContext, F->getArg(0), anyJLStore, SRetType);
 
     // We now assume we have an sret.
     // If it is properly rooted, we don't have any work to do
@@ -637,8 +639,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         llvm::raw_string_ostream ss(s);
         ss << "Illegal GC setup in which rerooting is required\n";
         ss << " + F: " << *F << "\n";
-        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
+        CustomErrorHandler(ExternalContext, s.c_str(), wrap(F),
+                           ErrorType::InternalError, nullptr, nullptr, nullptr);
       }
       assert(!rerooting);
 #endif
@@ -795,8 +797,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           ss << "    + Types[" << i << "] = " << *Types[i] << "\n";
         }
         ss << " F: " << *F << "\n";
-        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
+        CustomErrorHandler(ExternalContext, s.c_str(), wrap(F),
+                           ErrorType::InternalError, nullptr, nullptr, nullptr);
       }
       assert(numRooting == countF.count);
     }
@@ -908,9 +910,9 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         B.CreateStore(rval, gep);
 
         if (roots) {
-          moveSRetToFromRoots(B, rval->getType(), rval, roots_AT, roots,
-                              /*rootOffset*/ 0,
-                              SRetRootMovement::SRetValueToRootPointer);
+          moveSRetToFromRoots(
+              ExternalContext, B, rval->getType(), rval, roots_AT, roots,
+              /*rootOffset*/ 0, SRetRootMovement::SRetValueToRootPointer);
         }
 
         auto NR = B.CreateRetVoid();
@@ -958,8 +960,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                                                            i + curOffset));
               }
             } else {
-              moveSRetToFromRoots(B, Types[sretCount], gep, roots_AT, roots,
-                                  curOffset,
+              moveSRetToFromRoots(ExternalContext, B, Types[sretCount], gep,
+                                  roots_AT, roots, curOffset,
                                   SRetRootMovement::SRetPointerToRootPointer);
             }
           }
@@ -1021,8 +1023,9 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                   "sret ("
                << *sret << "), but no rereturned roots at index i=" << i
                << "\n";
-            CustomErrorHandler(s.c_str(), wrap(gep), ErrorType::InternalError,
-                               nullptr, nullptr, nullptr);
+            CustomErrorHandler(ExternalContext, s.c_str(), wrap(gep),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
           }
 
           sretCount++;
@@ -1107,8 +1110,9 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
             ss << " + Function containing CI: "
                << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
+              CustomErrorHandler(ExternalContext, s.c_str(), wrap(CI),
+                                 ErrorType::InternalError, nullptr, nullptr,
+                                 nullptr);
             } else {
               EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
                           ss.str());
@@ -1187,8 +1191,9 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
             ss << " + Function containing CI: "
                << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
+              CustomErrorHandler(ExternalContext, s.c_str(), wrap(CI),
+                                 ErrorType::InternalError, nullptr, nullptr,
+                                 nullptr);
             } else {
               EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
                           ss.str());
@@ -1269,7 +1274,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     // TODO we can optimize this further and avoid the copy in the primal and/or
     // forward mode as the copy is _only_ needed for the adjoint.
     for (auto &&[val, gep, ty] : preCallReplacements) {
-      copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {}, /*shouldZero*/ true);
+      copyNonJLValueInto(ExternalContext, B, ty, ty, gep, {}, ty, val, {},
+                         /*shouldZero*/ true);
     }
 
     // Actually perform the call, copying over relevant information.
@@ -1322,9 +1328,9 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         auto ld = B.CreateLoad(ty, gep);
         auto SI = B.CreateStore(ld, val);
         if (val->getType()->getPointerAddressSpace() == 10)
-          PostCacheStore(SI, B);
+          PostCacheStore(ExternalContext, SI, B);
       } else {
-        copyNonJLValueInto(B, ty, ty, val, {}, ty, gep, {},
+        copyNonJLValueInto(ExternalContext, B, ty, ty, val, {}, ty, gep, {},
                            /*shouldZero*/ false);
       }
     }
@@ -1349,7 +1355,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 
 using namespace llvm;
 
-void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
+void EnzymeFixupBatchedJuliaCallingConvention(EnzymeContextRef ExternalContext,
+                                              Function *F) {
   if (F->empty())
     return;
   auto RT = F->getReturnType();
@@ -1595,10 +1602,12 @@ class FixupJuliaCallingConventionNewPM
     : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
 #endif
   bool sret_jlvalue;
+  EnzymeContextRef ExternalContext;
 
 public:
-  FixupJuliaCallingConventionNewPM(bool sret_jlvalue)
-      : sret_jlvalue(sret_jlvalue) {}
+  FixupJuliaCallingConventionNewPM(bool sret_jlvalue,
+                                   EnzymeContextRef ExternalContext = nullptr)
+      : sret_jlvalue(sret_jlvalue), ExternalContext(ExternalContext) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
@@ -1609,7 +1618,7 @@ public:
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      EnzymeFixupJuliaCallingConvention(F, sret_jlvalue);
+      EnzymeFixupJuliaCallingConvention(ExternalContext, F, sret_jlvalue);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
@@ -1623,6 +1632,12 @@ class FixupBatchedJuliaCallingConventionNewPM
     : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
 #endif
 public:
+  EnzymeContextRef ExternalContext;
+
+  FixupBatchedJuliaCallingConventionNewPM(
+      EnzymeContextRef ExternalContext = nullptr)
+      : ExternalContext(ExternalContext) {}
+
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
     SmallVector<llvm::Function *, 16> Functions;
@@ -1632,7 +1647,7 @@ public:
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      EnzymeFixupBatchedJuliaCallingConvention(F);
+      EnzymeFixupBatchedJuliaCallingConvention(ExternalContext, F);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

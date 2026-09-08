@@ -29,8 +29,9 @@
 using namespace llvm;
 
 extern "C" {
-void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
-                                 LLVMValueRef, uint8_t) = nullptr;
+void (*EnzymeShadowAllocRewrite)(EnzymeContextRef, LLVMValueRef, void *,
+                                 LLVMValueRef, uint64_t, LLVMValueRef,
+                                 uint8_t) = nullptr;
 }
 
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
@@ -60,8 +61,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         auto i64 = Type::getInt64Ty(call.getContext());
         auto impi = getMPIHelper(call.getContext());
 
-        Value *impialloc =
-            CreateAllocation(BuilderZ, impi, ConstantInt::get(i64, 1));
+        Value *impialloc = CreateAllocation(gutils->externalContext(), BuilderZ,
+                                            impi, ConstantInt::get(i64, 1));
         BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
         d_req = BuilderZ.CreateBitCast(d_req, getUnqual(impialloc->getType()));
@@ -87,8 +88,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
               "", true, true);
 
           Value *firstallocation =
-              CreateAllocation(BuilderZ, Type::getInt8Ty(call.getContext()),
-                               len_arg, "mpirecv_malloccache");
+              CreateAllocation(gutils->externalContext(), BuilderZ,
+                               Type::getInt8Ty(call.getContext()), len_arg,
+                               "mpirecv_malloccache");
           BuilderZ.CreateStore(firstallocation, getMPIMemberPtr<MPI_Elem::Buf>(
                                                     BuilderZ, impialloc, impi));
           BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
@@ -288,12 +290,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                       shadow, len_arg, Builder2, BufferDefs);
 
           if (shouldFree()) {
-            CreateDealloc(Builder2, firstallocation);
+            CreateDealloc(gutils->externalContext(), Builder2, firstallocation);
           }
         } else
           assert(0 && "illegal mpi");
 
-        CreateDealloc(Builder2, helper);
+        CreateDealloc(gutils->externalContext(), Builder2, helper);
       }
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
@@ -494,7 +496,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       }
 
       Function *dsave = getOrInsertDifferentialWaitallSave(
-          *gutils->oldFunc->getParent(),
+          gutils->externalContext(), *gutils->oldFunc->getParent(),
           {count->getType(), req->getType(), d_req->getType()}, reqType);
 
       d_reqp = BuilderZ.CreateCall(dsave, {count, req, d_req});
@@ -607,7 +609,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       }
       Builder2.SetInsertPoint(endBlock);
       if (shouldFree()) {
-        CreateDealloc(Builder2, d_reqp);
+        CreateDealloc(gutils->externalContext(), Builder2, d_reqp);
       }
     } else if (Mode == DerivativeMode::ForwardMode ||
                Mode == DerivativeMode::ForwardModeError) {
@@ -748,9 +750,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  tysize, Type::getInt64Ty(call.getContext())),
                              "", true, true);
 
-      Value *firstallocation =
-          CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                           len_arg, "mpirecv_malloccache");
+      Value *firstallocation = CreateAllocation(
+          gutils->externalContext(), Builder2,
+          Type::getInt8Ty(call.getContext()), len_arg, "mpirecv_malloccache");
       args[0] = firstallocation;
 
       Type *types[sizeof(args) / sizeof(*args)];
@@ -776,7 +778,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                   shadow, len_arg, Builder2, BufferDefs);
 
       if (shouldFree()) {
-        CreateDealloc(Builder2, firstallocation);
+        CreateDealloc(gutils->externalContext(), Builder2, firstallocation);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -987,9 +989,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         Builder2.SetInsertPoint(rootBlock);
 
-        Value *rootbuf =
-            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                             len_arg, "mpireduce_malloccache");
+        Value *rootbuf = CreateAllocation(gutils->externalContext(), Builder2,
+                                          Type::getInt8Ty(call.getContext()),
+                                          len_arg, "mpireduce_malloccache");
         Builder2.CreateBr(mergeBlock);
 
         Builder2.SetInsertPoint(mergeBlock);
@@ -1064,7 +1066,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         // Free up the memory of the buffer
         if (shouldFree()) {
-          CreateDealloc(Builder2, buf);
+          CreateDealloc(gutils->externalContext(), Builder2, buf);
         }
       }
 
@@ -1235,9 +1237,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                              "", true, true);
 
       // 1. Alloc intermediate buffer
-      Value *buf =
-          CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                           len_arg, "mpireduce_malloccache");
+      Value *buf = CreateAllocation(gutils->externalContext(), Builder2,
+                                    Type::getInt8Ty(call.getContext()), len_arg,
+                                    "mpireduce_malloccache");
 
       // 1.5 if root, set intermediate = diff(recvbuffer)
       {
@@ -1328,7 +1330,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
+        CreateDealloc(gutils->externalContext(), Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1463,9 +1465,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                              "", true, true);
 
       // 1. Alloc intermediate buffer
-      Value *buf =
-          CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                           len_arg, "mpireduce_malloccache");
+      Value *buf = CreateAllocation(gutils->externalContext(), Builder2,
+                                    Type::getInt8Ty(call.getContext()), len_arg,
+                                    "mpireduce_malloccache");
 
       // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
       {
@@ -1508,7 +1510,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
+        CreateDealloc(gutils->externalContext(), Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1635,9 +1637,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           Builder2, /*lookup*/ true);
 
       // 1. Alloc intermediate buffer
-      Value *buf =
-          CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                           sendlen_arg, "mpireduce_malloccache");
+      Value *buf = CreateAllocation(gutils->externalContext(), Builder2,
+                                    Type::getInt8Ty(call.getContext()),
+                                    sendlen_arg, "mpireduce_malloccache");
 
       // 2. Scatter diff(recvbuffer) to intermediate buffer
       {
@@ -1713,7 +1715,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
+        CreateDealloc(gutils->externalContext(), Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1868,9 +1870,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
-        Value *rootbuf =
-            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                             sendlen_arg, "mpireduce_malloccache");
+        Value *rootbuf = CreateAllocation(gutils->externalContext(), Builder2,
+                                          Type::getInt8Ty(call.getContext()),
+                                          sendlen_arg, "mpireduce_malloccache");
 
         Builder2.CreateBr(mergeBlock);
 
@@ -1947,7 +1949,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          CreateDealloc(Builder2, buf);
+          CreateDealloc(gutils->externalContext(), Builder2, buf);
         }
 
         Builder2.CreateBr(mergeBlock);
@@ -2074,9 +2076,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           Builder2, /*lookup*/ true);
 
       // 1. Alloc intermediate buffer
-      Value *buf =
-          CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                           sendlen_arg, "mpireduce_malloccache");
+      Value *buf = CreateAllocation(gutils->externalContext(), Builder2,
+                                    Type::getInt8Ty(call.getContext()),
+                                    sendlen_arg, "mpireduce_malloccache");
 
       ConcreteType CT =
           TR.firstPointer(1, orig_sendbuf, &call, gutils, &Builder2);
@@ -2148,7 +2150,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
+        CreateDealloc(gutils->externalContext(), Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -2501,8 +2503,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto FS = getOrInsertPerCallingConv(*called->getParent(), called,
                                             "gsl_sf_legendre_array_n", FTS);
         Value *alSize = Builder2.CreateCall(FS, args[1]);
-        Value *tmp = CreateAllocation(Builder2, types[2], alSize);
-        Value *dtmp = CreateAllocation(Builder2, types[2], alSize);
+        Value *tmp = CreateAllocation(gutils->externalContext(), Builder2,
+                                      types[2], alSize);
+        Value *dtmp = CreateAllocation(gutils->externalContext(), Builder2,
+                                       types[2], alSize);
         Builder2.CreateLifetimeStart(tmp);
         Builder2.CreateLifetimeStart(dtmp);
 
@@ -2511,7 +2515,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         Builder2.CreateCall(F, args, Defs);
         Builder2.CreateLifetimeEnd(tmp);
-        CreateDealloc(Builder2, tmp);
+        CreateDealloc(gutils->externalContext(), Builder2, tmp);
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
 
@@ -2570,7 +2574,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         fin_idx->addIncoming(acc, loopBlock);
 
         Builder2.CreateLifetimeEnd(dtmp);
-        CreateDealloc(Builder2, dtmp);
+        CreateDealloc(gutils->externalContext(), Builder2, dtmp);
 
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
@@ -2974,7 +2978,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (Mode == DerivativeMode::ReverseModePrimal) {
               // Needs a stronger replacement check/assertion.
               Value *replacement = getUndefinedValueForType(
-                  *gutils->oldFunc->getParent(), placeholder->getType());
+                  gutils->externalContext(), *gutils->oldFunc->getParent(),
+                  placeholder->getType());
               gutils->replaceAWithB(placeholder, replacement);
               gutils->invertedPointers.erase(found);
               gutils->invertedPointers.insert(std::make_pair(
@@ -3071,7 +3076,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   if (EnzymeShadowAllocRewrite) {
                     bool used = unnecessaryInstructions.find(&call) ==
                                 unnecessaryInstructions.end();
-                    EnzymeShadowAllocRewrite(wrap(anti), gutils, wrap(&call),
+                    EnzymeShadowAllocRewrite(gutils->externalContext(),
+                                             wrap(anti), gutils, wrap(&call),
                                              idx, wrap(prev), used);
                   }
                 }
@@ -3284,8 +3290,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (EnzymeShadowAllocRewrite) {
               bool used = unnecessaryInstructions.find(&call) ==
                           unnecessaryInstructions.end();
-              EnzymeShadowAllocRewrite(wrap(CI), gutils, wrap(&call), idx,
-                                       wrap(prev), used);
+              EnzymeShadowAllocRewrite(gutils->externalContext(), wrap(CI),
+                                       gutils, wrap(&call), idx, wrap(prev),
+                                       used);
             }
           }
           idx++;

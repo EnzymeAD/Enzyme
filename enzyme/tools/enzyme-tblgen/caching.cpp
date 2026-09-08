@@ -171,7 +171,7 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
 << "      CallInst *malloccall = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << name << "\", &malloccall);\n"
+<< "      auto malins = CreateAllocation(gutils->externalContext(), BuilderZ, fpType, malloc_size, \"cache." << name << "\", &malloccall);\n"
 << "      if (malloccall) {\n"
 << "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
 << "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
@@ -212,7 +212,7 @@ os
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
 << "      Instruction *SubZero = nullptr;\n"
 << "      CallInst *malloccall = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", &malloccall";
+<< "      auto malins = CreateAllocation(gutils->externalContext(), BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
 << "      if (malloccall) {\n"
@@ -298,7 +298,7 @@ os
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      Instruction *SubZero = nullptr;\n"
 << "      CallInst *malloccall = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", &malloccall";
+<< "      auto malins = CreateAllocation(gutils->externalContext(), BuilderZ, fpType, matSize, \"cache." << matName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
 << "      if (malloccall) {\n"

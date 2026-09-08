@@ -287,6 +287,7 @@ static inline bool OnlyUsedInOMP(AllocaInst *AI) {
 }
 
 void RecursivelyReplaceAddressSpace(
+    EnzymeContextRef ExternalContext,
     SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
     SmallVector<Instruction *, 1> &toErase, bool legal) {
   SmallVector<StoreInst *, 1> toPostCache;
@@ -603,8 +604,8 @@ void RecursivelyReplaceAddressSpace(
     ss << " + inst: " << *inst << "\n";
 
     if (CustomErrorHandler) {
-      CustomErrorHandler(s.c_str(), wrap(inst), ErrorType::InternalError,
-                         nullptr, nullptr, nullptr);
+      CustomErrorHandler(ExternalContext, s.c_str(), wrap(inst),
+                         ErrorType::InternalError, nullptr, nullptr, nullptr);
     } else {
       auto instI = cast<Instruction>(inst);
       ss << *instI->getParent()->getParent() << "\n";
@@ -640,11 +641,12 @@ void RecursivelyReplaceAddressSpace(
   }
   for (auto SI : toPostCache) {
     IRBuilder<> B(SI->getNextNode());
-    PostCacheStore(SI, B);
+    PostCacheStore(ExternalContext, SI, B);
   }
 }
 
-void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
+void RecursivelyReplaceAddressSpace(EnzymeContextRef ExternalContext, Value *AI,
+                                    Value *rep, bool legal) {
   SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
   for (auto U : AI->users()) {
     Todo.push_back(
@@ -655,7 +657,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     assert(I);
     toErase.push_back(I);
   }
-  RecursivelyReplaceAddressSpace(Todo, toErase, legal);
+  RecursivelyReplaceAddressSpace(ExternalContext, Todo, toErase, legal);
 }
 
 /// Convert necessary stack allocations into mallocs for use in the reverse
@@ -663,7 +665,8 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 /// Even if topLevel any allocations that aren't in the entry block (and
 /// therefore may not be reachable in the reverse pass) must be upgraded.
 static inline void
-UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
+UpgradeAllocasToMallocs(EnzymeContextRef ExternalContext, Function *NewF,
+                        DerivativeMode mode,
                         SmallPtrSetImpl<llvm::BasicBlock *> &Unreachable) {
   SmallVector<AllocaInst *, 4> ToConvert;
 
@@ -754,9 +757,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     IRBuilder<> B(insertBefore);
     CallInst *CI = nullptr;
     Instruction *ZeroInst = nullptr;
-    auto rep = CreateAllocation(
-        B, AI->getAllocatedType(), B.CreateZExtOrTrunc(AI->getArraySize(), i64),
-        nam, &CI, /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
+    auto rep =
+        CreateAllocation(ExternalContext, B, AI->getAllocatedType(),
+                         B.CreateZExtOrTrunc(AI->getArraySize(), i64), nam, &CI,
+                         /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
     auto align = AI->getAlign().value();
     CI->setMetadata(
         "enzyme_fromstack",
@@ -801,7 +805,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
       AI->eraseFromParent();
     }
   }
-  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ false);
+  RecursivelyReplaceAddressSpace(ExternalContext, Todo, toErase,
+                                 /*legal*/ false);
 }
 
 // Create a stack variable containing the size of the allocation
@@ -1113,7 +1118,8 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       toErase.push_back(I);
     }
   }
-  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ true);
+  RecursivelyReplaceAddressSpace(externalContext(), Todo, toErase,
+                                 /*legal*/ true);
 
 #if LLVM_VERSION_MAJOR >= 22
   {
@@ -1556,6 +1562,10 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
       }
     }
   }
+}
+
+EnzymeContextRef PreProcessCache::externalContext() const {
+  return Logic ? Logic->externalContext() : nullptr;
 }
 
 PreProcessCache::PreProcessCache() {
@@ -2778,7 +2788,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     // For subfunction calls upgrade stack allocations to mallocs
     // to ensure availability in the reverse pass
     auto unreachable = getGuaranteedUnreachable(NewF);
-    UpgradeAllocasToMallocs(NewF, mode, unreachable);
+    UpgradeAllocasToMallocs(externalContext(), NewF, mode, unreachable);
   }
 
   CanonicalizeLoops(NewF, FAM);
@@ -2975,7 +2985,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
+FunctionType *getFunctionTypeForClone(EnzymeContextRef ExternalContext,
+                                      llvm::FunctionType *FTy,
                                       DerivativeMode mode, unsigned width,
                                       llvm::Type *additionalArg,
                                       llvm::ArrayRef<DIFFE_TYPE> constant_args,
@@ -3014,8 +3025,8 @@ FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
   }
   Type *RetType = StructType::get(FTy->getContext(), RetTypes);
   if (returnTape) {
-    RetTypes.insert(RetTypes.begin(),
-                    getDefaultAnonymousTapeType(FTy->getContext()));
+    RetTypes.insert(RetTypes.begin(), getDefaultAnonymousTapeType(
+                                          ExternalContext, FTy->getContext()));
   }
 
   if (RetTypes.size() == 0)
@@ -3046,8 +3057,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
-      F->getFunctionType(), mode, width, additionalArg, constant_args,
-      diffeReturnArg, returnTape, returnPrimal, returnShadow);
+      externalContext(), F->getFunctionType(), mode, width, additionalArg,
+      constant_args, diffeReturnArg, returnTape, returnPrimal, returnShadow);
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {

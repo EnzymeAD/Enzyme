@@ -2605,8 +2605,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
       os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
       os << "            if (CustomErrorHandler) {\n";
-      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
-         << ")), ErrorType::InternalError,\n";
+      os << "              CustomErrorHandler(gutils->externalContext(), "
+            "str.c_str(), wrap(&("
+         << origName << ")), ErrorType::InternalError,\n";
       os << "                                 nullptr, nullptr, nullptr);\n";
       os << "            } else {\n";
       os << "              EmitFailure(\"PHIError\", (" << origName
@@ -2636,8 +2637,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
       os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
       os << "            if (CustomErrorHandler) {\n";
-      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
-         << ")), ErrorType::InternalError,\n";
+      os << "              CustomErrorHandler(gutils->externalContext(), "
+            "str.c_str(), wrap(&("
+         << origName << ")), ErrorType::InternalError,\n";
       os << "                                 nullptr, nullptr, nullptr);\n";
       os << "            } else {\n";
       os << "              EmitFailure(\"PHIError\", (" << origName

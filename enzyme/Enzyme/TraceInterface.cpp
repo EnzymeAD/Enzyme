@@ -39,7 +39,7 @@ using namespace llvm;
 TraceInterface::TraceInterface(LLVMContext &C) : C(C){};
 
 PointerType *traceType(LLVMContext &C) {
-  return getDefaultAnonymousTapeType(C);
+  return getDefaultAnonymousTapeType(/*ExternalContext=*/nullptr, C);
 }
 
 Type *addressType(LLVMContext &C) { return getInt8PtrTy(C); }

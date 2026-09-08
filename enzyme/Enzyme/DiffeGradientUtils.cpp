@@ -211,7 +211,7 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     auto Alignment =
         oldFunc->getParent()->getDataLayout().getPrefTypeAlign(type);
     differentials[val]->setAlignment(Alignment);
-    ZeroMemory(entryBuilder, type, differentials[val],
+    ZeroMemory(externalContext(), entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
 #if LLVM_VERSION_MAJOR < 17
@@ -513,8 +513,9 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
   else
     ss << " addingType: null\n";
   if (CustomErrorHandler) {
-    CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
-                       nullptr, nullptr, wrap(&BuilderM));
+    CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(val),
+                       ErrorType::NoAccumulate, nullptr, nullptr,
+                       wrap(&BuilderM));
   } else {
     DebugLoc loc;
     if (auto inst = dyn_cast<Instruction>(val))
@@ -556,14 +557,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         if (bi->getOpcode() == BinaryOperator::FSub && ci->isZero()) {
           Value *res = BuilderM.CreateFSub(old, bi->getOperand(1));
           if (san)
-            res = SanitizeDerivatives(val, res, BuilderM, mask);
+            res = SanitizeDerivatives(externalContext(), val, res, BuilderM,
+                                      mask);
           return res;
         }
       }
     }
     Value *res = BuilderM.CreateFAdd(old, inc);
     if (san)
-      res = SanitizeDerivatives(val, res, BuilderM, mask);
+      res = SanitizeDerivatives(externalContext(), val, res, BuilderM, mask);
     return res;
   };
 
@@ -576,7 +578,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
           addedSelects.push_back(res);
-          return SanitizeDerivatives(val, res, BuilderM, mask);
+          return SanitizeDerivatives(externalContext(), val, res, BuilderM,
+                                     mask);
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
@@ -585,7 +588,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
           addedSelects.push_back(res);
-          return SanitizeDerivatives(val, res, BuilderM, mask);
+          return SanitizeDerivatives(externalContext(), val, res, BuilderM,
+                                     mask);
         }
       }
     }
@@ -603,7 +607,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                                bc->getDestTy()),
                            false)));
             addedSelects.push_back(res);
-            return SanitizeDerivatives(val, res, BuilderM, mask);
+            return SanitizeDerivatives(externalContext(), val, res, BuilderM,
+                                       mask);
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
@@ -617,7 +622,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                            false),
                 old));
             addedSelects.push_back(res);
-            return SanitizeDerivatives(val, res, BuilderM, mask);
+            return SanitizeDerivatives(externalContext(), val, res, BuilderM,
+                                       mask);
           }
         }
       }
@@ -689,8 +695,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
       } else if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+        CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(val),
+                           ErrorType::NoType, TR.analyzer, nullptr,
+                           wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump(ss);
@@ -722,8 +729,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
          << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
          << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+        CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(val),
+                           ErrorType::NoType, TR.analyzer, nullptr,
+                           wrap(&BuilderM));
         return addedSelects;
       } else {
         DebugLoc loc;
@@ -872,7 +880,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
   }
   assert(!isConstantValue(val));
 #endif
-  toset = SanitizeDerivatives(val, toset, BuilderM);
+  toset = SanitizeDerivatives(externalContext(), val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit ||
       mode == DerivativeMode::ForwardModeError) {
@@ -953,7 +961,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
       (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
   forfree->setAlignment(Align(align));
 
-  CallInst *ci = CreateDealloc(tbuild, forfree);
+  CallInst *ci = CreateDealloc(externalContext(), tbuild, forfree);
   if (ci) {
     if (newFunc->getSubprogram())
       ci->setDebugLoc(DILocation::get(newFunc->getContext(), 0, 0,
@@ -1123,7 +1131,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
          << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(orig),
+        CustomErrorHandler(externalContext(), ss.str().c_str(), wrap(orig),
                            ErrorType::NoDerivative, this, nullptr,
                            wrap(&BuilderM));
         return;
@@ -1150,7 +1158,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       auto rule = [&](Value *dif, Value *ptr) {
         for (size_t i = 0; i < numElems; ++i) {
           auto vdif = BuilderM.CreateExtractElement(dif, i);
-          vdif = SanitizeDerivatives(orig, vdif, BuilderM);
+          vdif = SanitizeDerivatives(externalContext(), orig, vdif, BuilderM);
           Value *Idxs[] = {
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
@@ -1173,7 +1181,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       applyChainRule(BuilderM, rule, dif, ptr);
     } else {
       auto rule = [&](Value *dif, Value *ptr) {
-        dif = SanitizeDerivatives(orig, dif, BuilderM);
+        dif = SanitizeDerivatives(externalContext(), orig, dif, BuilderM);
         MaybeAlign alignv = align;
         if (alignv) {
           if (start != 0) {
@@ -1199,7 +1207,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       auto LI = BuilderM.CreateLoad(addingType, ptr);
 
       Value *res = BuilderM.CreateFAdd(LI, dif);
-      res = SanitizeDerivatives(orig, res, BuilderM);
+      res = SanitizeDerivatives(externalContext(), orig, res, BuilderM);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
       SmallVector<Metadata *, 1> scopeMD = {
@@ -1281,7 +1289,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                         Constant::getNullValue(dif->getType())};
       Value *LI = BuilderM.CreateCall(LF, largs);
       Value *res = BuilderM.CreateFAdd(LI, dif);
-      res = SanitizeDerivatives(orig, res, BuilderM, mask);
+      res = SanitizeDerivatives(externalContext(), orig, res, BuilderM, mask);
       Value *sargs[] = {res, ptr, alignv, mask};
       BuilderM.CreateCall(SF, sargs);
     };
