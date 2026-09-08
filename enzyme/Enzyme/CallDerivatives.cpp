@@ -2493,8 +2493,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
           auto rule = [&](Value *sTo, Value *sFrom) {
             auto reify = [&](Value *shadow, Value *primal, uint64_t size) {
-              Value *base = Builder2.CreateLoad(
-                  getInt8PtrTy(call.getContext()), shadow, "shadow.base_addr");
+              Value *base = Builder2.CreateLoad(getInt8PtrTy(call.getContext()),
+                                                shadow, "shadow.base_addr");
               Builder2.CreateMemCpy(shadow, MaybeAlign(8), primal,
                                     MaybeAlign(8), size);
               Builder2.CreateStore(base, shadow);
