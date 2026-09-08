@@ -56,13 +56,13 @@ jobs:
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
         sudo python3 -m pip install --upgrade pip lit
+    - uses: actions/checkout@v4
     - name: install openmpi
       run: |
         git clone https://github.com/spack/spack.git
         . spack/share/spack/setup-env.sh
         spack compiler find
         spack install openmpi ^llvm
-    - uses: actions/checkout@v4
     - name: generate build system
       run: |
         . spack/share/spack/setup-env.sh
