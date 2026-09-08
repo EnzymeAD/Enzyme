@@ -1,4 +1,4 @@
-! Test differentiation through mpi_comm_scatter
+! Test differentiation through mpi_scatter
 !
 ! REQUIRES: fortran, mpi
 ! UNSUPPORTED: ifx

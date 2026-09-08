@@ -1,4 +1,4 @@
-! Test differentiation through mpi_comm_gather
+! Test differentiation through mpi_gather
 !
 ! REQUIRES: fortran, mpi
 ! UNSUPPORTED: ifx
