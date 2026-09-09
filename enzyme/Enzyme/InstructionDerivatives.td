@@ -1244,6 +1244,15 @@ def : IntrPattern<(Op $x),
                   (ForwardFromSummedReverse)                
                   >;
 
+def : IntrPattern<(Op $y, $x),
+                  [["atan2", "20", ""]],
+                  [
+                    (FDiv (FMul (DiffeRet), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
+                    (FNeg (FDiv (FMul (DiffeRet), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
+                  ],
+                  (ForwardFromSummedReverse)
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["asin", "19", ""]],
                   [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))))]  ,

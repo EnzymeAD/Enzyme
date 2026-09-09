@@ -4089,6 +4089,7 @@ public:
       {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
+        args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(
                 M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
@@ -4116,7 +4117,16 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
+        SmallVector<Value *, 2> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        if (ID == Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+            ID == Intrinsic::nvvm_barrier_cta_sync_aligned_count) {
+          auto *CB = cast<CallBase>(&I);
+          for (Use &arg : CB->args())
+            args.push_back(
+                lookup(gutils->getNewFromOriginal(arg.get()), Builder2));
+        }
+#endif
         auto cal = cast<CallInst>(
             Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
