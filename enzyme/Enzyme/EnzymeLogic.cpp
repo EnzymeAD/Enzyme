@@ -54,6 +54,7 @@
 #endif
 
 #include "llvm/Analysis/DependenceAnalysis.h"
+#include <chrono>
 #include <deque>
 
 #include "llvm/IR/BasicBlock.h"
@@ -105,6 +106,11 @@ llvm::cl::opt<bool>
     EnzymePrintUnnecessary("enzyme-print-unnecessary", cl::init(false),
                            cl::Hidden,
                            cl::desc("Print unnecessary values in function"));
+
+llvm::cl::opt<bool> EnzymePrintUnusedStats(
+    "enzyme-print-unused-stats", cl::init(false), cl::Hidden,
+    cl::desc("Print isNoNeed / differential-use cache statistics and timing "
+             "of calculateUnusedValuesInFunction"));
 
 cl::opt<bool> looseTypeAnalysis("enzyme-loose-types", cl::init(false),
                                 cl::Hidden,
@@ -756,8 +762,43 @@ void calculateUnusedValuesInFunction(
     }
   }
 
-  std::function<bool(const llvm::Value *)> isNoNeed = [&](const llvm::Value
-                                                              *v) {
+  // isNoNeed(v) walks every user of v's base object, and the callbacks below
+  // ask it once per (user, value) pair examined, so an allocation with U users
+  // costs O(U^2) per visit and is revisited every time one of its users is
+  // marked unnecessary: O(U^3), each step a differential-use query. Memoize it.
+  // The result depends only on unnecessaryValues / unnecessaryInstructions,
+  // which only grow, and every check against them can only turn a user from
+  // "blocking" into "benign": a `true` result is therefore final, and a `false`
+  // result stays valid until either set changes (the epoch below).
+  llvm::DenseMap<const llvm::Value *, std::pair<size_t, bool>> noNeedCache;
+  llvm::DenseMap<std::pair<const llvm::Value *, const llvm::Instruction *>,
+                 bool>
+      directUseCache;
+  size_t noNeedCalls = 0, noNeedHits = 0, directUseCalls = 0, directUseHits = 0;
+  auto noNeedEpoch = [&]() {
+    return unnecessaryValues.size() + unnecessaryInstructions.size();
+  };
+  // is_use_directly_needed_in_reverse depends on gutils, mode and
+  // oldUnreachable only, all fixed for this call, so its answer per (value,
+  // user) is constant.
+  auto cachedDirectUse = [&](const llvm::Value *cur,
+                             const llvm::Instruction *I) {
+    directUseCalls++;
+    auto key = std::make_pair(cur, I);
+    auto found = directUseCache.find(key);
+    if (found != directUseCache.end()) {
+      directUseHits++;
+      return found->second;
+    }
+    bool res = DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
+        gutils, cur, mode, I, oldUnreachable, QueryType::Primal);
+    directUseCache[key] = res;
+    return res;
+  };
+  auto unusedStart = std::chrono::steady_clock::now();
+  std::function<bool(const llvm::Value *)> isNoNeed;
+  std::function<bool(const llvm::Value *)> isNoNeedImpl = [&](const llvm::Value
+                                                                  *v) {
     auto Obj = getBaseObject(v);
     if (Obj != v)
       return isNoNeed(Obj);
@@ -791,9 +832,7 @@ void calculateUnusedValuesInFunction(
             }
             if (auto I = dyn_cast<Instruction>(u)) {
               if (unnecessaryInstructions.count(I)) {
-                if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
-                        gutils, cur, mode, I, oldUnreachable,
-                        QueryType::Primal)) {
+                if (!cachedDirectUse(cur, I)) {
                   continue;
                 }
               }
@@ -854,6 +893,19 @@ void calculateUnusedValuesInFunction(
       return isNoNeed(II->getOperand(ptrArgIdx));
     }
     return false;
+  };
+  isNoNeed = [&](const llvm::Value *v) {
+    noNeedCalls++;
+    size_t epoch = noNeedEpoch();
+    auto found = noNeedCache.find(v);
+    if (found != noNeedCache.end() &&
+        (found->second.second || found->second.first == epoch)) {
+      noNeedHits++;
+      return found->second.second;
+    }
+    bool res = isNoNeedImpl(v);
+    noNeedCache[v] = std::make_pair(epoch, res);
+    return res;
   };
 
   calculateUnusedValues(
@@ -1130,6 +1182,20 @@ void calculateUnusedValuesInFunction(
         }
         return true;
       });
+  if (EnzymePrintUnusedStats) {
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - unusedStart)
+                  .count();
+    llvm::errs() << "calculateUnusedValuesInFunction " << func.getName()
+                 << " mode=" << to_string(mode)
+                 << " insts=" << func.getInstructionCount()
+                 << " unnecessaryValues=" << unnecessaryValues.size()
+                 << " unnecessaryInstructions="
+                 << unnecessaryInstructions.size()
+                 << " isNoNeed calls=" << noNeedCalls << " hits=" << noNeedHits
+                 << " directUse calls=" << directUseCalls
+                 << " hits=" << directUseHits << " time=" << ms << "ms\n";
+  }
   if (EnzymePrintUnnecessary) {
     llvm::errs() << " val use analysis of " << func.getName()
                  << ": mode=" << to_string(mode) << "\n";
