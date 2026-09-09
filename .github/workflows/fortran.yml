@@ -72,13 +72,13 @@ jobs:
     - name: build enzyme
       working-directory: 'build'
       run: |
-        . spack/share/spack/setup-env.sh
+        . ../spack/share/spack/setup-env.sh
         spack load openmpi
         ninja LLVMEnzyme-${{ matrix.llvm }} FlangEnzyme-${{ matrix.llvm }}
     - name: run Fortran tests
       working-directory: 'build'
       run: |
-        . spack/share/spack/setup-env.sh
+        . ../spack/share/spack/setup-env.sh
         spack load openmpi
         ninja check-enzyme-fortran
   build-and-test-fortran-ifx:
@@ -131,12 +131,12 @@ jobs:
     - name: build enzyme
       working-directory: 'build'
       run: |
-        . spack/share/spack/setup-env.sh
+        . ../spack/share/spack/setup-env.sh
         spack load openmpi
         ninja LLVMEnzyme-${{ matrix.versions.llvm }}
     - name: run Fortran tests
       working-directory: 'build'
       run: |
-        . spack/share/spack/setup-env.sh
+        . ../spack/share/spack/setup-env.sh
         spack load openmpi
         ninja check-enzyme-fortran
