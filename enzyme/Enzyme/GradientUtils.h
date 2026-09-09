@@ -136,7 +136,6 @@ public:
 enum class AugmentedStruct;
 class GradientUtils : public CacheUtility {
 public:
-  EnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
   llvm::Function *oldFunc;

@@ -1602,12 +1602,10 @@ class FixupJuliaCallingConventionNewPM
     : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
 #endif
   bool sret_jlvalue;
-  EnzymeContextRef ExternalContext;
 
 public:
-  FixupJuliaCallingConventionNewPM(bool sret_jlvalue,
-                                   EnzymeContextRef ExternalContext = nullptr)
-      : sret_jlvalue(sret_jlvalue), ExternalContext(ExternalContext) {}
+  FixupJuliaCallingConventionNewPM(bool sret_jlvalue)
+      : sret_jlvalue(sret_jlvalue) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
@@ -1618,7 +1616,9 @@ public:
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      EnzymeFixupJuliaCallingConvention(ExternalContext, F, sret_jlvalue);
+      // A named pass has no frontend to hand a context to.
+      EnzymeFixupJuliaCallingConvention(/*ExternalContext=*/nullptr, F,
+                                        sret_jlvalue);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
@@ -1632,12 +1632,6 @@ class FixupBatchedJuliaCallingConventionNewPM
     : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
 #endif
 public:
-  EnzymeContextRef ExternalContext;
-
-  FixupBatchedJuliaCallingConventionNewPM(
-      EnzymeContextRef ExternalContext = nullptr)
-      : ExternalContext(ExternalContext) {}
-
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
     SmallVector<llvm::Function *, 16> Functions;
@@ -1647,7 +1641,7 @@ public:
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      EnzymeFixupBatchedJuliaCallingConvention(ExternalContext, F);
+      EnzymeFixupBatchedJuliaCallingConvention(/*ExternalContext=*/nullptr, F);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

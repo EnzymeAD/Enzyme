@@ -461,11 +461,8 @@ public:
   /// back unchanged to every frontend callback.
   EnzymeContextRef externalContext() const { return ExternalContext; }
 
-  EnzymeLogic(bool PostOpt) : PostOpt(PostOpt), ExternalContext(nullptr) {
-    // The preprocessing cache reaches frontend callbacks of its own and has no
-    // other way back to the logic that owns it.
-    PPC.Logic = this;
-  }
+  EnzymeLogic(bool PostOpt)
+      : PPC(*this), PostOpt(PostOpt), ExternalContext(nullptr) {}
 
   struct AugmentedCacheKey {
     llvm::Function *fn;

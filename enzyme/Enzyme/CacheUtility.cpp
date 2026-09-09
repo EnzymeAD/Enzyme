@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CacheUtility.h"
+#include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 
 using namespace llvm;
@@ -50,6 +51,10 @@ llvm::cl::opt<bool> EfficientMaxCache(
 }
 
 CacheUtility::~CacheUtility() {}
+
+EnzymeContextRef CacheUtility::externalContext() const {
+  return Logic.externalContext();
+}
 
 /// Erase this instruction both from LLVM modules and any local data-structures
 void CacheUtility::erase(Instruction *I) {

@@ -79,14 +79,14 @@ class EnzymeLogic;
 
 class PreProcessCache {
 public:
-  PreProcessCache();
+  /// The logic that owns this cache. Preprocessing runs before any
+  /// GradientUtils exists, so this is its route to the frontend state of the
+  /// request being served.
+  EnzymeLogic &Logic;
 
-  /// The logic that owns this cache, set by its constructor. Preprocessing
-  /// runs before any GradientUtils exists, so this is the only route from here
-  /// back to the frontend state of the request being served.
-  EnzymeLogic *Logic = nullptr;
+  PreProcessCache(EnzymeLogic &Logic);
 
-  /// The frontend state of the request being preprocessed, if known.
+  /// The frontend state of the request being preprocessed, taken from Logic.
   EnzymeContextRef externalContext() const;
 
   PreProcessCache(PreProcessCache &) = delete;
@@ -94,10 +94,9 @@ public:
   // since now the new location of FAM/MAM will not be used. Therefore, use a
   // custom move constructor and default initialize these, and move the
   // cache/origin maps.
-  PreProcessCache(PreProcessCache &&prev) : PreProcessCache() {
+  PreProcessCache(PreProcessCache &&prev) : PreProcessCache(prev.Logic) {
     cache = std::move(prev.cache);
     CloneOrigin = std::move(prev.CloneOrigin);
-    Logic = prev.Logic;
   };
 
   llvm::LoopAnalysisManager LAM;

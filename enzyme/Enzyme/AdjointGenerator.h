@@ -5241,12 +5241,11 @@ public:
           newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
         }
 
-        ErrorIfRuntimeInactive(gutils->externalContext(), BuilderZ,
-                               gutils->getNewFromOriginal(callval), newcalled,
-                               "Attempting to call an indirect active function "
-                               "whose runtime value is inactive",
-                               gutils->getNewFromOriginal(call.getDebugLoc()),
-                               &call);
+        ErrorIfRuntimeInactive(
+            gutils, BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+            "Attempting to call an indirect active function "
+            "whose runtime value is inactive",
+            gutils->getNewFromOriginal(call.getDebugLoc()), &call);
 
         auto ft = call.getFunctionType();
         bool retActive = subretType != DIFFE_TYPE::CONSTANT;
@@ -5645,8 +5644,7 @@ public:
 
         if (Mode != DerivativeMode::ReverseModeGradient)
           ErrorIfRuntimeInactive(
-              gutils->externalContext(), BuilderZ,
-              gutils->getNewFromOriginal(callval), newcalled,
+              gutils, BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
               "Attempting to call an indirect active function "
               "whose runtime value is inactive",
               gutils->getNewFromOriginal(call.getDebugLoc()), &call);

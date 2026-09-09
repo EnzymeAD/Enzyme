@@ -1592,14 +1592,15 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   return vinds;
 }
 
-llvm::Function *getOrInsertDifferentialWaitallSave(
-    EnzymeContextRef ExternalContext, llvm::Module &M,
-    llvm::ArrayRef<llvm::Type *> T, llvm::PointerType *reqType);
+llvm::Function *
+getOrInsertDifferentialWaitallSave(GradientUtils *gutils, llvm::Module &M,
+                                   llvm::ArrayRef<llvm::Type *> T,
+                                   llvm::PointerType *reqType);
 
-void ErrorIfRuntimeInactive(EnzymeContextRef ExternalContext,
-                            llvm::IRBuilder<> &B, llvm::Value *primal,
-                            llvm::Value *shadow, const char *Message,
-                            llvm::DebugLoc &&loc, llvm::Instruction *orig);
+void ErrorIfRuntimeInactive(GradientUtils *gutils, llvm::IRBuilder<> &B,
+                            llvm::Value *primal, llvm::Value *shadow,
+                            const char *Message, llvm::DebugLoc &&loc,
+                            llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
@@ -2242,8 +2243,8 @@ llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
                                          llvm::Module &M, llvm::Type *T,
                                          bool forceZero = false);
 
-llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
-                                 llvm::Value *val, llvm::Value *toset,
+llvm::Value *SanitizeDerivatives(GradientUtils *gutils, llvm::Value *val,
+                                 llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask = nullptr);
 
@@ -2424,10 +2425,10 @@ llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
                                 llvm::Value *col);
 
 // first one assume V is an Integer
-llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+llvm::Value *transpose(GradientUtils *gutils, std::string floatType,
                        llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+llvm::Value *transpose(GradientUtils *gutils, std::string floatType,
                        llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        bool cublas, llvm::IntegerType *IT,
                        llvm::IRBuilder<> &entryBuilder,

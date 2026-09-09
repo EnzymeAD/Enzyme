@@ -496,7 +496,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       }
 
       Function *dsave = getOrInsertDifferentialWaitallSave(
-          gutils->externalContext(), *gutils->oldFunc->getParent(),
+          gutils, *gutils->oldFunc->getParent(),
           {count->getType(), req->getType(), d_req->getType()}, reqType);
 
       d_reqp = BuilderZ.CreateCall(dsave, {count, req, d_req});

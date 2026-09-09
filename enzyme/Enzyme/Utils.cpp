@@ -944,10 +944,10 @@ void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss) {
   }
 }
 
-void ErrorIfRuntimeInactive(EnzymeContextRef ExternalContext,
-                            llvm::IRBuilder<> &B, llvm::Value *primal,
-                            llvm::Value *shadow, const char *Message,
-                            llvm::DebugLoc &&loc, llvm::Instruction *orig) {
+void ErrorIfRuntimeInactive(GradientUtils *gutils, llvm::IRBuilder<> &B,
+                            llvm::Value *primal, llvm::Value *shadow,
+                            const char *Message, llvm::DebugLoc &&loc,
+                            llvm::Instruction *orig) {
   Module &M = *B.GetInsertBlock()->getParent()->getParent();
   std::string name = "__enzyme_runtimeinactiveerr";
   if (CustomRuntimeInactiveError) {
@@ -986,8 +986,8 @@ void ErrorIfRuntimeInactive(EnzymeContextRef ExternalContext,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(ExternalContext, wrap(&EB), wrap(msg),
-                                 wrap(orig));
+      CustomRuntimeInactiveError(gutils->externalContext(), wrap(&EB),
+                                 wrap(msg), wrap(orig));
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -2341,10 +2341,10 @@ llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   return V;
 }
 
-llvm::Function *
-getOrInsertDifferentialWaitallSave(EnzymeContextRef ExternalContext,
-                                   llvm::Module &M, ArrayRef<llvm::Type *> T,
-                                   PointerType *reqType) {
+llvm::Function *getOrInsertDifferentialWaitallSave(GradientUtils *gutils,
+                                                   llvm::Module &M,
+                                                   ArrayRef<llvm::Type *> T,
+                                                   PointerType *reqType) {
   std::string name = "__enzyme_differential_waitall_save";
   FunctionType *FT = FunctionType::get(getUnqual(reqType), T, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -2369,7 +2369,7 @@ getOrInsertDifferentialWaitallSave(EnzymeContextRef ExternalContext,
   IRBuilder<> B(entry);
   count = B.CreateZExtOrTrunc(count, Type::getInt64Ty(entry->getContext()));
 
-  auto ret = CreateAllocation(ExternalContext, B, reqType, count);
+  auto ret = CreateAllocation(gutils->externalContext(), B, reqType, count);
 
   BasicBlock *loopBlock = BasicBlock::Create(M.getContext(), "loop", F);
   BasicBlock *endBlock = BasicBlock::Create(M.getContext(), "end", F);
@@ -3795,8 +3795,8 @@ llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
     return UndefValue::get(T);
 }
 
-llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
-                                 llvm::Value *val, llvm::Value *toset,
+llvm::Value *SanitizeDerivatives(GradientUtils *gutils, llvm::Value *val,
+                                 llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask) {
   if (EnzymeCheckDerivativeNaN && toset->getType()->isFPOrFPVectorTy()) {
@@ -3851,7 +3851,7 @@ llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
 
       B.SetInsertPoint(bad);
       if (CustomErrorHandler) {
-        CustomErrorHandler(ExternalContext, "NaN Error", wrap(inp),
+        CustomErrorHandler(gutils->externalContext(), "NaN Error", wrap(inp),
                            ErrorType::NaNError, nullptr, wrap(msg_ptr),
                            wrap(&B));
       } else {
@@ -3889,8 +3889,9 @@ llvm::Value *SanitizeDerivatives(EnzymeContextRef ExternalContext,
   }
 
   if (EnzymeSanitizeDerivatives)
-    return unwrap(EnzymeSanitizeDerivatives(
-        ExternalContext, wrap(val), wrap(toset), wrap(&BuilderM), wrap(mask)));
+    return unwrap(EnzymeSanitizeDerivatives(gutils->externalContext(),
+                                            wrap(val), wrap(toset),
+                                            wrap(&BuilderM), wrap(mask)));
   return toset;
 }
 
@@ -4110,7 +4111,7 @@ llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
 // However, if we ask openBlas c ABI,
 // it is one of the following 32 bit integers values:
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
-llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+llvm::Value *transpose(GradientUtils *gutils, std::string floatType,
                        IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
@@ -4165,7 +4166,7 @@ llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
     llvm::raw_string_ostream ss(s);
     ss << "cannot handle unknown trans blas value\n" << V;
     if (CustomErrorHandler) {
-      CustomErrorHandler(ExternalContext, ss.str().c_str(), nullptr,
+      CustomErrorHandler(gutils->externalContext(), ss.str().c_str(), nullptr,
                          ErrorType::NoDerivative, nullptr, nullptr, nullptr);
     } else {
       EmitFailure("unknown trans blas value", B.getCurrentDebugLocation(),
@@ -4197,7 +4198,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   return width;
 }
 
-llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
+llvm::Value *transpose(GradientUtils *gutils, std::string floatType,
                        llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        bool cublas, llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
@@ -4232,7 +4233,7 @@ llvm::Value *transpose(EnzymeContextRef ExternalContext, std::string floatType,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = transpose(ExternalContext, floatType, B, V, cublas);
+  V = transpose(gutils, floatType, B, V, cublas);
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);

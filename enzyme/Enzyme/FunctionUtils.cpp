@@ -1565,10 +1565,10 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
 }
 
 EnzymeContextRef PreProcessCache::externalContext() const {
-  return Logic ? Logic->externalContext() : nullptr;
+  return Logic.externalContext();
 }
 
-PreProcessCache::PreProcessCache() {
+PreProcessCache::PreProcessCache(EnzymeLogic &Logic) : Logic(Logic) {
   // Explicitly chose AA passes that are stateless
   // and will not be invalidated
   FAM.registerPass([] { return TypeBasedAA(); });

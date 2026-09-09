@@ -1402,9 +1402,8 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       auto name = Def->getValueAsString("name");
       os << "{(arg_transposed_" << name << " = arg_transposed_" << name
          << " ? arg_transposed_" << name << " : "
-         << "transpose(gutils->externalContext(), blas.floatType, Builder2, "
-            "arg_"
-         << name << ", byRef, cublas, charType, allocationBuilder, \"" << name
+         << "transpose(gutils, blas.floatType, Builder2, arg_" << name
+         << ", byRef, cublas, charType, allocationBuilder, \"" << name
          << "\"))}";
     } else {
       errs() << Def->getName() << "\n";

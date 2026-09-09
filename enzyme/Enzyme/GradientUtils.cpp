@@ -164,8 +164,8 @@ GradientUtils::GradientUtils(
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
     DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
     bool omp)
-    : CacheUtility(TLI_, newFunc_, Logic.ExternalContext), Logic(Logic),
-      mode(mode), oldFunc(oldFunc_), invertedPointers(),
+    : CacheUtility(Logic, TLI_, newFunc_), mode(mode), oldFunc(oldFunc_),
+      invertedPointers(),
       OrigDT(oldFunc_->empty()
                  ? ((DominatorTree *)nullptr)
                  : &Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(
