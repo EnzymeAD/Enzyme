@@ -7522,7 +7522,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       st->setAlignment(Align(bsize));
                     }
                     scopeInstructions[cache].push_back(st);
-                    for (auto post : PostCacheStore(externalContext(), st, v)) {
+                    for (auto post : PostCacheStore(st, v)) {
                       scopeInstructions[cache].push_back(post);
                     }
                   }
@@ -8871,8 +8871,8 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement = getUndefinedValueForType(
-          externalContext(), *oldFunc->getParent(), P->getType());
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
@@ -8909,8 +8909,8 @@ void GradientUtils::eraseFictiousPHIs() {
           EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
         }
       }
-      Value *replacement = getUndefinedValueForType(
-          externalContext(), *oldFunc->getParent(), pp->getType());
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), pp->getType());
       pp->replaceAllUsesWith(replacement);
     }
     erase(pp);

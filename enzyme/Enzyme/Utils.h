@@ -191,11 +191,12 @@ enum class ErrorType {
 /// An opaque handle on the frontend state that the differentiation request
 /// currently being served belongs to. Enzyme never inspects it: the frontend
 /// installs it on its EnzymeLogic with EnzymeLogicSetExternalContext, and
-/// Enzyme hands it back unchanged to every frontend callback it invokes. A
-/// callback can therefore recover the state of the request that reached it
-/// (for Enzyme.jl: the Julia world age the code is being compiled in, and the
-/// method instances of the functions in it) instead of consulting global or
-/// thread-local state. It is fixed for the lifetime of an EnzymeLogic.
+/// Enzyme hands it back unchanged to the frontend callbacks that need it (the
+/// error handler, the allocator, the return fixup and the derivative
+/// sanitizer). A callback can therefore recover the state of the request that
+/// reached it (for Enzyme.jl: the Julia world age the code is being compiled
+/// in) instead of consulting global or thread-local state. It is null when
+/// Enzyme has no way to reach a logic from the call site.
 typedef void *EnzymeContextRef;
 
 extern "C" {
@@ -210,9 +211,8 @@ extern LLVMValueRef (*CustomErrorHandler)(EnzymeContextRef, const char *,
                                           LLVMValueRef, LLVMBuilderRef);
 }
 
-llvm::SmallVector<llvm::Instruction *, 2>
-PostCacheStore(EnzymeContextRef ExternalContext, llvm::StoreInst *SI,
-               llvm::IRBuilder<> &B);
+llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
+                                                         llvm::IRBuilder<> &B);
 
 llvm::Value *CreateAllocation(EnzymeContextRef ExternalContext,
                               llvm::IRBuilder<> &B, llvm::Type *T,
@@ -220,10 +220,9 @@ llvm::Value *CreateAllocation(EnzymeContextRef ExternalContext,
                               llvm::CallInst **caller = nullptr,
                               llvm::Instruction **ZeroMem = nullptr,
                               bool isDefault = false);
-llvm::CallInst *CreateDealloc(EnzymeContextRef ExternalContext,
-                              llvm::IRBuilder<> &B, llvm::Value *ToFree);
-void ZeroMemory(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &Builder,
-                llvm::Type *T, llvm::Value *obj, bool isTape);
+llvm::CallInst *CreateDealloc(llvm::IRBuilder<> &B, llvm::Value *ToFree);
+void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
+                bool isTape);
 
 llvm::Value *
 CreateReAllocation(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
@@ -231,8 +230,7 @@ CreateReAllocation(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
                    llvm::Value *InnerCount, const llvm::Twine &Name = "",
                    llvm::CallInst **caller = nullptr, bool ZeroMem = false);
 
-llvm::PointerType *getDefaultAnonymousTapeType(EnzymeContextRef ExternalContext,
-                                               llvm::LLVMContext &C);
+llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C);
 
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(
@@ -1597,10 +1595,9 @@ getOrInsertDifferentialWaitallSave(GradientUtils *gutils, llvm::Module &M,
                                    llvm::ArrayRef<llvm::Type *> T,
                                    llvm::PointerType *reqType);
 
-void ErrorIfRuntimeInactive(GradientUtils *gutils, llvm::IRBuilder<> &B,
-                            llvm::Value *primal, llvm::Value *shadow,
-                            const char *Message, llvm::DebugLoc &&loc,
-                            llvm::Instruction *orig);
+void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+                            llvm::Value *shadow, const char *Message,
+                            llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
@@ -2239,8 +2236,7 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
 
 bool attributeKnownFunctions(llvm::Function &F);
 
-llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
-                                         llvm::Module &M, llvm::Type *T,
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
                                          bool forceZero = false);
 
 llvm::Value *SanitizeDerivatives(GradientUtils *gutils, llvm::Value *val,
@@ -2779,17 +2775,16 @@ enum class SRetRootMovement {
   NullifySRetValue = 4,
 };
 
-llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
-                                 llvm::IRBuilder<> &B, llvm::Type *jltype,
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction);
 
-void copyNonJLValueInto(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
-                        llvm::Type *curType, llvm::Type *dstType,
-                        llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix,
-                        llvm::Type *srcType, llvm::Value *src,
-                        llvm::ArrayRef<unsigned> srcPrefix, bool shouldZero);
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType,
+                        llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix,
+                        bool shouldZero);
 
 static bool anyJuliaObjects(llvm::Type *T) {
   if (isSpecialPtr(T))

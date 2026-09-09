@@ -4897,7 +4897,7 @@ public:
 
         if (tape && shouldFree()) {
           for (auto idx : subdata->tapeIndiciesToFree) {
-            CreateDealloc(gutils->externalContext(), Builder2,
+            CreateDealloc(Builder2,
                           idx == -1 ? tape
                                     : Builder2.CreateExtractValue(tape, idx));
           }
@@ -5122,8 +5122,7 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          argi = getUndefinedValueForType(gutils->externalContext(), M,
-                                          argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -5242,7 +5241,7 @@ public:
         }
 
         ErrorIfRuntimeInactive(
-            gutils, BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+            BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
             "Attempting to call an indirect active function "
             "whose runtime value is inactive",
             gutils->getNewFromOriginal(call.getDebugLoc()), &call);
@@ -5251,9 +5250,8 @@ public:
         bool retActive = subretType != DIFFE_TYPE::CONSTANT;
 
         FT = getFunctionTypeForClone(
-            gutils->externalContext(), ft, Mode, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, argsInverted, false,
-            /*returnTape*/ false,
+            ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
+            argsInverted, false, /*returnTape*/ false,
             /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
         PointerType *fptype = getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
@@ -5420,8 +5418,7 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        prearg = getUndefinedValueForType(gutils->externalContext(), M,
-                                          argi->getType());
+        prearg = getUndefinedValueForType(M, argi->getType());
         preType = ValueType::None;
       }
       pre_args.push_back(prearg);
@@ -5439,8 +5436,7 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          argi = getUndefinedValueForType(gutils->externalContext(), M,
-                                          argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
           revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
@@ -5517,8 +5513,7 @@ public:
                gutils->isConstantInstruction(&call)) &&
               !replaceFunction) {
             darg = getUndefinedValueForType(
-                gutils->externalContext(), M,
-                gutils->getShadowType(argi->getType()));
+                M, gutils->getShadowType(argi->getType()));
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
@@ -5555,8 +5550,7 @@ public:
 
         if (Mode == DerivativeMode::ReverseModeGradient && !replaceFunction) {
           nowrite_shadows.back() = true;
-          pre_args.push_back(getUndefinedValueForType(gutils->externalContext(),
-                                                      M, argi->getType()));
+          pre_args.push_back(getUndefinedValueForType(M, argi->getType()));
         } else {
           pre_args.push_back(
               gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
@@ -5644,7 +5638,7 @@ public:
 
         if (Mode != DerivativeMode::ReverseModeGradient)
           ErrorIfRuntimeInactive(
-              gutils, BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+              BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
               "Attempting to call an indirect active function "
               "whose runtime value is inactive",
               gutils->getNewFromOriginal(call.getDebugLoc()), &call);
@@ -6051,7 +6045,7 @@ public:
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        CreateDealloc(gutils->externalContext(), BuilderZ, tape);
+        CreateDealloc(BuilderZ, tape);
         tape = truetape;
       }
     } else {

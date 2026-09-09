@@ -641,7 +641,7 @@ void RecursivelyReplaceAddressSpace(
   }
   for (auto SI : toPostCache) {
     IRBuilder<> B(SI->getNextNode());
-    PostCacheStore(ExternalContext, SI, B);
+    PostCacheStore(SI, B);
   }
 }
 
@@ -2985,8 +2985,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(EnzymeContextRef ExternalContext,
-                                      llvm::FunctionType *FTy,
+FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
                                       DerivativeMode mode, unsigned width,
                                       llvm::Type *additionalArg,
                                       llvm::ArrayRef<DIFFE_TYPE> constant_args,
@@ -3025,8 +3024,8 @@ FunctionType *getFunctionTypeForClone(EnzymeContextRef ExternalContext,
   }
   Type *RetType = StructType::get(FTy->getContext(), RetTypes);
   if (returnTape) {
-    RetTypes.insert(RetTypes.begin(), getDefaultAnonymousTapeType(
-                                          ExternalContext, FTy->getContext()));
+    RetTypes.insert(RetTypes.begin(),
+                    getDefaultAnonymousTapeType(FTy->getContext()));
   }
 
   if (RetTypes.size() == 0)
@@ -3057,8 +3056,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
-      externalContext(), F->getFunctionType(), mode, width, additionalArg,
-      constant_args, diffeReturnArg, returnTape, returnPrimal, returnShadow);
+      F->getFunctionType(), mode, width, additionalArg, constant_args,
+      diffeReturnArg, returnTape, returnPrimal, returnShadow);
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {

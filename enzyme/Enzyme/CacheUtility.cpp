@@ -858,8 +858,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
     alloc->setAlignment(Align(align));
   }
-  auto undef_v = getUndefinedValueForType(externalContext(),
-                                          *newFunc->getParent(), types.back(),
+  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
                                           /*forceZero*/ false);
   if (!isa<UndefValue>(undef_v))
     scopeInstructions[alloc].push_back(
@@ -969,8 +968,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             LLVMContext::MD_invariant_group,
             CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
         scopeInstructions[alloc].push_back(storealloc);
-        for (auto post :
-             PostCacheStore(externalContext(), storealloc, allocationBuilder)) {
+        for (auto post : PostCacheStore(storealloc, allocationBuilder)) {
           scopeInstructions[alloc].push_back(post);
         }
       } else {
@@ -981,8 +979,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // TODO change this to a power-of-two allocation strategy
 
         auto zerostore = allocationBuilder.CreateStore(
-            getUndefinedValueForType(externalContext(), *newFunc->getParent(),
-                                     allocType,
+            getUndefinedValueForType(*newFunc->getParent(), allocType,
                                      /*forceZero*/ true),
             storeInto);
         scopeInstructions[alloc].push_back(zerostore);
@@ -1019,7 +1016,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // since we are reloading/storing based off the number of loop
         // iterations
         scopeInstructions[alloc].push_back(storealloc);
-        for (auto post : PostCacheStore(externalContext(), storealloc, build)) {
+        for (auto post : PostCacheStore(storealloc, build)) {
           scopeInstructions[alloc].push_back(post);
         }
       }
@@ -1483,7 +1480,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   storeinst->setMetadata(LLVMContext::MD_tbaa, TBAA);
   storeinst->setAlignment(Align(align));
   scopeInstructions[cache].push_back(storeinst);
-  for (auto post : PostCacheStore(externalContext(), storeinst, v)) {
+  for (auto post : PostCacheStore(storeinst, v)) {
     scopeInstructions[cache].push_back(post);
   }
 }

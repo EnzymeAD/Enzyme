@@ -211,8 +211,7 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        {\n"
-         << "          CallInst *freecall = "
-            "CreateDealloc(gutils->externalContext(), Builder2, free_"
+         << "          CallInst *freecall = CreateDealloc(Builder2, free_"
          << name << ");\n"
          << "          if (freecall) {\n"
          << "            auto ident = "
@@ -1543,9 +1542,8 @@ void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   os << "    {\n"
-     << "      CallInst *freecall = "
-        "CreateDealloc(gutils->externalContext(), "
-     << builder << ", true_" << allocName << ");\n"
+     << "      CallInst *freecall = CreateDealloc(" << builder << ", true_"
+     << allocName << ");\n"
      << "      if (freecall && ident_" << allocName << ") {\n"
      << "        freecall->setMetadata(\"enzyme_cache_free\", "
         "MDNode::get(freecall->getContext(), {ident_"

@@ -910,9 +910,9 @@ void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
         B.CreateStore(rval, gep);
 
         if (roots) {
-          moveSRetToFromRoots(
-              ExternalContext, B, rval->getType(), rval, roots_AT, roots,
-              /*rootOffset*/ 0, SRetRootMovement::SRetValueToRootPointer);
+          moveSRetToFromRoots(B, rval->getType(), rval, roots_AT, roots,
+                              /*rootOffset*/ 0,
+                              SRetRootMovement::SRetValueToRootPointer);
         }
 
         auto NR = B.CreateRetVoid();
@@ -960,8 +960,8 @@ void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
                                                            i + curOffset));
               }
             } else {
-              moveSRetToFromRoots(ExternalContext, B, Types[sretCount], gep,
-                                  roots_AT, roots, curOffset,
+              moveSRetToFromRoots(B, Types[sretCount], gep, roots_AT, roots,
+                                  curOffset,
                                   SRetRootMovement::SRetPointerToRootPointer);
             }
           }
@@ -1274,8 +1274,7 @@ void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
     // TODO we can optimize this further and avoid the copy in the primal and/or
     // forward mode as the copy is _only_ needed for the adjoint.
     for (auto &&[val, gep, ty] : preCallReplacements) {
-      copyNonJLValueInto(ExternalContext, B, ty, ty, gep, {}, ty, val, {},
-                         /*shouldZero*/ true);
+      copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {}, /*shouldZero*/ true);
     }
 
     // Actually perform the call, copying over relevant information.
@@ -1328,9 +1327,9 @@ void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
         auto ld = B.CreateLoad(ty, gep);
         auto SI = B.CreateStore(ld, val);
         if (val->getType()->getPointerAddressSpace() == 10)
-          PostCacheStore(ExternalContext, SI, B);
+          PostCacheStore(SI, B);
       } else {
-        copyNonJLValueInto(ExternalContext, B, ty, ty, val, {}, ty, gep, {},
+        copyNonJLValueInto(B, ty, ty, val, {}, ty, gep, {},
                            /*shouldZero*/ false);
       }
     }
@@ -1355,8 +1354,7 @@ void EnzymeFixupJuliaCallingConvention(EnzymeContextRef ExternalContext,
 
 using namespace llvm;
 
-void EnzymeFixupBatchedJuliaCallingConvention(EnzymeContextRef ExternalContext,
-                                              Function *F) {
+void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
   if (F->empty())
     return;
   auto RT = F->getReturnType();
@@ -1641,7 +1639,7 @@ public:
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      EnzymeFixupBatchedJuliaCallingConvention(/*ExternalContext=*/nullptr, F);
+      EnzymeFixupBatchedJuliaCallingConvention(F);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

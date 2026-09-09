@@ -29,9 +29,8 @@
 using namespace llvm;
 
 extern "C" {
-void (*EnzymeShadowAllocRewrite)(EnzymeContextRef, LLVMValueRef, void *,
-                                 LLVMValueRef, uint64_t, LLVMValueRef,
-                                 uint8_t) = nullptr;
+void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
+                                 LLVMValueRef, uint8_t) = nullptr;
 }
 
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
@@ -290,12 +289,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                       shadow, len_arg, Builder2, BufferDefs);
 
           if (shouldFree()) {
-            CreateDealloc(gutils->externalContext(), Builder2, firstallocation);
+            CreateDealloc(Builder2, firstallocation);
           }
         } else
           assert(0 && "illegal mpi");
 
-        CreateDealloc(gutils->externalContext(), Builder2, helper);
+        CreateDealloc(Builder2, helper);
       }
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
@@ -609,7 +608,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       }
       Builder2.SetInsertPoint(endBlock);
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, d_reqp);
+        CreateDealloc(Builder2, d_reqp);
       }
     } else if (Mode == DerivativeMode::ForwardMode ||
                Mode == DerivativeMode::ForwardModeError) {
@@ -778,7 +777,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                   shadow, len_arg, Builder2, BufferDefs);
 
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, firstallocation);
+        CreateDealloc(Builder2, firstallocation);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1066,7 +1065,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         // Free up the memory of the buffer
         if (shouldFree()) {
-          CreateDealloc(gutils->externalContext(), Builder2, buf);
+          CreateDealloc(Builder2, buf);
         }
       }
 
@@ -1330,7 +1329,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, buf);
+        CreateDealloc(Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1510,7 +1509,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, buf);
+        CreateDealloc(Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1715,7 +1714,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, buf);
+        CreateDealloc(Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1949,7 +1948,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          CreateDealloc(gutils->externalContext(), Builder2, buf);
+          CreateDealloc(Builder2, buf);
         }
 
         Builder2.CreateBr(mergeBlock);
@@ -2150,7 +2149,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       // Free up intermediate buffer
       if (shouldFree()) {
-        CreateDealloc(gutils->externalContext(), Builder2, buf);
+        CreateDealloc(Builder2, buf);
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -2515,7 +2514,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         Builder2.CreateCall(F, args, Defs);
         Builder2.CreateLifetimeEnd(tmp);
-        CreateDealloc(gutils->externalContext(), Builder2, tmp);
+        CreateDealloc(Builder2, tmp);
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
 
@@ -2574,7 +2573,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         fin_idx->addIncoming(acc, loopBlock);
 
         Builder2.CreateLifetimeEnd(dtmp);
-        CreateDealloc(gutils->externalContext(), Builder2, dtmp);
+        CreateDealloc(Builder2, dtmp);
 
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
@@ -2978,8 +2977,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (Mode == DerivativeMode::ReverseModePrimal) {
               // Needs a stronger replacement check/assertion.
               Value *replacement = getUndefinedValueForType(
-                  gutils->externalContext(), *gutils->oldFunc->getParent(),
-                  placeholder->getType());
+                  *gutils->oldFunc->getParent(), placeholder->getType());
               gutils->replaceAWithB(placeholder, replacement);
               gutils->invertedPointers.erase(found);
               gutils->invertedPointers.insert(std::make_pair(
@@ -3076,8 +3074,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   if (EnzymeShadowAllocRewrite) {
                     bool used = unnecessaryInstructions.find(&call) ==
                                 unnecessaryInstructions.end();
-                    EnzymeShadowAllocRewrite(gutils->externalContext(),
-                                             wrap(anti), gutils, wrap(&call),
+                    EnzymeShadowAllocRewrite(wrap(anti), gutils, wrap(&call),
                                              idx, wrap(prev), used);
                   }
                 }
@@ -3290,9 +3287,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (EnzymeShadowAllocRewrite) {
               bool used = unnecessaryInstructions.find(&call) ==
                           unnecessaryInstructions.end();
-              EnzymeShadowAllocRewrite(gutils->externalContext(), wrap(CI),
-                                       gutils, wrap(&call), idx, wrap(prev),
-                                       used);
+              EnzymeShadowAllocRewrite(wrap(CI), gutils, wrap(&call), idx,
+                                       wrap(prev), used);
             }
           }
           idx++;

@@ -2777,8 +2777,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
               tapeType);
       if (size != 0) {
         RetTypes[returnMapping.find(AugmentedStruct::Tape)->second] =
-            getDefaultAnonymousTapeType(externalContext(),
-                                        gutils->newFunc->getContext());
+            getDefaultAnonymousTapeType(gutils->newFunc->getContext());
       }
     }
   }
@@ -2938,7 +2937,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         memory = malloccall;
       } else {
         memory = ConstantPointerNull::get(
-            getDefaultAnonymousTapeType(externalContext(), NewF->getContext()));
+            getDefaultAnonymousTapeType(NewF->getContext()));
       }
       Value *Idxs[] = {
           ib.getInt32(0),
@@ -2952,7 +2951,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
       auto storeinst = ib.CreateStore(memory, gep);
-      PostCacheStore(externalContext(), storeinst, ib);
+      PostCacheStore(storeinst, ib);
     } else if (omp) {
       j->setName("tape");
       tapeMemory = j;
@@ -2971,7 +2970,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
       }
       if (EnzymeZeroCache) {
-        ZeroMemory(externalContext(), ib, tapeType, tapeMemory,
+        ZeroMemory(ib, tapeType, tapeMemory,
                    /*isTape*/ true);
       }
     }
@@ -2994,7 +2993,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           cast<GetElementPtrInst>(gep)->setIsInBounds(true);
         }
         auto storeinst = ib.CreateStore(VMap[v], gep);
-        PostCacheStore(externalContext(), storeinst, ib);
+        PostCacheStore(storeinst, ib);
       }
       ++i;
     }
@@ -3045,7 +3044,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         actualrv = unwrap(
             EnzymeFixupReturn(externalContext(), wrap(&ib), wrap(actualrv)));
       auto storeinst = ib.CreateStore(actualrv, gep);
-      PostCacheStore(externalContext(), storeinst, ib);
+      PostCacheStore(storeinst, ib);
     }
 
     if (shadowReturnUsed) {
@@ -3075,7 +3074,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           shadowRV = unwrap(
               EnzymeFixupReturn(externalContext(), wrap(&ib), wrap(shadowRV)));
         auto storeinst = ib.CreateStore(shadowRV, gep);
-        PostCacheStore(externalContext(), storeinst, ib);
+        PostCacheStore(storeinst, ib);
       }
     }
     if (noReturn)
@@ -3842,7 +3841,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           auto size = NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(
               aug.tapeType);
           if (size != 0) {
-            CreateDealloc(externalContext(), bb, tape);
+            CreateDealloc(bb, tape);
           }
         }
         tape = truetape;
@@ -4017,9 +4016,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
       size_t pa = 0;
       if (nextRetType != key.retType) {
-        revargs.push_back(getUndefinedValueForType(
-            externalContext(), *revfn->getParent(), key.todiff->getReturnType(),
-            /*forceZero*/ true));
+        revargs.push_back(getUndefinedValueForType(*revfn->getParent(),
+                                                   key.todiff->getReturnType(),
+                                                   /*forceZero*/ true));
       }
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
@@ -4378,12 +4377,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                               MDNode::get(truetape->getContext(), {}));
 
         if (!omp && gutils->FreeMemory) {
-          CreateDealloc(externalContext(), BuilderZ, additionalValue);
+          CreateDealloc(BuilderZ, additionalValue);
         }
         additionalValue = truetape;
       } else {
         if (gutils->FreeMemory) {
-          CreateDealloc(externalContext(), BuilderZ, additionalValue);
+          CreateDealloc(BuilderZ, additionalValue);
         }
         additionalValue = UndefValue::get(augmenteddata->tapeType);
       }
@@ -5054,7 +5053,7 @@ Function *EnzymeLogic::CreateForwardDiff(
                                 MDNode::get(truetape->getContext(), {}));
 
           if (!omp && gutils->FreeMemory) {
-            CreateDealloc(externalContext(), BuilderZ, additionalValue);
+            CreateDealloc(BuilderZ, additionalValue);
           }
           additionalValue = truetape;
         } else {
@@ -5063,7 +5062,7 @@ Function *EnzymeLogic::CreateForwardDiff(
                             ->getDataLayout()
                             .getTypeAllocSizeInBits(augmenteddata->tapeType);
             if (size != 0) {
-              CreateDealloc(externalContext(), BuilderZ, additionalValue);
+              CreateDealloc(BuilderZ, additionalValue);
             }
           }
           additionalValue = UndefValue::get(augmenteddata->tapeType);

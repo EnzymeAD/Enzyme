@@ -178,15 +178,12 @@ void EnzymeLogicSetExternalContext(EnzymeLogicRef, void *ExternalContext);
 void *EnzymeLogicGetExternalContext(EnzymeLogicRef);
 
 /// Run the Julia calling-convention fixup over every function of \p M. The
-/// named passes ("enzyme-fixup-julia", "enzyme-fixup-julia-sret",
-/// "enzyme-fixup-batched-julia") do the same with a null external context;
-/// call these instead when the frontend has a context to hand to the error
-/// callback the fixup can reach.
+/// named passes ("enzyme-fixup-julia", "enzyme-fixup-julia-sret") do the same
+/// with a null external context; call this instead when the frontend has a
+/// context to hand to the error callback the fixup reaches.
 void EnzymeFixupJuliaCallingConventionModule(LLVMModuleRef M,
                                              uint8_t sret_jlvalue,
                                              void *ExternalContext);
-void EnzymeFixupBatchedJuliaCallingConventionModule(LLVMModuleRef M,
-                                                    void *ExternalContext);
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
                              uint8_t *existed, size_t len);

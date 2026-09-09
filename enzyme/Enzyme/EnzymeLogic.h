@@ -458,7 +458,7 @@ public:
   void *ExternalContext;
 
   /// The frontend state that requests served by this logic belong to. Handed
-  /// back unchanged to every frontend callback.
+  /// back unchanged to the frontend callbacks that take it.
   EnzymeContextRef externalContext() const { return ExternalContext; }
 
   EnzymeLogic(bool PostOpt)

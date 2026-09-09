@@ -425,10 +425,9 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 
 llvm::FunctionType *getFunctionTypeForClone(
-    EnzymeContextRef ExternalContext, llvm::FunctionType *FTy,
-    DerivativeMode mode, unsigned width, llvm::Type *additionalArg,
-    llvm::ArrayRef<DIFFE_TYPE> constant_args, bool diffeReturnArg,
-    bool returnTape, bool returnPrimal, bool returnShadow);
+    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
+    llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
+    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow);
 
 /// Lower __enzyme_todense, returning if changed.
 bool LowerSparsification(llvm::Function *F, bool replaceAll = true);

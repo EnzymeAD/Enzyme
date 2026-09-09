@@ -66,18 +66,16 @@ LLVMValueRef (*CustomAllocator)(EnzymeContextRef, LLVMBuilderRef, LLVMTypeRef,
                                 /*Count*/ LLVMValueRef,
                                 /*Align*/ LLVMValueRef, uint8_t,
                                 LLVMValueRef *) = nullptr;
-void (*CustomZero)(EnzymeContextRef, LLVMBuilderRef, LLVMTypeRef,
+void (*CustomZero)(LLVMBuilderRef, LLVMTypeRef,
                    /*Ptr*/ LLVMValueRef, uint8_t) = nullptr;
-LLVMValueRef (*CustomDeallocator)(EnzymeContextRef, LLVMBuilderRef,
-                                  LLVMValueRef) = nullptr;
-void (*CustomRuntimeInactiveError)(EnzymeContextRef, LLVMBuilderRef,
-                                   LLVMValueRef, LLVMValueRef) = nullptr;
-LLVMValueRef *(*EnzymePostCacheStore)(EnzymeContextRef, LLVMValueRef,
-                                      LLVMBuilderRef, uint64_t *size) = nullptr;
-LLVMTypeRef (*EnzymeDefaultTapeType)(EnzymeContextRef,
-                                     LLVMContextRef) = nullptr;
-LLVMValueRef (*EnzymeUndefinedValueForType)(EnzymeContextRef, LLVMModuleRef,
-                                            LLVMTypeRef, uint8_t) = nullptr;
+LLVMValueRef (*CustomDeallocator)(LLVMBuilderRef, LLVMValueRef) = nullptr;
+void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
+                                   LLVMValueRef) = nullptr;
+LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
+                                      uint64_t *size) = nullptr;
+LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMModuleRef, LLVMTypeRef,
+                                            uint8_t) = nullptr;
 
 LLVMValueRef (*EnzymeSanitizeDerivatives)(EnzymeContextRef, LLVMValueRef,
                                           LLVMValueRef toset, LLVMBuilderRef,
@@ -413,22 +411,21 @@ bool attributeKnownFunctions(llvm::Function &F) {
   return changed;
 }
 
-void ZeroMemory(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &Builder,
-                llvm::Type *T, llvm::Value *obj, bool isTape) {
+void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
+                bool isTape) {
   if (CustomZero) {
-    CustomZero(ExternalContext, wrap(&Builder), wrap(T), wrap(obj), isTape);
+    CustomZero(wrap(&Builder), wrap(T), wrap(obj), isTape);
   } else {
     Builder.CreateStore(Constant::getNullValue(T), obj);
   }
 }
 
-llvm::SmallVector<llvm::Instruction *, 2>
-PostCacheStore(EnzymeContextRef ExternalContext, llvm::StoreInst *SI,
-               llvm::IRBuilder<> &B) {
+llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
+                                                         llvm::IRBuilder<> &B) {
   SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
     uint64_t size = 0;
-    auto ptr = EnzymePostCacheStore(ExternalContext, wrap(SI), wrap(&B), &size);
+    auto ptr = EnzymePostCacheStore(wrap(SI), wrap(&B), &size);
     for (size_t i = 0; i < size; i++) {
       res.push_back(cast<Instruction>(unwrap(ptr[i])));
     }
@@ -437,11 +434,9 @@ PostCacheStore(EnzymeContextRef ExternalContext, llvm::StoreInst *SI,
   return res;
 }
 
-llvm::PointerType *getDefaultAnonymousTapeType(EnzymeContextRef ExternalContext,
-                                               llvm::LLVMContext &C) {
+llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C) {
   if (EnzymeDefaultTapeType)
-    return cast<PointerType>(
-        unwrap(EnzymeDefaultTapeType(ExternalContext, wrap(&C))));
+    return cast<PointerType>(unwrap(EnzymeDefaultTapeType(wrap(&C))));
   return getInt8PtrTy(C);
 }
 
@@ -783,13 +778,12 @@ Value *CreateAllocation(EnzymeContextRef ExternalContext, IRBuilder<> &Builder,
   return res;
 }
 
-CallInst *CreateDealloc(EnzymeContextRef ExternalContext,
-                        llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
+CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   CallInst *res = nullptr;
 
   if (CustomDeallocator) {
-    res = dyn_cast_or_null<CallInst>(unwrap(
-        CustomDeallocator(ExternalContext, wrap(&Builder), wrap(ToFree))));
+    res = dyn_cast_or_null<CallInst>(
+        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
   } else {
 
     ToFree =
@@ -944,10 +938,9 @@ void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss) {
   }
 }
 
-void ErrorIfRuntimeInactive(GradientUtils *gutils, llvm::IRBuilder<> &B,
-                            llvm::Value *primal, llvm::Value *shadow,
-                            const char *Message, llvm::DebugLoc &&loc,
-                            llvm::Instruction *orig) {
+void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+                            llvm::Value *shadow, const char *Message,
+                            llvm::DebugLoc &&loc, llvm::Instruction *orig) {
   Module &M = *B.GetInsertBlock()->getParent()->getParent();
   std::string name = "__enzyme_runtimeinactiveerr";
   if (CustomRuntimeInactiveError) {
@@ -986,8 +979,7 @@ void ErrorIfRuntimeInactive(GradientUtils *gutils, llvm::IRBuilder<> &B,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(gutils->externalContext(), wrap(&EB),
-                                 wrap(msg), wrap(orig));
+      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -3783,12 +3775,11 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   return {};
 }
 
-llvm::Constant *getUndefinedValueForType(EnzymeContextRef ExternalContext,
-                                         llvm::Module &M, llvm::Type *T,
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
                                          bool forceZero) {
   if (EnzymeUndefinedValueForType)
-    return cast<Constant>(unwrap(EnzymeUndefinedValueForType(
-        ExternalContext, wrap(&M), wrap(T), forceZero)));
+    return cast<Constant>(
+        unwrap(EnzymeUndefinedValueForType(wrap(&M), wrap(T), forceZero)));
   else if (EnzymeZeroCache || forceZero)
     return Constant::getNullValue(T);
   else
@@ -4972,8 +4963,7 @@ static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
   return B.CreateInBoundsGEP(type, value, vals);
 }
 
-llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
-                                 llvm::IRBuilder<> &B, llvm::Type *jltype,
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction) {
@@ -5025,8 +5015,7 @@ llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
       }
       case SRetRootMovement::NullifySRetValue: {
         loc = getUndefinedValueForType(
-            ExternalContext, *B.GetInsertBlock()->getParent()->getParent(), ty,
-            false);
+            *B.GetInsertBlock()->getParent()->getParent(), ty, false);
         val = B.CreateInsertValue(val, loc, path);
         break;
       }
@@ -5097,9 +5086,9 @@ llvm::Value *moveSRetToFromRoots(EnzymeContextRef ExternalContext,
   return val;
 }
 
-void copyNonJLValueInto(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
-                        llvm::Type *curType, llvm::Type *dstType,
-                        llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix0,
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix0,
                         llvm::Type *srcType, llvm::Value *src,
                         llvm::ArrayRef<unsigned> srcPrefix0, bool shouldZero) {
   std::deque<
@@ -5124,7 +5113,7 @@ void copyNonJLValueInto(EnzymeContextRef ExternalContext, llvm::IRBuilder<> &B,
           Value *out = dst;
           if (dstPrefix.size() > 0)
             out = constantInBoundsGEPHelper(B, dstType, out, dstPrefix);
-          B.CreateStore(getUndefinedValueForType(ExternalContext, M, ty), out);
+          B.CreateStore(getUndefinedValueForType(M, ty), out);
         }
       }
       // We don't actually need pointers either here

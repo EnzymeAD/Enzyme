@@ -211,7 +211,7 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     auto Alignment =
         oldFunc->getParent()->getDataLayout().getPrefTypeAlign(type);
     differentials[val]->setAlignment(Alignment);
-    ZeroMemory(externalContext(), entryBuilder, type, differentials[val],
+    ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
 #if LLVM_VERSION_MAJOR < 17
@@ -956,7 +956,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
       (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
   forfree->setAlignment(Align(align));
 
-  CallInst *ci = CreateDealloc(externalContext(), tbuild, forfree);
+  CallInst *ci = CreateDealloc(tbuild, forfree);
   if (ci) {
     if (newFunc->getSubprogram())
       ci->setDebugLoc(DILocation::get(newFunc->getContext(), 0, 0,
