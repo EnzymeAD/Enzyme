@@ -30,7 +30,9 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -435,6 +437,29 @@ public:
   /// Map of possible query states to TypeAnalyzer intermediate results
   std::map<FnTypeInfo, std::shared_ptr<TypeAnalyzer>> analyzedFunctions;
 
+  /// Where a type holds Julia tracked pointers (address spaces 10, 11, 13).
+  struct JuliaObjectShape {
+    /// Every leaf of the type is a tracked pointer (and there is at least
+    /// one leaf), so the whole value is a pointer.
+    bool All = false;
+    /// Some leaf of the type is a tracked pointer.
+    bool Any = false;
+    /// Byte offsets of the tracked pointers, in the order the type walk
+    /// visits them. Populated whenever Any is set.
+    llvm::SmallVector<int, 4> PointerOffsets;
+  };
+
+  /// Cache of JuliaObjectShape per type. Types are uniqued per LLVMContext,
+  /// so a Type* is a stable key for the lifetime of the context, which
+  /// outlives this object. The returned reference is only valid until the
+  /// next call, since a later lookup may grow the map.
+  const JuliaObjectShape &getJuliaObjectShape(llvm::Type *T,
+                                              const llvm::DataLayout &DL);
+
+private:
+  llvm::DenseMap<llvm::Type *, JuliaObjectShape> JuliaObjectShapes;
+
+public:
   /// Analyze a particular function, returning the results
   TypeResults analyzeFunction(const FnTypeInfo &fn);
 
