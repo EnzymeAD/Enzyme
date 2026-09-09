@@ -937,98 +937,92 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   return;
 }
 
-static bool AllJuliaTypes(Type *T) {
+static bool isJuliaTrackedPointer(Type *T) {
   if (auto PT = dyn_cast<PointerType>(T)) {
     unsigned AS = PT->getPointerAddressSpace();
-    if (AS == 10 || AS == 11 || AS == 13) {
-      return true;
-    }
+    return AS == 10 || AS == 11 || AS == 13;
   }
-  if (auto AT = dyn_cast<ArrayType>(T)) {
-    return AllJuliaTypes(AT->getElementType());
-  }
-  if (auto ST = dyn_cast<StructType>(T)) {
-    auto len = ST->getNumElements();
-    if (len != 0) {
-      for (size_t i = 0; i < len; i++) {
-        if (!AllJuliaTypes(ST->getElementType(i)))
-          return false;
+  return false;
+}
+
+const TypeAnalysis::JuliaObjectShape &
+TypeAnalysis::getJuliaObjectShape(Type *T, const DataLayout &DL) {
+  auto found = JuliaObjectShapes.find(T);
+  if (found != JuliaObjectShapes.end())
+    return found->second;
+
+  // Build into a local: the recursive calls below may grow the map and
+  // invalidate any reference into it.
+  JuliaObjectShape Shape;
+  if (isJuliaTrackedPointer(T)) {
+    Shape.All = true;
+    Shape.Any = true;
+    Shape.PointerOffsets.push_back(0);
+  } else if (auto AT = dyn_cast<ArrayType>(T)) {
+    // Copy, since the recursive call may reallocate the map.
+    JuliaObjectShape Elem = getJuliaObjectShape(AT->getElementType(), DL);
+    Shape.All = Elem.All;
+    Shape.Any = Elem.Any;
+    // Record offsets even when All is set: an enclosing mixed aggregate needs
+    // them.
+    if (Shape.Any) {
+      // Array elements are laid out at successive multiples of the element's
+      // alloc size, which is what a gep [0, 1] into the array would compute.
+      // Walk from the last element down to match the worklist order the
+      // offsets were historically inserted in.
+      size_t stride = DL.getTypeAllocSize(AT->getElementType());
+      for (size_t i = AT->getNumElements(); i-- > 0;) {
+        for (int off : Elem.PointerOffsets)
+          Shape.PointerOffsets.push_back((int)(i * stride) + off);
       }
-      return true;
     }
-  }
-  return false;
-}
-
-static bool AnyJuliaTypes(Type *T) {
-  if (auto PT = dyn_cast<PointerType>(T)) {
-    unsigned AS = PT->getPointerAddressSpace();
-    if (AS == 10 || AS == 11 || AS == 13) {
-      return true;
-    }
-  }
-  if (auto AT = dyn_cast<ArrayType>(T)) {
-    return AnyJuliaTypes(AT->getElementType());
-  }
-  if (auto ST = dyn_cast<StructType>(T)) {
+  } else if (auto ST = dyn_cast<StructType>(T)) {
     auto len = ST->getNumElements();
+    // An empty struct holds no pointers, so it is neither All nor Any.
+    Shape.All = len != 0;
     for (size_t i = 0; i < len; i++) {
-      if (AnyJuliaTypes(ST->getElementType(i)))
-        return true;
+      // Copy, since the recursive call may reallocate the map.
+      JuliaObjectShape Elem = getJuliaObjectShape(ST->getElementType(i), DL);
+      Shape.All &= Elem.All;
+      Shape.Any |= Elem.Any;
+    }
+    if (Shape.Any) {
+      // The struct layout already records each field's offset, which is what a
+      // gep [0, i] into the struct would compute. Walk from the last field down
+      // to match the worklist order the offsets were historically inserted in.
+      auto SL = DL.getStructLayout(ST);
+      for (size_t i = len; i-- > 0;) {
+        // Every field was cached by the loop above, so this cannot grow the
+        // map.
+        const auto &Elem =
+            JuliaObjectShapes.find(ST->getElementType(i))->second;
+        int base = (int)SL->getElementOffset(i);
+        for (int off : Elem.PointerOffsets)
+          Shape.PointerOffsets.push_back(base + off);
+      }
     }
   }
-  return false;
+  return JuliaObjectShapes[T] = std::move(Shape);
 }
 
-static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
+static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T, TypeAnalysis &TA,
                                        const DataLayout &DL) {
-  if (AllJuliaTypes(T)) {
+  const auto &Shape = TA.getJuliaObjectShape(T, DL);
+  if (Shape.All) {
     TT.remove({-1});
     TT.remove({0});
     TT.insert({-1}, BaseType::Pointer);
     return;
   }
-  if (!AnyJuliaTypes(T))
+  if (!Shape.Any)
     return;
   auto outAll = TT[{-1}];
   if (outAll != BaseType::Unknown)
     return;
 
-  std::vector<std::pair<Type *, size_t>> todo;
-  todo.emplace_back(T, 0);
-  while (!todo.empty()) {
-    auto cur = todo.back();
-    todo.pop_back();
-    T = cur.first;
-    auto offset = cur.second;
-    if (!AnyJuliaTypes(T))
-      continue;
-    if (isa<PointerType>(T)) {
-      TT.remove(std::vector<int>{(int)offset});
-      TT.insert(std::vector<int>{(int)offset}, BaseType::Pointer);
-      continue;
-    }
-    if (auto AT = dyn_cast<ArrayType>(T)) {
-      // Array elements are laid out at successive multiples of the element's
-      // alloc size, which is what a gep [0, 1] into the array would compute.
-      size_t stride = DL.getTypeAllocSize(AT->getElementType());
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.emplace_back(AT->getElementType(), offset + i * stride);
-      }
-
-      continue;
-    }
-    if (auto ST = dyn_cast<StructType>(T)) {
-      // The struct layout already records each field's offset, which is what a
-      // gep [0, i] into the struct would compute.
-      auto SL = DL.getStructLayout(ST);
-      for (size_t i = 0; i < ST->getNumElements(); i++) {
-        todo.emplace_back(ST->getElementType(i),
-                          offset + (size_t)SL->getElementOffset(i));
-      }
-
-      continue;
-    }
+  for (int offset : Shape.PointerOffsets) {
+    TT.remove(std::vector<int>{offset});
+    TT.insert(std::vector<int>{offset}, BaseType::Pointer);
   }
 }
 
@@ -1045,7 +1039,7 @@ const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
     getConstantAnalysis(C, *this, analysis);
     if (EnzymeJuliaAddrLoad)
       AugmentWithJuliaObjectType(
-          analysis[Val], Val->getType(),
+          analysis[Val], Val->getType(), interprocedural,
           fntypeinfo.Function->getParent()->getDataLayout());
     return analysis[Val];
   }
@@ -1070,7 +1064,7 @@ const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
 
   if (EnzymeJuliaAddrLoad)
     AugmentWithJuliaObjectType(
-        analysis[Val], Val->getType(),
+        analysis[Val], Val->getType(), interprocedural,
         fntypeinfo.Function->getParent()->getDataLayout());
 
   // Return current results
@@ -6526,7 +6520,10 @@ std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
   return fntypeinfo.knownIntegralValues(val, DT, intseen, SE);
 }
 
-void TypeAnalysis::clear() { analyzedFunctions.clear(); }
+void TypeAnalysis::clear() {
+  analyzedFunctions.clear();
+  JuliaObjectShapes.clear();
+}
 
 FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                     llvm::Function *todiff) {
