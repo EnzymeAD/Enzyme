@@ -5,7 +5,7 @@ else()
 endif()
 
 # Locate an MPI implementation for the Fortran MPI regression tests
-# (enzyme/test/Fortran/MPI); the tests are marked unsupported if none is
+# (enzyme/test/Fortran/mpi); the tests are marked unsupported if none is
 # found. The include and link flags are serialized into lit substitutions
 # %mpi_include and %mpi_libs.
 set(ENZYME_MPI_FORTRAN_ENABLED 0)
