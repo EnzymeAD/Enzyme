@@ -1183,7 +1183,7 @@ static inline llvm::Loop *getAncestor(llvm::Loop *R1, llvm::Loop *R2) {
 // into the resutls vector.
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<llvm::Instruction *> &stores,
+                     const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter

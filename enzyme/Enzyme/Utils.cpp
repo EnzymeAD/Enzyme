@@ -2646,7 +2646,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<Instruction *> &stores,
+                     const llvm::SetVector<Instruction *> &stores,
                      const llvm::Loop *region) {
   using namespace llvm;
   std::map<BasicBlock *, SmallVector<Instruction *, 1>> maybeBlocks;
