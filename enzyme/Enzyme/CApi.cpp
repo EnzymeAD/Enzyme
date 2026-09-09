@@ -618,8 +618,7 @@ uint8_t EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,
                                                     LLVMValueRef val) {
   auto v = unwrap(val);
-  TypeTree TT = gutils->TR.query(v);
-  TypeTree *pTT = new TypeTree(TT);
+  TypeTree *pTT = new TypeTree(gutils->TR.query(v));
   return (CTypeTreeRef)pTT;
 }
 
