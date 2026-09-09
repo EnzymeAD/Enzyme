@@ -1552,21 +1552,22 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
-                                         "jl_alloc_array_1d",
-                                         "jl_alloc_array_2d",
-                                         "jl_alloc_array_3d",
-                                         "ijl_alloc_array_1d",
-                                         "ijl_alloc_array_2d",
-                                         "ijl_alloc_array_3d",
-                                         "jl_gc_alloc_typed",
-                                         "ijl_gc_alloc_typed",
-                                         "jl_alloc_genericmemory",
-                                         "ijl_alloc_genericmemory",
-                                         "jl_alloc_genericmemory_unchecked",
-                                         "ijl_alloc_genericmemory_unchecked",
-                                         "jl_new_array",
-                                         "ijl_new_array"};
+          static const StringSet<> JuliaKnownTypes = {
+              "julia.gc_alloc_obj",
+              "jl_alloc_array_1d",
+              "jl_alloc_array_2d",
+              "jl_alloc_array_3d",
+              "ijl_alloc_array_1d",
+              "ijl_alloc_array_2d",
+              "ijl_alloc_array_3d",
+              "jl_gc_alloc_typed",
+              "ijl_gc_alloc_typed",
+              "jl_alloc_genericmemory",
+              "ijl_alloc_genericmemory",
+              "jl_alloc_genericmemory_unchecked",
+              "ijl_alloc_genericmemory_unchecked",
+              "jl_new_array",
+              "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;

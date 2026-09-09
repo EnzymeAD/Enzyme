@@ -225,7 +225,7 @@ struct {
 bool isInactiveCall(CallBase &CI) {
 
   // clang-format off
-const char *KnownInactiveFunctionsStartingWith[] = {
+static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
     "strcpy",
@@ -235,11 +235,11 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSaIcEC1Ev",
 };
 
-const char *KnownInactiveFunctionsContains[] = {
+static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
-const StringSet<> KnownInactiveFunctions = {
+static const StringSet<> KnownInactiveFunctions = {
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -374,7 +374,7 @@ const StringSet<> KnownInactiveFunctions = {
     "cudaGetLastError",
 };
 
-const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
+static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::experimental_noalias_scope_decl,
     Intrinsic::objectsize,
     Intrinsic::floor,
@@ -436,7 +436,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::is_constant,
     Intrinsic::memset};
 
-const char *DemangledKnownInactiveFunctionsStartingWith[] = {
+static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator"
     "std::__u::basic_streambuf",
