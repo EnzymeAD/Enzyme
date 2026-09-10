@@ -39,7 +39,30 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
 
   ! Symbolic function names for enzyme_function_like
+  integer(c_int), public, bind(C, name="enzyme_math_sin")   :: enzyme_sin
+  integer(c_int), public, bind(C, name="enzyme_math_cos")   :: enzyme_cos
+  integer(c_int), public, bind(C, name="enzyme_math_tan")   :: enzyme_tan
+  integer(c_int), public, bind(C, name="enzyme_math_asin")  :: enzyme_asin
+  integer(c_int), public, bind(C, name="enzyme_math_acos")  :: enzyme_acos
+  integer(c_int), public, bind(C, name="enzyme_math_atan")  :: enzyme_atan
+  integer(c_int), public, bind(C, name="enzyme_math_atan2") :: enzyme_atan2
+  integer(c_int), public, bind(C, name="enzyme_math_exp")   :: enzyme_exp
+  integer(c_int), public, bind(C, name="enzyme_math_exp2")  :: enzyme_exp2
+  integer(c_int), public, bind(C, name="enzyme_math_exp10") :: enzyme_exp10
+  integer(c_int), public, bind(C, name="enzyme_math_expm1") :: enzyme_expm1
+  integer(c_int), public, bind(C, name="enzyme_math_log")   :: enzyme_log
+  integer(c_int), public, bind(C, name="enzyme_math_log2")  :: enzyme_log2
+  integer(c_int), public, bind(C, name="enzyme_math_log10") :: enzyme_log10
   integer(c_int), public, bind(C, name="enzyme_math_log1p") :: enzyme_log1p
+  integer(c_int), public, bind(C, name="enzyme_math_acosh") :: enzyme_acosh
+  integer(c_int), public, bind(C, name="enzyme_math_asinh") :: enzyme_asinh
+  integer(c_int), public, bind(C, name="enzyme_math_atanh") :: enzyme_atanh
+  integer(c_int), public, bind(C, name="enzyme_math_sqrt")  :: enzyme_sqrt
+  integer(c_int), public, bind(C, name="enzyme_math_cbrt")  :: enzyme_cbrt
+  integer(c_int), public, bind(C, name="enzyme_math_hypot") :: enzyme_hypot
+  integer(c_int), public, bind(C, name="enzyme_math_pow")   :: enzyme_pow
+  integer(c_int), public, bind(C, name="enzyme_math_erf")   :: enzyme_erf
+  integer(c_int), public, bind(C, name="enzyme_math_erfc")  :: enzyme_erfc
 
   ! Bindings for function hooks
   public :: enzyme_autodiff
