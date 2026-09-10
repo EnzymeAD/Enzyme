@@ -3163,6 +3163,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
 
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
+  AugmentedCachedFunctions.find(tup)->second.uncachedTapeArgs =
+      gutils->getUncachedTapeArgs();
   if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
@@ -4318,8 +4320,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   gutils->can_modref_map = &can_modref_map;
 
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
-  if (augmenteddata)
+  if (augmenteddata) {
     mapping = augmenteddata->tapeIndices;
+    gutils->setUncachedTapeArgs(augmenteddata->uncachedTapeArgs);
+  }
 
   auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(std::make_pair(I, u), mapping, B);
