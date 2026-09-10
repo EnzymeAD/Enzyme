@@ -126,6 +126,13 @@ if len("@ENZYME_BINARY_DIR@") != 0:
                       + config.llvm_ver + config.llvm_shlib_ext)
 config.substitutions.append(('%loadLLDEnzymeOpt', loadLLDEnzymeOpt))
 
+loadTestCallHandler = ''
+if len("@ENZYME_BINARY_DIR@") != 0 and "@ENZYME_TEST_PLUGIN_ENABLED@" == "1":
+  loadTestCallHandler = (' -load=@ENZYME_BINARY_DIR@/test/EnzymeTestCallHandler-'
+                         + config.llvm_ver + config.llvm_shlib_ext)
+  config.available_features.add('enzyme_test_plugin')
+config.substitutions.append(('%loadTestCallHandler', loadTestCallHandler))
+
 config.substitutions.append(('%hasMPFR', has_mpfr))
 
 # Fortran-specific configuration

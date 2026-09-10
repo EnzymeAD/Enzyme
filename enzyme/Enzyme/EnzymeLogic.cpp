@@ -2886,8 +2886,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (removeTapeStruct) {
     tapeType = MallocTypes[0];
 
-    for (auto &a : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
-      a.second = -1;
+    for (auto &entry : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
+      // Negative entries <= -2 encode uncached arguments rather than physical
+      // tape slots, so only rewrite physical slot index 0 to -1.
+      if (entry.second >= 0)
+        entry.second = -1;
     }
   }
 
