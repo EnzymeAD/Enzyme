@@ -80,6 +80,7 @@
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/TimeProfiler.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSet.h"
 
 #include "DiffeGradientUtils.h"
@@ -756,105 +757,151 @@ void calculateUnusedValuesInFunction(
     }
   }
 
-  std::function<bool(const llvm::Value *)> isNoNeed = [&](const llvm::Value
-                                                              *v) {
-    auto Obj = getBaseObject(v);
-    if (Obj != v)
-      return isNoNeed(Obj);
-    if (auto C = dyn_cast<LoadInst>(v))
-      return isNoNeed(C->getOperand(0));
-    else if (auto arg = dyn_cast<Argument>(v)) {
-      auto act = constant_args[arg->getArgNo()];
-      if (act == DIFFE_TYPE::DUP_NONEED) {
-        return true;
-      }
-    } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
-      if (!gutils->isConstantValue(const_cast<Value *>(v))) {
-        std::set<const Value *> done;
-        std::deque<const Value *> todo = {v};
-        bool legal = true;
-        while (todo.size()) {
-          const Value *cur = todo.back();
-          todo.pop_back();
-          if (done.count(cur))
-            continue;
-          done.insert(cur);
+  // isNoNeed(v) walks every user of v's base object, and the callbacks below
+  // ask it once per (user, value) pair examined, so an allocation with U users
+  // costs O(U^2) per visit and is revisited every time one of its users is
+  // marked unnecessary: O(U^3), each step a differential-use query. Memoize it,
+  // along with the differential-use queries it makes.
+  //
+  // The result depends only on unnecessaryValues / unnecessaryInstructions,
+  // which only grow, and every check against them can only turn a user from
+  // "blocking" into "benign": a `true` result is therefore final, and a `false`
+  // result stays valid until either set changes (the epoch below).
+  struct NoNeedQuery {
+    const SmallPtrSetImpl<const Value *> &unnecessaryValues;
+    const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
+    GradientUtils *gutils;
+    DerivativeMode mode;
+    TargetLibraryInfo &TLI;
+    ArrayRef<DIFFE_TYPE> constant_args;
+    const SmallPtrSetImpl<BasicBlock *> &oldUnreachable;
+    DenseMap<const Value *, std::pair<size_t, bool>> cache{};
+    DenseMap<std::pair<const Value *, const Instruction *>, bool>
+        directUseCache{};
 
-          if (unnecessaryValues.count(cur))
-            continue;
+    bool operator()(const Value *v) {
+      size_t epoch = unnecessaryValues.size() + unnecessaryInstructions.size();
+      auto found = cache.find(v);
+      if (found != cache.end() &&
+          (found->second.second || found->second.first == epoch))
+        return found->second.second;
+      bool res = compute(v);
+      cache[v] = std::make_pair(epoch, res);
+      return res;
+    }
 
-          for (auto u : cur->users()) {
-            if (auto SI = dyn_cast<StoreInst>(u)) {
-              if (SI->getValueOperand() != cur) {
-                continue;
-              }
-            }
-            if (auto I = dyn_cast<Instruction>(u)) {
-              if (unnecessaryInstructions.count(I)) {
-                if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
-                        gutils, cur, mode, I, oldUnreachable,
-                        QueryType::Primal)) {
+    // is_use_directly_needed_in_reverse depends on gutils, mode and
+    // oldUnreachable only, all fixed for the duration of this call, so its
+    // answer per (value, user) pair is constant.
+    bool directUseNeeded(const Value *cur, const Instruction *I) {
+      auto key = std::make_pair(cur, I);
+      auto found = directUseCache.find(key);
+      if (found != directUseCache.end())
+        return found->second;
+      bool res = DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
+          gutils, cur, mode, I, oldUnreachable, QueryType::Primal);
+      directUseCache[key] = res;
+      return res;
+    }
+
+    bool compute(const Value *v) {
+      auto Obj = getBaseObject(v);
+      if (Obj != v)
+        return (*this)(Obj);
+      if (auto C = dyn_cast<LoadInst>(v))
+        return (*this)(C->getOperand(0));
+      else if (auto arg = dyn_cast<Argument>(v)) {
+        auto act = constant_args[arg->getArgNo()];
+        if (act == DIFFE_TYPE::DUP_NONEED) {
+          return true;
+        }
+      } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
+        if (!gutils->isConstantValue(const_cast<Value *>(v))) {
+          std::set<const Value *> done;
+          std::deque<const Value *> todo = {v};
+          bool legal = true;
+          while (todo.size()) {
+            const Value *cur = todo.back();
+            todo.pop_back();
+            if (done.count(cur))
+              continue;
+            done.insert(cur);
+
+            if (unnecessaryValues.count(cur))
+              continue;
+
+            for (auto u : cur->users()) {
+              if (auto SI = dyn_cast<StoreInst>(u)) {
+                if (SI->getValueOperand() != cur) {
                   continue;
                 }
               }
-              if (isDeallocationCall(I, TLI)) {
-                continue;
-              }
-            }
-            if (auto II = dyn_cast<IntrinsicInst>(u);
-                II && isIntelSubscriptIntrinsic(*II)) {
-              todo.push_back(&*u);
-              continue;
-            } else if (auto CI = dyn_cast<CallInst>(u)) {
-              if (getFuncNameFromCall(CI) == "julia.write_barrier") {
-                continue;
-              }
-              if (getFuncNameFromCall(CI) == "julia.write_barrier_binding") {
-                continue;
-              }
-              bool writeOnlyNoCapture = true;
-              if (shouldDisableNoWrite(CI)) {
-                writeOnlyNoCapture = false;
-              }
-              for (size_t i = 0; i < CI->arg_size(); i++) {
-                if (cur == CI->getArgOperand(i)) {
-                  if (!isNoCapture(CI, i)) {
-                    writeOnlyNoCapture = false;
-                    break;
-                  }
-                  if (!isWriteOnly(CI, i)) {
-                    writeOnlyNoCapture = false;
-                    break;
+              if (auto I = dyn_cast<Instruction>(u)) {
+                if (unnecessaryInstructions.count(I)) {
+                  if (!directUseNeeded(cur, I)) {
+                    continue;
                   }
                 }
+                if (isDeallocationCall(I, TLI)) {
+                  continue;
+                }
               }
-              // Don't need the primal argument if it is write only and
-              // not captured
-              if (writeOnlyNoCapture) {
+              if (auto II = dyn_cast<IntrinsicInst>(u);
+                  II && isIntelSubscriptIntrinsic(*II)) {
+                todo.push_back(&*u);
                 continue;
+              } else if (auto CI = dyn_cast<CallInst>(u)) {
+                if (getFuncNameFromCall(CI) == "julia.write_barrier") {
+                  continue;
+                }
+                if (getFuncNameFromCall(CI) == "julia.write_barrier_binding") {
+                  continue;
+                }
+                bool writeOnlyNoCapture = true;
+                if (shouldDisableNoWrite(CI)) {
+                  writeOnlyNoCapture = false;
+                }
+                for (size_t i = 0; i < CI->arg_size(); i++) {
+                  if (cur == CI->getArgOperand(i)) {
+                    if (!isNoCapture(CI, i)) {
+                      writeOnlyNoCapture = false;
+                      break;
+                    }
+                    if (!isWriteOnly(CI, i)) {
+                      writeOnlyNoCapture = false;
+                      break;
+                    }
+                  }
+                }
+                // Don't need the primal argument if it is write only and
+                // not captured
+                if (writeOnlyNoCapture) {
+                  continue;
+                }
               }
-            }
-            if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
-                isa<PHINode>(u)) {
-              todo.push_back(&*u);
-              continue;
-            } else {
-              legal = false;
-              break;
+              if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
+                  isa<PHINode>(u)) {
+                todo.push_back(&*u);
+                continue;
+              } else {
+                legal = false;
+                break;
+              }
             }
           }
+          if (legal) {
+            return true;
+          }
         }
-        if (legal) {
-          return true;
-        }
+      } else if (auto II = dyn_cast<IntrinsicInst>(v);
+                 II && isIntelSubscriptIntrinsic(*II)) {
+        unsigned int ptrArgIdx = 3;
+        return (*this)(II->getOperand(ptrArgIdx));
       }
-    } else if (auto II = dyn_cast<IntrinsicInst>(v);
-               II && isIntelSubscriptIntrinsic(*II)) {
-      unsigned int ptrArgIdx = 3;
-      return isNoNeed(II->getOperand(ptrArgIdx));
+      return false;
     }
-    return false;
-  };
+  } isNoNeed{unnecessaryValues, unnecessaryInstructions, gutils, mode, TLI,
+             constant_args,     oldUnreachable};
 
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
