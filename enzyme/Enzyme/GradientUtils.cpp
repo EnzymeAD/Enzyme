@@ -2719,6 +2719,22 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       assert(malloc);
       return UndefValue::get(malloc->getType());
     }
+    // The augmented pass stored nothing at this index because the value is an
+    // argument, so take it from this function's arguments rather than loading
+    // the (empty) slot.
+    auto uncached = uncachedTapeArgs.find((unsigned)idx);
+    if (uncached != uncachedTapeArgs.end()) {
+      Value *ret = argFromOriginal(uncached->second);
+      assert(ret->getType() == malloc->getType());
+      if (replace)
+        if (auto malloci = dyn_cast<Instruction>(malloc)) {
+          malloci->replaceAllUsesWith(ret);
+          if (malloci == &*BuilderQ.GetInsertPoint())
+            BuilderQ.SetInsertPoint(malloci->getNextNode());
+          erase(malloci);
+        }
+      return ret;
+    }
     if (idx >= 0 && !tape->getType()->isStructTy()) {
       llvm::errs() << "cacheForReverse incorrect tape type: " << *tape
                    << " idx: " << idx << "\n";
@@ -3080,6 +3096,16 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
     if (isa<UndefValue>(malloc)) {
       addedTapeVals.push_back(malloc);
+      return malloc;
+    }
+
+    // An argument is available unchanged in the reverse pass, so there is
+    // nothing to cache. Record which argument is wanted against this index and
+    // store nothing -- the slot is left undef, so no store (and no builder) is
+    // materialized for it, and the split reverse rebuilds the value instead.
+    if (auto uncached = originalArgOf(malloc)) {
+      uncachedTapeArgs[(unsigned)idx] = *uncached;
+      addedTapeVals.push_back(UndefValue::get(malloc->getType()));
       return malloc;
     }
 
@@ -9839,6 +9865,34 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
   if (erase) {
     this->erase(I);
   }
+}
+
+std::optional<std::pair<unsigned, bool>>
+GradientUtils::originalArgOf(Value *val) {
+  if (!isa<Argument>(val))
+    return std::nullopt;
+  auto found = newToOriginalFn.find(val);
+  if (found != newToOriginalFn.end()) {
+    Value *orig = found->second;
+    if (auto oarg = dyn_cast_or_null<Argument>(orig))
+      return std::make_pair(oarg->getArgNo(), false);
+  }
+  for (auto &oarg : oldFunc->args()) {
+    auto ifound = invertedPointers.find(&oarg);
+    if (ifound != invertedPointers.end() && &*ifound->second == val)
+      return std::make_pair(oarg.getArgNo(), true);
+  }
+  return std::nullopt;
+}
+
+Value *GradientUtils::argFromOriginal(std::pair<unsigned, bool> arg) {
+  assert(arg.first < oldFunc->arg_size());
+  auto oarg = oldFunc->getArg(arg.first);
+  if (!arg.second)
+    return getNewFromOriginal((Value *)oarg);
+  auto found = invertedPointers.find(oarg);
+  assert(found != invertedPointers.end());
+  return &*found->second;
 }
 
 void GradientUtils::setTape(Value *newtape) {
