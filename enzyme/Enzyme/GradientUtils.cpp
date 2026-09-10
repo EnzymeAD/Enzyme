@@ -9382,7 +9382,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
-  SmallPtrSet<Instruction *, 1> storingOps;
+  SetVector<Instruction *> storingOps;
   SmallPtrSet<Instruction *, 1> frees;
   SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
   bool promotable = true;
@@ -9617,8 +9617,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       for (auto S : storingOps)
         if (!stores.count(S)) {
           SmallVector<Instruction *, 2> results;
-          SmallPtrSet<Instruction *, 2> shadowPtrLoadSet(
-              shadowPointerLoads.begin(), shadowPointerLoads.end());
+          SetVector<Instruction *> shadowPtrLoadSet;
+          shadowPtrLoadSet.insert(shadowPointerLoads.begin(),
+                                  shadowPointerLoads.end());
           mayExecuteAfter(results, S, shadowPtrLoadSet, outer);
           if (results.size()) {
             EmitWarning("NotPromotable", *results[0],
