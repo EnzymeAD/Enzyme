@@ -7913,7 +7913,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       origInst = isOriginal(prelcssaInst);
     if (origInst) {
       TypeTree TT = TR.query(origInst);
-      if (TT.isKnown())
+      // considerTBAA rejects a tree with an offset past the register size of
+      // the instruction it is attached to with a fatal error, so drop those
+      // rather than emitting metadata a later type analysis run will reject.
+      auto &DL = newFunc->getParent()->getDataLayout();
+      auto RegSize = (DL.getTypeSizeInBits(resultInst->getType()) + 7) / 8;
+      bool legal = TT.isKnown();
+      for (const auto &pair : TT.getMapping())
+        if (pair.first[0] != -1 && (size_t)pair.first[0] >= RegSize)
+          legal = false;
+      if (legal)
         resultInst->setMetadata("enzyme_type",
                                 TT.toMD(resultInst->getContext()));
     }
