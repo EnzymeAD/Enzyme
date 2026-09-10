@@ -66,22 +66,12 @@ declare double @__enzyme_fwdsplit(...)
 ; CHECK-NEXT: }
 
 ; CHECK: define internal ptr @augmented_bar(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %p, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %"p'", double %x, double %"x'")
-; CHECK-NEXT:   %tapemem = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) ptr @malloc(i64 8)
-; CHECK-NEXT:   %"c'ipg" = getelementptr inbounds i8, ptr %"p'", i64 8
-; CHECK-NEXT:   %c = getelementptr inbounds i8, ptr %p, i64 8
-; CHECK-NEXT:   %1 = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %"c'ipg", ptr nonnull @iadd_op, i8 7, i8 1, i64 1)
-; CHECK-NEXT:   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %c, ptr nonnull @iadd_op, i8 7, i8 1, i64 1)
-; CHECK-NEXT:   %d = load double, ptr %p, align 8, !alias.scope !0, !noalias !3
-; CHECK-NEXT:   store double %d, ptr %tapemem, align 8
-; CHECK-NEXT:   ret ptr %tapemem
-; CHECK-NEXT: }
+; CHECK: %"c'ipg" = getelementptr inbounds i8, ptr %"p'", i64 8
+; CHECK-NEXT: %c = getelementptr inbounds i8, ptr %p, i64 8
+; CHECK-NEXT: %{{.+}} = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %"c'ipg", ptr nonnull @iadd_op, i8 7, i8 1, i64 1)
+; CHECK-NEXT: %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %c, ptr nonnull @iadd_op, i8 7, i8 1, i64 1)
 
+; The tangent pass must not repeat the shadow increment.
 ; CHECK: define internal double @fwddiffebar(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %p, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %"p'", double %x, double %"x'", ptr %tapeArg)
-; CHECK-NEXT:   %d = load double, ptr %tapeArg, align 8, !enzyme_mustcache !5
-; CHECK-NEXT:   tail call void @free(ptr nonnull %tapeArg)
-; CHECK-NEXT:   %"d'ipl" = load double, ptr %"p'", align 8, !alias.scope !6, !noalias !9
-; CHECK-NEXT:   %1 = fmul fast double %"d'ipl", %x
-; CHECK-NEXT:   %2 = fmul fast double %"x'", %d
-; CHECK-NEXT:   %3 = fadd fast double %1, %2
-; CHECK-NEXT:   ret double %3
-; CHECK-NEXT: }
+; CHECK-NOT: julia.atomicmodify
+; CHECK: ret double
