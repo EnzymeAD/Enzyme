@@ -16,6 +16,15 @@ define internal i64 @fadd_op(i64 %old, i64 %v) {
   ret i64 %ri
 }
 
+; op may take the forwarded argument in a type other than the element type of
+; the result struct; a missing shadow has to be zero of the *argument* type.
+define internal i64 @fadd_op_dbl(i64 %old, double %vf) {
+  %oldf = bitcast i64 %old to double
+  %r = fadd double %oldf, %vf
+  %ri = bitcast double %r to i64
+  ret i64 %ri
+}
+
 define double @foo(ptr %p, double %vf) {
   %v = bitcast double %vf to i64
   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op, i8 5, i8 1, i64 %v)
@@ -24,9 +33,18 @@ define double @foo(ptr %p, double %vf) {
   ret double %newf
 }
 
+define double @baz(ptr %p, double %vf) {
+  %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op_dbl, i8 5, i8 1, double %vf)
+  %new = extractvalue { i64, i64 } %on, 1
+  %newf = bitcast i64 %new to double
+  ret double %newf
+}
+
 define double @caller(ptr %a, ptr %b, double %v, double %dv) {
   %r1 = call double (...) @__enzyme_fwddiff(ptr nonnull @foo, ptr %a, ptr %b, double %v, double %dv)
-  ret double %r1
+  %r2 = call double (...) @__enzyme_fwddiff(ptr nonnull @baz, ptr %a, ptr %b, metadata !"enzyme_const", double %v)
+  %fr = fadd double %r1, %r2
+  ret double %fr
 }
 
 declare double @__enzyme_fwddiff(...)
@@ -36,6 +54,14 @@ declare double @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %v = bitcast double %vf to i64
 ; CHECK-NEXT:   %1 = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %"p'", ptr nonnull @fadd_op, i8 5, i8 1, i64 %"v'ipc")
 ; CHECK-NEXT:   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op, i8 5, i8 1, i64 %v)
+; CHECK-NEXT:   %"new'ipev" = extractvalue { i64, i64 } %1, 1
+; CHECK-NEXT:   %"newf'ipc" = bitcast i64 %"new'ipev" to double
+; CHECK-NEXT:   ret double %"newf'ipc"
+; CHECK-NEXT: }
+
+; CHECK: define internal double @fwddiffebaz(ptr %p, ptr %"p'", double %vf)
+; CHECK-NEXT:   %1 = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %"p'", ptr nonnull @fadd_op_dbl, i8 5, i8 1, double 0.000000e+00)
+; CHECK-NEXT:   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op_dbl, i8 5, i8 1, double %vf)
 ; CHECK-NEXT:   %"new'ipev" = extractvalue { i64, i64 } %1, 1
 ; CHECK-NEXT:   %"newf'ipc" = bitcast i64 %"new'ipev" to double
 ; CHECK-NEXT:   ret double %"newf'ipc"

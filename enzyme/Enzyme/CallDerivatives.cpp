@@ -2292,9 +2292,24 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   // generated derivative code); it is only expanded to atomicrmw/cmpxchg by
   // Julia's ExpandAtomicModify pass after GC lowering.
   if (startsWith(funcName, "julia.atomicmodify.")) {
-    // Fully inactive calls are replayed by the constant fallback.
-    if (gutils->isConstantInstruction(&call) && gutils->isConstantValue(&call))
-      return false;
+    auto eraseAtomicModify = [&]() {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else
+        eraseIfUnused(call);
+    };
+
+    // Fully inactive calls only need the primal replayed. This must be
+    // handled here rather than falling through to the generic call path,
+    // as the latter may decide against the constant fallback (e.g. for a
+    // nocapture, non-readonly pointer argument) and then reject the
+    // variadic call with `Number of arg operands != function parameters`.
+    if (gutils->isConstantInstruction(&call) &&
+        gutils->isConstantValue(&call)) {
+      eraseAtomicModify();
+      return true;
+    }
 
     Type *elty = cast<StructType>(call.getType())->getElementType(0);
     unsigned opArgNo = 0;
@@ -2311,14 +2326,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     bool constval = gutils->isConstantValue(&call);
     bool constptr = gutils->isConstantValue(call.getArgOperand(0));
-
-    auto eraseAtomicModify = [&]() {
-      if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ForwardModeSplit) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      } else
-        eraseIfUnused(call);
-    };
 
     // No shadow memory is involved; replaying the primal suffices.
     if (constval && constptr) {
@@ -2345,11 +2352,39 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // e.g. lock states and counters of shadow objects consistent.
     if (constval && constargs &&
         (vd.isKnown() ? !vd.isFloat() : looseTypeAnalysis)) {
-      if (Mode == DerivativeMode::ForwardMode ||
-          Mode == DerivativeMode::ForwardModeError ||
-          Mode == DerivativeMode::ForwardModeSplit ||
-          Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModePrimal) {
+      // Which pass emits the shadow modification is decided exactly as for
+      // an inactive store into duplicated memory (visitCommonStore); in
+      // particular the augmented primal and the split derivative pass must
+      // not both replay it, and a shadow that is only materialized in the
+      // reverse pass must be updated there.
+      bool backwardsShadow = false;
+      bool forwardsShadow = true;
+      for (auto pair : gutils->backwardsOnlyShadows) {
+        if (pair.second.stores.count(&call)) {
+          backwardsShadow = true;
+          forwardsShadow = pair.second.primalInitialize;
+          if (auto inst = dyn_cast<Instruction>(pair.first))
+            if (!forwardsShadow && pair.second.LI &&
+                pair.second.LI->contains(inst->getParent()))
+              backwardsShadow = false;
+        }
+      }
+      if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(0)))) {
+        unsigned argNo = arg->getArgNo();
+        if (argNo < gutils->nowrite_shadows.size() &&
+            gutils->nowrite_shadows[argNo]) {
+          forwardsShadow = false;
+          backwardsShadow = false;
+        }
+      }
+
+      if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+          (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeCombined &&
+           (forwardsShadow || backwardsShadow)) ||
+          Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
         Value *dptr = gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
         for (size_t i = 0; i < gutils->getWidth(); i++) {
           SmallVector<Value *, 6> args;
@@ -2377,7 +2412,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         // the tangent {dold, dnew}.
         auto rule = [&](Value *dptr, Value *dval) -> Value * {
           if (dval == nullptr)
-            dval = Constant::getNullValue(elty);
+            dval =
+                Constant::getNullValue(call.getArgOperand(valIdx)->getType());
           SmallVector<Value *, 6> args;
           for (size_t i = 0; i < call.arg_size(); i++) {
             if (i == 0)
@@ -2405,7 +2441,21 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         return true;
       }
     } else if (Mode == DerivativeMode::ReverseModePrimal) {
-      if (constval) {
+      // Nothing to do in the primal pass beyond replaying the call. Besides
+      // the inactive case this also covers the augmented primal paired with
+      // a ForwardModeSplit derivative, which handles any recognized op.
+      if (constval || (opKind != AtomicRMWInst::BAD_BINOP && !constptr)) {
+        if (!constval) {
+          auto ifound = gutils->invertedPointers.find(&call);
+          if (ifound != gutils->invertedPointers.end()) {
+            auto placeholder = cast<PHINode>(&*ifound->second);
+            gutils->invertedPointers.erase(ifound);
+            gutils->replaceAWithB(
+                placeholder,
+                Constant::getNullValue(gutils->getShadowType(call.getType())));
+            gutils->erase(placeholder);
+          }
+        }
         eraseIfUnused(call);
         return true;
       }
@@ -2446,10 +2496,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         addToDiffe(call.getArgOperand(valIdx), diff, Builder2, FT);
       }
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      } else
-        eraseIfUnused(call);
+      eraseAtomicModify();
       return true;
     }
 
