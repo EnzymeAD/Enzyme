@@ -5,34 +5,21 @@
 ! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
-module function_like_procedure_pointer_test
-  implicit none
-
-  procedure(log1p_like_function), pointer, private :: &
-    fn__enzyme_function_like__log1p => log1p_like_function
-
-contains
-
-  function log1p_like_function(x) result(y)
-    real, value :: x
-    real :: y
-
-    y = 2.0 * x
-  end function log1p_like_function
-
-  function test(x) result(y)
-    real, intent(in) :: x
-    real :: y
-
-    y = log1p_like_function(x)
-  end function test
-
-end module function_like_procedure_pointer_test
-
 program main
   use enzyme, only: enzyme_autodiff
-  use function_like_procedure_pointer_test, only: test
   implicit none
+
+  ! A procedure pointer initializer cannot target an internal procedure.
+  ! Use an external function with an explicit interface to avoid a module.
+  interface
+    function double_value(x) result(y)
+      real, value :: x
+      real :: y
+    end function double_value
+  end interface
+
+  procedure(double_value), pointer :: &
+    fn__enzyme_function_like__log1p => double_value
 
   real :: x, dx
 
@@ -41,7 +28,25 @@ program main
   call enzyme_autodiff(test, x, dx)
 
   write(*,"(f6.4)") dx
+
+contains
+
+  function test(x) result(y)
+    real, intent(in) :: x
+    real :: y
+
+    y = double_value(x)
+  end function test
+
 end program main
+
+function double_value(x) result(y)
+  implicit none
+  real, value :: x
+  real :: y
+
+  y = 2.0 * x
+end function double_value
 
 ! IR: "enzyme_math"="log1p"
 ! CHECK: 0.3333
