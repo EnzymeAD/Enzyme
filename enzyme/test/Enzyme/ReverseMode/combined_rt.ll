@@ -851,7 +851,7 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  br i1 [[icmp_active]], label %invertbb13_active, label %invertbb13_amerge
 
 ; CHECK:invertbb13_active:{{.*}}
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i39'ipc_unwrap", align 8, !tbaa !58, !alias.scope !140, !noalias !141
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i39'ipc_unwrap", align 8, !tbaa !58, !alias.scope ![[ACTIVE_SCOPE:[0-9]+]], !noalias ![[ACTIVE_NOALIAS:[0-9]+]]
 ; CHECK-NEXT:  br label %invertbb13_amerge
 
 ; CHECK:invertbb13_amerge:{{.*}}
@@ -861,7 +861,7 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  br i1 [[icmp_amerge]], label %invertbb13_amerge_active, label %invertbb13_amerge_amerge
 
 ; CHECK:invertbb13_amerge_active:                         ; preds = %invertbb13_amerge
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i37'ipc_unwrap", align 8, !tbaa !58, !alias.scope !140, !noalias !141
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i37'ipc_unwrap", align 8, !tbaa !58, !alias.scope ![[ACTIVE_SCOPE]], !noalias ![[ACTIVE_NOALIAS]]
 ; CHECK-NEXT:  br label %invertbb13_amerge_amerge
 
 ; CHECK:invertbb13_amerge_amerge:                         ; preds = %invertbb13_amerge_active, %invertbb13_amerge
