@@ -983,6 +983,15 @@ static bool AnyJuliaTypes(Type *T) {
 static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
                                        const DataLayout &DL) {
   if (AllJuliaTypes(T)) {
+    // Fast path: already augmented (exact-key checks are O(log n); the
+    // remove/insert below each walk the whole map).
+    {
+      const auto &M = TT.getMapping();
+      auto it = M.find(std::vector<int>{-1});
+      if (it != M.end() && it->second == BaseType::Pointer &&
+          M.find(std::vector<int>{0}) == M.end())
+        return;
+    }
     TT.remove({-1});
     TT.remove({0});
     TT.insert({-1}, BaseType::Pointer);
@@ -1004,6 +1013,12 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
     if (!AnyJuliaTypes(T))
       continue;
     if (isa<PointerType>(T)) {
+      {
+        const auto &M = TT.getMapping();
+        auto it = M.find(std::vector<int>{(int)offset});
+        if (it != M.end() && it->second == BaseType::Pointer)
+          continue; // already augmented at this offset
+      }
       TT.remove(std::vector<int>{(int)offset});
       TT.insert(std::vector<int>{(int)offset}, BaseType::Pointer);
       continue;
