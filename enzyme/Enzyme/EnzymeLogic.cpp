@@ -2975,24 +2975,22 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     unsigned i = 0;
     for (auto v : gutils->getTapeValues()) {
       if (!isa<UndefValue>(v)) {
-        Value *nv = VMap[v];
-        // An instruction has to be stored right after it is defined, whereas an
-        // argument, constant or global is available from the start of the
-        // function and can be stored alongside the tape allocation itself.
-        IRBuilder<> tb(ib.GetInsertBlock(), ib.GetInsertPoint());
-        if (auto inst = dyn_cast<Instruction>(nv)) {
-          tb.SetInsertPoint(inst->getNextNode());
-          if (isa<PHINode>(inst))
-            tb.SetInsertPoint(getFirstNonPHI(inst->getParent()));
+        if (!isa<Instruction>(VMap[v])) {
+          llvm::errs() << " non constant for vmap[v=" << *v
+                       << " ]= " << *VMap[v] << "\n";
         }
-        Value *Idxs[] = {tb.getInt32(0), tb.getInt32(i)};
+        auto inst = cast<Instruction>(VMap[v]);
+        IRBuilder<> ib(inst->getNextNode());
+        if (isa<PHINode>(inst))
+          ib.SetInsertPoint(getFirstNonPHI(inst->getParent()));
+        Value *Idxs[] = {ib.getInt32(0), ib.getInt32(i)};
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
-          gep = tb.CreateGEP(tapeType, tapeMemory, Idxs, "");
+          gep = ib.CreateGEP(tapeType, tapeMemory, Idxs, "");
           cast<GetElementPtrInst>(gep)->setIsInBounds(true);
         }
-        auto storeinst = tb.CreateStore(nv, gep);
-        PostCacheStore(storeinst, tb);
+        auto storeinst = ib.CreateStore(VMap[v], gep);
+        PostCacheStore(storeinst, ib);
       }
       ++i;
     }
