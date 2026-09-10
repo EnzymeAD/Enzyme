@@ -570,7 +570,8 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
                 if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
                         SE.getConstant(Iters->getType(), i, /*signed*/ false),
                         SE))) {
-                  insert(Val->getAPInt().getSExtValue());
+                  if (Val->getAPInt().getSignificantBits() <= 64)
+                    insert(Val->getAPInt().getSExtValue());
                 }
               }
               return intseen[val];
@@ -3383,10 +3384,14 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           bool isNegMask = false;
           if (Args[i]) {
             if (auto CI = dyn_cast<ConstantInt>(Args[i])) {
-              int64_t andval = CI->getSExtValue();
-              if (andval < 0 && andval >= -64) {
-                Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
-                isNegMask = true;
+              // Masks wider than 64 bits (e.g. on i128) cannot be a small
+              // negative number, and getSExtValue would assert on them.
+              if (CI->getValue().getSignificantBits() <= 64) {
+                int64_t andval = CI->getSExtValue();
+                if (andval < 0 && andval >= -64) {
+                  Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                  isNegMask = true;
+                }
               }
             }
             if (!isNegMask) {
