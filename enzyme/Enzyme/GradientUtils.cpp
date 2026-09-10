@@ -3094,12 +3094,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
     bool inLoop;
 
-    if (!isa<Instruction>(malloc)) {
-      // An argument, constant or global is available for the whole function and
-      // cannot vary between loop iterations, so it never needs to be cached per
-      // iteration.
-      inLoop = false;
-    } else if (ctx.ForceSingleIteration) {
+    if (ctx.ForceSingleIteration) {
       inLoop = true;
       ctx.ForceSingleIteration = false;
     } else {
