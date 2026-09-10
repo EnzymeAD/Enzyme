@@ -117,6 +117,8 @@ cl::list<std::string> EnzymeLoadInactiveFiles(
 static const StringSet<> InactiveGlobals = {
     "small_typeof",
     "jl_small_typeof",
+    "jl_world_counter",
+    "ijl_world_counter",
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",

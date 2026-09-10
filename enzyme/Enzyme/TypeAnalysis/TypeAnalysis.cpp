@@ -886,6 +886,16 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    // from julia code, the world age counter is an integer
+    if (GV->getName() == "jl_world_counter" ||
+        GV->getName() == "ijl_world_counter") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+
     if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
