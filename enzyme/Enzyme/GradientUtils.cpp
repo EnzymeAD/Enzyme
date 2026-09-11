@@ -6079,8 +6079,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
 
-    invertedPointers.insert(
-        std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+    // A constant operand can still reach here: the InsertValueInst case below
+    // skips its mixed-activity check when runtimeActivity is set, and then
+    // inverts both operands unconditionally. Caching a shadow for a constant
+    // value breaks the invariant that constants have no entry in
+    // invertedPointers, which forwardModeInvertedPointerFallback asserts on.
+    if (!isConstantValue(oval))
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
   } else if (auto arg = dyn_cast<InsertValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
