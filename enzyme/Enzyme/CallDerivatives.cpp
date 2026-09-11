@@ -2570,6 +2570,50 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         auto begin_call = cast<CallInst>(call.getOperand(0));
 
+        // A single begin may dominate multiple ends (branches/loops). The
+        // existing logic below creates one reverse begin per forward end and
+        // keeps only the last, leaving a begin that does not dominate its end
+        // (`Instruction does not dominate all uses` / verification failure).
+        // When the reverse preserve would carry no arguments (nothing to keep
+        // alive in the reverse, e.g. discrete index searches), skip it.
+        unsigned numEnds = 0;
+        for (auto *U : begin_call->users()) {
+          if (auto *UI = dyn_cast<CallInst>(U)) {
+            if (auto *UF = UI->getCalledFunction()) {
+              if (UF->getName() == "llvm.julia.gc_preserve_end")
+                ++numEnds;
+            }
+          }
+        }
+        if (numEnds > 1) {
+          bool needsPreserve = false;
+          for (auto &arg : begin_call->args()) {
+            bool primalUsed = false;
+            bool shadowUsed = false;
+            gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+            if (primalUsed) {
+              needsPreserve = true;
+              break;
+            }
+            if (!gutils->isConstantValue(arg) && shadowUsed) {
+              needsPreserve = true;
+              break;
+            }
+          }
+          if (!needsPreserve) {
+            auto ifound = gutils->invertedPointers.find(begin_call);
+            if (ifound != gutils->invertedPointers.end()) {
+              if (auto *placeholder =
+                      dyn_cast<CallInst>(&*ifound->second)) {
+                if (placeholder->use_empty())
+                  gutils->erase(placeholder);
+              }
+              gutils->invertedPointers.erase(ifound);
+            }
+            return true;
+          }
+        }
+
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         SmallVector<Value *, 1> args;
@@ -2642,7 +2686,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         getReverseBuilder(Builder2);
 
         auto ifound = gutils->invertedPointers.find(&call);
-        assert(ifound != gutils->invertedPointers.end());
+        if (ifound == gutils->invertedPointers.end()) {
+          // No reverse begin was created (multi-end with empty args, skipped
+          // above); nothing to end in the reverse.
+          return true;
+        }
         auto placeholder = cast<CallInst>(&*ifound->second);
         Builder2.CreateCall(
             called->getParent()->getOrInsertFunction(
