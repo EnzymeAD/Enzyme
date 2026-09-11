@@ -64,6 +64,7 @@
 #include "llvm/CodeGen/UnreachableBlockElim.h"
 
 #include "llvm/Analysis/PhiValues.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScopedNoAliasAA.h"
@@ -2289,6 +2290,263 @@ bool DetectReadonlyOrThrow(Module &M) {
   return changed;
 }
 
+namespace {
+
+/// Post-dominance over the CFG with the blocks that can only lead to an abort
+/// (see `getGuaranteedUnreachable`) removed.
+///
+/// LLVM's PostDominatorTree treats every `unreachable` as a function exit, and
+/// Julia ends every bounds check in one, so with them left in almost nothing
+/// post-dominates anything.  Those paths never return, which is exactly why
+/// ignoring them is the right model here: what runs after a preserve region
+/// closes only matters on paths that do return.
+class AbortIgnoringPostDom {
+  static constexpr unsigned Undef = ~0U;
+
+  SmallVector<BasicBlock *, 32> Nodes;
+  DenseMap<BasicBlock *, unsigned> Ids;
+  SmallVector<SmallVector<unsigned, 2>, 32> Succs;
+  SmallVector<SmallVector<unsigned, 2>, 32> Preds;
+  SmallVector<unsigned, 32> Rank; // post-order number in the reversed CFG
+  SmallVector<unsigned, 32> IPDom;
+  unsigned Root; // virtual exit, sitting behind every returning block
+
+  unsigned intersect(unsigned A, unsigned B) const {
+    while (A != B) {
+      while (Rank[A] < Rank[B])
+        A = IPDom[A];
+      while (Rank[B] < Rank[A])
+        B = IPDom[B];
+    }
+    return A;
+  }
+
+public:
+  AbortIgnoringPostDom(Function &F) {
+    auto Unreachable = getGuaranteedUnreachable(&F);
+
+    Root = 0;
+    if (F.empty() || Unreachable.count(&F.getEntryBlock()))
+      return;
+
+    SmallVector<BasicBlock *, 32> Todo = {&F.getEntryBlock()};
+    Ids[&F.getEntryBlock()] = 0;
+    Nodes.push_back(&F.getEntryBlock());
+    while (!Todo.empty()) {
+      auto BB = Todo.pop_back_val();
+      for (auto Succ : successors(BB)) {
+        if (Unreachable.count(Succ) || Ids.count(Succ))
+          continue;
+        Ids[Succ] = Nodes.size();
+        Nodes.push_back(Succ);
+        Todo.push_back(Succ);
+      }
+    }
+
+    Root = Nodes.size();
+    Succs.resize(Root + 1);
+    Preds.resize(Root + 1);
+    for (unsigned I = 0; I != Root; ++I) {
+      for (auto Succ : successors(Nodes[I])) {
+        auto Found = Ids.find(Succ);
+        if (Found == Ids.end())
+          continue;
+        Succs[I].push_back(Found->second);
+        Preds[Found->second].push_back(I);
+      }
+      // Nothing left to go to in the pruned CFG means this block returns, as
+      // far as this analysis is concerned.
+      if (Succs[I].empty()) {
+        Succs[I].push_back(Root);
+        Preds[Root].push_back(I);
+      }
+    }
+
+    // Post-order of the reversed CFG, walking back from the virtual exit.
+    Rank.assign(Root + 1, Undef);
+    SmallVector<unsigned, 32> Order;
+    SmallVector<std::pair<unsigned, unsigned>, 32> Stack;
+    SmallVector<bool, 32> Seen(Root + 1, false);
+    Stack.push_back({Root, 0});
+    Seen[Root] = true;
+    while (!Stack.empty()) {
+      unsigned Node = Stack.back().first;
+      unsigned &Idx = Stack.back().second;
+      if (Idx < Preds[Node].size()) {
+        unsigned Child = Preds[Node][Idx++];
+        if (!Seen[Child]) {
+          Seen[Child] = true;
+          Stack.push_back({Child, 0});
+        }
+        continue;
+      }
+      Rank[Node] = Order.size();
+      Order.push_back(Node);
+      Stack.pop_back();
+    }
+
+    // Cooper-Harvey-Kennedy, on the reversed CFG.
+    IPDom.assign(Root + 1, Undef);
+    IPDom[Root] = Root;
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (auto It = Order.rbegin(), End = Order.rend(); It != End; ++It) {
+        unsigned Node = *It;
+        if (Node == Root)
+          continue;
+        unsigned New = Undef;
+        for (unsigned Succ : Succs[Node]) {
+          if (IPDom[Succ] == Undef)
+            continue;
+          New = (New == Undef) ? Succ : intersect(Succ, New);
+        }
+        if (New != Undef && New != IPDom[Node]) {
+          IPDom[Node] = New;
+          Changed = true;
+        }
+      }
+    }
+  }
+
+  /// The nearest block that every returning path out of each of `BBs` runs
+  /// through, or null if there is none.
+  BasicBlock *nearestCommonPostDominator(ArrayRef<BasicBlock *> BBs) const {
+    unsigned Cur = Undef;
+    for (auto BB : BBs) {
+      auto Found = Ids.find(BB);
+      if (Found == Ids.end() || IPDom[Found->second] == Undef)
+        return nullptr;
+      Cur = (Cur == Undef) ? Found->second : intersect(Found->second, Cur);
+    }
+    if (Cur == Undef || Cur == Root)
+      return nullptr;
+    return Nodes[Cur];
+  }
+};
+
+} // namespace
+
+/// Give `Begin` a single `llvm.julia.gc_preserve_end` that post-dominates it,
+/// replacing the several ends it currently has.  Returns false when no such
+/// place exists, leaving the function untouched.
+static bool MergeGCPreserveEnds(CallInst *Begin, ArrayRef<CallInst *> Ends,
+                                DominatorTree &DT, AbortIgnoringPostDom &PDT,
+                                bool &CFGChanged) {
+  auto EndFn = Ends[0]->getCalledFunction();
+  if (!EndFn)
+    return false;
+
+  auto BB = Begin->getParent();
+  if (!DT.getNode(BB))
+    return false;
+
+  SmallVector<BasicBlock *, 2> EndBlocks;
+  for (auto End : Ends)
+    EndBlocks.push_back(End->getParent());
+
+  // Every returning path out of the region runs through `Merge`, but it is only
+  // a legal home for the end if the begin dominates it.
+  auto Merge = PDT.nearestCommonPostDominator(EndBlocks);
+  if (!Merge)
+    return false;
+
+  if (!DT.dominates(BB, Merge)) {
+    // `Merge` is also reachable without ever running the begin.  The paths that
+    // did run it all enter `Merge` from inside the begin's dominator subtree,
+    // so splitting those edges off into a block of their own gives a home that
+    // the begin does dominate -- as long as they are the only way out of that
+    // subtree, otherwise a path could leave the region without ever reaching
+    // the split block.
+    SmallVector<BasicBlock *, 2> InRegion;
+    for (auto Pred : predecessors(Merge))
+      if (DT.dominates(BB, Pred))
+        InRegion.push_back(Pred);
+    if (InRegion.empty())
+      return false;
+
+    for (auto Node : depth_first(DT.getNode(BB)))
+      for (auto Succ : successors(Node->getBlock()))
+        if (Succ != Merge && !DT.dominates(BB, Succ))
+          return false;
+
+    Merge = SplitBlockPredecessors(Merge, InRegion, ".gcpreserve", &DT);
+    if (!Merge)
+      return false;
+    CFGChanged = true;
+  }
+
+  auto InsertPt = &*Merge->getFirstInsertionPt();
+  if (!DT.dominates(Begin, InsertPt))
+    return false;
+
+  IRBuilder<> B(InsertPt);
+  Value *Args[] = {Begin};
+  auto NewEnd = B.CreateCall(EndFn, Args);
+  NewEnd->setCallingConv(Ends[0]->getCallingConv());
+  NewEnd->setAttributes(Ends[0]->getAttributes());
+  NewEnd->setDebugLoc(Ends[0]->getDebugLoc());
+
+  for (auto End : Ends)
+    End->eraseFromParent();
+  return true;
+}
+
+/// A pass such as JumpThreading is free to clone a basic block holding an
+/// `llvm.julia.gc_preserve_end`: the token it consumes may legally have many
+/// uses, and only the instruction *producing* a token blocks duplication.  That
+/// leaves a single `llvm.julia.gc_preserve_begin` paired with several ends.
+///
+/// Reverse mode mirrors a preserve region by emitting a `gc_preserve_begin` at
+/// the invert of the end and the matching `gc_preserve_end` at the invert of
+/// the begin, so it needs the end to post-dominate the begin.  With several
+/// ends no mirrored begin dominates the mirrored end, and the differentiated
+/// function fails verification.
+///
+/// Restore the one-end invariant.  The preserved region can only grow, which is
+/// always safe.
+static bool CanonicalizeGCPreserveEnds(Function &F,
+                                       FunctionAnalysisManager &FAM) {
+  SmallVector<CallInst *, 1> Begins;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (getFuncNameFromCall(CI) == "llvm.julia.gc_preserve_begin")
+          Begins.push_back(CI);
+
+  bool changed = false;
+  DominatorTree *DT = nullptr;
+  std::unique_ptr<AbortIgnoringPostDom> PDT;
+
+  for (auto Begin : Begins) {
+    SmallVector<CallInst *, 2> Ends;
+    for (auto U : Begin->users())
+      if (auto CI = dyn_cast<CallInst>(U))
+        if (getFuncNameFromCall(CI) == "llvm.julia.gc_preserve_end")
+          Ends.push_back(CI);
+    if (Ends.size() < 2)
+      continue;
+
+    if (!DT)
+      DT = &FAM.getResult<DominatorTreeAnalysis>(F);
+    if (!PDT)
+      PDT = std::make_unique<AbortIgnoringPostDom>(F);
+
+    bool CFGChanged = false;
+    changed |= MergeGCPreserveEnds(Begin, Ends, *DT, *PDT, CFGChanged);
+    if (CFGChanged)
+      PDT.reset();
+  }
+
+  if (changed) {
+    PreservedAnalyses PA;
+    PA.preserve<DominatorTreeAnalysis>();
+    FAM.invalidate(F, PA);
+  }
+
+  return changed;
+}
+
 Function *PreProcessCache::preprocessForClone(Function *F,
                                               DerivativeMode mode) {
 
@@ -2956,6 +3214,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
   }
+
+  CanonicalizeGCPreserveEnds(*NewF, FAM);
 
   {
     SmallPtrSet<Function *, 1> calls_todo;
