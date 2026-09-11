@@ -34,6 +34,8 @@ module enzyme_function_hooks
   !       prepend with 'f' in the Fortran versions of the function hooks.
   public :: f__enzyme_autodiff
   public :: f__enzyme_fwddiff
+  public :: f__enzyme_function_like
   external :: f__enzyme_autodiff
   external :: f__enzyme_fwddiff
+  external :: f__enzyme_function_like
 end module enzyme_function_hooks
