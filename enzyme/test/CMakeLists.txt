@@ -4,6 +4,15 @@ else()
   set(ENZYME_FLANG_ENABLED 0)
 endif()
 
+# Tests that need to compile a C translation unit alongside the main input
+# (e.g. enzyme/test/Fortran/ReverseMode/custom_rule_from_c.f90) are gated on
+# the `clang` lit feature.
+if (${Clang_FOUND})
+  set(ENZYME_CLANG_ENABLED 1)
+else()
+  set(ENZYME_CLANG_ENABLED 0)
+endif()
+
 # Locate an MPI implementation for the Fortran MPI regression tests
 # (enzyme/test/Fortran/mpi); the tests are marked unsupported if none is
 # found. The include and link flags are serialized into lit substitutions

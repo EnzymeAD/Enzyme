@@ -69,6 +69,8 @@ config.substitutions.append(('%eopt', emopt))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
+if "@ENZYME_CLANG_ENABLED@" == "1":
+    config.available_features.add('clang')
 config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
 
 oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
