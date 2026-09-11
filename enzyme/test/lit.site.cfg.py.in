@@ -116,6 +116,15 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
+# ClangEnzyme, loaded into opt rather than clang. Unlike LLVMEnzyme it is built
+# with ENZYME_RUNPASS, so it registers the pass builder extension points and can
+# be used to run the pipelines a linker would (e.g. -passes='lto<O2>').
+optLoadClangEnzyme = ''
+if len("@ENZYME_BINARY_DIR@") != 0:
+  optLoadClangEnzyme = (' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-'
+                        + config.llvm_ver + config.llvm_shlib_ext)
+config.substitutions.append(('%optLoadClangEnzyme', optLoadClangEnzyme))
+
 config.substitutions.append(('%hasMPFR', has_mpfr))
 
 # Fortran-specific configuration
