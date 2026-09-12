@@ -8713,6 +8713,21 @@ void GradientUtils::computeMinCache() {
       }
     }
 
+    // Whether V may be rebuilt in the reverse pass, given the allocations and
+    // the induction variables of the loops enclosing its definition.
+    auto legalToRecompute = [&](Value *V) {
+      ValueToValueMapTy Available2;
+      for (auto a : Available)
+        Available2[a.first] = a.second;
+      for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(V)->getParent());
+           L != nullptr; L = L->getParentLoop()) {
+        for (auto v : LoopAvail[L]) {
+          Available2[v] = v;
+        }
+      }
+      return legalRecompute(V, Available2, nullptr);
+    };
+
     SetVector<Value *> Intermediates;
     SetVector<Value *> Required;
     std::deque<Value *> todo(Recomputes.begin(), Recomputes.end());
@@ -8728,16 +8743,7 @@ void GradientUtils::computeMinCache() {
         continue;
       }
       if (!Recomputes.count(V)) {
-        ValueToValueMapTy Available2;
-        for (auto a : Available)
-          Available2[a.first] = a.second;
-        for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(V)->getParent());
-             L != nullptr; L = L->getParentLoop()) {
-          for (auto v : LoopAvail[L]) {
-            Available2[v] = v;
-          }
-        }
-        if (!legalRecompute(V, Available2, nullptr)) {
+        if (!legalToRecompute(V)) {
           // if not legal to recompute, we would've already explicitly marked
           // this for caching if it was needed in reverse pass
           continue;
@@ -8763,8 +8769,12 @@ void GradientUtils::computeMinCache() {
 
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+    }
+    // A cached loopy reduction PHI still reads its start value in the reverse
+    // pass. The helper may add that start value to MinReq, so walk a copy.
+    for (Value *V : SmallVector<Value *, 8>(MinReq.begin(), MinReq.end())) {
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(
+          this, V, Intermediates, todo, legalToRecompute, MinReq, NeedGraph);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8775,8 +8785,8 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
+      DifferentialUseAnalysis::pushLoopyPHIPreheader(
+          this, V, Intermediates, todo, legalToRecompute, MinReq, NeedGraph);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
@@ -8804,16 +8814,7 @@ void GradientUtils::computeMinCache() {
           if (getFuncNameFromCall(CI) == "julia.call")
             assert(0);
 
-        ValueToValueMapTy Available2;
-        for (auto a : Available)
-          Available2[a.first] = a.second;
-        for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(V)->getParent());
-             L != nullptr; L = L->getParentLoop()) {
-          for (auto v : LoopAvail[L]) {
-            Available2[v] = v;
-          }
-        }
-        assert(legalRecompute(V, Available2, nullptr));
+        assert(legalToRecompute(V));
       }
       if (!NeedGraph.count(V)) {
         assert(!MinReq.count(V));
