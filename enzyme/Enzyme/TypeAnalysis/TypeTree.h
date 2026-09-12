@@ -829,30 +829,34 @@ public:
     auto m0 = TypeTree::operator[]({0});
 
     llvm::Type *flt = m0.isFloat();
+    if (!flt && !(anythingIsFloat && m0 == BaseType::Anything))
+      return nullptr;
+
     if (!flt) {
-      if (!(anythingIsFloat && m0 == BaseType::Anything)) {
-        return nullptr;
+      // A leading Anything leaves the floating type, and with it the chunk
+      // size, to the first floating entry at a later byte.
+      for (size_t i = 1; i < size && !flt; ++i)
+        flt = TypeTree::operator[]({(int)i}).isFloat();
+      if (!flt) {
+        // There is no floating entry at all. Without a chunk size the only
+        // claim available is that every byte is Anything.
+        for (size_t i = 1; i < size; ++i)
+          if (TypeTree::operator[]({(int)i}) != BaseType::Anything)
+            return nullptr;
+        return (llvm::Type *)0x123;
       }
     }
+
     size_t chunk = dl.getTypeSizeInBits(flt) / 8;
-    for (size_t i = chunk; i < size; i += chunk) {
+    for (size_t i = 0; i < size; i += chunk) {
       auto mx = TypeTree::operator[]({(int)i});
       if (auto f2 = mx.isFloat()) {
-        if (f2 != flt) {
-          if (anythingIsFloat && !flt) {
-            flt = f2;
-            continue;
-          }
+        if (f2 != flt)
           return nullptr;
-        }
       } else if (anythingIsFloat && mx == BaseType::Anything) {
         continue;
       } else
         return nullptr;
-    }
-
-    if (!flt && anythingIsFloat) {
-      return (llvm::Type *)0x123;
     }
     return flt;
   }
