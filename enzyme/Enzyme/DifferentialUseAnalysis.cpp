@@ -1285,9 +1285,13 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
   return true;
 }
 
-void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
-                           llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo) {
+void pushLoopyPHIPreheader(
+    const GradientUtils *gutils, llvm::Value *V,
+    llvm::SetVector<llvm::Value *> &Intermediates,
+    std::deque<llvm::Value *> &todo,
+    llvm::function_ref<bool(llvm::Value *)> legalRecompute,
+    llvm::SetVector<llvm::Value *> &MinReq,
+    llvm::SmallPtrSetImpl<llvm::Value *> &NeedGraph) {
   using namespace llvm;
   if (auto P0 = dyn_cast<PHINode>(V)) {
     if (!gutils->OrigLI)
@@ -1349,6 +1353,15 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       if (!isa<Instruction>(Pstart))
         break;
       Intermediates.insert(Pstart);
+      if (!legalRecompute(Pstart)) {
+        // The start value cannot be rebuilt in the reverse pass (for example
+        // a preheader PHI merging another loop's exit value). It lies outside
+        // the min-cut graph, so require its cache directly. As with every
+        // cached value, nothing it is computed from is needed on its behalf.
+        MinReq.insert(Pstart);
+        NeedGraph.insert(Pstart);
+        break;
+      }
       todo.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {
         if (phi->getNumIncomingValues() == 1)
