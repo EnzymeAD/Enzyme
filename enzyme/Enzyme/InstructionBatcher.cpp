@@ -254,7 +254,7 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
         auto found = vectorizedValues.find(op);
         assert(found != vectorizedValues.end());
         Value *new_op = found->second[i];
-        Builder2.CreateInsertValue(agg, new_op, {i});
+        agg = Builder2.CreateInsertValue(agg, new_op, {i});
       }
       args.push_back(agg);
       arg_types.push_back(BATCH_TYPE::VECTOR);
