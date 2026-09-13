@@ -5230,6 +5230,27 @@ public:
         auto argTy =
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
+        if (argTy == DIFFE_TYPE::CONSTANT) {
+          // The ReadNone/ReadOnly/WriteOnly entries just copied into
+          // structAttrs above (from PrimalParamAttrsToPreserve) describe the
+          // *original* call's primal behavior only. Differentiating this
+          // call may route through a custom derivative rule that reads (or
+          // writes) this constant argument despite the primal never doing
+          // so, so those copied attributes are not known to still hold on
+          // the newly generated call -- drop them here rather than carry an
+          // unverified claim onto it.
+          auto &attrs = structAttrs[args.size()];
+          attrs.erase(std::remove_if(
+                          attrs.begin(), attrs.end(),
+                          [](const Attribute &A) {
+                            return A.isEnumAttribute() &&
+                                   (A.getKindAsEnum() == Attribute::ReadNone ||
+                                    A.getKindAsEnum() == Attribute::ReadOnly ||
+                                    A.getKindAsEnum() == Attribute::WriteOnly);
+                          }),
+                      attrs.end());
+        }
+
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
              (writeOnlyNoCapture ||
@@ -5503,6 +5524,24 @@ public:
         }
 
       auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+
+      if (argTy == DIFFE_TYPE::CONSTANT) {
+        // See the matching comment in the forward-mode call handling above:
+        // these ReadNone/ReadOnly/WriteOnly entries were just copied from
+        // the original call's primal attributes and are not known to still
+        // hold once this call is routed through differentiation (e.g. a
+        // custom rule reading/writing this constant argument).
+        auto &attrs = structAttrs[pre_args.size()];
+        attrs.erase(
+            std::remove_if(attrs.begin(), attrs.end(),
+                           [](const Attribute &A) {
+                             return A.isEnumAttribute() &&
+                                    (A.getKindAsEnum() == Attribute::ReadNone ||
+                                     A.getKindAsEnum() == Attribute::ReadOnly ||
+                                     A.getKindAsEnum() == Attribute::WriteOnly);
+                           }),
+            attrs.end());
+      }
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;

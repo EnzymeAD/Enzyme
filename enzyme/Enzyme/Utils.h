@@ -1618,6 +1618,23 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
     return true;
   }
+
+  // At this point `F` is resolved (the `!F` case above already returned
+  // true) and carries none of the existing custom-derivative markers. If
+  // it still has a body Enzyme can (and will) look into -- an ordinary
+  // resolved function, including one with `available_externally` linkage
+  // -- do not trust write-only/no-capture attribute inference on this call
+  // to prune an argument's primal value. Such attributes are typically
+  // computed from the callee's own primal semantics alone and cannot see
+  // that a call reachable from within this body may carry a custom
+  // derivative rule (e.g. an EnzymeRules-style rule) that reads the
+  // argument at differentiation time despite the primal never doing so.
+  // Only calls to truly opaque functions (declarations with no body to
+  // look into at all) are safe to trust here.
+  if (!F->isDeclaration()) {
+    return true;
+  }
+
   return false;
 }
 

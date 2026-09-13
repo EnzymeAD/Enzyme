@@ -3155,6 +3155,21 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (EnzymePrintActivity)
         llvm::errs() << "in new function " << NewF->getName()
                      << " constant arg " << *j << "\n";
+
+      // Read/write-effect attributes on this parameter (e.g. `readnone`)
+      // were inferred from the *original* function's primal body alone.
+      // Differentiating this function can introduce genuine reads/writes
+      // of a `CONSTANT` argument that the primal never had (e.g. a custom
+      // derivative rule reachable from within this body reading it), which
+      // those attributes know nothing about. Since we cannot yet tell
+      // whether that will happen for this particular argument, drop the
+      // now-unverified claim rather than carry a possibly-false promise
+      // onto the differentiated function; `enzyme_inactive`/`nocapture`
+      // are untouched, only what could allow the optimizer to elide or
+      // reorder an actual memory access is.
+      NewF->removeParamAttr(jj, Attribute::ReadNone);
+      NewF->removeParamAttr(jj, Attribute::ReadOnly);
+      NewF->removeParamAttr(jj, Attribute::WriteOnly);
     } else {
       nonconstant.insert(i);
       if (EnzymePrintActivity)
