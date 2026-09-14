@@ -424,6 +424,7 @@ struct InlineEnzymeIntoRegion
         &getContext());
 
     GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   }
 };

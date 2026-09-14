@@ -5731,8 +5731,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               AllocaInst *antialloca = bb.CreateAlloca(
                   allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
                   arg->getName() + "'ipa");
-              if (arg->getAlignment()) {
-                antialloca->setAlignment(Align(arg->getAlignment()));
+              if (arg->getAlign()) {
+                antialloca->setAlignment(*arg->getAlign());
               }
               return antialloca;
             };
@@ -5758,10 +5758,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
                   getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
-              if (arg->getAlignment()) {
+              if (arg->getAlign()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
-                                                   Align(arg->getAlignment())));
+                                                   *arg->getAlign()));
               }
               memset->addParamAttr(0, Attribute::NonNull);
               assert((width > 1 && antialloca->getType() ==
@@ -6056,18 +6056,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(newi->getNextNode());
 
     auto AggTy = arg->getAggregateOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(arg->getType()) + 7) / 8;
     auto AggSize = (DL.getTypeSizeInBits(AggTy) + 7) / 8;
 
@@ -6098,18 +6088,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     auto AggTy = arg->getAggregateOperand()->getType();
     auto InsertedTy = arg->getInsertedValueOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(InsertedTy) + 7) / 8;
 
     for (int i = 0; i < 2; i++) {
@@ -7922,6 +7902,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Value *result =
       lookupValueFromCache(inst->getType(), /*isForwardPass*/ false, BuilderM,
                            found->second, found->first, isi1, available);
+  if (auto *resultInst = dyn_cast<Instruction>(result)) {
+    auto *origInst = isOriginal(inst);
+    if (!origInst)
+      origInst = isOriginal(prelcssaInst);
+    if (origInst) {
+      TypeTree TT = TR.query(origInst);
+      if (TT.isKnown())
+        resultInst->setMetadata("enzyme_type",
+                                TT.toMD(resultInst->getContext()));
+    }
+  }
   if (auto LI2 = dyn_cast<LoadInst>(result))
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
@@ -9402,7 +9393,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
-  SmallPtrSet<Instruction *, 1> storingOps;
+  SetVector<Instruction *> storingOps;
   SmallPtrSet<Instruction *, 1> frees;
   SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
   bool promotable = true;
@@ -9637,8 +9628,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       for (auto S : storingOps)
         if (!stores.count(S)) {
           SmallVector<Instruction *, 2> results;
-          SmallPtrSet<Instruction *, 2> shadowPtrLoadSet(
-              shadowPointerLoads.begin(), shadowPointerLoads.end());
+          SetVector<Instruction *> shadowPtrLoadSet;
+          shadowPtrLoadSet.insert(shadowPointerLoads.begin(),
+                                  shadowPointerLoads.end());
           mayExecuteAfter(results, S, shadowPtrLoadSet, outer);
           if (results.size()) {
             EmitWarning("NotPromotable", *results[0],

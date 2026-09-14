@@ -1,14 +1,6 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s
 // RUN: %eopt %s --allow-unregistered-dialect --enzyme-wrap="infn=main outfn= argTys=enzyme_dup retTys=enzyme_active mode=ReverseModeCombined" --lower-llvm-ext --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s --check-prefix=LOWER
 
-// Binomial checkpointing of a bare !llvm.ptr, the shape a CUDA program hits:
-// the loop mutates memory reached through a pointer whose extent is not in its
-// type, so the size comes from llvm_ext.ptr_size_hint and the clone buffer holds
-// pointer *handles* rather than flattened contents.
-//
-// The second RUN line covers lower-llvm-ext; the copies it emits are enzymexla
-// ops, which live outside this repository, hence --allow-unregistered-dialect.
-
 module {
   func.func @main(%p: !llvm.ptr) -> f32 {
     %c0 = arith.constant 0 : index
@@ -31,66 +23,42 @@ module {
     return %0 : f32
   }
 }
-
 // CHECK-LABEL: func.func @main(
-// One clone per slot allocated up front, then the buffer of handles they are
-// stored in -- which is typed from a clone. The size on every alloc/memcpy is
-// the hinted extent.
+// CHECK:         %[[TOTAL:.+]] = arith.constant 160 : i64
 // CHECK:         %[[SZ:.+]] = llvm.mlir.constant(40 : i64) : i64
-// CHECK:         %[[C0:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK-NEXT:    llvm_ext.memcpy %[[C0]], %arg0, %[[SZ]]
-// CHECK-NEXT:    %[[C1:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK-NEXT:    llvm_ext.memcpy %[[C1]], %arg0, %[[SZ]]
-// CHECK-NEXT:    %[[C2:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK-NEXT:    llvm_ext.memcpy %[[C2]], %arg0, %[[SZ]]
-// CHECK-NEXT:    %[[C3:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
-// CHECK-NEXT:    llvm_ext.memcpy %[[C3]], %arg0, %[[SZ]]
-// CHECK-NEXT:    %[[SLOTS:.+]] = memref.alloc() : memref<4x!llvm.ptr>
-// CHECK-NEXT:    memref.store %[[C0]], %[[SLOTS]][%c0] : memref<4x!llvm.ptr>
-// CHECK-NEXT:    memref.store %[[C1]], %[[SLOTS]][%c1] : memref<4x!llvm.ptr>
-// CHECK-NEXT:    memref.store %[[C2]], %[[SLOTS]][%c2] : memref<4x!llvm.ptr>
-// CHECK-NEXT:    memref.store %[[C3]], %[[SLOTS]][%c3] : memref<4x!llvm.ptr>
+// CHECK:         %[[SLOTS:.+]] = llvm_ext.alloc %[[TOTAL]] : (i64) -> !llvm.ptr
 
-// Forward: snapshot into slot %k with a copy, no new allocation.
 // CHECK:         scf.for %[[K:.+]] = %c0 to %c4 step %c1
-// CHECK:           %[[FWDSLOT:.+]] = memref.load %[[SLOTS]][%[[K]]] : memref<4x!llvm.ptr>
+// CHECK:           %[[KI:.+]] = arith.index_cast %[[K]] : index to i64
+// CHECK-NEXT:      %[[OFF:.+]] = arith.muli %[[KI]], %[[SZ]] : i64
+// CHECK-NEXT:      %[[FWDSLOT:.+]] = llvm.getelementptr %[[SLOTS]][%[[OFF]]] : (!llvm.ptr, i64) -> !llvm.ptr, i8
 // CHECK-NEXT:      llvm_ext.memcpy %[[FWDSLOT]], %arg0, %[[SZ]]
 
-// The working clone the reverse pass replays into, outside the reverse loop.
 // CHECK:         %[[WORK:.+]] = llvm_ext.alloc %[[SZ]] : (i64) -> !llvm.ptr
 // CHECK-NEXT:    llvm_ext.memcpy %[[WORK]], %arg0, %[[SZ]]
 
-// Reverse: the slot index is the stack-pointer iter arg minus one, never a
-// function of the reverse induction variable.
 // CHECK:         scf.for %{{.+}} = %c0 to %c10 step %c1 iter_args(%[[SP:.+]] = %c4
 // CHECK-NEXT:      %[[CAPO:.+]] = arith.subi %[[SP]], %c1 : index
 // CHECK:           memref.load %{{.+}}[%[[CAPO]]] : memref<4xf32>
 // CHECK:           memref.load %{{.+}}[%[[CAPO]]] : memref<4xindex>
-// CHECK:           %[[REVSLOT:.+]] = memref.load %[[SLOTS]][%[[CAPO]]] : memref<4x!llvm.ptr>
+// CHECK:           %[[CAPOI:.+]] = arith.index_cast %[[CAPO]] : index to i64
+// CHECK-NEXT:      %[[REVOFF:.+]] = arith.muli %[[CAPOI]], %[[SZ]] : i64
+// CHECK-NEXT:      %[[REVSLOT:.+]] = llvm.getelementptr %[[SLOTS]][%[[REVOFF]]] : (!llvm.ptr, i64) -> !llvm.ptr, i8
 // CHECK-NEXT:      llvm_ext.memcpy %[[WORK]], %[[REVSLOT]], %[[SZ]]
 
-// The remat re-places a checkpoint; the pointer snapshot moves with it.
 // CHECK:           scf.while ({{.*}}%[[ACAPO:.+]] = %[[CAPO]]
-// CHECK:             %[[ACSLOT:.+]] = memref.load %[[SLOTS]][%[[ACAPO]]] : memref<4x!llvm.ptr>
+// CHECK:             %[[ACAPOI:.+]] = arith.index_cast %[[ACAPO]] : index to i64
+// CHECK-NEXT:        %[[ACOFF:.+]] = arith.muli %[[ACAPOI]], %[[SZ]] : i64
+// CHECK-NEXT:        %[[ACSLOT:.+]] = llvm.getelementptr %[[SLOTS]][%[[ACOFF]]] : (!llvm.ptr, i64) -> !llvm.ptr, i8
 // CHECK-NEXT:        llvm_ext.memcpy %[[ACSLOT]], %[[WORK]], %[[SZ]]
 
-// Teardown: working clone, then every slot's clone, then the handle buffer.
 // CHECK:         llvm_ext.free %[[WORK]]
-// CHECK-NEXT:    scf.for %[[J:.+]] = %c0 to %c4 step %c1 {
-// CHECK-NEXT:      %[[FREESLOT:.+]] = memref.load %[[SLOTS]][%[[J]]] : memref<4x!llvm.ptr>
-// CHECK-NEXT:      llvm_ext.free %[[FREESLOT]]
-// CHECK-NEXT:    }
-// CHECK-NEXT:    memref.dealloc %[[SLOTS]] : memref<4x!llvm.ptr>
+// CHECK-NEXT:    llvm_ext.free %[[SLOTS]]
 
-// After lower-llvm-ext the host allocator is used throughout, including for the
-// frees of handles loaded back out of the buffer: those handles are typed
-// !llvm.ptr, so the memory space is right there in the type and no tracing back
-// to the allocation is needed to pick the deallocator.
 // LOWER-DAG:   llvm.func @malloc(i64) -> !llvm.ptr
 // LOWER-DAG:   llvm.func @free(!llvm.ptr)
 // LOWER-LABEL: func.func @main(
 // LOWER:         llvm.call @malloc
 // LOWER:         "enzymexla.memcpy"
-// LOWER:         memref.load
 // LOWER:         llvm.call @free
 // LOWER-NOT:     llvm_ext.

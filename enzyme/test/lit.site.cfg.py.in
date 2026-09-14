@@ -127,6 +127,18 @@ if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
 
+# Include and link flags for the MPI Fortran bindings, detected by CMake's
+# FindMPI. The MPI tests (enzyme/test/Fortran/MPI) are gated on
+# `REQUIRES: mpi` and are unsupported when no MPI Fortran bindings are found.
+config.substitutions.append(('%mpi_include', '@ENZYME_MPI_INCLUDE_FLAGS@'))
+config.substitutions.append(('%mpi_libs', '@ENZYME_MPI_LINK_FLAGS@'))
+if "@ENZYME_MPI_FORTRAN_ENABLED@" == "1":
+    config.available_features.add('mpi')
+    # mpirun resolves the user home directory via the HOME environment
+    # variable, which lit does not propagate by default.
+    if 'HOME' in os.environ:
+        config.environment['HOME'] = os.environ['HOME']
+
 # Built by ENZYME_FLANG=ON; lets flang run Enzyme itself instead of piping IR to opt.
 config.substitutions.append(('%loadFlangEnzyme',
                              ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'

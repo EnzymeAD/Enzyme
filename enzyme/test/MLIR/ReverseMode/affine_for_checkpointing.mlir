@@ -17,60 +17,57 @@ module {
   }
 }
 
-// CHECK: #[[MAP:.+]] = affine_map<(d0, d1) -> (d0 + d1)>
-// CHECK: #[[MAP1:.+]] = affine_map<(d0, d1) -> (-d0 + d1 + 6)>
+// CHECK: #[[MAP:.+]] = affine_map<(d0, d1) -> (d0 * 3 + d1)>
+// CHECK: #[[MAP1:.+]] = affine_map<(d0, d1) -> (d0 * -3 + d1 + 6)>
 // CHECK:  func.func @main(%arg0: f32, %arg1: f32) -> f32 {
 // CHECK-NEXT:    %c2 = arith.constant 2 : index
-// CHECK-NEXT:    %c3 = arith.constant 3 : index
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:    %[[v0:.+]] = affine.for %arg2 = 0 to 9 step 3 iter_args(%arg3 = %arg0) -> (f32) {
-// CHECK-NEXT:      %[[idx:.+]] = arith.divui %arg2, %c3 : index
-// CHECK-NEXT:      memref.store %arg3, %alloc[%[[idx]]] : memref<3xf32>
-// CHECK-NEXT:      %[[v3:.+]] = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %arg3) -> (f32) {
-// CHECK-NEXT:        %[[v4:.+]] = affine.apply #[[MAP]](%arg2, %arg4)
-// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %arg5, %arg5 : f32
-// CHECK-NEXT:        %[[v6:.+]] = math.cos %[[v5]] : f32
-// CHECK-NEXT:        %[[v7:.+]] = arith.index_cast %[[v4]] : index to i64
-// CHECK-NEXT:        %[[v8:.+]] = arith.uitofp %[[v7]] : i64 to f32
-// CHECK-NEXT:        %[[v9:.+]] = arith.mulf %[[v6]], %[[v8]] : f32
-// CHECK-NEXT:        affine.yield %[[v9]] : f32
+// CHECK-NEXT:    %0 = affine.for %arg2 = 0 to 3 iter_args(%arg3 = %arg0) -> (f32) {
+// CHECK-NEXT:      memref.store %arg3, %alloc[%arg2] : memref<3xf32>
+// CHECK-NEXT:      %2 = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %arg3) -> (f32) {
+// CHECK-NEXT:        %3 = affine.apply #[[MAP]](%arg2, %arg4)
+// CHECK-NEXT:        %4 = arith.mulf %arg5, %arg5 : f32
+// CHECK-NEXT:        %5 = math.cos %4 : f32
+// CHECK-NEXT:        %6 = arith.index_cast %3 : index to i64
+// CHECK-NEXT:        %7 = arith.uitofp %6 : i64 to f32
+// CHECK-NEXT:        %8 = arith.mulf %5, %7 : f32
+// CHECK-NEXT:        affine.yield %8 : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      affine.yield %[[v3]] : f32
+// CHECK-NEXT:      affine.yield %2 : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[v1:.+]] = affine.for %arg2 = 0 to 9 step 3 iter_args(%arg3 = %arg1) -> (f32) {
-// CHECK-NEXT:      %[[idx2:.+]] = arith.divui %arg2, %c3 : index
-// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c2, %[[idx2]] : index
-// CHECK-NEXT:      %[[v4:.+]] = memref.load %alloc[%[[ridx]]] : memref<3xf32>
+// CHECK-NEXT:    %1 = affine.for %arg2 = 0 to 3 iter_args(%arg3 = %arg1) -> (f32) {
+// CHECK-NEXT:      %2 = arith.subi %c2, %arg2 : index
+// CHECK-NEXT:      %3 = memref.load %alloc[%2] : memref<3xf32>
 // CHECK-NEXT:      %alloc_0 = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:      %[[v5:.+]] = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %[[v4]]) -> (f32) {
+// CHECK-NEXT:      %4 = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %3) -> (f32) {
 // CHECK-NEXT:        memref.store %arg5, %alloc_0[%arg4] : memref<3xf32>
-// CHECK-NEXT:        %[[v7:.+]] = affine.apply #[[MAP1]](%arg2, %arg4)
-// CHECK-NEXT:        %[[v8:.+]] = arith.mulf %arg5, %arg5 : f32
-// CHECK-NEXT:        %[[v9:.+]] = math.cos %[[v8]] : f32
-// CHECK-NEXT:        %[[v10:.+]] = arith.index_cast %[[v7]] : index to i64
-// CHECK-NEXT:        %[[v11:.+]] = arith.uitofp %[[v10]] : i64 to f32
-// CHECK-NEXT:        %[[v12:.+]] = arith.mulf %[[v9]], %[[v11]] : f32
-// CHECK-NEXT:        affine.yield %[[v12]] : f32
+// CHECK-NEXT:        %6 = affine.apply #[[MAP1]](%arg2, %arg4)
+// CHECK-NEXT:        %7 = arith.mulf %arg5, %arg5 : f32
+// CHECK-NEXT:        %8 = math.cos %7 : f32
+// CHECK-NEXT:        %9 = arith.index_cast %6 : index to i64
+// CHECK-NEXT:        %10 = arith.uitofp %9 : i64 to f32
+// CHECK-NEXT:        %11 = arith.mulf %8, %10 : f32
+// CHECK-NEXT:        affine.yield %11 : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      %[[v6:.+]] = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %arg3) -> (f32) {
-// CHECK-NEXT:        %[[r7:.+]] = arith.subi %c2, %arg4 : index
-// CHECK-NEXT:        %[[v8:.+]] = memref.load %alloc_0[%[[r7]]] : memref<3xf32>
-// CHECK-NEXT:        %[[v9:.+]] = affine.apply #[[MAP1]](%arg2, %[[r7]])
-// CHECK-NEXT:        %[[v10:.+]] = arith.mulf %[[v8]], %[[v8]] : f32
-// CHECK-NEXT:        %[[v11:.+]] = arith.index_cast %[[v9]] : index to i64
-// CHECK-NEXT:        %[[v12:.+]] = arith.uitofp %[[v11]] : i64 to f32
-// CHECK-NEXT:        %[[v13:.+]] = arith.mulf %arg5, %[[v12]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v14:.+]] = math.sin %[[v10]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v15:.+]] = arith.negf %[[v14]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v16:.+]] = arith.mulf %[[v13]], %[[v15]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v17:.+]] = arith.mulf %[[v16]], %[[v8]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v18:.+]] = arith.mulf %[[v16]], %[[v8]] fastmath<fast> : f32
-// CHECK-NEXT:        %[[v19:.+]] = arith.addf %[[v17]], %[[v18]] fastmath<fast> : f32
-// CHECK-NEXT:        affine.yield %[[v19]] : f32
+// CHECK-NEXT:      %5 = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %arg3) -> (f32) {
+// CHECK-NEXT:        %6 = arith.subi %c2, %arg4 : index
+// CHECK-NEXT:        %7 = memref.load %alloc_0[%6] : memref<3xf32>
+// CHECK-NEXT:        %8 = affine.apply #[[MAP1]](%arg2, %6)
+// CHECK-NEXT:        %9 = arith.mulf %7, %7 : f32
+// CHECK-NEXT:        %10 = arith.index_cast %8 : index to i64
+// CHECK-NEXT:        %11 = arith.uitofp %10 : i64 to f32
+// CHECK-NEXT:        %12 = arith.mulf %arg5, %11 fastmath<fast> : f32
+// CHECK-NEXT:        %13 = math.sin %9 fastmath<fast> : f32
+// CHECK-NEXT:        %14 = arith.negf %13 fastmath<fast> : f32
+// CHECK-NEXT:        %15 = arith.mulf %12, %14 fastmath<fast> : f32
+// CHECK-NEXT:        %16 = arith.mulf %15, %7 fastmath<fast> : f32
+// CHECK-NEXT:        %17 = arith.mulf %15, %7 fastmath<fast> : f32
+// CHECK-NEXT:        %18 = arith.addf %16, %17 fastmath<fast> : f32
+// CHECK-NEXT:        affine.yield %18 : f32
 // CHECK-NEXT:      }
 // CHECK-NEXT:      memref.dealloc %alloc_0 : memref<3xf32>
-// CHECK-NEXT:      affine.yield %[[v6]] : f32
+// CHECK-NEXT:      affine.yield %5 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<3xf32>
-// CHECK-NEXT:    return %[[v1]] : f32
+// CHECK-NEXT:    return %1 : f32
 // CHECK-NEXT:  }

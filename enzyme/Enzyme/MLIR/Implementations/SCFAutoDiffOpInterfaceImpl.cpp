@@ -207,111 +207,86 @@ struct ForOpInterfaceReverse
   static scf::ForOp createConstantScaffoldLoop(OpBuilder &builder, Location loc,
                                                int64_t lb, int64_t ub,
                                                int64_t step, ValueRange inits) {
-    // Creation order (step, then ub, then lb) matches the original
-    // outerFwd construction exactly: canonicalize's constant placement is
-    // sensitive to it (constants aren't freely reordered), so this order
-    // must be preserved for scf.for's output to stay byte-identical.
+    // Creation order (step, then ub, then lb): canonicalize's constant
+    // placement is sensitive to it, since constants aren't freely reordered,
+    // so keeping one order here is what keeps the two scaffolds' constants
+    // laid out the same way.
     Value stepV = arith::ConstantIndexOp::create(builder, loc, step);
     Value ubV = arith::ConstantIndexOp::create(builder, loc, ub);
     Value lbV = arith::ConstantIndexOp::create(builder, loc, lb);
     return scf::ForOp::create(builder, loc, lbV, ubV, stepV, inits);
   }
 
-  // The forward outer loop steps *by* nInner, so its induction variable is the
-  // segment's base iteration directly. With a dynamic trip count the bound is
-  // the trip count rounded up to a whole number of segments.
+  // Both outer loops count segments: one iteration per checkpoint, so the trip
+  // count is the stated period. It stays a compile-time constant even when the
+  // trip count of the loop being differentiated is not -- that is what reading
+  // the period as a segment count buys -- which is what lets the checkpoint
+  // storage these loops push one entry to per iteration be sized statically.
   static scf::ForOp createForwardOuterLoop(OpBuilder &builder, Location loc,
                                            const PeriodicSchedule &sched,
                                            ValueRange inits) {
-    if (!sched.isDynamic())
-      return createConstantScaffoldLoop(builder, loc, 0,
-                                        sched.nInner * sched.numSegments(),
-                                        sched.nInner, inits);
-
-    Value stepV = arith::ConstantIndexOp::create(builder, loc, sched.nInner);
-    Value ubV = arith::MulIOp::create(builder, loc, sched.nOuterV, stepV);
-    Value lbV = arith::ConstantIndexOp::create(builder, loc, 0);
-    return scf::ForOp::create(builder, loc, lbV, ubV, stepV, inits);
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
   }
 
-  // Unchanged shape: a plain sequential reverse-iteration counter.
   static scf::ForOp createReverseOuterLoop(OpBuilder &builder, Location loc,
                                            const PeriodicSchedule &sched,
                                            ValueRange inits) {
-    if (!sched.isDynamic())
-      return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
-                                        inits);
-
-    Value stepV = arith::ConstantIndexOp::create(builder, loc, 1);
-    Value lbV = arith::ConstantIndexOp::create(builder, loc, 0);
-    return scf::ForOp::create(builder, loc, lbV, sched.nOuterV, stepV, inits);
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
   }
 
+  // {segment base, segment length}, for the segment `outerIV` indexes. Both are
+  // emitted once here, at the top of the outer body, and handed back to the
+  // hooks that need them -- which is also what keeps the base from being
+  // computed twice, once for the segment loop's bound and once for the
+  // induction variable derived from it.
   static SmallVector<Value>
   computeForwardSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
                             const PeriodicSchedule &sched) {
-    Value nInnerCst =
-        arith::ConstantIndexOp::create(builder, loc, sched.nInner);
-    // The last segment is short whenever the trip count is not a whole
-    // multiple of the period, which for a dynamic trip count is not something
-    // that can be decided here: clamp unconditionally.
-    if (sched.isDynamic())
-      return {arith::MinUIOp::create(
-          builder, loc, nInnerCst,
-          arith::SubIOp::create(builder, loc, sched.numItersV, outerIV))};
+    Value base = segmentBase(builder, loc, sched, outerIV);
+    return {base, segmentLength(builder, loc, sched, base)};
+  }
 
-    Value nInnerUB = nInnerCst;
-    if (sched.hasTrailing()) {
-      // if this is the last iteration, then the inner loop will only make
-      // trailingIters iterations
-      Value trailingCst =
-          arith::ConstantIndexOp::create(builder, loc, sched.trailingIters);
-      Value lastOuterIter = arith::ConstantIndexOp::create(
-          builder, loc, sched.nInner * sched.nOuter);
-      Value isLastFwdIter = arith::CmpIOp::create(
-          builder, loc, arith::CmpIPredicate::eq, outerIV, lastOuterIter);
-      nInnerUB = arith::SelectOp::create(builder, loc, isLastFwdIter,
-                                         trailingCst, nInnerCst);
-    }
-    return {nInnerUB};
+  // The reverse replays the segments back to front, so its own counter names
+  // segment numSegments() - 1 - i. Same two values as the forward direction,
+  // from there on.
+  //
+  // numSegments() - 1, not nOuter: the two coincide only when there *is* a
+  // trailing segment. Without one (a period that divides the trip count, or a
+  // perfect-square sqrt split) nOuter - i names a segment one past the end, and
+  // the replayed segment's induction variable comes out shifted by a whole
+  // period -- silently, since the value is dead whenever the loop body does not
+  // read its induction variable, which is why no test caught it.
+  static SmallVector<Value>
+  computeReverseSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
+                            const PeriodicSchedule &sched) {
+    Value lastSegment =
+        arith::ConstantIndexOp::create(builder, loc, sched.numSegments() - 1);
+    Value index = arith::SubIOp::create(builder, loc, lastSegment, outerIV);
+    Value base = segmentBase(builder, loc, sched, index);
+    return {base, segmentLength(builder, loc, sched, base)};
+  }
+
+  static scf::ForOp createSegmentLoop(OpBuilder &builder, Location loc,
+                                      ArrayRef<Value> hint, ValueRange inits) {
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+    return scf::ForOp::create(builder, loc, zero, hint[1], one, inits);
   }
 
   static scf::ForOp createForwardSegmentLoop(OpBuilder &builder, Location loc,
                                              Value, ArrayRef<Value> fwdHint,
                                              const PeriodicSchedule &,
                                              ValueRange inits) {
-    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
-    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
-    return scf::ForOp::create(builder, loc, zero, fwdHint[0], one, inits);
+    return createSegmentLoop(builder, loc, fwdHint, inits);
   }
 
   static scf::ForOp createReverseSegmentLoop(OpBuilder &builder, Location loc,
-                                             Value outerIV,
-                                             ArrayRef<Value> revHint,
-                                             const PeriodicSchedule &sched,
+                                             Value, ArrayRef<Value> revHint,
+                                             const PeriodicSchedule &,
                                              ValueRange inits) {
-    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
-    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
-    Value nInnerCst =
-        arith::ConstantIndexOp::create(builder, loc, sched.nInner);
-    Value nInnerUB = nInnerCst;
-    if (sched.isDynamic()) {
-      // Same clamp as the forward direction, against this segment's own base.
-      // `precomputedBound` is the segment index counted from the end.
-      Value base = arith::MulIOp::create(builder, loc, revHint[0], nInnerCst);
-      nInnerUB = arith::MinUIOp::create(
-          builder, loc, nInnerCst,
-          arith::SubIOp::create(builder, loc, sched.numItersV, base));
-    } else if (sched.hasTrailing()) {
-      // this is the first reverse iteration
-      Value trailingCst =
-          arith::ConstantIndexOp::create(builder, loc, sched.trailingIters);
-      Value isFirstRevIter = arith::CmpIOp::create(
-          builder, loc, arith::CmpIPredicate::eq, outerIV, zero);
-      nInnerUB = arith::SelectOp::create(builder, loc, isFirstRevIter,
-                                         trailingCst, nInnerCst);
-    }
-    return scf::ForOp::create(builder, loc, zero, nInnerUB, one, inits);
+    return createSegmentLoop(builder, loc, revHint, inits);
   }
 
   static scf::ForOp createLoopWithSameBounds(OpBuilder &builder, Location loc,
@@ -322,56 +297,13 @@ struct ForOpInterfaceReverse
                               templateLoop.getStep(), inits);
   }
 
-  static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
-                                       scf::ForOp forOp, Value outerIV,
-                                       Value localIV,
-                                       const PeriodicSchedule &sched,
-                                       ArrayRef<Value> /*fwdHint*/) {
-    Value flatIV = arith::AddIOp::create(builder, loc, outerIV, localIV);
-    if (sched.isDynamic()) {
-      flatIV = castToType(builder, loc, flatIV, sched.stepV.getType());
-      return arith::AddIOp::create(
-          builder, loc, sched.startV,
-          arith::MulIOp::create(builder, loc, sched.stepV, flatIV));
-    }
-    Value stepCst =
-        arith::ConstantIndexOp::create(builder, loc, getConstantStep(forOp));
-    return arith::MulIOp::create(builder, loc, flatIV, stepCst);
-  }
-
-  // The index of the segment being replayed, counted from the end.
-  static SmallVector<Value>
-  computeReverseSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
-                            const PeriodicSchedule &sched) {
-    if (sched.isDynamic()) {
-      Value last = arith::SubIOp::create(
-          builder, loc, sched.nOuterV,
-          arith::ConstantIndexOp::create(builder, loc, 1));
-      return {arith::SubIOp::create(builder, loc, last, outerIV)};
-    }
-    // numSegments() - 1, not nOuter: the two coincide only when there *is* a
-    // trailing segment. Without one (a period that divides the trip count, or a
-    // perfect-square sqrt split) nOuter - j names a segment one past the end,
-    // and the replayed segment's induction variable comes out shifted by a
-    // whole period -- silently, since the value is dead whenever the loop body
-    // does not read its induction variable, which is why no test caught it.
-    Value lastSegment =
-        arith::ConstantIndexOp::create(builder, loc, sched.numSegments() - 1);
-    return {arith::SubIOp::create(builder, loc, lastSegment, outerIV)};
-  }
-
-  static Value computeReverseSegmentIV(OpBuilder &builder, Location loc,
-                                       scf::ForOp forOp, Value outerIV,
-                                       Value localIV,
-                                       const PeriodicSchedule &sched,
-                                       ArrayRef<Value> revHint) {
-    Value currentOuterStep = revHint[0];
-    Value nInnerCst =
-        arith::ConstantIndexOp::create(builder, loc, sched.nInner);
-    Value flatIV = arith::AddIOp::create(
-        builder, loc,
-        arith::MulIOp::create(builder, loc, currentOuterStep, nInnerCst),
-        localIV);
+  // start + step * (segment base + localIV): the original loop's own induction
+  // variable at the iteration this replay step stands for. Both directions
+  // count iterations from the same place, so both ask for it the same way.
+  static Value segmentIV(OpBuilder &builder, Location loc, scf::ForOp forOp,
+                         const PeriodicSchedule &sched, ArrayRef<Value> hint,
+                         Value localIV) {
+    Value flatIV = arith::AddIOp::create(builder, loc, hint[0], localIV);
     if (sched.isDynamic()) {
       flatIV = castToType(builder, loc, flatIV, sched.stepV.getType());
       return arith::AddIOp::create(
@@ -385,6 +317,22 @@ struct ForOpInterfaceReverse
     return arith::AddIOp::create(
         builder, loc, arith::MulIOp::create(builder, loc, flatIV, stepCst),
         startCst);
+  }
+
+  static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
+                                       scf::ForOp forOp, Value /*outerIV*/,
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
+                                       ArrayRef<Value> fwdHint) {
+    return segmentIV(builder, loc, forOp, sched, fwdHint, localIV);
+  }
+
+  static Value computeReverseSegmentIV(OpBuilder &builder, Location loc,
+                                       scf::ForOp forOp, Value /*outerIV*/,
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
+                                       ArrayRef<Value> revHint) {
+    return segmentIV(builder, loc, forOp, sched, revHint, localIV);
   }
 
   static void createScaffoldYield(OpBuilder &builder, Location loc,
