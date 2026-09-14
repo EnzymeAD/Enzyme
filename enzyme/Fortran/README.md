@@ -143,9 +143,10 @@ equivalent.
 | Module function | Use a pointer declaration before the module's `contains` to keep registration with the function. The compiler supplies its explicit interface. A registration call in executable code also works. |
 | Internal function | Use call registration only if Flang supplies a direct function reference. Access to variables from the containing program or procedure can prevent registration. See the restriction below. The current pointer mechanism cannot register an internal function. |
 
-### Call-style registration
+### Registration with a subroutine call
 
-The call-style interface follows the same pattern as `enzyme_autodiff`:
+Call `enzyme_function_like` as a subroutine with the target function and the
+symbolic name of the mathematical function:
 
 ```fortran
 use enzyme, only: enzyme_function_like, enzyme_log1p
@@ -248,8 +249,11 @@ call-style registration.
 
 #### Register a module function
 
-Place the declaration before the module's `contains` statement. Unlike a
-`call`, a procedure-pointer declaration is allowed in this part of a module.
+Put the pointer declaration in the declaration section of a module, program,
+function, or subroutine where the module function is accessible.
+Put it before executable statements or `contains`.
+Omit `private` when the declaration is outside a module's declaration section.
+The example below puts the declaration before the module's `contains` statement.
 
 ```fortran
 module function_like_example
@@ -299,29 +303,3 @@ in a module; it keeps the registration marker out of the module's public API.
 The `test` wrapper takes its argument by reference for the `enzyme_autodiff`
 binding, while `double_value` takes its argument by value to match the scalar
 `log1p` rule.
-
-#### Register a module function from a subroutine
-
-The declaration can instead appear in a subroutine's declaration section,
-before executable statements. For example, remove the module-level registration
-from `function_like_example` above and add this subroutine alongside its
-`double_value` and `test` functions:
-
-```fortran
-subroutine differentiate(x, dx)
-  use enzyme, only: enzyme_autodiff
-  implicit none
-  real, intent(in) :: x
-  real, intent(inout) :: dx
-
-  procedure(double_value), pointer :: &
-    fn__enzyme_function_like__log1p => double_value
-
-  call enzyme_autodiff(test, x, dx)
-end subroutine differentiate
-```
-
-The main program can then import `differentiate` and call
-`differentiate(x, dx)` with `x = 2.0` and `dx = 0.0`. The result is again
-`0.3333`. The registration remains a compile-time annotation, not a runtime
-switch local to this subroutine.
