@@ -24,17 +24,17 @@ declare double @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %1 = extractelement <4 x double> %v, i64 1
 ; CHECK-NEXT:   %2 = extractelement <4 x double> %v, i64 2
 ; CHECK-NEXT:   %3 = extractelement <4 x double> %v, i64 3
-; CHECK-NEXT:   %4 = fcmp fast olt double %0, %1
-; CHECK-NEXT:   %5 = select fast i1 %4, double %1, double %0
-; CHECK-NEXT:   %6 = fcmp fast olt double %5, %2
-; CHECK-NEXT:   %7 = select fast i1 %6, double %2, double %5
-; CHECK-NEXT:   %8 = fcmp fast olt double %7, %3
+; CHECK-NEXT:   %4 = fcmp olt double %0, %1
+; CHECK-NEXT:   %5 = select i1 %4, double %1, double %0
+; CHECK-NEXT:   %6 = fcmp olt double %5, %2
+; CHECK-NEXT:   %7 = select i1 %6, double %2, double %5
+; CHECK-NEXT:   %8 = fcmp olt double %7, %3
 ; CHECK-NEXT:   %9 = extractelement <4 x double> %"v'", i64 0
 ; CHECK-NEXT:   %10 = extractelement <4 x double> %"v'", i64 1
-; CHECK-NEXT:   %11 = select fast i1 %4, double %10, double %9
+; CHECK-NEXT:   %11 = select i1 %4, double %10, double %9
 ; CHECK-NEXT:   %12 = extractelement <4 x double> %"v'", i64 2
-; CHECK-NEXT:   %13 = select fast i1 %6, double %12, double %11
+; CHECK-NEXT:   %13 = select i1 %6, double %12, double %11
 ; CHECK-NEXT:   %14 = extractelement <4 x double> %"v'", i64 3
-; CHECK-NEXT:   %15 = select fast i1 %8, double %14, double %13
+; CHECK-NEXT:   %15 = select i1 %8, double %14, double %13
 ; CHECK-NEXT:   ret double %15
 ; CHECK-NEXT: }

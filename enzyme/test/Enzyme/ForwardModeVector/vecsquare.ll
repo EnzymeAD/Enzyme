@@ -31,23 +31,23 @@ entry:
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[SQ:%.*]] = fmul <4 x float> [[X]], [[X]]
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [2 x <4 x float>] %"x'", 0
-; CHECK-NEXT:    [[TMP2:%.*]] = fmul fast <4 x float> [[TMP0]], [[X]]
+; CHECK-NEXT:    [[TMP2:%.*]] = fmul <4 x float> [[TMP0]], [[X]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [2 x <4 x float>] %"x'", 1
-; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast <4 x float> [[TMP6]], [[X]]
+; CHECK-NEXT:    [[TMP8:%.*]] = fmul <4 x float> [[TMP6]], [[X]]
 
-; CHECK-NEXT:    [[TMP4:%.*]] = fadd fast <4 x float> [[TMP2]], [[TMP2]]
+; CHECK-NEXT:    [[TMP4:%.*]] = fadd <4 x float> [[TMP2]], [[TMP2]]
 
-; CHECK-NEXT:    [[TMP10:%.*]] = fadd fast <4 x float> [[TMP8]], [[TMP8]]
+; CHECK-NEXT:    [[TMP10:%.*]] = fadd <4 x float> [[TMP8]], [[TMP8]]
 
 
-; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast <4 x float> [[TMP4]], [[X]]
-; CHECK-NEXT:    [[TMP20:%.*]] = fmul fast <4 x float> [[TMP10]], [[X]]
+; CHECK-NEXT:    [[TMP9:%.*]] = fmul <4 x float> [[TMP4]], [[X]]
+; CHECK-NEXT:    [[TMP20:%.*]] = fmul <4 x float> [[TMP10]], [[X]]
 
-; CHECK-NEXT:    [[TMP15:%.*]] = fmul fast <4 x float> [[TMP0]], [[SQ]]
-; CHECK-NEXT:    [[TMP21:%.*]] = fmul fast <4 x float> [[TMP6]], [[SQ]]
+; CHECK-NEXT:    [[TMP15:%.*]] = fmul <4 x float> [[TMP0]], [[SQ]]
+; CHECK-NEXT:    [[TMP21:%.*]] = fmul <4 x float> [[TMP6]], [[SQ]]
 
-; CHECK-NEXT:    [[TMP16:%.*]] = fadd fast <4 x float> [[TMP9]], [[TMP15]]
-; CHECK-NEXT:    [[TMP22:%.*]] = fadd fast <4 x float> [[TMP20]], [[TMP21]]
+; CHECK-NEXT:    [[TMP16:%.*]] = fadd <4 x float> [[TMP9]], [[TMP15]]
+; CHECK-NEXT:    [[TMP22:%.*]] = fadd <4 x float> [[TMP20]], [[TMP21]]
 
 ; CHECK-NEXT:    %"id'ipsv" = shufflevector <4 x float> [[TMP4]], <4 x float> [[TMP16]], <4 x i32> <i32 0, i32 1, i32 4, i32 5>
 ; CHECK-NEXT:    %"id'ipsv1" = shufflevector <4 x float> [[TMP10]], <4 x float> [[TMP22]], <4 x i32> <i32 0, i32 1, i32 4, i32 5>

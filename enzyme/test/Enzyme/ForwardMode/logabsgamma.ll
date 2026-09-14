@@ -21,8 +21,8 @@ declare { double, i64 } @__enzyme_fwddiff(...)
 
 ; CHECK: define internal { double, i64 } @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @digamma(double %x)
-; CHECK-NEXT:   %1 = fmul fast double %0, %"x'"
+; CHECK-NEXT:   %0 = call double @digamma(double %x)
+; CHECK-NEXT:   %1 = fmul double %0, %"x'"
 ; CHECK-NEXT:   %2 = insertvalue { double, i64 } undef, double %1, 0
 ; CHECK-NEXT:   ret { double, i64 } %2
 ; CHECK-NEXT: }

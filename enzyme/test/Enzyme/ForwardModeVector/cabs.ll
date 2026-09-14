@@ -22,26 +22,26 @@ declare [3 x double] @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal [3 x double] @fwddiffe3tester(double %x, [3 x double] %"x'", double %y, [3 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @cabs(double %x, double %y)
-; CHECK-NEXT:   %1 = fdiv fast double %x, %0
+; CHECK-NEXT:   %0 = call double @cabs(double %x, double %y)
+; CHECK-NEXT:   %1 = fdiv double %x, %0
 ; CHECK-NEXT:   %2 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %3 = fmul fast double %2, %1
+; CHECK-NEXT:   %3 = fmul double %2, %1
 ; CHECK-NEXT:   %4 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %5 = fmul fast double %4, %1
+; CHECK-NEXT:   %5 = fmul double %4, %1
 ; CHECK-NEXT:   %6 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %7 = fmul fast double %6, %1
-; CHECK-NEXT:   %8 = fdiv fast double %y, %0
+; CHECK-NEXT:   %7 = fmul double %6, %1
+; CHECK-NEXT:   %8 = fdiv double %y, %0
 ; CHECK-NEXT:   %9 = extractvalue [3 x double] %"y'", 0
-; CHECK-NEXT:   %10 = fmul fast double %9, %8
+; CHECK-NEXT:   %10 = fmul double %9, %8
 ; CHECK-NEXT:   %11 = extractvalue [3 x double] %"y'", 1
-; CHECK-NEXT:   %12 = fmul fast double %11, %8
+; CHECK-NEXT:   %12 = fmul double %11, %8
 ; CHECK-NEXT:   %13 = extractvalue [3 x double] %"y'", 2
-; CHECK-NEXT:   %14 = fmul fast double %13, %8
-; CHECK-NEXT:   %15 = fadd fast double %3, %10
+; CHECK-NEXT:   %14 = fmul double %13, %8
+; CHECK-NEXT:   %15 = fadd double %3, %10
 ; CHECK-NEXT:   %16 = insertvalue [3 x double] undef, double %15, 0
-; CHECK-NEXT:   %17 = fadd fast double %5, %12
+; CHECK-NEXT:   %17 = fadd double %5, %12
 ; CHECK-NEXT:   %18 = insertvalue [3 x double] %16, double %17, 1
-; CHECK-NEXT:   %19 = fadd fast double %7, %14
+; CHECK-NEXT:   %19 = fadd double %7, %14
 ; CHECK-NEXT:   %20 = insertvalue [3 x double] %18, double %19, 2
 ; CHECK-NEXT:   ret [3 x double] %20
 ; CHECK-NEXT: }

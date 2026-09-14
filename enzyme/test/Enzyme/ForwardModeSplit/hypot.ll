@@ -28,18 +28,18 @@ declare double @__enzyme_fwdsplit(...)
 
 ; CHECK: define internal double @fwddiffetester(
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a1:.+]] = fmul fast double %"x'", %x
-; CHECK-DAG:   %[[a0:.+]] = call fast double @hypot(double %x, double %y)
-; CHECK-DAG:   %[[a2:.+]] = fmul fast double %"y'", %y
-; CHECK-DAG:   %[[a40:.+]] = fdiv fast double %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a41:.+]] = fdiv fast double %[[a2]], %[[a0]]
-; CHECK-DAG:   %[[a3:.+]] = fadd fast double %[[a40]], %[[a41]]
+; CHECK-DAG:   %[[a1:.+]] = fmul double %"x'", %x
+; CHECK-DAG:   %[[a0:.+]] = call double @hypot(double %x, double %y)
+; CHECK-DAG:   %[[a2:.+]] = fmul double %"y'", %y
+; CHECK-DAG:   %[[a40:.+]] = fdiv double %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a41:.+]] = fdiv double %[[a2]], %[[a0]]
+; CHECK-DAG:   %[[a3:.+]] = fadd double %[[a40]], %[[a41]]
 ; CHECK-DAG:   ret double %[[a3]]
 
 ; CHECK: define internal double @fwddiffetester2(
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a1:.+]] = fmul fast double %"x'", %x
-; CHECK-DAG:   %[[a0:.+]] = call fast double @hypot(double %x, double 2.000000e+00)
-; CHECK-DAG:   %[[a2:.+]] = fdiv fast double %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a1:.+]] = fmul double %"x'", %x
+; CHECK-DAG:   %[[a0:.+]] = call double @hypot(double %x, double 2.000000e+00)
+; CHECK-DAG:   %[[a2:.+]] = fdiv double %[[a1]], %[[a0]]
 ; CHECK-DAG:   ret double %[[a2]]
 

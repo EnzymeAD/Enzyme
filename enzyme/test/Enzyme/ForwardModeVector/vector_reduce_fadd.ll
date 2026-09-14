@@ -25,11 +25,11 @@ declare float @llvm.vector.reduce.fadd.v4f32(float, <4 x float>)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue [2 x float] %"start_value'", 0
 ; CHECK-NEXT:   %1 = extractvalue [2 x <4 x float>] %"input'", 0
-; CHECK-NEXT:   %2 = call fast float @llvm.vector.reduce.fadd.v4f32(float %0, <4 x float> %1)
+; CHECK-NEXT:   %2 = call float @llvm.vector.reduce.fadd.v4f32(float %0, <4 x float> %1)
 ; CHECK-NEXT:   %3 = insertvalue [2 x float] undef, float %2, 0
 ; CHECK-NEXT:   %4 = extractvalue [2 x float] %"start_value'", 1
 ; CHECK-NEXT:   %5 = extractvalue [2 x <4 x float>] %"input'", 1
-; CHECK-NEXT:   %6 = call fast float @llvm.vector.reduce.fadd.v4f32(float %4, <4 x float> %5)
+; CHECK-NEXT:   %6 = call float @llvm.vector.reduce.fadd.v4f32(float %4, <4 x float> %5)
 ; CHECK-NEXT:   %7 = insertvalue [2 x float] %3, float %6, 1
 ; CHECK-NEXT:   ret [2 x float] %7
 ; CHECK-NEXT: }

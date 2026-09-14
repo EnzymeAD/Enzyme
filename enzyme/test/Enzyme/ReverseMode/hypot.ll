@@ -28,21 +28,24 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a1:.+]] = fmul fast double %differeturn, %x
-; CHECK-DAG:   %[[a0:.+]] = call fast double @hypot(double %x, double %y)
-; CHECK-DAG:   %[[a2:.+]] = fdiv fast double %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a3:.+]] = fmul fast double %differeturn, %y
-; CHECK-DAG:   %[[a4:.+]] = fdiv fast double %[[a3]], %[[a0]]
-; CHECK-DAG:   %[[a5:.+]] = insertvalue { double, double } undef, double %[[a2]], 0
-; CHECK-DAG:   %[[a6:.+]] = insertvalue { double, double } %[[a5]], double %[[a4]], 1
-; CHECK-NEXT:   ret { double, double } %[[a6]]
+; CHECK-DAG:   %[[a1:.+]] = fmul double %differeturn, %x
+; CHECK-DAG:   %[[a0:.+]] = call double @hypot(double %x, double %y)
+; CHECK-DAG:   %[[a2:.+]] = fdiv double %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a3:.+]] = fadd double 0.000000e+00, %[[a2]]
+; CHECK-DAG:   %[[a4:.+]] = fmul double %differeturn, %y
+; CHECK-DAG:   %[[a5:.+]] = fdiv double %[[a4]], %[[a0]]
+; CHECK-DAG:   %[[a6:.+]] = fadd double 0.000000e+00, %[[a5]]
+; CHECK-DAG:   %[[a7:.+]] = insertvalue { double, double } undef, double %[[a3]], 0
+; CHECK-DAG:   %[[a8:.+]] = insertvalue { double, double } %[[a7]], double %[[a6]], 1
+; CHECK-NEXT:   ret { double, double } %[[a8]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double } @diffetester2(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a1:.+]] = fmul fast double %differeturn, %x
-; CHECK-DAG:   %[[a0:.+]] = call fast double @hypot(double %x, double 2.000000e+00)
-; CHECK-DAG:   %[[a2:.+]] = fdiv fast double %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a3:.+]] = insertvalue { double } undef, double %[[a2]], 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-DAG:   %[[a1:.+]] = fmul double %differeturn, %x
+; CHECK-DAG:   %[[a0:.+]] = call double @hypot(double %x, double 2.000000e+00)
+; CHECK-DAG:   %[[a2:.+]] = fdiv double %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a3:.+]] = fadd double 0.000000e+00, %[[a2]]
+; CHECK-DAG:   %[[a4:.+]] = insertvalue { double } undef, double %[[a3]], 0
+; CHECK-NEXT:   ret { double } %[[a4]]
 ; CHECK-NEXT: }

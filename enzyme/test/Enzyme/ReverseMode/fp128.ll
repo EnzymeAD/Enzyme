@@ -26,6 +26,10 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x0, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = insertvalue { double } undef, double %differeturn, 0
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:   %0 = fpext double %differeturn to fp128
+; CHECK-NEXT:   %1 = fadd fp128 0.000000e+00, %0
+; CHECK-NEXT:   %2 = fptrunc fp128 %1 to double
+; CHECK-NEXT:   %3 = fadd double 0.000000e+00, %2
+; CHECK-NEXT:   %4 = insertvalue { double } undef, double %3, 0
+; CHECK-NEXT:   ret { double } %4
 ; CHECK-NEXT: }
