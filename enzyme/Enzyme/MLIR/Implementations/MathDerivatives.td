@@ -63,7 +63,7 @@ def : MLIRDerivative<"math", "Log2Op", (Op $x),
                   >;
 def : MLIRDerivative<"math", "AtanOp", (Op $x),
                     [
-                      (CheckedMulF (DiffeRet), (DivF (ConstantFP<"1.0","arith","ConstantOp"> $x):$one, (AddF (MulF $x, $x), $one)))
+                      (CheckedMulF (DiffeRet), (DivF (ConstantFP<"1.0","arith","ConstantOp">):$one, (AddF (MulF $x, $x), $one)))
                     ]
                   >;
 def : MLIRDerivative<"math", "AbsFOp", (Op $x),
