@@ -118,11 +118,37 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeReuseConservativeAugmentation(
+    "enzyme-reuse-conservative-augmentation", cl::init(true), cl::Hidden,
+    cl::desc("When no augmented primal exists for exactly the caching "
+             "assumptions of a call site, reuse one generated for the same "
+             "function under stronger assumptions instead of generating "
+             "another"));
 cl::opt<bool> EnzymeAssumeUnknownNoFree(
     "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
     cl::desc("Assume unknown instructions are nofree as needed"));
 
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
+}
+
+/// Whether a derivative generated under the caching assumptions \p have
+/// (calls after the call site may write; these arguments may be overwritten)
+/// is valid at a call site whose own assumptions are \p want: everything
+/// \p want takes to be unsafe, \p have does too. Caching a value that would
+/// not have been overwritten is redundant, not wrong, so an augmentation that
+/// caches at least as much as a call site needs serves it correctly.
+static bool cachesAtLeast(bool have_subsequent_calls_may_write,
+                          const std::vector<bool> &have_overwritten_args,
+                          bool want_subsequent_calls_may_write,
+                          const std::vector<bool> &want_overwritten_args) {
+  if (want_subsequent_calls_may_write && !have_subsequent_calls_may_write)
+    return false;
+  if (have_overwritten_args.size() != want_overwritten_args.size())
+    return false;
+  for (size_t i = 0; i < want_overwritten_args.size(); ++i)
+    if (want_overwritten_args[i] && !have_overwritten_args[i])
+      return false;
+  return true;
 }
 
 struct CacheAnalysis {
@@ -675,7 +701,65 @@ struct CacheAnalysis {
         }
       }
     }
+    if (EnzymeReuseConservativeAugmentation)
+      unifyOverwrittenArgsAcrossCallsites(overwritten_args_map);
     return overwritten_args_map;
+  }
+
+  // The assumptions computed above depend on where each call sits: a call
+  // followed by a write to memory the callee reads gets stronger ones than a
+  // call to the same function that nothing follows. Since they are part of
+  // the derivative cache key, each distinct set costs a separately generated
+  // augmented primal and reverse pass for the callee, and the copies can be
+  // identical. A derivative generated under stronger assumptions is correct
+  // for a call site with weaker ones (it caches a superset of what that site
+  // needs), so give every call site of one callee the strongest assumptions
+  // that some other call site of the same callee already needs. Only existing
+  // sets are adopted, never a union that no call site needs on its own, so no
+  // derivative is generated that would not have been generated anyway. Sets
+  // that are incomparable stay as they are.
+  void unifyOverwrittenArgsAcrossCallsites(
+      std::map<CallInst *, std::pair<bool, const std::vector<bool>>> &map) {
+    using Key = std::pair<bool, std::vector<bool>>;
+    std::map<Function *, std::set<Key>> keysPerCallee;
+    for (auto &kv : map) {
+      Function *callee = getFunctionFromCall(kv.first);
+      if (!callee || kv.second.second.empty())
+        continue;
+      keysPerCallee[callee].insert({kv.second.first, kv.second.second});
+    }
+    std::vector<std::pair<CallInst *, Key>> changes;
+    for (auto &kv : map) {
+      Function *callee = getFunctionFromCall(kv.first);
+      if (!callee || kv.second.second.empty())
+        continue;
+      const Key mine{kv.second.first, kv.second.second};
+      // The strongest set that covers this call site; ties between
+      // incomparable candidates go to the larger one in the set's own order,
+      // so the choice does not depend on instruction addresses.
+      const Key *best = nullptr;
+      for (const Key &cand : keysPerCallee[callee]) {
+        if (!cachesAtLeast(cand.first, cand.second, mine.first, mine.second))
+          continue;
+        if (!best)
+          best = &cand;
+        else if (cachesAtLeast(cand.first, cand.second, best->first,
+                               best->second))
+          best = &cand;
+        else if (!cachesAtLeast(best->first, best->second, cand.first,
+                                cand.second) &&
+                 *best < cand)
+          best = &cand;
+      }
+      if (best && *best != mine)
+        changes.emplace_back(kv.first, *best);
+    }
+    for (auto &ch : changes) {
+      map.erase(ch.first);
+      map.insert(
+          std::pair<CallInst *, std::pair<bool, const std::vector<bool>>>(
+              ch.first, ch.second));
+    }
   }
 };
 
@@ -1996,6 +2080,17 @@ void restoreCache(
   }
 }
 
+AugmentedReturn &
+EnzymeLogic::cacheAugmentation(const AugmentedCacheKey &key,
+                               AugmentedReturn &&aug) {
+  aug.subsequent_calls_may_write = key.subsequent_calls_may_write;
+  aug.overwritten_args = key.overwritten_args;
+  auto found = AugmentedCachedFunctions.find(key);
+  if (found != AugmentedCachedFunctions.end())
+    AugmentedCachedFunctions.erase(found);
+  return AugmentedCachedFunctions.emplace(key, std::move(aug)).first->second;
+}
+
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
@@ -2049,11 +2144,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
       returnMapping[AugmentedStruct::Return] = -1;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
-          ->second;
+      return cacheAugmentation(tup, AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args, shadowReturnUsed));
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2068,6 +2160,55 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
   }
+
+  // The caching assumptions are the only part of the key that depends on
+  // where the call sits in its caller rather than on what is called: the
+  // same callee reached from two call sites, one of which is followed by a
+  // write and one of which is not, gets two keys. An augmentation generated
+  // under the stronger assumptions is correct for the weaker call site (it
+  // caches a superset of what that site needs), so before generating a
+  // second one, look for one that already exists. Entries for this function
+  // are contiguous in the map (it orders on the function first), so the
+  // scan is bounded by the number of derivatives of this one function.
+  if (EnzymeReuseConservativeAugmentation) {
+    AugmentedCacheKey lo = {todiff,
+                            retType,
+                            constant_args,
+                            /*subsequent_calls_may_write*/ false,
+                            std::vector<bool>(_overwritten_args.size(), false),
+                            nowrite_shadows,
+                            returnUsed,
+                            shadowReturnUsed,
+                            oldTypeInfo,
+                            forceAnonymousTape,
+                            AtomicAdd,
+                            omp,
+                            width,
+                            runtimeActivity,
+                            strongZero};
+    for (auto it = AugmentedCachedFunctions.lower_bound(lo);
+         it != AugmentedCachedFunctions.end() && it->first.fn == todiff; ++it) {
+      const AugmentedCacheKey &k = it->first;
+      if (!it->second.isComplete)
+        continue;
+      if (k.retType != retType || k.returnUsed != returnUsed ||
+          k.shadowReturnUsed != shadowReturnUsed ||
+          k.freeMemory != forceAnonymousTape || k.AtomicAdd != AtomicAdd ||
+          k.omp != omp || k.width != width ||
+          k.runtimeActivity != runtimeActivity || k.strongZero != strongZero)
+        continue;
+      if (k.constant_args != tup.constant_args ||
+          k.nowrite_shadows != tup.nowrite_shadows)
+        continue;
+      if (!cachesAtLeast(k.subsequent_calls_may_write, k.overwritten_args,
+                         subsequent_calls_may_write, _overwritten_args))
+        continue;
+      if (k.typeInfo < tup.typeInfo || tup.typeInfo < k.typeInfo)
+        continue;
+      return it->second;
+    }
+  }
+
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   // TODO make default typing (not just constant)
@@ -2171,13 +2312,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       else
         bb.CreateRet(cal);
 
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
+      return cacheAugmentation(tup, AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
                                  aug.returns, aug.overwritten_args_map,
                                  aug.can_modref_map, next_constant_args,
-                                 shadowReturnUsed))
-          ->second;
+                                 shadowReturnUsed));
     }
 
     if (foundcalled->hasStructRetAttr() && !todiff->hasStructRetAttr()) {
@@ -2233,11 +2371,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (foundcalled->getReturnType() == todiff->getReturnType()) {
       std::map<AugmentedStruct, int> returnMapping;
       returnMapping[AugmentedStruct::Return] = -1;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                 {}, constant_args, shadowReturnUsed))
-          ->second;
+      return cacheAugmentation(tup, AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
+                                 {}, constant_args, shadowReturnUsed));
     }
 
     if (auto ST = dyn_cast<StructType>(foundcalled->getReturnType())) {
@@ -2316,11 +2451,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                  {llvm::ValueAsMetadata::get(NewF)}));
           foundcalled = NewF;
         }
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
+        return cacheAugmentation(tup, AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
+                                   {}, constant_args, shadowReturnUsed));
       }
       if (ST->getNumElements() == 2 &&
           ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
@@ -2329,11 +2461,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Return] = 0;
         returnMapping[AugmentedStruct::DifferentialReturn] = 1;
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
+        return cacheAugmentation(tup, AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
+                                   {}, constant_args, shadowReturnUsed));
       }
       if (ST->getNumElements() == 2) {
         std::map<AugmentedStruct, int> returnMapping;
@@ -2393,11 +2522,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                  {llvm::ValueAsMetadata::get(NewF)}));
           foundcalled = NewF;
         }
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
+        return cacheAugmentation(tup, AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
+                                   {}, constant_args, shadowReturnUsed));
       }
     }
 
@@ -2411,11 +2537,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Tape] = -1;
     }
 
-    return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-               AugmentedCachedFunctions, tup,
-               AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
-                               constant_args, shadowReturnUsed))
-        ->second; // dyn_cast<StructType>(st->getElementType(0)));
+    return cacheAugmentation(tup, AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
+                               constant_args, shadowReturnUsed)); // dyn_cast<StructType>(st->getElementType(0)));
   }
 
   std::map<AugmentedStruct, int> returnMapping;
@@ -2456,11 +2579,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       IRBuilder<> b(&*newFunc->getEntryBlock().begin());
       RequestContext context2{nullptr, &b};
       EmitNoDerivativeError(ss.str(), todiff, context2);
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
-          ->second;
+      return cacheAugmentation(tup, AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args, shadowReturnUsed));
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2512,8 +2632,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                   unnecessaryInstructions, gutils, TLI);
 
-  insert_or_assign(AugmentedCachedFunctions, tup,
-                   AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
+  cacheAugmentation(tup, AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    overwritten_args_map, can_modref_map,
                                    constant_args, shadowReturnUsed));
 
@@ -3712,6 +3831,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       preventTypeAnalysisLoops(prevkey.typeInfo, prevkey.todiff);
   auto key = prevkey.replaceTypeInfo(oldTypeInfo);
 
+  // The reverse pass is generated against the tape of the augmented primal,
+  // whose layout follows from the caching assumptions that augmentation was
+  // generated under. A call site that reused an augmentation generated under
+  // stronger assumptions than its own (CreateAugmentedPrimal) has to request
+  // its reverse pass under those same assumptions, and then every call site
+  // sharing the augmentation shares the reverse pass as well.
+  if (augmenteddata && EnzymeReuseConservativeAugmentation &&
+      cachesAtLeast(augmenteddata->subsequent_calls_may_write,
+                    augmenteddata->overwritten_args,
+                    key.subsequent_calls_may_write, key.overwritten_args)) {
+    key.subsequent_calls_may_write = augmenteddata->subsequent_calls_may_write;
+    key.overwritten_args = augmenteddata->overwritten_args;
+  }
+
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());
 
@@ -4701,11 +4834,24 @@ Function *EnzymeLogic::CreateForwardDiff(
       mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
 
+  // As in CreatePrimalAndGradient: a split forward pass reads the tape of its
+  // augmentation, so request it under the assumptions that augmentation was
+  // generated under.
+  bool key_subsequent_calls_may_write = subsequent_calls_may_write;
+  std::vector<bool> key_overwritten_args = _overwritten_args;
+  if (augmenteddata && EnzymeReuseConservativeAugmentation &&
+      cachesAtLeast(augmenteddata->subsequent_calls_may_write,
+                    augmenteddata->overwritten_args,
+                    subsequent_calls_may_write, _overwritten_args)) {
+    key_subsequent_calls_may_write = augmenteddata->subsequent_calls_may_write;
+    key_overwritten_args = augmenteddata->overwritten_args;
+  }
+
   ForwardCacheKey tup = {todiff,
                          retType,
                          constant_args,
-                         subsequent_calls_may_write,
-                         _overwritten_args,
+                         key_subsequent_calls_may_write,
+                         key_overwritten_args,
                          returnUsed,
                          mode,
                          width,
@@ -4980,7 +5126,7 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
   if (mode == DerivativeMode::ForwardModeSplit) {
-    std::vector<bool> _overwritten_argsPP = _overwritten_args;
+    std::vector<bool> _overwritten_argsPP = key_overwritten_args;
 
     gutils->computeGuaranteedFrees();
     CacheAnalysis CA(
@@ -4989,7 +5135,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
         *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
-        subsequent_calls_may_write, _overwritten_argsPP, mode, omp);
+        key_subsequent_calls_may_write, _overwritten_argsPP, mode, omp);
     const std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
         overwritten_args_map = CA.compute_overwritten_args_for_callsites();
     gutils->overwritten_args_map_ptr = &overwritten_args_map;
