@@ -319,18 +319,20 @@ static clang::FrontendPluginRegistry::Add<EnzymeAction<EnzymePlugin>>
 #if LLVM_VERSION_MAJOR > 10
 namespace {
 
+bool isGlobalDecl(const Decl *D) {
+  auto VD = dyn_cast<VarDecl>(D);
+  return VD && VD->hasGlobalStorage();
+}
+
 /// Shared check for the registration attributes which apply to both functions
 /// and global variables.
 bool appertainsToFunctionOrGlobal(Sema &S, const ParsedAttr &Attr,
                                   const Decl *D) {
-  if (isa<FunctionDecl>(D))
+  if (isa<FunctionDecl>(D) || isGlobalDecl(D))
     return true;
-  if (auto VD = dyn_cast<VarDecl>(D)) {
-    if (VD->hasGlobalStorage())
-      return true;
-  }
+
   S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
-      << Attr << "functions and globals";
+      << Attr << " applies to functions and globals only";
   return false;
 }
 
@@ -663,6 +665,40 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeSparseAccumulateAttrInfo>
     SparseX("enzyme_sparse_accumulate", "");
+
+struct EnzymeNoTypeAnalysisAttrInfo : public ParsedAttrInfo {
+  EnzymeNoTypeAnalysisAttrInfo() {
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_notypeanalysis"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_notypeanalysis"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_notypeanalysis"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_notypeanalysis"},
+      {ParsedAttr::AS_CXX11, "enzyme::notypeanalysis"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    return appertainsToFunctionOrGlobal(S, Attr, D);
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    // For now enzyme::notypeanalysis corresponds to the internal attribute
+    // enzyme_ta_norecur
+    return handleEnzymeMarkerAttr(S, D, Attr, "enzyme_notypeanalysis",
+                                  /*FnAnnotation*/ "enzyme_ta_norecur",
+                                  /*VarAnnotation*/ "enzyme_ta_norecur");
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo>
+    enzyme_notypeanalysis("enzyme_notypeanalysis", "");
+
 } // namespace
 
 #endif
