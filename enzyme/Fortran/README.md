@@ -141,9 +141,7 @@ equivalent.
 | Function location and interface | When to use each form |
 |---|---|
 | Module function | Use a pointer declaration before the module's `contains` to keep registration with the function. The compiler supplies its explicit interface. A registration call in executable code also works. |
-| External function with an explicit interface | Put the pointer declaration after the interface block in the declaration section. A registration call in executable code also works. |
 | Internal function | Use call registration only if Flang supplies a direct function reference. Access to variables from the containing program or procedure can prevent registration. See the restriction below. The current pointer mechanism cannot register an internal function. |
-| External function with an implicit interface | Use `procedure(real)` for an ordinary pointer to a function with a real result. For scalar math registration, provide the required value arguments and an explicit interface. |
 
 ### Call-style registration
 
@@ -301,99 +299,6 @@ in a module; it keeps the registration marker out of the module's public API.
 The `test` wrapper takes its argument by reference for the `enzyme_autodiff`
 binding, while `double_value` takes its argument by value to match the scalar
 `log1p` rule.
-
-#### Register an external function with an explicit interface
-
-An external function is defined outside any program, module, or other procedure.
-It can be in the same source file as its caller.
-
-Use an explicit interface when the function has a `value` argument, as required
-by the scalar math rules shown here. Put the pointer declaration after the
-interface block, before executable statements. Omit `private` outside a module.
-
-In this example, `double_value` follows `end program main`. Its interface block
-describes its value argument and result.
-
-```fortran
-program main
-  use enzyme, only: enzyme_autodiff
-  implicit none
-
-  interface
-    function double_value(x) result(y)
-      real, value :: x
-      real :: y
-    end function double_value
-  end interface
-
-  procedure(double_value), pointer :: &
-    fn__enzyme_function_like__log1p => double_value
-
-  real :: x, dx
-
-  x = 2.0
-  dx = 0.0
-  call enzyme_autodiff(test, x, dx)
-  write(*,"(f6.4)") dx ! Prints 0.3333
-
-contains
-
-  function test(x) result(y)
-    real, intent(in) :: x
-    real :: y
-
-    y = double_value(x)
-  end function test
-
-end program main
-
-function double_value(x) result(y)
-  implicit none
-  real, value :: x
-  real :: y
-
-  y = 2.0 * x
-end function double_value
-```
-
-Keep the explicit interface consistent with the external function definition.
-The internal `test` wrapper is allowed here because the initialized pointer
-targets the external `double_value`, not `test`.
-
-#### External function with an implicit interface
-
-A simple external function with scalar arguments passed by reference can use
-an implicit interface. Use this form for ordinary Fortran pointer calls when
-the function has no features that require an explicit interface.
-
-```fortran
-program main
-  implicit none
-  real, external :: double_value
-  procedure(real), pointer :: p => double_value
-
-  print *, p(3.0) ! Prints 6
-end program main
-
-real function double_value(x)
-  implicit none
-  real, intent(in) :: x
-
-  double_value = 2 * x
-end function double_value
-```
-
-Here, `procedure(real)` specifies a real result but does not describe the
-arguments. The pointer therefore has an implicit interface. Use
-`procedure(double_value)` only when an explicit interface for `double_value`
-is available.
-
-This example shows an ordinary pointer call. It does not register a math rule.
-Its by-reference argument does not match the scalar `log1p` interface. To register
-this function as `log1p`, give its argument the `value` attribute. Then provide
-the explicit interface and registration declaration from the preceding example.
-Changing the argument to `value` changes the calling convention. Update the
-interfaces at all call sites and recompile the callers.
 
 #### Register a module function from a subroutine
 
