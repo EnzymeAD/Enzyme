@@ -125,6 +125,17 @@ public:
 
   bool isComplete;
 
+  //! The caching assumptions this augmentation was generated under: whether
+  //! calls after the call site may write to memory the function reads, and
+  //! which arguments may be overwritten before the reverse pass runs. They
+  //! are the `subsequent_calls_may_write` and `overwritten_args` of the key
+  //! it is cached under, and decide the tape layout. A call site that assumes
+  //! no more than this may reuse the augmentation, and then has to request its
+  //! reverse pass under these assumptions rather than its own (see
+  //! EnzymeLogic::CreateAugmentedPrimal and CreatePrimalAndGradient).
+  bool subsequent_calls_may_write;
+  std::vector<bool> overwritten_args;
+
   AugmentedReturn(
       llvm::Function *fn, llvm::Type *tapeType,
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
@@ -136,7 +147,8 @@ public:
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
         can_modref_map(can_modref_map), constant_args(constant_args),
-        shadowReturnUsed(shadowReturnUsed), isComplete(false) {}
+        shadowReturnUsed(shadowReturnUsed), isComplete(false),
+        subsequent_calls_may_write(false), overwritten_args() {}
 };
 
 ///  \p todiff is the function to differentiate
@@ -591,6 +603,11 @@ public:
   ///  tape structure
   ///  \p AtomicAdd is whether to perform all adjoint updates to
   ///  memory in an atomic way
+  /// Record \p aug as the augmentation for \p key, noting on it the caching
+  /// assumptions of the key (AugmentedReturn::overwritten_args).
+  AugmentedReturn &cacheAugmentation(const AugmentedCacheKey &key,
+                                     AugmentedReturn &&aug);
+
   const AugmentedReturn &CreateAugmentedPrimal(
       RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
