@@ -1999,7 +1999,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isAllocationCall(CI, TLI)) {
           continue;
         }
-        if (getFuncNameFromCall(CI) == "zeroType") {
+        if (getFuncNameFromCall(CI) == "enzyme_zerotype") {
           auto Obj = getBaseObject(CI->getArgOperand(0));
           // Storing into local memory is fine since it definitionally will not
           // be seen outside the function. Note, even if one stored into x =

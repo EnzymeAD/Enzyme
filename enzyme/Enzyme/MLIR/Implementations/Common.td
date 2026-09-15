@@ -166,6 +166,8 @@ def CmpF : ArithInst<"CmpFOp">;
 def Arith_Select : ArithInst<"SelectOp">;
 def Llvm_Select : LlvmInst<"SelectOp">;
 
+def AndI : ArithInst<"AndIOp">;
+def OrI : ArithInst<"OrIOp">;
 
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
@@ -200,5 +202,8 @@ def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
 def PowF : MathInst<"PowFOp">;
 def LogF : MathInst<"LogOp">;
+def CopySignF : MathInst<"CopySignOp">;
+def IsNanF : MathInst<"IsNaNOp">;
+def FloorF : MathInst<"FloorOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
