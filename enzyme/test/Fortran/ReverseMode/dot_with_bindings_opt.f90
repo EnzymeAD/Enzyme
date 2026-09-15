@@ -70,7 +70,7 @@ contains
     real, dimension(n), intent(in) :: a
     real, dimension(n), intent(in) :: b
     real, intent(in) :: c
-    real, intent(out) :: c
+    real, intent(out) :: d
     d = dot_product(a, b) + c
   end subroutine dot
 
