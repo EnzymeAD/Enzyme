@@ -116,10 +116,10 @@ exit:                                             ; preds = %bb23, %bb
 ; CHECK-NEXT:   %[[i0:.+]] = alloca double*
 ; CHECK-NEXT:   %[[i1:.+]] = alloca double*
 ; CHECK-NEXT:   %[[i2:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; CHECK-NEXT:   %i18_malloccache_unwrap = bitcast i8* %2 to double*
-; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i0]]
+; CHECK-NEXT:   %[[tape:.+]] = bitcast i8* %[[i2]] to double*
+; CHECK-NEXT:   store double* %[[tape]], double** %[[i0]]
 ; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @augmented_outlined.1 to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** %[[i0]])
-; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i1]]
+; CHECK-NEXT:   store double* %[[tape]], double** %[[i1]]
 ; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @diffeoutlined to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** %[[i1]])
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i2]])
 ; CHECK-NEXT:   ret void
