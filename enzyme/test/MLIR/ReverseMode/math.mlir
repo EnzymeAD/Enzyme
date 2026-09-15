@@ -82,3 +82,47 @@ func.func @dfma(%x: f64, %y: f64, %z: f64, %dr: f64) -> (f64, f64, f64) {
 // CHECK-NEXT:    %[[dy:.+]] = arith.mulf %[[dr]], %[[x]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[dx]], %[[dy]], %[[dr]] : f64, f64, f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @copysign(%x: f64, %y: f64) -> f64 {
+  %res = math.copysign %x, %y : f64
+  return %res : f64
+}
+
+func.func @dcopysign(%x: f64, %y: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @copysign(%x, %y, %dr)
+    {
+      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
+      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    } : (f64, f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffecopysign(%[[x:.+]]: f64, %[[y:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[sx:.+]] = math.copysign %[[one]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sy:.+]] = math.copysign %[[one]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[prod:.+]] = arith.mulf %[[sx]], %[[sy]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[prod]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @log1p(%x: f64) -> f64 {
+  %res = math.log1p %x : f64
+  return %res : f64
+}
+
+func.func @dlog1p(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @log1p(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffelog1p(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xp1:.+]] = arith.addf %[[x]], %[[one]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[xp1]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

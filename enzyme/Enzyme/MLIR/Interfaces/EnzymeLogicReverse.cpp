@@ -59,7 +59,8 @@ LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
     OpBuilder augmentBuilder(gutils->getNewFromOriginal(op));
-    ifaceOp.createShadowValues(augmentBuilder, gutils);
+    if (failed(ifaceOp.createShadowValues(augmentBuilder, gutils)))
+      return failure();
     return ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
   }
   op->emitError() << "could not compute the adjoint for this operation " << *op;
@@ -196,13 +197,14 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
     mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented, bool omp,
+    std::vector<bool> overwritten_args, void *augmented, bool omp,
     llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
     bool markReadonly) {
 
   if (fn.getFunctionBody().empty()) {
-    llvm::errs() << fn << "\n";
-    llvm_unreachable("Differentiating empty function");
+    fn.emitError() << "cannot differentiate a function without a body: "
+                   << fn.getNameAttr() << "\n";
+    return nullptr;
   }
 
   MReverseCacheKey tup = {fn,
@@ -216,7 +218,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           static_cast<unsigned>(width),
                           addedType,
                           type_args,
-                          volatile_args,
+                          overwritten_args,
                           omp};
 
   {

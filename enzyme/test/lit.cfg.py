@@ -46,6 +46,17 @@ path = os.path.pathsep.join((config.llvm_libs_dir,
                               config.environment.get('LD_LIBRARY_PATH','')))
 config.environment['LD_LIBRARY_PATH'] = path
 
+# libomp.so is often installed in an arch-specific subdirectory of the LLVM
+# libs dir (e.g. lib/x86_64-unknown-linux-gnu/).  Add any such subdirectory
+# that contains libomp.so to LD_LIBRARY_PATH so that OpenMP executables built
+# during tests can find the runtime library.
+import glob as _glob
+for _omp_so in _glob.glob(os.path.join(config.llvm_libs_dir, '*/libomp.so')):
+    _omp_dir = os.path.dirname(_omp_so)
+    config.environment['LD_LIBRARY_PATH'] = \
+        _omp_dir + os.pathsep + config.environment['LD_LIBRARY_PATH']
+    break
+
 #tools = ['opt', 'lli', 'clang', 'clang++']
 #llvm_config.add_tool_substitutions(tools, config.llvm_tools_dir)
 

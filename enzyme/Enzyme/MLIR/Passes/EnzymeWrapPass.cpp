@@ -10,6 +10,7 @@
 // ops.
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -21,6 +22,9 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -125,10 +129,11 @@ struct DifferentiateWrapperPass
     bool freeMemory = true;
     size_t width = 1;
 
-    std::vector<bool> volatile_args;
+    std::vector<bool> overwritten_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       (void)a;
-      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc;
@@ -136,13 +141,15 @@ struct DifferentiateWrapperPass
       newFunc = Logic.CreateForwardDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
           width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+      if (!newFunc)
+        return signalPassFailure();
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, atomicAdd, width,
-          /*addedType*/ nullptr, type_args, volatile_args,
+          /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
           markReadonly);
     }

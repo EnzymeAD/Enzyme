@@ -71,7 +71,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         if (FI->hasOneUse()) {
           bool allBranch = true;
           for (auto user : FI->users()) {
-            if (!isa<BranchInst>(user)) {
+            if (!isAnyBranch(user)) {
               allBranch = false;
               break;
             }

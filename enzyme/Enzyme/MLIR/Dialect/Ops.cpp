@@ -813,6 +813,11 @@ public:
         continue;
       }
 
+      // An op whose outputs do not line up with its activities (there is no
+      // verifier saying they must) is left for the AD pass to diagnose;
+      // reading on would walk off the ends of the ranges.
+      if (out_idx >= (int64_t)uop.getOutputs().size())
+        return failure();
       mlir::Value res = uop.getOutputs()[out_idx];
 
       switch (val) {
@@ -821,6 +826,8 @@ public:
         // active -> const(if dres == 0)
         // active -> constnoneed(both)
 
+        if (in_idx >= (int64_t)uop.getInputs().size())
+          return failure();
         mlir::Value dres = uop.getInputs()[in_idx];
         in_idx++;
 
@@ -866,6 +873,8 @@ public:
       case Activity::enzyme_activenoneed:
         // activenoneed -> constnoneed
         {
+          if (in_idx >= (int64_t)uop.getInputs().size())
+            return failure();
           mlir::Value dres = uop.getInputs()[in_idx];
           in_idx++;
           auto new_act = iattr;
@@ -926,6 +935,8 @@ public:
       auto val = iattr.getValue();
 
       if (val == Activity::enzyme_active) {
+        if (out_idx >= (int64_t)uop.getOutputs().size())
+          return failure();
         mlir::Value res = uop.getOutputs()[out_idx];
         if (!res.use_empty()) {
           out_ty.push_back(res.getType());

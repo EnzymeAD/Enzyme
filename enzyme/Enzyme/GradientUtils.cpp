@@ -506,7 +506,7 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     One = ConstantVector::getSplat(VTy->getElementCount(), One);
   }
   PN->addIncoming(One, lc.preheader);
-  lbuilder.SetInsertPoint(lc.header->getFirstNonPHI());
+  lbuilder.SetInsertPoint(getFirstNonPHI(lc.header));
   if (auto inst = dyn_cast<Instruction>(val)) {
     if (DT.dominates(PN, inst))
       lbuilder.SetInsertPoint(inst->getNextNode());
@@ -1905,18 +1905,20 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             goto rnextpair;
 
           {
-            auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+            auto bi1 = (isAnyBranch(block->getTerminator())
+                            ? cast<Instruction>(block->getTerminator())
+                            : nullptr);
             if (!bi1) {
               goto endCheck;
             }
 
-            auto cond1 = getOp(bi1->getCondition());
+            auto cond1 = getOp(getBranchCondition(bi1));
             if (cond1 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
-            auto bi2 = cast<BranchInst>(subblock->getTerminator());
-            auto cond2 = getOp(bi2->getCondition());
+            auto bi2 = cast<Instruction>(subblock->getTerminator());
+            auto cond2 = getOp(getBranchCondition(bi2));
             if (cond2 == nullptr) {
               assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
@@ -2204,9 +2206,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                        ConstantInt::get(prevIdx->getType(), 0));
 
         if (blocks[0]->size() == 1 && blocks[1]->size() == 1) {
-          if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-            if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-              if (B1->isUnconditional() && B2->isUnconditional() &&
+          if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                             ? cast<Instruction>(blocks[0]->getTerminator())
+                             : nullptr))
+            if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                               ? cast<Instruction>(blocks[1]->getTerminator())
+                               : nullptr))
+              if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                   B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
                 eraseBlocks(blocks, bret);
                 Value *toret = BuilderM.CreateSelect(
@@ -2280,14 +2286,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   fast:;
     assert(equivalentTerminator);
 
-    if (isa<BranchInst>(equivalentTerminator) ||
+    if (isAnyBranch(equivalentTerminator) ||
         isa<SwitchInst>(equivalentTerminator)) {
       BasicBlock *oldB = BuilderM.GetInsertBlock();
 
       SmallVector<BasicBlock *, 2> predBlocks;
       Value *cond = nullptr;
-      if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
-        cond = branch->getCondition();
+      if (auto branch = (isAnyBranch(equivalentTerminator)
+                             ? cast<Instruction>(equivalentTerminator)
+                             : nullptr)) {
+        cond = getBranchCondition(branch);
         predBlocks.push_back(branch->getSuccessor(0));
         predBlocks.push_back(branch->getSuccessor(1));
       } else {
@@ -2374,11 +2382,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
       // Fast path to not make a split block if no additional instructions
       // were made in the two blocks
-      if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
+      if (isAnyBranch(equivalentTerminator) && blocks[0]->size() == 1 &&
           blocks[1]->size() == 1) {
-        if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
-          if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
-            if (B1->isUnconditional() && B2->isUnconditional() &&
+        if (auto B1 = (isAnyBranch(blocks[0]->getTerminator())
+                           ? cast<Instruction>(blocks[0]->getTerminator())
+                           : nullptr))
+          if (auto B2 = (isAnyBranch(blocks[1]->getTerminator())
+                             ? cast<Instruction>(blocks[1]->getTerminator())
+                             : nullptr))
+            if (isUnconditionalBranch(B1) && isUnconditionalBranch(B2) &&
                 B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
               eraseBlocks(blocks, bret);
               Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
@@ -2401,7 +2413,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
 
       bret->moveAfter(last);
-      if (isa<BranchInst>(equivalentTerminator)) {
+      if (isAnyBranch(equivalentTerminator)) {
         BuilderM.CreateCondBr(cond, blocks[0], blocks[1]);
       } else {
         auto SI = cast<SwitchInst>(equivalentTerminator);
@@ -3709,8 +3721,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       assert(TI);
       if (notForAnalysis.count(B)) {
         NB.CreateUnreachable();
-      } else if (auto BI = dyn_cast<BranchInst>(TI)) {
-        if (BI->isUnconditional()) {
+      } else if (auto BI =
+                     (isAnyBranch(TI) ? cast<Instruction>(TI) : nullptr)) {
+        if (isUnconditionalBranch(BI)) {
           if (notForAnalysis.count(BI->getSuccessor(0)))
             NB.CreateUnreachable();
           else
@@ -3725,9 +3738,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           } else if (notForAnalysis.count(BI->getSuccessor(1))) {
             NB.CreateBr(remap(BI->getSuccessor(0)));
           } else {
-            NB.CreateCondBr(
-                lookupM(getNewFromOriginal(BI->getCondition()), NB, available),
-                remap(BI->getSuccessor(0)), remap(BI->getSuccessor(1)));
+            NB.CreateCondBr(lookupM(getNewFromOriginal(getBranchCondition(BI)),
+                                    NB, available),
+                            remap(BI->getSuccessor(0)),
+                            remap(BI->getSuccessor(1)));
           }
         }
       } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
@@ -4159,8 +4173,8 @@ bool GradientUtils::legalRecompute(const Value *val,
               bool failed = false;
 
               allInstructionsBetween(
-                  const_cast<GradientUtils *>(this)->LI, origStart,
-                  const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
+                  *OrigLI, origStart, const_cast<Instruction *>(orig),
+                  [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
                             &TR, *OrigAA, TLI,
@@ -5717,8 +5731,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               AllocaInst *antialloca = bb.CreateAlloca(
                   allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
                   arg->getName() + "'ipa");
-              if (arg->getAlignment()) {
-                antialloca->setAlignment(Align(arg->getAlignment()));
+              if (arg->getAlign()) {
+                antialloca->setAlignment(*arg->getAlign());
               }
               return antialloca;
             };
@@ -5744,10 +5758,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
                   getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
-              if (arg->getAlignment()) {
+              if (arg->getAlign()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
-                                                   Align(arg->getAlignment())));
+                                                   *arg->getAlign()));
               }
               memset->addParamAttr(0, Attribute::NonNull);
               assert((width > 1 && antialloca->getType() ==
@@ -6042,18 +6056,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(newi->getNextNode());
 
     auto AggTy = arg->getAggregateOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(arg->getType()) + 7) / 8;
     auto AggSize = (DL.getTypeSizeInBits(AggTy) + 7) / 8;
 
@@ -6084,18 +6088,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     auto AggTy = arg->getAggregateOperand()->getType();
     auto InsertedTy = arg->getInsertedValueOperand()->getType();
-    SmallVector<Value *, 4> vec;
-    vec.push_back(ConstantInt::get(Type::getInt64Ty(arg->getContext()), 0));
-    for (auto ind : arg->getIndices()) {
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(arg->getContext()), ind));
-    }
-    auto ud = UndefValue::get(getUnqual(AggTy));
-    auto g2 = GetElementPtrInst::Create(AggTy, ud, vec);
-    APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-    g2->accumulateConstantOffset(DL, ai);
-    delete g2;
-
-    unsigned Off = (unsigned)ai.getLimitedValue();
+    unsigned Off =
+        (unsigned)getAggregateElementOffset(DL, AggTy, arg->getIndices());
     auto ObjSize = (DL.getTypeSizeInBits(InsertedTy) + 7) / 8;
 
     for (int i = 0; i < 2; i++) {
@@ -6597,7 +6591,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
-        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        IRBuilder<> postPhi(getFirstNonPHI(NewV->getParent()));
         Type *shadowTy = getShadowType(phi->getType());
         PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 
@@ -7908,6 +7902,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Value *result =
       lookupValueFromCache(inst->getType(), /*isForwardPass*/ false, BuilderM,
                            found->second, found->first, isi1, available);
+  if (auto *resultInst = dyn_cast<Instruction>(result)) {
+    auto *origInst = isOriginal(inst);
+    if (!origInst)
+      origInst = isOriginal(prelcssaInst);
+    if (origInst) {
+      TypeTree TT = TR.query(origInst);
+      if (TT.isKnown())
+        resultInst->setMetadata("enzyme_type",
+                                TT.toMD(resultInst->getContext()));
+    }
+  }
   if (auto LI2 = dyn_cast<LoadInst>(result))
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
@@ -7973,13 +7978,13 @@ void GradientUtils::branchToCorrespondingTarget(
   if (targetToPreds.size() == 1) {
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << *oldFunc << "\n";
         llvm::errs() << *newFunc << "\n";
         llvm::errs() << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateBr(targetToPreds.begin()->first);
     } else {
       for (auto pair : *replacePHIs) {
@@ -8104,7 +8109,9 @@ void GradientUtils::branchToCorrespondingTarget(
         // Only handle cases where the split was due to a conditional
         // branch. This branch, `bi`, splits off uniqueTargets[0] from
         // the remainder of foundTargets.
-        auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+        auto bi1 = (isAnyBranch(block->getTerminator())
+                        ? cast<Instruction>(block->getTerminator())
+                        : nullptr);
         if (!bi1)
           goto rnextpair;
 
@@ -8177,17 +8184,19 @@ void GradientUtils::branchToCorrespondingTarget(
 
           // This branch, `bi2`, splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
+          auto bi2 = (isAnyBranch(subblock->getTerminator())
+                          ? cast<Instruction>(subblock->getTerminator())
+                          : nullptr);
           if (!bi2)
             goto rnextpair;
 
           // Condition cond1 splits off uniqueTargets[0] from
           // the remainder of foundTargets.
-          auto cond1 = lookupM(bi1->getCondition(), BuilderM);
+          auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
 
           // Condition cond2 splits off the two blocks in
           // (foundTargets-uniqueTargets) from each other.
-          auto cond2 = lookupM(bi2->getCondition(), BuilderM);
+          auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
 
           if (replacePHIs == nullptr) {
             BasicBlock *staging =
@@ -8309,27 +8318,29 @@ void GradientUtils::branchToCorrespondingTarget(
 fast:;
   assert(equivalentTerminator);
 
-  if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
+  if (auto branch = (isAnyBranch(equivalentTerminator)
+                         ? cast<Instruction>(equivalentTerminator)
+                         : nullptr)) {
     BasicBlock *block = equivalentTerminator->getParent();
-    assert(branch->getCondition());
+    assert(getBranchCondition(branch));
 
-    assert(branch->getCondition()->getType() == T);
+    assert(getBranchCondition(branch)->getType() == T);
 
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+            !isAnyBranch(&BuilderM.GetInsertBlock()->back()))) {
         llvm::errs() << "newFunc : " << *newFunc << "\n";
         llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(
-          lookupM(branch->getCondition(), BuilderM),
+          lookupM(getBranchCondition(branch), BuilderM),
           *done[std::make_pair(block, branch->getSuccessor(0))].begin(),
           *done[std::make_pair(block, branch->getSuccessor(1))].begin());
     } else {
       for (auto pair : *replacePHIs) {
-        Value *phi = lookupM(branch->getCondition(), BuilderM);
+        Value *phi = lookupM(getBranchCondition(branch), BuilderM);
         Value *val = nullptr;
         if (pair.first ==
             *done[std::make_pair(block, branch->getSuccessor(0))].begin()) {
@@ -8472,7 +8483,7 @@ nofast:;
   if (replacePHIs == nullptr) {
     if (targetToPreds.size() == 2) {
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
+             !isAnyBranch(&BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(which, /*true*/ targets[1], /*false*/ targets[0]);
     } else {
       assert(targets.size() > 0);
@@ -9382,7 +9393,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
-  SmallPtrSet<Instruction *, 1> storingOps;
+  SetVector<Instruction *> storingOps;
   SmallPtrSet<Instruction *, 1> frees;
   SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
   bool promotable = true;
@@ -9617,8 +9628,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       for (auto S : storingOps)
         if (!stores.count(S)) {
           SmallVector<Instruction *, 2> results;
-          SmallPtrSet<Instruction *, 2> shadowPtrLoadSet(
-              shadowPointerLoads.begin(), shadowPointerLoads.end());
+          SetVector<Instruction *> shadowPtrLoadSet;
+          shadowPtrLoadSet.insert(shadowPointerLoads.begin(),
+                                  shadowPointerLoads.end());
           mayExecuteAfter(results, S, shadowPtrLoadSet, outer);
           if (results.size()) {
             EmitWarning("NotPromotable", *results[0],

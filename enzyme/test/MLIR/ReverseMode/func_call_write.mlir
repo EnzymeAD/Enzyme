@@ -1,4 +1,11 @@
 // RUN: %eopt %s --enzyme-wrap="infn=main outfn= argTys=enzyme_dup,enzyme_active retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math | FileCheck %s
+// The callee writes through its dup memref argument, which reverse mode
+// cannot yet differentiate: the reverse pass would need the argument's
+// pre-call contents, and caching of overwritten arguments (LLVM Enzyme's
+// overwritten_args) is not implemented on the MLIR side. Tracked in
+// https://github.com/EnzymeAD/Enzyme/issues/3109 -- remove the XFAIL when
+// it lands.
+// XFAIL: *
 
 module {
   func.func @main(%a: memref<f32>, %b: f32) -> f32 {

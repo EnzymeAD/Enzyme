@@ -76,7 +76,13 @@ public:
 
   void visitSwitchInst(llvm::SwitchInst &inst);
 
+#if LLVM_VERSION_MAJOR >= 24
+  void visitCondBrInst(llvm::CondBrInst &branch);
+  void visitUncondBrInst(llvm::UncondBrInst &branch);
+  void visitBranch(llvm::Instruction &branch);
+#else
   void visitBranchInst(llvm::BranchInst &branch);
+#endif
 
   void visitReturnInst(llvm::ReturnInst &ret);
 

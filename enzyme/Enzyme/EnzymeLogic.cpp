@@ -890,8 +890,7 @@ void calculateUnusedValuesInFunction(
         if (llvm::isa<llvm::ReturnInst>(inst) && returnValue) {
           return UseReq::Need;
         }
-        if (llvm::isa<llvm::BranchInst>(inst) ||
-            llvm::isa<llvm::SwitchInst>(inst)) {
+        if (isAnyBranch(inst) || llvm::isa<llvm::SwitchInst>(inst)) {
           size_t num = 0;
           for (auto suc : successors(inst->getParent())) {
             if (!oldUnreachable.count(suc)) {
@@ -1447,7 +1446,7 @@ bool legalCombinedForwardReverse(
       return;
     }
 
-    if (isa<BranchInst>(I) || isa<SwitchInst>(I)) {
+    if (isAnyBranch(I) || isa<SwitchInst>(I)) {
       legal = false;
       if (EnzymePrintPerf) {
         if (called)
@@ -1484,7 +1483,7 @@ bool legalCombinedForwardReverse(
       return;
     }
 
-    if (isa<BranchInst>(I)) {
+    if (isAnyBranch(I)) {
       legal = false;
 
       return;
@@ -1844,7 +1843,7 @@ void restoreCache(
         IRBuilder<> BuilderZ(newi->getNextNode());
         if (isa<PHINode>(m.first.first)) {
           BuilderZ.SetInsertPoint(
-              cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+              getFirstNonPHI(cast<Instruction>(newi)->getParent()));
         }
         Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
                                                /*replace*/ false);
@@ -1927,9 +1926,11 @@ void restoreCache(
     if (unreachables.size() == 0 || reachables.size() == 0)
       continue;
 
-    if (auto bi = dyn_cast<BranchInst>(BB.getTerminator())) {
+    if (auto bi = (isAnyBranch(BB.getTerminator())
+                       ? cast<Instruction>(BB.getTerminator())
+                       : nullptr)) {
 
-      Value *condition = gutils->getNewFromOriginal(bi->getCondition());
+      Value *condition = gutils->getNewFromOriginal(getBranchCondition(bi));
 
       Constant *repVal = (bi->getSuccessor(0) == unreachables[0])
                              ? ConstantInt::getFalse(condition->getContext())
@@ -2588,7 +2589,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       continue;
     }
 
-    if (!isa<ReturnInst>(term) && !isa<BranchInst>(term) &&
+    if (!isa<ReturnInst>(term) && !isAnyBranch(term) &&
         !isa<SwitchInst>(term)) {
       llvm::errs() << *oBB.getParent() << "\n";
       llvm::errs() << "unknown terminator instance " << *term << "\n";
@@ -2617,7 +2618,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
             if (isa<PHINode>(newi)) {
               BuilderZ.SetInsertPoint(
-                  cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+                  getFirstNonPHI(cast<Instruction>(newi)->getParent()));
             }
             gutils->cacheForReverse(BuilderZ, newi,
                                     getIndex(&I, CacheType::Self, BuilderZ));
@@ -2913,7 +2914,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   CloneFunctionInto(NewF, nf, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
 
-  IRBuilder<> ib(NewF->getEntryBlock().getFirstNonPHI());
+  IRBuilder<> ib(getFirstNonPHI(&NewF->getEntryBlock()));
 
   AllocaInst *ret = noReturn ? nullptr : ib.CreateAlloca(RetType);
 
@@ -2952,7 +2953,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       j->setName("tape");
       tapeMemory = j;
       // if structs were supported by openmp we could do this, but alas, no
-      // IRBuilder<> B(NewF->getEntryBlock().getFirstNonPHI());
+      // IRBuilder<> B(getFirstNonPHI(&NewF->getEntryBlock()));
       // tapeMemory = B.CreateAlloca(j->getType());
       // B.CreateStore(j, tapeMemory);
     } else {
@@ -2981,7 +2982,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         auto inst = cast<Instruction>(VMap[v]);
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))
-          ib.SetInsertPoint(inst->getParent()->getFirstNonPHI());
+          ib.SetInsertPoint(getFirstNonPHI(inst->getParent()));
         Value *Idxs[] = {ib.getInt32(0), ib.getInt32(i)};
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
@@ -3395,7 +3396,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               7) /
              8;
 
-    auto PNtypeT = gutils->TR.query(orig);
+    const auto &PNtypeT = gutils->TR.query(orig);
     auto PNtype = PNtypeT[{-1}];
 
     // TODO remove explicit type check and only use PNtype
@@ -4519,7 +4520,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
     auto term = oBB.getTerminator();
     assert(term);
-    if (!isa<ReturnInst>(term) && !isa<BranchInst>(term) &&
+    if (!isa<ReturnInst>(term) && !isAnyBranch(term) &&
         !isa<SwitchInst>(term)) {
       llvm::errs() << *oBB.getParent() << "\n";
       llvm::errs() << "unknown terminator instance " << *term << "\n";
@@ -5088,7 +5089,7 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     auto term = oBB.getTerminator();
     assert(term);
-    if (!isa<ReturnInst>(term) && !isa<BranchInst>(term) &&
+    if (!isa<ReturnInst>(term) && !isAnyBranch(term) &&
         !isa<SwitchInst>(term)) {
       llvm::errs() << *oBB.getParent() << "\n";
       llvm::errs() << "unknown terminator instance " << *term << "\n";
@@ -5604,7 +5605,12 @@ public:
 
   void visitReturnInst(llvm::ReturnInst &I) { return; }
 
+#if LLVM_VERSION_MAJOR >= 24
+  void visitCondBrInst(llvm::CondBrInst &I) { return; }
+  void visitUncondBrInst(llvm::UncondBrInst &I) { return; }
+#else
   void visitBranchInst(llvm::BranchInst &I) { return; }
+#endif
   void visitSwitchInst(llvm::SwitchInst &I) { return; }
   void visitUnreachableInst(llvm::UnreachableInst &I) { return; }
   void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
@@ -5936,11 +5942,9 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
     if (isa<ReturnInst>(todo) && ret_type == BATCH_TYPE::VECTOR)
       continue;
 
-    if (auto branch_inst = dyn_cast<BranchInst>(todo)) {
-      if (!branch_inst->isConditional()) {
-        toVectorize.erase(todo);
-        continue;
-      }
+    if (isUnconditionalBranch(todo)) {
+      toVectorize.erase(todo);
+      continue;
     }
 
     if (auto call_inst = dyn_cast<CallInst>(todo)) {
@@ -5994,7 +5998,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
   auto entry = std::next(NewF->begin());
-  IRBuilder<> Builder2(entry->getFirstNonPHI());
+  IRBuilder<> Builder2(getFirstNonPHI(&*entry));
   Builder2.SetCurrentDebugLocation(DebugLoc());
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
     Argument *orig_arg = tobatch->arg_begin() + i;
@@ -6425,7 +6429,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     return F;
 
   // clang-format off
-  StringSet<> NoFreeDemangles = {
+  static const StringSet<> NoFreeDemangles = {
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::~basic_istream()",
       "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::~basic_filebuf()",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>::~basic_ostream()",
@@ -6635,7 +6639,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::io::stdio::_eprint",
   };
 
-  StringSet<> NoFrees = {"mpfr_greater_p",
+  static const StringSet<> NoFrees = {"mpfr_greater_p",
                         "vprintf",
                         "fprintf",
                         "fputc",

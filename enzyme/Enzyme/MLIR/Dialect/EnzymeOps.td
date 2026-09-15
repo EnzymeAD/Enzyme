@@ -561,18 +561,16 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
 
   let results = (outs AnyType:$result);
 
-  let arguments = (ins
-      AtomicRMWKindAttr:$kind,
+  let arguments = (ins AtomicRMWKindAttr:$kind, AtomicOrdering:$ordering,
       AnyType:$value,
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
-      Variadic<Index>:$indices,
-      AffineMapAttr:$map,
+      Variadic<Index>:$indices, AffineMapAttr:$map,
       OptionalAttr<IntValidAlignment<I64Attr>>:$alignment,
       DefaultValuedAttr<Arith_FastMathAttr,
                         "::mlir::arith::FastMathFlags::none">:$fastmath);
 
   let assemblyFormat = [{
-    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]`
+    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` $ordering
     (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
   }];

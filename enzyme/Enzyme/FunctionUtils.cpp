@@ -1408,7 +1408,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       }
     }
     if (auto II = dyn_cast<InvokeInst>(res)) {
-      B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+      B.SetInsertPoint(getFirstNonPHI(II->getNormalDest()));
     } else {
       B.SetInsertPoint(res->getNextNode());
     }
@@ -1424,7 +1424,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       B.CreateStore(B.CreateLoad(AI->getAllocatedType(), AI), AI2);
       Bound->setArgOperand(i, AI2);
       if (auto II = dyn_cast<InvokeInst>(Bound)) {
-        B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+        B.SetInsertPoint(getFirstNonPHI(II->getNormalDest()));
       } else {
         B.SetInsertPoint(Bound->getNextNode());
       }
@@ -1999,7 +1999,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isAllocationCall(CI, TLI)) {
           continue;
         }
-        if (getFuncNameFromCall(CI) == "zeroType") {
+        if (getFuncNameFromCall(CI) == "enzyme_zerotype") {
           auto Obj = getBaseObject(CI->getArgOperand(0));
           // Storing into local memory is fine since it definitionally will not
           // be seen outside the function. Note, even if one stored into x =
@@ -2417,7 +2417,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             if (isa<ConstantPointerNull>(IC->getOperand(1 - i)))
               if (isAllocationCall(IC->getOperand(i), TLI)) {
                 for (auto U : IC->users()) {
-                  if (auto BI = dyn_cast<BranchInst>(U))
+                  if (auto BI =
+                          (isAnyBranch(U) ? cast<Instruction>(U) : nullptr))
                     BranchesToErase.push_back(BI->getParent());
                 }
                 IC->replaceAllUsesWith(
@@ -2613,8 +2614,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
               g.getValueType(), g.getType()->getPointerAddressSpace(), nullptr,
               g.getName() + "_local");
 
-          if (g.getAlignment()) {
-            antialloca->setAlignment(Align(g.getAlignment()));
+          if (g.getAlign()) {
+            antialloca->setAlignment(*g.getAlign());
           }
 
           std::map<Constant *, Value *> remap;
@@ -2673,13 +2674,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           {
 
             auto cal = bb.CreateCall(intr, args);
-            if (g.getAlignment()) {
-              cal->addParamAttr(
-                  0, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
-              cal->addParamAttr(
-                  1, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
+            if (g.getAlign()) {
+              cal->addParamAttr(0, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
+              cal->addParamAttr(1, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
             }
           }
 
@@ -2688,13 +2687,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           for (ReturnInst *RI : Returns) {
             IRBuilder<> IB(RI);
             auto cal = IB.CreateCall(intr, args);
-            if (g.getAlignment()) {
-              cal->addParamAttr(
-                  0, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
-              cal->addParamAttr(
-                  1, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
+            if (g.getAlign()) {
+              cal->addParamAttr(0, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
+              cal->addParamAttr(1, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
             }
           }
         }
@@ -3381,11 +3378,13 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
 void SelectOptimization(Function *F) {
   DominatorTree DT(*F);
   for (auto &BB : *F) {
-    if (auto BI = dyn_cast<BranchInst>(BB.getTerminator())) {
-      if (BI->isConditional()) {
+    if (auto BI = (isAnyBranch(BB.getTerminator())
+                       ? cast<Instruction>(BB.getTerminator())
+                       : nullptr)) {
+      if (isConditionalBranch(BI)) {
         for (auto &I : BB) {
           if (auto SI = dyn_cast<SelectInst>(&I)) {
-            if (SI->getCondition() == BI->getCondition()) {
+            if (SI->getCondition() == getBranchCondition(BI)) {
               for (Value::use_iterator UI = SI->use_begin(), E = SI->use_end();
                    UI != E;) {
                 Use &U = *UI;
@@ -6447,7 +6446,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
 
   if (auto PN = dyn_cast<PHINode>(cur)) {
-    B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
+    B.SetInsertPoint(getFirstNonPHI(PN->getParent()));
     if (SE.isSCEVable(PN->getType())) {
       auto S = SE.getSCEV(PN);
 
@@ -6472,7 +6471,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         for (auto U : cur->users()) {
           push(U);
         }
-        auto point = PN->getParent()->getFirstNonPHI();
+        auto point = getFirstNonPHI(PN->getParent());
         auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
         cur->replaceAllUsesWith(tmp);
         cur->eraseFromParent();
@@ -6949,11 +6948,13 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (!DT.dominates(prev, PN->getParent())) {
           continue;
         }
-        auto br = dyn_cast<BranchInst>(prev->getTerminator());
+        auto br = (isAnyBranch(prev->getTerminator())
+                       ? cast<Instruction>(prev->getTerminator())
+                       : nullptr);
         if (!br) {
           continue;
         }
-        if (!br->isConditional()) {
+        if (!isConditionalBranch(br)) {
           continue;
         }
         if (br->getSuccessor(0) != PN->getParent()) {
@@ -6991,7 +6992,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           (*iter)->moveBefore(br);
         }
         auto sel = pushcse(B.CreateSelect(
-            br->getCondition(), PN->getIncomingValueForBlock(prev),
+            getBranchCondition(br), PN->getIncomingValueForBlock(prev),
             PN->getIncomingValueForBlock(br->getSuccessor(1)),
             "tphisel." + cur->getName()));
 
@@ -8256,88 +8257,86 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
   // llvm::errs() << " post fix inner " << F << "\n";
 
-  SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
+  SmallVector<std::pair<BasicBlock *, Instruction *>, 1> sparseBlocks;
   bool legalToSparse = true;
   for (auto &B : F)
-    if (auto br = dyn_cast<BranchInst>(B.getTerminator()))
-      if (br->isConditional())
-        for (int bidx = 0; bidx < 2; bidx++)
-          if (auto uncond_br =
-                  dyn_cast<BranchInst>(br->getSuccessor(bidx)->getTerminator()))
-            if (!uncond_br->isConditional())
-              if (uncond_br->getSuccessor(0) == br->getSuccessor(1 - bidx)) {
-                auto blk = br->getSuccessor(bidx);
-                int countSparse = 0;
-                for (auto &I : *blk) {
-                  if (auto CI = dyn_cast<CallInst>(&I)) {
-                    if (auto F = CI->getCalledFunction()) {
-                      if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
-                        countSparse++;
-                      }
-                    }
+    if (isConditionalBranch(B.getTerminator())) {
+      auto br = B.getTerminator();
+      for (int bidx = 0; bidx < 2; bidx++) {
+        auto uncond_br = br->getSuccessor(bidx)->getTerminator();
+        if (isUnconditionalBranch(uncond_br))
+          if (uncond_br->getSuccessor(0) == br->getSuccessor(1 - bidx)) {
+            auto blk = br->getSuccessor(bidx);
+            int countSparse = 0;
+            for (auto &I : *blk) {
+              if (auto CI = dyn_cast<CallInst>(&I)) {
+                if (auto F = CI->getCalledFunction()) {
+                  if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
+                    countSparse++;
                   }
                 }
-                if (countSparse == 0)
-                  continue;
-                if (countSparse > 1) {
-                  legalToSparse = false;
-                  EmitFailure(
-                      "NoSparsification", br->getDebugLoc(), br, "F: ", F,
-                      "\nMultiple distinct sparse stores in same block: ",
-                      *blk);
-                  break;
-                }
-
-                for (auto &I : *blk) {
-                  if (auto CI = dyn_cast<CallInst>(&I)) {
-                    if (auto F = CI->getCalledFunction()) {
-                      if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
-                        continue;
-                      }
-                    }
-                    if (isReadOnly(CI))
-                      continue;
-                  }
-                  if (!I.mayWriteToMemory())
-                    continue;
-
-                  legalToSparse = false;
-                  EmitFailure(
-                      "NoSparsification", br->getDebugLoc(), br, "F: ", F,
-                      "\nIllegal writing instruction in sparse block: ", I);
-                  break;
-                }
-
-                if (!legalToSparse) {
-                  break;
-                }
-
-                auto L = LI.getLoopFor(blk);
-                if (!L) {
-                  legalToSparse = false;
-                  EmitFailure("NoSparsification", br->getDebugLoc(), br,
-                              "F: ", F, "\nCould not find loop for: ", *blk);
-                  break;
-                }
-                auto idx = L->getCanonicalInductionVariable();
-                if (!idx) {
-                  legalToSparse = false;
-                  EmitFailure("NoSparsification", br->getDebugLoc(), br,
-                              "F: ", F, "\nL:", *L,
-                              "\nCould not find loop index: ", *L->getHeader());
-                  break;
-                }
-                assert(idx);
-                auto preheader = L->getLoopPreheader();
-                if (!preheader) {
-                  legalToSparse = false;
-                  EmitFailure("NoSparsification", br->getDebugLoc(), br,
-                              "F: ", F, "\nL:", *L,
-                              "\nCould not find loop preheader");
-                  break;
-                }
-                sparseBlocks.emplace_back(blk, br);
               }
+            }
+            if (countSparse == 0)
+              continue;
+            if (countSparse > 1) {
+              legalToSparse = false;
+              EmitFailure(
+                  "NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                  "\nMultiple distinct sparse stores in same block: ", *blk);
+              break;
+            }
+
+            for (auto &I : *blk) {
+              if (auto CI = dyn_cast<CallInst>(&I)) {
+                if (auto F = CI->getCalledFunction()) {
+                  if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
+                    continue;
+                  }
+                }
+                if (isReadOnly(CI))
+                  continue;
+              }
+              if (!I.mayWriteToMemory())
+                continue;
+
+              legalToSparse = false;
+              EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                          "\nIllegal writing instruction in sparse block: ", I);
+              break;
+            }
+
+            if (!legalToSparse) {
+              break;
+            }
+
+            auto L = LI.getLoopFor(blk);
+            if (!L) {
+              legalToSparse = false;
+              EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                          "\nCould not find loop for: ", *blk);
+              break;
+            }
+            auto idx = L->getCanonicalInductionVariable();
+            if (!idx) {
+              legalToSparse = false;
+              EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                          "\nL:", *L,
+                          "\nCould not find loop index: ", *L->getHeader());
+              break;
+            }
+            assert(idx);
+            auto preheader = L->getLoopPreheader();
+            if (!preheader) {
+              legalToSparse = false;
+              EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                          "\nL:", *L, "\nCould not find loop preheader");
+              break;
+            }
+            sparseBlocks.emplace_back(blk, br);
+          }
+      }
+    }
 
   if (!legalToSparse) {
     return;
@@ -8370,7 +8369,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
     // default is condition avoids sparse, negated is condition goes
     // to sparse
-    auto cond = br->getCondition();
+    auto cond = getBranchCondition(br);
     bool negated = br->getSuccessor(0) == blk;
 
     bool legal = true;
@@ -8440,7 +8439,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
       Value *LoopCount = nullptr;
 
-      IRBuilder<> B(L->getHeader()->getFirstNonPHI());
+      IRBuilder<> B(getFirstNonPHI(L->getHeader()));
       {
 #if LLVM_VERSION_MAJOR >= 22
         SCEVExpander Exp(SE, "sparseenzyme");
@@ -8472,7 +8471,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     if (!negated)
       nidx = B.CreateNot(nidx);
 
-    br->setCondition(nidx);
+    setBranchCondition(br, nidx);
     forSparsification[L].second.emplace_back(blk, solutions);
   }
 
@@ -8557,12 +8556,14 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         bool guarded = false;
         if (auto P = B->getSinglePredecessor())
           if (auto S = B->getSingleSuccessor())
-            if (auto BI = dyn_cast<BranchInst>(P->getTerminator()))
-              if (BI->isConditional())
+            if (auto BI = (isAnyBranch(P->getTerminator())
+                               ? cast<Instruction>(P->getTerminator())
+                               : nullptr))
+              if (isConditionalBranch(BI))
                 for (size_t i = 0; i < 2; i++)
                   if (BI->getSuccessor(i) == B &&
                       BI->getSuccessor(1 - i) == S) {
-                    auto val = BI->getCondition();
+                    auto val = getBranchCondition(BI);
                     if (auto xori = dyn_cast<Instruction>(val))
                       if (xori->getOpcode() == Instruction::Xor)
                         val = xori->getOperand(0);

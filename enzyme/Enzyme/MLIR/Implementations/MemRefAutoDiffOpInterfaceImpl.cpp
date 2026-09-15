@@ -16,6 +16,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -64,14 +65,16 @@ struct LoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient =
+          auto loadedGradientOp =
               memref::LoadOp::create(builder, loadOp.getLoc(), memrefGradient,
                                      ArrayRef<Value>(retrievedArguments));
+          loadedGradientOp.setAlignmentAttr(loadOp.getAlignmentAttr());
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                  loadedGradient, gradient);
-          memref::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
-                                  memrefGradient,
-                                  ArrayRef<Value>(retrievedArguments));
+                                                  loadedGradientOp, gradient);
+          auto storeGradientOp = memref::StoreOp::create(
+              builder, loadOp.getLoc(), addedGradient, memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          storeGradientOp.setAlignmentAttr(loadOp.getAlignmentAttr());
         } else {
           setDerivativeFastMath(enzyme::AtomicRMWOp::create(
               builder, loadOp.getLoc(), gradient.getType(),
@@ -105,8 +108,8 @@ struct LoadOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
@@ -114,15 +117,29 @@ struct LoadOpInterfaceReverse
     // so what stands for it is the handle held at the same place in the shadow:
     // the same load, off the shadow memref. Reading it out is the whole of the
     // derivative -- see the adjoint above, which leaves it alone.
-    if (!iface || !iface.isMutable())
-      return;
-    if (gutils->isConstantValue(loadOp) || gutils->isConstantValue(memref))
-      return;
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a load of a type without "
+                "autodiff semantics "
+             << *op;
+    // An immutable load's derivative is the adjoint's to accumulate.
+    if (!iface.isMutable())
+      return success();
+    if (gutils->isConstantValue(loadOp))
+      return success();
+    // Cannot load a non-constant value out of a constant memref: there is no
+    // shadow to read the handle from, so the claimed activity cannot be
+    // honored.
+    if (gutils->isConstantValue(memref))
+      return op->emitError()
+             << "cannot load a non-constant value out of a constant memref "
+             << *op;
     Value memrefShadow = gutils->invertPointerM(memref, builder);
     auto newLoad = cast<memref::LoadOp>(gutils->getNewFromOriginal(op));
     auto shadowLoad = cast<memref::LoadOp>(builder.clone(*newLoad));
     shadowLoad.getMemrefMutable().assign(memrefShadow);
     gutils->setInvertedPointer(loadOp.getResult(), shadowLoad.getResult());
+    return success();
   }
 };
 
@@ -150,20 +167,29 @@ struct StoreOpInterfaceReverse
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient =
+          auto loadedGradientOp =
               memref::LoadOp::create(builder, storeOp.getLoc(), memrefGradient,
                                      ArrayRef<Value>(retrievedArguments));
-          gutils->addToDiffe(val, loadedGradient, builder);
+          loadedGradientOp.setAlignmentAttr(storeOp.getAlignmentAttr());
+          gutils->addToDiffe(val, loadedGradientOp, builder);
         }
 
         auto zero =
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        memref::StoreOp::create(builder, storeOp.getLoc(), zero, memrefGradient,
-                                ArrayRef<Value>(retrievedArguments));
+        auto zeroStoreOp = memref::StoreOp::create(
+            builder, storeOp.getLoc(), zero, memrefGradient,
+            ArrayRef<Value>(retrievedArguments));
+        zeroStoreOp.setAlignmentAttr(storeOp.getAlignmentAttr());
       }
     }
+
+    // A store into memory whose primal contents the caller declared
+    // unneeded (enzyme_dupnoneed) need not happen in the augmented
+    // forward pass either.
+    if (gutils->primalStoreElidable(storeOp.getMemref()))
+      gutils->erase(gutils->getNewFromOriginal(op));
     return success();
   }
 
@@ -189,12 +215,39 @@ struct StoreOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-    // auto storeOp = cast<memref::StoreOp>(op);
-    // Value memref = storeOp.getMemref();
-    // Value shadow = gutils->getShadowValue(memref);
-    // Do nothing yet. In the future support memref<memref<...>>
+  // A store of a mutable value -- a pointer, an inner memref -- has no float
+  // adjoint to accumulate; its derivative story is structural: the shadow
+  // memory must hold the shadow value at the same spot, so shadow loads
+  // traverse shadow structures. A value nothing differentiates is its own
+  // shadow, keeping inactive fields readable through the shadow object.
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<memref::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return op->emitError()
+             << "could not compute the shadow of a store of a type without "
+                "autodiff semantics "
+             << *op;
+    if (gutils->isConstantValue(memref))
+      return success();
+    // Immutable values' shadows live in the reverse sweep's adjoint, which
+    // accumulates and zeroes the slot; only mutable values need the forward
+    // sweep to place their shadow.
+    if (!iface.isMutable())
+      return success();
+    Value memrefShadow = gutils->invertPointerM(memref, builder);
+    Value valShadow =
+        gutils->isConstantValue(val)
+            ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
+            : gutils->invertPointerM(val, builder);
+    auto newOp = cast<memref::StoreOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<memref::StoreOp>(builder.clone(*newOp));
+    shadowOp.getValueMutable().assign(valShadow);
+    shadowOp.getMemrefMutable().assign(memrefShadow);
+    return success();
   }
 };
 
@@ -212,8 +265,8 @@ struct SubViewOpInterfaceReverse
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     auto subviewOp = cast<memref::SubViewOp>(op);
     auto newSubviewOp = cast<memref::SubViewOp>(gutils->getNewFromOriginal(op));
     if (!gutils->isConstantValue(subviewOp.getSource())) {
@@ -224,6 +277,7 @@ struct SubViewOpInterfaceReverse
           newSubviewOp.getMixedStrides());
       gutils->setInvertedPointer(subviewOp, shadow);
     }
+    return success();
   }
 };
 
@@ -266,6 +320,75 @@ public:
   void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {
     memref::DeallocOp::create(builder, value.getLoc(), value);
   };
+
+  bool implementsBatchAllocation(Type self, Value base,
+                                 OpFoldResult size) const {
+    return true;
+  }
+
+  Value deriveSubElement(Type self, OpBuilder &builder, Location loc,
+                         Value base, Value multiel, Value index) const {
+    auto MT = cast<MemRefType>(base.getType());
+
+    SmallVector<Value> dynSizes, offsets;
+
+    offsets.push_back(index);
+
+    SmallVector<int64_t> static_offsets(MT.getRank() + 1, 0);
+    static_offsets[0] = ShapedType::kDynamic;
+
+    SmallVector<int64_t> static_sizes;
+    static_sizes.push_back(1);
+    static_sizes.append(MT.getShape().begin(), MT.getShape().end());
+    SmallVector<int64_t> static_strides(MT.getRank() + 1, 1);
+
+    for (auto [i, sz] : llvm::enumerate(MT.getShape())) {
+      if (sz == ShapedType::kDynamic) {
+        dynSizes.push_back(memref::DimOp::create(builder, loc, base, i));
+      }
+    }
+
+    auto RT = memref::SubViewOp::inferRankReducedResultType(
+        MT.getShape(), cast<MemRefType>(multiel.getType()), static_offsets,
+        static_sizes, static_strides);
+    auto sv = memref::SubViewOp::create(
+        builder, loc, RT, multiel, offsets, dynSizes, /*strides=*/ValueRange(),
+        /*static_offsets=*/builder.getDenseI64ArrayAttr(static_offsets),
+        /*static_sizes=*/builder.getDenseI64ArrayAttr(static_sizes),
+        /*static_strides=*/builder.getDenseI64ArrayAttr(static_strides));
+
+    return sv;
+  }
+
+  Value batchAllocate(Type self, OpBuilder &builder, Location loc, Value base,
+                      OpFoldResult numel) const {
+    auto MT = cast<MemRefType>(self);
+
+    SmallVector<int64_t> shape;
+    SmallVector<Value> dynSizes;
+
+    if (auto attr = dyn_cast<Attribute>(numel)) {
+      shape.push_back(cast<IntegerAttr>(attr).getValue().getSExtValue());
+    } else {
+      shape.push_back(ShapedType::kDynamic);
+      dynSizes.push_back(cast<Value>(numel));
+    }
+
+    for (auto [i, sz] : llvm::enumerate(MT.getShape())) {
+      shape.push_back(sz);
+
+      if (sz == ShapedType::kDynamic) {
+        dynSizes.push_back(memref::DimOp::create(
+            builder, loc, base,
+            arith::ConstantIndexOp::create(builder, loc, i)));
+      }
+    }
+
+    Value alloc = memref::AllocOp::create(
+        builder, loc, MemRefType::get(shape, MT.getElementType()), dynSizes);
+
+    return alloc;
+  }
 };
 
 class MemRefAutoDiffTypeInterface

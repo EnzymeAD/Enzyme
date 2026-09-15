@@ -48,6 +48,73 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/IR/Instructions.h"
+
+// LLVM 24 split BranchInst into CondBrInst and UncondBrInst. These helpers
+// ask the questions Enzyme asks of a branch in one spelling for every
+// supported LLVM; successors need no helper, Instruction::getSuccessor and
+// getNumSuccessors say them generically on both sides of the split.
+static inline bool isAnyBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::CondBrInst, llvm::UncondBrInst>(V);
+#else
+  return llvm::isa<llvm::BranchInst>(V);
+#endif
+}
+
+static inline bool isConditionalBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::CondBrInst>(V);
+#else
+  if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(V))
+    return BI->isConditional();
+  return false;
+#endif
+}
+
+static inline bool isUnconditionalBranch(const llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::isa<llvm::UncondBrInst>(V);
+#else
+  if (auto *BI = llvm::dyn_cast<llvm::BranchInst>(V))
+    return BI->isUnconditional();
+  return false;
+#endif
+}
+
+/// The condition of a branch isConditionalBranch says yes to.
+static inline llvm::Value *getBranchCondition(llvm::Value *V) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::cast<llvm::CondBrInst>(V)->getCondition();
+#else
+  return llvm::cast<llvm::BranchInst>(V)->getCondition();
+#endif
+}
+
+static inline void setBranchCondition(llvm::Value *V, llvm::Value *Cond) {
+#if LLVM_VERSION_MAJOR >= 24
+  llvm::cast<llvm::CondBrInst>(V)->setCondition(Cond);
+#else
+  llvm::cast<llvm::BranchInst>(V)->setCondition(Cond);
+#endif
+}
+
+#if LLVM_VERSION_MAJOR >= 24
+static inline llvm::Instruction *
+createUnconditionalBranch(llvm::BasicBlock *Target,
+                          llvm::InsertPosition InsertBefore) {
+  return llvm::UncondBrInst::Create(Target, InsertBefore);
+}
+#else
+// llvm::InsertPosition arrives later than some supported majors; accept
+// whatever this LLVM's BranchInst::Create does.
+template <typename PosT>
+static inline llvm::Instruction *
+createUnconditionalBranch(llvm::BasicBlock *Target, PosT InsertBefore) {
+  return llvm::BranchInst::Create(Target, InsertBefore);
+}
+#endif
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -159,6 +226,11 @@ extern llvm::StringMap<std::function<llvm::Value *(
     llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
     GradientUtils *)>>
     shadowHandlers;
+
+static inline bool EmitWarningEnabled(const llvm::LLVMContext &Ctx) {
+  return EnzymePrintPerf ||
+         Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme");
+}
 
 template <typename... Args>
 void EmitWarning(llvm::StringRef RemarkName,
@@ -426,17 +498,7 @@ enum class ReturnType {
   Void,
 };
 
-/// Potential differentiable argument classifications
-enum class DIFFE_TYPE {
-  OUT_DIFF = 0, // add differential to an output struct. Only for scalar values
-                // in ReverseMode variants.
-  DUP_ARG = 1,  // duplicate the argument and store differential inside.
-               // For references, pointers, or integers in ReverseMode variants.
-               // For all types in ForwardMode variants.
-  CONSTANT = 2,  // no differential. Usable everywhere.
-  DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward. Same as DUP_ARG otherwise.
-};
+#include "EnzymeCallMarkers.h"
 
 enum class BATCH_TYPE {
   SCALAR = 0,
@@ -1126,7 +1188,7 @@ static inline llvm::Loop *getAncestor(llvm::Loop *R1, llvm::Loop *R2) {
 // into the resutls vector.
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<llvm::Instruction *> &stores,
+                     const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
@@ -1261,6 +1323,39 @@ static inline llvm::PointerType *changePointerAddrSpace(llvm::PointerType *PT,
   return llvm::PointerType::get(PT->getContext(), AddressSpace);
 }
 
+/// The byte offset of the aggregate element addressed by `Idxs` within `T`,
+/// that is, what `gep T, ptr, 0, Idxs...` would compute. The data layout
+/// already records this, so read it off directly rather than materializing a
+/// throwaway GEP and folding it: callers run this once per field of every
+/// aggregate they walk.
+static inline uint64_t
+getAggregateElementOffset(const llvm::DataLayout &DL, llvm::Type *T,
+                          llvm::ArrayRef<unsigned> Idxs) {
+  uint64_t Offset = 0;
+  for (unsigned Idx : Idxs) {
+    llvm::Type *ElTy =
+        llvm::GetElementPtrInst::getTypeAtIndex(T, (uint64_t)Idx);
+    assert(ElTy && "index out of range of aggregate type");
+    if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+      Offset += DL.getStructLayout(ST)->getElementOffset(Idx);
+    } else {
+      // Array and vector elements sit at successive multiples of the element's
+      // alloc size, which is the stride a gep applies to a sequential index.
+      uint64_t Stride = DL.getTypeAllocSize(ElTy);
+      Offset += Idx * Stride;
+    }
+    T = ElTy;
+  }
+  return Offset;
+}
+
+/// The byte offset of element `Idx` of the aggregate type `T`.
+static inline uint64_t getAggregateElementOffset(const llvm::DataLayout &DL,
+                                                 llvm::Type *T, uint64_t Idx) {
+  unsigned Idxs[1] = {(unsigned)Idx};
+  return getAggregateElementOffset(DL, T, Idxs);
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);
@@ -1293,9 +1388,12 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
   }
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
+/// `templateFn` is the MPI entry point this reduction is being built for; the
+/// MPI_Op_create it needs is named to match.
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
+                                   llvm::Type *OpPtr, llvm::Type *OpType,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
@@ -1762,6 +1860,20 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // Later LLVM folds readonly/readnone into the memory(...) attribute. The
+    // argument's bytes must not be written through the argument pointers
+    // (ArgMem) nor through anything else that could alias them (Other);
+    // inaccessible memory cannot alias an argument, so it alone may be
+    // written.
+    {
+      auto ME = F->getMemoryEffects();
+      if (!llvm::isModSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isModSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+#endif
     // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
     //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
     //   return true;
@@ -1774,6 +1886,21 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    // Use the callee's effects only under a matching calling convention,
+    // for the same reason as the attribute path below. As above, both the
+    // argument-memory and aliasable-other locations must be write-free.
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+      auto ME = call->getMemoryEffects();
+      if (!llvm::isModSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isModSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+  }
+#endif
 
   if (auto F = getFunctionFromCall(call)) {
     // Do not use function attrs for if different calling conv, such as a julia
@@ -1878,6 +2005,18 @@ static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+#if LLVM_VERSION_MAJOR >= 16
+    // As in isReadOnly: the argument's bytes must be unread both through the
+    // argument pointers and through anything that could alias them; only
+    // inaccessible memory may be read.
+    {
+      auto ME = F->getMemoryEffects();
+      if (!llvm::isRefSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isRefSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+#endif
   }
   return false;
 }
@@ -1888,6 +2027,18 @@ static inline bool isWriteOnly(const llvm::CallBase *call, ssize_t arg = -1) {
     return true;
   if (arg != -1 && call->onlyWritesMemory(arg))
     return true;
+#if LLVM_VERSION_MAJOR >= 16
+  if (arg != -1) {
+    auto F2 = getFunctionFromCall(call);
+    if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+      auto ME = call->getMemoryEffects();
+      if (!llvm::isRefSet(
+              ME.getModRef(llvm::MemoryEffects::Location::ArgMem)) &&
+          !llvm::isRefSet(ME.getModRef(llvm::MemoryEffects::Location::Other)))
+        return true;
+    }
+  }
+#endif
 #else
   if (call->hasFnAttr(llvm::Attribute::WriteOnly) ||
       call->hasFnAttr(llvm::Attribute::ReadNone))
@@ -2352,10 +2503,22 @@ getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
 #endif
 }
 
+static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
+#if LLVM_VERSION_MAJOR >= 18
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIIt();
+#else
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return B->getFirstNonPHI();
+#endif
+}
+
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 #if LLVM_VERSION_MAJOR >= 20
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return B->getFirstNonPHIOrDbg();
 #endif
 }
@@ -2485,6 +2648,91 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::Value *op0, llvm::Value *op1,
                              bool offsetAllowed = false);
 
+/// MPI routines recognized by Enzyme, keyed by their lowercase,
+/// underscore-free base name and mapped to the canonical C name (without the
+/// profiling "P" prefix).
+static const std::pair<const char *, const char *> KnownMPIFunctions[] = {
+    {"abort", "MPI_Abort"},
+    {"allgather", "MPI_Allgather"},
+    {"allreduce", "MPI_Allreduce"},
+    {"barrier", "MPI_Barrier"},
+    {"bcast", "MPI_Bcast"},
+    {"brecv", "MPI_Brecv"},
+    {"bsend", "MPI_Bsend"},
+    {"comm_accept", "MPI_Comm_accept"},
+    {"comm_call_errhandler", "MPI_Comm_call_errhandler"},
+    {"comm_compare", "MPI_Comm_compare"},
+    {"comm_connect", "MPI_Comm_connect"},
+    {"comm_create", "MPI_Comm_create"},
+    {"comm_create_errhandler", "MPI_Comm_create_errhandler"},
+    {"comm_create_group", "MPI_Comm_create_group"},
+    {"comm_disconnect", "MPI_Comm_disconnect"},
+    {"comm_dup", "MPI_Comm_dup"},
+    {"comm_free", "MPI_Comm_free"},
+    {"comm_get_info", "MPI_Comm_get_info"},
+    {"comm_get_name", "MPI_Comm_get_name"},
+    {"comm_get_parent", "MPI_Comm_get_parent"},
+    {"comm_idup", "MPI_Comm_idup"},
+    {"comm_join", "MPI_Comm_join"},
+    {"comm_rank", "MPI_Comm_rank"},
+    {"comm_remote_size", "MPI_Comm_remote_size"},
+    {"comm_set_info", "MPI_Comm_set_info"},
+    {"comm_set_name", "MPI_Comm_set_name"},
+    {"comm_size", "MPI_Comm_size"},
+    {"comm_spawn", "MPI_Comm_spawn"},
+    {"comm_spawn_multiple", "MPI_Comm_spawn_multiple"},
+    {"comm_split", "MPI_Comm_split"},
+    {"finalize", "MPI_Finalize"},
+    {"gather", "MPI_Gather"},
+    {"get_count", "MPI_Get_count"},
+    {"get_processor_name", "MPI_Get_processor_name"},
+    {"graph_create", "MPI_Graph_create"},
+    {"init", "MPI_Init"},
+    {"intercomm_create", "MPI_Intercomm_create"},
+    {"irecv", "MPI_Irecv"},
+    {"isend", "MPI_Isend"},
+    {"op_create", "MPI_Op_create"},
+    {"probe", "MPI_Probe"},
+    {"recv", "MPI_Recv"},
+    {"reduce", "MPI_Reduce"},
+    {"reduce_scatter_block", "MPI_Reduce_scatter_block"},
+    {"scatter", "MPI_Scatter"},
+    {"send", "MPI_Send"},
+    {"ssend", "MPI_Ssend"},
+    {"test", "MPI_Test"},
+    {"type_size", "MPI_Type_size"},
+    {"wait", "MPI_Wait"},
+    {"waitall", "MPI_Waitall"},
+    {"wtime", "MPI_Wtime"},
+};
+
+/// Canonicalize the name of an MPI routine across calling conventions: both
+/// the C convention ("MPI_Recv", "PMPI_Recv") and common Fortran ABI
+/// manglings ("mpi_recv_", "mpi_recv__", "pmpi_recv_", "MPI_RECV", ...) map
+/// to the canonical C name without profiling prefix (e.g. "MPI_Recv").
+/// Returns an empty StringRef if the name is not a known MPI routine.
+static inline llvm::StringRef canonicalizeMPIName(llvm::StringRef Name) {
+  llvm::StringRef Base = Name;
+  if (!Base.consume_front_insensitive("pmpi_") &&
+      !Base.consume_front_insensitive("mpi_"))
+    return "";
+  while (Base.consume_back("_")) {
+  }
+  if (Base.empty())
+    return "";
+  for (const auto &E : KnownMPIFunctions)
+    if (Base.equals_insensitive(E.first))
+      return E.second;
+  return "";
+}
+
+/// True if `Name` uses a Fortran ABI mangling of an MPI routine (trailing
+/// underscore(s), e.g. "mpi_recv_", "mpi_comm_rank__"). Such calls pass all
+/// arguments by reference and take an extra trailing `ierr` argument.
+static inline bool isFortranMPICall(llvm::StringRef Name) {
+  return endsWith(Name, "_") && !canonicalizeMPIName(Name).empty();
+}
+
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
   if (!startsWith(caller, "ejl")) {
@@ -2507,8 +2755,34 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
     assert(startsWith(callee, "MPI"));
     return ("P" + callee).str();
   }
+  // A caller using a Fortran MPI ABI convention (e.g. "mpi_reduce_") needs
+  // the callee mangled the same way so that the call resolves against the
+  // MPI library's Fortran bindings (e.g. "mpi_bcast_").
+  if (startsWith(callee, "MPI_") && isFortranMPICall(caller)) {
+    bool profiling = caller.substr(0, 5).equals_insensitive("pmpi_");
+    size_t underscores = 0;
+    while (underscores < caller.size() &&
+           caller[caller.size() - 1 - underscores] == '_')
+      underscores++;
+    std::string result = profiling ? "pmpi_" : "mpi_";
+    result += callee.drop_front(strlen("MPI_")).lower();
+    result.append(underscores, '_');
+    return result;
+  }
   return callee.str();
 }
+
+/// Declare `callee` in `M` under whatever naming convention the frontend used
+/// to reach `templateFn`, recording the plain name in enzyme_math so that the
+/// declaration is still recognized afterwards. A helper introduced next to a
+/// call has to follow that call's convention to resolve at link time: Julia,
+/// for one, names its lazily bound ccalls "ejlstr$<function>$<library>" and
+/// loads those libraries RTLD_LOCAL, so a plainly named declaration would not
+/// be reachable via dlsym.
+llvm::FunctionCallee getOrInsertPerCallingConv(llvm::Module &M,
+                                               llvm::Function *templateFn,
+                                               llvm::StringRef callee,
+                                               llvm::FunctionType *FT);
 
 static inline std::string convertSRetTypeToString(llvm::Type *T) {
   return std::to_string((size_t)T);

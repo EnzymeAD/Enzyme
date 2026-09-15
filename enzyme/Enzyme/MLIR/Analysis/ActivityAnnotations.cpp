@@ -189,15 +189,23 @@ void enzyme::traversePointsToSets(const enzyme::AliasClassSet &start,
                                   const enzyme::PointsToSets &pointsToSets,
                                   function_ref<void(DistinctAttr)> visit) {
   using enzyme::AliasClassSet;
+  // The points-to graph is a graph, not a tree: without remembering what has
+  // been visited, a cycle spins this loop forever and converging chains
+  // revisit their shared tails once per path.
+  DenseSet<DistinctAttr> visited;
   AliasClassSet current(start);
   while (!current.isUndefined()) {
     AliasClassSet next;
 
     assert(!current.isUnknown() && "Unhandled traversal of unknown");
     for (DistinctAttr currentClass : current.getElements()) {
+      if (!visited.insert(currentClass).second)
+        continue;
       visit(currentClass);
       (void)next.join(pointsToSets.getPointsTo(currentClass));
     }
+    if (next.isUndefined())
+      break;
     std::swap(current, next);
   }
 }

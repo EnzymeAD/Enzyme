@@ -43,11 +43,19 @@ class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
 
 private:
   bool Begin;
+  // Whether a function named as one half of a custom derivative rule is kept
+  // external and uninlined so the rule can still be resolved later. A pipeline
+  // that does not implement custom rules -- the MLIR one -- has nothing to
+  // resolve them with, and holding the rule's functions in place only keeps
+  // dead code, and the kernels it launches, alive. The globals are consumed
+  // either way.
+  bool PreserveCustomRuleLinkage;
   static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;
-  PreserveNVVMNewPM(bool Begin) : Begin(Begin) {}
+  PreserveNVVMNewPM(bool Begin, bool PreserveCustomRuleLinkage = true)
+      : Begin(Begin), PreserveCustomRuleLinkage(PreserveCustomRuleLinkage) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 

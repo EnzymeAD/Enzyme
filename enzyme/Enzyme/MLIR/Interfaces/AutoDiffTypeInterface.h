@@ -15,6 +15,7 @@
 #define ENZYME_MLIR_INTERFACES_AUTODIFFTYPEINTERFACE_H
 
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"

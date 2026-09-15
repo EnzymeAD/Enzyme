@@ -110,7 +110,7 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     /*desc=*/[{
       Creates or alters shadow values.
     }],
-    /*retTy=*/"void",
+    /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createShadowValues",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
     >,

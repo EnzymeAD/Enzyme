@@ -172,7 +172,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
   }
-  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+  // Canonical MPI name across calling conventions (C "MPI_Recv", "PMPI_Recv"
+  // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
+  // ABIs; the Fortran ABI only appends a trailing `ierr` argument.
+  StringRef canonMPIName = canonicalizeMPIName(F.getName());
+  if (canonMPIName == "MPI_Irecv") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -205,7 +209,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     }
   }
   auto name = getFuncName(&F);
-  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+  if (canonMPIName == "MPI_Isend") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -237,8 +241,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
-      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+  if (canonMPIName == "MPI_Comm_rank" || canonMPIName == "MPI_Comm_size") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -267,7 +270,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+  if (canonMPIName == "MPI_Wait") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -282,7 +285,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+  if (canonMPIName == "MPI_Waitall") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -311,7 +314,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 
       {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
   {
-    auto found = MPI_TYPE_ARGS.find(name.str());
+    auto found = MPI_TYPE_ARGS.find(canonMPIName.str());
     if (found != MPI_TYPE_ARGS.end()) {
       for (auto user : F.users()) {
         if (auto CI = dyn_cast<CallBase>(user))
@@ -2195,6 +2198,16 @@ Function *getOrInsertDifferentialFloatMemmove(
                                             atomic);
 }
 
+FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
+                                         StringRef callee, FunctionType *FT) {
+  auto res = M.getOrInsertFunction(
+      getRenamedPerCallingConv(templateFn->getName(), callee), FT);
+  if (auto F = dyn_cast<Function>(res.getCallee()))
+    if (!F->hasFnAttribute("enzyme_math"))
+      F->addFnAttr("enzyme_math", callee);
+  return res;
+}
+
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
@@ -2249,8 +2262,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  addFunctionNoCapture(F, 0);
-  addFunctionNoCapture(F, 1);
+  // A CUdeviceptr is passed as an integer, which cannot carry nocapture.
+  if (Ty->isPointerTy()) {
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
@@ -2489,9 +2505,10 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   return F;
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, IRBuilder<> &B2) {
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
+                                   llvm::Type *OpPtr, llvm::Type *OpType,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
   auto FlT = CT.isFloat();
@@ -2571,10 +2588,13 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   llvm::Type *rtypes[] = {getInt8PtrTy(M.getContext()), intType, OpPtr};
   FunctionType *RFT = FunctionType::get(intType, rtypes, false);
 
-  Constant *RF = M.getNamedValue("MPI_Op_create");
+  std::string opCreate =
+      getRenamedPerCallingConv(templateFn->getName(), "MPI_Op_create");
+  Constant *RF = M.getNamedValue(opCreate);
   if (!RF) {
-    RF =
-        cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
+    RF = cast<Function>(
+        getOrInsertPerCallingConv(M, templateFn, "MPI_Op_create", RFT)
+            .getCallee());
   } else {
     RF = ConstantExpr::getBitCast(RF, getUnqual(RFT));
   }
@@ -2626,7 +2646,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<Instruction *> &stores,
+                     const llvm::SetVector<Instruction *> &stores,
                      const llvm::Loop *region) {
   using namespace llvm;
   std::map<BasicBlock *, SmallVector<Instruction *, 1>> maybeBlocks;
@@ -3550,22 +3570,8 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
       auto offset = preOffset;
 
       auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(EVI->getContext()), 0));
-      for (auto ind : EVI->getIndices()) {
-        vec.push_back(
-            ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
-      }
-      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
-      auto g2 =
-          GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      offset += (size_t)ai.getLimitedValue();
+      offset += (size_t)getAggregateElementOffset(
+          DL, EVI->getOperand(0)->getType(), EVI->getIndices());
 
       if (valSz == 0) {
         auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
@@ -3671,66 +3677,97 @@ Function *getFirstFunctionDefinition(Module &M) {
   return nullptr;
 }
 
+/// Decompose `in` as `prefix + floatType + stem + suffix` using the supplied
+/// tables, setting the out-parameters to the entries that matched.
+///
+/// No name the tables in `extractBLAS` can spell decomposes in more than one
+/// way, so peeling the fixed parts off either end of `in` and looking up what
+/// remains is equivalent to comparing `in` against every name the tables can
+/// generate -- but it allocates nothing. That matters: `extractBLAS` runs for
+/// every call instruction visited by type analysis and by
+/// `is_use_directly_needed_in_reverse`, and materialising the ~1200 candidate
+/// `std::string`s per query dominated compile time on call-heavy modules that
+/// contain no BLAS at all.
+static bool matchBLASName(StringRef in, ArrayRef<const char *> prefixes,
+                          ArrayRef<const char *> floatTypes,
+                          ArrayRef<const char *> stems,
+                          ArrayRef<const char *> suffixes,
+                          const char *&prefixOut, const char *&floatTypeOut,
+                          const char *&stemOut, const char *&suffixOut) {
+  for (const char *p : prefixes) {
+    StringRef afterPrefix = in;
+    if (!afterPrefix.consume_front(p))
+      continue;
+    for (const char *t : floatTypes) {
+      StringRef afterType = afterPrefix;
+      if (!afterType.consume_front(t))
+        continue;
+      for (const char *s : suffixes) {
+        StringRef stem = afterType;
+        if (!stem.consume_back(s))
+          continue;
+        for (const char *f : stems) {
+          if (stem != f)
+            continue;
+          prefixOut = p;
+          floatTypeOut = t;
+          stemOut = f;
+          suffixOut = s;
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {
+  static const char *extractable[] = {
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
   };
-  const char *floatType[] = {"s", "d", "c", "z"};
-  const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
-  const char *suffixes[] = {"", "_", "64_", "_64_"};
-  for (auto t : floatType) {
-    for (auto f : extractable) {
-      for (auto p : prefixes) {
-        for (auto s : suffixes) {
-          if (in == (Twine(p) + t + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t, p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *floatType[] = {"s", "d", "c", "z"};
+  static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
+  static const char *suffixes[] = {"", "_", "64_", "_64_"};
+
+  const char *p = nullptr, *t = nullptr, *f = nullptr, *s = nullptr;
+  if (matchBLASName(in, prefixes, floatType, extractable, suffixes, p, t, f,
+                    s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
-  const char *cuFFloatType[] = {"s", "d", "c", "z"};
-  const char *cuCPrefixes[] = {"cublas"};
-  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
-  for (auto t : llvm::enumerate(cuCFloatType)) {
-    for (auto f : extractable) {
-      for (auto p : cuCPrefixes) {
-        for (auto s : cuSuffixes) {
-          if (in == (Twine(p) + t.value() + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t.value(), p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  static const char *cuCPrefixes[] = {"cublas"};
+  static const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
+  if (matchBLASName(in, cuCPrefixes, cuCFloatType, extractable, cuSuffixes, p,
+                    t, f, s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // Fortran interface to cublas
-  const char *cuFPrefixes[] = {"cublas_"};
-  for (auto t : cuFFloatType) {
-    for (auto f : extractable) {
-      for (auto p : cuFPrefixes) {
-        if (in == (Twine(p) + t + f).str()) {
-          return BlasInfo{
-              t, p, "", f, false,
-          };
-        }
-      }
-    }
+  static const char *cuFFloatType[] = {"s", "d", "c", "z"};
+  static const char *cuFPrefixes[] = {"cublas_"};
+  static const char *cuFSuffixes[] = {""};
+  if (matchBLASName(in, cuFPrefixes, cuFFloatType, extractable, cuFSuffixes, p,
+                    t, f, s)) {
+    return BlasInfo{
+        t, p, "", f, false,
+    };
   }
+
   return {};
 }
 

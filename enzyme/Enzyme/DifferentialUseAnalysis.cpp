@@ -324,7 +324,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (!shadow)
-    if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
+    if (isa<CmpInst>(user) || isAnyBranch(user) || isa<ReturnInst>(user) ||
         isa<FPExtInst>(user) || isa<FPTruncInst>(user)
         // isa<ExtractElement>(use) ||
         // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
@@ -1142,7 +1142,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           if (!gutils->TR.anyPointer(a))
             continue;
 
-          auto vd = gutils->TR.query(a);
+          const auto &vd = gutils->TR.query(a);
 
           if (!vd[{-1, -1}].isPossiblePointer())
             continue;

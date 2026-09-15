@@ -51,6 +51,11 @@ class ReturnOp<string dialect_, string opName_> {
   string opName = opName_;
 }
 
+class CallOp<string dialect_, string opName_> {
+  string dialect = dialect_;
+  string opName = opName_;
+}
+
 class BranchOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;
@@ -161,6 +166,8 @@ def CmpF : ArithInst<"CmpFOp">;
 def Arith_Select : ArithInst<"SelectOp">;
 def Llvm_Select : LlvmInst<"SelectOp">;
 
+def AndI : ArithInst<"AndIOp">;
+def OrI : ArithInst<"OrIOp">;
 
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
@@ -190,7 +197,13 @@ def ComplexIm : ComplexInst<"ImOp">;
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
+def Exp2F : MathInst<"Exp2Op">;
 def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
+def PowF : MathInst<"PowFOp">;
+def LogF : MathInst<"LogOp">;
+def CopySignF : MathInst<"CopySignOp">;
+def IsNanF : MathInst<"IsNaNOp">;
+def FloorF : MathInst<"FloorOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

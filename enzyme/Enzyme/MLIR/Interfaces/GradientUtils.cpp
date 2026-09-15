@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/CloneFunction.h"
+#include "Interfaces/Utils.h"
 
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
@@ -23,6 +24,10 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
+
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -342,4 +347,22 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
   }
   return op->emitError() << "could not compute the adjoint for this operation "
                          << *op;
+}
+
+Value MGradientUtils::getBaseObject(Value v) {
+  return mlir::enzyme::oputils::getBaseObject(v);
+}
+
+DIFFE_TYPE MGradientUtils::getDiffeTypeOfBase(Value ptr) {
+  Value base = getBaseObject(ptr);
+  auto blockArg = dyn_cast<BlockArgument>(base);
+  if (!blockArg)
+    return DIFFE_TYPE::DUP_ARG;
+  Block *owner = blockArg.getOwner();
+  if (owner != &oldFunc.getFunctionBody().front())
+    return DIFFE_TYPE::DUP_ARG;
+  unsigned idx = blockArg.getArgNumber();
+  if (idx >= ArgDiffeTypes.size())
+    return DIFFE_TYPE::DUP_ARG;
+  return ArgDiffeTypes[idx];
 }

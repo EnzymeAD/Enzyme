@@ -48,3 +48,16 @@ jobs:
       run: |
         . enzyme_venv/bin/activate
         fortitude check
+
+    shell-lint:
+    name: Linting for shell scripts
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Shellcheck
+      run: |
+        sudo apt update
+        sudo apt install shellcheck
+    - name: Run Shellcheck
+      run: shellcheck -x $(find enzyme -name '*.sh')

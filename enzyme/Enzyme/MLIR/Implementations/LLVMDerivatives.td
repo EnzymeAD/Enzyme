@@ -12,6 +12,9 @@ def : InactiveOp<"LLVM", "StackRestoreOp">;
 def : InactiveOp<"LLVM", "NoAliasScopeDeclOp">;
 def : InactiveOp<"LLVM", "LifetimeStartOp">;
 def : InactiveOp<"LLVM", "LifetimeEndOp">;
+def : InactiveOp<"LLVM", "DbgValueOp">;
+def : InactiveOp<"LLVM", "DbgDeclareOp">;
+def : InactiveOp<"LLVM", "DbgLabelOp">;
 def : InactiveOp<"LLVM", "Prefetch">;
 def : InactiveOp<"LLVM", "MemsetOp">;
 
@@ -21,6 +24,8 @@ def : InactiveOp<"LLVM", "UnreachableOp">;
 
 
 def : ReadOnlyIdentityOp<"LLVM", "LoadOp", [0]>;
+def : MemoryIdentityOp<"LLVM", "ExtractValueOp", [0], [0]>;
+def : MemoryIdentityOp<"LLVM", "InsertValueOp", [0, 1], [0, 1]>;
 def : ReadOnlyIdentityOp<"LLVM", "AddrSpaceCastOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "BitcastOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "GEPOp", [0]>;
@@ -43,3 +48,4 @@ def : MLIRDerivative<"LLVM", "SelectOp", (Op $pred, $x, $y),
                     ]
                   >;
 
+def : CallOp<"LLVM", "CallOp">;

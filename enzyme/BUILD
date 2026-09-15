@@ -167,7 +167,6 @@ cc_library(
 cc_library(
     name = "EnzymeTypeAnalysis",
     srcs = [
-        "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
         "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
         "Enzyme/TypeAnalysis/TypeTree.cpp",
     ],
@@ -288,7 +287,6 @@ cc_library(
             "Enzyme/eopt.cpp",
             "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
             "Enzyme/TypeAnalysis/TypeTree.cpp",
-            "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
             "Enzyme/CacheUtility.cpp",
             "Enzyme/MustExitScalarEvolution.cpp",
             "Enzyme/ActivityAnalysis.cpp",
@@ -325,7 +323,7 @@ cc_library(
         "Enzyme/Clang",  # for bundled_includes.h
     ],
     visibility = ["//visibility:public"],
-        deps = [
+    deps = [
         ":EnzymeCacheUtility",
         ":EnzymeDiffCore",
         ":EnzymeTypeAnalysis",
@@ -451,10 +449,10 @@ td_library(
     includes = ["."],
     deps = [
         ":EnzymeDialectTdFiles",
-        "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
         "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
@@ -508,8 +506,8 @@ gentbl_cc_library(
     td_file = "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.td",
     deps = [
         ":LLVMExtDialectTdFiles",
-        "@llvm-project//mlir:SideEffectInterfacesTdFiles"
-    ]
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -947,7 +945,6 @@ gentbl_cc_library(
     deps = [":ImplementationsCommonTdFiles"],
 )
 
-
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -965,6 +962,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.h",
         "Enzyme/MLIR/Analysis/*.h",
         "Enzyme/MLIR/Implementations/*.h",
+        "Enzyme/EnzymeCallMarkers.h",
         "Enzyme/Utils.h",
         "Enzyme/TypeAnalysis/*.h",
     ]),
