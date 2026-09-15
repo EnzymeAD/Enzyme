@@ -193,6 +193,66 @@ struct AffineIfOpInterfaceReverse
   }
 };
 
+// The reverse of an affine.if is an scf.if (see AffineIfOpInterfaceReverse
+// above), so the reverse if op searched for by the min-cut cache logic below
+// is an scf::IfOp rather than an affine::AffineIfOp.
+struct AffineIfOpEnzymeOpsRemover
+    : public IfLikeEnzymeOpsRemover<AffineIfOpEnzymeOpsRemover,
+                                    affine::AffineIfOp, scf::IfOp> {
+  static Block *getThenBlock(affine::AffineIfOp ifOp, OpBuilder &builder) {
+    return ifOp.getThenBlock();
+  }
+
+  static Block *getElseBlock(affine::AffineIfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      affine::AffineYieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.getElseBlock();
+  }
+
+  static Block *getThenBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    return ifOp.thenBlock();
+  }
+
+  static Block *getElseBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      scf::YieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.elseBlock();
+  }
+
+  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
+    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
+  }
+
+  static affine::AffineIfOp replace(PatternRewriter &rewriter,
+                                    affine::AffineIfOp otherIfOp,
+                                    TypeRange resultTypes) {
+    auto newIf = affine::AffineIfOp::create(
+        rewriter, otherIfOp->getLoc(), resultTypes, otherIfOp.getIntegerSet(),
+        otherIfOp->getOperands(), /*withElseRegion=*/true);
+
+    newIf.getThenRegion().takeBody(otherIfOp.getThenRegion());
+    newIf.getElseRegion().takeBody(otherIfOp.getElseRegion());
+
+    rewriter.replaceAllUsesWith(
+        otherIfOp->getResults(),
+        newIf->getResults().slice(0, otherIfOp->getNumResults()));
+    rewriter.eraseOp(otherIfOp);
+    return newIf;
+  }
+};
+
 affine::AffineParallelOp
 createAffineParallelWithShadows(Operation *op, OpBuilder &builder,
                                 MGradientUtils *gutils,
@@ -1456,5 +1516,6 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     affine::AffineParallelOp::attachInterface<
         AffineParallelRegionBranchOpInterface>(*context);
     affine::AffineIfOp::attachInterface<AffineIfOpInterfaceReverse>(*context);
+    affine::AffineIfOp::attachInterface<AffineIfOpEnzymeOpsRemover>(*context);
   });
 }

@@ -1021,7 +1021,10 @@ void removalBlockExplore(Block *block, IRMapping &mapping,
                          llvm::SetVector<Value> &gradients,
                          llvm::MapVector<Value, CacheInfo> &caches);
 
-template <typename FinalClass, typename OpName>
+// ReverseOpName is the type of the if-like op generated for the reverse pass
+// corresponding to this OpName. It usually is the same as OpName, but need
+// not be (e.g. the reverse of an affine.if is an scf.if).
+template <typename FinalClass, typename OpName, typename ReverseOpName = OpName>
 struct IfLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
   LogicalResult removeEnzymeOps(Operation *op,
@@ -1084,11 +1087,11 @@ struct IfLikeEnzymeOpsRemover
 
     if (removeCaches && hasMinCut(ifOp)) {
       // Find the reverse if op
-      OpName reverseIfOp = nullptr;
+      ReverseOpName reverseIfOp = nullptr;
       auto findReverseIf = [&](Operation *parent) {
-        if (isa<OpName>(parent) &&
+        if (isa<ReverseOpName>(parent) &&
             (reverseIfOp == nullptr || parent->isProperAncestor(reverseIfOp))) {
-          reverseIfOp = cast<OpName>(parent);
+          reverseIfOp = cast<ReverseOpName>(parent);
         }
       };
       for (auto &[_, info] : truePushedCaches)
