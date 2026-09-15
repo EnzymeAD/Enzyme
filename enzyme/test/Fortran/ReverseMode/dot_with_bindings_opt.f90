@@ -5,12 +5,12 @@
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 program main
-  use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
+  use enzyme, only: enzyme_const, enzyme_dup, enzyme_out, enzyme_autodiff
   implicit none
 
   integer, parameter :: n = 20000000
   integer, parameter :: s = 20
-  real :: x(n), y(n), z = 1 / s
+  real :: x(n), y(n), z = 1 / s, v
   real :: dx(n), dy(n), dz
   integer :: i
 
@@ -27,7 +27,8 @@ program main
   call enzyme_autodiff(dot, enzyme_const, n, &
                        enzyme_dup, x, dx, &
                        enzyme_dup, y, dy, &
-                       enzyme_dup, z, dz)
+                       enzyme_dup, z, dz, &
+                       enzyme_out, v)
   write(*, "(f4.1)") dx(1)
   write(*, "(f4.1)") dy(1)
   write(*, "(f4.1)") dz
@@ -39,7 +40,8 @@ program main
   call enzyme_autodiff(dot, enzyme_const, n, &
                        enzyme_const, x, &
                        enzyme_dup, y, dy, &
-                       enzyme_dup, z, dz)
+                       enzyme_dup, z, dz, &
+                       enzyme_out, v)
   write(*, "(f4.1)") dx(1)
   write(*, "(f4.1)") dy(1)
   write(*, "(f4.1)") dz
@@ -51,7 +53,8 @@ program main
   call enzyme_autodiff(dot, enzyme_const, n, &
                        enzyme_const, x, &
                        enzyme_const, y, &
-                       enzyme_dup, z, dz)
+                       enzyme_dup, z, dz, &
+                       enzyme_out, v)
   write(*, "(f4.1)") dx(1)
   write(*, "(f4.1)") dy(1)
   write(*, "(f4.1)") dz
@@ -62,13 +65,14 @@ contains
   ! TODO: Switch to assumed shape implementation once
   !       https://github.com/EnzymeAD/Enzyme/issues/2820
   !       has been addressed
-  real function dot(n, a, b, c)
+  subroutine dot(n, a, b, c, d)
     integer, intent(in) :: n
     real, dimension(n), intent(in) :: a
     real, dimension(n), intent(in) :: b
     real, intent(in) :: c
-    dot = dot_product(a, b) + c
-  end function
+    real, intent(out) :: c
+    d = dot_product(a, b) + c
+  end subroutine dot
 
 end program
 
