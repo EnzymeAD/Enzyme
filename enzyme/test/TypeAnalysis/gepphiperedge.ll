@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=caller -S -o /dev/null | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="print-type-analysis" -type-analysis-func=caller -S -o /dev/null | FileCheck %s; fi
 
 ; A phi of derived pointers split into a base phi and an offset phi that are
 ; correlated per incoming edge: %mem is a {i64 length, ptr data} object indexed
