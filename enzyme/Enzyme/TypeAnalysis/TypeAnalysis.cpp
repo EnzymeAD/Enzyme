@@ -2196,6 +2196,61 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   (void)legalOffset;
   assert(legalOffset);
 
+  // A phi of derived pointers may have been split into a base phi and an
+  // offset phi that are correlated per incoming edge (Enzyme.jl's
+  // nodecayed_phis! does this for addrspace(11) phis):
+  //   %base = phi ptr addrspace(10) [ %a, %bb1 ], [ %b, %bb2 ]
+  //   %off  = phi i64 [ 8, %bb1 ], [ 0, %bb2 ]
+  //   %p    = getelementptr i8, addrspacecast(%base), %off
+  // %a is only ever indexed by 8 and %b only by 0, and %a and %b need not
+  // share a layout (e.g. a Memory{T} and an Array{T}). The generic handling
+  // below would apply every offset to the merged base, i.e. assert both
+  // layouts on both objects. Instead push the gep's pointee type into the
+  // incoming object of each edge at that edge's offset; the base phi itself
+  // then only learns what its incomings agree on.
+  bool upPerEdge = false;
+  if ((direction & UP) && VariableOffsets.size() == 1) {
+    auto offPhi = dyn_cast<PHINode>(VariableOffsets.begin()->first);
+    Value *ptr = gep.getPointerOperand();
+    while (auto CI = dyn_cast<CastInst>(ptr))
+      ptr = CI->getOperand(0);
+    auto basePhi = dyn_cast<PHINode>(ptr);
+    if (offPhi && basePhi && offPhi->getParent() == basePhi->getParent() &&
+        offPhi->getNumIncomingValues() == basePhi->getNumIncomingValues()) {
+      APInt scale = VariableOffsets.begin()->second;
+      SmallVector<std::pair<Value *, int64_t>, 4> edges;
+      bool legal = true;
+      for (unsigned i = 0, e = offPhi->getNumIncomingValues(); i < e; ++i) {
+        auto CI = dyn_cast<ConstantInt>(offPhi->getIncomingValue(i));
+        if (!CI ||
+            offPhi->getIncomingBlock(i) != basePhi->getIncomingBlock(i)) {
+          legal = false;
+          break;
+        }
+        APInt off = constOffset + scale * CI->getValue().sextOrTrunc(BitWidth);
+        if (off.isNegative()) {
+          legal = false;
+          break;
+        }
+        edges.emplace_back(basePhi->getIncomingValue(i),
+                           (int64_t)off.getLimitedValue());
+      }
+      if (legal) {
+        upPerEdge = true;
+        for (auto [base, off] : edges) {
+          if (base == basePhi)
+            continue;
+          updateAnalysis(base,
+                         gepData0
+                             .ShiftIndices(DL, /*init offset*/ 0,
+                                           /*max size*/ -1, /*new offset*/ off)
+                             .Only(-1, inst),
+                         &gep);
+        }
+      }
+    }
+  }
+
   SmallVector<std::set<int>, 4> idnext;
 
   SmallPtrSet<BasicBlock *, 1> previousLoopInductionHeaders;
@@ -2303,7 +2358,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   }
   if (direction & DOWN)
     updateAnalysis(&gep, downTree.Only(-1, inst), &gep);
-  if (direction & UP)
+  if ((direction & UP) && !upPerEdge)
     updateAnalysis(gep.getPointerOperand(), upTree.Only(-1, inst), &gep);
 }
 
