@@ -211,6 +211,10 @@ struct AffineIfOpInterfaceReverse
       }
     }
 
+    cond = cond ? cond
+                : arith::ConstantIntOp::create(cacheBuilder, loc, /*value=*/1,
+                                               /*width=*/1);
+
     return {gutils->initAndPushCache(cond, cacheBuilder)};
   }
 
