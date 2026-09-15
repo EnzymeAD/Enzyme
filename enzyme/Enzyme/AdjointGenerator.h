@@ -4576,10 +4576,9 @@ public:
             if (!remapVisited.insert(v).second)
               return v;
             auto newInst = inst->clone();
-            newInst->setName(inst->getName() + ".omprem");
             for (unsigned i = 0; i < newInst->getNumOperands(); ++i)
               newInst->setOperand(i, remapFromOutlined(inst->getOperand(i)));
-            BuilderZ.Insert(newInst);
+            BuilderZ.Insert(newInst, inst->getName() + ".omprem");
             available[inst] = newInst;
             return newInst;
           };
