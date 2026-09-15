@@ -65,8 +65,8 @@ program main
   dz = 0.0
   call enzyme_autodiff(dot, enzyme_const, n, &
                        enzyme_const, x, &
-                       enzyme_dup, y, &
-                       enzyme_const, z, dz)
+                       enzyme_dup, y, dy, &
+                       enzyme_const, z)
   write(*, "(f4.1)") dx(1)
   write(*, "(f4.1)") dy(1)
   write(*, "(f4.1)") dz
