@@ -39,11 +39,11 @@ def : MLIRDerivative<"arith", "MaxNumFOp", (Op $x, $y),
                   >;
 
 def IsPosZero : SubRoutine<(Op $x), (CmpF (Arith_OEQ),
-                                          (CopySignF (ConstantFP<"1","arith","ConstantOp">), $x),
-                                          (ConstantFP<"1","arith","ConstantOp">))>;
+                                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $x), $x),
+                                          (ConstantFP<"1","arith","ConstantOp"> $x))>;
 def IsNegZero : SubRoutine<(Op $x), (CmpF (Arith_OEQ),
-                                          (CopySignF (ConstantFP<"1","arith","ConstantOp">), $x),
-                                          (ConstantFP<"-1","arith","ConstantOp">))>;
+                                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $x), $x),
+                                          (ConstantFP<"-1","arith","ConstantOp"> $x))>;
 
 def : MLIRDerivative<"arith", "MaximumFOp", (Op $x, $y),
                     [
