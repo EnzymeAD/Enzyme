@@ -360,8 +360,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             ss << "Could not find use of stored value\n";
             ss << " sv: " << *sv << "\n";
             if (CustomErrorHandler) {
-              CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                               nullptr, wrap(arg), nullptr);
+              CustomErrorHandler(ss.str().c_str(), wrap(sv),
+                                 ErrorType::GCRewrite, nullptr, wrap(arg),
+                                 nullptr);
             }
           }
           legal = false;
@@ -398,7 +399,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           ss << " sv: " << *sv << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                             nullptr, wrap(arg), nullptr);
+                               nullptr, wrap(arg), nullptr);
           }
         }
         legal = false;
