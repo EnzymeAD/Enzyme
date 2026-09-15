@@ -1430,7 +1430,7 @@ struct WhileOpInterfaceReverse
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
     // Cache the number of iterations of the *before* block.
-    auto whileOp = cast<scf::WhileOp>(op);
+    // auto whileOp = cast<scf::WhileOp>(op);
 
     auto newOp = cast<scf::WhileOp>(gutils->getNewFromOriginal(op));
     OpBuilder builder(newOp);
@@ -1455,9 +1455,13 @@ struct WhileOpInterfaceReverse
                                 newOp->getOperands().end());
     initArgs.push_back(zero);
 
+    SmallVector<Type> resultTypes(newOp->getResultTypes().begin(),
+                                  newOp->getResultTypes().end());
+    resultTypes.push_back(zero.getType());
+
     builder.setInsertionPoint(newOp);
-    auto newWhile = builder.create<scf::WhileOp>(
-        newOp->getLoc(), ValueRange(initArgs).getTypes(), initArgs);
+    auto newWhile =
+        builder.create<scf::WhileOp>(newOp->getLoc(), resultTypes, initArgs);
 
     newWhile.getBefore().takeBody(newOp.getBefore());
     newWhile.getAfter().takeBody(newOp.getAfter());
@@ -1472,8 +1476,10 @@ struct WhileOpInterfaceReverse
     return {numItersCache};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 } // namespace
