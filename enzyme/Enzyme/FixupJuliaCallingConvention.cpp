@@ -359,8 +359,10 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             llvm::raw_string_ostream ss(s);
             ss << "Could not find use of stored value\n";
             ss << " sv: " << *sv << "\n";
-            CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+            if (CustomErrorHandler) {
+              CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
                                nullptr, wrap(arg), nullptr);
+            }
           }
           legal = false;
           break;
@@ -394,8 +396,10 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
           ss << " sv: " << *sv << "\n";
-          CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
                              nullptr, wrap(arg), nullptr);
+          }
         }
         legal = false;
         break;
