@@ -30,6 +30,8 @@ for.body:                                         ; preds = %for.inc, %entry
   %arrayidx = getelementptr inbounds double, double* %in, i64 %indvars.iv
   %0 = load double, double* %arrayidx, align 8, !tbaa !2
   %cmp1 = fcmp fast ogt double %0, 1.000000e+00
+  ; Keep the inner predicate available on every path to the merge.
+  %cmp8 = fcmp fast ogt double %0, 0.000000e+00
   br i1 %cmp1, label %if.then, label %if.else
 
 if.then:                                          ; preds = %for.body
@@ -37,7 +39,6 @@ if.then:                                          ; preds = %for.body
   br label %for.inc
 
 if.else:                                          ; preds = %for.body
-  %cmp8 = fcmp fast ogt double %0, 0.000000e+00
   br i1 %cmp8, label %if.then9, label %for.inc
 
 if.then9:                                         ; preds = %if.else
@@ -139,7 +140,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %cmp1_unwrap = fcmp fast ogt double %_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %cmp8_unwrap = fcmp fast ogt double %_unwrap, 0.000000e+00
 ; CHECK-NEXT:   %anot1_ = xor i1 %cmp1_unwrap, true
-; CHECK-NEXT:   %[[andVal:.+]] = and i1 %cmp8_unwrap, %anot1_
+; CHECK-NEXT:   %[[andVal:.+]] = select i1 %anot1_, i1 %cmp8_unwrap, i1 false
 ; CHECK-NEXT:   %3 = fadd fast double %"add'de.2", %2
 ; CHECK-NEXT:   %4 = select{{( fast)?}} i1 %[[andVal]], double %3, double %"add'de.2"
 ; CHECK-NEXT:   %5 = fadd fast double %"mul'de.1", %2

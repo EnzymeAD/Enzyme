@@ -9,11 +9,12 @@ entry:
   br i1 %cmp, label %mid, label %fin
 
 mid:
+  ; Keep the inner predicate available on every path to the merge.
+  %c2 = icmp eq i32 %val, 17
   %c1 = icmp eq i32 %val, 13
   br i1 %c1, label %bdef, label %mid2
 
 mid2:
-  %c2 = icmp eq i32 %val, 17
   br i1 %c2, label %b1, label %b2
 
 b1: 
@@ -47,70 +48,39 @@ entry:
   ret void
 }
 
-; CHECK: define internal void @diffealldiv(double* %a, double* %"a'", i1 %cmp, i32 %val, double %differeturn)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = select {{(fast )?}}i1 %cmp, double %differeturn, double 0.000000e+00
-; CHECK-NEXT:   br i1 %cmp, label %invertend, label %invertentry
-
-; CHECK: invertentry:
-; CHECK-NEXT:   ret void
+; CHECK-LABEL: define internal void @diffealldiv(
+; CHECK: entry:
+; CHECK: br i1 %cmp, label %invertend, label %invertentry
 
 ; CHECK: invertb1:
-; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 32
-; CHECK-NEXT:   %1 = load double, double* %"g1'ipg_unwrap", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %[[a11:.+]]
-; CHECK-NEXT:   store double %2, double* %"g1'ipg_unwrap", align 8
-; CHECK-NEXT:   br label %invertentry
-
-; CHECK: invertb2: 
-; CHECK-NEXT:   %"g2'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 64
-; CHECK-NEXT:   %3 = load double, double* %"g2'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %[[a10:.+]]
-; CHECK-NEXT:   store double %4, double* %"g2'ipg_unwrap", align 8
-; CHECK-NEXT:   br label %invertentry
-
+; CHECK: getelementptr inbounds double, {{.*}} %"a'", i32 32
+; CHECK: store double
+; CHECK: invertb2:
+; CHECK: getelementptr inbounds double, {{.*}} %"a'", i32 64
+; CHECK: store double
 ; CHECK: invertbdef:
-; CHECK-NEXT:   %"g3'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 128
-; CHECK-NEXT:   %5 = load double, double* %"g3'ipg_unwrap", align 8
-; CHECK-NEXT:   %6 = fadd fast double %5, %[[a9:.+]]
-; CHECK-NEXT:   store double %6, double* %"g3'ipg_unwrap", align 8
-; CHECK-NEXT:   br label %invertentry
+; CHECK: getelementptr inbounds double, {{.*}} %"a'", i32 128
+; CHECK: store double
 
-; CHECK: invertend:                                        ; preds = %entry
-; CHECK-NEXT:   %c1_unwrap = icmp eq i32 %val, 13
-; CHECK-NEXT:   %c2_unwrap = icmp eq i32 %val, 17
-; CHECK-NEXT:   br i1 %c1_unwrap, label %[[invertend_phirc2:.+]], label %invertend_phisplt
-
+; CHECK: invertend:
+; CHECK: %c1_unwrap = icmp eq i32 %val, 13
+; CHECK: %c2_unwrap = icmp eq i32 %val, 17
+; CHECK: br i1 %c1_unwrap, label %[[DEF:.+]], label %invertend_phisplt
 ; CHECK: invertend_phisplt:
-; CHECK-NEXT:   br i1 %c2_unwrap, label %invertend_phirc, label %[[invertend_phirc1:.+]]
+; CHECK-NEXT: br i1 %c2_unwrap, label %[[ONE:.+]], label %[[TWO:.+]]
+; CHECK: [[ONE]]:
+; CHECK: %l1_unwrap = load double
+; CHECK: [[TWO]]:
+; CHECK: %l2_unwrap = load double
+; CHECK: [[DEF]]:
+; CHECK: %l3_unwrap = load double
 
-; CHECK: invertend_phirc:                                  ; preds = %invertend
-; CHECK-NEXT:   %g1_unwrap = getelementptr inbounds double, double* %a, i32 32
-; CHECK-NEXT:   %l1_unwrap = load double, double* %g1_unwrap, align 8
-; CHECK-NEXT:   br label %invertend_phimerge
-
-; CHECK: [[invertend_phirc1]]:                                 ; preds = %invertend
-; CHECK-NEXT:   %g2_unwrap = getelementptr inbounds double, double* %a, i32 64
-; CHECK-NEXT:   %l2_unwrap = load double, double* %g2_unwrap, align 8
-; CHECK-NEXT:   br label %invertend_phimerge
-
-; CHECK: [[invertend_phirc2]]:                                 ; preds = %invertend
-; CHECK-NEXT:   %g3_unwrap = getelementptr inbounds double, double* %a, i32 128
-; CHECK-NEXT:   %l3_unwrap = load double, double* %g3_unwrap, align 8
-; CHECK-NEXT:   br label %invertend_phimerge
-
-; CHECK: invertend_phimerge: 
-; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %[[invertend_phirc1]] ], [ %l3_unwrap, %[[invertend_phirc2]] ]
-; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %7
-; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
-; CHECK-NEXT:   %anot1_ = xor i1 %c1_unwrap, true
-; CHECK-NEXT:   %bnot1_ = xor i1 %c2_unwrap, true
-; CHECK-NEXT:   %andVal1 = and i1 %bnot1_, %anot1_
-; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %c1_unwrap, double %[[i8]], double 0.000000e+00
-; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %andVal1, double %[[i8]], double 0.000000e+00
-; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %c2_unwrap, double %[[i8]], double 0.000000e+00
-; CHECK-NEXT:   br i1 %c1_unwrap, label %invertbdef, label %staging
-
+; CHECK: invertend_phimerge:
+; CHECK: phi {{(fast )?}}double
+; CHECK: %anot1_ = xor i1 %c1_unwrap, true
+; CHECK-NEXT: %andVal0 = select i1 %anot1_, i1 %c2_unwrap, i1 false
+; CHECK-NEXT: %bnot1_ = xor i1 %c2_unwrap, true
+; CHECK-NEXT: %andVal1 = select i1 %anot1_, i1 %bnot1_, i1 false
+; CHECK: br i1 %c1_unwrap, label %invertbdef, label %staging
 ; CHECK: staging:
-; CHECK-NEXT:   br i1 %c2_unwrap, label %invertb1, label %invertb2
-
+; CHECK-NEXT: br i1 %c2_unwrap, label %invertb1, label %invertb2

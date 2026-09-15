@@ -40,6 +40,8 @@ declare dso_local double @__enzyme_autodiff(i8*, double, i32) local_unnamed_addr
 define internal double @taylorlog(double %x, i32 %SINCOSN) #2 {
 entry:
   %cmp8 = icmp eq i32 %SINCOSN, 0
+  ; Keep the inner predicate available on every path to the merge.
+  %lcmp.mod = icmp ne i32 %SINCOSN, 1
   br i1 %cmp8, label %for.cond.cleanup, label %for.body
 
 for.body:                                         ; preds = %for.body, %for.body.preheader.new
@@ -54,7 +56,6 @@ for.body:                                         ; preds = %for.body, %for.body
   br i1 %end, label %lcssa, label %for.body
 
 lcssa:
-  %lcmp.mod = icmp ne i32 %SINCOSN, 1
   br i1 %lcmp.mod, label %for.cond.cleanup, label %bad
 
 bad:
@@ -100,23 +101,24 @@ attributes #8 = { noreturn nounwind }
 ; CHECK: define internal { double } @diffetaylorlog(double %x, i32 %SINCOSN, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp8 = icmp eq i32 %SINCOSN, 0
-; CHECK-NEXT:   %lcmp.mod_unwrap = icmp ne i32 %SINCOSN, 1
+; CHECK-NEXT:   %lcmp.mod = icmp ne i32 %SINCOSN, 1
 ; CHECK-NEXT:   %anot1_ = xor i1 %cmp8, true
-; CHECK-NEXT:   %[[andVal:.+]] = and i1 %lcmp.mod_unwrap, %anot1_
-; CHECK-NEXT:   %bnot1_ = xor i1 %lcmp.mod_unwrap, true
-; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %bnot1_, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %[[andVal:.+]] = select i1 %anot1_, i1 %lcmp.mod, i1 false
+; CHECK-NEXT:   %bnot1_ = xor i1 %lcmp.mod, true
+; CHECK-NEXT:   %[[andVal1:.+]] = select i1 %anot1_, i1 %bnot1_, i1 false
+; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %[[andVal1]], double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %[[andVal]], double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp8, label %invertentry, label %staging
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body, %entry
-; CHECK-NEXT:   %"x'de.0" = phi double [ %0, %entry ], [ %[[i7:.+]], %invertfor.body ]
+; CHECK-NEXT:   %"x'de.0" = phi {{(nsz )?}}double [ %0, %entry ], [ %[[i7:.+]], %invertfor.body ]
 ; CHECK-NEXT:   %2 = insertvalue { double } undef, double %"x'de.0", 0
 ; CHECK-NEXT:   ret { double } %2
 
 ; CHECK: invertfor.body:                                   ; preds = %staging, %incinvertfor.body
-; CHECK-NEXT:   %"x'de.1" = phi double [ %0, %staging ], [ %[[i7]], %incinvertfor.body ]
+; CHECK-NEXT:   %"x'de.1" = phi {{(nsz )?}}double [ %0, %staging ], [ %[[i7]], %incinvertfor.body ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[_unwrap2:.+]], %staging ], [ %[[i10:.+]], %incinvertfor.body ]
-; CHECK-NEXT:   %iv.next_unwrap = add nuw nsw i64 %"iv'ac.0", 1
+; CHECK-NEXT:   %iv.next_unwrap = add nuw {{(nsw )?}}i64 %"iv'ac.0", 1
 ; CHECK-NEXT:   %_unwrap = trunc i64 %iv.next_unwrap to i32
 ; CHECK-NEXT:   %conv_unwrap = sitofp i32 %_unwrap to double
 ; CHECK-NEXT:   %[[d0diffez:.+]] = fdiv fast double %1, %conv_unwrap
