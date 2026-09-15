@@ -1999,7 +1999,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isAllocationCall(CI, TLI)) {
           continue;
         }
-        if (getFuncNameFromCall(CI) == "zeroType") {
+        if (getFuncNameFromCall(CI) == "enzyme_zerotype") {
           auto Obj = getBaseObject(CI->getArgOperand(0));
           // Storing into local memory is fine since it definitionally will not
           // be seen outside the function. Note, even if one stored into x =
@@ -2614,8 +2614,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
               g.getValueType(), g.getType()->getPointerAddressSpace(), nullptr,
               g.getName() + "_local");
 
-          if (g.getAlignment()) {
-            antialloca->setAlignment(Align(g.getAlignment()));
+          if (g.getAlign()) {
+            antialloca->setAlignment(*g.getAlign());
           }
 
           std::map<Constant *, Value *> remap;
@@ -2674,13 +2674,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           {
 
             auto cal = bb.CreateCall(intr, args);
-            if (g.getAlignment()) {
-              cal->addParamAttr(
-                  0, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
-              cal->addParamAttr(
-                  1, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
+            if (g.getAlign()) {
+              cal->addParamAttr(0, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
+              cal->addParamAttr(1, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
             }
           }
 
@@ -2689,13 +2687,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           for (ReturnInst *RI : Returns) {
             IRBuilder<> IB(RI);
             auto cal = IB.CreateCall(intr, args);
-            if (g.getAlignment()) {
-              cal->addParamAttr(
-                  0, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
-              cal->addParamAttr(
-                  1, Attribute::getWithAlignment(g.getContext(),
-                                                 Align(g.getAlignment())));
+            if (g.getAlign()) {
+              cal->addParamAttr(0, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
+              cal->addParamAttr(1, Attribute::getWithAlignment(g.getContext(),
+                                                               *g.getAlign()));
             }
           }
         }

@@ -1142,7 +1142,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           if (!gutils->TR.anyPointer(a))
             continue;
 
-          auto vd = gutils->TR.query(a);
+          const auto &vd = gutils->TR.query(a);
 
           if (!vd[{-1, -1}].isPossiblePointer())
             continue;

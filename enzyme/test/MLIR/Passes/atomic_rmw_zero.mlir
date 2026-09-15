@@ -28,7 +28,7 @@ func.func @used(%m: memref<4xf64>, %i: index) -> f64 {
 
 func.func @affine_used(%m: memref<4xf64>, %i: index) -> f64 {
   %z = arith.constant 0.000000e+00 : f64
-  %0 = enzyme.affine_atomic_rmw addf %z, %m, (affine_map<(d0) -> (d0)>)[%i] fastmath<fast> : (f64, memref<4xf64>) -> f64
+  %0 = enzyme.affine_atomic_rmw addf %z, %m, (affine_map<(d0) -> (d0)>)[%i] monotonic fastmath<fast> : (f64, memref<4xf64>) -> f64
   return %0 : f64
 }
 

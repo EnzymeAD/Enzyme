@@ -210,7 +210,7 @@ public:
                             bool pointerIntSame = false) const;
 
   /// The TypeTree of a particular Value
-  TypeTree query(llvm::Value *val) const;
+  const TypeTree &query(llvm::Value *val) const;
 
   /// Whether any part of the top level register can contain a float
   ///   e.g. { i64, float } can contain a  float, but { i64, i8* } would not.
@@ -312,7 +312,7 @@ public:
                bool PHIRecur = false);
 
   /// Get the current results for a given value
-  TypeTree getAnalysis(llvm::Value *Val);
+  const TypeTree &getAnalysis(llvm::Value *Val);
 
   /// Add additional information to the Type info of val, readding it to the
   /// work queue as necessary

@@ -908,8 +908,9 @@ struct AffineLoadOpInterfaceReverse
           } else {
             setDerivativeFastMath(enzyme::AffineAtomicRMWOp::create(
                 builder, loadOp.getLoc(), gradient.getType(),
-                arith::AtomicRMWKind::addf, gradient, memrefGradient,
-                retrievedArguments, loadOp.getAffineMap(), alignAttr));
+                arith::AtomicRMWKind::addf, Ordering::monotonic, gradient,
+                memrefGradient, retrievedArguments, loadOp.getAffineMap(),
+                alignAttr));
           }
         }
       }
