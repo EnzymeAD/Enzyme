@@ -14,6 +14,23 @@ define internal i64 @fadd_op(i64 %old, i64 %v) {
   ret i64 %ri
 }
 
+; op may take the forwarded argument in a type other than the element type of
+; the result struct
+define internal i64 @fadd_op_dbl(i64 %old, double %vf) {
+  %oldf = bitcast i64 %old to double
+  %r = fadd double %oldf, %vf
+  %ri = bitcast double %r to i64
+  ret i64 %ri
+}
+
+define internal i64 @fsub_op(i64 %old, i64 %v) {
+  %oldf = bitcast i64 %old to double
+  %vf = bitcast i64 %v to double
+  %r = fsub double %oldf, %vf
+  %ri = bitcast double %r to i64
+  ret i64 %ri
+}
+
 define internal i64 @iadd_op(i64 %old, i64 %v) {
   %r = add i64 %old, %v
   ret i64 %r
@@ -37,11 +54,29 @@ define double @bar(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]
   ret double %m
 }
 
+; the adjoint read from the shadow location is converted to the type in which
+; op takes the value.
+define void @baz(ptr %p, double %vf) {
+  %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op_dbl, i8 5, i8 1, double %vf)
+  ret void
+}
+
+; atomic { x -= v }: the adjoint of v is the negated shadow.
+define void @sub(ptr %p, double %vf) {
+  %v = bitcast double %vf to i64
+  %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fsub_op, i8 5, i8 1, i64 %v)
+  ret void
+}
+
 define double @caller(ptr %a, ptr %b, double %v) {
   %r1 = call double (...) @__enzyme_autodiff(ptr nonnull @foo, ptr %a, ptr %b, double %v)
   %r2 = call double (...) @__enzyme_autodiff(ptr nonnull @bar, ptr %a, ptr %b, double %v)
-  %fr = fadd double %r1, %r2
-  ret double %fr
+  %r3 = call double (...) @__enzyme_autodiff(ptr nonnull @baz, ptr %a, ptr %b, double %v)
+  %r4 = call double (...) @__enzyme_autodiff(ptr nonnull @sub, ptr %a, ptr %b, double %v)
+  %f1 = fadd double %r1, %r2
+  %f2 = fadd double %f1, %r3
+  %f3 = fadd double %f2, %r4
+  ret double %f3
 }
 
 declare double @__enzyme_autodiff(...)
@@ -70,4 +105,24 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-NEXT:   store double %4, ptr %"p'", align 8
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %2, 0
 ; CHECK-NEXT:   ret { double } %5
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffebaz(ptr %p, ptr %"p'", double %vf)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op_dbl, i8 5, i8 1, double %vf)
+; CHECK-NEXT:   %0 = load atomic i64, ptr %"p'" monotonic, align 8
+; CHECK-NEXT:   %1 = bitcast i64 %0 to double
+; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
+; CHECK-NEXT:   ret { double } %2
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffesub(ptr %p, ptr %"p'", double %vf)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %v = bitcast double %vf to i64
+; CHECK-NEXT:   %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fsub_op, i8 5, i8 1, i64 %v)
+; CHECK-NEXT:   %0 = load atomic i64, ptr %"p'" monotonic, align 8
+; CHECK-NEXT:   %1 = bitcast i64 %0 to double
+; CHECK-NEXT:   %2 = fneg fast double %1
+; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
+; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }

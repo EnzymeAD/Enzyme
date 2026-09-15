@@ -2490,12 +2490,62 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   // generated derivative code); it is only expanded to atomicrmw/cmpxchg by
   // Julia's ExpandAtomicModify pass after GC lowering.
   if (startsWith(funcName, "julia.atomicmodify.")) {
-    auto eraseAtomicModify = [&]() {
-      if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ForwardModeSplit) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      } else
+    // Retire the primal call replayed in the pass being generated. Like the
+    // generic call path, tape its result in the augmented primal and read it
+    // back from the tape in the derivative pass if the latter needs the
+    // primal value: the modification must never be repeated by recomputing
+    // the call there.
+    auto finishPrimal = [&]() {
+      bool primalNeededInReverse = false;
+      {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      if (!primalNeededInReverse &&
+          Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused &&
+          !gutils->unnecessaryIntermediates.count(&call)) {
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
+        auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                              ? DerivativeMode::ReverseModeGradient
+                              : Mode;
+        primalNeededInReverse =
+            DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                   oldUnreachable);
+      }
+      if (primalNeededInReverse) {
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self, BuilderZ));
         eraseIfUnused(call);
+      } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                 Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+    };
+
+    // The pseudo-intrinsic called with the operands of the primal call,
+    // except for the location and (if non-null) the operand at valIdx.
+    auto emitCall = [&](Value *ptr, unsigned valIdx, Value *val) -> Value * {
+      SmallVector<Value *, 6> args;
+      for (size_t i = 0; i < call.arg_size(); i++) {
+        if (i == 0)
+          args.push_back(ptr);
+        else if (i == valIdx && val)
+          args.push_back(val);
+        else
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+      }
+      auto CI = BuilderZ.CreateCall(call.getFunctionType(), called, args);
+      CI->setCallingConv(call.getCallingConv());
+      CI->setAttributes(call.getAttributes());
+      CI->copyMetadata(*newCall);
+      return CI;
     };
 
     // Fully inactive calls only need the primal replayed. This must be
@@ -2505,7 +2555,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // variadic call with `Number of arg operands != function parameters`.
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
-      eraseAtomicModify();
+      finishPrimal();
       return true;
     }
 
@@ -2521,13 +2571,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       opKind = AtomicRMWInst::BAD_BINOP;
     // Call operand forwarded to op's update value parameter.
     unsigned valIdx = opArgNo + 3;
+    Value *valOp = opKind != AtomicRMWInst::BAD_BINOP
+                       ? call.getArgOperand(valIdx)
+                       : nullptr;
 
     bool constval = gutils->isConstantValue(&call);
     bool constptr = gutils->isConstantValue(call.getArgOperand(0));
 
     // No shadow memory is involved; replaying the primal suffices.
     if (constval && constptr) {
-      eraseAtomicModify();
+      finishPrimal();
       return true;
     }
 
@@ -2547,34 +2600,21 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // Non-differentiable (integer/pointer) data modified within duplicated
     // memory: replicate the modification on the shadow location with the
     // primal arguments (like inactive stores into active memory), keeping
-    // e.g. lock states and counters of shadow objects consistent.
-    if (constval && constargs &&
-        (vd.isKnown() ? !vd.isFloat() : looseTypeAnalysis)) {
+    // e.g. lock states and counters of shadow objects consistent. As for an
+    // inactive store, only the modified data has to be inactive, not the
+    // operands op derives it from; when the type of the data is unknown, an
+    // active operand however suggests floating point data, which is left
+    // to the rules for recognized ops below.
+    if (constval &&
+        (vd.isKnown() ? !vd.isFloat() : (looseTypeAnalysis && constargs))) {
       // Which pass emits the shadow modification is decided exactly as for
       // an inactive store into duplicated memory (visitCommonStore); in
       // particular the augmented primal and the split derivative pass must
       // not both replay it, and a shadow that is only materialized in the
       // reverse pass must be updated there.
-      bool backwardsShadow = false;
-      bool forwardsShadow = true;
-      for (auto pair : gutils->backwardsOnlyShadows) {
-        if (pair.second.stores.count(&call)) {
-          backwardsShadow = true;
-          forwardsShadow = pair.second.primalInitialize;
-          if (auto inst = dyn_cast<Instruction>(pair.first))
-            if (!forwardsShadow && pair.second.LI &&
-                pair.second.LI->contains(inst->getParent()))
-              backwardsShadow = false;
-        }
-      }
-      if (auto arg = dyn_cast<Argument>(getBaseObject(call.getArgOperand(0)))) {
-        unsigned argNo = arg->getArgNo();
-        if (argNo < gutils->nowrite_shadows.size() &&
-            gutils->nowrite_shadows[argNo]) {
-          forwardsShadow = false;
-          backwardsShadow = false;
-        }
-      }
+      bool forwardsShadow, backwardsShadow;
+      shadowStoreSchedule(call, call.getArgOperand(0), forwardsShadow,
+                          backwardsShadow);
 
       if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
           (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
@@ -2584,77 +2624,84 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
         Value *dptr = gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
-        for (size_t i = 0; i < gutils->getWidth(); i++) {
-          SmallVector<Value *, 6> args;
-          args.push_back(gutils->getWidth() == 1
-                             ? dptr
-                             : gutils->extractMeta(BuilderZ, dptr, i));
-          for (size_t j = 1; j < call.arg_size(); j++)
-            args.push_back(gutils->getNewFromOriginal(call.getArgOperand(j)));
-          auto CI = BuilderZ.CreateCall(call.getFunctionType(), called, args);
-          CI->setCallingConv(call.getCallingConv());
-          CI->setAttributes(call.getAttributes());
-          CI->copyMetadata(*newCall);
-        }
+        applyChainRule(
+            BuilderZ, [&](Value *dptr) { emitCall(dptr, 0, nullptr); }, dptr);
       }
-      eraseAtomicModify();
+      finishPrimal();
       return true;
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
-      if (opKind != AtomicRMWInst::BAD_BINOP && !constptr) {
+      if (opKind != AtomicRMWInst::BAD_BINOP) {
         // new = op(old, v) is linear in (old, v) for FAdd/FSub/Xchg, so the
-        // same op applied to the shadow location and shadow value computes
-        // the tangent {dold, dnew}.
-        auto rule = [&](Value *dptr, Value *dval) -> Value * {
-          if (dval == nullptr)
-            dval =
-                Constant::getNullValue(call.getArgOperand(valIdx)->getType());
-          SmallVector<Value *, 6> args;
-          for (size_t i = 0; i < call.arg_size(); i++) {
-            if (i == 0)
-              args.push_back(dptr);
-            else if (i == valIdx)
-              args.push_back(dval);
-            else
-              args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+        // same op applied to the shadow location and the shadow of v
+        // computes the tangent {dold, dnew}.
+        //
+        // The shadow of v is its tangent (zero if inactive), except for an
+        // inactive value exchanged into duplicated memory: like an inactive
+        // store, that writes the primal value for pointer/integer data (and
+        // zero for floating point data) into the shadow location.
+        Value *dval = nullptr;
+        if (!gutils->isConstantValue(valOp)) {
+          dval = gutils->invertPointerM(valOp, BuilderZ);
+        } else if (opKind == AtomicRMWInst::Xchg && !constptr) {
+          if (!gutils->runtimeActivity && vd == BaseType::Pointer &&
+              !isa<UndefValue>(valOp) && !isa<ConstantPointerNull>(valOp)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << call
+               << " const val: " << *valOp;
+            if (CustomErrorHandler) {
+              dval = unwrap(CustomErrorHandler(
+                  str.c_str(), wrap(&call), ErrorType::MixedActivityError,
+                  gutils, wrap(valOp), wrap(&BuilderZ)));
+            } else
+              EmitWarningAlways("MixedActivityError", call, ss.str(),
+                                MixedActivityHint);
           }
-          auto CI = BuilderZ.CreateCall(call.getFunctionType(), called, args);
-          CI->setCallingConv(call.getCallingConv());
-          CI->setAttributes(call.getAttributes());
-          CI->copyMetadata(*newCall);
-          return CI;
+          if (!dval)
+            dval = gutils->invertPointerM(valOp, BuilderZ,
+                                          TypeTree(vd).Only(-1, nullptr));
+        }
+        if (!dval)
+          dval =
+              Constant::getNullValue(gutils->getShadowType(valOp->getType()));
+
+        auto rule = [&](Value *dptr, Value *dval) -> Value * {
+          if (!dptr) {
+            // Inactive location: dold = 0 and dnew = dv (-dv for FSub), in
+            // the bits of the modified value.
+            Value *dnew = dval;
+            if (opKind == AtomicRMWInst::FSub) {
+              dnew = BuilderZ.CreateBitCast(dnew, FT);
+              dnew = BuilderZ.CreateFNeg(dnew);
+            }
+            dnew = BuilderZ.CreateBitCast(dnew, elty);
+            return BuilderZ.CreateInsertValue(
+                Constant::getNullValue(call.getType()), dnew, {1});
+          }
+          return emitCall(dptr, valIdx, dval);
         };
         Value *diff = applyChainRule(
             call.getType(), BuilderZ, rule,
-            gutils->invertPointerM(call.getArgOperand(0), BuilderZ),
-            gutils->isConstantValue(call.getArgOperand(valIdx))
-                ? nullptr
-                : gutils->invertPointerM(call.getArgOperand(valIdx), BuilderZ));
+            constptr ? nullptr
+                     : gutils->invertPointerM(call.getArgOperand(0), BuilderZ),
+            dval);
         if (!constval)
           setDiffe(&call, diff, BuilderZ);
-        eraseIfUnused(call);
+        finishPrimal();
         return true;
       }
     } else if (Mode == DerivativeMode::ReverseModePrimal) {
       // Nothing to do in the primal pass beyond replaying the call. Besides
       // the inactive case this also covers the augmented primal paired with
       // a ForwardModeSplit derivative, which handles any recognized op.
-      if (constval || (opKind != AtomicRMWInst::BAD_BINOP && !constptr)) {
-        if (!constval) {
-          auto ifound = gutils->invertedPointers.find(&call);
-          if (ifound != gutils->invertedPointers.end()) {
-            auto placeholder = cast<PHINode>(&*ifound->second);
-            gutils->invertedPointers.erase(ifound);
-            gutils->replaceAWithB(
-                placeholder,
-                Constant::getNullValue(gutils->getShadowType(call.getType())));
-            gutils->erase(placeholder);
-          }
-        }
-        eraseIfUnused(call);
+      if (constval || opKind != AtomicRMWInst::BAD_BINOP) {
+        if (!constval)
+          resolveShadowPlaceholder(call);
+        finishPrimal();
         return true;
       }
     } else if ((Mode == DerivativeMode::ReverseModeCombined ||
@@ -2662,39 +2709,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                constval &&
                (opKind == AtomicRMWInst::FAdd ||
                 opKind == AtomicRMWInst::FSub)) {
-      if (!gutils->isConstantValue(call.getArgOperand(valIdx)) && !constptr) {
-        IRBuilder<> Builder2(&call);
-        getReverseBuilder(Builder2);
-        Value *ip = gutils->invertPointerM(call.getArgOperand(0), Builder2);
-        ip = lookup(ip, Builder2);
+      if (!gutils->isConstantValue(valOp) && !constptr) {
         auto order = static_cast<AtomicOrdering>(
             cast<ConstantInt>(call.getArgOperand(2))->getZExtValue());
-        if (order == AtomicOrdering::Release)
-          order = AtomicOrdering::Monotonic;
-        else if (order == AtomicOrdering::AcquireRelease)
-          order = AtomicOrdering::Acquire;
         auto ssid = static_cast<SyncScope::ID>(
             cast<ConstantInt>(call.getArgOperand(3))->getZExtValue());
         auto align = call.getParamAlign(0).value_or(DL.getABITypeAlign(elty));
-
-        auto rule = [&](Value *ip) -> Value * {
-          LoadInst *dif1 = Builder2.CreateLoad(elty, ip);
-          dif1->setAlignment(align);
-          dif1->setOrdering(order);
-          dif1->setSyncScopeID(ssid);
-          Value *res = dif1;
-          if (opKind == AtomicRMWInst::FSub) {
-            res = Builder2.CreateBitCast(res, FT);
-            res = Builder2.CreateFNeg(res);
-            res = Builder2.CreateBitCast(res, elty);
-          }
-          return res;
-        };
-        Value *diff = applyChainRule(elty, Builder2, rule, ip);
-
-        addToDiffe(call.getArgOperand(valIdx), diff, Builder2, FT);
+        addAtomicRMWValueAdjoint(call, call.getArgOperand(0), valOp, elty, FT,
+                                 /*negate*/ opKind == AtomicRMWInst::FSub,
+                                 align, order, ssid, /*isVolatile*/ false);
       }
-      eraseAtomicModify();
+      finishPrimal();
       return true;
     }
 
@@ -2704,24 +2729,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     llvm::raw_string_ostream ss(s);
     ss << *gutils->oldFunc << "\n" << call << "\n";
     ss << " Active atomic modify not yet handled";
-    EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+    Value *rval = EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
     if (!constval) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit) {
-        setDiffe(&call,
-                 Constant::getNullValue(gutils->getShadowType(call.getType())),
-                 BuilderZ);
+        if (!rval)
+          rval = Constant::getNullValue(gutils->getShadowType(call.getType()));
+        setDiffe(&call, rval, BuilderZ);
       } else {
-        auto ifound = gutils->invertedPointers.find(&call);
-        if (ifound != gutils->invertedPointers.end()) {
-          auto placeholder = cast<PHINode>(&*ifound->second);
-          gutils->invertedPointers.erase(ifound);
-          gutils->replaceAWithB(
-              placeholder,
-              Constant::getNullValue(gutils->getShadowType(call.getType())));
-          gutils->erase(placeholder);
-        }
+        resolveShadowPlaceholder(call, rval);
       }
     }
     if (!call.getType()->isVoidTy()) {

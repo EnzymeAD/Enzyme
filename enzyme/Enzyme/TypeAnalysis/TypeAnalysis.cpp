@@ -4721,74 +4721,129 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     //   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope,
     //                                          args...)
     // which atomically performs old = *ptr; new = op(old, args...);
-    // *ptr = new. Both result elements have the type of the pointee of ptr,
-    // and op is analyzed interprocedurally to relate the forwarded arguments
-    // with the modified memory.
+    // *ptr = new. Both result elements and the return of op have the type of
+    // the pointee of ptr, and op is analyzed interprocedurally to relate the
+    // forwarded arguments with the modified memory.
     if (startsWith(funcName, "julia.atomicmodify.")) {
       auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
       auto *RT = cast<StructType>(call.getType());
       auto *SL = DL.getStructLayout(RT);
       auto LoadSize = (DL.getTypeSizeInBits(RT->getElementType(0)) + 7) / 8;
       int Off[2] = {(int)SL->getElementOffset(0), (int)SL->getElementOffset(1)};
+      Value *ptr = call.getArgOperand(0);
 
-      TypeTree Pointee = getAnalysis(call.getArgOperand(0))
-                             .Lookup(LoadSize, DL)
-                             .PurgeAnything();
+      // What is known about the modified location from the pointer. Anything
+      // else known about it (both result elements, the return of op) is
+      // merged into the pointee of ptr through updateAnalysis, which reports
+      // conflicting (float/integer) information instead of asserting, and
+      // reaches the other users of the location on a later iteration.
+      TypeTree Pointee = getAnalysis(ptr).Lookup(LoadSize, DL).PurgeAnything();
+      auto updateLocation = [&](const TypeTree &Loc) {
+        if (!(direction & UP))
+          return;
+        TypeTree Ptr = Loc.ShiftIndices(DL, /*start*/ 0, LoadSize,
+                                        /*addOffset*/ 0)
+                           .Only(-1, &call);
+        Ptr.insert({-1}, BaseType::Pointer);
+        updateAnalysis(ptr, Ptr, &call);
+      };
+      auto updateResult = [&](const TypeTree &Loc) {
+        if (!(direction & DOWN))
+          return;
+        for (int i = 0; i < 2; i++)
+          updateAnalysis(&call, Loc.ShiftIndices(DL, 0, LoadSize, Off[i]),
+                         &call);
+      };
+
       TypeTree Ret = getAnalysis(&call);
       for (int i = 0; i < 2; i++)
-        Pointee |= Ret.ShiftIndices(DL, Off[i], LoadSize, 0).PurgeAnything();
+        updateLocation(
+            Ret.ShiftIndices(DL, Off[i], LoadSize, 0).PurgeAnything());
+      updateResult(Pointee);
 
       Function *op = dyn_cast<Function>(call.getArgOperand(1));
       if (op && !op->empty() && !op->isVarArg() &&
-          call.arg_size() - 3 == op->getFunctionType()->getNumParams() &&
-          (direction & UP)) {
-        FnTypeInfo typeInfo(op);
-        int argnum = 0;
-        for (auto &arg : op->args()) {
-          std::set<int64_t> bounded;
-          if (argnum == 0) {
-            typeInfo.Arguments.insert(
-                std::pair<Argument *, TypeTree>(&arg, Pointee));
+          call.arg_size() - 3 == op->getFunctionType()->getNumParams()) {
+        // As for visitIPOCall, skip the interprocedural analysis of op once
+        // everything it could tell about the location and the forwarded
+        // arguments has been derived.
+        bool unknown = false;
+        for (size_t i = 0; i < LoadSize;) {
+          auto CT = Pointee[{(int)i}];
+          if (auto flt = CT.isFloat()) {
+            i += (DL.getTypeSizeInBits(flt) + 7) / 8;
+          } else if (CT == BaseType::Pointer) {
+            i += DL.getPointerSize(0);
+          } else if (CT == BaseType::Integer) {
+            i++;
           } else {
-            typeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(
-                &arg, getAnalysis(call.getArgOperand(argnum + 3))));
-            for (auto v : fntypeinfo.knownIntegralValues(
-                     call.getArgOperand(argnum + 3), DT, intseen, SE)) {
-              if (abs(v) > MaxIntOffset)
-                continue;
-              bounded.insert(v);
+            unknown = true;
+            break;
+          }
+        }
+        for (size_t i = 4; !unknown && i < call.arg_size(); i++) {
+          Value *arg = call.getArgOperand(i);
+          if (!isa<ConstantData>(arg) && !getAnalysis(arg).IsFullyDetermined())
+            unknown = true;
+        }
+
+        if (unknown) {
+          // The same call information visitIPOCall derives through
+          // getCallInfo, with op's first parameter fed from the location
+          // rather than from a call operand.
+          FnTypeInfo typeInfo(op);
+          size_t argnum = 0;
+          for (auto &arg : op->args()) {
+            Value *src = argnum == 0 ? nullptr : call.getArgOperand(argnum + 3);
+            TypeTree dt = src ? getAnalysis(src) : Pointee;
+            if (arg.getType()->isIntOrIntVectorTy() &&
+                dt.Inner0() == BaseType::Anything && mustRemainInteger(&arg))
+              dt = TypeTree(BaseType::Integer).Only(-1, &call);
+            typeInfo.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&arg, dt));
+            std::set<int64_t> bounded;
+            if (src)
+              for (auto v :
+                   fntypeinfo.knownIntegralValues(src, DT, intseen, SE)) {
+                if (abs(v) > MaxIntOffset)
+                  continue;
+                bounded.insert(v);
+              }
+            typeInfo.KnownValues.insert(
+                std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+            ++argnum;
+          }
+          // The new value stored to the location is op's return.
+          typeInfo.Return = Pointee;
+          typeInfo = preventTypeAnalysisLoops(typeInfo, fntypeinfo.Function);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " starting IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " ending IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeTree OpRet = STR.getReturnAnalysis().PurgeAnything();
+          updateLocation(OpRet);
+          updateResult(OpRet);
+          if (direction & UP) {
+            argnum = 0;
+            for (auto &arg : op->args()) {
+              if (argnum != 0)
+                updateAnalysis(call.getArgOperand(argnum + 3), STR.query(&arg),
+                               &call);
+              ++argnum;
             }
           }
-          typeInfo.KnownValues.insert(
-              std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
-          ++argnum;
         }
-        TypeResults STR = interprocedural.analyzeFunction(typeInfo);
-        // The new value stored to *ptr is op's return.
-        Pointee |= STR.getReturnAnalysis().PurgeAnything();
-        argnum = 0;
-        for (auto &arg : op->args()) {
-          if (argnum != 0)
-            updateAnalysis(call.getArgOperand(argnum + 3), STR.query(&arg),
-                           &call);
-          ++argnum;
-        }
-      }
-
-      if (direction & UP) {
-        TypeTree Ptr = Pointee
-                           .ShiftIndices(DL, /*start*/ 0, LoadSize,
-                                         /*addOffset*/ 0)
-                           .Only(-1, &call);
-        Ptr.insert({-1}, BaseType::Pointer);
-        updateAnalysis(call.getArgOperand(0), Ptr, &call);
-      }
-
-      if (direction & DOWN) {
-        TypeTree Result;
-        for (int i = 0; i < 2; i++)
-          Result |= Pointee.ShiftIndices(DL, 0, LoadSize, Off[i]);
-        updateAnalysis(&call, Result, &call);
       }
       return;
     }

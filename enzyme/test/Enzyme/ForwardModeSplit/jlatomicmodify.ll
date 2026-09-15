@@ -42,11 +42,25 @@ define double @bar(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]
   ret double %m
 }
 
+; the primal result is needed by the tangent: the augmented primal tapes it,
+; and the tangent pass reads it from the tape rather than repeating the
+; modification of primal memory.
+define double @baz(ptr %p, double %vf) {
+  %v = bitcast double %vf to i64
+  %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op, i8 5, i8 1, i64 %v)
+  %new = extractvalue { i64, i64 } %on, 1
+  %newf = bitcast i64 %new to double
+  %m = fmul double %newf, %vf
+  ret double %m
+}
+
 define double @caller(ptr %a, ptr %b, double %v, double %dv) {
   %r1 = call double (...) @__enzyme_fwdsplit(ptr nonnull @foo, ptr %a, ptr %b, double %v, double %dv, ptr null)
   %r2 = call double (...) @__enzyme_fwdsplit(ptr nonnull @bar, ptr %a, ptr %b, double %v, double %dv, ptr null)
-  %fr = fadd double %r1, %r2
-  ret double %fr
+  %r3 = call double (...) @__enzyme_fwdsplit(ptr nonnull @baz, ptr %a, ptr %b, double %v, double %dv, ptr null)
+  %f1 = fadd double %r1, %r2
+  %f2 = fadd double %f1, %r3
+  ret double %f2
 }
 
 declare double @__enzyme_fwdsplit(...)
@@ -74,4 +88,20 @@ declare double @__enzyme_fwdsplit(...)
 ; The tangent pass must not repeat the shadow increment.
 ; CHECK: define internal double @fwddiffebar(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %p, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Integer}" %"p'", double %x, double %"x'", ptr %tapeArg)
 ; CHECK-NOT: julia.atomicmodify
+; CHECK: ret double
+
+; CHECK: define internal ptr @augmented_baz(ptr %p, ptr %"p'", double %vf, double %"vf'")
+; CHECK: %on = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %p, ptr nonnull @fadd_op, i8 5, i8 1, i64 %v)
+; CHECK-NEXT: %new = extractvalue { i64, i64 } %on, 1
+; CHECK-NEXT: %newf = bitcast i64 %new to double
+; CHECK-NEXT: store double %newf, ptr %{{.+}}, align 8
+; CHECK-NEXT: ret ptr
+
+; The tangent must read the taped primal result, not repeat the modification
+; of primal memory.
+; CHECK: define internal double @fwddiffebaz(ptr %p, ptr %"p'", double %vf, double %"vf'", ptr %tapeArg)
+; CHECK-NEXT: %newf = load double, ptr %tapeArg, align 8
+; CHECK-NOT: @julia.atomicmodify.i64.p0(ptr align 8 %p,
+; CHECK: %1 = call { i64, i64 } (ptr, ptr, i8, i8, ...) @julia.atomicmodify.i64.p0(ptr align 8 %"p'", ptr nonnull @fadd_op, i8 5, i8 1, i64 %"v'ipc")
+; CHECK-NOT: @julia.atomicmodify.i64.p0(ptr align 8 %p,
 ; CHECK: ret double
