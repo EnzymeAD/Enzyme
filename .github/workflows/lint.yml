@@ -49,7 +49,7 @@ jobs:
         . enzyme_venv/bin/activate
         fortitude check
 
-    shell-lint:
+  shell-lint:
     name: Linting for shell scripts
     runs-on: ubuntu-latest
 
