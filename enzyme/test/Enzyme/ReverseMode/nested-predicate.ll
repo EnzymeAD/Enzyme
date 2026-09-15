@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg)" -S -o %t
+; RUN: %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg)" -S -o %t
 ; RUN: FileCheck %s < %t
 ; RUN: %lli %t
 ; RUN: %opt %t -passes="default<O2>" -o %t.opt
