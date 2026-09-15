@@ -210,9 +210,20 @@ with `use enzyme, only: ...`.
 | Trigonometric functions | `enzyme_sin`, `enzyme_cos`, `enzyme_tan`, `enzyme_asin`, `enzyme_acos`, `enzyme_atan`, `enzyme_atan2` |
 | Exponential functions | `enzyme_exp`, `enzyme_exp2`, `enzyme_exp10`, `enzyme_expm1` |
 | Logarithms | `enzyme_log`, `enzyme_log2`, `enzyme_log10`, `enzyme_log1p` |
+| Hyperbolic functions | `enzyme_sinh`, `enzyme_sinhf`, `enzyme_cosh`, `enzyme_coshf`, `enzyme_tanh`, `enzyme_tanhf` |
 | Inverse hyperbolic functions | `enzyme_acosh`, `enzyme_asinh`, `enzyme_atanh` |
 | Roots and powers | `enzyme_sqrt`, `enzyme_cbrt`, `enzyme_hypot`, `enzyme_pow` |
 | Error functions | `enzyme_erf`, `enzyme_erfc` |
+| Absolute value and selection | `enzyme_fabs`, `enzyme_fmin`, `enzyme_fmax`, `enzyme_fdim`, `enzyme_copysign` |
+| Remainders | `enzyme_fmod`, `enzyme_remainder` |
+| Fused multiply-add | `enzyme_fma` |
+| Additional trigonometric functions | `enzyme_sinpi`, `enzyme_cospi`, `enzyme_sinc`, `enzyme_sincn` |
+| Imaginary error function | `enzyme_erfi` |
+| Bessel functions of orders zero and one | `enzyme_j0`, `enzyme_j0f`, `enzyme_j1`, `enzyme_j1f`, `enzyme_y0`, `enzyme_y0f`, `enzyme_y1`, `enzyme_y1f` |
+| Bessel functions with integer order | `enzyme_jn`, `enzyme_yn` |
+| Scaling by a power of two | `enzyme_ldexp`, `enzyme_ldexpf` |
+| Integer scaling and powers | `enzyme_scalbn`, `enzyme_powi` |
+| Rounding and exponent extraction | `enzyme_round`, `enzyme_logb`, `enzyme_ceil`, `enzyme_floor`, `enzyme_trunc`, `enzyme_rint`, `enzyme_nearbyint` |
 
 For example, use `enzyme_sin` to register a function with the `sin` rule:
 
@@ -222,7 +233,7 @@ use enzyme, only: enzyme_function_like, enzyme_sin
 call enzyme_function_like(my_sin, enzyme_sin)
 ```
 
-You can declare other symbolic names in user code. Use the `enzyme_math_`
+You can also declare symbolic names in user code. Use the `enzyme_math_`
 prefix followed by a function name that Enzyme supports:
 
 ```fortran
@@ -230,7 +241,7 @@ module enzyme_math_names
   use iso_c_binding, only: c_int
   implicit none
 
-  integer(c_int), bind(C, name="enzyme_math_fmin") :: enzyme_fmin
+  integer(c_int), public, bind(C, name="enzyme_math_sin")  :: enzyme_sin
 end module enzyme_math_names
 ```
 

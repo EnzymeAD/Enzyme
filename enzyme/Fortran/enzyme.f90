@@ -63,6 +63,48 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_math_pow")   :: enzyme_pow
   integer(c_int), public, bind(C, name="enzyme_math_erf")   :: enzyme_erf
   integer(c_int), public, bind(C, name="enzyme_math_erfc")  :: enzyme_erfc
+  integer(c_int), public, bind(C, name="enzyme_math_fabs")  :: enzyme_fabs
+  integer(c_int), public, bind(C, name="enzyme_math_fmin")  :: enzyme_fmin
+  integer(c_int), public, bind(C, name="enzyme_math_fmax")  :: enzyme_fmax
+  integer(c_int), public, bind(C, name="enzyme_math_fdim")  :: enzyme_fdim
+  integer(c_int), public, bind(C, name="enzyme_math_copysign") :: enzyme_copysign
+  integer(c_int), public, bind(C, name="enzyme_math_fmod")  :: enzyme_fmod
+  integer(c_int), public, bind(C, name="enzyme_math_remainder") :: enzyme_remainder
+  integer(c_int), public, bind(C, name="enzyme_math_fma")   :: enzyme_fma
+  integer(c_int), public, bind(C, name="enzyme_math_sinpi") :: enzyme_sinpi
+  integer(c_int), public, bind(C, name="enzyme_math_cospi") :: enzyme_cospi
+  integer(c_int), public, bind(C, name="enzyme_math_sinc")  :: enzyme_sinc
+  integer(c_int), public, bind(C, name="enzyme_math_sincn") :: enzyme_sincn
+  integer(c_int), public, bind(C, name="enzyme_math_erfi")  :: enzyme_erfi
+  integer(c_int), public, bind(C, name="enzyme_math_jn")    :: enzyme_jn
+  integer(c_int), public, bind(C, name="enzyme_math_yn")    :: enzyme_yn
+  integer(c_int), public, bind(C, name="enzyme_math_scalbn") :: enzyme_scalbn
+  integer(c_int), public, bind(C, name="enzyme_math_powi")  :: enzyme_powi
+  integer(c_int), public, bind(C, name="enzyme_math_round") :: enzyme_round
+  integer(c_int), public, bind(C, name="enzyme_math_logb")  :: enzyme_logb
+  integer(c_int), public, bind(C, name="enzyme_math_ceil")  :: enzyme_ceil
+  integer(c_int), public, bind(C, name="enzyme_math_floor") :: enzyme_floor
+  integer(c_int), public, bind(C, name="enzyme_math_trunc") :: enzyme_trunc
+  integer(c_int), public, bind(C, name="enzyme_math_rint")  :: enzyme_rint
+  integer(c_int), public, bind(C, name="enzyme_math_nearbyint") :: enzyme_nearbyint
+
+  ! These labels require the specified real precision.
+  integer(c_int), public, bind(C, name="enzyme_math_sinh")  :: enzyme_sinh
+  integer(c_int), public, bind(C, name="enzyme_math_sinhf") :: enzyme_sinhf
+  integer(c_int), public, bind(C, name="enzyme_math_cosh")  :: enzyme_cosh
+  integer(c_int), public, bind(C, name="enzyme_math_coshf") :: enzyme_coshf
+  integer(c_int), public, bind(C, name="enzyme_math_tanh")  :: enzyme_tanh
+  integer(c_int), public, bind(C, name="enzyme_math_tanhf") :: enzyme_tanhf
+  integer(c_int), public, bind(C, name="enzyme_math_j0")    :: enzyme_j0
+  integer(c_int), public, bind(C, name="enzyme_math_j0f")   :: enzyme_j0f
+  integer(c_int), public, bind(C, name="enzyme_math_j1")    :: enzyme_j1
+  integer(c_int), public, bind(C, name="enzyme_math_j1f")   :: enzyme_j1f
+  integer(c_int), public, bind(C, name="enzyme_math_y0")    :: enzyme_y0
+  integer(c_int), public, bind(C, name="enzyme_math_y0f")   :: enzyme_y0f
+  integer(c_int), public, bind(C, name="enzyme_math_y1")    :: enzyme_y1
+  integer(c_int), public, bind(C, name="enzyme_math_y1f")   :: enzyme_y1f
+  integer(c_int), public, bind(C, name="enzyme_math_ldexp") :: enzyme_ldexp
+  integer(c_int), public, bind(C, name="enzyme_math_ldexpf") :: enzyme_ldexpf
 
   ! Bindings for function hooks
   public :: enzyme_autodiff
