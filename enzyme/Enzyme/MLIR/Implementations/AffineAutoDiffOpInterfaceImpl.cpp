@@ -165,43 +165,11 @@ struct AffineIfOpInterfaceReverse
         ifOp->getOperands().drop_front(is.getNumDims()), getNewFromOriginal);
 
     for (auto [eq, E] : llvm::zip_equal(is.getEqFlags(), is.getConstraints())) {
-      AffineExpr lhsExpr = E, rhsExpr = cacheBuilder.getAffineConstantExpr(0);
-
-      while (lhsExpr.getKind() == AffineExprKind::Add) {
-        auto binExpr = cast<AffineBinaryOpExpr>(lhsExpr);
-
-        if (binExpr.getRHS().getKind() != AffineExprKind::Constant)
-          break;
-
-        rhsExpr = rhsExpr - binExpr.getRHS();
-        lhsExpr = binExpr.getLHS();
-      }
-
-      bool isLE = false;
-      if (lhsExpr.getKind() == AffineExprKind::Mul) {
-        auto binExpr = cast<AffineBinaryOpExpr>(lhsExpr);
-        auto binRHS = binExpr.getRHS();
-
-        if (auto rhsConstant = dyn_cast<AffineConstantExpr>(binRHS)) {
-          int64_t factor = rhsConstant.getValue();
-          if (factor < 0 && !eq) {
-            isLE = true;
-            lhsExpr = binExpr.getLHS();
-            rhsExpr = (-rhsExpr).floorDiv(-factor);
-          }
-        }
-      }
-
-      Value lhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), lhsExpr,
-                                           dims, symbols),
-            rhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), rhsExpr,
-                                           dims, symbols);
-      Value constraintCond =
-          arith::CmpIOp::create(cacheBuilder, ifOp.getLoc(),
-                                eq     ? arith::CmpIPredicate::eq
-                                : isLE ? arith::CmpIPredicate::sle
-                                       : arith::CmpIPredicate::sge,
-                                lhs, rhs);
+      Value lhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), E, dims,
+                                           symbols);
+      Value constraintCond = arith::CmpIOp::create(
+          cacheBuilder, ifOp.getLoc(),
+          eq ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sge, lhs, zero);
 
       if (cond) {
         cond = arith::AndIOp::create(cacheBuilder, ifOp.getLoc(),
@@ -212,8 +180,9 @@ struct AffineIfOpInterfaceReverse
     }
 
     cond = cond ? cond
-                : arith::ConstantIntOp::create(cacheBuilder, loc, /*value=*/1,
-                                               /*width=*/1);
+                : arith::ConstantIntOp::create(cacheBuilder, ifOp.getLoc(),
+                                               cacheBuilder.getI1Type(),
+                                               /*value=*/1);
 
     return {gutils->initAndPushCache(cond, cacheBuilder)};
   }
