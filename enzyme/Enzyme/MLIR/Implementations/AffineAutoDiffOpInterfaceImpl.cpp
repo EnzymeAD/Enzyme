@@ -67,6 +67,159 @@ affine::AffineIfOp createAffineIfWithShadows(Operation *op, OpBuilder &builder,
       adaptor.getOperands(), !original.getElseRegion().empty());
 }
 
+struct AffineIfOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineIfOpInterfaceReverse, affine::AffineIfOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto ifOp = cast<affine::AffineIfOp>(op);
+    bool hasElse = ifOp.hasElse();
+    Value cond = gutils->popCache(caches[0], builder);
+
+    SmallVector<bool> resultsActive(ifOp.getNumResults(), false);
+    for (int i = 0, e = resultsActive.size(); i < e; ++i) {
+      auto result = ifOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      resultsActive[i] = needsGrad && !gutils->isConstantValue(result);
+    }
+
+    SmallVector<Value> incomingGradients;
+    for (auto &&[active, res] :
+         llvm::zip_equal(resultsActive, ifOp.getResults())) {
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(res, builder));
+        if (!gutils->isConstantValue(res))
+          gutils->zeroDiffe(res, builder);
+      }
+    }
+
+    auto revIf =
+        scf::IfOp::create(builder, ifOp.getLoc(), TypeRange{}, cond, hasElse);
+
+    bool valid = true;
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(op->getRegions(), revIf->getRegions())) {
+      for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
+        OpBuilder bodyBuilder(&revBB, revBB.end());
+        bodyBuilder.setInsertionPoint(revBB.getTerminator());
+
+        mlir::enzyme::localizeGradients(bodyBuilder, gutils, &oBB);
+
+        auto term = oBB.getTerminator();
+        // Align incomingGradients with their corresponding yield operands.
+        SmallVector<Value> activeTermOperands;
+        activeTermOperands.reserve(incomingGradients.size());
+        for (auto &&[resultActive, operand] :
+             llvm::zip_equal(resultsActive, term->getOperands())) {
+          if (resultActive)
+            activeTermOperands.push_back(operand);
+        }
+
+        for (auto &&[arg, operand] :
+             llvm::zip_equal(incomingGradients, activeTermOperands)) {
+          // Check activity of the argument separately from the result. If
+          // some branches yield inactive values while others yield active
+          // values, the result will be active, but this operand may still be
+          // inactive (and we cannot addToDiffe)
+          if (!gutils->isConstantValue(operand)) {
+            gutils->addToDiffe(operand, arg, bodyBuilder);
+          }
+        }
+
+        auto first = oBB.rbegin();
+        first++; // skip terminator
+
+        auto last = oBB.rend();
+
+        for (auto it = first; it != last; ++it) {
+          Operation *op = &*it;
+          valid &=
+              gutils->Logic.visitChild(op, bodyBuilder, gutils).succeeded();
+        }
+      }
+    }
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto ifOp = cast<affine::AffineIfOp>(op);
+    auto is = ifOp.getCondition();
+
+    auto newOp = gutils->getNewFromOriginal(op);
+    OpBuilder cacheBuilder(newOp);
+
+    Value cond = nullptr;
+
+    Value zero = arith::ConstantIndexOp::create(cacheBuilder, ifOp.getLoc(), 0);
+
+    auto getNewFromOriginal = [&](Value v) {
+      return gutils->getNewFromOriginal(v);
+    };
+
+    SmallVector<Value> dims = llvm::map_to_vector(
+        ifOp->getOperands().take_front(is.getNumDims()), getNewFromOriginal);
+    SmallVector<Value> symbols = llvm::map_to_vector(
+        ifOp->getOperands().drop_front(is.getNumDims()), getNewFromOriginal);
+
+    for (auto [eq, E] : llvm::zip_equal(is.getEqFlags(), is.getConstraints())) {
+      AffineExpr lhsExpr = E, rhsExpr = cacheBuilder.getAffineConstantExpr(0);
+
+      while (lhsExpr.getKind() == AffineExprKind::Add) {
+        auto binExpr = cast<AffineBinaryOpExpr>(lhsExpr);
+
+        if (binExpr.getRHS().getKind() != AffineExprKind::Constant)
+          break;
+
+        rhsExpr = rhsExpr - binExpr.getRHS();
+        lhsExpr = binExpr.getLHS();
+      }
+
+      bool isLE = false;
+      if (lhsExpr.getKind() == AffineExprKind::Mul) {
+        auto binExpr = cast<AffineBinaryOpExpr>(lhsExpr);
+        auto binRHS = binExpr.getRHS();
+
+        if (auto rhsConstant = dyn_cast<AffineConstantExpr>(binRHS)) {
+          int64_t factor = rhsConstant.getValue();
+          if (factor < 0 && !eq) {
+            isLE = true;
+            lhsExpr = binExpr.getLHS();
+            rhsExpr = (-rhsExpr).floorDiv(-factor);
+          }
+        }
+      }
+
+      Value lhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), lhsExpr,
+                                           dims, symbols),
+            rhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), rhsExpr,
+                                           dims, symbols);
+      Value constraintCond =
+          arith::CmpIOp::create(cacheBuilder, ifOp.getLoc(),
+                                eq     ? arith::CmpIPredicate::eq
+                                : isLE ? arith::CmpIPredicate::sle
+                                       : arith::CmpIPredicate::sge,
+                                lhs, rhs);
+
+      if (cond) {
+        cond = arith::AndIOp::create(cacheBuilder, ifOp.getLoc(),
+                                     constraintCond, cond);
+      } else {
+        cond = constraintCond;
+      }
+    }
+
+    return {gutils->initAndPushCache(cond, cacheBuilder)};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
+};
+
 affine::AffineParallelOp
 createAffineParallelWithShadows(Operation *op, OpBuilder &builder,
                                 MGradientUtils *gutils,
@@ -1329,5 +1482,6 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
         *context);
     affine::AffineParallelOp::attachInterface<
         AffineParallelRegionBranchOpInterface>(*context);
+    affine::AffineIfOp::attachInterface<AffineIfOpInterfaceReverse>(*context);
   });
 }

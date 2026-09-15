@@ -38,6 +38,7 @@ static llvm::cl::opt<bool>
 void mlir::enzyme::localizeGradients(OpBuilder &builder,
                                      MGradientUtilsReverse *gutils,
                                      Block *fwd) {
+  OpBuilder::InsertionGuard guard(builder);
   Operation *parent = fwd->getParentOp();
 
   auto localizeGradientValue = [&](Value val) {
