@@ -5,18 +5,24 @@
 ! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
-program main
-  use enzyme, only: enzyme_autodiff
+module enzyme_test_reverse_function_like_procedure_pointer
   implicit none
 
-  ! A procedure pointer initializer cannot target an internal procedure.
-  ! Use an external function with an explicit interface to avoid a module.
-  interface
-    function double_value(x) result(y)
-      real, value :: x
-      real :: y
-    end function double_value
-  end interface
+contains
+
+  function double_value(x) result(y)
+    real, value :: x
+    real :: y
+
+    y = 2.0 * x
+  end function double_value
+
+end module enzyme_test_reverse_function_like_procedure_pointer
+
+program main
+  use enzyme, only: enzyme_autodiff
+  use enzyme_test_reverse_function_like_procedure_pointer, only: double_value
+  implicit none
 
   procedure(double_value), pointer :: &
     fn__enzyme_function_like__log1p => double_value
@@ -39,14 +45,6 @@ contains
   end function test
 
 end program main
-
-function double_value(x) result(y)
-  implicit none
-  real, value :: x
-  real :: y
-
-  y = 2.0 * x
-end function double_value
 
 ! IR: "enzyme_math"="log1p"
 ! CHECK: 0.3333
