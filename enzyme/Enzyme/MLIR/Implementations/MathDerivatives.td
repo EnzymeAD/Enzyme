@@ -1,5 +1,7 @@
 include "Common.td"
 
+class MathInactiveOp<string m> : InactiveOp<"math", m>;
+
 def : MLIRDerivative<"math", "CosOp", (Op $x),
                     [
                       (CheckedMulF (DiffeRet), (NegF (SinF $x)))
@@ -16,7 +18,7 @@ def : MLIRDerivative<"math", "Exp2Op", (Op $x),
                         (DiffeRet),
                         (MulF
                           (Exp2F $x),
-                          (LogF 
+                          (LogF
                             (ConstantFP<"2","arith","ConstantOp"> $x)
                             )))
                     ]
@@ -78,3 +80,25 @@ def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                       )
                     ]
                   >;
+
+def : MLIRDerivative<"math", "Log1pOp", (Op $x),
+                    [
+                      (CheckedDivF
+                        (DiffeRet),
+                        (AddF $x, (ConstantFP<"1","arith","ConstantOp"> $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "CopySignOp", (Op $x, $y),
+                    [
+                      (CheckedMulF
+                        (DiffeRet),
+                        (MulF
+                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $x), $x),
+                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $y), $y))),
+                      (InactiveArg)
+                    ]
+                  >;
+
+def : MathInactiveOp<"CeilOp">;
+def : MathInactiveOp<"FloorOp">;
