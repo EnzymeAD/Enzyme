@@ -20,6 +20,7 @@ def DifferentiatePass : Pass<"enzyme"> {
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
     "memref::MemRefDialect",
+    "math::MathDialect",
     "mlir::LLVM::LLVMDialect",
     "mlir::enzyme::llvm_ext::LLVMExtDialect"
   ];
@@ -128,6 +129,7 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
     "memref::MemRefDialect",
+    "math::MathDialect",
     "mlir::LLVM::LLVMDialect",
     "mlir::enzyme::llvm_ext::LLVMExtDialect"
   ];
@@ -292,7 +294,7 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
 
 def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
   let summary = "Hoist independent primal ops out of autodiff_region.";
-  let dependentDialects = [ 
+  let dependentDialects = [
   "enzyme::EnzymeDialect",
   ];
 }
@@ -330,7 +332,7 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 def EnzymeBatchToTensorPass : Pass<"enzyme-batch-to-tensor"> {
   let summary = "Legalize batching specific operations to tensor dialect";
   let dependentDialects = [
-    "tensor::TensorDialect", 
+    "tensor::TensorDialect",
     "arith::ArithDialect",
     "enzyme::EnzymeDialect"
   ];
