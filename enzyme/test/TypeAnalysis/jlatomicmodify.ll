@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=caller -S -o /dev/null | FileCheck %s --check-prefix=CALLER; fi
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=fromload -S -o /dev/null | FileCheck %s --check-prefix=FROMLOAD; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="print-type-analysis" -type-analysis-func=caller -S -o /dev/null | FileCheck %s --check-prefix=CALLER; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="print-type-analysis" -type-analysis-func=fromload -S -o /dev/null | FileCheck %s --check-prefix=FROMLOAD; fi
 
 ; Julia 1.13's atomic modify pseudo-intrinsic
 ;   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope, args...)
