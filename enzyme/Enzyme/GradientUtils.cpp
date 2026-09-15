@@ -7902,6 +7902,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Value *result =
       lookupValueFromCache(inst->getType(), /*isForwardPass*/ false, BuilderM,
                            found->second, found->first, isi1, available);
+  if (auto *resultInst = dyn_cast<Instruction>(result)) {
+    auto *origInst = isOriginal(inst);
+    if (!origInst)
+      origInst = isOriginal(prelcssaInst);
+    if (origInst) {
+      TypeTree TT = TR.query(origInst);
+      if (TT.isKnown())
+        resultInst->setMetadata("enzyme_type",
+                                TT.toMD(resultInst->getContext()));
+    }
+  }
   if (auto LI2 = dyn_cast<LoadInst>(result))
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
@@ -9382,7 +9393,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
-  SmallPtrSet<Instruction *, 1> storingOps;
+  SetVector<Instruction *> storingOps;
   SmallPtrSet<Instruction *, 1> frees;
   SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
   bool promotable = true;
@@ -9617,8 +9628,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       for (auto S : storingOps)
         if (!stores.count(S)) {
           SmallVector<Instruction *, 2> results;
-          SmallPtrSet<Instruction *, 2> shadowPtrLoadSet(
-              shadowPointerLoads.begin(), shadowPointerLoads.end());
+          SetVector<Instruction *> shadowPtrLoadSet;
+          shadowPtrLoadSet.insert(shadowPointerLoads.begin(),
+                                  shadowPointerLoads.end());
           mayExecuteAfter(results, S, shadowPtrLoadSet, outer);
           if (results.size()) {
             EmitWarning("NotPromotable", *results[0],
