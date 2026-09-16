@@ -21,7 +21,7 @@
 !
 ! ===----------------------------------------------------------------------=== !
 module enzyme
-  use iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int
   use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
                                    enzyme_fwddiff  => f__enzyme_fwddiff
   implicit none
