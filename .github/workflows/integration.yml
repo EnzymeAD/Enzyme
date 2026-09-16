@@ -45,13 +45,15 @@ jobs:
           - os: linux-x86-a2-48-a100-4gpu
             package: summit
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout Enzyme repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
       - name: add llvm
         run: |
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
           apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           apt-get install -y cmake gcc g++ clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-dev libzstd-dev
-      - uses: actions/checkout@v4
       - name: mkdir
         run: rm -rf build && mkdir build
       - name: cmake
