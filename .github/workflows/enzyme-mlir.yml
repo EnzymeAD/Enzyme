@@ -23,10 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: ["Release", "Debug"] # "RelWithDebInfo"
-        llbuild: ["Release"]
+        build: [Release, Debug] # RelWithDebInfo
+        llbuild: [Release]
         os: [linux-x86-n2-32]
-
     timeout-minutes: 500
 
     container:

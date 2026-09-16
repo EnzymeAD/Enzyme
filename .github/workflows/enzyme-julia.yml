@@ -26,15 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version:
-          - '1.10'
-          - '1.11'
-          - '1.12'
-          - '1.13'
-        os:
-          - ubuntu-latest
-        arch:
-          - 'default'
+        version: ['1.10', '1.11', '1.12', '1.13']
+        os: [ubuntu-latest]
+        arch: [default]
     timeout-minutes: 60
     steps:
     - name: Checkout Enzyme repository
@@ -70,7 +64,7 @@ jobs:
     - uses: julia-actions/julia-buildpkg@v1
       with:
         project: jl
-    - name: "Set test arguments"
+    - name: Set test arguments
       shell: bash
       run: |
         # Run tests in verbose mode

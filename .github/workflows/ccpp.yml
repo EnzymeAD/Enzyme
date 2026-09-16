@@ -19,18 +19,17 @@ jobs:
   build:
     name: Integration CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    
+
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15", "16", "17", "18", "19", "20", "21"]
-        build: ["Release"] # "RelWithDebInfo"
+        llvm: [15, 16, 17, 18, 19, 20, 21]
+        build: [Release] # RelWithDebInfo
         os: [ubuntu-22.04]
-    
     timeout-minutes: 45
-    
+
     steps:
-    - name: add llvm 
+    - name: add llvm
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-get install -y libmpfr-dev
