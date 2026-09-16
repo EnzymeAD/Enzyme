@@ -4570,8 +4570,12 @@ public:
                 isa<Argument>(v))
               return v;
             auto inst = cast<Instruction>(v);
-            if (inst->getParent()->getParent() == gutils->newFunc)
+            if (inst->getParent()->getParent() == gutils->newFunc) {
+              llvm::errs() << "OMPREMAP-DEBUG: caller-context instruction "
+                              "reached remapFromOutlined: "
+                           << *inst << "\n";
               return v;
+            }
             // Guard against cycles (shouldn't occur in SSA, but be safe).
             if (!remapVisited.insert(v).second)
               return v;
