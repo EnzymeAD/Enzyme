@@ -15,6 +15,7 @@ jobs:
   emission-order:
     name: Deterministic IR emission order
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
     - name: Checkout Enzyme repository
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -28,6 +29,7 @@ jobs:
   llvm-api:
     name: Direct use of wrapped LLVM APIs
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
     - name: Checkout Enzyme repository
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -40,7 +42,7 @@ jobs:
   fortran-lint:
     name: Linting for Fortran source
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
     - name: Checkout Enzyme repository
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -59,7 +61,7 @@ jobs:
   shell-lint:
     name: Linting for shell scripts
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
     - name: Checkout Enzyme repository
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -75,7 +77,7 @@ jobs:
   cmake-lint:
     name: Linting for CMakeLists.txt files
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
     - name: Checkout Enzyme repository
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
