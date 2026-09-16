@@ -37,7 +37,10 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
@@ -51,16 +54,28 @@ jobs:
     - name: make check-enzyme-integration
       working-directory: build
       run: make -j `nproc` check-enzyme-integration
-      
+
     - name: Update Nightly Release
-      uses: ncipollo/release-action@v1
-      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }} 
-      with:
-        tag: nightly
-        name: Nightly Release
-        body: "Latest nightly build of Enzyme."
-        artifacts: "build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}*,build/Enzyme/ClangEnzyme-${{ matrix.llvm }}*,build/Enzyme/LLDEnzyme-${{ matrix.llvm }}*"
-        allowUpdates: true
-        removeArtifacts: false
-        replacesArtifacts: true
-        token: ${{ secrets.GITHUB_TOKEN }}
+      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        if gh release view nightly >/dev/null 2>&1; then
+          gh release edit nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
+        else
+          gh release create nightly --title "Nightly Release" --notes "Latest nightly build of Enzyme."
+        fi
+        artifacts=()
+        for pattern in \
+          build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}* \
+          build/Enzyme/ClangEnzyme-${{ matrix.llvm }}* \
+          build/Enzyme/LLDEnzyme-${{ matrix.llvm }}*; do
+          for artifact in $pattern; do
+            [ -e "$artifact" ] && artifacts+=("$artifact")
+          done
+        done
+        if [ ${#artifacts[@]} -gt 0 ]; then
+          gh release upload nightly "${artifacts[@]}" --clobber
+        else
+          echo "No nightly artifacts found for LLVM ${{ matrix.llvm }}."
+        fi
