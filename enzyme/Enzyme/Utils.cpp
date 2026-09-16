@@ -1655,13 +1655,24 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   return;
 }
 
+llvm::Constant *getRealValuedConstant(llvm::Type *fpType, double val) {
+  if (auto VT = dyn_cast<VectorType>(fpType)) {
+    auto elTy = VT->getElementType();
+    return ConstantVector::get(
+        {ConstantFP::get(elTy, val), ConstantFP::get(elTy, 0.0)});
+  }
+  return ConstantFP::get(fpType, val);
+}
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
                      llvm::ArrayRef<llvm::Value *> args,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
                      bool byRef, bool cublas, bool julia_decl) {
-  assert(fpTy->isFloatingPointTy());
+  // relax to receive complex values.
+  bool isComplex = (blas.floatType == "c" || blas.floatType == "z");
+  assert(fpTy->isFloatingPointTy() || isComplex);
 
   // add inner_prod call if not already present
   std::string prod_name = "__enzyme_inner_prod" + blas.floatType + blas.suffix;
@@ -1673,8 +1684,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   if (!F->empty())
     return B.CreateCall(F, args, bundles);
 
-  // add dot call if not already present
-  std::string dot_name = blas.prefix + blas.floatType + "dot" + blas.suffix;
+  // for the complex varient use `dotc`.
+  std::string dot_name = blas.prefix + blas.floatType +
+                         (isComplex ? "dotc" : "dot") + blas.suffix;
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   auto FDot = M.getOrInsertFunction(dot_name, FDotT);
@@ -4140,11 +4152,21 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
     }
 
   } else if (T->isIntegerTy(32)) {
-    auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
-    auto sel1 = B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
-        ConstantInt::get(V->getType(), 111), ConstantInt::get(V->getType(), 0));
-    return B.CreateSelect(is111, ConstantInt::get(V->getType(), 112), sel1);
+    // CBLAS_TRANSPOSE: CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113.
+    // See the Fortran codeblock above: 111<->113/'N'<->'C'. 112 case not handled
+    if (floatType == "z" || floatType == "c") {
+      auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
+      auto sel1 = B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 113)),
+          ConstantInt::get(V->getType(), 111), ConstantInt::get(V->getType(), 0));
+      return B.CreateSelect(is111, ConstantInt::get(V->getType(), 113), sel1);
+    } else {
+      auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
+      auto sel1 = B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
+          ConstantInt::get(V->getType(), 111), ConstantInt::get(V->getType(), 0));
+      return B.CreateSelect(is111, ConstantInt::get(V->getType(), 112), sel1);
+    }
   } else {
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -4205,11 +4227,23 @@ llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
     }
 
     // cblas
-    if (!cublas)
+    if (!cublas) {
+      // CBLAS_TRANSPOSE swap 111<->113/'N'<->'C'
+      
+      if (floatType == "c" || floatType == "z") {
+        auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
+        auto sel1 = B.CreateSelect(
+            B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 113)),
+            ConstantInt::get(V->getType(), 111),
+            ConstantInt::get(V->getType(), 0));
+        return B.CreateSelect(is111, ConstantInt::get(V->getType(), 113),
+                              sel1);
+      }
       return B.CreateSelect(
           B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
           ConstantInt::get(V->getType(), 112),
           ConstantInt::get(V->getType(), 111));
+    }
   }
 
   if (byRef) {

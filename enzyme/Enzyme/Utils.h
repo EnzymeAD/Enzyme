@@ -915,6 +915,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
                      bool byRef, bool cublas, bool julia_decl);
 
+// Costruct Constant<1.0> for the complex numbers correctly i.e. 1.0 + 0.0i.
+llvm::Constant *getRealValuedConstant(llvm::Type *fpType, double val);
+
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
                                          llvm::Type *elementType,
