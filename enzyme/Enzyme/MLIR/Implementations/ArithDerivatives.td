@@ -65,11 +65,11 @@ def : MLIRDerivative<"arith", "MinimumFOp", (Op $x, $y),
                         (DiffeRet),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
                             (DiffeRet),
-                            (ConstantFP<"0","arith","ConstantOp"> $x))),
+                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $x)))),
                       (Arith_Select (CmpF (Arith_OLT), $x, $y),
-                        (ConstantFP<"0","arith","ConstantOp"> $y),
+                        (ConstantFP<"0","arith","ConstantOp"> (Shadow $y)),
                         (Arith_Select (AndI (IsNegZero $x), (IsPosZero $y)),
-                            (ConstantFP<"0","arith","ConstantOp"> $y),
+                            (ConstantFP<"0","arith","ConstantOp"> (Shadow $y)),
                             (DiffeRet)))
                     ]>;
 
