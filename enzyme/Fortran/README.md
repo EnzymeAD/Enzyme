@@ -3,13 +3,12 @@
 Source files in this subdirectory provides Fortran bindings for Enzyme, as
 detailed in the following.
 
-## Note on compilers
-
-Before providing details on the Fortran bindings, it is worth noting that Enzyme
-only supports the `2023.0.0` and `2023.2.4` versions of the Intel
-IFX Fortran compiler. We strongly recommend using the
-[Flang](https://flang.llvm.org) compiler, which is available as part of the
-[LLVM project](https://github.com/llvm/llvm-project).
+> [!NOTE] Note on compilers
+> Before providing details on the Fortran bindings, it is worth noting that
+> Enzyme only supports the `2023.0.0` and `2023.2.4` versions of the Intel
+> IFX Fortran compiler. We strongly recommend using the
+> [Flang](https://flang.llvm.org) compiler, which is available as part of the
+> [LLVM project](https://github.com/llvm/llvm-project).
 
 ## Running Enzyme from flang
 
@@ -124,3 +123,9 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
+
+## Further information
+
+For further information on the Fortran bindings for Enzyme, see the
+[Fortran guide](https://enzyme.mit.edu/getting_started/FortranGuide/) on the
+Enzyme website.
