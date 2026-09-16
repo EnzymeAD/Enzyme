@@ -37,6 +37,25 @@ jobs:
       run: |
         python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme
 
+  fortran-lint:
+    name: Linting for Fortran source
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+    - name: Install Fortitude
+      run: |
+        python3 -m venv enzyme_venv
+        . enzyme_venv/bin/activate
+        pip install fortitude-lint
+    - name: Run Fortitude check
+      run: |
+        . enzyme_venv/bin/activate
+        fortitude check
+
   shell-lint:
     name: Linting for shell scripts
     runs-on: ubuntu-latest
@@ -52,6 +71,25 @@ jobs:
         sudo apt install shellcheck
     - name: Run Shellcheck
       run: shellcheck -x $(find enzyme -name '*.sh')
+
+  cmake-lint:
+    name: Linting for CMakeLists.txt files
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+    - name: Install cmakefmt
+      run: |
+        python3 -m venv enzyme_venv
+        . enzyme_venv/bin/activate
+        pip install cmakefmt
+    - name: Run cmakefmt --check
+      run: |
+        . enzyme_venv/bin/activate
+        cmakefmt --check
 
   zizmor:
     name: GitHub Actions linting
