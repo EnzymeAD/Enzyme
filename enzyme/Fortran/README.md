@@ -123,3 +123,9 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
+
+## Further information
+
+For further information on the Fortran bindings for Enzyme, see the
+[Fortran guide](https://enzyme.mit.edu/getting_started/FortranGuide/) on the
+Enzyme website.
