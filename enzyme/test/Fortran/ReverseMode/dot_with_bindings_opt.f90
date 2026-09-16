@@ -68,9 +68,9 @@ contains
     real, dimension(n), intent(in) :: b
     real, intent(in) :: c
     dot = dot_product(a, b) + c
-  end function
+  end function dot
 
-end program
+end program main
 
 ! CHECK: 20.0
 ! CHECK-NEXT: 20.0
