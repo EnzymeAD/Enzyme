@@ -8,11 +8,12 @@ forward-mode rules through a derived type of Fortran procedure pointers.
 
 ## Note on compilers
 
-Before providing details on the Fortran bindings, it is worth noting that Enzyme
-only supports the `2023.0.0` and `2023.2.4` versions of the Intel
-IFX Fortran compiler. We strongly recommend using the
-[Flang](https://flang.llvm.org) compiler, which is available as part of the
-[LLVM project](https://github.com/llvm/llvm-project).
+> [!NOTE] Note on compilers
+> Before providing details on the Fortran bindings, it is worth noting that
+> Enzyme only supports the `2023.0.0` and `2023.2.4` versions of the Intel
+> IFX Fortran compiler. We strongly recommend using the
+> [Flang](https://flang.llvm.org) compiler, which is available as part of the
+> [LLVM project](https://github.com/llvm/llvm-project).
 
 ## Running Enzyme from flang
 
