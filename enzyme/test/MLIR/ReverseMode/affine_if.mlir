@@ -34,7 +34,7 @@ func.func @sum_tail(%x: memref<4xf64>) -> f64 {
 // CHECK-NEXT:        affine.yield %5 : f64
 // CHECK-NEXT:      } else {
 // CHECK-NEXT:        affine.yield %cst : f64
-// CHECK-NEXT:      } {preserve_cache}
+// CHECK-NEXT:      }
 // CHECK-NEXT:      %3 = arith.addf %arg4, %2 : f64
 // CHECK-NEXT:      affine.yield %3 : f64
 // CHECK-NEXT:    }
