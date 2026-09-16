@@ -135,7 +135,6 @@ for an example.
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
 
-
 ## Function-like hooks
 
 The `enzyme_function_like` hook tells Enzyme to differentiate a function as if
@@ -493,3 +492,9 @@ The [forward-mode example](../test/Fortran/ForwardMode/custom_derivative.f90)
 prints `dy = 0.3333`. The
 [seed test](../test/Fortran/ForwardMode/custom_derivative_seeds.f90) checks that
 `dy` scales with `dx` and that the rule replaces a previous value of `dy`.
+
+## Further information
+
+For further information on the Fortran bindings for Enzyme, see the
+[Fortran guide](https://enzyme.mit.edu/getting_started/FortranGuide/) on the
+Enzyme website.
