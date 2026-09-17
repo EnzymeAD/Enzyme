@@ -8190,6 +8190,13 @@ void GradientUtils::branchToCorrespondingTarget(
           if (!bi2)
             goto rnextpair;
 
+          // Both predicates are looked up unconditionally below. A predicate
+          // defined only on the inner path may require an unwritten cache or
+          // an unsafe recomputation when that path was not taken.
+          if (auto *I = dyn_cast<Instruction>(getBranchCondition(bi2)))
+            if (!DT.dominates(I->getParent(), ctx))
+              goto rnextpair;
+
           // Condition cond1 splits off uniqueTargets[0] from
           // the remainder of foundTargets.
           auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
@@ -8250,7 +8257,11 @@ void GradientUtils::branchToCorrespondingTarget(
               Value *val = cond2;
               if (i == 1)
                 val = BuilderM.CreateNot(val, "bnot1_");
-              val = BuilderM.CreateAnd(val, otherBranch, "andVal" + Twine(i));
+              // The inner predicate may be poison on the other outer path.
+              val = BuilderM.CreateSelect(
+                  otherBranch, val,
+                  ConstantInt::getFalse(BuilderM.getContext()),
+                  "andVal" + Twine(i));
               if (&*BuilderM.GetInsertPoint() == found->second) {
                 if (found->second->getNextNode())
                   BuilderM.SetInsertPoint(found->second->getNextNode());
