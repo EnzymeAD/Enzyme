@@ -42,9 +42,11 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 
+#include "EnzymeCallMarkers.h"
 #include "PreserveNVVM.h"
 #include "Utils.h"
 
@@ -348,9 +350,57 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
+// Clang's RDC retention lists describe device symbols referenced from host
+// code, including references in host/device functions. Enzyme call markers
+// are compile-time metadata, not runtime device variables. Their presence in
+// these lists would keep an undefined device symbol alive after AD consumed
+// every call. Remove only the markers; genuine host-only device references
+// must still extract their definitions from device archives.
+static bool removeCudaMarkerRetention(Module &M) {
+  SmallVector<GlobalVariable *, 4> Lists;
+  for (auto &G : M.globals())
+    if (startsWith(G.getName(), "__clang_gpu_used_external") &&
+        G.hasInternalLinkage() && G.hasInitializer() &&
+        isa<ConstantArray>(G.getInitializer()))
+      Lists.push_back(&G);
+
+  bool Changed = false;
+  for (auto *G : Lists) {
+    auto *Initial = cast<ConstantArray>(G->getInitializer());
+    SmallVector<Constant *, 4> Keep;
+    for (auto &Op : Initial->operands()) {
+      auto *Entry = cast<Constant>(Op.get());
+      auto *Variable = dyn_cast<GlobalVariable>(Entry->stripPointerCasts());
+      if (!Variable || !enzyme_markers::lookupEnzymeMarker(Variable->getName()))
+        Keep.push_back(Entry);
+    }
+    if (Keep.size() == Initial->getNumOperands())
+      continue;
+    Changed = true;
+    if (Keep.empty()) {
+      removeFromUsedLists(
+          M, [G](Constant *C) { return C->stripPointerCasts() == G; });
+      G->eraseFromParent();
+    } else {
+      auto *A = ConstantArray::get(
+          ArrayType::get(Initial->getType()->getElementType(), Keep.size()),
+          Keep);
+      auto *Replacement = new GlobalVariable(
+          M, A->getType(), G->isConstant(), G->getLinkage(), A, "", nullptr,
+          G->getThreadLocalMode(), G->getAddressSpace());
+      Replacement->copyAttributesFrom(G);
+      Replacement->copyMetadata(G, 0);
+      Replacement->takeName(G);
+      G->replaceAllUsesWith(Replacement);
+      G->eraseFromParent();
+    }
+  }
+  return Changed;
+}
+
 bool preserveNVVM(bool Begin, Module &M,
                   bool PreserveCustomRuleLinkage = true) {
-  bool changed = false;
+  bool changed = removeCudaMarkerRetention(M);
   constexpr static const char gradient_handler_name[] =
       "__enzyme_register_gradient";
   constexpr static const char derivative_handler_name[] =
