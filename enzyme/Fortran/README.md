@@ -103,7 +103,7 @@ example, if you have a subroutine
 then you can make use of activity descriptors like so:
 ```fortran
   call enzyme_autodiff(my_subroutine, enzyme_const, n, &
-                       enzyme_dup, x, dx, enzyme_dup, y, dy
+                       enzyme_dup, x, dx, enzyme_dup, y, dy)
 ```
 
 ## Function hook for batching
@@ -124,3 +124,193 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
+
+
+## Function-like hooks
+
+The `enzyme_function_like` hook tells Enzyme to differentiate a function as if
+it were a known mathematical function. For example, Enzyme can use the
+derivative of `log1p` for `double_value`, regardless of its
+implementation. The examples below deliberately compute `2*x` while requesting
+the derivative of `log1p`: at `x = 2`, Enzyme returns `1/3` instead of `2`. This
+illustrates a derivative override; the two functions are not mathematically
+equivalent.
+
+### Choose a registration form
+
+| Function location and interface | When to use each form |
+|---|---|
+| Module function | Use a pointer declaration before the module's `contains` to keep registration with the function. The compiler supplies its explicit interface. A registration call in executable code also works. |
+| Internal function | Use call registration only if Flang supplies a direct function reference. Access to variables from the containing program or procedure can prevent registration. See the restriction below. The current pointer mechanism cannot register an internal function. |
+
+### Registration with a subroutine call
+
+Call `enzyme_function_like` as a subroutine with the target function and the
+symbolic name of the mathematical function:
+
+```fortran
+use enzyme, only: enzyme_function_like, enzyme_log1p
+
+call enzyme_function_like(double_value, enzyme_log1p)
+```
+
+Put the registration call in executable code, after declarations. For an
+internal function, you must use this form instead of an initialized procedure
+pointer. An internal function follows `contains` inside a program or another
+procedure. The compiler supplies its explicit interface.
+
+The [call-style test](../test/Fortran/ReverseMode/function_like.f90) shows this
+placement. Its registration call is in the main program. Its target function,
+`double_value`, is inside that program, after `contains`.
+
+> [!WARNING]
+> Call registration does not support all internal functions. An internal
+> function can access variables from its containing program or procedure.
+> Fortran calls this access **host association**. For example, `double_value`
+> could calculate `factor * x`, where `factor` is a variable in the containing
+> procedure.
+>
+> Flang can then generate an adapter that gives the function access to those
+> variables. The current registration code requires a direct function reference.
+> It cannot process this adapter, and compilation can fail with
+> `First argument of enzyme_function_like must be a constant function`.
+>
+> The example above uses only the argument `x` and does not need this adapter.
+
+
+Here `enzyme_log1p` supplies the symbolic function name `log1p`; its value is not
+used. Functions passed to `enzyme_function_like` must have an LLVM-level
+signature compatible with the selected mathematical function. Scalar arguments
+must use the `value` attribute so that Flang lowers them as LLVM values rather
+than using Fortran's usual by-reference calling convention. This binding is
+currently supported with Flang.
+
+When running Enzyme separately with `opt`, `preserve-nvvm` must process the
+`enzyme_function_like` hook before differentiation:
+
+```console
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
+    -passes='preserve-nvvm,enzyme,preserve-nvvm-end' input.bc -o output.bc
+```
+
+> [!WARNING]
+> When using this separate `opt` workflow, compile the Fortran source to LLVM
+> with `-O0`. Otherwise, Flang may inline calls to the function before
+> `preserve-nvvm` processes the `enzyme_function_like` hook.
+
+The `FlangEnzyme`
+compiler plugin runs `preserve-nvvm` at the start of Flang's LLVM optimization
+pipeline and does not require this separate `opt` step.
+
+The `enzyme` module exports these symbolic names. Import the required names
+with `use enzyme, only: ...`.
+
+| Function group | Bindings |
+|---|---|
+| Trigonometric functions | `enzyme_sin`, `enzyme_cos`, `enzyme_tan`, `enzyme_asin`, `enzyme_acos`, `enzyme_atan`, `enzyme_atan2` |
+| Exponential functions | `enzyme_exp`, `enzyme_exp2`, `enzyme_exp10`, `enzyme_expm1` |
+| Logarithms | `enzyme_log`, `enzyme_log2`, `enzyme_log10`, `enzyme_log1p` |
+| Hyperbolic functions | `enzyme_sinh`, `enzyme_sinhf`, `enzyme_cosh`, `enzyme_coshf`, `enzyme_tanh`, `enzyme_tanhf` |
+| Inverse hyperbolic functions | `enzyme_acosh`, `enzyme_asinh`, `enzyme_atanh` |
+| Roots and powers | `enzyme_sqrt`, `enzyme_cbrt`, `enzyme_hypot`, `enzyme_pow` |
+| Error functions | `enzyme_erf`, `enzyme_erfc` |
+| Absolute value and selection | `enzyme_fabs`, `enzyme_fmin`, `enzyme_fmax`, `enzyme_fdim`, `enzyme_copysign` |
+| Remainders | `enzyme_fmod`, `enzyme_remainder` |
+| Fused multiply-add | `enzyme_fma` |
+| Additional trigonometric functions | `enzyme_sinpi`, `enzyme_cospi`, `enzyme_sinc`, `enzyme_sincn` |
+| Imaginary error function | `enzyme_erfi` |
+| Bessel functions of orders zero and one | `enzyme_j0`, `enzyme_j0f`, `enzyme_j1`, `enzyme_j1f`, `enzyme_y0`, `enzyme_y0f`, `enzyme_y1`, `enzyme_y1f` |
+| Bessel functions with integer order | `enzyme_jn`, `enzyme_yn` |
+| Scaling by a power of two | `enzyme_ldexp`, `enzyme_ldexpf` |
+| Integer scaling and powers | `enzyme_scalbn`, `enzyme_powi` |
+| Rounding and exponent extraction | `enzyme_round`, `enzyme_logb`, `enzyme_ceil`, `enzyme_floor`, `enzyme_trunc`, `enzyme_rint`, `enzyme_nearbyint` |
+
+For example, use `enzyme_sin` to register a function with the `sin` rule:
+
+```fortran
+use enzyme, only: enzyme_function_like, enzyme_sin
+
+call enzyme_function_like(my_sin, enzyme_sin)
+```
+
+You can also declare symbolic names in user code. Use the `enzyme_math_`
+prefix followed by a function name that Enzyme supports:
+
+```fortran
+module enzyme_math_names
+  use iso_c_binding, only: c_int
+  implicit none
+
+  integer(c_int), public, bind(C, name="enzyme_math_sin")  :: enzyme_sin
+end module enzyme_math_names
+```
+
+Each symbolic name needs an `enzyme_math_*` binding in the `enzyme` module
+or in user code.
+
+### Procedure-pointer registration
+
+Alternatively, a statically initialized procedure pointer can register the
+same relationship without a hook call or symbolic-name binding. Enzyme reads
+and removes the registration marker at compile time. Do not call through the
+registration pointer. Enzyme replaces remaining references to the marker with
+null pointers. Call the target function directly, for example, `double_value(x)`.
+Use the same FlangEnzyme plugin or separate `opt` pipeline described above for
+call-style registration.
+
+#### Register a module function
+
+Put the pointer declaration in the declaration section of a module, program,
+function, or subroutine where the module function is accessible.
+Put it before executable statements or `contains`.
+Omit `private` when the declaration is outside a module's declaration section.
+The example below puts the declaration before the module's `contains` statement.
+
+```fortran
+module function_like_example
+  implicit none
+
+  procedure(double_value), pointer, private :: &
+    fn__enzyme_function_like__log1p => double_value
+
+contains
+
+  function double_value(x) result(y)
+    real, value :: x
+    real :: y
+
+    y = 2.0 * x
+  end function double_value
+
+  function test(x) result(y)
+    real, intent(in) :: x
+    real :: y
+
+    y = double_value(x)
+  end function test
+
+end module function_like_example
+
+program main
+  use enzyme, only: enzyme_autodiff
+  use function_like_example, only: test
+  implicit none
+  real :: x, dx
+
+  x = 2.0
+  dx = 0.0
+  call enzyme_autodiff(test, x, dx)
+  write(*,"(f6.4)") dx ! Prints 0.3333
+end program main
+```
+
+Here, `procedure(double_value)` gives the pointer the target's interface,
+and `=> double_value` initializes it with the target. PreserveNVVM reads
+the mathematical name after the exact `__enzyme_function_like__` delimiter, so
+this example registers the target as `log1p`. The prefix before the delimiter
+can be any valid name but must be unique in its scope. `private` is optional
+in a module; it keeps the registration marker out of the module's public API.
+
+The `test` wrapper takes its argument by reference for the `enzyme_autodiff`
+binding, while `double_value` takes its argument by value to match the scalar
+`log1p` rule.
