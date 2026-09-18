@@ -101,6 +101,11 @@ using namespace llvm;
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
                                  cl::desc("Run the Enzyme pass"));
 
+llvm::cl::opt<bool> EnzymeLTOPreLink(
+    "enzyme-lto-prelink", cl::init(false), cl::Hidden,
+    cl::desc("Run Enzyme in an LTO pre-link pipeline, rather than deferring "
+             "differentiation to the post-link run"));
+
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
@@ -3151,7 +3156,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
 #if LLVM_VERSION_MAJOR >= 20
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+                            ThinOrFullLTOPhase Phase)
 #else
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
@@ -3160,6 +3165,23 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
     if (!EnzymeEnable)
       return;
+
+#if LLVM_VERSION_MAJOR >= 20
+    // An LTO pre-link pipeline only ever sees one translation unit, so a
+    // __enzyme_autodiff call here may name a function whose body lives in
+    // another object file. Differentiating now fails on exactly those calls,
+    // while the post-link run sees the whole program: for full LTO that is the
+    // FullLinkTimeOptimizationEarly callback below, for ThinLTO this same
+    // callback re-entered with ThinLTOPostLink. Defer to it -- the
+    // PreserveNVVM run above keeps the relevant functions alive until then.
+    //
+    // This requires the plugin to be loaded by the linker as well, e.g.
+    // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
+    // restore the old behaviour when that is not possible.
+    if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
+                              Phase == ThinOrFullLTOPhase::ThinLTOPreLink))
+      return;
+#endif
 
     if (Level != OptimizationLevel::O0)
       prePass(MPM, Level);
