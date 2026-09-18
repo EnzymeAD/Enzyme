@@ -1618,6 +1618,12 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
     return true;
   }
+
+  // Get rid of readnone/writeonly for `Const`
+  if (!F->isDeclaration()) {
+    return true;
+  }
+
   return false;
 }
 

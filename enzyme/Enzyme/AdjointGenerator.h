@@ -5230,6 +5230,20 @@ public:
         auto argTy =
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
+        if (argTy == DIFFE_TYPE::CONSTANT && shouldDisableNoWrite(&call)) {
+          // Delete the read/write labels for `CONSTANT`.
+          auto &attrs = structAttrs[args.size()];
+          attrs.erase(std::remove_if(
+                          attrs.begin(), attrs.end(),
+                          [](const Attribute &A) {
+                            return A.isEnumAttribute() &&
+                                   (A.getKindAsEnum() == Attribute::ReadNone ||
+                                    A.getKindAsEnum() == Attribute::ReadOnly ||
+                                    A.getKindAsEnum() == Attribute::WriteOnly);
+                          }),
+                      attrs.end());
+        }
+
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
              (writeOnlyNoCapture ||
@@ -5503,6 +5517,20 @@ public:
         }
 
       auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+
+      if (argTy == DIFFE_TYPE::CONSTANT && shouldDisableNoWrite(&call)) {
+        // Delete the read/write labels for `CONSTANT`
+        auto &attrs = structAttrs[pre_args.size()];
+        attrs.erase(
+            std::remove_if(attrs.begin(), attrs.end(),
+                           [](const Attribute &A) {
+                             return A.isEnumAttribute() &&
+                                    (A.getKindAsEnum() == Attribute::ReadNone ||
+                                     A.getKindAsEnum() == Attribute::ReadOnly ||
+                                     A.getKindAsEnum() == Attribute::WriteOnly);
+                           }),
+            attrs.end());
+      }
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;
