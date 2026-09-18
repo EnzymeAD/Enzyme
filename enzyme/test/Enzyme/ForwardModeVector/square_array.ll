@@ -25,27 +25,27 @@ declare %struct.Gradients @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[MUL:%.*]] = fmul double [[X]], [[X]]
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:    [[TMP1:%.*]] = fmul fast double [[TMP0]], [[X]]
+; CHECK-NEXT:    [[TMP1:%.*]] = fmul double [[TMP0]], [[X]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:    [[TMP5:%.*]] = fmul fast double [[TMP4]], [[X]]
+; CHECK-NEXT:    [[TMP5:%.*]] = fmul double [[TMP4]], [[X]]
 ; CHECK-NEXT:    [[TMP8:%.*]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast double [[TMP8]], [[X]]
+; CHECK-NEXT:    [[TMP9:%.*]] = fmul double [[TMP8]], [[X]]
 
-; CHECK-NEXT:    [[TMP2:%.*]] = fadd fast double [[TMP1]], [[TMP1]]
-; CHECK-NEXT:    [[TMP6:%.*]] = fadd fast double [[TMP5]], [[TMP5]]
-; CHECK-NEXT:    [[TMP10:%.*]] = fadd fast double [[TMP9]], [[TMP9]]
+; CHECK-NEXT:    [[TMP2:%.*]] = fadd double [[TMP1]], [[TMP1]]
+; CHECK-NEXT:    [[TMP6:%.*]] = fadd double [[TMP5]], [[TMP5]]
+; CHECK-NEXT:    [[TMP10:%.*]] = fadd double [[TMP9]], [[TMP9]]
 
-; CHECK-NEXT:    [[TMP12:%.*]] = fmul fast double [[TMP2]], [[X]]
-; CHECK-NEXT:    [[TMP16:%.*]] = fmul fast double [[TMP6]], [[X]]
-; CHECK-NEXT:    [[TMP20:%.*]] = fmul fast double [[TMP10]], [[X]]
+; CHECK-NEXT:    [[TMP12:%.*]] = fmul double [[TMP2]], [[X]]
+; CHECK-NEXT:    [[TMP16:%.*]] = fmul double [[TMP6]], [[X]]
+; CHECK-NEXT:    [[TMP20:%.*]] = fmul double [[TMP10]], [[X]]
 
-; CHECK-NEXT:    [[TMP13:%.*]] = fmul fast double [[TMP0]], [[MUL]]
-; CHECK-NEXT:    [[TMP17:%.*]] = fmul fast double [[TMP4]], [[MUL]]
-; CHECK-NEXT:    [[TMP21:%.*]] = fmul fast double [[TMP8]], [[MUL]]
+; CHECK-NEXT:    [[TMP13:%.*]] = fmul double [[TMP0]], [[MUL]]
+; CHECK-NEXT:    [[TMP17:%.*]] = fmul double [[TMP4]], [[MUL]]
+; CHECK-NEXT:    [[TMP21:%.*]] = fmul double [[TMP8]], [[MUL]]
 
-; CHECK-NEXT:    [[TMP14:%.*]] = fadd fast double [[TMP12]], [[TMP13]]
-; CHECK-NEXT:    [[TMP18:%.*]] = fadd fast double [[TMP16]], [[TMP17]]
-; CHECK-NEXT:    [[TMP22:%.*]] = fadd fast double [[TMP20]], [[TMP21]]
+; CHECK-NEXT:    [[TMP14:%.*]] = fadd double [[TMP12]], [[TMP13]]
+; CHECK-NEXT:    [[TMP18:%.*]] = fadd double [[TMP16]], [[TMP17]]
+; CHECK-NEXT:    [[TMP22:%.*]] = fadd double [[TMP20]], [[TMP21]]
 
 ; CHECK-NEXT:    %[[ipiv:.+]] = insertvalue { double, double } zeroinitializer, double [[TMP2]], 0
 ; CHECK-NEXT:    %[[ipiv1:.+]] = insertvalue { double, double } zeroinitializer, double [[TMP6]], 0

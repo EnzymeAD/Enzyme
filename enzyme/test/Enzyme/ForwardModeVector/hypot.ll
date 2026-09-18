@@ -30,30 +30,30 @@ declare %struct.Gradients @__enzyme_fwddiff(...)
 ; CHECK: define internal [3 x double] @fwddiffe3tester(double %x, [3 x double] %"x'", double %y, [3 x double] %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %1 = fmul fast double %0, %x
+; CHECK-NEXT:   %1 = fmul double %0, %x
 ; CHECK-NEXT:   %2 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %3 = fmul fast double %2, %x
+; CHECK-NEXT:   %3 = fmul double %2, %x
 ; CHECK-NEXT:   %4 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %5 = fmul fast double %4, %x
-; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double %y)
-; CHECK-NEXT:   %7 = fdiv fast double %1, %6
-; CHECK-NEXT:   %8 = fdiv fast double %3, %6
-; CHECK-NEXT:   %9 = fdiv fast double %5, %6
+; CHECK-NEXT:   %5 = fmul double %4, %x
+; CHECK-NEXT:   %6 = call double @hypot(double %x, double %y)
+; CHECK-NEXT:   %7 = fdiv double %1, %6
+; CHECK-NEXT:   %8 = fdiv double %3, %6
+; CHECK-NEXT:   %9 = fdiv double %5, %6
 ; CHECK-NEXT:   %10 = extractvalue [3 x double] %"y'", 0
-; CHECK-NEXT:   %11 = fmul fast double %10, %y
+; CHECK-NEXT:   %11 = fmul double %10, %y
 ; CHECK-NEXT:   %12 = extractvalue [3 x double] %"y'", 1
-; CHECK-NEXT:   %13 = fmul fast double %12, %y
+; CHECK-NEXT:   %13 = fmul double %12, %y
 ; CHECK-NEXT:   %14 = extractvalue [3 x double] %"y'", 2
-; CHECK-NEXT:   %15 = fmul fast double %14, %y
-; CHECK-NEXT:   %16 = call fast double @hypot(double %x, double %y)
-; CHECK-NEXT:   %17 = fdiv fast double %11, %16
-; CHECK-NEXT:   %18 = fdiv fast double %13, %16
-; CHECK-NEXT:   %19 = fdiv fast double %15, %16
-; CHECK-NEXT:   %20 = fadd fast double %7, %17
+; CHECK-NEXT:   %15 = fmul double %14, %y
+; CHECK-NEXT:   %16 = call double @hypot(double %x, double %y)
+; CHECK-NEXT:   %17 = fdiv double %11, %16
+; CHECK-NEXT:   %18 = fdiv double %13, %16
+; CHECK-NEXT:   %19 = fdiv double %15, %16
+; CHECK-NEXT:   %20 = fadd double %7, %17
 ; CHECK-NEXT:   %21 = insertvalue [3 x double] undef, double %20, 0
-; CHECK-NEXT:   %22 = fadd fast double %8, %18
+; CHECK-NEXT:   %22 = fadd double %8, %18
 ; CHECK-NEXT:   %23 = insertvalue [3 x double] %21, double %22, 1
-; CHECK-NEXT:   %24 = fadd fast double %9, %19
+; CHECK-NEXT:   %24 = fadd double %9, %19
 ; CHECK-NEXT:   %25 = insertvalue [3 x double] %23, double %24, 2
 ; CHECK-NEXT:   ret [3 x double] %25
 ; CHECK-NEXT: }
@@ -61,15 +61,15 @@ declare %struct.Gradients @__enzyme_fwddiff(...)
 ; CHECK: define internal [3 x double] @fwddiffe3tester2(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %1 = fmul fast double %0, %x
+; CHECK-NEXT:   %1 = fmul double %0, %x
 ; CHECK-NEXT:   %2 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %3 = fmul fast double %2, %x
+; CHECK-NEXT:   %3 = fmul double %2, %x
 ; CHECK-NEXT:   %4 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %5 = fmul fast double %4, %x
-; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double 2.000000e+00)
-; CHECK-NEXT:   %7 = fdiv fast double %1, %6
-; CHECK-NEXT:   %[[i9:.+]] = fdiv fast double %3, %6
-; CHECK-NEXT:   %[[i11:.+]] = fdiv fast double %5, %6
+; CHECK-NEXT:   %5 = fmul double %4, %x
+; CHECK-NEXT:   %6 = call double @hypot(double %x, double 2.000000e+00)
+; CHECK-NEXT:   %7 = fdiv double %1, %6
+; CHECK-NEXT:   %[[i9:.+]] = fdiv double %3, %6
+; CHECK-NEXT:   %[[i11:.+]] = fdiv double %5, %6
 ; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] undef, double %7, 0
 ; CHECK-NEXT:   %[[i10:.+]] = insertvalue [3 x double] %[[i8]], double %[[i9]], 1
 ; CHECK-NEXT:   %[[i12:.+]] = insertvalue [3 x double] %[[i10]], double %[[i11]], 2

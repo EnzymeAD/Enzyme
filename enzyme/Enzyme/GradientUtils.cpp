@@ -4964,6 +4964,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 void GradientUtils::getReverseBuilder(IRBuilder<> &Builder2, bool original) {
   assert(reverseBlocks.size());
   BasicBlock *BB = Builder2.GetInsertBlock();
+  // The builder still stands at the primal being differentiated, so the
+  // adjoint it goes on to generate is entitled to that primal's fast math
+  // flags and to no others.
+  const Instruction *primal = nullptr;
+  if (BB && Builder2.GetInsertPoint() != BB->end())
+    primal = &*Builder2.GetInsertPoint();
   if (original)
     BB = getNewFromOriginal(BB);
   assert(reverseBlocks.find(BB) != reverseBlocks.end());
@@ -4981,7 +4987,7 @@ void GradientUtils::getReverseBuilder(IRBuilder<> &Builder2, bool original) {
     Builder2.SetInsertPoint(BB2);
   Builder2.SetCurrentDebugLocation(
       getNewFromOriginal(Builder2.getCurrentDebugLocation()));
-  Builder2.setFastMathFlags(getFast());
+  Builder2.setFastMathFlags(getFastFrom(primal));
 }
 
 void GradientUtils::getForwardBuilder(IRBuilder<> &Builder2) {
@@ -4993,7 +4999,9 @@ void GradientUtils::getForwardBuilder(IRBuilder<> &Builder2) {
   Builder2.SetInsertPoint(getNextNonDebugInstruction(nInsert));
   Builder2.SetCurrentDebugLocation(
       getNewFromOriginal(Builder2.getCurrentDebugLocation()));
-  Builder2.setFastMathFlags(getFast());
+  // The tangent carries the flags of the primal it differentiates and no
+  // others.
+  Builder2.setFastMathFlags(getFastFrom(insert));
 }
 
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,

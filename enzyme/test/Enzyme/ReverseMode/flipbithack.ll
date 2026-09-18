@@ -25,10 +25,12 @@ declare { double, double } @__enzyme_autodiff(...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %csty = bitcast double %y to i64
 ; CHECK-NEXT:   %andy = and i64 %csty, -9223372036854775808
-; CHECK-NEXT:   %0 = icmp eq i64 %andy, 0
-; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %differeturn
-; CHECK-NEXT:   %2 = select{{( fast)?}} i1 %0, double %differeturn, double %1
-; CHECK-NEXT:   %3 = insertvalue { double, double } undef, double %2, 0
-; CHECK-NEXT:   %4 = insertvalue { double, double } %3, double 0.000000e+00, 1
-; CHECK-NEXT:   ret { double, double } %4
+; CHECK-NEXT:   %0 = fadd double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %1 = icmp eq i64 %andy, 0
+; CHECK-NEXT:   %2 = {{(fsub double \-?0.000000e\+00,|fneg double)}} %0
+; CHECK-NEXT:   %3 = select{{( fast)?}} i1 %1, double %0, double %2
+; CHECK-NEXT:   %4 = fadd double 0.000000e+00, %3
+; CHECK-NEXT:   %5 = insertvalue { double, double } undef, double %4, 0
+; CHECK-NEXT:   %6 = insertvalue { double, double } %5, double 0.000000e+00, 1
+; CHECK-NEXT:   ret { double, double } %6
 ; CHECK-NEXT: }

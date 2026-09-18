@@ -91,8 +91,10 @@ llvm::cl::opt<bool>
     EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
                    cl::desc("Use blas copy calls to cache vectors"));
 llvm::cl::opt<bool>
-    EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
-                   cl::desc("Use fast math on derivative compuation"));
+    EnzymeFastMath("enzyme-fast-math", cl::init(false), cl::Hidden,
+                   cl::desc("Grant every generated instruction blanket fast "
+                            "math, rather than the flags of the primal it "
+                            "derives from"));
 llvm::cl::opt<bool> EnzymeMemmoveWarning(
     "enzyme-memmove-warning", cl::init(true), cl::Hidden,
     cl::desc("Warn if using memmove implementation as a fallback for memmove"));
@@ -3884,6 +3886,17 @@ llvm::FastMathFlags getFast() {
   if (EnzymeFastMath)
     f.set();
   return f;
+}
+
+llvm::FastMathFlags getFastFrom(const llvm::Instruction *primal) {
+  if (EnzymeFastMath) {
+    llvm::FastMathFlags f;
+    f.set();
+    return f;
+  }
+  if (primal && llvm::isa<llvm::FPMathOperator>(primal))
+    return primal->getFastMathFlags();
+  return llvm::FastMathFlags();
 }
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,

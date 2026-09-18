@@ -31,12 +31,13 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %0 = call {{(fast )?}}[2 x double] @__fd_sincos_1(double %x)
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %0, 1
 ; CHECK-NEXT:   %2 = extractvalue [2 x double] %differeturn, 0
-; CHECK-NEXT:   %3 = fmul fast double %1, %2
+; CHECK-NEXT:   %3 = fmul double %1, %2
 ; CHECK-NEXT:   %4 = extractvalue [2 x double] %0, 0
 ; CHECK-NEXT:   %5 = extractvalue [2 x double] %differeturn, 1
-; CHECK-NEXT:   %6 = fmul fast double %4, %5
-; CHECK-NEXT:   %7 = {{(fsub fast double -0.000000e\+00,|fneg fast double)}} %6
-; CHECK-NEXT:   %8 = fadd fast double %3, %7
-; CHECK-NEXT:   %9 = insertvalue { double } undef, double %8, 0
-; CHECK-NEXT:   ret { double } %9
+; CHECK-NEXT:   %6 = fmul double %4, %5
+; CHECK-NEXT:   %7 = {{(fsub double -0.000000e\+00,|fneg double)}} %6
+; CHECK-NEXT:   %8 = fadd double %3, %7
+; CHECK-NEXT:   %9 = fadd double 0.000000e+00, %8
+; CHECK-NEXT:   %10 = insertvalue { double } undef, double %9, 0
+; CHECK-NEXT:   ret { double } %10
 ; CHECK-NEXT: }

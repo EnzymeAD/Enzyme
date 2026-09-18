@@ -22,11 +22,11 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @cabs(double %x, double %y)
-; CHECK-NEXT:   %1 = fdiv fast double %x, %0
-; CHECK-NEXT:   %2 = fmul fast double %"x'", %1
-; CHECK-NEXT:   %3 = fdiv fast double %y, %0
-; CHECK-NEXT:   %4 = fmul fast double %"y'", %3
-; CHECK-NEXT:   %5 = fadd fast double %2, %4
+; CHECK-NEXT:   %0 = call double @cabs(double %x, double %y)
+; CHECK-NEXT:   %1 = fdiv double %x, %0
+; CHECK-NEXT:   %2 = fmul double %"x'", %1
+; CHECK-NEXT:   %3 = fdiv double %y, %0
+; CHECK-NEXT:   %4 = fmul double %"y'", %3
+; CHECK-NEXT:   %5 = fadd double %2, %4
 ; CHECK-NEXT:   ret double %5
 ; CHECK-NEXT: }

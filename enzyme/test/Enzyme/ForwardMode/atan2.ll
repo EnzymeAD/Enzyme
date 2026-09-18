@@ -21,13 +21,14 @@ declare double @__enzyme_fwddiff(...)
 
 ; CHECK-LABEL: define internal double @fwddiffetester(
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a3:.+]] = fmul fast double %"y'", %x
-; CHECK-DAG:    %[[a1:.+]] = fmul fast double %x, %x
-; CHECK-DAG:    %[[a0:.+]] = fmul fast double %y, %y
-; CHECK-DAG:   %[[a2:.+]] = fadd fast double %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a4:.+]] = fmul fast double %"x'", %y
-; CHECK-DAG:   %[[a5:.+]] = fsub fast double %[[a3]], %[[a4]]
-; CHECK-DAG:   %[[a6:.+]] = fdiv fast double %[[a5]], %[[a2]]
-; CHECK-NEXT:   ret double %[[a6]]
+; CHECK-DAG:   %[[a3:.+]] = fmul double %"y'", %x
+; CHECK-DAG:    %[[a1:.+]] = fmul double %x, %x
+; CHECK-DAG:    %[[a0:.+]] = fmul double %y, %y
+; CHECK-DAG:   %[[a2:.+]] = fadd double %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a7:.+]] = fdiv double %[[a3]], %[[a2]]
+; CHECK-DAG:   %[[a4:.+]] = fmul double %"x'", %y
+; CHECK-DAG:   %[[a8:.+]] = fdiv double %[[a4]], %[[a2]]
+; CHECK-DAG:   %[[a5:.+]] = fsub double %[[a7]], %[[a8]]
+; CHECK-NEXT:   ret double %[[a5]]
 ; CHECK-NEXT: }
 
