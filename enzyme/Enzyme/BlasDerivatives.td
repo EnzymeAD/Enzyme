@@ -56,6 +56,7 @@ def Rows : MagicInst; // given a transpose, normal rows, normal cols get the tru
 def Concat : MagicInst;
 
 def ShadowNoInc : MagicInst;
+def Dep : MagicInst;
 
 class Binop<string _s, list<string> _tys> {
   string s = _s;
@@ -670,6 +671,45 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
                       ),
                   /* b     */ (BlasCall<"trtrs"> $layout, $uplo, transpose<"trans">, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
                   ]
+                  >;
+
+def trsv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, $incx),
+                  ["x"],
+                  [cblas_layout, uplo, trans, diag, len, mld<["uplo", "n", "n"]>, vinc<["n"]>],
+                  [
+                  /* A     */
+                    (Seq<["tri", "triangular", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"ger">
+                        $layout,
+                        $n,
+                        $n,
+                        Constant<"-1">,
+                        (Rows $trans,
+                          (Concat (Shadow $x)),
+                          (Concat $x)),
+                        (Rows $trans,
+                          (Concat $x),
+                          (Concat (Shadow $x))),
+                        use<"tri">, $n),
+
+                      (BlasCall<"copy">
+                          (ISelect (is_nonunit $diag), ConstantInt<0>, $n),
+                          (First (Shadow $A)), (Add $lda, ConstantInt<1>),
+                          use<"tri">, (Add $n, ConstantInt<1>)),
+
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
+                      ),
+                  /* x     */ (BlasCall<"trsv"> $layout, $uplo, transpose<"trans">, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x)),
+                  ]
+                  ,
+                  (Seq<["tmp", "vector", "n"], [], 0>
+                    (BlasCall<"copy"> $n, (Dep (Shadow $A), $x), use<"tmp">, ConstantInt<1>),
+                    (BlasCall<"trmv"> $layout, $uplo, $trans, $diag, $n, (Shadow $A), use<"tmp">, ConstantInt<1>),
+                    (BlasCall<"axpy"> $n, Constant<"-1">, (Dep (Shadow $A), use<"tmp">), ConstantInt<1>, (Shadow $x)),
+                    (BlasCall<"axpy"> (ISelect (is_nonunit $diag), ConstantInt<0>, $n), Constant<"1">, (Dep (Shadow $A), $x), (Shadow $x)),
+                    (BlasCall<"trsv"> $layout, $uplo, $trans, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x))
+                  )
                   >;
 
 def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $ap),
