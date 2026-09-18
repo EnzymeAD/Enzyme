@@ -247,9 +247,15 @@ void dump(const Node &n) {
     llvm::errs() << "[" << n.getValue() << ", "
                  << (n.outgoing() ? "Value(out)" : "Value(in)") << "]\n";
   else if (n.isOperation())
-    llvm::errs() << "[" << *n.getOperation() << ", " << "Operation" << "]\n";
+    llvm::errs() << "[" << *n.getOperation() << ", "
+                 << "Operation"
+                 << "]\n";
   else
-    llvm::errs() << "[" << "NULL" << ", " << "None" << "]\n";
+    llvm::errs() << "["
+                 << "NULL"
+                 << ", "
+                 << "None"
+                 << "]\n";
 }
 
 // The adjacency sets are insertion-ordered rather than hashed. A Node wraps a
