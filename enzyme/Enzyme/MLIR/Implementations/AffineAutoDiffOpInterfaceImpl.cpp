@@ -105,7 +105,19 @@ struct AffineIfOpInterfaceReverse
         OpBuilder bodyBuilder(&revBB, revBB.end());
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
 
-        mlir::enzyme::localizeGradients(bodyBuilder, gutils, &oBB);
+        // All values defined in the body should have no use outside this
+        // block therefore we can set their diffe to zero upon entering the
+        // reverse block to simplify the work of the
+        // remove-unnecessary-enzyme-ops pass.
+        for (auto &it : oBB.getOperations()) {
+          for (auto res : it.getResults()) {
+            if (!gutils->isConstantValue(res)) {
+              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+              if (iface && !iface.isMutable())
+                gutils->zeroDiffe(res, bodyBuilder);
+            }
+          }
+        }
 
         auto term = oBB.getTerminator();
         // Align incomingGradients with their corresponding yield operands.

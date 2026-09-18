@@ -97,6 +97,10 @@ void mlir::enzyme::removalBlockExplore(
       auto value = setOp.getValue();
       mapping.map(grad, value);
       gradients.insert(grad);
+
+      ++it;
+      rewriter.eraseOp(setOp);
+      continue;
     }
 
     if (auto getOp = dyn_cast<enzyme::GetOp>(op)) {
@@ -107,7 +111,9 @@ void mlir::enzyme::removalBlockExplore(
                                       getOp.getResult().getType(), grad);
         mapping.map(grad, value);
       }
-      rewriter.replaceAllUsesWith(getOp.getResult(), value);
+      ++it;
+      rewriter.replaceOp(getOp, value);
+      continue;
     }
 
     if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
