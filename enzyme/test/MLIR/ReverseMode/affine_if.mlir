@@ -21,7 +21,6 @@ func.func @sum_tail(%x: memref<4xf64>) -> f64 {
 }
 
 // CHECK:  func.func @sum_tail(%arg0: memref<4xf64>, %arg1: memref<4xf64>, %arg2: f64) {
-// CHECK-NEXT:    %c3 = arith.constant 3 : index
 // CHECK-NEXT:    %c2 = arith.constant 2 : index
 // CHECK-NEXT:    %c0 = arith.constant 0 : index
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f64
@@ -39,7 +38,7 @@ func.func @sum_tail(%x: memref<4xf64>) -> f64 {
 // CHECK-NEXT:      affine.yield %3 : f64
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1 = affine.for %arg3 = 0 to 4 iter_args(%arg4 = %arg2) -> (f64) {
-// CHECK-NEXT:      %2 = arith.subi %c3, %arg3 : index
+// CHECK-NEXT:      %2 = affine.apply #{{.*}}(%arg3)
 // CHECK-NEXT:      %3 = arith.subi %c2, %2 : index
 // CHECK-NEXT:      %4 = arith.cmpi sge, %3, %c0 : index
 // CHECK-NEXT:      scf.if %4 {

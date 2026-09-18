@@ -10,6 +10,7 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -234,6 +235,27 @@ public:
                          llvm::ArrayRef<IntOrValue> bounds) {
     llvm::SmallVector<mlir::Value> results;
     for (auto &&[bound, iv] : llvm::zip_equal(bounds, otherInductionVariable)) {
+      if (affine::isAffineInductionVar(iv)) {
+        AffineExpr reversedIV;
+        SmallVector<Value> operands{iv};
+        unsigned numSymbols = 0;
+        AffineExpr ivExpr = rewriter.getAffineDimExpr(0);
+
+        if (bound.vval) {
+          AffineExpr boundExpr = rewriter.getAffineSymbolExpr(0);
+          reversedIV = boundExpr - 1 - ivExpr;
+          operands.push_back(bound.vval);
+          numSymbols = 1;
+        } else {
+          reversedIV = rewriter.getAffineConstantExpr(bound.ival - 1) - ivExpr;
+        }
+
+        AffineMap map = AffineMap::get(/*dimCount=*/1, numSymbols, reversedIV);
+        results.push_back(affine::AffineApplyOp::create(rewriter, op->getLoc(),
+                                                        map, operands));
+        continue;
+      }
+
       Value boundv;
       if (bound.vval) {
         Value c1;
