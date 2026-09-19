@@ -688,7 +688,10 @@ void calculateUnusedValuesInFunction(
   std::map<UsageKey, bool> CacheResults =
       gutils->populateSeenFromKnownRecompute();
   std::map<UsageKey, bool> PrimalSeen;
-  if (mode == DerivativeMode::ReverseModeGradient) {
+  // The passes consuming the tape read cached values from it, so the values
+  // those were computed from are not needed for them.
+  if (mode == DerivativeMode::ReverseModeGradient ||
+      mode == DerivativeMode::ForwardModeSplit) {
     PrimalSeen = CacheResults;
   }
 
