@@ -376,12 +376,13 @@ public:
   void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
     using namespace llvm;
 
-    auto found = gutils->invertedPointers.find(&I);
     if (gutils->isConstantValue(&I)) {
-      assert(found == gutils->invertedPointers.end());
+      // A constant value may have a shadow cached by invertPointerM. It is a
+      // real shadow, not a placeholder, so leave it for reuse.
       return;
     }
 
+    auto found = gutils->invertedPointers.find(&I);
     assert(found != gutils->invertedPointers.end());
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
