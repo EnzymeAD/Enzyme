@@ -27,8 +27,13 @@ extern bool
 DetectPointerArgOfFn(llvm::Function &F,
                      llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
 
+// Determine whether the tracked pointers stored into the sret-like argument
+// `arg` need to be given fresh roots. They do not if every one of them is also
+// stored into an existing enzymejl_returnRoots argument; the indices of the
+// returnRoots arguments found that way are added to `rootingArgs`.
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
-                    llvm::Type *SRetType = nullptr) {
+                    llvm::Type *SRetType = nullptr,
+                    std::set<size_t> *rootingArgs = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
 
   if (!SRetType)
@@ -214,6 +219,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                                         arg2->getArgNo(),
                                     "enzymejl_returnRoots")
                       .isValid()) {
+                if (rootingArgs)
+                  rootingArgs->insert(arg2->getArgNo());
                 foundUse = true;
                 break;
               }
@@ -571,14 +578,48 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       srets.insert(i);
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")) {
       bool anyJLStore = false;
+      std::set<size_t> rootingArgs;
       enzyme_srets.insert(i);
-      if (needsReRooting(F->getArg(i), anyJLStore)) {
+      if (needsReRooting(F->getArg(i), anyJLStore, nullptr, &rootingArgs)) {
         // Case 1: jlvalue_t's were stored into the sret, but were not stored
         // into an existing rooted argument.
         reroot_enzyme_srets.insert(i);
       } else if (anyJLStore) {
         // Case 2: jlvalue_t's were stored into the sret, and the were stored
         // into an existing rooted argument.
+        //
+        // The sret contributes its tracked pointers to the merged sret type
+        // without contributing roots of its own, so the returnRoots which
+        // holds them must provide exactly those roots: it is assigned to this
+        // sret rather than being returned as a further member of the merged
+        // sret type (which would add tracked pointers that nothing roots).
+        // If there is no single such returnRoots of the right size, give the
+        // sret roots of its own instead.
+        llvm::Type *SRetType = convertSRetTypeFromString(
+            Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")
+                .getValueAsString(),
+            &F->getContext());
+        CountTrackedPointers tracked(SRetType);
+        bool assigned = false;
+        // An sret made only of tracked pointers may end up acting as its own
+        // root (see below), which leaves no separate roots to place the
+        // returnRoots in. The returnRoots therefore stays a member of the
+        // merged sret type in that case.
+        if (rootingArgs.size() == 1 && !tracked.all) {
+          size_t ridx = *rootingArgs.begin();
+          size_t rcount = convertRRootCountFromString(
+              Attrs
+                  .getAttribute(AttributeList::FirstArgIndex + ridx,
+                                "enzymejl_returnRoots")
+                  .getValueAsString());
+          if (ridx > i && !selected_roots.count(ridx) &&
+              rcount == tracked.count) {
+            selected_roots[ridx] = i;
+            assigned = true;
+          }
+        }
+        if (!assigned)
+          reroot_enzyme_srets.insert(i);
       } else {
         // Case 3: No jlvalue_t's were stored into the sret.
         llvm::Type *SRetType = convertSRetTypeFromString(
@@ -598,8 +639,10 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                            "enzymejl_returnRoots")) {
       rroots.insert(i);
       size_t sret_idx;
-      // Existing
-      if (needsReReturning(F->getArg(i), sret_idx, srets_without_stores)) {
+      if (selected_roots.count(i)) {
+        // Already assigned to the sret whose jlvalue_t's it holds (Case 2).
+      } else if (needsReReturning(F->getArg(i), sret_idx,
+                                  srets_without_stores)) {
         reret_roots.insert(i);
       } else {
         selected_roots[i] = sret_idx;
