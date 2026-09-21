@@ -2215,15 +2215,16 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     while (auto CI = dyn_cast<CastInst>(ptr))
       ptr = CI->getOperand(0);
     auto basePhi = dyn_cast<PHINode>(ptr);
-    if (offPhi && basePhi && offPhi->getParent() == basePhi->getParent() &&
-        offPhi->getNumIncomingValues() == basePhi->getNumIncomingValues()) {
+    if (offPhi && basePhi && offPhi->getParent() == basePhi->getParent()) {
       APInt scale = VariableOffsets.begin()->second;
       SmallVector<std::pair<Value *, int64_t>, 4> edges;
       bool legal = true;
       for (unsigned i = 0, e = offPhi->getNumIncomingValues(); i < e; ++i) {
         auto CI = dyn_cast<ConstantInt>(offPhi->getIncomingValue(i));
-        if (!CI ||
-            offPhi->getIncomingBlock(i) != basePhi->getIncomingBlock(i)) {
+        // The two phis need not list their predecessors in the same order,
+        // pair the edges by incoming block rather than by operand index.
+        int baseIdx = basePhi->getBasicBlockIndex(offPhi->getIncomingBlock(i));
+        if (!CI || baseIdx < 0) {
           legal = false;
           break;
         }
@@ -2232,7 +2233,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
           legal = false;
           break;
         }
-        edges.emplace_back(basePhi->getIncomingValue(i),
+        edges.emplace_back(basePhi->getIncomingValue(baseIdx),
                            (int64_t)off.getLimitedValue());
       }
       if (legal) {
