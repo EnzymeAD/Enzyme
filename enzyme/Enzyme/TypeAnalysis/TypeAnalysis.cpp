@@ -2221,8 +2221,6 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       bool legal = true;
       for (unsigned i = 0, e = offPhi->getNumIncomingValues(); i < e; ++i) {
         auto CI = dyn_cast<ConstantInt>(offPhi->getIncomingValue(i));
-        // The two phis need not list their predecessors in the same order,
-        // pair the edges by incoming block rather than by operand index.
         int baseIdx = basePhi->getBasicBlockIndex(offPhi->getIncomingBlock(i));
         if (!CI || baseIdx < 0) {
           legal = false;
