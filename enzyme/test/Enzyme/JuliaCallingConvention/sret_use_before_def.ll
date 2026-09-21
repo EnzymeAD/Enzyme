@@ -1,4 +1,6 @@
-; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s 2>&1 | FileCheck %s
+
+; CHECK-NOT: warning:
 
 define void @caller({ { {} addrspace(10)* } }* %arg, { { {} addrspace(10)* } } addrspace(10)* %valid_ptr) {
 ; CHECK-LABEL: define void @caller({ { {} addrspace(10)* } }* %arg, { { {} addrspace(10)* } } addrspace(10)* %valid_ptr)
