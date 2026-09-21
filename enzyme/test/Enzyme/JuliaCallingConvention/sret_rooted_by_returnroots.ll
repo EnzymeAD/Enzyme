@@ -1,4 +1,4 @@
-; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s 2>&1 | FileCheck %s
 
 ; The primal sret holds a tracked pointer which the callee also stores into the
 ; existing returnRoots, whereas the tracked pointer of the shadow sret has no
@@ -6,6 +6,11 @@
 ; returned as a further member of the merged sret: the merged sret then has
 ; three tracked pointers (return value, primal sret, shadow sret) and the three
 ; roots to match (return value, shadow sret, primal returnRoots).
+;
+; That the shadow sret is rerooted is expected, as the only returnRoots belongs
+; to the primal sret, and must not be reported as a failure to find its roots.
+
+; CHECK-NOT: warning:
 
 ; CHECK-LABEL: define {{.*}} @caller(
 ; CHECK: %stack_sret = alloca { { {{[^,]+}}, double }, { {{[^,]+}}, i64 }, { {{[^,]+}}, i64 } }

@@ -31,9 +31,14 @@ DetectPointerArgOfFn(llvm::Function &F,
 // `arg` need to be given fresh roots. They do not if every one of them is also
 // stored into an existing enzymejl_returnRoots argument; the indices of the
 // returnRoots arguments found that way are added to `rootingArgs`.
+//
+// `assignedRoots` holds the returnRoots arguments which were already assigned
+// to another sret. As those hold the tracked pointers of that sret, not finding
+// the ones of `arg` in them is expected rather than worth a diagnostic.
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr,
-                    std::set<size_t> *rootingArgs = nullptr) {
+                    std::set<size_t> *rootingArgs = nullptr,
+                    const std::map<size_t, size_t> *assignedRoots = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
 
   if (!SRetType)
@@ -50,11 +55,15 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
   }
 
   bool hasReturnRootingAfterArg = false;
+  bool hasUnassignedReturnRootingAfterArg = false;
   for (size_t i = arg->getArgNo() + 1; i < arg->getParent()->arg_size(); i++) {
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
                            "enzymejl_returnRoots")) {
       hasReturnRootingAfterArg = true;
-      break;
+      if (!assignedRoots || !assignedRoots->count(i)) {
+        hasUnassignedReturnRootingAfterArg = true;
+        break;
+      }
     }
   }
 
@@ -375,7 +384,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             continue;
         }
 
-        if (hasReturnRootingAfterArg) {
+        if (hasUnassignedReturnRootingAfterArg) {
           std::string s;
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
@@ -580,7 +589,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       bool anyJLStore = false;
       std::set<size_t> rootingArgs;
       enzyme_srets.insert(i);
-      if (needsReRooting(F->getArg(i), anyJLStore, nullptr, &rootingArgs)) {
+      if (needsReRooting(F->getArg(i), anyJLStore, nullptr, &rootingArgs,
+                         &selected_roots)) {
         // Case 1: jlvalue_t's were stored into the sret, but were not stored
         // into an existing rooted argument.
         reroot_enzyme_srets.insert(i);
