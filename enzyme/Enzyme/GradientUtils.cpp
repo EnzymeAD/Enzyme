@@ -461,12 +461,7 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
         ss << " header: " << *lc.header << "\n";
         ss << " fn: " << *lc.header->getParent() << "\n";
 
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
-                             nullptr, nullptr, nullptr);
-        } else {
-          EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
-        }
+        EmitError("GetIndexError", ErrorType::InternalError, ss.str(), PN);
       }
       Value *ival = PN->getIncomingValue(Idx);
       if (auto CDV = dyn_cast<ConstantDataVector>(ival)) {
@@ -2861,17 +2856,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           ss << "malloc->getType(): " << *malloc->getType() << "\n";
           ss << "ret: " << *ret << " - " << *ret->getType() << "\n";
           ss << "malloc: " << *malloc << "\n";
-          if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(malloc),
-                               ErrorType::InternalError, nullptr, nullptr,
-                               nullptr);
-          } else {
-            DebugLoc loc;
-            if (auto I = dyn_cast<Instruction>(malloc))
-              EmitFailure("LoopCache", I->getDebugLoc(), I, ss.str());
-            else
-              EmitFailure("LoopCache", DebugLoc(), newFunc, ss.str());
-          }
+          if (CustomErrorHandler || isa<Instruction>(malloc))
+            EmitError("LoopCache", ErrorType::InternalError, ss.str(), malloc);
+          else
+            EmitFailure("LoopCache", DebugLoc(), newFunc, ss.str());
           return UndefValue::get(malloc->getType());
         }
       }
@@ -4001,12 +3989,8 @@ bool GradientUtils::legalRecompute(const Value *val,
       ss << "newFunc: " << *newFunc << "\n";
       ss << "phi: " << *phi << "\n";
       ss << "Invalid legalRecompute query on ficticious phi\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(phi), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
-      } else {
-        EmitFailure("InvalidLegalRecompute", phi->getDebugLoc(), phi, ss.str());
-      }
+      EmitError("InvalidLegalRecompute", ErrorType::InternalError, ss.str(),
+                phi);
     }
     auto parent = phi->getParent();
     struct {
@@ -5856,14 +5840,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ss << "cannot compute with global variable that doesn't have marked "
             "shadow global\n";
       ss << *arg << "\n";
-      if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
-      } else {
-        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
-                    ss.str());
-      }
+      if (auto iv = EmitError("InvertGlobal", ErrorType::NoShadow, ss.str(),
+                              arg, this, nullptr, &BuilderM))
+        return iv;
       return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md = arg->getMetadata("enzyme_shadow");
@@ -5876,14 +5855,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             "shadow global as mdtuple\n";
       ss << *arg << "\n";
       ss << " md: " << *md << "\n";
-      if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
-      } else {
-        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
-                    ss.str());
-      }
+      if (auto iv = EmitError("InvertGlobal", ErrorType::NoShadow, ss.str(),
+                              arg, this, nullptr, &BuilderM))
+        return iv;
       return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md2 = cast<MDTuple>(md);
@@ -6127,13 +6101,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
                  << " const val: " << *op;
-              if (CustomErrorHandler)
-                ivops[i] = unwrap(CustomErrorHandler(
-                    str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
-              else
-                EmitWarningAlways("MixedActivityError", *arg, ss.str(),
-                                  MixedActivityHint);
+              ivops[i] =
+                  EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                            ss.str(), arg, this, op, &bb);
             }
           }
         }
@@ -6242,13 +6212,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        if (CustomErrorHandler)
-          itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(tval), wrap(&bb)));
-        else
-          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
-                            MixedActivityHint);
+        itval = EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                          ss.str(), arg, this, tval, &bb);
       }
       if (!itval) {
         itval = invertPointerM(tval, bb, TT);
@@ -6263,13 +6228,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        if (CustomErrorHandler)
-          ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(fval), wrap(&bb)));
-        else
-          EmitWarningAlways("MixedActivityError", *arg, ss.str(),
-                            MixedActivityHint);
+        ifval = EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                          ss.str(), arg, this, fval, &bb);
       }
       if (!ifval) {
         ifval = invertPointerM(fval, bb, TT);
@@ -6616,13 +6576,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
-              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                              ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
-              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
-                                MixedActivityHint);
+            val = EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                            ss.str(), phi, this, preval, &pre);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);
@@ -6690,13 +6645,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
-              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                              ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
-              EmitWarningAlways("MixedActivityError", *phi, ss.str(),
-                                MixedActivityHint);
+            val = EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                            ss.str(), phi, this, preval, &pre);
           }
           if (!val) {
             val = invertPointerM(preval, pre, TT);
@@ -6751,29 +6701,27 @@ end:;
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
-  if (CustomErrorHandler) {
-    std::string str;
-    raw_string_ostream ss(str);
-    ss << "cannot find shadow for " << *oval;
-    auto iv =
-        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
-                                  this, nullptr, wrap(&BuilderM)));
-    if (iv) {
-      invertedPointers.insert(
-          std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
-      return iv;
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << "cannot find shadow for " << *oval;
+  if (!CustomErrorHandler) {
+    ss << " icv=" << isConstantValue(oval) << "\n";
+    ss << "fn:" << *newFunc << "\n";
+    for (auto z : invertedPointers) {
+      ss << "available inversion for " << *z.first << " of " << *z.second
+         << "\n";
     }
   }
-
-  llvm::errs() << *newFunc->getParent() << "\n";
-  llvm::errs() << "fn:" << *newFunc << "\noval=" << *oval
-               << " icv=" << isConstantValue(oval) << "\n";
-  for (auto z : invertedPointers) {
-    llvm::errs() << "available inversion for " << *z.first << " of "
-                 << *z.second << "\n";
+  if (auto iv = EmitError("NoShadow", ErrorType::NoShadow, ss.str(), oval, this,
+                          nullptr, &BuilderM)) {
+    invertedPointers.insert(
+        std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
+    return iv;
   }
-  assert(0 && "cannot find deal with ptr that isnt arg");
-  report_fatal_error("cannot find deal with ptr that isnt arg");
+  // A handler is expected to either supply the shadow or not return.
+  if (CustomErrorHandler)
+    report_fatal_error("cannot find deal with ptr that isnt arg");
+  return UndefValue::get(getShadowType(oval->getType()));
 }
 
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
@@ -7634,14 +7582,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                     ss << "Inserted a phi node (" << *a
                        << ") during unwrap of SCEV: " << *ar1->getStart()
                        << "\n";
-                    if (CustomErrorHandler) {
-                      CustomErrorHandler(str.c_str(), wrap(li),
-                                         ErrorType::InternalError, nullptr,
-                                         nullptr, nullptr);
-                    } else {
-                      EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
-                                  ss.str());
-                    }
+                    EmitError("InsertedPHISCEV", ErrorType::InternalError,
+                              ss.str(), li);
                   }
                   auto uwV =
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
@@ -8826,15 +8768,8 @@ void GradientUtils::computeMinCache() {
           std::string str;
           raw_string_ostream ss(str);
           ss << "Illegal cached pointer: " << *V << "\n";
-          if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap((Value *)V),
-                               ErrorType::InternalError, nullptr, nullptr,
-                               nullptr);
-          } else {
-            EmitFailure(
-                "CachedPointerError", cast<Instruction>(V)->getDebugLoc(),
-                cast<Instruction>(V)->getParent()->getParent(), ss.str());
-          }
+          EmitError("CachedPointerError", ErrorType::InternalError, ss.str(),
+                    V);
         }
       }
     }
@@ -8909,11 +8844,12 @@ void GradientUtils::eraseFictiousPHIs() {
           ss << "  user: " << *U << "\n";
         }
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(pp), ErrorType::InternalError,
-                             nullptr, nullptr, nullptr);
+          EmitError("IllegalReplacePHI", ErrorType::InternalError, ss.str(),
+                    pp);
         } else {
+          // The placeholder has no location, unlike what it stands in for.
           ss << " newFunc:\n" << *newFunc << "\n";
-          EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
+          EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, ss.str());
         }
       }
       Value *replacement =
@@ -9710,17 +9646,8 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
     ss << "fwdBlock: " << *found->second << "\n";
     ss << "currentBlock: " << *currentBlock << "\n";
     ss << "vec.back(): " << *vec.back() << "\n";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap((Value *)currentBlock),
-                         ErrorType::InternalError, nullptr, nullptr, nullptr);
-    } else {
-      DebugLoc loc;
-      if (hasTerminator(found->second)) {
-        loc = found->second->getTerminator()->getDebugLoc();
-      }
-      EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
-                  ss.str());
-    }
+    EmitError("AddReverseBlockError", ErrorType::InternalError, ss.str(),
+              currentBlock);
   }
   assert(vec.back() == currentBlock);
 
@@ -9876,13 +9803,8 @@ int GradientUtils::getIndex(
     ss << " </mapping>\n";
     ss << "idx: " << *idx.first << ", " << idx.second << "\n";
     ss << " could not find index in mapping\n";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
-                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
-    } else {
-      EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
-                  ss.str());
-    }
+    EmitError("GetIndexError", ErrorType::GetIndexError, ss.str(), idx.first,
+              this, nullptr, &B);
     return IndexMappingError;
   }
   return found->second;

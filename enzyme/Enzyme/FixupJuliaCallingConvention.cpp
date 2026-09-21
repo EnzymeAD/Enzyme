@@ -176,8 +176,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "Unknown user of sret-like argument\n";
-    CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
-                       wrap(cur), wrap(arg), nullptr);
+    EmitError("GCRewrite", ErrorType::GCRewrite, ss.str(), I, wrap(cur), arg);
     legal = false;
     anyJLStore = true;
     break;
@@ -373,8 +372,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
           ss << " sv: " << *sv << "\n";
-          CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                             nullptr, wrap(arg), nullptr);
+          EmitError("GCRewrite", ErrorType::GCRewrite, ss.str(), sv, nullptr,
+                    arg);
         }
         legal = false;
         break;
@@ -637,8 +636,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         llvm::raw_string_ostream ss(s);
         ss << "Illegal GC setup in which rerooting is required\n";
         ss << " + F: " << *F << "\n";
-        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
+        EmitError("IllegalGCSetup", ErrorType::InternalError, ss.str(), F);
       }
       assert(!rerooting);
 #endif
@@ -795,8 +793,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           ss << "    + Types[" << i << "] = " << *Types[i] << "\n";
         }
         ss << " F: " << *F << "\n";
-        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
-                           nullptr, nullptr, nullptr);
+        EmitError("IllegalGCSetup", ErrorType::InternalError, ss.str(), F);
       }
       assert(numRooting == countF.count);
     }
@@ -1021,8 +1018,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                   "sret ("
                << *sret << "), but no rereturned roots at index i=" << i
                << "\n";
-            CustomErrorHandler(s.c_str(), wrap(gep), ErrorType::InternalError,
-                               nullptr, nullptr, nullptr);
+            EmitError("IllegalGCSetup", ErrorType::InternalError, ss.str(),
+                      gep);
           }
 
           sretCount++;
@@ -1106,13 +1103,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
             ss << " + CI erring: " << *CI << "\n";
             ss << " + Function containing CI: "
                << CI->getParent()->getParent()->getName() << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
-            } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
-                          ss.str());
-            }
+            EmitError("UnsupportedArgument", ErrorType::InternalError, ss.str(),
+                      CI);
           }
 
           Value *gep = sret;
@@ -1186,13 +1178,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
             ss << " + CI erring: " << *CI << "\n";
             ss << " + Function containing CI: "
                << CI->getParent()->getParent()->getName() << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
-            } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
-                          ss.str());
-            }
+            EmitError("UnsupportedArgument", ErrorType::InternalError, ss.str(),
+                      CI);
           }
 
           auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,

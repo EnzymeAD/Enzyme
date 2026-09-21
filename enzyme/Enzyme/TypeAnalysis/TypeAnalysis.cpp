@@ -1282,21 +1282,14 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     if (Origin)
       ss << " origin=" << *Origin;
 
-    if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
-                         (void *)this, wrap(Origin), nullptr);
-    }
-    if (auto I = dyn_cast<Instruction>(Val)) {
-      EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
-      exit(1);
-    } else if (auto I = dyn_cast_or_null<Instruction>(Origin)) {
-      EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
-      exit(1);
-    } else {
+    if (CustomErrorHandler || isa<Instruction>(Val) ||
+        isa_and_nonnull<Instruction>(Origin))
+      EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                ss.str(), Val, this, Origin);
+    else
       EmitFailure("IllegalUpdateAnalysis", DiagnosticLocation(),
                   fntypeinfo.Function, ss.str());
-      exit(1);
-    }
+    exit(1);
   }
 
   if (Changed) {
@@ -2151,15 +2144,15 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     bool legal = true;
     auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
     if (!legal) {
-      if (CustomErrorHandler)
-        CustomErrorHandler("Could not keep minus one", wrap(&gep),
-                           ErrorType::IllegalTypeAnalysis, this, nullptr,
-                           nullptr);
-      else {
-        dump();
-        llvm::errs() << " could not perform minus one for gep'd: " << gep
-                     << "\n";
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Could not keep minus one";
+      if (!CustomErrorHandler) {
+        ss << " for gep'd: " << gep << "\n";
+        dump(ss);
       }
+      EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                ss.str(), &gep, this);
     }
     updateAnalysis(&gep, keepMinus, &gep);
     // Don't propagate pointer type when the input pointer is null
@@ -2431,14 +2424,11 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
                 ss << "Illegal binopIn(0): " << *BO
                    << " lhs: " << PhiTypes.str()
                    << " rhs: " << getAnalysis(BO->getOperand(0)).str() << "\n";
-                if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(BO),
-                                     ErrorType::IllegalTypeAnalysis,
-                                     (void *)this, wrap(BO), nullptr);
-                }
-                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
-                            ss.str());
-                report_fatal_error("Performed illegal updateAnalysis");
+                EmitError("IllegalUpdateAnalysis",
+                          ErrorType::IllegalTypeAnalysis, ss.str(), BO, this,
+                          BO);
+                report_fatal_error("Performed illegal updateAnalysis",
+                                   /*gen_crash_diag*/ false);
               }
               break;
             } else if (BO->getOperand(1) == &phi) {
@@ -2458,14 +2448,11 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
                 ss << "Illegal binopIn(1): " << *BO
                    << " lhs: " << PhiTypes.str() << " rhs: " << otherData.str()
                    << "\n";
-                if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(BO),
-                                     ErrorType::IllegalTypeAnalysis,
-                                     (void *)this, wrap(BO), nullptr);
-                }
-                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
-                            ss.str());
-                report_fatal_error("Performed illegal updateAnalysis");
+                EmitError("IllegalUpdateAnalysis",
+                          ErrorType::IllegalTypeAnalysis, ss.str(), BO, this,
+                          BO);
+                report_fatal_error("Performed illegal updateAnalysis",
+                                   /*gen_crash_diag*/ false);
               }
               break;
             }
@@ -2527,13 +2514,10 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
         ss << "Illegal updateBinop Analysis " << *bo << "\n";
         ss << "Illegal binopIn(consts): " << *bo << " lhs: " << vd1.str()
            << " rhs: " << vd2.str() << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(bo),
-                             ErrorType::IllegalTypeAnalysis, (void *)this,
-                             wrap(bo), nullptr);
-        }
-        EmitFailure("IllegalUpdateAnalysis", bo->getDebugLoc(), bo, ss.str());
-        report_fatal_error("Performed illegal updateAnalysis");
+        EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                  ss.str(), bo, this, bo);
+        report_fatal_error("Performed illegal updateAnalysis",
+                           /*gen_crash_diag*/ false);
       }
       PhiTypes &= vd1.Only(bo->getType()->isIntegerTy() ? -1 : 0, &phi);
     }
@@ -3134,28 +3118,26 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       bool LegalOr = true;
       auto Data = TypeTree(dt).Only(-1, nullptr);
       LHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
-      if (CustomErrorHandler && !LegalOr) {
+      if (!LegalOr) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Illegal updateAnalysis prev:" << LHS.str()
            << " new: " << Data.str() << "\n";
         ss << "val: " << *Args[0];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[0]),
-                           ErrorType::IllegalTypeAnalysis, (void *)this,
-                           wrap(origin), nullptr);
+        EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                  ss.str(), Args[0], this, origin);
       }
       RHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
-      if (CustomErrorHandler && !LegalOr) {
+      if (!LegalOr) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Illegal updateAnalysis prev:" << RHS.str()
            << " new: " << Data.str() << "\n";
         ss << "val: " << *Args[1];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[1]),
-                           ErrorType::IllegalTypeAnalysis, (void *)this,
-                           wrap(origin), nullptr);
+        EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                  ss.str(), Args[1], this, origin);
       }
     }
     if (direction & DOWN)
@@ -3224,14 +3206,10 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               ss << " (i=" << i << ") " << (i == 0 ? "RHS" : "LHS") << " "
                  << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
                  << "\n";
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(origin),
-                                   ErrorType::IllegalTypeAnalysis, (void *)this,
-                                   wrap(origin), nullptr);
-              }
-              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
-                          origin, ss.str());
-              report_fatal_error("Performed illegal updateAnalysis");
+              EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                        ss.str(), origin, this, origin);
+              report_fatal_error("Performed illegal updateAnalysis",
+                                 /*gen_crash_diag*/ false);
             }
           }
         }
@@ -3380,14 +3358,10 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         ss << "Illegal updateBinop Analysis " << *origin << "\n";
         ss << "Illegal binopIn(down): " << Opcode << " lhs: " << Result.str()
            << " rhs: " << AnalysisRHS.str() << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(origin),
-                             ErrorType::IllegalTypeAnalysis, (void *)this,
-                             wrap(origin), nullptr);
-        }
-        EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(), origin,
-                    ss.str());
-        report_fatal_error("Performed illegal updateAnalysis");
+        EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                  ss.str(), origin, this, origin);
+        report_fatal_error("Performed illegal updateAnalysis",
+                           /*gen_crash_diag*/ false);
       }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
@@ -3672,13 +3646,10 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
     ss << *MTI.getArgOperand(1) << " "
        << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
 
-    if (CustomErrorHandler) {
-      CustomErrorHandler(str.c_str(), wrap(&MTI),
-                         ErrorType::IllegalTypeAnalysis, (void *)this,
-                         wrap(&MTI), nullptr);
-    }
-    EmitFailure("IllegalUpdateAnalysis", MTI.getDebugLoc(), &MTI, ss.str());
-    report_fatal_error("Performed illegal updateAnalysis");
+    EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis, ss.str(),
+              &MTI, this, &MTI);
+    report_fatal_error("Performed illegal updateAnalysis",
+                       /*gen_crash_diag*/ false);
   }
   res.insert({}, BaseType::Pointer);
   res = res.Only(-1, &MTI);
@@ -4293,13 +4264,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       ss << "Illegal updateBinopIntr Analysis " << I << "\n";
       ss << "Illegal binopIn(intr): " << I << " lhs: " << vd.str()
          << " rhs: " << getAnalysis(I.getOperand(1)).str() << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I),
-                           ErrorType::IllegalTypeAnalysis, (void *)this,
-                           wrap(&I), nullptr);
-      }
-      EmitFailure("IllegalUpdateAnalysis", I.getDebugLoc(), &I, ss.str());
-      report_fatal_error("Performed illegal updateAnalysis");
+      EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                ss.str(), &I, this, &I);
+      report_fatal_error("Performed illegal updateAnalysis",
+                         /*gen_crash_diag*/ false);
     }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
@@ -4559,16 +4527,15 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     bool legal = true;
     auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
     if (!legal) {
-      if (CustomErrorHandler)
-        CustomErrorHandler("Could not keep minus one", wrap(&II),
-                           ErrorType::IllegalTypeAnalysis, &TA, nullptr,
-                           nullptr);
-      else {
-        TA.dump();
-        llvm::errs()
-            << " could not perform minus one for llvm.intel.subscript'd: " << II
-            << "\n";
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Could not keep minus one";
+      if (!CustomErrorHandler) {
+        ss << " for llvm.intel.subscript'd: " << II << "\n";
+        TA.dump(ss);
       }
+      EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
+                ss.str(), &II, &TA);
     }
     TA.updateAnalysis(&II, keepMinus, &II);
     TA.updateAnalysis(&II, TypeTree(pointerAnalysis.Inner0()).Only(-1, &II),
@@ -6678,12 +6645,9 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
       raw_string_ostream ss(str);
       ss << "Illegal firstPointer, num: " << num << " q: " << q.str() << "\n";
       ss << " at " << *val << " from " << *I << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(I), ErrorType::IllegalFirstPointer,
-                           &analyzer, nullptr, nullptr);
-      }
-      llvm::errs() << ss.str() << "\n";
-      llvm_unreachable("Illegal firstPointer");
+      EmitError("IllegalFirstPointer", ErrorType::IllegalFirstPointer, ss.str(),
+                I, &analyzer);
+      break;
     }
   }
 

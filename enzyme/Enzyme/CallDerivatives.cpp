@@ -2653,13 +2653,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << call
                << " const val: " << *valOp;
-            if (CustomErrorHandler) {
-              dval = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(&call), ErrorType::MixedActivityError,
-                  gutils, wrap(valOp), wrap(&BuilderZ)));
-            } else
-              EmitWarningAlways("MixedActivityError", call, ss.str(),
-                                MixedActivityHint);
+            dval =
+                EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                          ss.str(), &call, gutils, valOp, &BuilderZ);
           }
           if (!dval)
             dval = gutils->invertPointerM(valOp, BuilderZ,

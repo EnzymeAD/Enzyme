@@ -602,15 +602,10 @@ void RecursivelyReplaceAddressSpace(
     ss << " + prev: " << *prev << "\n";
     ss << " + inst: " << *inst << "\n";
 
-    if (CustomErrorHandler) {
-      CustomErrorHandler(s.c_str(), wrap(inst), ErrorType::InternalError,
-                         nullptr, nullptr, nullptr);
-    } else {
-      auto instI = cast<Instruction>(inst);
-      ss << *instI->getParent()->getParent() << "\n";
-      EmitFailure("IllegalAddressSpacePropagation", instI->getDebugLoc(), instI,
-                  ss.str());
-    }
+    if (!CustomErrorHandler)
+      ss << *cast<Instruction>(inst)->getParent()->getParent() << "\n";
+    EmitError("IllegalAddressSpacePropagation", ErrorType::InternalError,
+              ss.str(), inst);
     llvm_unreachable("Illegal address space propagation");
   }
 

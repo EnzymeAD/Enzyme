@@ -195,6 +195,8 @@ extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
+/// Emit errors into the generated code, rather than failing compilation
+extern llvm::cl::opt<bool> EnzymeRuntimeError;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -371,13 +373,39 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   return nullptr;
 }
 
+/// Report an error of kind `Kind` concerning `V`. Use this instead of calling
+/// CustomErrorHandler, as it supplies the behavior for when a frontend has not
+/// registered one (e.g. when run through opt or clang).
+///
+/// If a CustomErrorHandler is registered it is called with `message`, `V`,
+/// `Kind`, `Data`, `Extra` and `B`, whose meaning depend on `Kind`, and the
+/// value it returns (if any) is returned as a replacement to use.
+///
+/// Otherwise nullptr is returned after either
+///  * emitting a runtime error at `B`, for a missing derivative or type when
+///    -enzyme-runtime-error is set,
+///  * emitting a warning, for the kinds we recover from (mixed activity,
+///    exceeding the type depth, being unable to rewrite GC roots), or
+///  * emitting an EnzymeFailure for everything else.
+/// The diagnostic is attributed to the first of `V`, the insertion point of
+/// `B` and `Extra` from which a function can be found. Compilation is only
+/// aborted if there is none.
+///
+/// As whether a failure diagnostic returns is up to the LLVMContext's
+/// diagnostic handler, callers must leave the IR valid after an error.
+llvm::Value *EmitError(llvm::StringRef RemarkName, ErrorType Kind,
+                       const std::string &message, const llvm::Value *V,
+                       const void *Data = nullptr,
+                       const llvm::Value *Extra = nullptr,
+                       llvm::IRBuilder<> *B = nullptr);
+
 class GradientUtils;
 struct RequestContext;
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils, llvm::IRBuilder<> &B,
                                    llvm::Value *condition = nullptr);
-bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+void EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
                            RequestContext &ctx);
 
 void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
