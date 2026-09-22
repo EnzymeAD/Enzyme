@@ -150,9 +150,10 @@ symbolic name of the mathematical function:
 
 ```fortran
 module enzyme_math_names
-  use iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int
   implicit none
-  integer(c_int), bind(C, name="enzyme_math_log1p") :: enzyme_log1p
+  private
+  integer(c_int), public, bind(C, name="enzyme_math_log1p") :: enzyme_log1p
 end module enzyme_math_names
 ```
 
@@ -225,10 +226,11 @@ For example, declare a binding for the `sin` rule:
 
 ```fortran
 module enzyme_math_names
-  use iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int
   implicit none
+  private
 
-  integer(c_int), bind(C, name="enzyme_math_sin") :: enzyme_sin
+  integer(c_int), public, bind(C, name="enzyme_math_sin") :: enzyme_sin
 end module enzyme_math_names
 ```
 

@@ -5,9 +5,10 @@
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 module function_like_names
-  use iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int
   implicit none
-  integer(c_int), bind(C, name="enzyme_math_log1p") :: enzyme_log1p
+  private
+  integer(c_int), public, bind(C, name="enzyme_math_log1p") :: enzyme_log1p
 end module function_like_names
 
 program main
