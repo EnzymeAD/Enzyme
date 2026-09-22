@@ -7,6 +7,7 @@
 
 module enzyme_test_reverse_function_like_module_procedure_pointer
   implicit none
+  public
 
   procedure(double_value), pointer :: &
     fn__enzyme_function_like__log1p => double_value

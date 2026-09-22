@@ -7,6 +7,7 @@
 
 module enzyme_test_reverse_function_like_procedure_pointer
   implicit none
+  public
 
 contains
 
