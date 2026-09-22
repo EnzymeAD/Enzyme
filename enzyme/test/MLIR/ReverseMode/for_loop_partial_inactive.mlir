@@ -75,7 +75,6 @@ func.func @daffine_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
 // CHECK-SAME:      %[[ARG0:.*]]: f32,
 // CHECK-SAME:      %[[ARG1:.*]]: index,
 // CHECK-SAME:      %[[ARG2:.*]]: f32) -> f32 {
-// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 1 : index
 // CHECK:           %[[CONSTANT_1:.*]] = arith.constant 1.000000e+00 : f32
 // CHECK:           %[[CONSTANT_2:.*]] = arith.constant 0.000000e+00 : f32
 // CHECK:           %[[ALLOC_0:.*]] = memref.alloc(%[[ARG1]]) : memref<?xf32>
@@ -86,9 +85,8 @@ func.func @daffine_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
 // CHECK:             affine.yield %[[MULF_0]], %[[ADDF_0]] : f32, f32
 // CHECK:           }
 // CHECK:           %[[FOR_1:.*]]:2 = affine.for %[[VAL_3:.*]] = 0 to %[[ARG1]] iter_args(%[[VAL_4:.*]] = %[[ARG2]], %[[VAL_5:.*]] = %[[CONSTANT_2]]) -> (f32, f32) {
-// CHECK:             %[[SUBI_0:.*]] = arith.subi %[[ARG1]], %[[CONSTANT_0]] : index
-// CHECK:             %[[SUBI_1:.*]] = arith.subi %[[SUBI_0]], %[[VAL_3]] : index
-// CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[SUBI_1]]] : memref<?xf32>
+// CHECK:             %[[REVERSE_IV:.*]] = affine.apply #{{.*}}(%[[VAL_3]])[%[[ARG1]]]
+// CHECK:             %[[LOAD_0:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[REVERSE_IV]]] : memref<?xf32>
 // CHECK:             %[[MULF_1:.*]] = arith.mulf %[[VAL_4]], %[[ARG0]] fastmath<fast> : f32
 // CHECK:             %[[MULF_2:.*]] = arith.mulf %[[VAL_4]], %[[LOAD_0]] fastmath<fast> : f32
 // CHECK:             %[[ADDF_1:.*]] = arith.addf %[[VAL_5]], %[[MULF_2]] fastmath<fast> : f32

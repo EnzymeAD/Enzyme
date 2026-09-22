@@ -10,6 +10,7 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -234,6 +235,27 @@ public:
                          llvm::ArrayRef<IntOrValue> bounds) {
     llvm::SmallVector<mlir::Value> results;
     for (auto &&[bound, iv] : llvm::zip_equal(bounds, otherInductionVariable)) {
+      if (affine::isAffineInductionVar(iv)) {
+        AffineExpr reversedIV;
+        SmallVector<Value> operands{iv};
+        unsigned numSymbols = 0;
+        AffineExpr ivExpr = rewriter.getAffineDimExpr(0);
+
+        if (bound.vval) {
+          AffineExpr boundExpr = rewriter.getAffineSymbolExpr(0);
+          reversedIV = boundExpr - 1 - ivExpr;
+          operands.push_back(bound.vval);
+          numSymbols = 1;
+        } else {
+          reversedIV = rewriter.getAffineConstantExpr(bound.ival - 1) - ivExpr;
+        }
+
+        AffineMap map = AffineMap::get(/*dimCount=*/1, numSymbols, reversedIV);
+        results.push_back(affine::AffineApplyOp::create(rewriter, op->getLoc(),
+                                                        map, operands));
+        continue;
+      }
+
       Value boundv;
       if (bound.vval) {
         Value c1;
@@ -1021,7 +1043,10 @@ void removalBlockExplore(Block *block, IRMapping &mapping,
                          llvm::SetVector<Value> &gradients,
                          llvm::MapVector<Value, CacheInfo> &caches);
 
-template <typename FinalClass, typename OpName>
+// ReverseOpName is the type of the if-like op generated for the reverse pass
+// corresponding to this OpName. It usually is the same as OpName, but need
+// not be (e.g. the reverse of an affine.if is an scf.if).
+template <typename FinalClass, typename OpName, typename ReverseOpName = OpName>
 struct IfLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
   LogicalResult removeEnzymeOps(Operation *op,
@@ -1084,11 +1109,11 @@ struct IfLikeEnzymeOpsRemover
 
     if (removeCaches && hasMinCut(ifOp)) {
       // Find the reverse if op
-      OpName reverseIfOp = nullptr;
+      ReverseOpName reverseIfOp = nullptr;
       auto findReverseIf = [&](Operation *parent) {
-        if (isa<OpName>(parent) &&
+        if (isa<ReverseOpName>(parent) &&
             (reverseIfOp == nullptr || parent->isProperAncestor(reverseIfOp))) {
-          reverseIfOp = cast<OpName>(parent);
+          reverseIfOp = cast<ReverseOpName>(parent);
         }
       };
       for (auto &[_, info] : truePushedCaches)

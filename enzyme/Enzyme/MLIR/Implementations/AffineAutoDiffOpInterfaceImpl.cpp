@@ -67,6 +67,204 @@ affine::AffineIfOp createAffineIfWithShadows(Operation *op, OpBuilder &builder,
       adaptor.getOperands(), !original.getElseRegion().empty());
 }
 
+struct AffineIfOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineIfOpInterfaceReverse, affine::AffineIfOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto ifOp = cast<affine::AffineIfOp>(op);
+    bool hasElse = ifOp.hasElse();
+    Value cond = gutils->popCache(caches[0], builder);
+
+    SmallVector<bool> resultsActive(ifOp.getNumResults(), false);
+    for (int i = 0, e = resultsActive.size(); i < e; ++i) {
+      auto result = ifOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      resultsActive[i] = needsGrad && !gutils->isConstantValue(result);
+    }
+
+    SmallVector<Value> incomingGradients;
+    for (auto &&[active, res] :
+         llvm::zip_equal(resultsActive, ifOp.getResults())) {
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(res, builder));
+        if (!gutils->isConstantValue(res))
+          gutils->zeroDiffe(res, builder);
+      }
+    }
+
+    auto revIf =
+        scf::IfOp::create(builder, ifOp.getLoc(), TypeRange{}, cond, hasElse);
+
+    bool valid = true;
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(op->getRegions(), revIf->getRegions())) {
+      for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
+        OpBuilder bodyBuilder(&revBB, revBB.end());
+        bodyBuilder.setInsertionPoint(revBB.getTerminator());
+
+        // All values defined in the body should have no use outside this
+        // block therefore we can set their diffe to zero upon entering the
+        // reverse block to simplify the work of the
+        // remove-unnecessary-enzyme-ops pass.
+        for (auto &it : oBB.getOperations()) {
+          for (auto res : it.getResults()) {
+            if (!gutils->isConstantValue(res)) {
+              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+              if (iface && !iface.isMutable())
+                gutils->zeroDiffe(res, bodyBuilder);
+            }
+          }
+        }
+
+        auto term = oBB.getTerminator();
+        // Align incomingGradients with their corresponding yield operands.
+        SmallVector<Value> activeTermOperands;
+        activeTermOperands.reserve(incomingGradients.size());
+        for (auto &&[resultActive, operand] :
+             llvm::zip_equal(resultsActive, term->getOperands())) {
+          if (resultActive)
+            activeTermOperands.push_back(operand);
+        }
+
+        for (auto &&[arg, operand] :
+             llvm::zip_equal(incomingGradients, activeTermOperands)) {
+          // Check activity of the argument separately from the result. If
+          // some branches yield inactive values while others yield active
+          // values, the result will be active, but this operand may still be
+          // inactive (and we cannot addToDiffe)
+          if (!gutils->isConstantValue(operand)) {
+            gutils->addToDiffe(operand, arg, bodyBuilder);
+          }
+        }
+
+        auto first = oBB.rbegin();
+        first++; // skip terminator
+
+        auto last = oBB.rend();
+
+        for (auto it = first; it != last; ++it) {
+          Operation *op = &*it;
+          valid &=
+              gutils->Logic.visitChild(op, bodyBuilder, gutils).succeeded();
+        }
+      }
+    }
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto ifOp = cast<affine::AffineIfOp>(op);
+    auto is = ifOp.getCondition();
+
+    auto newOp = gutils->getNewFromOriginal(op);
+    OpBuilder cacheBuilder(newOp);
+
+    Value cond = nullptr;
+
+    Value zero = arith::ConstantIndexOp::create(cacheBuilder, ifOp.getLoc(), 0);
+
+    auto getNewFromOriginal = [&](Value v) {
+      return gutils->getNewFromOriginal(v);
+    };
+
+    SmallVector<Value> dims = llvm::map_to_vector(
+        ifOp->getOperands().take_front(is.getNumDims()), getNewFromOriginal);
+    SmallVector<Value> symbols = llvm::map_to_vector(
+        ifOp->getOperands().drop_front(is.getNumDims()), getNewFromOriginal);
+
+    for (auto [eq, E] : llvm::zip_equal(is.getEqFlags(), is.getConstraints())) {
+      Value lhs = affine::expandAffineExpr(cacheBuilder, ifOp.getLoc(), E, dims,
+                                           symbols);
+      Value constraintCond = arith::CmpIOp::create(
+          cacheBuilder, ifOp.getLoc(),
+          eq ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sge, lhs, zero);
+
+      if (cond) {
+        cond = arith::AndIOp::create(cacheBuilder, ifOp.getLoc(),
+                                     constraintCond, cond);
+      } else {
+        cond = constraintCond;
+      }
+    }
+
+    cond = cond ? cond
+                : arith::ConstantIntOp::create(cacheBuilder, ifOp.getLoc(),
+                                               cacheBuilder.getI1Type(),
+                                               /*value=*/1);
+
+    return {gutils->initAndPushCache(cond, cacheBuilder)};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
+};
+
+// The reverse of an affine.if is an scf.if (see AffineIfOpInterfaceReverse
+// above), so the reverse if op searched for by the min-cut cache logic below
+// is an scf::IfOp rather than an affine::AffineIfOp.
+struct AffineIfOpEnzymeOpsRemover
+    : public IfLikeEnzymeOpsRemover<AffineIfOpEnzymeOpsRemover,
+                                    affine::AffineIfOp, scf::IfOp> {
+  static Block *getThenBlock(affine::AffineIfOp ifOp, OpBuilder &builder) {
+    return ifOp.getThenBlock();
+  }
+
+  static Block *getElseBlock(affine::AffineIfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      affine::AffineYieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.getElseBlock();
+  }
+
+  static Block *getThenBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    return ifOp.thenBlock();
+  }
+
+  static Block *getElseBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      scf::YieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.elseBlock();
+  }
+
+  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
+    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
+  }
+
+  static affine::AffineIfOp replace(PatternRewriter &rewriter,
+                                    affine::AffineIfOp otherIfOp,
+                                    TypeRange resultTypes) {
+    auto newIf = affine::AffineIfOp::create(
+        rewriter, otherIfOp->getLoc(), resultTypes, otherIfOp.getIntegerSet(),
+        otherIfOp->getOperands(), /*withElseRegion=*/true);
+
+    newIf.getThenRegion().takeBody(otherIfOp.getThenRegion());
+    newIf.getElseRegion().takeBody(otherIfOp.getElseRegion());
+
+    rewriter.replaceAllUsesWith(
+        otherIfOp->getResults(),
+        newIf->getResults().slice(0, otherIfOp->getNumResults()));
+    rewriter.eraseOp(otherIfOp);
+    return newIf;
+  }
+};
+
 affine::AffineParallelOp
 createAffineParallelWithShadows(Operation *op, OpBuilder &builder,
                                 MGradientUtils *gutils,
@@ -1329,5 +1527,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
         *context);
     affine::AffineParallelOp::attachInterface<
         AffineParallelRegionBranchOpInterface>(*context);
+    affine::AffineIfOp::attachInterface<AffineIfOpInterfaceReverse>(*context);
+    affine::AffineIfOp::attachInterface<AffineIfOpEnzymeOpsRemover>(*context);
   });
 }
