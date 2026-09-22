@@ -2196,62 +2196,6 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   (void)legalOffset;
   assert(legalOffset);
 
-  // A phi of derived pointers may have been split into a base phi and an
-  // offset phi that are correlated per incoming edge (Enzyme.jl's
-  // nodecayed_phis! does this for addrspace(11) phis):
-  //   %base = phi ptr addrspace(10) [ %a, %bb1 ], [ %b, %bb2 ]
-  //   %off  = phi i64 [ 8, %bb1 ], [ 0, %bb2 ]
-  //   %p    = getelementptr i8, addrspacecast(%base), %off
-  // %a is only ever indexed by 8 and %b only by 0, and %a and %b need not
-  // share a layout (e.g. a Memory{T} and an Array{T}). The generic handling
-  // below would apply every offset to the merged base, i.e. assert both
-  // layouts on both objects. Instead push the gep's pointee type into the
-  // incoming object of each edge at that edge's offset; the base phi itself
-  // then only learns what its incomings agree on.
-  bool upPerEdge = false;
-  if ((direction & UP) && VariableOffsets.size() == 1) {
-    auto offPhi = dyn_cast<PHINode>(VariableOffsets.begin()->first);
-    Value *ptr = gep.getPointerOperand();
-    while (auto CI = dyn_cast<CastInst>(ptr))
-      ptr = CI->getOperand(0);
-    auto basePhi = dyn_cast<PHINode>(ptr);
-    if (offPhi && basePhi && offPhi->getParent() == basePhi->getParent()) {
-      APInt scale = VariableOffsets.begin()->second;
-      SmallVector<std::pair<Value *, int64_t>, 4> edges;
-      bool legal = true;
-      for (unsigned i = 0, e = offPhi->getNumIncomingValues(); i < e; ++i) {
-        auto CI = dyn_cast<ConstantInt>(offPhi->getIncomingValue(i));
-        int baseIdx = basePhi->getBasicBlockIndex(offPhi->getIncomingBlock(i));
-        if (!CI || baseIdx < 0) {
-          legal = false;
-          break;
-        }
-        APInt off = constOffset + scale * CI->getValue().sextOrTrunc(BitWidth);
-        if (off.isNegative()) {
-          legal = false;
-          break;
-        }
-        edges.emplace_back(basePhi->getIncomingValue(baseIdx),
-                           (int64_t)off.getLimitedValue());
-      }
-      if (legal) {
-        upPerEdge = true;
-        for (auto [base, off] : edges) {
-          if (base == basePhi)
-            continue;
-          updateAnalysis(base,
-                         gepData0
-                             .ShiftIndices(DL, /*init offset*/ 0,
-                                           /*max size*/ -1, /*new offset*/ off)
-                             .Only(-1, inst),
-                         &gep);
-        }
-      }
-    }
-  }
-
-  SmallVector<std::set<int>, 4> idnext;
-
   SmallPtrSet<BasicBlock *, 1> previousLoopInductionHeaders;
   {
     Value *ptr = gep.getPointerOperand();
@@ -2274,91 +2218,158 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     }
   }
 
+  // A phi of derived pointers may have been split into a base phi and an
+  // offset phi that are correlated per incoming edge (Enzyme.jl's
+  // nodecayed_phis! does this for addrspace(11) phis):
+  //   %base = phi ptr addrspace(10) [ %a, %bb1 ], [ %b, %bb2 ]
+  //   %off  = phi i64 [ 8, %bb1 ], [ 0, %bb2 ]
+  //   %p    = getelementptr i8, addrspacecast(%base), %off
+  // %a is only ever indexed by 8 and %b only by 0, and %a and %b need not
+  // share a layout (e.g. a Memory{T} and an Array{T}). Enumerating the values
+  // of %off and applying every offset to the merged base would assert both
+  // layouts on both objects. If the pointer operand (through casts) is a phi
+  // and some variable index is a phi of the same block, thread the phi
+  // instead: enumerate the offsets separately for each incoming edge, taking
+  // the index phi's value on that edge, and push the gep's pointee type into
+  // the incoming object of that edge. The base phi then only learns what its
+  // incomings agree on through its own downward rule.
+  PHINode *basePhi = nullptr;
+  {
+    Value *ptr = gep.getPointerOperand();
+    while (auto CI = dyn_cast<CastInst>(ptr))
+      ptr = CI->getOperand(0);
+    if (auto P = dyn_cast<PHINode>(ptr))
+      for (auto &pair : VariableOffsets)
+        if (auto IP = dyn_cast<PHINode>(pair.first))
+          if (IP->getParent() == P->getParent())
+            basePhi = P;
+  }
+
+  // The objects the gep may be applied to, one per incoming edge of the base
+  // phi, or only the pointer operand, with the legal values of each variable
+  // index for that object.
+  struct Edge {
+    Value *base;
+    SmallVector<std::set<int>, 4> idnext;
+  };
+  SmallVector<Edge, 4> edges;
+  if (basePhi) {
+    for (unsigned i = 0, e = basePhi->getNumIncomingValues(); i < e; ++i)
+      edges.push_back({basePhi->getIncomingValue(i), {}});
+  } else {
+    edges.push_back({gep.getPointerOperand(), {}});
+  }
+
   for (auto &pair : VariableOffsets) {
     auto a = pair.first;
-    auto iset = fntypeinfo.knownIntegralValues(a, DT, intseen, SE);
-    std::set<int> vset;
-    for (auto i : iset) {
-      // Don't consider negative indices of gep
-      if (i < 0)
-        continue;
-      vset.insert(i);
-    }
-    if (vset.size() == 0)
-      return;
-
-    // If seen the same variable before with > 1 option, we will accidentally
-    // do an offset for [option1, option2] * oldOffset + [option1, option2] *
-    // newOffset
-    //   instead of [option1, option2] * (oldOffset + newOffset).
-    //   In this case abort
-    //   TODO, in the future, mutually compute the offset together.
-    if (vset.size() != 1) {
-      SmallPtrSet<PHINode *, 1> seen;
-      for (auto loopInd : findLoopIndices(pair.first, LI, DT, seen))
-        if (previousLoopInductionHeaders.count(loopInd))
+    auto IP = dyn_cast<PHINode>(a);
+    bool correlated = basePhi && IP && IP->getParent() == basePhi->getParent();
+    for (unsigned ei = 0, ee = edges.size(); ei < ee; ++ei) {
+      Value *v = a;
+      if (correlated) {
+        int idx = IP->getBasicBlockIndex(basePhi->getIncomingBlock(ei));
+        if (idx < 0)
           return;
+        v = IP->getIncomingValue(idx);
+      }
+      auto iset = fntypeinfo.knownIntegralValues(v, DT, intseen, SE);
+      std::set<int> vset;
+      for (auto i : iset) {
+        // Don't consider negative indices of gep
+        if (i < 0)
+          continue;
+        vset.insert(i);
+      }
+      if (vset.size() == 0)
+        return;
+
+      // If seen the same variable before with > 1 option, we will accidentally
+      // do an offset for [option1, option2] * oldOffset + [option1, option2] *
+      // newOffset
+      //   instead of [option1, option2] * (oldOffset + newOffset).
+      //   In this case abort
+      //   TODO, in the future, mutually compute the offset together.
+      if (vset.size() != 1) {
+        SmallPtrSet<PHINode *, 1> seen;
+        for (auto loopInd : findLoopIndices(a, LI, DT, seen))
+          if (previousLoopInductionHeaders.count(loopInd))
+            return;
+      }
+      edges[ei].idnext.push_back(vset);
     }
-    idnext.push_back(vset);
   }
 
-  // Stores pair ([whether first offset is zero], offset)
-  std::vector<std::pair<bool, int>> offsets;
   Value *firstIdx = *gep.idx_begin();
-  if (VariableOffsets.size() == 0) {
-    bool firstIsZero = cast<ConstantInt>(firstIdx)->getLimitedValue() == 0;
-    offsets.emplace_back(firstIsZero, (int)constOffset.getLimitedValue());
-  } else {
-    bool firstIsZero = false;
-    if (auto CI = dyn_cast<ConstantInt>(firstIdx))
-      firstIsZero = CI->getLimitedValue() == 0;
-    for (auto vec : getSet<int>(idnext, idnext.size() - 1)) {
-      APInt nextOffset = constOffset;
-      for (auto [varpair, const_value] : llvm::zip(VariableOffsets, vec)) {
-        nextOffset += varpair.second * const_value;
-        if (varpair.first == firstIdx)
-          firstIsZero = const_value == 0;
-      }
-      offsets.emplace_back(firstIsZero, (int)nextOffset.getLimitedValue());
-    }
-  }
 
   bool seenIdx = false;
 
-  for (auto [firstIsZero, off] : offsets) {
-    // TODO also allow negative offsets
-    if (off < 0)
-      continue;
-
-    int maxSize = -1;
-    if (firstIsZero) {
-      maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
+  for (auto &edge : edges) {
+    // Stores pair ([whether first offset is zero], offset)
+    std::vector<std::pair<bool, int>> offsets;
+    if (VariableOffsets.size() == 0) {
+      bool firstIsZero = cast<ConstantInt>(firstIdx)->getLimitedValue() == 0;
+      offsets.emplace_back(firstIsZero, (int)constOffset.getLimitedValue());
+    } else {
+      bool firstIsZero = false;
+      if (auto CI = dyn_cast<ConstantInt>(firstIdx))
+        firstIsZero = CI->getLimitedValue() == 0;
+      for (auto vec : getSet<int>(edge.idnext, edge.idnext.size() - 1)) {
+        APInt nextOffset = constOffset;
+        for (auto [varpair, const_value] : llvm::zip(VariableOffsets, vec)) {
+          nextOffset += varpair.second * const_value;
+          if (varpair.first == firstIdx)
+            firstIsZero = const_value == 0;
+        }
+        offsets.emplace_back(firstIsZero, (int)nextOffset.getLimitedValue());
+      }
     }
 
-    if (direction & DOWN) {
-      auto shft =
-          pointerData0.ShiftIndices(DL, /*init offset*/ off,
-                                    /*max size*/ maxSize, /*newoffset*/ 0);
-      if (seenIdx)
-        downTree &= shft;
-      else
-        downTree = shft;
+    TypeTree upTree;
+    bool seenUp = false;
+
+    for (auto [firstIsZero, off] : offsets) {
+      // TODO also allow negative offsets
+      if (off < 0)
+        continue;
+
+      int maxSize = -1;
+      if (firstIsZero) {
+        maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
+      }
+
+      // The downward tree is shifted from the merged pointer operand rather
+      // than the incoming object of the edge: the base phi is already the
+      // intersection of its incomings, and the gep is only revisited when the
+      // analysis of its operands changes.
+      if (direction & DOWN) {
+        auto shft =
+            pointerData0.ShiftIndices(DL, /*init offset*/ off,
+                                      /*max size*/ maxSize, /*newoffset*/ 0);
+        if (seenIdx)
+          downTree &= shft;
+        else
+          downTree = shft;
+      }
+
+      if (direction & UP) {
+        auto shft = gepData0.ShiftIndices(DL, /*init offset*/ 0,
+                                          /*max size*/ -1, /*new offset*/ off);
+        if (seenUp)
+          upTree |= shft;
+        else
+          upTree = shft;
+      }
+      seenIdx = true;
+      seenUp = true;
     }
 
-    if (direction & UP) {
-      auto shft = gepData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
-                                        /*new offset*/ off);
-      if (seenIdx)
-        upTree |= shft;
-      else
-        upTree = shft;
-    }
-    seenIdx = true;
+    // On a self edge of the base phi the object is the merged phi itself;
+    // pushing into it would assert the offset of this edge on every incoming.
+    if ((direction & UP) && edge.base != basePhi)
+      updateAnalysis(edge.base, upTree.Only(-1, inst), &gep);
   }
   if (direction & DOWN)
     updateAnalysis(&gep, downTree.Only(-1, inst), &gep);
-  if ((direction & UP) && !upPerEdge)
-    updateAnalysis(gep.getPointerOperand(), upTree.Only(-1, inst), &gep);
 }
 
 void TypeAnalyzer::visitPHINode(PHINode &phi) {
