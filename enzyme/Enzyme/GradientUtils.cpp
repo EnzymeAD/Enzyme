@@ -744,6 +744,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (available.count(val)) {
     auto avail = available.lookup(val);
+    // A null entry marks a value as explicitly unavailable (e.g. the phi
+    // currently being unrolled, to prevent recursive unrolling).
+    if (!avail)
+      return nullptr;
     assert(avail->getType());
     if (avail->getType() != val->getType()) {
       llvm::errs() << "val: " << *val << "\n";

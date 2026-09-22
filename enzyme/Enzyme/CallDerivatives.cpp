@@ -2409,6 +2409,66 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
+// Classify the op callee of a julia.atomicmodify pseudo-intrinsic call
+// (op has signature elty (elty oldval, args...), with elty an integer type
+// holding the bits of the modified value) as an atomicrmw-style operation
+// whose derivative Enzyme knows. On success sets opArgNo to the index of the
+// op parameter providing the update value and FT to the floating point type
+// the update is performed in (nullptr for Xchg).
+static llvm::AtomicRMWInst::BinOp
+classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
+  using namespace llvm;
+  FT = nullptr;
+  if (!op || op->empty() || op->isVarArg() ||
+      op->getFunctionType()->getNumParams() == 0)
+    return AtomicRMWInst::BAD_BINOP;
+  ReturnInst *Ret = nullptr;
+  for (auto &BB : *op)
+    if (auto R = dyn_cast<ReturnInst>(BB.getTerminator())) {
+      if (Ret)
+        return AtomicRMWInst::BAD_BINOP;
+      Ret = R;
+    }
+  if (!Ret || !Ret->getReturnValue())
+    return AtomicRMWInst::BAD_BINOP;
+  auto peel = [](Value *V) {
+    while (auto BC = dyn_cast<BitCastInst>(V))
+      V = BC->getOperand(0);
+    return V;
+  };
+  Value *RV = peel(Ret->getReturnValue());
+  Value *Old = op->getArg(0);
+  if (auto A = dyn_cast<Argument>(RV)) {
+    if (A == Old)
+      return AtomicRMWInst::BAD_BINOP;
+    opArgNo = A->getArgNo();
+    return AtomicRMWInst::Xchg;
+  }
+  if (auto BO = dyn_cast<BinaryOperator>(RV)) {
+    Value *L = peel(BO->getOperand(0));
+    Value *R = peel(BO->getOperand(1));
+    FT = BO->getType();
+    if (!FT->isFPOrFPVectorTy())
+      return AtomicRMWInst::BAD_BINOP;
+    if (BO->getOpcode() == Instruction::FAdd) {
+      if (L == Old && isa<Argument>(R) && R != Old) {
+        opArgNo = cast<Argument>(R)->getArgNo();
+        return AtomicRMWInst::FAdd;
+      }
+      if (R == Old && isa<Argument>(L) && L != Old) {
+        opArgNo = cast<Argument>(L)->getArgNo();
+        return AtomicRMWInst::FAdd;
+      }
+    } else if (BO->getOpcode() == Instruction::FSub) {
+      if (L == Old && isa<Argument>(R) && R != Old) {
+        opArgNo = cast<Argument>(R)->getArgNo();
+        return AtomicRMWInst::FSub;
+      }
+    }
+  }
+  return AtomicRMWInst::BAD_BINOP;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -2420,6 +2480,276 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   IRBuilder<> BuilderZ(newCall);
   BuilderZ.setFastMathFlags(getFast());
+
+  // Julia's atomic modify pseudo-intrinsic (introduced in Julia 1.13):
+  //   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope,
+  //                                          args...)
+  // which atomically performs old = *ptr; new = op(old, args...);
+  // *ptr = new, where op's parameter i (i >= 1) is forwarded from call
+  // operand i + 3. The pseudo-intrinsic must be kept intact (including in
+  // generated derivative code); it is only expanded to atomicrmw/cmpxchg by
+  // Julia's ExpandAtomicModify pass after GC lowering.
+  if (startsWith(funcName, "julia.atomicmodify.")) {
+    // Retire the primal call replayed in the pass being generated. Like the
+    // generic call path, tape its result in the augmented primal and read it
+    // back from the tape in the derivative pass if the latter needs the
+    // primal value: the modification must never be repeated by recomputing
+    // the call there.
+    auto finishPrimal = [&]() {
+      bool primalNeededInReverse = false;
+      {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      if (!primalNeededInReverse &&
+          Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused &&
+          !gutils->unnecessaryIntermediates.count(&call)) {
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
+        auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                              ? DerivativeMode::ReverseModeGradient
+                              : Mode;
+        primalNeededInReverse =
+            DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                   oldUnreachable);
+      }
+      if (primalNeededInReverse) {
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self, BuilderZ));
+        eraseIfUnused(call);
+      } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                 Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+    };
+
+    // The pseudo-intrinsic called with the operands of the primal call,
+    // except for the location and (if non-null) the operand at valIdx.
+    auto emitCall = [&](Value *ptr, unsigned valIdx, Value *val) -> Value * {
+      SmallVector<Value *, 6> args;
+      for (size_t i = 0; i < call.arg_size(); i++) {
+        if (i == 0)
+          args.push_back(ptr);
+        else if (i == valIdx && val)
+          args.push_back(val);
+        else
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+      }
+      auto CI = BuilderZ.CreateCall(call.getFunctionType(), called, args);
+      CI->setCallingConv(call.getCallingConv());
+      CI->setAttributes(call.getAttributes());
+      CI->copyMetadata(*newCall);
+      return CI;
+    };
+
+    // Fully inactive calls only need the primal replayed. This must be
+    // handled here rather than falling through to the generic call path,
+    // as the latter may decide against the constant fallback (e.g. for a
+    // nocapture, non-readonly pointer argument) and then reject the
+    // variadic call with `Number of arg operands != function parameters`.
+    if (gutils->isConstantInstruction(&call) &&
+        gutils->isConstantValue(&call)) {
+      finishPrimal();
+      return true;
+    }
+
+    Type *elty = cast<StructType>(call.getType())->getElementType(0);
+    unsigned opArgNo = 0;
+    Type *FT = nullptr;
+    auto opKind = classifyAtomicModifyOp(
+        dyn_cast<Function>(call.getArgOperand(1)), opArgNo, FT);
+    if (opKind != AtomicRMWInst::BAD_BINOP &&
+        call.arg_size() - 3 != cast<Function>(call.getArgOperand(1))
+                                   ->getFunctionType()
+                                   ->getNumParams())
+      opKind = AtomicRMWInst::BAD_BINOP;
+    // Call operand forwarded to op's update value parameter.
+    unsigned valIdx = opArgNo + 3;
+    Value *valOp = opKind != AtomicRMWInst::BAD_BINOP
+                       ? call.getArgOperand(valIdx)
+                       : nullptr;
+
+    bool constval = gutils->isConstantValue(&call);
+    bool constptr = gutils->isConstantValue(call.getArgOperand(0));
+
+    // No shadow memory is involved; replaying the primal suffices.
+    if (constval && constptr) {
+      finishPrimal();
+      return true;
+    }
+
+    auto &DL = gutils->newFunc->getParent()->getDataLayout();
+    auto storeSize = (DL.getTypeSizeInBits(elty) + 7) / 8;
+    auto vd = TR.firstPointer(storeSize, call.getArgOperand(0), &call, gutils,
+                              /*errifnotfound*/ nullptr,
+                              /*pointerIntSame*/ true);
+
+    bool constargs = true;
+    for (size_t i = 4; i < call.arg_size(); i++)
+      if (!gutils->isConstantValue(call.getArgOperand(i))) {
+        constargs = false;
+        break;
+      }
+
+    // Non-differentiable (integer/pointer) data modified within duplicated
+    // memory: replicate the modification on the shadow location with the
+    // primal arguments (like inactive stores into active memory), keeping
+    // e.g. lock states and counters of shadow objects consistent. As for an
+    // inactive store, only the modified data has to be inactive, not the
+    // operands op derives it from; when the type of the data is unknown, an
+    // active operand however suggests floating point data, which is left
+    // to the rules for recognized ops below.
+    if (constval &&
+        (vd.isKnown() ? !vd.isFloat() : (looseTypeAnalysis && constargs))) {
+      // Which pass emits the shadow modification is decided exactly as for
+      // an inactive store into duplicated memory (visitCommonStore); in
+      // particular the augmented primal and the split derivative pass must
+      // not both replay it, and a shadow that is only materialized in the
+      // reverse pass must be updated there.
+      bool forwardsShadow, backwardsShadow;
+      shadowStoreSchedule(call, call.getArgOperand(0), forwardsShadow,
+                          backwardsShadow);
+
+      if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+          (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeCombined &&
+           (forwardsShadow || backwardsShadow)) ||
+          Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        Value *dptr = gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
+        applyChainRule(
+            BuilderZ, [&](Value *dptr) { emitCall(dptr, 0, nullptr); }, dptr);
+      }
+      finishPrimal();
+      return true;
+    }
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      if (opKind != AtomicRMWInst::BAD_BINOP) {
+        // new = op(old, v) is linear in (old, v) for FAdd/FSub/Xchg, so the
+        // same op applied to the shadow location and the shadow of v
+        // computes the tangent {dold, dnew}.
+        //
+        // The shadow of v is its tangent (zero if inactive), except for an
+        // inactive value exchanged into duplicated memory: like an inactive
+        // store, that writes the primal value for pointer/integer data (and
+        // zero for floating point data) into the shadow location.
+        Value *dval = nullptr;
+        if (!gutils->isConstantValue(valOp)) {
+          dval = gutils->invertPointerM(valOp, BuilderZ);
+        } else if (opKind == AtomicRMWInst::Xchg && !constptr) {
+          if (!gutils->runtimeActivity && vd == BaseType::Pointer &&
+              !isa<UndefValue>(valOp) && !isa<ConstantPointerNull>(valOp)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << call
+               << " const val: " << *valOp;
+            if (CustomErrorHandler) {
+              dval = unwrap(CustomErrorHandler(
+                  str.c_str(), wrap(&call), ErrorType::MixedActivityError,
+                  gutils, wrap(valOp), wrap(&BuilderZ)));
+            } else
+              EmitWarningAlways("MixedActivityError", call, ss.str(),
+                                MixedActivityHint);
+          }
+          if (!dval)
+            dval = gutils->invertPointerM(valOp, BuilderZ,
+                                          TypeTree(vd).Only(-1, nullptr));
+        }
+        if (!dval)
+          dval =
+              Constant::getNullValue(gutils->getShadowType(valOp->getType()));
+
+        auto rule = [&](Value *dptr, Value *dval) -> Value * {
+          if (!dptr) {
+            // Inactive location: dold = 0 and dnew = dv (-dv for FSub), in
+            // the bits of the modified value.
+            Value *dnew = dval;
+            if (opKind == AtomicRMWInst::FSub) {
+              dnew = BuilderZ.CreateBitCast(dnew, FT);
+              dnew = BuilderZ.CreateFNeg(dnew);
+            }
+            dnew = BuilderZ.CreateBitCast(dnew, elty);
+            return BuilderZ.CreateInsertValue(
+                Constant::getNullValue(call.getType()), dnew, {1});
+          }
+          return emitCall(dptr, valIdx, dval);
+        };
+        Value *diff = applyChainRule(
+            call.getType(), BuilderZ, rule,
+            constptr ? nullptr
+                     : gutils->invertPointerM(call.getArgOperand(0), BuilderZ),
+            dval);
+        if (!constval)
+          setDiffe(&call, diff, BuilderZ);
+        finishPrimal();
+        return true;
+      }
+    } else if (Mode == DerivativeMode::ReverseModePrimal) {
+      // Nothing to do in the primal pass beyond replaying the call. Besides
+      // the inactive case this also covers the augmented primal paired with
+      // a ForwardModeSplit derivative, which handles any recognized op.
+      if (constval || opKind != AtomicRMWInst::BAD_BINOP) {
+        if (!constval)
+          resolveShadowPlaceholder(call);
+        finishPrimal();
+        return true;
+      }
+    } else if ((Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ReverseModeGradient) &&
+               constval &&
+               (opKind == AtomicRMWInst::FAdd ||
+                opKind == AtomicRMWInst::FSub)) {
+      if (!gutils->isConstantValue(valOp) && !constptr) {
+        auto order = static_cast<AtomicOrdering>(
+            cast<ConstantInt>(call.getArgOperand(2))->getZExtValue());
+        auto ssid = static_cast<SyncScope::ID>(
+            cast<ConstantInt>(call.getArgOperand(3))->getZExtValue());
+        auto align = call.getParamAlign(0).value_or(DL.getABITypeAlign(elty));
+        addAtomicRMWValueAdjoint(call, call.getArgOperand(0), valOp, elty, FT,
+                                 /*negate*/ opKind == AtomicRMWInst::FSub,
+                                 align, order, ssid, /*isVolatile*/ false);
+      }
+      finishPrimal();
+      return true;
+    }
+
+    // Remaining cases (active result in reverse mode, or an op that is not
+    // a recognized linear modification) are not supported.
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << *gutils->oldFunc << "\n" << call << "\n";
+    ss << " Active atomic modify not yet handled";
+    Value *rval = EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+    if (!constval) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        if (!rval)
+          rval = Constant::getNullValue(gutils->getShadowType(call.getType()));
+        setDiffe(&call, rval, BuilderZ);
+      } else {
+        resolveShadowPlaceholder(call, rval);
+      }
+    }
+    if (!call.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&call)->uses())) {
+        U.set(UndefValue::get(call.getType()));
+      }
+    }
+    eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return true;
+  }
 
   if (Mode != DerivativeMode::ReverseModePrimal && called) {
     if (funcName == "__kmpc_for_static_init_4" ||
