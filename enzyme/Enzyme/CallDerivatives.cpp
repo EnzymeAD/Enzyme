@@ -33,6 +33,19 @@ void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
                                  LLVMValueRef, uint8_t) = nullptr;
 }
 
+/// Whether \p Begin has exactly one llvm.julia.gc_preserve_end outside the
+/// abort-only blocks the reverse pass drops, as reversing the region requires;
+/// CanonicalizeGCPreserveEnds merges them where it can.
+static bool hasSingleGCPreserveEnd(CallInst *Begin, GradientUtils *gutils) {
+  unsigned Ends = 0;
+  for (auto U : Begin->users())
+    if (auto CI = dyn_cast<CallInst>(U))
+      if (getFuncNameFromCall(CI) == "llvm.julia.gc_preserve_end" &&
+          !gutils->notForAnalysis.count(CI->getParent()))
+        ++Ends;
+  return Ends == 1;
+}
+
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  llvm::StringRef funcName) {
   using namespace llvm;
@@ -2902,6 +2915,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
+
+        if (!hasSingleGCPreserveEnd(begin_call, gutils)) {
+          std::string s;
+          llvm::raw_string_ostream ss(s);
+          ss << "cannot reverse gc preserve region with several ends: "
+             << *begin_call << "\n";
+          EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+          return true;
+        }
         SmallVector<Value *, 1> args;
         for (auto &arg : begin_call->args()) {
           bool primalUsed = false;
@@ -2974,6 +2996,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto ifound = gutils->invertedPointers.find(&call);
         assert(ifound != gutils->invertedPointers.end());
         auto placeholder = cast<CallInst>(&*ifound->second);
+        if (!hasSingleGCPreserveEnd(&call, gutils)) {
+          gutils->invertedPointers.erase(ifound);
+          gutils->erase(placeholder);
+          return true;
+        }
         Builder2.CreateCall(
             called->getParent()->getOrInsertFunction(
                 "llvm.julia.gc_preserve_end",
