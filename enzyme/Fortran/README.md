@@ -149,8 +149,20 @@ Call `enzyme_function_like` as a subroutine with the target function and the
 symbolic name of the mathematical function:
 
 ```fortran
-use enzyme, only: enzyme_function_like, enzyme_log1p
+module enzyme_math_names
+  use iso_c_binding, only: c_int
+  implicit none
+  integer(c_int), bind(C, name="enzyme_math_log1p") :: enzyme_log1p
+end module enzyme_math_names
+```
 
+Import the binding in the program or procedure that registers the target:
+
+```fortran
+use enzyme, only: enzyme_function_like
+use enzyme_math_names, only: enzyme_log1p
+
+! Put this call after all declarations.
 call enzyme_function_like(double_value, enzyme_log1p)
 ```
 
@@ -202,51 +214,33 @@ The `FlangEnzyme`
 compiler plugin runs `preserve-nvvm` at the start of Flang's LLVM optimization
 pipeline and does not require this separate `opt` step.
 
-The `enzyme` module exports these symbolic names. Import the required names
-with `use enzyme, only: ...`.
+Use this hook to assign a mathematical rule to a custom function.
 
-| Function group | Bindings |
-|---|---|
-| Trigonometric functions | `enzyme_sin`, `enzyme_cos`, `enzyme_tan`, `enzyme_asin`, `enzyme_acos`, `enzyme_atan`, `enzyme_atan2` |
-| Exponential functions | `enzyme_exp`, `enzyme_exp2`, `enzyme_exp10`, `enzyme_expm1` |
-| Logarithms | `enzyme_log`, `enzyme_log2`, `enzyme_log10`, `enzyme_log1p` |
-| Hyperbolic functions | `enzyme_sinh`, `enzyme_sinhf`, `enzyme_cosh`, `enzyme_coshf`, `enzyme_tanh`, `enzyme_tanhf` |
-| Inverse hyperbolic functions | `enzyme_acosh`, `enzyme_asinh`, `enzyme_atanh` |
-| Roots and powers | `enzyme_sqrt`, `enzyme_cbrt`, `enzyme_hypot`, `enzyme_pow` |
-| Error functions | `enzyme_erf`, `enzyme_erfc` |
-| Absolute value and selection | `enzyme_fabs`, `enzyme_fmin`, `enzyme_fmax`, `enzyme_fdim`, `enzyme_copysign` |
-| Remainders | `enzyme_fmod`, `enzyme_remainder` |
-| Fused multiply-add | `enzyme_fma` |
-| Additional trigonometric functions | `enzyme_sinpi`, `enzyme_cospi`, `enzyme_sinc`, `enzyme_sincn` |
-| Imaginary error function | `enzyme_erfi` |
-| Bessel functions of orders zero and one | `enzyme_j0`, `enzyme_j0f`, `enzyme_j1`, `enzyme_j1f`, `enzyme_y0`, `enzyme_y0f`, `enzyme_y1`, `enzyme_y1f` |
-| Bessel functions with integer order | `enzyme_jn`, `enzyme_yn` |
-| Scaling by a power of two | `enzyme_ldexp`, `enzyme_ldexpf` |
-| Integer scaling and powers | `enzyme_scalbn`, `enzyme_powi` |
-| Rounding and exponent extraction | `enzyme_round`, `enzyme_logb`, `enzyme_ceil`, `enzyme_floor`, `enzyme_trunc`, `enzyme_rint`, `enzyme_nearbyint` |
+For call registration, declare the required symbolic names in a user module.
+Use `integer(c_int)` with `bind(C, name="enzyme_math_<function>")`.
+Replace `<function>` with a mathematical rule name that Enzyme supports.
+The variable value is not used. The binding name selects the rule.
 
-For example, use `enzyme_sin` to register a function with the `sin` rule:
-
-```fortran
-use enzyme, only: enzyme_function_like, enzyme_sin
-
-call enzyme_function_like(my_sin, enzyme_sin)
-```
-
-You can also declare symbolic names in user code. Use the `enzyme_math_`
-prefix followed by a function name that Enzyme supports:
+For example, declare a binding for the `sin` rule:
 
 ```fortran
 module enzyme_math_names
   use iso_c_binding, only: c_int
   implicit none
 
-  integer(c_int), public, bind(C, name="enzyme_math_sin")  :: enzyme_sin
+  integer(c_int), bind(C, name="enzyme_math_sin") :: enzyme_sin
 end module enzyme_math_names
 ```
 
-Each symbolic name needs an `enzyme_math_*` binding in the `enzyme` module
-or in user code.
+Import this binding where the registration call occurs:
+
+```fortran
+use enzyme, only: enzyme_function_like
+use enzyme_math_names, only: enzyme_sin
+
+! Put this call after all declarations.
+call enzyme_function_like(function_similar_to_sin, enzyme_sin)
+```
 
 ### Procedure-pointer registration
 
