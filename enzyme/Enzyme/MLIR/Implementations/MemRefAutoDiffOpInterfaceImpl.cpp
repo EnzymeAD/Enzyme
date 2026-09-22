@@ -93,7 +93,7 @@ struct LoadOpInterfaceReverse
     ValueRange indices = loadOp.getIndices();
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
       if (!gutils->isConstantValue(loadOp) &&
-          !gutils->isConstantValue(memref)) {
+          !gutils->isConstantValue(memref) && !iface.isMutable()) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
         caches.push_back(gutils->initAndPushCache(
@@ -154,7 +154,9 @@ struct StoreOpInterfaceReverse
     Value memref = storeOp.getMemref();
     // ValueRange indices = storeOp.getIndices();
 
-    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return success();
 
     if (!gutils->isConstantValue(memref)) {
       Value memrefGradient = gutils->popCache(caches.front(), builder);
