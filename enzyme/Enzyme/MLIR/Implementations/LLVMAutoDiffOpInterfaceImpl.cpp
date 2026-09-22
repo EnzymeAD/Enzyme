@@ -407,8 +407,9 @@ struct LoadOpInterfaceReverse
                                  MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<LLVM::LoadOp>(op);
     auto addr = loadOp.getAddr();
-    if (!(isa<AutoDiffTypeInterface>(loadOp.getType()) &&
-          (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr))))
+    auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
+    if (!iface || iface.isMutable() ||
+        (gutils->isConstantValue(loadOp) || gutils->isConstantValue(addr)))
       return {};
     OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
     return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
@@ -548,7 +549,9 @@ struct StoreOpInterfaceReverse
     Value val = storeOp.getValue();
     Value addr = storeOp.getAddr();
 
-    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface)
+      return success();
 
     if (!gutils->isConstantValue(addr)) {
       Value addrGradient = gutils->popCache(caches.front(), builder);
