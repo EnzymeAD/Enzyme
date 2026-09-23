@@ -18,7 +18,7 @@
 ; CHECK: call void @augmented({{.*}} sret({{.*}}) %stack_sret, {{.*}} "enzymejl_returnRoots"="3" %stack_roots_AT, {{.*}} %v, {{.*}} %dv)
 
 ; CHECK-LABEL: define internal void @augmented({{.*}} sret({ { {{[^,]+}}, double }, { {{[^,]+}}, i64 }, { {{[^,]+}}, i64 } }) %0, {{.*}} "enzymejl_returnRoots"="3" %1, {{.*}} %v, {{.*}} %dv)
-; CHECK: [[RR:%[0-9]+]] = getelementptr inbounds [3 x {{.*}}], {{.*}} %1, i32 0, i32 2
+; CHECK: getelementptr inbounds [3 x {{.*}}], {{.*}} %1, i32 0, i32 2
 ; CHECK: store {{.*}} %v, {{.*}} %r0
 ; CHECK: [[R0:%[0-9]+]] = getelementptr inbounds [3 x {{.*}}], {{.*}} %1, i64 0, i32 0
 ; CHECK-NEXT: store {{.*}} %dv, {{.*}} [[R0]]
