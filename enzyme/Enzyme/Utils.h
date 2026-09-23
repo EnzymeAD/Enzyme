@@ -387,9 +387,10 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
 ///  * emitting a warning, for the kinds we recover from (mixed activity,
 ///    exceeding the type depth, being unable to rewrite GC roots), or
 ///  * emitting an EnzymeFailure for everything else.
-/// The diagnostic is attributed to the first of `V`, the insertion point of
-/// `B` and `Extra` from which a function can be found. Compilation is only
-/// aborted if there is none.
+/// The diagnostic is attributed to the first of `V` and `Extra` which is an
+/// instruction, else the first of `V`, the insertion point of `B` and `Extra`
+/// from which a function can be found. Compilation is only aborted if there is
+/// none.
 ///
 /// As whether a failure diagnostic returns is up to the LLVMContext's
 /// diagnostic handler, callers must leave the IR valid after an error.

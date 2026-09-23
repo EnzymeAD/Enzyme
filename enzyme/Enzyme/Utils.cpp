@@ -4514,10 +4514,15 @@ llvm::Value *EmitError(llvm::StringRef RemarkName, ErrorType Kind,
     return nullptr;
   }
 
-  // Attribute the diagnostic to the value at fault, falling back to wherever
-  // we were generating code and finally to the secondary value.
+  // Attribute the diagnostic to an instruction at fault, else the value at
+  // fault, else wherever we were generating code, else the secondary value.
   DiagnosticLocation Loc;
-  const Function *F = getDiagnosticFunction(V, Loc);
+  const Function *F = nullptr;
+  for (auto G : {V, Extra})
+    if (isa_and_nonnull<Instruction>(G) && (F = getDiagnosticFunction(G, Loc)))
+      break;
+  if (!F)
+    F = getDiagnosticFunction(V, Loc);
   if (!F && hasIP) {
     F = B->GetInsertBlock()->getParent();
     if (B->getCurrentDebugLocation())

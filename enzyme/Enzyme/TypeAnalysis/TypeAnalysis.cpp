@@ -3128,6 +3128,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         EmitError("IllegalUpdateAnalysis", ErrorType::IllegalTypeAnalysis,
                   ss.str(), Args[0], this, origin);
       }
+      LegalOr = true;
       RHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
       if (!LegalOr) {
         std::string str;

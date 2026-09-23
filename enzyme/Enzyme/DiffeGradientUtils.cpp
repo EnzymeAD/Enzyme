@@ -679,7 +679,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
       }
-      if (!CustomErrorHandler)
+      if (!CustomErrorHandler && !EnzymeRuntimeError)
         TR.dump(ss);
       EmitError("CannotDeduceType", ErrorType::NoType, ss.str(), val,
                 TR.analyzer, nullptr, &BuilderM);
