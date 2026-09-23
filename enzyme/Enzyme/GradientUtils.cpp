@@ -9477,6 +9477,12 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+      // A use only as an operand bundle input (e.g. Julia's "jl_roots", which
+      // keeps an object alive across the call) is not a memory access. Skip
+      // it, as the call case below does by only inspecting the arguments.
+      if (llvm::none_of(II->args(),
+                        [&](const Use &arg) { return arg == prev; }))
+        continue;
       if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
         LifetimeStarts.insert(II);
       } else if (II->getCalledFunction()->getName() ==
