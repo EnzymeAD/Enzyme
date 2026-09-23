@@ -8649,6 +8649,48 @@ void GradientUtils::computeMinCache() {
             }
         }
       }
+      // The loop contexts are only created after this cache decision, as
+      // getContext may itself create caches. For the other loops, take the
+      // values that getContext will expand the limit from: an instruction
+      // that already computes (a part of) it where the expander would reuse
+      // it, and else the unknowns of its scalar evolution.
+      for (Loop *L : LI.getLoopsInPreorder()) {
+        if (loopContexts.count(L) || !L->getLoopPreheader())
+          continue;
+        const SCEV *Limit, *MaxIterations;
+        computeLoopLimits(L, Limit, MaxIterations);
+        if (Limit == SE.getCouldNotCompute())
+          continue;
+        struct FindLimitValues {
+          GradientUtils &gutils;
+          Instruction *InsertPt;
+          std::deque<Instruction *> &Insts;
+          bool follow(const SCEV *S) {
+            if (auto U = dyn_cast<SCEVUnknown>(S)) {
+              if (auto I = dyn_cast<Instruction>(U->getValue()))
+                Insts.push_back(I);
+              return false;
+            }
+            if (isa<SCEVConstant>(S))
+              return false;
+            for (Value *V : gutils.SE.getSCEVValues(S)) {
+              auto I = dyn_cast<Instruction>(V);
+              if (!I || I->getType() != S->getType() ||
+                  !gutils.DT.dominates(I, InsertPt))
+                continue;
+              auto IL = gutils.LI.getLoopFor(I->getParent());
+              if (IL && !IL->contains(InsertPt))
+                continue;
+              Insts.push_back(I);
+              return false;
+            }
+            return true;
+          }
+          bool isDone() const { return false; }
+        } Finder{*this, L->getLoopPreheader()->getTerminator(),
+                 LoopBoundRequirements};
+        visitAll(Limit, Finder);
+      }
       SmallPtrSet<Instruction *, 3> Seen;
       while (LoopBoundRequirements.size()) {
         Instruction *val = LoopBoundRequirements.front();
