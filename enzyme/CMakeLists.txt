@@ -64,6 +64,98 @@ message(LLVM_SHLIBEXT = ${LLVM_SHLIBEXT})
 
 set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
+function(enzyme_llvm_config out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  if(NOT LLVM_CONFIG)
+    return()
+  endif()
+  execute_process(
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE
+    COMMAND "${LLVM_CONFIG}" ${ARGN}
+    RESULT_VARIABLE llvm_config_result
+    OUTPUT_VARIABLE llvm_config_output
+    ERROR_VARIABLE llvm_config_error)
+  if(NOT llvm_config_result EQUAL 0)
+    message(WARNING "`${LLVM_CONFIG} ${ARGN}` failed: ${llvm_config_error}")
+    return()
+  endif()
+  # llvm-config prints native paths, CMake wants forward slashes.
+  file(TO_CMAKE_PATH "${llvm_config_output}" llvm_config_output)
+  set(${out_var} "${llvm_config_output}" PARENT_SCOPE)
+endfunction()
+
+function(enzyme_find_llvm_package_dir pkg config_file out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  set(cmake_dirs)
+  foreach(cmake_dir "${LLVM_DIR}" "${LLVM_CONFIG_CMAKE_DIR}")
+    if(cmake_dir)
+      get_filename_component(parent_dir "${cmake_dir}" DIRECTORY)
+      list(APPEND cmake_dirs "${parent_dir}")
+    endif()
+  endforeach()
+  if(LLVM_CONFIG_LIBDIR)
+    list(APPEND cmake_dirs "${LLVM_CONFIG_LIBDIR}/cmake")
+  endif()
+  foreach(root_dir "${LLVM_CONFIG_PREFIX}" "${LLVM_DIR}")
+    if(root_dir)
+      list(APPEND cmake_dirs "${root_dir}/lib/cmake" "${root_dir}/lib64/cmake")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES cmake_dirs)
+  foreach(cmake_dir IN LISTS cmake_dirs)
+    if(EXISTS "${cmake_dir}/${pkg}/${config_file}")
+      get_filename_component(found_dir "${cmake_dir}/${pkg}" REALPATH)
+      set(${out_var} "${found_dir}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+endfunction()
+
+if(NOT LLVM_CONFIG)
+  set(llvm_config_versioned_names)
+  # This makes distros decentrailize their toolchain then ship llvm-config-x happy.
+  foreach(llvm_config_major RANGE 15 40)
+    list(APPEND llvm_config_versioned_names "llvm-config-${llvm_config_major}")
+  endforeach()
+  list(REVERSE llvm_config_versioned_names)
+  set(llvm_config_names llvm-config ${llvm_config_versioned_names})
+
+  if(LLVM_DIR)
+    find_program(
+      LLVM_CONFIG
+      NAMES ${llvm_config_names}
+      PATHS "${LLVM_DIR}/bin" "${LLVM_DIR}/../../../bin" NO_DEFAULT_PATH
+      DOC "llvm-config used to locate LLVM, Clang and MLIR")
+  endif()
+  find_program(
+    LLVM_CONFIG
+    NAMES ${llvm_config_names}
+    DOC "llvm-config used to locate LLVM, Clang and MLIR")
+endif()
+message("llvm-config: ${LLVM_CONFIG}")
+
+enzyme_llvm_config(LLVM_CONFIG_VERSION --version)
+enzyme_llvm_config(LLVM_CONFIG_CMAKE_DIR --cmakedir)
+enzyme_llvm_config(LLVM_CONFIG_PREFIX --prefix)
+enzyme_llvm_config(LLVM_CONFIG_LIBDIR --libdir)
+enzyme_llvm_config(LLVM_CONFIG_BINDIR --bindir)
+
+if(LLVM_CONFIG_CMAKE_DIR)
+  get_filename_component(
+    LLVM_CONFIG_CMAKE_DIR "${LLVM_CONFIG_CMAKE_DIR}"
+    REALPATH)
+endif()
+
+if(NOT LLVM_DIR)
+  if(NOT LLVM_CONFIG_CMAKE_DIR)
+    message(
+      SEND_ERROR
+        "No LLVM_DIR given and no usable llvm-config found, pass -DLLVM_CONFIG=<path to llvm-config> or -DLLVM_DIR=<prefix>/lib/cmake/llvm")
+  endif()
+  set(LLVM_DIR "${LLVM_CONFIG_CMAKE_DIR}")
+  message("LLVM_DIR from `${LLVM_CONFIG} --cmakedir`: ${LLVM_DIR}")
+endif()
+
 get_filename_component(
   LLVM_ABSOLUTE_DIR "${LLVM_DIR}"
   REALPATH
@@ -71,13 +163,29 @@ get_filename_component(
 
 if(NOT EXISTS "${LLVM_DIR}")
   message("Looking for LLVM_DIR at ${LLVM_DIR}")
-  message(SEND_ERROR "The given LLVM_DIR does not exist. Typo?")
+  message(SEND_ERROR "The given LLVM_DIR (${LLVM_DIR}) does not exist. Typo?")
 endif()
 
 set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
 
-if(EXISTS "${LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake")
-  set(LLVM_DIR "${LLVM_DIR}/lib/cmake/llvm")
+# LLVM_DIR may point at an install prefix or a build tree rather than at the
+# directory holding LLVMConfig.cmake.
+if(NOT EXISTS "${LLVM_DIR}/LLVMConfig.cmake")
+  set(llvm_cmake_dir "")
+  if(LLVM_CONFIG_CMAKE_DIR)
+    # llvm-config knows which library directory is really used (lib, lib64).
+    string(FIND "${LLVM_CONFIG_CMAKE_DIR}" "${LLVM_DIR}/" llvm_cmake_dir_offset)
+    if(llvm_cmake_dir_offset EQUAL 0)
+      set(llvm_cmake_dir "${LLVM_CONFIG_CMAKE_DIR}")
+    endif()
+  endif()
+  if(llvm_cmake_dir)
+    set(LLVM_DIR "${llvm_cmake_dir}")
+  elseif(EXISTS "${LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake")
+    set(LLVM_DIR "${LLVM_DIR}/lib/cmake/llvm")
+  elseif(EXISTS "${LLVM_DIR}/lib64/cmake/llvm/LLVMConfig.cmake")
+    set(LLVM_DIR "${LLVM_DIR}/lib64/cmake/llvm")
+  endif()
 endif()
 
 message("LLVM ABS DIR " ${LLVM_DIR})
@@ -103,110 +211,81 @@ if((NOT ENZYME_EXTERNAL_SHARED_LIB)
 endif()
 
 if(NOT DEFINED LLVM_EXTERNAL_LIT)
-  if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
-    message("found llvm match ${CMAKE_MATCH_1} dir ${LLVM_DIR}")
-    if(EXISTS ${LLVM_DIR}/../../../bin/llvm-lit)
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/../../../bin/llvm-lit)
-    else()
-      set(LLVM_EXTERNAL_LIT lit)
+  # An LLVM build tree generates llvm-lit into its binary directory. Installed
+  # LLVMs usually do not ship it at all, hence the plain "lit" fallback, which
+  # is resolved from the PATH (pip install lit) when the tests run.
+  set(llvm_lit_hints)
+  foreach(bin_dir "${LLVM_CONFIG_BINDIR}" "${LLVM_TOOLS_BINARY_DIR}"
+          "${LLVM_DIR}/../../../bin" "${LLVM_DIR}/bin")
+    if(bin_dir)
+      list(APPEND llvm_lit_hints "${bin_dir}")
     endif()
-  else()
-    if(EXISTS ${LLVM_DIR}/bin/llvm-lit)
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/bin/llvm-lit)
-    else()
-      set(LLVM_EXTERNAL_LIT lit)
-    endif()
+  endforeach()
+  find_program(
+    LLVM_EXTERNAL_LIT
+    NAMES llvm-lit lit
+    HINTS ${llvm_lit_hints}
+    DOC "lit used to run the Enzyme test suite")
+  if(NOT LLVM_EXTERNAL_LIT)
+    set(LLVM_EXTERNAL_LIT lit)
+    message("no lit found, try to install lit using pip install lit")
   endif()
 endif()
 
-get_filename_component(
-  LLVM_ABSOLUTE_LIT "${LLVM_EXTERNAL_LIT}"
-  REALPATH
-  BASE_DIR "${CMAKE_BINARY_DIR}")
-
-set(LLVM_EXTERNAL_LIT "${LLVM_ABSOLUTE_LIT}" CACHE FILEPATH "a" FORCE)
+if(LLVM_EXTERNAL_LIT MATCHES "/")
+  # ABSOLUTE, not REALPATH: a distro lit is often a dispatcher symlink (Gentoo
+  # python-exec) that refuses to run under its resolved name.
+  get_filename_component(
+    LLVM_ABSOLUTE_LIT "${LLVM_EXTERNAL_LIT}"
+    ABSOLUTE
+    BASE_DIR "${CMAKE_BINARY_DIR}")
+  set(LLVM_EXTERNAL_LIT "${LLVM_ABSOLUTE_LIT}" CACHE FILEPATH "a" FORCE)
+else()
+  set(LLVM_EXTERNAL_LIT "${LLVM_EXTERNAL_LIT}" CACHE FILEPATH "a" FORCE)
+endif()
 message("found llvm lit " ${LLVM_EXTERNAL_LIT})
 
 list(INSERT CMAKE_PREFIX_PATH 0 "${LLVM_DIR}")
 message("LLVM dir ${LLVM_DIR}")
+
 if(ENZYME_CLANG)
-  if(DEFINED Clang_DIR)
+  if(Clang_DIR)
     get_filename_component(
       Clang_ABSOLUTE_DIR "${Clang_DIR}"
       REALPATH
       BASE_DIR "${CMAKE_BINARY_DIR}")
     set(Clang_DIR "${Clang_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
-    list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
     message("clang dir defined ${Clang_DIR}")
   else()
-    if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
-      if(EXISTS ${LLVM_DIR}/../clang/../../libclangBasic.a)
-        set(Clang_DIR ${LLVM_DIR}/../clang)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
-      endif()
-    elseif(LLVM_DIR MATCHES ".*/llvm-([0-9]+)/?$")
-      if(EXISTS ${LLVM_DIR}/lib/libclangBasic.a)
-        set(Clang_DIR ${LLVM_DIR}/lib/cmake/clang)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
-      endif()
-    elseif(LLVM_DIR MATCHES ".*/llvm-([0-9]+)/cmake/?$")
-      get_filename_component(LLDIR "${LLVM_DIR}" DIRECTORY)
-      if(EXISTS ${LLDIR}/lib/libclangBasic.a)
-        set(Clang_DIR ${LLDIR}/lib/cmake/clang)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
-      endif()
-    else()
-      if(EXISTS ${LLVM_DIR}/lib/libclangBasic.a)
-        set(Clang_DIR ${LLVM_DIR})
-        list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
-      endif()
-    endif()
-    message("clang dir from llvm ${Clang_DIR}")
+    enzyme_find_llvm_package_dir(clang ClangConfig.cmake Clang_DIR)
+    message("clang dir detected from LLVM ${Clang_DIR}")
   endif()
-else()
+  if(Clang_DIR)
+    list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
+  else()
+    message("no clang found alongside ${LLVM_DIR}")
+    message("pass -DClang_DIR=<prefix>/lib/cmake/clang for the clang plugin")
+  endif()
 endif()
 
 if(ENZYME_MLIR)
-  if(DEFINED MLIR_DIR)
+  if(MLIR_DIR)
     get_filename_component(
       MLIR_ABSOLUTE_DIR "${MLIR_DIR}"
       REALPATH
       BASE_DIR "${CMAKE_BINARY_DIR}")
     set(MLIR_DIR "${MLIR_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
-    list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
     message("MLIR dir defined ${MLIR_DIR}")
   else()
-    if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
-      if(EXISTS ${LLVM_DIR}/../mlir/../../libMLIRIR.a)
-        set(MLIR_DIR ${LLVM_DIR}/../mlir)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
-      else()
-        message(SEND_ERROR "MLIR requested but not found")
-      endif()
-    elseif(LLVM_DIR MATCHES ".*/llvm-([0-9]+)/?$")
-      if(EXISTS ${LLVM_DIR}/lib/libMLIRIR.a)
-        set(MLIR_DIR ${LLVM_DIR}/lib/cmake/mlir)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
-      else()
-        message(SEND_ERROR "MLIR requested but not found")
-      endif()
-    elseif(LLVM_DIR MATCHES ".*/llvm-([0-9]+)/cmake/?$")
-      get_filename_component(LLDIR "${LLVM_DIR}" DIRECTORY)
-      if(EXISTS ${LLDIR}/lib/libMLIRIR.a)
-        set(MLIR_DIR ${LLDIR}/lib/cmake/mlir)
-        list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
-      else()
-        message(SEND_ERROR "MLIR requested but not found")
-      endif()
-    else()
-      if(EXISTS ${LLVM_DIR}/lib/libMLIRIR.a)
-        set(MLIR_DIR ${LLVM_DIR})
-        list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
-      else()
-        message(SEND_ERROR "MLIR requested but not found")
-      endif()
-    endif()
-    message("mlir dir from llvm ${MLIR_DIR}")
+    enzyme_find_llvm_package_dir(mlir MLIRConfig.cmake MLIR_DIR)
+    message("mlir dir detected from LLVM ${MLIR_DIR}")
+  endif()
+  if(MLIR_DIR)
+    list(INSERT CMAKE_PREFIX_PATH 0 "${MLIR_DIR}")
+  else()
+    message(
+      SEND_ERROR
+        "MLIR requested but not found alongside ${LLVM_DIR}, pass -DMLIR_DIR=<prefix>/lib/cmake/mlir")
   endif()
 endif()
 
@@ -221,7 +300,7 @@ include(AddLLVM)
 message("clang dir ${Clang_DIR}")
 message("mlir dir ${MLIR_DIR}")
 
-if(DEFINED Clang_DIR)
+if(Clang_DIR)
   find_package(Clang REQUIRED CONFIG PATHS ${Clang_DIR} NO_DEFAULT_PATH)
   if(${Clang_FOUND})
     include_directories(${CLANG_INCLUDE_DIRS})
@@ -233,7 +312,7 @@ else()
 endif()
 message("found Clang ${Clang_FOUND}")
 
-if(DEFINED MLIR_DIR)
+if(MLIR_DIR)
   find_package(MLIR REQUIRED CONFIG PATHS ${MLIR_DIR} NO_DEFAULT_PATH)
   if(${MLIR_FOUND})
     include_directories(${MLIR_INCLUDE_DIRS})
