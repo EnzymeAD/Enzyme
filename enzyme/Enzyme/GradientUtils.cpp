@@ -9730,6 +9730,9 @@ shadowUsedByCustomDerivative(const CallInst *CI, unsigned idx,
   // True for custom derivatives, and for calls to an unknown function.
   if (shouldDisableNoWrite(CI))
     return true;
+  // Handlers registered through EnzymeRegisterCallHandler.
+  if (customCallHandlers.count(getFuncNameFromCall(CI)))
+    return true;
 
   auto F = getFunctionFromCall(CI);
   if (!F || F->empty() || idx >= F->arg_size())
@@ -9747,7 +9750,7 @@ shadowUsedByCustomDerivative(const CallInst *CI, unsigned idx,
       continue;
     for (auto &U : cur->uses()) {
       auto user = U.getUser();
-      if (isPointerArithmeticInst(user)) {
+      if (isPointerArithmeticInst(user) || isa<SelectInst>(user)) {
         todo.push_back(user);
         continue;
       }
