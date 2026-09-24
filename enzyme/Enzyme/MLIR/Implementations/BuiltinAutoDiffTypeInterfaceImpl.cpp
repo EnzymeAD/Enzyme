@@ -332,6 +332,92 @@ public:
     return 2 * elSize;
   }
 };
+class VectorTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<VectorTypeInterface,
+                                                  VectorType> {
+public:
+  Attribute createNullAttr(Type self) const {
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+
+    if (auto F = dyn_cast<FloatType>(ET)) {
+      APFloat apvalue(F.getFloatSemantics(), 0);
+      return DenseElementsAttr::get(vecType, apvalue);
+    }
+    if (auto G = dyn_cast<ComplexType>(ET)) {
+      if (auto F = dyn_cast<FloatType>(G.getElementType())) {
+        APFloat apvalue(F.getFloatSemantics(), 0);
+        mlir::Complex<APFloat> c(apvalue, apvalue);
+        return DenseElementsAttr::get(vecType, c);
+      }
+    }
+    if (auto IT = dyn_cast<IntegerType>(ET)) {
+      APInt apvalue(IT.getWidth(), 0);
+      return DenseElementsAttr::get(vecType, apvalue);
+    }
+    llvm::errs() << " cannot create null value of vector type: " << vecType
+                 << "\n";
+    assert(0);
+    return nullptr;
+  }
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto attr = createNullAttr(self);
+    assert(attr);
+    auto vecType = cast<VectorType>(self);
+    return arith::ConstantOp::create(builder, loc, vecType,
+                                     cast<TypedAttr>(attr));
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    return iface.createAddOp(builder, loc, a, b);
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(ET))
+      return iface.createConjOp(builder, loc, a);
+    return a;
+  }
+
+  Type getShadowType(Type self, unsigned width = 1) const {
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    return VectorType::get(vecType.getShape(), iface.getShadowType(width));
+  }
+
+  bool isMutable() const { return false; }
+
+  bool isContainedIn(Type self, Type other) const {
+    if (self == other)
+      return true;
+
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(ET))
+      return iface.isContainedIn(other);
+
+    return false;
+  }
+
+  int64_t getApproxSize(Type self) const {
+    auto vecType = cast<VectorType>(self);
+    auto ET = vecType.getElementType();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(ET)) {
+      auto elSize = iface.getApproxSize();
+      if (elSize == INT64_MAX)
+        return elSize;
+      return vecType.getNumElements() * elSize;
+    }
+    return INT64_MAX;
+  }
+};
 } // namespace
 
 void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
@@ -346,5 +432,6 @@ void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);
     RankedTensorType::attachInterface<TensorTypeInterface>(*context);
     ComplexType::attachInterface<ComplexTypeInterface>(*context);
+    VectorType::attachInterface<VectorTypeInterface>(*context);
   });
 }
