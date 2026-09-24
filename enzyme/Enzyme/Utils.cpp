@@ -3298,7 +3298,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 
 // Find the base pointer of ptr and the offset in bytes from the start of
 // the returned base pointer to this value.
-AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
+Value *getBaseAndOffset(Value *ptr, size_t &offset) {
   offset = 0;
   while (true) {
     if (auto CI = dyn_cast<CastInst>(ptr)) {
@@ -3334,7 +3334,16 @@ AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
     }
     return nullptr;
   }
-  return cast<AllocaInst>(ptr);
+  if (isa<AllocaInst>(ptr))
+    return ptr;
+  // Assume all allocainsts are uninitialized data
+  if (auto *CI = llvm::dyn_cast<llvm::CallBase>(ptr)) {
+    auto name = getFuncNameFromCall(CI);
+    if (name == "malloc" || name == "julia.gc_alloc_obj") {
+      return ptr;
+    }
+  }
+  return nullptr;
 }
 
 // Find all user instructions of AI, returning tuples of <instruction, value,
@@ -3386,8 +3395,7 @@ findAllUsersOf(Value *AI) {
 // that pointer when indexed at offset. If it is impossible to guarantee that
 // the set contains all such values, set legal to false
 SmallVector<std::pair<Value *, size_t>, 1>
-getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
-                       bool &legal) {
+getAllLoadedValuesFrom(Value *ptr0, size_t offset, size_t valSz, bool &legal) {
   SmallVector<std::pair<Value *, size_t>, 1> options;
 
   auto todo = findAllUsersOf(ptr0);
