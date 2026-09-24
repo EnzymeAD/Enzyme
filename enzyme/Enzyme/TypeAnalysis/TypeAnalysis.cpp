@@ -2253,11 +2253,18 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     SmallVector<std::set<int>, 4> idnext;
     // The index phi's value on this edge has no known values.
     bool unknown = false;
+    // Like visitPHINode, do not push into a loop-carried incoming of a header.
+    bool loopCarried = false;
   };
   SmallVector<Edge, 4> edges;
   if (basePhi) {
-    for (unsigned i = 0, e = basePhi->getNumIncomingValues(); i < e; ++i)
+    auto L = LI.getLoopFor(basePhi->getParent());
+    bool isHeader = L && L->getHeader() == basePhi->getParent();
+    for (unsigned i = 0, e = basePhi->getNumIncomingValues(); i < e; ++i) {
       edges.push_back({basePhi->getIncomingValue(i), {}});
+      edges.back().loopCarried =
+          isHeader && L->contains(basePhi->getIncomingBlock(i));
+    }
   } else {
     edges.push_back({gep.getPointerOperand(), {}});
   }
@@ -2317,8 +2324,6 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   // so neither may the gep: push the union of all edges into the pointer
   // operand instead.
   bool perEdgeUp = basePhi && EnzymeStrictAliasing;
-  TypeTree mergedUpTree;
-  bool seenMergedUp = false;
 
   for (auto &edge : edges) {
     if (edge.unknown)
@@ -2343,7 +2348,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       }
     }
 
-    TypeTree upTree;
+    TypeTree edgeUpTree;
     bool seenUp = false;
 
     for (auto [firstIsZero, off] : offsets) {
@@ -2374,9 +2379,9 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
         auto shft = gepData0.ShiftIndices(DL, /*init offset*/ 0,
                                           /*max size*/ -1, /*new offset*/ off);
         if (seenUp)
-          upTree |= shft;
+          edgeUpTree |= shft;
         else
-          upTree = shft;
+          edgeUpTree = shft;
       }
       seenIdx = true;
       seenUp = true;
@@ -2384,25 +2389,15 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
     if (!(direction & UP) || !seenUp)
       continue;
-    if (!perEdgeUp) {
-      if (seenMergedUp)
-        mergedUpTree |= upTree;
-      else
-        mergedUpTree = upTree;
-      seenMergedUp = true;
-      continue;
-    }
-    // On a self edge of the base phi the object is the merged phi itself;
-    // pushing into it would assert the offset of this edge on every incoming.
-    if (edge.base != basePhi)
-      updateAnalysis(edge.base, upTree.Only(-1, inst), &gep);
+    if (!perEdgeUp)
+      upTree |= edgeUpTree;
+    else if (!edge.loopCarried)
+      updateAnalysis(edge.base, edgeUpTree.Only(-1, inst), &gep);
   }
-  if (!seenIdx)
-    return;
   if (direction & DOWN)
     updateAnalysis(&gep, downTree.Only(-1, inst), &gep);
-  if ((direction & UP) && seenMergedUp)
-    updateAnalysis(gep.getPointerOperand(), mergedUpTree.Only(-1, inst), &gep);
+  if (direction & UP)
+    updateAnalysis(gep.getPointerOperand(), upTree.Only(-1, inst), &gep);
 }
 
 void TypeAnalyzer::visitPHINode(PHINode &phi) {
