@@ -155,8 +155,12 @@ struct StoreOpInterfaceReverse
     // ValueRange indices = storeOp.getIndices();
 
     auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
-    if (!iface)
+    if (!iface) {
+      if (!gutils->isConstantValue(val))
+        return op->emitError() << "AutoDiffTypeInterface not implemented for "
+                               << val.getType();
       return success();
+    }
 
     if (!gutils->isConstantValue(memref)) {
       Value memrefGradient = gutils->popCache(caches.front(), builder);

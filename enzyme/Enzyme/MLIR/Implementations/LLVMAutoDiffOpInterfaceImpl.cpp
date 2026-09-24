@@ -550,8 +550,12 @@ struct StoreOpInterfaceReverse
     Value addr = storeOp.getAddr();
 
     auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
-    if (!iface)
+    if (!iface) {
+      if (!gutils->isConstantValue(val))
+        return op->emitError() << "AutoDiffTypeInterface not implemented for "
+                               << val.getType();
       return success();
+    }
 
     if (!gutils->isConstantValue(addr)) {
       Value addrGradient = gutils->popCache(caches.front(), builder);

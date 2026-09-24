@@ -24,8 +24,7 @@ func.func @dload_ptr(%pp: !llvm.ptr, %dpp: !llvm.ptr, %dr: f64) {
 
 // -----
 
-// Verify that storing a type without AutoDiffTypeInterface (like a vector)
-// into a memref doesn't crash on an unchecked cast in reverse mode.
+// Verify that storing a VectorType works in reverse mode with AutoDiffTypeInterface.
 
 func.func @store_vector(%m: memref<10xvector<4xf32>>, %v: vector<4xf32>) {
   %c0 = arith.constant 0 : index
@@ -33,10 +32,11 @@ func.func @store_vector(%m: memref<10xvector<4xf32>>, %v: vector<4xf32>) {
   return
 }
 
-func.func @dstore_vector(%m: memref<10xvector<4xf32>>, %dm: memref<10xvector<4xf32>>, %v: vector<4xf32>) {
-  enzyme.autodiff @store_vector(%m, %dm, %v) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[] } : (memref<10xvector<4xf32>>, memref<10xvector<4xf32>>, vector<4xf32>) -> ()
-  return
+func.func @dstore_vector(%m: memref<10xvector<4xf32>>, %dm: memref<10xvector<4xf32>>, %v: vector<4xf32>) -> vector<4xf32> {
+  %r = enzyme.autodiff @store_vector(%m, %dm, %v) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_active>], ret_activity=[] } : (memref<10xvector<4xf32>>, memref<10xvector<4xf32>>, vector<4xf32>) -> vector<4xf32>
+  return %r : vector<4xf32>
 }
 
 // CHECK-LABEL: func.func private @diffestore_vector
+// CHECK: memref.load
 // CHECK: return
