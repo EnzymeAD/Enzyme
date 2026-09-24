@@ -1854,10 +1854,23 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                if (!DT.dominates(block2, target))
+                  goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its
               // two targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
@@ -8125,10 +8138,26 @@ void GradientUtils::branchToCorrespondingTarget(
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              // The targets may be reverse blocks (absent from DT), so test
+              // the forward predecessor edges that lead into each target.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                for (const auto &predEdge : targetToPreds.find(target)->second)
+                  if (!DT.dominates(block2, predEdge.first))
+                    goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its two
               // targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
