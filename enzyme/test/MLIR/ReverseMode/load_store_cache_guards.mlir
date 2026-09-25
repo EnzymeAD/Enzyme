@@ -1,4 +1,4 @@
-// RUN: %eopt --split-input-file --enzyme --canonicalize %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops %s | FileCheck %s
 
 // Verify that loading a mutable type (!llvm.ptr) from an active pointer does
 // not push a dangling address cache into the augmented forward pass.
@@ -11,7 +11,7 @@ llvm.func @load_ptr(%pp: !llvm.ptr) -> f64 {
 }
 
 func.func @dload_ptr(%pp: !llvm.ptr, %dpp: !llvm.ptr, %dr: f64) {
-  enzyme.autodiff @load_ptr(%pp, %dpp, %dr) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (!llvm.ptr, !llvm.ptr, f64) -> ()
+  enzyme.autodiff @load_ptr(%pp, %dpp, %dr) { activity=[#enzyme<activity<enzyme_dup>>], ret_activity=[#enzyme<activity<enzyme_activenoneed>>] } : (!llvm.ptr, !llvm.ptr, f64) -> ()
   return
 }
 
@@ -33,10 +33,28 @@ func.func @store_vector(%m: memref<10xvector<4xf32>>, %v: vector<4xf32>) {
 }
 
 func.func @dstore_vector(%m: memref<10xvector<4xf32>>, %dm: memref<10xvector<4xf32>>, %v: vector<4xf32>) -> vector<4xf32> {
-  %r = enzyme.autodiff @store_vector(%m, %dm, %v) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_active>], ret_activity=[] } : (memref<10xvector<4xf32>>, memref<10xvector<4xf32>>, vector<4xf32>) -> vector<4xf32>
+  %r = enzyme.autodiff @store_vector(%m, %dm, %v) { activity=[#enzyme<activity<enzyme_dup>>, #enzyme<activity<enzyme_active>>], ret_activity=[] } : (memref<10xvector<4xf32>>, memref<10xvector<4xf32>>, vector<4xf32>) -> vector<4xf32>
   return %r : vector<4xf32>
 }
 
 // CHECK-LABEL: func.func private @diffestore_vector
 // CHECK: memref.load
 // CHECK: return
+
+// -----
+
+// Verify that storing a VectorType in LLVM dialect works in reverse mode.
+
+llvm.func @store_vector_llvm(%p: !llvm.ptr, %v: vector<4xf32>) {
+  llvm.store %v, %p : vector<4xf32>, !llvm.ptr
+  llvm.return
+}
+
+func.func @dstore_vector_llvm(%p: !llvm.ptr, %dp: !llvm.ptr, %v: vector<4xf32>) -> vector<4xf32> {
+  %r = enzyme.autodiff @store_vector_llvm(%p, %dp, %v) { activity=[#enzyme<activity<enzyme_dup>>, #enzyme<activity<enzyme_active>>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, vector<4xf32>) -> vector<4xf32>
+  return %r : vector<4xf32>
+}
+
+// CHECK-LABEL: llvm.func @diffestore_vector_llvm
+// CHECK: llvm.load
+// CHECK: llvm.return
