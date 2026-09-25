@@ -407,8 +407,9 @@ struct LoadOpInterfaceReverse
                                  MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<LLVM::LoadOp>(op);
     auto addr = loadOp.getAddr();
-    if (!(isa<AutoDiffTypeInterface>(loadOp.getType()) &&
-          (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr))))
+    auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType());
+    if (!iface || iface.isMutable() ||
+        (gutils->isConstantValue(loadOp) || gutils->isConstantValue(addr)))
       return {};
     OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
     return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
@@ -548,7 +549,13 @@ struct StoreOpInterfaceReverse
     Value val = storeOp.getValue();
     Value addr = storeOp.getAddr();
 
-    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface) {
+      if (!gutils->isConstantValue(val))
+        return op->emitError() << "AutoDiffTypeInterface not implemented for "
+                               << val.getType();
+      return success();
+    }
 
     if (!gutils->isConstantValue(addr)) {
       Value addrGradient = gutils->popCache(caches.front(), builder);
@@ -581,12 +588,16 @@ struct StoreOpInterfaceReverse
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<LLVM::StoreOp>(op);
-    auto addr = storeOp.getAddr();
-    if (gutils->isConstantValue(addr))
-      return {};
-    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
-                                     cacheBuilder)};
+    Value addr = storeOp.getAddr();
+    Value val = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (!gutils->isConstantValue(addr)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        return {gutils->initAndPushCache(
+            gutils->invertPointerM(addr, cacheBuilder), cacheBuilder)};
+      }
+    }
+    return {};
   }
 
   // A store of a mutable value -- a pointer -- has no float adjoint to
