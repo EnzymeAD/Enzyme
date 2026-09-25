@@ -112,7 +112,7 @@ module {
 // CHECK-NEXT: %{{.+}} = func.call @test.generate
 // CHECK-NEXT: %{{.+}} = arith.negf
 // CHECK-NEXT: enzyme.yield
-// CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
+// CHECK-NEXT: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
 //
 // --- Warmup loop: 16 iter_args ---
 // CHECK-NEXT: %[[WARMUP:.+]]:16 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[ZERO_F]], %[[ZERO_F]], %[[ZERO_F]], %[[C0]], %[[ZERO_F]], %[[ZERO_1D]], %[[ZERO_1D]], %[[C0]], %[[C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
@@ -121,7 +121,7 @@ module {
 // --- Momentum sampling with mass matrix ---
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
-// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random %{{.+}}, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random %{{.+}}, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[MASS_SQRT]] {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[INV_MASS]] {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
@@ -236,7 +236,7 @@ module {
 // --- Momentum with adapted mass matrix from warmup ---
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
-// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[WARMUP]]#6 {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[WARMUP]]#5 {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
@@ -302,7 +302,7 @@ module {
 // --- Momentum sampling ---
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
-// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT: %{{.+}} = impulse.dot
 // CHECK-NEXT: %{{.+}} = impulse.dot
 // CHECK-NEXT: %{{.+}} = impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
@@ -405,7 +405,7 @@ module {
 // --- Momentum sampling with mass matrix ---
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
-// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[M_SQRT]] {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot %{{.+}}, %[[M_INV]] {{.*}}
 // CHECK-NEXT: %{{.+}} = impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
@@ -501,7 +501,7 @@ module {
 // --- Momentum sampling ---
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
 // CHECK-NEXT: %{{.+}} = impulse.randomSplit
-// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT: %{{.+}} = impulse.dot
 // CHECK-NEXT: %{{.+}} = impulse.dot
 // CHECK-NEXT: %{{.+}} = impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>

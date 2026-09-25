@@ -7,7 +7,7 @@ module {
   }
 
   func.func @dsquare(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (complex<f64>, complex<f64>) -> complex<f64>
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (complex<f64>, complex<f64>) -> complex<f64>
     return %r : complex<f64>
   }
 }

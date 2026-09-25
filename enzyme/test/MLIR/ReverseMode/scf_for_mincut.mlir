@@ -18,8 +18,8 @@ module {
 
   func.func @dmain(%arg0: f32, %dsum: f32) -> f32 {
     %darg0 = enzyme.autodiff @main(%arg0, %dsum) {
-      activity = [#enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f32, f32) -> f32
     return %darg0 : f32
   }
@@ -80,8 +80,8 @@ func.func private @recompute_if(%cond: memref<?xi1>, %x: f32) -> f32 {
 
 func.func @drecompute_if(%cond: memref<?xi1>, %arg0: f32, %dsum: f32) -> f32 {
   %darg0 = enzyme.autodiff @recompute_if(%cond, %arg0, %dsum) {
-    activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (memref<?xi1>, f32, f32) -> f32
   return %darg0 : f32
 }

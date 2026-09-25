@@ -2513,6 +2513,26 @@ static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
 #endif
 }
 
+// LLVM 24 dropped the llvm::Instruction* overloads of insertBefore and
+// moveBefore in favour of ones taking a position in the instruction list.
+static inline void insertBeforeInst(llvm::Instruction *I,
+                                    llvm::Instruction *Before) {
+#if LLVM_VERSION_MAJOR >= 24
+  I->insertBefore(Before->getIterator());
+#else
+  I->insertBefore(Before);
+#endif
+}
+
+static inline void moveBeforeInst(llvm::Instruction *I,
+                                  llvm::Instruction *Before) {
+#if LLVM_VERSION_MAJOR >= 24
+  I->moveBefore(Before->getIterator());
+#else
+  I->moveBefore(Before);
+#endif
+}
+
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 #if LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper

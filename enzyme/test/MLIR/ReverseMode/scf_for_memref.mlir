@@ -24,8 +24,8 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 
 func.func @dreduce(%x: f32, %ub: index, %dres: f32) -> (f32) {
   %res = enzyme.autodiff @reduce(%x, %ub, %dres) {
-    activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f32, index, f32) -> f32
   return %res : f32
 }
@@ -92,8 +92,8 @@ func.func private @reverse_index(%lb: index, %ub: index, %x: memref<?xf32>) -> f
 
 func.func @dreverse_index(%lb: index, %ub: index, %x: memref<?xf32>, %dx: memref<?xf32>, %dr: f32) {
     enzyme.autodiff @reverse_index(%lb, %ub, %x, %dx, %dr) {
-      activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (index, index, memref<?xf32>, memref<?xf32>, f32) -> ()
     return
 }
@@ -159,8 +159,8 @@ func.func @reduce_i32(%x: f32, %ub: i32) -> (f32) {
 
 func.func @dreduce(%x: f32, %ub: i32, %dres: f32) -> (f32) {
   %res = enzyme.autodiff @reduce_i32(%x, %ub, %dres) {
-    activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f32, i32, f32) -> f32
   return %res : f32
 }

@@ -672,7 +672,9 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       ZeroMem = nullptr;
     }
   } else {
-#if LLVM_VERSION_MAJOR > 17
+#if LLVM_VERSION_MAJOR >= 24
+    res = Builder.CreateMalloc(AllocSizeTy, Align, AllocCount, nullptr, Name);
+#elif LLVM_VERSION_MAJOR > 17
     res =
         Builder.CreateMalloc(AllocSizeTy, T, Align, AllocCount, nullptr, Name);
 #else

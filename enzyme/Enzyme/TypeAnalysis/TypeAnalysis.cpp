@@ -848,7 +848,8 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     auto I = CE->getAsInstruction();
-    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator());
+    insertBeforeInst(I,
+                     TA.fntypeinfo.Function->getEntryBlock().getTerminator());
 
     // Just analyze this new "instruction" and none of the others
     {
@@ -1915,7 +1916,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
     return;
   }
   auto I = CE.getAsInstruction();
-  I->insertBefore(fntypeinfo.Function->getEntryBlock().getTerminator());
+  insertBeforeInst(I, fntypeinfo.Function->getEntryBlock().getTerminator());
   analysis[I] = analysis[&CE];
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
@@ -3018,8 +3019,12 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
   // We don't care about correct MD node numbering here.
+#if LLVM_VERSION_MAJOR >= 24
+  ModuleSlotTracker MST(fntypeinfo.Function->getParent());
+#else
   ModuleSlotTracker MST(fntypeinfo.Function->getParent(),
                         /*ShouldInitializeAllMetadata*/ false);
+#endif
   for (auto &pair : analysis) {
     if (auto F = dyn_cast<Function>(pair.first))
       ss << "@" << F->getName();

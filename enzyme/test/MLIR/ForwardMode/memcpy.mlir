@@ -15,7 +15,7 @@ module {
   }
 
   func.func @df(%p: !llvm.ptr, %dp: !llvm.ptr, %q: !llvm.ptr, %dq: !llvm.ptr) {
-    enzyme.fwddiff @f(%p, %dp, %q, %dq) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+    enzyme.fwddiff @f(%p, %dp, %q, %dq) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
     return
   }
 }
@@ -43,7 +43,7 @@ module {
   }
 
   func.func @dg(%p: !llvm.ptr, %dp: !llvm.ptr, %c: !llvm.ptr) {
-    enzyme.fwddiff @g(%p, %dp, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+    enzyme.fwddiff @g(%p, %dp, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
     return
   }
 }
@@ -68,7 +68,7 @@ module {
   }
 
   func.func @dh(%p: !llvm.ptr, %dp: !llvm.ptr, %c: !llvm.ptr) {
-    enzyme.fwddiff @h(%p, %dp, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+    enzyme.fwddiff @h(%p, %dp, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
     return
   }
 }

@@ -12,10 +12,10 @@ func.func private @flatten(%b0: index, %b1: index, %b2: index, %x: memref<?xf32>
 func.func @dflatten(%b0: index, %b1: index, %b2: index, %x: memref<?xf32>, %dx: memref<?xf32>) {
   enzyme.autodiff @flatten(%b0, %b1, %b2, %x, %dx) {
     activity = [
-      #enzyme<activity enzyme_const>,
-      #enzyme<activity enzyme_const>,
-      #enzyme<activity enzyme_const>,
-      #enzyme<activity enzyme_dup>
+      #enzyme.activity<enzyme_const>,
+      #enzyme.activity<enzyme_const>,
+      #enzyme.activity<enzyme_const>,
+      #enzyme.activity<enzyme_dup>
     ],
     ret_activity = []
   } : (index, index, index, memref<?xf32>, memref<?xf32>) -> ()

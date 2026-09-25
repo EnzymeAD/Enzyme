@@ -14,7 +14,7 @@ module {
   }
   llvm.func @dsquare(%x: f64) -> f64 {
     %cst = arith.constant 1.000000e+00 : f64
-    %0 = enzyme.autodiff @square(%x, %cst) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>]} : (f64, f64) -> f64
+    %0 = enzyme.autodiff @square(%x, %cst) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>]} : (f64, f64) -> f64
     llvm.return %0 : f64
   }
 }

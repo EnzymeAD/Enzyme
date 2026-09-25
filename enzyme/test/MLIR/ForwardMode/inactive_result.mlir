@@ -17,7 +17,7 @@ module {
   }
 
   func.func @df(%idx: memref<?xi64>, %didx: memref<?xi64>, %data: memref<?xf64>, %ddata: memref<?xf64>) {
-    enzyme.fwddiff @f(%idx, %didx, %data, %ddata) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (memref<?xi64>, memref<?xi64>, memref<?xf64>, memref<?xf64>) -> ()
+    enzyme.fwddiff @f(%idx, %didx, %data, %ddata) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[] } : (memref<?xi64>, memref<?xi64>, memref<?xf64>, memref<?xf64>) -> ()
     return
   }
 }

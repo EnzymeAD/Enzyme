@@ -60,7 +60,7 @@ module {
 // CHECK-NEXT: %[[AD_GEN:.+]]:4 = func.call @test.generate{{.*}}(%[[AD_CONS]], %[[SPLIT2]]#1, %[[MEAN]], %[[STDDEV]]) : (tensor<1x1xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[AD_NEG:.+]] = arith.negf %[[AD_GEN]]#1 : tensor<f64>
 // CHECK-NEXT: enzyme.yield %[[AD_NEG]], %[[AD_GEN]]#2 : tensor<f64>, tensor<2xui64>
-// CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
+// CHECK-NEXT: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
 //
 // --- Main sampling loop ---
 // CHECK: %[[LOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q0]], %[[AD_INIT]]#2, %[[U0]], %[[SPLIT2]]#0, %[[SAMPLES_INIT]], %[[DIAG_INIT]], %[[LD_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64> {
@@ -69,7 +69,7 @@ module {
 // --- Sample momentum p ~ N(0, I) ---
 // CHECK-NEXT: %[[RNG_S:.+]]:3 = impulse.randomSplit %[[RNG_I]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT: %[[RNG_M:.+]]:2 = impulse.randomSplit %[[RNG_S]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
-// CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = impulse.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = impulse.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Transform momentum by mass matrix sqrt: p_transformed = massMatrixSqrt @ p ---
 // CHECK-NEXT: %[[P_XFORM:.+]] = impulse.dot %[[P]], {{.+}} {{{.*}}lhs_contracting_dimensions = array<i64: 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
@@ -109,7 +109,7 @@ module {
 // CHECK-NEXT: %[[AD_LF_GEN:.+]]:4 = func.call @test.generate(%[[AD_LF_CONS]], %[[LF_RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x1xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[AD_LF_NEG:.+]] = arith.negf %[[AD_LF_GEN]]#1 : tensor<f64>
 // CHECK-NEXT: enzyme.yield %[[AD_LF_NEG]], %[[AD_LF_GEN]]#2 : tensor<f64>, tensor<2xui64>
-// CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
+// CHECK-NEXT: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
 //
 // --- Leapfrog: second half step momentum p_new = p_half - (eps/2) * grad_new ---
 // CHECK-NEXT: %[[GRAD_NEW_SCALED:.+]] = arith.mulf %[[HALF_DIR_BC]], %[[AD_LF]]#2 : tensor<1x1xf64>
@@ -133,7 +133,7 @@ module {
 // CHECK-NEXT: %[[ACCEPT_PROB:.+]] = arith.minimumf %[[EXP_DH]], %[[ONE]] : tensor<f64>
 //
 // --- Draw uniform for MH ---
-// CHECK-NEXT: %[[RNG_U:.+]], %[[UNIF:.+]] = impulse.random %[[LF]]#4, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RNG_U:.+]], %[[UNIF:.+]] = impulse.random %[[LF]]#4, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 //
 // --- Accept comparison ---
 // CHECK-NEXT: %[[ACCEPTED:.+]] = arith.cmpf olt, %[[UNIF]], %[[ACCEPT_PROB]] : tensor<f64>

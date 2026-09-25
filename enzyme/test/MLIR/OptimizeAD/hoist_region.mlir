@@ -36,7 +36,7 @@ func.func @foo(%arg0: f64, %arg1: f64,%xx: f64) -> f64 {
 
     %sqxyz = arith.mulf %zz, %sqxy : f64
     enzyme.yield %sqxyz : f64
-  } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -93,7 +93,7 @@ func.func @bar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
     %8 = arith.mulf %2, %7 : f64
     %10 = arith.mulf %8, %9 : f64
     enzyme.yield %10 : f64
-  } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -117,7 +117,7 @@ func.func @bar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
 // CHECK-NEXT:     %8 = arith.mulf %3, %7 : f64
 // CHECK-NEXT:     %9 = arith.mulf %8, %1 : f64
 // CHECK-NEXT:     enzyme.yield %9 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %2 : f64
 // CHECK-NEXT: }
 
@@ -142,7 +142,7 @@ func.func @baz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
     %8 = arith.mulf %2, %7 : f64
     %10 = arith.mulf %8, %9 : f64
     enzyme.yield %10 : f64
-  } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -166,7 +166,7 @@ func.func @baz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
 // CHECK-NEXT:     %8 = arith.mulf %1, %7 : f64
 // CHECK-NEXT:     %9 = arith.mulf %8, %2 : f64
 // CHECK-NEXT:     enzyme.yield %9 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %3 : f64
 // CHECK-NEXT: }
 
@@ -209,7 +209,7 @@ func.func @fwfoo(%arg0: f64, %arg1: f64,%xx: f64) -> f64 {
 
     %sqxyz = arith.mulf %zz, %sqxy : f64
     enzyme.yield %sqxyz : f64
-  } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -242,7 +242,7 @@ func.func @fwfoo(%arg0: f64, %arg1: f64,%xx: f64) -> f64 {
 // CHECK-NEXT:     }
 // CHECK-NEXT:     %8 = arith.mulf %7, %5 : f64
 // CHECK-NEXT:     enzyme.yield %8 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %2 : f64
 // CHECK-NEXT: }
 
@@ -267,7 +267,7 @@ func.func @fwbar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
     %8 = arith.mulf %2, %7 : f64
     %10 = arith.mulf %8, %9 : f64
     enzyme.yield %10 : f64
-  } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -290,7 +290,7 @@ func.func @fwbar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
 // CHECK-NEXT:     %8 = arith.mulf %3, %7 : f64
 // CHECK-NEXT:     %9 = arith.mulf %8, %1 : f64
 // CHECK-NEXT:     enzyme.yield %9 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %2 : f64
 // CHECK-NEXT: }
 
@@ -315,7 +315,7 @@ func.func @fwbaz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
     %8 = arith.mulf %2, %7 : f64
     %10 = arith.mulf %8, %9 : f64
     enzyme.yield %10 : f64
-  } attributes {activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -339,6 +339,6 @@ func.func @fwbaz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
 // CHECK-NEXT:     %8 = arith.mulf %1, %7 : f64
 // CHECK-NEXT:     %9 = arith.mulf %8, %2 : f64
 // CHECK-NEXT:     enzyme.yield %9 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %3 : f64
 // CHECK-NEXT: }

@@ -19,9 +19,9 @@ module {
 
   func.func @dscale(%arg0: memref<?xf64>, %arg1: memref<?xf64>, %arg2: memref<?xf64>, %arg3: memref<?xf64>, %arg4: memref<?xf64>) {
     enzyme.autodiff @scale(%arg0, %arg3, %arg1, %arg2, %arg4) {
-        activity=[#enzyme<activity enzyme_dup>, 
-                  #enzyme<activity enzyme_const>, 
-                  #enzyme<activity enzyme_dup>],
+        activity=[#enzyme.activity<enzyme_dup>, 
+                  #enzyme.activity<enzyme_const>, 
+                  #enzyme.activity<enzyme_dup>],
         ret_activity=[]
       } : (memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>) -> ()
 

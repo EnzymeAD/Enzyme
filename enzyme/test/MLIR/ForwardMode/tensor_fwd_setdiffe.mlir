@@ -7,7 +7,7 @@ module {
     return %z : tensor<2xf64>
   }
   func.func @dsincos(%x : tensor<2xf64>, %dx : tensor<2xf64>) -> tensor<2xf64> {
-    %r = enzyme.fwddiff @sincos(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (tensor<2xf64>, tensor<2xf64>) -> (tensor<2xf64>)
+    %r = enzyme.fwddiff @sincos(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (tensor<2xf64>, tensor<2xf64>) -> (tensor<2xf64>)
     return %r : tensor<2xf64>
   }
 }

@@ -6,7 +6,7 @@ func.func @sq(%x: f64) -> f64 {
 }
 
 func.func @dsq(%x: f64, %dr: f64) -> f64 {
-  %0 = enzyme.autodiff @sq(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.autodiff @sq(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -29,7 +29,7 @@ func.func @atan(%x: f64) -> f64 {
 }
 
 func.func @datan(%x: f64, %dr: f64) -> f64 {
-  %0 = enzyme.autodiff @atan(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.autodiff @atan(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -50,7 +50,7 @@ func.func @absf(%x: f64) -> f64 {
 }
 
 func.func @dabsf(%x: f64, %dr: f64) -> f64 {
-  %0 = enzyme.autodiff @absf(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.autodiff @absf(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -70,7 +70,7 @@ func.func @fma(%x: f64, %y: f64, %z: f64) -> f64 {
 }
 
 func.func @dfma(%x: f64, %y: f64, %z: f64, %dr: f64) -> (f64, f64, f64) {
-  %0:3 = enzyme.autodiff @fma(%x, %y, %z, %dr) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64, f64, f64) -> (f64, f64, f64)
+  %0:3 = enzyme.autodiff @fma(%x, %y, %z, %dr) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64, f64, f64) -> (f64, f64, f64)
   return %0#0, %0#1, %0#2 : f64, f64, f64
 }
 
@@ -93,8 +93,8 @@ func.func @copysign(%x: f64, %y: f64) -> f64 {
 func.func @dcopysign(%x: f64, %y: f64, %dr: f64) -> f64 {
   %0 = enzyme.autodiff @copysign(%x, %y, %dr)
     {
-      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+      ret_activity=[#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64, f64) -> f64
   return %0 : f64
 }
@@ -116,7 +116,7 @@ func.func @log1p(%x: f64) -> f64 {
 }
 
 func.func @dlog1p(%x: f64, %dr: f64) -> f64 {
-  %0 = enzyme.autodiff @log1p(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.autodiff @log1p(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
   return %0 : f64
 }
 

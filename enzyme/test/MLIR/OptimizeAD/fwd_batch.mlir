@@ -7,8 +7,8 @@ module {
     return %y : f64
   }
   func.func @test1(%x : f64, %dx1 : f64, %dx2 : f64) -> (f64,f64) {
-    %r1 = enzyme.fwddiff @square(%x, %dx1) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> (f64)
-    %r2 = enzyme.fwddiff @square(%x, %dx2) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
+    %r1 = enzyme.fwddiff @square(%x, %dx1) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> (f64)
+    %r2 = enzyme.fwddiff @square(%x, %dx2) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r1,%r2 : f64, f64
   }
 }
@@ -42,8 +42,8 @@ module {
   }
   func.func @test3(%x : f64, %dx1 : f64, %dx2 : f64,
                    %y : f64, %dy1 : f64, %dy2 : f64, %c : f64) -> (f64, f64) {
-    %r1 = enzyme.fwddiff @muladd(%x, %dx1, %y, %dy1, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
-    %r2 = enzyme.fwddiff @muladd(%x, %dx2, %y, %dy2, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
+    %r1 = enzyme.fwddiff @muladd(%x, %dx1, %y, %dy1, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
+    %r2 = enzyme.fwddiff @muladd(%x, %dx2, %y, %dy2, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64) -> f64
     return %r1, %r2 : f64, f64
   }
 }
@@ -77,8 +77,8 @@ module {
     return %y : tensor<10xf64>
   }
   func.func @test2(%x : tensor<10xf64>, %dx : tensor<10xf64>, %dx2 : tensor<10xf64>) -> (tensor<10xf64>,tensor<10xf64>) {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>)
-    %r2 = enzyme.fwddiff @square(%x, %dx2) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>)
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>)
+    %r2 = enzyme.fwddiff @square(%x, %dx2) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>)
     return %r,%r2 : tensor<10xf64>,tensor<10xf64>
   }
 }

@@ -8,8 +8,8 @@ func.func @maximumf(%a: f64, %b: f64) -> f64 {
 func.func @dmaximumf(%a: f64, %da: f64, %b: f64, %db: f64) -> f64 {
   %r = enzyme.fwddiff @maximumf(%a, %da, %b, %db)
     {
-      activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
-      ret_activity=[#enzyme<activity enzyme_dupnoneed>]
+      activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+      ret_activity=[#enzyme.activity<enzyme_dupnoneed>]
     } : (f64, f64, f64, f64) -> (f64)
   return %r : f64
 }
@@ -57,8 +57,8 @@ func.func @minimumf(%a: f64, %b: f64) -> f64 {
 func.func @dminimumf(%a: f64, %da: f64, %b: f64, %db: f64) -> f64 {
   %r = enzyme.fwddiff @minimumf(%a, %da, %b, %db)
     {
-      activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
-      ret_activity=[#enzyme<activity enzyme_dupnoneed>]
+      activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+      ret_activity=[#enzyme.activity<enzyme_dupnoneed>]
     } : (f64, f64, f64, f64) -> (f64)
   return %r : f64
 }

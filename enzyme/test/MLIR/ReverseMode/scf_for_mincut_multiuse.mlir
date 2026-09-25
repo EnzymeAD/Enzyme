@@ -54,8 +54,8 @@ func.func private @reduce(%x: memref<?xf32>, %ub: index) -> f32 {
 
 func.func @dreduce(%x: memref<?xf32>, %dx: memref<?xf32>, %ub: index, %dseed: f32) {
   enzyme.autodiff @reduce(%x, %dx, %ub, %dseed) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (memref<?xf32>, memref<?xf32>, index, f32) -> ()
   return
 }

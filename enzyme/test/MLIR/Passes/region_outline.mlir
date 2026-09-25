@@ -13,14 +13,14 @@ func.func @to_outline(%26: !llvm.ptr, %27: !llvm.ptr, %28: !llvm.ptr, %29: !llvm
           ^bb0(%arg8: !llvm.ptr, %arg9: !llvm.ptr):
             %63 = arith.index_castui %arg5 : index to i64
             %64 = llvm.getelementptr inbounds|nuw %arg8[%63] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-            %65 = llvm.load %64 invariant {alignment = 4 : i64} : !llvm.ptr -> f32
+            %65 = llvm.load %64 invariant <alignment = 4> : !llvm.ptr -> f32
             %66 = arith.extf %65 : f32 to f64
-            %67 = arith.mulf %66, %cst {fastmathFlags = #llvm.fastmath<contract>} : f64
+            %67 = arith.mulf %66, %cst fastmath<contract> : f64
             %68 = arith.truncf %67 : f64 to f32
             %69 = llvm.getelementptr inbounds|nuw %arg9[%63] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-            llvm.store %68, %69 {alignment = 4 : i64} : f32, !llvm.ptr
+            llvm.store %68, %69 <alignment = 4> : f32, !llvm.ptr
             enzyme.yield
-          } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "outlined_func", ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+          } attributes {activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], fn = "outlined_func", ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
           scf.yield
         }
       }
@@ -37,12 +37,12 @@ func.func @to_outline(%26: !llvm.ptr, %27: !llvm.ptr, %28: !llvm.ptr, %29: !llvm
 // CHECK:           %[[CONSTANT_0:.*]] = arith.constant 5.600000e+00 : f64
 // CHECK:           %[[INDEX_CASTUI_0:.*]] = arith.index_castui %[[ARG2]] : index to i64
 // CHECK:           %[[GETELEMENTPTR_0:.*]] = llvm.getelementptr inbounds|nuw %[[ARG0]]{{\[}}%[[INDEX_CASTUI_0]]] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-// CHECK:           %[[LOAD_0:.*]] = llvm.load %[[GETELEMENTPTR_0]] invariant {alignment = 4 : i64} : !llvm.ptr -> f32
+// CHECK:           %[[LOAD_0:.*]] = llvm.load %[[GETELEMENTPTR_0]] invariant <alignment = 4> : !llvm.ptr -> f32
 // CHECK:           %[[EXTF_0:.*]] = arith.extf %[[LOAD_0]] : f32 to f64
-// CHECK:           %[[MULF_0:.*]] = arith.mulf %[[EXTF_0]], %[[CONSTANT_0]] {fastmathFlags = #llvm.fastmath<contract>} : f64
+// CHECK:           %[[MULF_0:.*]] = arith.mulf %[[EXTF_0]], %[[CONSTANT_0]] fastmath<contract> : f64
 // CHECK:           %[[TRUNCF_0:.*]] = arith.truncf %[[MULF_0]] : f64 to f32
 // CHECK:           %[[GETELEMENTPTR_1:.*]] = llvm.getelementptr inbounds|nuw %[[ARG1]]{{\[}}%[[INDEX_CASTUI_0]]] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-// CHECK:           llvm.store %[[TRUNCF_0]], %[[GETELEMENTPTR_1]] {alignment = 4 : i64} : f32, !llvm.ptr
+// CHECK:           llvm.store %[[TRUNCF_0]], %[[GETELEMENTPTR_1]] <alignment = 4> : f32, !llvm.ptr
 // CHECK:           return
 // CHECK:         }
 
@@ -55,14 +55,14 @@ llvm.func internal @d_Z6squarePfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !l
     %1 = nvvm.read.ptx.sreg.tid.x : i32
     %2 = llvm.zext nneg %1 : i32 to i64
     %3 = llvm.getelementptr inbounds|nuw %arg4[%2] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %4 = llvm.load %3 {alignment = 4 : i64} : !llvm.ptr -> f32
+    %4 = llvm.load %3 <alignment = 4> : !llvm.ptr -> f32
     %5 = llvm.fpext %4 : f32 to f64
-    %6 = llvm.fmul %5, %0 {fastmathFlags = #llvm.fastmath<contract>} : f64
+    %6 = llvm.fmul %5, %0 fastmath<contract> : f64
     %7 = llvm.fptrunc %6 : f64 to f32
     %8 = llvm.getelementptr inbounds|nuw %arg5[%2] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %7, %8 {alignment = 4 : i64} : f32, !llvm.ptr
+    llvm.store %7, %8 <alignment = 4> : f32, !llvm.ptr
     enzyme.yield
-  } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+  } attributes {activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
   llvm.return
 }
 
@@ -76,19 +76,19 @@ func.func @outline_multi(%x: f64, %dr: f64) -> (f64, f64) {
   ^bb0(%arg0: f64):
     %sq = arith.mulf %arg0, %arg0 : f64
     enzyme.yield %sq : f64
-  } attributes {activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 
   %r1 = enzyme.autodiff_region(%x, %dr) {
   ^bb0(%arg0: f64):
     %add = arith.addf %arg0, %arg0 : f64
     enzyme.yield %add : f64
-  } attributes {activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
   return %r0, %r1 : f64, f64
 }
 
 // CHECK: func.func @outline_multi(%arg0: f64, %arg1: f64) -> (f64, f64) {
-// CHECK-NEXT:    %0 = enzyme.autodiff @outline_multi_to_diff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
-// CHECK-NEXT:    %1 = enzyme.autodiff @outline_multi_to_diff1(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    %0 = enzyme.autodiff @outline_multi_to_diff0(%arg0, %arg1) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    %1 = enzyme.autodiff @outline_multi_to_diff1(%arg0, %arg1) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %0, %1 : f64, f64
 // CHECK-NEXT:  }
 
@@ -113,8 +113,8 @@ func.func @free_var_ordering(%x: f64) -> f64 {
     %mul = arith.mulf %arg0, %const : f64
     enzyme.yield %mul : f64
   } attributes {
-    activity = [#enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f64, f64) -> f64
 
   return %grad : f64
@@ -123,7 +123,7 @@ func.func @free_var_ordering(%x: f64) -> f64 {
 // CHECK: func.func @free_var_ordering(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %[[CONST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[SEED:.*]] = arith.constant 1.000000e+00 : f64
-// CHECK-NEXT:    %[[GRAD:.*]] = enzyme.autodiff @free_var_ordering_to_diff0(%arg0, %[[SEED]]) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    %[[GRAD:.*]] = enzyme.autodiff @free_var_ordering_to_diff0(%arg0, %[[SEED]]) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %[[GRAD]] : f64
 // CHECK-NEXT:  }
 
@@ -145,8 +145,8 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
     %mul = arith.mulf %val, %const : f64
     enzyme.yield %mul : f64
   } attributes {
-    activity = [#enzyme<activity enzyme_dup>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_dup>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (memref<f64>, memref<f64>, f64) -> ()
 
   return
@@ -155,7 +155,7 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
 // CHECK: func.func @free_var_with_dup(%arg0: memref<f64>, %arg1: memref<f64>) {
 // CHECK-NEXT:    %[[CST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[SEED:.*]] = arith.constant 1.000000e+00 : f64
-// CHECK-NEXT:    enzyme.autodiff @free_var_with_dup_to_diff0(%arg0, %arg1, %[[SEED]]) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (memref<f64>, memref<f64>, f64) -> ()
+// CHECK-NEXT:    enzyme.autodiff @free_var_with_dup_to_diff0(%arg0, %arg1, %[[SEED]]) {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (memref<f64>, memref<f64>, f64) -> ()
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }
 
@@ -173,13 +173,13 @@ func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
   ^bb0(%arg2: f64):
     %1 = arith.mulf %arg0, %arg2 : f64
     enzyme.yield %1 : f64
-  } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
 
 // CHECK:  func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 // CHECK:  func.func private @dsquare_to_diff0(%arg0: f64) -> f64 {
@@ -194,13 +194,13 @@ func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
   ^bb0(%arg2: f64):
     %1 = arith.mulf %arg0, %arg2 : f64
     enzyme.yield %1 : f64
-  } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  } attributes {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
   return %0 : f64
 }
 
 
 // CHECK: func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) {activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %0 : f64
 // CHECK-NEXT: }
 // CHECK: func.func private @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {

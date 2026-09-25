@@ -7,7 +7,7 @@ module {
     return %res : f64
   }
   func.func @dif_ext(%x : f32, %dx : tensor<2xf32>) -> tensor<2xf64> {
-    %r = enzyme.fwddiff @ext(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>], width=2 } : (f32, tensor<2xf32>) -> (tensor<2xf64>)
+    %r = enzyme.fwddiff @ext(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>], width=2 } : (f32, tensor<2xf32>) -> (tensor<2xf64>)
     return %r : tensor<2xf64>
   }
 

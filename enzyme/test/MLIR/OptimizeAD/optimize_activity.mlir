@@ -11,10 +11,10 @@ module {
 
   func.func @fwd_return_activity(%x: f32, %y: f32, %dy: f32) -> f32 {
     %p, %dp = enzyme.fwddiff @square2(%x, %y, %dy)
-        {activity = [#enzyme<activity enzyme_const>,
-                     #enzyme<activity enzyme_dup>],
-         ret_activity = [#enzyme<activity enzyme_dup>,
-                         #enzyme<activity enzyme_constnoneed>]}
+        {activity = [#enzyme.activity<enzyme_const>,
+                     #enzyme.activity<enzyme_dup>],
+         ret_activity = [#enzyme.activity<enzyme_dup>,
+                         #enzyme.activity<enzyme_constnoneed>]}
         : (f32, f32, f32) -> (f32, f32)
     return %p : f32
   }
@@ -22,26 +22,26 @@ module {
   func.func @fwd_argument_activity(%x: f32, %y: f32, %dx: f32, %dy: f32)
       -> (f32, f32, f32) {
     %p, %q, %dq = enzyme.fwddiff @square2(%x, %dx, %y, %dy)
-        {activity = [#enzyme<activity enzyme_dup>,
-                     #enzyme<activity enzyme_dup>],
-         ret_activity = [#enzyme<activity enzyme_const>,
-                         #enzyme<activity enzyme_dup>]}
+        {activity = [#enzyme.activity<enzyme_dup>,
+                     #enzyme.activity<enzyme_dup>],
+         ret_activity = [#enzyme.activity<enzyme_const>,
+                         #enzyme.activity<enzyme_dup>]}
         : (f32, f32, f32, f32) -> (f32, f32, f32)
     return %p, %q, %dq : f32, f32, f32
   }
 }
 
 // CLASSIC-LABEL: func.func @fwd_return_activity
-// CLASSIC: enzyme.fwddiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_constnoneed>]
+// CLASSIC: enzyme.fwddiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>]{{.*}}ret_activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_constnoneed>]
 
 // CLASSIC-LABEL: func.func @fwd_argument_activity
-// CLASSIC: enzyme.fwddiff @square2(%arg0, %arg2, %arg1, %arg3) {{.*}}activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>]
+// CLASSIC: enzyme.fwddiff @square2(%arg0, %arg2, %arg1, %arg3) {{.*}}activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>]{{.*}}ret_activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>]
 
 // DATAFLOW-LABEL: func.func @fwd_return_activity
-// DATAFLOW: enzyme.fwddiff @square2(%arg0, %arg1) {{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_constnoneed>]
+// DATAFLOW: enzyme.fwddiff @square2(%arg0, %arg1) {{.*}}activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>]{{.*}}ret_activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_constnoneed>]
 
 // DATAFLOW-LABEL: func.func @fwd_argument_activity
-// DATAFLOW: enzyme.fwddiff @square2(%arg0, %arg1, %arg3) {{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>]
+// DATAFLOW: enzyme.fwddiff @square2(%arg0, %arg1, %arg3) {{.*}}activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>]{{.*}}ret_activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>]
 
 // -----
 
@@ -56,17 +56,17 @@ module {
   func.func @rev_return_activity(%x: f32, %y: f32, %dp: f32, %dq: f32)
       -> (f32, f32) {
     %p, %dx = enzyme.autodiff @square2(%x, %y, %dp, %dq)
-        {activity = [#enzyme<activity enzyme_active>,
-                     #enzyme<activity enzyme_const>],
-         ret_activity = [#enzyme<activity enzyme_active>,
-                         #enzyme<activity enzyme_activenoneed>]}
+        {activity = [#enzyme.activity<enzyme_active>,
+                     #enzyme.activity<enzyme_const>],
+         ret_activity = [#enzyme.activity<enzyme_active>,
+                         #enzyme.activity<enzyme_activenoneed>]}
         : (f32, f32, f32, f32) -> (f32, f32)
     return %p, %dx : f32, f32
   }
 }
 
 // CLASSIC-LABEL: func.func @rev_return_activity
-// CLASSIC: enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_constnoneed>]
+// CLASSIC: enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]{{.*}}ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_constnoneed>]
 
 // DATAFLOW-LABEL: func.func @rev_return_activity
-// DATAFLOW: enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_constnoneed>]
+// DATAFLOW: enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]{{.*}}ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_constnoneed>]

@@ -7,7 +7,7 @@ module {
   }
 
   func.func @dfma(%x: f64, %dx: f64, %y: f64, %dy: f64, %z: f64, %dz: f64) -> f64 {
-    %r = enzyme.fwddiff @fma(%x, %dx, %y, %dy, %z, %dz) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64, f64) -> f64
+    %r = enzyme.fwddiff @fma(%x, %dx, %y, %dy, %z, %dz) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64, f64, f64, f64, f64) -> f64
     return %r : f64
   }
 }
