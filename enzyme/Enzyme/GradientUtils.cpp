@@ -10151,9 +10151,14 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    libfunc = TLI.getLibFunc(allocationfn);
+    assert(libfunc != NotLibFunc && "ought find known allocation fn");
+#else
     bool res = TLI.getLibFunc(allocationfn, libfunc);
     (void)res;
     assert(res && "ought find known allocation fn");
+#endif
   }
 
   llvm::LibFunc freefunc;

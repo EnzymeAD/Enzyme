@@ -18,8 +18,8 @@ func.func @square_ip(%arg0: memref<?xf32>, %ub: index) {
 
 // CHECK-LABEL: func.func @square_ip(
 // The store adjoint loads and zeroes the shadow slot.
-// CHECK:         memref.load %arg1[%{{.+}}] {alignment = 16 : i64} : memref<?xf32>
-// CHECK:         memref.store %cst, %arg1[%{{.+}}] {alignment = 16 : i64} : memref<?xf32>
+// CHECK:         memref.load %arg1[%{{.+}}] alignment(16) : memref<?xf32>
+// CHECK:         memref.store %cst, %arg1[%{{.+}}] alignment(16) : memref<?xf32>
 // The load adjoint accumulates into the shadow slot.
-// CHECK:         memref.load %arg1[%{{.+}}] {alignment = 16 : i64} : memref<?xf32>
-// CHECK:         memref.store %{{.+}}, %arg1[%{{.+}}] {alignment = 16 : i64} : memref<?xf32>
+// CHECK:         memref.load %arg1[%{{.+}}] alignment(16) : memref<?xf32>
+// CHECK:         memref.store %{{.+}}, %arg1[%{{.+}}] alignment(16) : memref<?xf32>

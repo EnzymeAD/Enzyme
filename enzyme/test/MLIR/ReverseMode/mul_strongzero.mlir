@@ -7,7 +7,7 @@ module {
   }
 
   func.func @dsquare(%x: f64, %dr: f64) -> f64 {
-    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>], strong_zero=true } : (f64, f64) -> f64
+    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>], strong_zero=true } : (f64, f64) -> f64
     return %r : f64
   }
 }

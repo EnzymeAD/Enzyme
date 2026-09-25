@@ -18,7 +18,7 @@ module {
     return
   }
   func.func @dsquare(%x : memref<?xf32>, %dx : memref<?xf32>, %y : memref<?xf32>, %dy : memref<?xf32>, %n : index) {
-    enzyme.fwddiff @square(%x, %dx, %y, %dy, %n) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[] } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
+    enzyme.fwddiff @square(%x, %dx, %y, %dy, %n) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[] } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
     return
   }
 }

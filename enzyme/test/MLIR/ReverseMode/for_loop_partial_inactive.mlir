@@ -16,8 +16,8 @@ func.func private @some_res_inactive(%x: f32, %ub: index) -> (f32) {
 
 func.func @dsome_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
   %dx = enzyme.autodiff @some_res_inactive(%x, %ub, %dr) {
-    activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f32, index, f32) -> f32
   return %dx : f32
 }
@@ -65,8 +65,8 @@ func.func private @affine_some_res_inactive(%x: f32, %ub: index) -> (f32) {
 
 func.func @daffine_res_inactive(%x: f32, %ub: index, %dr: f32) -> (f32) {
   %dx = enzyme.autodiff @affine_some_res_inactive(%x, %ub, %dr) {
-    activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f32, index, f32) -> f32
   return %dx : f32
 }

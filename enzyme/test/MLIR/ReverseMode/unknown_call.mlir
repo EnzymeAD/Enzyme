@@ -12,7 +12,7 @@ module {
     return %m : f64
   }
   func.func @dsq(%x: f64, %dr: f64) -> f64 {
-    %g = enzyme.autodiff @sq(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+    %g = enzyme.autodiff @sq(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
     return %g : f64
   }
 }

@@ -11,13 +11,25 @@ func.func @foo(%x: memref<?xf32>, %y: memref<?xf32>) {
 
 func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
   enzyme.autodiff @foo(%x, %dx, %y, %dy) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return
 }
 
-// CHECK: func.func private @diffefoo(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
+// CHECK:  func.func @foo(%arg0: memref<?xf32>, %arg1: memref<?xf32>) {
+// CHECK-NEXT:    affine.parallel (%arg2) = (0) to (4) {
+// CHECK-NEXT:      %0 = memref.load %arg0[%arg2] : memref<?xf32>
+// CHECK-NEXT:      %1 = arith.mulf %0, %0 : f32
+// CHECK-NEXT:      affine.store %1, %arg1[%arg2] : memref<?xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func @dfoo(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
+// CHECK-NEXT:    call @diffefoo(%arg0, %arg1, %arg2, %arg3) : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func private @diffefoo(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<4xf32>
 // CHECK-NEXT:    affine.parallel (%arg4) = (0) to (4) {
@@ -29,13 +41,11 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 // CHECK-NEXT:    affine.parallel (%arg4) = (0) to (4) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg4] : memref<4xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %2 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %3 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %2, %3 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %4, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<4xf32>
 // CHECK-NEXT:    return
@@ -55,13 +65,26 @@ func.func @nonconst_bound(%x: memref<?xf32>, %y: memref<?xf32>, %len: index) {
 func.func @dnonconst(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
   %c4 = arith.constant 4 : index
   enzyme.autodiff @nonconst_bound(%x, %dx, %y, %dy, %c4) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
     ret_activity = []
   } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
   return
 }
 
-// CHECK: func.func private @diffenonconst_bound(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>, %arg4: index) {
+// CHECK:  func.func @nonconst_bound(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: index) {
+// CHECK-NEXT:    affine.parallel (%arg3) = (0) to (symbol(%arg2)) {
+// CHECK-NEXT:      %0 = memref.load %arg0[%arg3] : memref<?xf32>
+// CHECK-NEXT:      %1 = arith.mulf %0, %0 : f32
+// CHECK-NEXT:      affine.store %1, %arg1[%arg3] : memref<?xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func @dnonconst(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
+// CHECK-NEXT:    %c4 = arith.constant 4 : index
+// CHECK-NEXT:    call @diffenonconst_bound(%arg0, %arg1, %arg2, %arg3, %c4) : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func private @diffenonconst_bound(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>, %arg4: index) {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc(%arg4) : memref<?xf32>
 // CHECK-NEXT:    affine.parallel (%arg5) = (0) to (symbol(%arg4)) {
@@ -73,13 +96,11 @@ func.func @dnonconst(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %
 // CHECK-NEXT:    affine.parallel (%arg5) = (0) to (symbol(%arg4)) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg5] : memref<?xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg5] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg5] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %2 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %3 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %2, %3 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %4, %arg1[%arg5] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>
 // CHECK-NEXT:    return
@@ -98,13 +119,25 @@ func.func @non_1_step(%x: memref<?xf32>, %y: memref<?xf32>) {
 
 func.func @dnon_1_step(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
   enzyme.autodiff @non_1_step(%x, %dx, %y, %dy) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return
 }
 
-// CHECK: func.func private @diffenon_1_step(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
+// CHECK:  func.func @non_1_step(%arg0: memref<?xf32>, %arg1: memref<?xf32>) {
+// CHECK-NEXT:    affine.parallel (%arg2) = (0) to (4) step (2) {
+// CHECK-NEXT:      %0 = memref.load %arg0[%arg2] : memref<?xf32>
+// CHECK-NEXT:      %1 = arith.mulf %0, %0 : f32
+// CHECK-NEXT:      affine.store %1, %arg1[%arg2] : memref<?xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func @dnon_1_step(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
+// CHECK-NEXT:    call @diffenon_1_step(%arg0, %arg1, %arg2, %arg3) : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func private @diffenon_1_step(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
 // CHECK-NEXT:    %c2 = arith.constant 2 : index
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<2xf32>
@@ -119,13 +152,11 @@ func.func @dnon_1_step(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>,
 // CHECK-NEXT:      %0 = arith.divui %arg4, %c2 : index
 // CHECK-NEXT:      %1 = memref.load %alloc[%0] : memref<2xf32>
 // CHECK-NEXT:      %2 = memref.load %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.addf %2, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4] : memref<?xf32>
-// CHECK-NEXT:      %4 = arith.mulf %3, %1 fastmath<fast> : f32
-// CHECK-NEXT:      %5 = arith.addf %4, %cst fastmath<fast> : f32
-// CHECK-NEXT:      %6 = arith.mulf %3, %1 fastmath<fast> : f32
-// CHECK-NEXT:      %7 = arith.addf %5, %6 fastmath<fast> : f32
-// CHECK-NEXT:      %8 = enzyme.atomic_rmw addf %7, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK-NEXT:      %3 = arith.mulf %2, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.mulf %2, %1 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = arith.addf %3, %4 fastmath<fast> : f32
+// CHECK-NEXT:      %6 = enzyme.atomic_rmw addf %5, %arg1[%arg4] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<2xf32>
 // CHECK-NEXT:    return
@@ -144,13 +175,25 @@ func.func @par2d(%x: memref<3x3xf32>, %y: memref<3x3xf32>) {
 
 func.func @dpar2d(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %y: memref<3x3xf32>, %dy: memref<3x3xf32>) {
   enzyme.autodiff @par2d(%x, %dx, %y, %dy) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
   return
 }
 
-// CHECK: func.func private @diffepar2d(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>, %arg3: memref<3x3xf32>) {
+// CHECK:  func.func @par2d(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>) {
+// CHECK-NEXT:    affine.parallel (%arg2, %arg3) = (0, 0) to (3, 3) {
+// CHECK-NEXT:      %0 = affine.load %arg0[%arg2, %arg3] : memref<3x3xf32>
+// CHECK-NEXT:      %1 = arith.mulf %0, %0 : f32
+// CHECK-NEXT:      affine.store %1, %arg1[%arg2, %arg3] : memref<3x3xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func @dpar2d(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>, %arg3: memref<3x3xf32>) {
+// CHECK-NEXT:    call @diffepar2d(%arg0, %arg1, %arg2, %arg3) : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func private @diffepar2d(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>, %arg3: memref<3x3xf32>) {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<3x3xf32>
 // CHECK-NEXT:    affine.parallel (%arg4, %arg5) = (0, 0) to (3, 3) {
@@ -162,13 +205,11 @@ func.func @dpar2d(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %y: memref<3x3xf32>
 // CHECK-NEXT:    affine.parallel (%arg4, %arg5) = (0, 0) to (3, 3) {
 // CHECK-NEXT:      %0 = memref.load %alloc[%arg4, %arg5] : memref<3x3xf32>
 // CHECK-NEXT:      %1 = memref.load %arg3[%arg4, %arg5] : memref<3x3xf32>
-// CHECK-NEXT:      %2 = arith.addf %1, %cst fastmath<fast> : f32
 // CHECK-NEXT:      memref.store %cst, %arg3[%arg4, %arg5] : memref<3x3xf32>
-// CHECK-NEXT:      %3 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %4 = arith.addf %3, %cst fastmath<fast> : f32
-// CHECK-NEXT:      %5 = arith.mulf %2, %0 fastmath<fast> : f32
-// CHECK-NEXT:      %6 = arith.addf %4, %5 fastmath<fast> : f32
-// CHECK-NEXT:      %7 = enzyme.atomic_rmw addf %6, %arg1[%arg4, %arg5] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
+// CHECK-NEXT:      %2 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %3 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %4 = arith.addf %2, %3 fastmath<fast> : f32
+// CHECK-NEXT:      %5 = enzyme.atomic_rmw addf %4, %arg1[%arg4, %arg5] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<3x3xf32>
 // CHECK-NEXT:    return
@@ -193,42 +234,50 @@ func.func @some_inactive(%x: memref<3x3xf32>, %inactive: memref<3x3xf32>, %y: me
 
 func.func @dsome_inactive(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %inactive: memref<3x3xf32>, %y: memref<3x3xf32>, %dy: memref<3x3xf32>) {
   enzyme.autodiff @some_inactive(%x, %dx, %inactive, %y, %dy) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
   return
 }
 
-// CHECK-LABEL:   func.func private @diffesome_inactive(
-// CHECK-SAME:      %[[ARG0:.*]]: memref<3x3xf32>, %[[ARG1:.*]]: memref<3x3xf32>, %[[ARG2:.*]]: memref<3x3xf32>, %[[ARG3:.*]]: memref<3x3xf32>, %[[ARG4:.*]]: memref<3x3xf32>) {
-// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK:           %[[ALLOC_0:.*]] = memref.alloc() : memref<3x3xf32>
-// CHECK:           affine.parallel (%[[VAL_0:.*]], %[[VAL_1:.*]]) = (0, 0) to (3, 3) {
-// CHECK:             %[[LOAD_0:.*]] = affine.load %[[ARG0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] : memref<3x3xf32>
-// CHECK:             %[[LOAD_1:.*]] = affine.load %[[ARG2]]{{\[}}%[[VAL_0]], %[[VAL_1]]] : memref<3x3xf32>
-// CHECK:             %[[EXP_0:.*]] = math.exp %[[LOAD_1]] : f32
-// CHECK:             %[[SIN_0:.*]] = math.sin %[[EXP_0]] : f32
-// CHECK:             %[[TANH_0:.*]] = math.tanh %[[SIN_0]] : f32
-// CHECK:             %[[MULF_0:.*]] = arith.mulf %[[TANH_0]], %[[TANH_0]] : f32
-// The inactive exp/sin/tanh/mulf chain is single-use throughout, so the mincut
-// slides the cache to its last value; only %[[MULF_0]] is stored.
-// CHECK:             memref.store %[[MULF_0]], %[[ALLOC_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] : memref<3x3xf32>
-// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[MULF_0]], %[[LOAD_0]] : f32
-// CHECK:             affine.store %[[MULF_1]], %[[ARG3]]{{\[}}%[[VAL_0]], %[[VAL_1]]] : memref<3x3xf32>
-// CHECK:           }
-// CHECK:           affine.parallel (%[[VAL_2:.*]], %[[VAL_3:.*]]) = (0, 0) to (3, 3) {
-// The reverse pass reads that value directly and recomputes nothing.
-// CHECK:             %[[LOAD_2:.*]] = memref.load %[[ALLOC_0]]{{\[}}%[[VAL_2]], %[[VAL_3]]] : memref<3x3xf32>
-// CHECK-NOT:         math.exp
-// CHECK-NOT:         math.sin
-// CHECK-NOT:         math.tanh
-// CHECK:             %[[LOAD_3:.*]] = memref.load %[[ARG4]]{{\[}}%[[VAL_2]], %[[VAL_3]]] : memref<3x3xf32>
-// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[LOAD_3]], %[[CONSTANT_0]] fastmath<fast> : f32
-// CHECK:             memref.store %[[CONSTANT_0]], %[[ARG4]]{{\[}}%[[VAL_2]], %[[VAL_3]]] : memref<3x3xf32>
-// CHECK:             %[[MULF_3:.*]] = arith.mulf %[[ADDF_0]], %[[LOAD_2]] fastmath<fast> : f32
-// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[MULF_3]], %[[CONSTANT_0]] fastmath<fast> : f32
-// CHECK:             %[[ATOMIC_RMW_0:.*]] = enzyme.atomic_rmw addf %[[ADDF_1]], %[[ARG1]]{{\[}}%[[VAL_2]], %[[VAL_3]]] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
-// CHECK:           }
-// CHECK:           memref.dealloc %[[ALLOC_0]] : memref<3x3xf32>
-// CHECK:           return
-// CHECK:         }
+// CHECK:  func.func @some_inactive(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>) {
+// CHECK-NEXT:    affine.parallel (%arg3, %arg4) = (0, 0) to (3, 3) {
+// CHECK-NEXT:      %0 = affine.load %arg0[%arg3, %arg4] : memref<3x3xf32>
+// CHECK-NEXT:      %1 = affine.load %arg1[%arg3, %arg4] : memref<3x3xf32>
+// CHECK-NEXT:      %2 = math.exp %1 : f32
+// CHECK-NEXT:      %3 = math.sin %2 : f32
+// CHECK-NEXT:      %4 = math.tanh %3 : f32
+// CHECK-NEXT:      %5 = arith.mulf %4, %4 : f32
+// CHECK-NEXT:      %6 = arith.mulf %5, %0 : f32
+// CHECK-NEXT:      affine.store %6, %arg2[%arg3, %arg4] : memref<3x3xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func @dsome_inactive(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>, %arg3: memref<3x3xf32>, %arg4: memref<3x3xf32>) {
+// CHECK-NEXT:    call @diffesome_inactive(%arg0, %arg1, %arg2, %arg3, %arg4) : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }
+// CHECK:  func.func private @diffesome_inactive(%arg0: memref<3x3xf32>, %arg1: memref<3x3xf32>, %arg2: memref<3x3xf32>, %arg3: memref<3x3xf32>, %arg4: memref<3x3xf32>) {
+// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
+// CHECK-NEXT:    %alloc = memref.alloc() : memref<3x3xf32>
+// CHECK-NEXT:    affine.parallel (%arg5, %arg6) = (0, 0) to (3, 3) {
+// CHECK-NEXT:      %0 = affine.load %arg0[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      %1 = affine.load %arg2[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      %2 = math.exp %1 : f32
+// CHECK-NEXT:      %3 = math.sin %2 : f32
+// CHECK-NEXT:      %4 = math.tanh %3 : f32
+// CHECK-NEXT:      %5 = arith.mulf %4, %4 : f32
+// CHECK-NEXT:      memref.store %5, %alloc[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      %6 = arith.mulf %5, %0 : f32
+// CHECK-NEXT:      affine.store %6, %arg3[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    affine.parallel (%arg5, %arg6) = (0, 0) to (3, 3) {
+// CHECK-NEXT:      %0 = memref.load %alloc[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      %1 = memref.load %arg4[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      memref.store %cst, %arg4[%arg5, %arg6] : memref<3x3xf32>
+// CHECK-NEXT:      %2 = arith.mulf %1, %0 fastmath<fast> : f32
+// CHECK-NEXT:      %3 = enzyme.atomic_rmw addf %2, %arg1[%arg5, %arg6] monotonic fastmath<fast> : (f32, memref<3x3xf32>) -> f32
+// CHECK-NEXT:    }
+// CHECK-NEXT:    memref.dealloc %alloc : memref<3x3xf32>
+// CHECK-NEXT:    return
+// CHECK-NEXT:  }

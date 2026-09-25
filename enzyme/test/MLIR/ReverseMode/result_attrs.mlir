@@ -10,8 +10,8 @@ module {
 
   func.func @main_ad(%arg0: i32, %arg1: f32, %arg2: f32) -> (f32, f32) {
     %r:2 = enzyme.autodiff @main(%arg0, %arg1, %arg2) {
-      activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>],
-      ret_activity=[#enzyme<activity enzyme_constnoneed>, #enzyme<activity enzyme_active>]
+      activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>],
+      ret_activity=[#enzyme.activity<enzyme_constnoneed>, #enzyme.activity<enzyme_active>]
     } : (i32, f32, f32) -> (f32, f32)
     return %r#0, %r#1 : f32, f32
   }

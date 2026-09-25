@@ -65,8 +65,14 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
 
   using namespace llvm;
   llvm::LibFunc libfunc;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc)
+    return false;
+#else
   if (!TLI.getLibFunc(name, libfunc))
     return false;
+#endif
 
   switch (libfunc) {
   case LibFunc_malloc: // malloc(unsigned int);
@@ -135,7 +141,12 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   llvm::LibFunc libfunc;
   if (name == "_ZdlPvmSt11align_val_t")
     return true;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc) {
+#else
   if (!TLI.getLibFunc(name, libfunc)) {
+#endif
     if (name == "free")
       return true;
     if (name == "_mlir_memref_to_llvm_free")

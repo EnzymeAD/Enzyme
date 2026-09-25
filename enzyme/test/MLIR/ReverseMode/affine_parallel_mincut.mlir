@@ -42,7 +42,7 @@ func.func private @reproducer(%cond: i1, %srcGrid: memref<?xf32>, %dstGrid: memr
 
 func.func @dreproducer(%cond: i1, %src: memref<?xf32>, %dsrc: memref<?xf32>, %dst: memref<?xf32>, %ddst: memref<?xf32>) {
   enzyme.autodiff @reproducer(%cond, %src, %dsrc, %dst, %ddst) {
-    activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (i1, memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return

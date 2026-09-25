@@ -9,7 +9,7 @@ module {
   }
 
   func.func @dsquare(%x: f64, %dr: f64) -> f64 {
-    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
+    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
     return %r : f64
   }
 }
@@ -59,13 +59,10 @@ module {
 
 
 // REM:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
-// REM-NEXT:    %[[cst:.+]] = arith.constant 0.000000e+00 : f64
-// REM-NEXT:    %[[a1:.+]] = arith.addf %arg1, %[[cst]] fastmath<fast> : f64
-// REM-NEXT:    %[[a2:.+]] = arith.mulf %[[a1]], %arg0 fastmath<fast> : f64
-// REM-NEXT:    %[[a3:.+]] = arith.addf %[[a2]], %[[cst]] fastmath<fast> : f64
-// REM-NEXT:    %[[a4:.+]] = arith.mulf %[[a1]], %arg0 fastmath<fast> : f64
-// REM-NEXT:    %[[a5:.+]] = arith.addf %[[a3]], %[[a4]] fastmath<fast> : f64
-// REM-NEXT:    return %[[a5]] : f64
+// REM-NEXT:    %[[a1:.+]] = arith.mulf %arg1, %arg0 fastmath<fast> : f64
+// REM-NEXT:    %[[a2:.+]] = arith.mulf %arg1, %arg0 fastmath<fast> : f64
+// REM-NEXT:    %[[a3:.+]] = arith.addf %[[a1]], %[[a2]] fastmath<fast> : f64
+// REM-NEXT:    return %[[a3]] : f64
 // REM-NEXT:  }
 
 // FIN:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {

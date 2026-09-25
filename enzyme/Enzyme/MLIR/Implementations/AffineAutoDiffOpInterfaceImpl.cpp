@@ -376,8 +376,11 @@ struct AffineForOpInterfaceReverse
                                              loadOp.getAffineMap(), operands);
       assert(indices && "failed to expand affine.load's index map");
       Value memref = mapping.lookupOrDefault(loadOp.getMemref());
-      Operation *newLoad =
+      auto newLoadOp =
           memref::LoadOp::create(builder, loadOp.getLoc(), memref, *indices);
+      newLoadOp.setAlignmentAttr(
+          loadOp->getAttrOfType<IntegerAttr>("alignment"));
+      Operation *newLoad = newLoadOp;
       mapping.map(loadOp.getResult(), newLoad->getResult(0));
       // IRMapping tracks an operation map alongside its value map (populated
       // automatically by builder.clone, which this bypasses); callers such
@@ -398,8 +401,11 @@ struct AffineForOpInterfaceReverse
       assert(indices && "failed to expand affine.store's index map");
       Value memref = mapping.lookupOrDefault(storeOp.getMemref());
       Value value = mapping.lookupOrDefault(storeOp.getValue());
-      Operation *newStore = memref::StoreOp::create(builder, storeOp.getLoc(),
-                                                    value, memref, *indices);
+      auto newStoreOp = memref::StoreOp::create(builder, storeOp.getLoc(),
+                                                value, memref, *indices);
+      newStoreOp.setAlignmentAttr(
+          storeOp->getAttrOfType<IntegerAttr>("alignment"));
+      Operation *newStore = newStoreOp;
       mapping.map(&op, newStore);
       return;
     }

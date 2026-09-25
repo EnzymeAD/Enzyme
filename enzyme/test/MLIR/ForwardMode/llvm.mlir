@@ -10,7 +10,7 @@ module {
     return %r : f64
   }
   func.func @dsq(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r : f64
   }
 
@@ -20,7 +20,7 @@ module {
   }
 
   func.func @dexp(%x: f32, %dx: f32) -> f32 {
-    %r = enzyme.fwddiff @exp(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f32, f32) -> f32
+    %r = enzyme.fwddiff @exp(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f32, f32) -> f32
     return %r : f32
   }
 }
@@ -41,8 +41,8 @@ module {
 // CHECK-NEXT:   }
 
 // CHECK:  func.func private @fwddiffeexp(%[[arg0:.+]]: f32, %[[arg1:.+]]: f32) -> f32 {
-// CHECK-NEXT:    %[[der:.+]] = llvm.intr.exp(%[[arg0]]) {fastmathFlags = #llvm.fastmath<fast>} : (f32) -> f32
-// CHECK-NEXT:    %[[res:.+]] = llvm.fmul %[[arg1]], %[[der]] {fastmathFlags = #llvm.fastmath<fast>} : f32
+// CHECK-NEXT:    %[[der:.+]] = llvm.intr.exp(%[[arg0]]) fastmath<fast> : (f32) -> f32
+// CHECK-NEXT:    %[[res:.+]] = llvm.fmul %[[arg1]], %[[der]] fastmath<fast> : f32
 // CHECK-NEXT:    %[[exp:.+]] = llvm.intr.exp(%[[arg0]]) : (f32) -> f32
 // CHECK-NEXT:    return %[[res]] : f32
 // CHECK-NEXT:  }

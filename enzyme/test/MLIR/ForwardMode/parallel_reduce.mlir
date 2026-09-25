@@ -20,8 +20,8 @@ module {
 
   func.func @dnrm2(%arg0: memref<?xf64>, %arg1: memref<?xf64>) -> f64  {
     %3 = enzyme.fwddiff @nrm2(%arg0, %arg1) { 
-        activity=[#enzyme<activity enzyme_dup>], 
-        ret_activity=[#enzyme<activity enzyme_dupnoneed>] 
+        activity=[#enzyme.activity<enzyme_dup>], 
+        ret_activity=[#enzyme.activity<enzyme_dupnoneed>] 
       } : (memref<?xf64>, memref<?xf64>) -> (f64)
     return %3 : f64
   }
