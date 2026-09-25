@@ -56,6 +56,7 @@ def Rows : MagicInst; // given a transpose, normal rows, normal cols get the tru
 def Concat : MagicInst;
 
 def ShadowNoInc : MagicInst;
+def Dep : MagicInst;
 
 class Binop<string _s, list<string> _tys> {
   string s = _s;
@@ -89,8 +90,13 @@ class IntMatchers<string _inty, string _outty, list<string> _before, list<string
 
 def side_to_trans : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "'R'", "'r'"],
-    ["'n'", "'N'", "'T'", "'t'"]
+    ["'l'", "'L'", "141", "0", "'R'", "'r'", "142", "1"],
+    ["'n'", "'N'", "'N'", "'N'", "'T'", "'t'", "'T'", "'T'"]
+    >;
+def side_to_rtrans : IntMatchers<
+    "charType", "charType",
+    ["'l'", "'L'", "141", "0", "'R'", "'r'", "142", "1"],
+    ["'t'", "'T'", "'T'", "'T'", "'N'", "'n'", "'N'", "'N'"]
     >;
 
 def is_diag_int : IntMatchers<
@@ -107,6 +113,7 @@ def is_nonunit : MagicInst;
 def First : MagicInst;
 def Lookup : MagicInst;
 def LoadLookup : MagicInst;
+def mat_ld : MagicInst;
 
 class FAdd<string _tmp=""> {
   string unused = _tmp;
@@ -160,6 +167,10 @@ class CopyLowerToUpper<string _tmp> {
 }
 
 class MemcpyMatAdd<bit _shouldZero> {
+  bit shouldZero = _shouldZero;
+}
+
+class MatAdd<bit _shouldZero> {
   bit shouldZero = _shouldZero;
 }
 
@@ -672,6 +683,45 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
                   ]
                   >;
 
+def trsv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, $incx),
+                  ["x"],
+                  [cblas_layout, uplo, trans, diag, len, mld<["uplo", "n", "n"]>, vinc<["n"]>],
+                  [
+                  /* A     */
+                    (Seq<["tri", "triangular", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"ger">
+                        $layout,
+                        $n,
+                        $n,
+                        Constant<"-1">,
+                        (Rows $trans,
+                          (Concat (Shadow $x)),
+                          (Concat $x)),
+                        (Rows $trans,
+                          (Concat $x),
+                          (Concat (Shadow $x))),
+                        use<"tri">, $n),
+
+                      (BlasCall<"copy">
+                          (ISelect (is_nonunit $diag), ConstantInt<0>, $n),
+                          (First (Shadow $A)), (Add $lda, ConstantInt<1>),
+                          use<"tri">, (Add $n, ConstantInt<1>)),
+
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
+                      ),
+                  /* x     */ (BlasCall<"trsv"> $layout, $uplo, transpose<"trans">, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x)),
+                  ]
+                  ,
+                  (Seq<["tmp", "vector", "n"], [], 0>
+                    (BlasCall<"copy"> $n, (Dep (Shadow $A), (Dep (Shadow $x), $x)), use<"tmp">, ConstantInt<1>),
+                    (BlasCall<"trmv"> $layout, $uplo, $trans, $diag, $n, (Shadow $A), (Dep (Shadow $x), use<"tmp">), ConstantInt<1>),
+                    (BlasCall<"axpy"> $n, Constant<"-1">, (Dep (Shadow $A), use<"tmp">), ConstantInt<1>, (Shadow $x)),
+                    (BlasCall<"axpy"> (ISelect (is_nonunit $diag), ConstantInt<0>, $n), Constant<"1">, (Dep (Shadow $A), $x), (Shadow $x)),
+                    (BlasCall<"trsv"> $layout, $uplo, $trans, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x))
+                  )
+                  >;
+
 def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $ap),
                   ["ap"],
                   [cblas_layout, uplo, len, fp, vinc<["n"]>, vinc<["n"]>, ap<["n"]>],
@@ -718,9 +768,55 @@ def trsm: CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $al
                   [cblas_layout, side, uplo, trans, diag, len, len, fp, mld<["side", "m", "n"]>, mld<["m","n"]>],
                   [
                     /* alpha */ (AssertingInactiveArg),
-                    /* A     */ (AssertingInactiveArg),
-                    /* B     */ (AssertingInactiveArg),
+                    /* A     */ (Seq<["tmp", "product", "m", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, Char<"G">, $m, $n, (Shadow $B), use<"tmp">, (mat_ld $layout, $m, $n)),
+                      (BlasCall<"trsm"> $layout, $side, $uplo, transpose<"transa">, $diag, $m, $n, Constant<"1.0">, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), use<"tmp">, (mat_ld $layout, $m, $n)),
+                      (Seq<["tri", "side_square", "side", "m", "n"], [], 1>
+                        (BlasCall<"lacpy"> $layout, $uplo, (ISelect (is_left $side), $m, $n), (ISelect (is_left $side), $m, $n), (Shadow $A), use<"tri">, (ISelect (is_left $side), $m, $n)),
+                        (BlasCall<"gemm">
+                          $layout,
+                          (side_to_trans $side),
+                          (side_to_rtrans $side),
+                          (ISelect (is_left $side), $m, $n),
+                          (ISelect (is_left $side), $m, $n),
+                          (ISelect (is_left $side), $n, $m),
+                          Constant<"-1">,
+                          (Rows (side_to_trans $side),
+                            (Rows $transa,
+                              (Concat use<"tmp">, (mat_ld $layout, $m, $n)),
+                              (Concat $B, $ldb)),
+                            (Rows $transa,
+                              (Concat $B, $ldb),
+                              (Concat use<"tmp">, (mat_ld $layout, $m, $n)))),
+                          (Rows (side_to_trans $side),
+                            (Rows $transa,
+                              (Concat $B, $ldb),
+                              (Concat use<"tmp">, (mat_ld $layout, $m, $n))),
+                            (Rows $transa,
+                              (Concat use<"tmp">, (mat_ld $layout, $m, $n)),
+                              (Concat $B, $ldb))),
+                          Constant<"1">,
+                          use<"tri">, (ISelect (is_left $side), $m, $n)),
+                        (BlasCall<"copy">
+                          (ISelect (is_nonunit $diag), ConstantInt<0>, (ISelect (is_left $side), $m, $n)),
+                          (First (Shadow $A)), (Add $lda, ConstantInt<1>),
+                          use<"tri">, (Add (ISelect (is_left $side), $m, $n), ConstantInt<1>)),
+                        (BlasCall<"lacpy"> $layout, $uplo, (ISelect (is_left $side), $m, $n), (ISelect (is_left $side), $m, $n), use<"tri">, (ISelect (is_left $side), $m, $n), (Shadow $A))
+                      )
+                    ),
+                    /* B     */ (BlasCall<"trsm"> $layout, $side, $uplo, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), (Shadow $B)),
                   ]
+                  ,
+                  (Seq<["tmp", "product", "m", "n"], [], 0>
+                    (Dep (Shadow $alpha), (AssertingInactiveArg)),
+                    (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $alpha, $m, $n, (Shadow $B), Alloca<1>),
+                    (BlasCall<"lacpy"> $layout, Char<"G">, $m, $n, (Dep (Shadow $A), (Dep (Shadow $B), $B)), $ldb, use<"tmp">, (mat_ld $layout, $m, $n)),
+                    (BlasCall<"trmm"> $layout, $side, $uplo, $transa, $diag, $m, $n, Constant<"1.0">, (Shadow $A), (Dep (Shadow $B), use<"tmp">), (mat_ld $layout, $m, $n)),
+                    (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"-1.0">, $m, $n, (Dep (Shadow $A), use<"tmp">), (mat_ld $layout, $m, $n), Alloca<1>),
+                    (MatAdd<true> $layout, $m, $n, (Shadow $B), (Concat (Dep (Shadow $A), use<"tmp">), (mat_ld $layout, $m, $n))),
+                    (MatAdd<false> $layout, (ISelect (is_nonunit $diag), ConstantInt<0>, $m), $n, (Shadow $B), (Concat (Dep (Shadow $A), $B), $ldb)),
+                    (BlasCall<"trsm"> $layout, $side, $uplo, $transa, $diag, $m, $n, Constant<"1.0">, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), (Shadow $B))
+                  )
                   >;
 
 def uplo_to_normal : IntMatchers<
@@ -743,7 +839,6 @@ def uplo_to_rside : IntMatchers<
     ["'l'", "'L'", "'U'", "'u'"],
     ["'R'", "'R'", "'L'", "'L'"]
     >;
-
 
 def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   ["A"],
@@ -888,4 +983,20 @@ def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $i
                     ),
                     (BlasCall<"potrs"> $layout, $uplo, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>)
                   ]
+                  ,
+                  (Seq<["tmp", "product", "n", "nrhs"], [], 0>
+                    (BlasCall<"lacpy"> $layout, Char<"G">, $n, $nrhs, (Dep (Shadow $A), (Dep (Shadow $B), $B)), $ldb, use<"tmp">, (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"trmm"> $layout, Char<"L">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $nrhs, Constant<"1.0">, (Dep (Shadow $A), $A), (ld $A, Char<"N">, $lda, $n, $n), (Dep (Shadow $B), use<"tmp">), (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"trmm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $nrhs, Constant<"1.0">, (Shadow $A), (Dep (Shadow $B), use<"tmp">), (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"-1.0">, $n, $nrhs, (Dep (Shadow $A), (Dep (Shadow $B), use<"tmp">)), (mat_ld $layout, $n, $nrhs), Alloca<1>),
+                    (MatAdd<true> $layout, $n, $nrhs, (Shadow $B), (Concat (Dep (Shadow $A), use<"tmp">), (mat_ld $layout, $n, $nrhs))),
+
+                    (BlasCall<"lacpy"> $layout, Char<"G">, $n, $nrhs, (Dep (Shadow $A), (Dep (Shadow $B), $B)), $ldb, use<"tmp">, (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"trmm"> $layout, Char<"L">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $nrhs, Constant<"1.0">, (Shadow $A), (Dep (Shadow $B), use<"tmp">), (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"trmm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $nrhs, Constant<"1.0">, (Dep (Shadow $A), $A), (ld $A, Char<"N">, $lda, $n, $n), (Dep (Shadow $B), use<"tmp">), (mat_ld $layout, $n, $nrhs)),
+                    (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"-1.0">, $n, $nrhs, (Dep (Shadow $A), (Dep (Shadow $B), use<"tmp">)), (mat_ld $layout, $n, $nrhs), Alloca<1>),
+                    (MatAdd<true> $layout, $n, $nrhs, (Shadow $B), (Concat (Dep (Shadow $A), use<"tmp">), (mat_ld $layout, $n, $nrhs))),
+
+                    (BlasCall<"potrs"> $layout, $uplo, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>)
+                  )
                   >;

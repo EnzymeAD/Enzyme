@@ -72,12 +72,26 @@ void my_dtrmv(char layout, char uplo, char trans,
     inDerivative = true;
 }
 
+void my_dtrsv(char layout, char uplo, char trans, char diag, int N,
+              double *__restrict__ A, int lda, double *__restrict__ X,
+              int incx) {
+  cblas_dtrsv(layout, uplo, trans, diag, N, A, lda, X, incx);
+  inDerivative = true;
+}
+
 void my_dtrmm(char layout, char side, char uplo,
                                            char trans, char diag, int M, int N,
                                            double alpha, double * __restrict__ A, int lda,
                                            double *__restrict B, int ldb) {
     cblas_dtrmm(layout, side, uplo, trans, diag, M, N, alpha, A, lda, B, ldb);
     inDerivative = true;
+}
+
+void my_dtrsm(char layout, char side, char uplo, char trans, char diag, int M,
+              int N, double alpha, double *__restrict__ A, int lda,
+              double *__restrict__ B, int ldb) {
+  cblas_dtrsm(layout, side, uplo, trans, diag, M, N, alpha, A, lda, B, ldb);
+  inDerivative = true;
 }
 
 void ow_dtrmm(char layout, char side, char uplo,
@@ -946,6 +960,278 @@ static void trmvTests() {
   }
   }
   REALCOPY = false;
+}
+
+static void trsvTests() {
+  int N = 17;
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+      for (auto diag : {'U', 'u', 'N', 'n'})
+        for (auto transA :
+             {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, N, N, lda),
+              /*B*/ BlasInfo(B, N, incB),
+              /*C*/ BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+          };
+          {
+            std::string Test = "TRSV active A, x";
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            assert(calls.size() == 1);
+            assert(calls[0].inDerivative == false);
+            assert(calls[0].type == CallType::TRSV);
+            assert(calls[0].pout_arg1 == B);
+            assert(calls[0].pin_arg1 == A);
+            assert(calls[0].pin_arg2 == UNUSED_POINTER);
+            assert(calls[0].farg1 == UNUSED_DOUBLE);
+            assert(calls[0].farg2 == UNUSED_DOUBLE);
+            assert(calls[0].layout == layout);
+            assert(calls[0].targ1 == (char)transA);
+            assert(calls[0].targ2 == UNUSED_TRANS);
+            assert(calls[0].iarg1 == N);
+            assert(calls[0].iarg2 == UNUSED_INT);
+            assert(calls[0].iarg3 == UNUSED_INT);
+            assert(calls[0].iarg4 == lda);
+            assert(calls[0].iarg5 == incB);
+            assert(calls[0].iarg6 == UNUSED_INT);
+            assert(calls[0].uplo == uplo);
+            assert(calls[0].diag == diag);
+
+            checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+            init();
+            __enzyme_autodiff((void *)my_dtrsv, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_dup,
+                              A, dA, enzyme_const, lda, enzyme_dup, B, dB,
+                              enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            inDerivative = true;
+
+            size_t idx = 1;
+            double *x = B;
+            int xinc = incB;
+            if (foundCalls[idx].type == CallType::COPY) {
+              x = (double *)foundCalls[idx].pout_arg1;
+              xinc = 1;
+              inputs[4] = BlasInfo(x, N, xinc);
+              cblas_dcopy(N, B, incB, x, xinc);
+              idx++;
+            }
+
+            cblas_dtrsv(layout, uplo, (char)transpose(transA), diag, N, A, lda,
+                        dB, incB);
+            idx++;
+
+            assert(foundCalls[idx].type == CallType::LACPY);
+            double *tri = (double *)foundCalls[idx].pout_arg1;
+            inputs[3] = BlasInfo(tri, layout, N, N, N);
+
+            cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+            cblas_dger(layout, N, N, -1.0, is_normal(transA) ? dB : x,
+                       is_normal(transA) ? incB : xinc,
+                       is_normal(transA) ? x : dB,
+                       is_normal(transA) ? xinc : incB, tri, N);
+
+            cblas_dcopy((diag == 'U' || diag == 'u') ? N : 0, dA, lda + 1, tri,
+                        N + 1);
+
+            cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+          {
+            std::string Test = "TRSV active x";
+
+            init();
+            __enzyme_autodiff((void *)my_dtrsv, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N,
+                              enzyme_const, A, enzyme_const, lda, enzyme_dup,
+                              B, dB, enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            inDerivative = true;
+
+            cblas_dtrsv(layout, uplo, (char)transpose(transA), diag, N, A, lda,
+                        dB, incB);
+
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+          {
+            std::string Test = "TRSV active A";
+
+            init();
+            __enzyme_autodiff((void *)my_dtrsv, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_dup,
+                              A, dA, enzyme_const, lda, enzyme_const, B,
+                              enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_dtrsv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
+            inDerivative = true;
+
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+        }
+  }
+}
+
+static void trsmTests() {
+  int M = 5;
+  int N = 4;
+  for (char layout : {CblasColMajor, CblasRowMajor})
+    for (auto side : {'L', 'R'})
+      for (auto uplo : {'U', 'L'})
+        for (auto diag : {'U', 'N'})
+          for (auto transA :
+               {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+            int aN = is_left(side) ? M : N;
+            int tmpLD = mat_ld(layout, M, N);
+            BlasInfo inputs[6] = {
+                /*A*/ BlasInfo(A, layout, aN, aN, lda),
+                /*B*/ BlasInfo(B, layout, M, N, incB),
+                /*C*/ BlasInfo(),
+                BlasInfo(),
+                BlasInfo(),
+                BlasInfo(),
+            };
+            {
+              std::string Test = "TRSM active A, B";
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, A,
+                       lda, B, incB);
+
+              assert(calls.size() == 1);
+              assert(calls[0].inDerivative == false);
+              assert(calls[0].type == CallType::TRSM);
+              assert(calls[0].pout_arg1 == B);
+              assert(calls[0].pin_arg1 == A);
+              assert(calls[0].layout == layout);
+              assert(calls[0].side == side);
+              assert(calls[0].uplo == uplo);
+              assert(calls[0].diag == diag);
+              assert(calls[0].targ1 == (char)transA);
+              assert(calls[0].iarg1 == M);
+              assert(calls[0].iarg2 == N);
+              assert(calls[0].iarg4 == lda);
+              assert(calls[0].iarg5 == incB);
+              assert(calls[0].farg1 == alpha);
+
+              init();
+              __enzyme_autodiff(
+                  (void *)my_dtrsm, enzyme_const, layout, enzyme_const, side,
+                  enzyme_const, uplo, enzyme_const, (char)transA, enzyme_const,
+                  diag, enzyme_const, M, enzyme_const, N, enzyme_const, alpha,
+                  enzyme_dup, A, dA, enzyme_const, lda, enzyme_dup, B, dB,
+                  enzyme_const, incB);
+              foundCalls = calls;
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, A,
+                       lda, B, incB);
+
+              size_t idx = 1;
+              double *B0 = B;
+              int B0LD = incB;
+              if (foundCalls[idx].type == CallType::LACPY &&
+                  foundCalls[idx].pin_arg1 == B) {
+                B0 = (double *)foundCalls[idx].pout_arg1;
+                B0LD = M;
+                inputs[3] = BlasInfo(B0, layout, M, N, B0LD);
+                cblas_dlacpy(layout, '\0', M, N, B, incB, B0, B0LD);
+                idx++;
+              }
+
+              inDerivative = true;
+
+              assert(foundCalls[idx].type == CallType::LACPY);
+              double *tmp = (double *)foundCalls[idx].pout_arg1;
+              inputs[4] = BlasInfo(tmp, layout, M, N, tmpLD);
+              cblas_dlacpy(layout, 'G', M, N, dB, incB, tmp, tmpLD);
+              idx++;
+
+              cblas_dtrsm(layout, side, uplo, (char)transpose(transA), diag, M,
+                          N, 1.0, A, lda, tmp, tmpLD);
+              idx++;
+
+              assert(foundCalls[idx].type == CallType::LACPY);
+              int triN = is_left(side) ? M : N;
+              double *tri = (double *)foundCalls[idx].pout_arg1;
+              inputs[5] = BlasInfo(tri, layout, triN, triN, triN);
+              cblas_dlacpy(layout, uplo, triN, triN, dA, lda, tri, triN);
+
+              bool normal = is_normal(transA);
+              double *gemmA =
+                  is_left(side) ? (normal ? tmp : B0) : (normal ? B0 : tmp);
+              int gemmALD =
+                  is_left(side) ? (normal ? tmpLD : B0LD)
+                                : (normal ? B0LD : tmpLD);
+              double *gemmB =
+                  is_left(side) ? (normal ? B0 : tmp) : (normal ? tmp : B0);
+              int gemmBLD =
+                  is_left(side) ? (normal ? B0LD : tmpLD)
+                                : (normal ? tmpLD : B0LD);
+              cblas_dgemm(layout, side_to_trans(side), side_to_rtrans(side),
+                          triN, triN, is_left(side) ? N : M, -1.0, gemmA,
+                          gemmALD, gemmB, gemmBLD, 1.0, tri, triN);
+
+              cblas_dcopy((diag == 'U') ? triN : 0, dA, lda + 1, tri,
+                          triN + 1);
+              cblas_dlacpy(layout, uplo, triN, triN, tri, triN, dA, lda);
+              cblas_dtrsm(layout, side, uplo, (char)transpose(transA), diag, M,
+                          N, alpha, A, lda, dB, incB);
+
+              checkTest(Test);
+            }
+            {
+              std::string Test = "TRSM active B";
+
+              init();
+              __enzyme_autodiff(
+                  (void *)my_dtrsm, enzyme_const, layout, enzyme_const, side,
+                  enzyme_const, uplo, enzyme_const, (char)transA, enzyme_const,
+                  diag, enzyme_const, M, enzyme_const, N, enzyme_const, alpha,
+                  enzyme_const, A, enzyme_const, lda, enzyme_dup, B, dB,
+                  enzyme_const, incB);
+              foundCalls = calls;
+              init();
+
+              my_dtrsm(layout, side, uplo, (char)transA, diag, M, N, alpha, A,
+                       lda, B, incB);
+
+              inDerivative = true;
+              cblas_dtrsm(layout, side, uplo, (char)transpose(transA), diag, M,
+                          N, alpha, A, lda, dB, incB);
+
+              checkTest(Test);
+            }
+          }
 }
 
 static void trmmTests() {
@@ -2214,6 +2500,10 @@ int main() {
   gemmTests();
 
   trmvTests();
+
+  trsvTests();
+
+  trsmTests();
 
   trmmTests();
 
