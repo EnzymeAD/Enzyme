@@ -355,6 +355,10 @@ public:
       APInt apvalue(IT.getWidth(), 0);
       return DenseElementsAttr::get(vecType, apvalue);
     }
+    if (isa<IndexType>(ET)) {
+      APInt apvalue(IndexType::kInternalStorageBitWidth, 0);
+      return DenseElementsAttr::get(vecType, apvalue);
+    }
     llvm::errs() << " cannot create null value of vector type: " << vecType
                  << "\n";
     assert(0);
@@ -385,25 +389,48 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width = 1) const {
-    auto vecType = cast<VectorType>(self);
-    auto ET = vecType.getElementType();
-    auto iface = cast<AutoDiffTypeInterface>(ET);
-    return VectorType::get(vecType.getShape(), iface.getShadowType(width));
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
-  bool isMutable() const { return false; }
+  bool isMutable(Type self) const { return false; }
 
-  bool isContainedIn(Type self, Type other) const {
-    if (self == other)
-      return true;
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
 
+  bool isZero(Type self, Value val) const {
     auto vecType = cast<VectorType>(self);
     auto ET = vecType.getElementType();
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(ET))
-      return iface.isContainedIn(other);
+    DenseElementsAttr eAttr;
 
-    return false;
+    if (!matchPattern(val, m_Constant(&eAttr)))
+      return false;
+
+    if (!eAttr.isSplat())
+      return false;
+    // recurse on the individual element type
+    auto splatVal = eAttr.getSplatValue<Attribute>();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+    return ADET && ADET.isZeroAttr(splatVal);
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    auto eAttr = dyn_cast<DenseElementsAttr>(attr);
+    if (!eAttr)
+      return false;
+
+    if (!eAttr.isSplat())
+      return false;
+
+    auto ET = eAttr.getType().getElementType();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+
+    if (!ADET)
+      return false;
+
+    return ADET.isZeroAttr(eAttr.getSplatValue<Attribute>());
   }
 
   int64_t getApproxSize(Type self) const {

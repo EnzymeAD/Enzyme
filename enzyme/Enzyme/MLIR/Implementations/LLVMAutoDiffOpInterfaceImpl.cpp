@@ -588,12 +588,16 @@ struct StoreOpInterfaceReverse
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<LLVM::StoreOp>(op);
-    auto addr = storeOp.getAddr();
-    if (gutils->isConstantValue(addr))
-      return {};
-    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
-                                     cacheBuilder)};
+    Value addr = storeOp.getAddr();
+    Value val = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (!gutils->isConstantValue(addr)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        return {gutils->initAndPushCache(
+            gutils->invertPointerM(addr, cacheBuilder), cacheBuilder)};
+      }
+    }
+    return {};
   }
 
   // A store of a mutable value -- a pointer -- has no float adjoint to
