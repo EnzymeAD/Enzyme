@@ -3825,6 +3825,58 @@ public:
       }
     }
 
+    // The ranges of a memmove may overlap, and then one segment's source may be
+    // another segment's destination. The segments must be done in an order in
+    // which none overwrites what another has still to read: the copies of the
+    // shadow back to front if the destination is above the source, and the
+    // derivatives in the reverse pass back to front if it is below (as within a
+    // segment, see getOrInsertDifferentialFloatMemmove). That is only known at
+    // run time. So the calls for the segments of one kind (a float type, or
+    // none) keep their order, and when they have to go back to front, the call
+    // for segment k does segment mirror[k] instead: the one as far from the end
+    // among the segments of that kind as k is from the start. Segments of
+    // different kinds do not overlap each other's ranges in a move by whole
+    // elements. A call does another segment by moving its pointers by the
+    // difference of the offsets, so the segments of a float type are made equal
+    // in length first, by giving each element a segment of its own.
+    SmallVector<size_t, 4> mirror, seglength;
+    if (ID == Intrinsic::memmove && toIterate.size() > 1 &&
+        isa<ConstantInt>(new_size)) {
+      auto segEnd = [&](size_t k) -> size_t {
+        return k + 1 < toIterate.size()
+                   ? std::get<1>(toIterate[k + 1])
+                   : cast<ConstantInt>(new_size)->getZExtValue();
+      };
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      std::map<Type *, std::set<size_t>> lengths;
+      for (size_t k = 0; k < toIterate.size(); k++)
+        lengths[std::get<0>(toIterate[k])].insert(segEnd(k) -
+                                                  std::get<1>(toIterate[k]));
+      decltype(toIterate) split;
+      for (size_t k = 0; k < toIterate.size(); k++) {
+        auto [floatTy, start, size] = toIterate[k];
+        size_t elsize = floatTy ? DL.getTypeAllocSize(floatTy) : 0;
+        if (floatTy && lengths[floatTy].size() > 1 &&
+            (segEnd(k) - start) % elsize == 0) {
+          for (size_t o = start; o < segEnd(k); o += elsize)
+            split.emplace_back(floatTy, o, elsize);
+        } else {
+          split.emplace_back(floatTy, start, size);
+        }
+      }
+      toIterate = split;
+      std::map<Type *, SmallVector<size_t, 4>> kinds;
+      for (size_t k = 0; k < toIterate.size(); k++) {
+        kinds[std::get<0>(toIterate[k])].push_back(k);
+        seglength.push_back(segEnd(k) - std::get<1>(toIterate[k]));
+      }
+      mirror.resize(toIterate.size());
+      for (auto &pair : kinds)
+        for (size_t j = 0; j < pair.second.size(); j++)
+          mirror[pair.second[j]] = pair.second[pair.second.size() - 1 - j];
+    }
+    size_t segment = 0;
+
     // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
     // vd.str() << "\n";
 
@@ -3861,6 +3913,37 @@ public:
           srcalign = 1;
         }
       }
+      // The segment this call does instead when the calls go back to front,
+      // how far its start is from this one's, and its length.
+      size_t k = segment++;
+      size_t m = k < mirror.size() ? mirror[k] : k;
+      int64_t delta = (int64_t)std::get<1>(toIterate[m]) - (int64_t)seg_start;
+      Value *mlength = length;
+      if (m != k)
+        mlength = ConstantInt::get(new_size->getType(), seglength[m]);
+      if (m != k) {
+        for (auto start : {seg_start, std::get<1>(toIterate[m])}) {
+          subdstalign = std::min<unsigned>(
+              subdstalign,
+              commonAlignment(dstAlign.valueOrOne(), start).value());
+          subsrcalign = std::min<unsigned>(
+              subsrcalign,
+              commonAlignment(srcAlign.valueOrOne(), start).value());
+        }
+      }
+      // Moves `ptr` to the mirrored segment if `backwards`.
+      auto mirrorPtr = [&](IRBuilder<> &B, Value *ptr, Value *backwards) {
+        return B.CreateInBoundsGEP(
+            Type::getInt8Ty(ptr->getContext()), ptr,
+            B.CreateSelect(backwards,
+                           ConstantInt::get(new_size->getType(), delta,
+                                            /*IsSigned*/ true),
+                           ConstantInt::get(new_size->getType(), 0)));
+      };
+      auto mirrored = [&](Value *dst, Value *src) {
+        return m != k && dst->getType() == src->getType() &&
+               dst->getType()->isPointerTy();
+      };
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
       Value *shadow_dst = gutils->isConstantValue(orig_dst)
                               ? nullptr
@@ -3874,15 +3957,54 @@ public:
           shadow_dst = gutils->getNewFromOriginal(orig_dst);
         if (shadow_src == nullptr)
           shadow_src = gutils->getNewFromOriginal(orig_src);
-        SubTransferHelper(
-            gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
-            /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
-            gutils->getNewFromOriginal(orig_dst),
-            gutils->isConstantValue(orig_src), shadow_src,
-            gutils->getNewFromOriginal(orig_src),
-            /*length*/ length, /*volatile*/ isVolatile, &MTI,
-            /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
-            /*backwardsShadow*/ backwardsShadow);
+        Value *primal_dst = gutils->getNewFromOriginal(orig_dst);
+        Value *primal_src = gutils->getNewFromOriginal(orig_src);
+        Value *seg_length = length;
+        bool shadowsLookedUp = false;
+        // Whether SubTransferHelper copies the segment in the forward pass.
+        bool copies = floatTy
+                          ? Mode == DerivativeMode::ForwardModeSplit
+                          : (forwardsShadow &&
+                             (Mode == DerivativeMode::ReverseModePrimal ||
+                              Mode == DerivativeMode::ReverseModeCombined)) ||
+                                (backwardsShadow &&
+                                 (Mode == DerivativeMode::ReverseModeGradient ||
+                                  Mode == DerivativeMode::ForwardModeSplit));
+        if (mirrored(shadow_dst, shadow_src) && mlength == length && floatTy &&
+            (Mode == DerivativeMode::ReverseModeGradient ||
+             Mode == DerivativeMode::ReverseModeCombined)) {
+          // The derivative is taken in the reverse pass, from the looked up
+          // pointers: back to front if the destination is below the source.
+          IRBuilder<> Builder2(&MTI);
+          gutils->getReverseBuilder(Builder2);
+          shadow_dst = gutils->lookupM(shadow_dst, Builder2);
+          shadow_src = gutils->lookupM(shadow_src, Builder2);
+          Value *backwards = Builder2.CreateICmpULT(shadow_dst, shadow_src);
+          shadow_dst = mirrorPtr(Builder2, shadow_dst, backwards);
+          shadow_src = mirrorPtr(Builder2, shadow_src, backwards);
+          if (gutils->runtimeActivity) {
+            primal_dst = mirrorPtr(
+                Builder2, gutils->lookupM(primal_dst, Builder2), backwards);
+            primal_src = mirrorPtr(
+                Builder2, gutils->lookupM(primal_src, Builder2), backwards);
+          }
+          shadowsLookedUp = true;
+        } else if (mirrored(shadow_dst, shadow_src) && copies) {
+          // The copy of the shadow is made in the forward pass: back to front
+          // if the destination is above the source.
+          Value *backwards = BuilderZ.CreateICmpUGT(shadow_dst, shadow_src);
+          shadow_dst = mirrorPtr(BuilderZ, shadow_dst, backwards);
+          shadow_src = mirrorPtr(BuilderZ, shadow_src, backwards);
+          seg_length = BuilderZ.CreateSelect(backwards, mlength, length);
+        }
+        SubTransferHelper(gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
+                          /*offset*/ seg_start,
+                          gutils->isConstantValue(orig_dst), shadow_dst,
+                          primal_dst, gutils->isConstantValue(orig_src),
+                          shadow_src, primal_src,
+                          /*length*/ seg_length, /*volatile*/ isVolatile, &MTI,
+                          /*allowForward*/ forwardsShadow, shadowsLookedUp,
+                          /*backwardsShadow*/ backwardsShadow);
       };
 
       auto fwd_rule = [&](Value *ddst, Value *dsrc) {
@@ -3890,6 +4012,13 @@ public:
           ddst = gutils->getNewFromOriginal(orig_dst);
         if (dsrc == nullptr)
           dsrc = gutils->getNewFromOriginal(orig_src);
+        // The copy goes back to front if the destination is above the source.
+        if (mirrored(ddst, dsrc) && mlength == length &&
+            !(floatTy && gutils->isConstantValue(orig_src))) {
+          Value *backwards = BuilderZ.CreateICmpUGT(ddst, dsrc);
+          ddst = mirrorPtr(BuilderZ, ddst, backwards);
+          dsrc = mirrorPtr(BuilderZ, dsrc, backwards);
+        }
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
