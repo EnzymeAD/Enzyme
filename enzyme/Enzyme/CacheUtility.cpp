@@ -488,6 +488,92 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
   return LimitVar;
 }
 
+/// Either result is CouldNotCompute if scalar evolution cannot compute it.
+/// Exits that are guaranteed to reach an unreachable are ignored. The IR is
+/// not changed.
+void CacheUtility::computeLoopLimits(Loop *L, const SCEV *&Limit,
+                                     const SCEV *&MaxIterations) {
+  MaxIterations = nullptr;
+  const SCEV *MayExitMaxBECount = nullptr;
+
+  SmallVector<BasicBlock *, 8> ExitingBlocks;
+  L->getExitingBlocks(ExitingBlocks);
+
+  // Remove all exiting blocks that are guaranteed
+  // to result in unreachable
+  for (auto &ExitingBlock : ExitingBlocks) {
+    BasicBlock *Exit = nullptr;
+    for (auto *SBB : successors(ExitingBlock)) {
+      if (!L->contains(SBB)) {
+        if (SE.GuaranteedUnreachable.count(SBB))
+          continue;
+        Exit = SBB;
+        break;
+      }
+    }
+    if (!Exit)
+      ExitingBlock = nullptr;
+  }
+  ExitingBlocks.erase(
+      std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
+      ExitingBlocks.end());
+
+  // Compute the exit in the scenarios where an unreachable
+  // is not hit
+  for (BasicBlock *ExitingBlock : ExitingBlocks) {
+    assert(L->contains(ExitingBlock));
+
+    ScalarEvolution::ExitLimit EL =
+        SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
+
+    bool seenHeaders = false;
+    SmallPtrSet<BasicBlock *, 4> Seen;
+    std::deque<BasicBlock *> Todo = {ExitingBlock};
+    while (Todo.size()) {
+      auto cur = Todo.front();
+      Todo.pop_front();
+      if (Seen.count(cur))
+        continue;
+      if (!L->contains(cur))
+        continue;
+      if (cur == L->getHeader()) {
+        seenHeaders = true;
+        break;
+      }
+      for (auto S : successors(cur)) {
+        Todo.push_back(S);
+      }
+    }
+    if (seenHeaders) {
+      if (MaxIterations == nullptr ||
+          MaxIterations == SE.getCouldNotCompute()) {
+        MaxIterations = EL.ExactNotTaken;
+      }
+      if (MaxIterations != SE.getCouldNotCompute()) {
+        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+          MaxIterations =
+              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+        }
+      }
+
+      if (MayExitMaxBECount == nullptr ||
+          EL.ExactNotTaken == SE.getCouldNotCompute())
+        MayExitMaxBECount = EL.ExactNotTaken;
+
+      if (EL.ExactNotTaken != MayExitMaxBECount) {
+        MayExitMaxBECount = SE.getCouldNotCompute();
+      }
+    }
+  }
+  if (MayExitMaxBECount == nullptr) {
+    MayExitMaxBECount = SE.getCouldNotCompute();
+  }
+  if (MaxIterations == nullptr) {
+    MaxIterations = SE.getCouldNotCompute();
+  }
+  Limit = MayExitMaxBECount;
+}
+
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
   assert(BB->getParent() == newFunc);
@@ -538,86 +624,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
 
   const SCEV *Limit = nullptr;
   const SCEV *MaxIterations = nullptr;
-  {
-    const SCEV *MayExitMaxBECount = nullptr;
-
-    SmallVector<BasicBlock *, 8> ExitingBlocks;
-    L->getExitingBlocks(ExitingBlocks);
-
-    // Remove all exiting blocks that are guaranteed
-    // to result in unreachable
-    for (auto &ExitingBlock : ExitingBlocks) {
-      BasicBlock *Exit = nullptr;
-      for (auto *SBB : successors(ExitingBlock)) {
-        if (!L->contains(SBB)) {
-          if (SE.GuaranteedUnreachable.count(SBB))
-            continue;
-          Exit = SBB;
-          break;
-        }
-      }
-      if (!Exit)
-        ExitingBlock = nullptr;
-    }
-    ExitingBlocks.erase(
-        std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
-        ExitingBlocks.end());
-
-    // Compute the exit in the scenarios where an unreachable
-    // is not hit
-    for (BasicBlock *ExitingBlock : ExitingBlocks) {
-      assert(L->contains(ExitingBlock));
-
-      ScalarEvolution::ExitLimit EL =
-          SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
-
-      bool seenHeaders = false;
-      SmallPtrSet<BasicBlock *, 4> Seen;
-      std::deque<BasicBlock *> Todo = {ExitingBlock};
-      while (Todo.size()) {
-        auto cur = Todo.front();
-        Todo.pop_front();
-        if (Seen.count(cur))
-          continue;
-        if (!L->contains(cur))
-          continue;
-        if (cur == loopContexts[L].header) {
-          seenHeaders = true;
-          break;
-        }
-        for (auto S : successors(cur)) {
-          Todo.push_back(S);
-        }
-      }
-      if (seenHeaders) {
-        if (MaxIterations == nullptr ||
-            MaxIterations == SE.getCouldNotCompute()) {
-          MaxIterations = EL.ExactNotTaken;
-        }
-        if (MaxIterations != SE.getCouldNotCompute()) {
-          if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
-            MaxIterations =
-                SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
-          }
-        }
-
-        if (MayExitMaxBECount == nullptr ||
-            EL.ExactNotTaken == SE.getCouldNotCompute())
-          MayExitMaxBECount = EL.ExactNotTaken;
-
-        if (EL.ExactNotTaken != MayExitMaxBECount) {
-          MayExitMaxBECount = SE.getCouldNotCompute();
-        }
-      }
-    }
-    if (MayExitMaxBECount == nullptr) {
-      MayExitMaxBECount = SE.getCouldNotCompute();
-    }
-    if (MaxIterations == nullptr) {
-      MaxIterations = SE.getCouldNotCompute();
-    }
-    Limit = MayExitMaxBECount;
-  }
+  computeLoopLimits(L, Limit, MaxIterations);
   assert(Limit);
   Value *LimitVar = nullptr;
 

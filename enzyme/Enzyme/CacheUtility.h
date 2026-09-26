@@ -197,6 +197,12 @@ public:
   llvm::AllocaInst *getDynamicLoopLimit(llvm::Loop *L,
                                         bool ReverseLimit = true);
 
+  /// Compute the scalar evolution of the backedge-taken count of L (Limit)
+  /// and of an upper bound on it (MaxIterations), from which getContext
+  /// expands the loop limits.
+  void computeLoopLimits(llvm::Loop *L, const llvm::SCEV *&Limit,
+                         const llvm::SCEV *&MaxIterations);
+
   /// Print out all currently cached values
   void dumpScope() {
     llvm::errs() << "scope:\n";
