@@ -9401,6 +9401,54 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
   }
 }
 
+// Whether the derivative of `CI` may access the shadow of its argument `idx` in
+// the forward pass, through code which Enzyme did not generate. Code generated
+// by Enzyme only zero-initializes the shadow of float memory in the forward
+// pass, and replays its pointer stores in the reverse pass. A custom derivative
+// gives no such guarantee: its augmented forward pass may read or write the
+// shadow. This looks through callees which Enzyme will differentiate itself,
+// since the shadow is passed on to the custom derivatives called therein.
+static bool
+shadowUsedByCustomDerivative(const CallInst *CI, unsigned idx,
+                             SmallPtrSetImpl<const Argument *> &seen) {
+  // True for custom derivatives, and for calls to an unknown function.
+  if (shouldDisableNoWrite(CI))
+    return true;
+  // Handlers registered through EnzymeRegisterCallHandler.
+  if (customCallHandlers.count(getFuncNameFromCall(CI)))
+    return true;
+
+  auto F = getFunctionFromCall(CI);
+  if (!F || F->empty() || idx >= F->arg_size())
+    return false;
+
+  auto arg = F->getArg(idx);
+  if (!seen.insert(arg).second)
+    return false;
+
+  SmallVector<const Value *, 1> todo = {arg};
+  SmallPtrSet<const Value *, 1> visited;
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!visited.insert(cur).second)
+      continue;
+    for (auto &U : cur->uses()) {
+      auto user = U.getUser();
+      if (isPointerArithmeticInst(user) || isa<SelectInst>(user)) {
+        todo.push_back(user);
+        continue;
+      }
+      if (auto CI2 = dyn_cast<CallInst>(user)) {
+        if (!CI2->isArgOperand(&U))
+          continue;
+        if (shadowUsedByCustomDerivative(CI2, CI2->getArgOperandNo(&U), seen))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 void GradientUtils::computeForwardingProperties(Instruction *V) {
   if (!EnzymeRematerialize)
     return;
@@ -9565,6 +9613,19 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 
         // From here on out we can assume the pointer is not captured, and only
         // written to or read from.
+
+        // A custom derivative may access the shadow in its forward pass, and
+        // that access cannot be replayed in the reverse pass.
+        if (shadowpromotable) {
+          SmallPtrSet<const Argument *, 1> seen;
+          if (shadowUsedByCustomDerivative(CI, idx, seen)) {
+            shadowpromotable = false;
+            EmitWarning("NotPromotable", *cur,
+                        " Could not promote shadow allocation ", *V,
+                        " due to call ", *cur,
+                        " which may use the shadow in a custom derivative");
+          }
+        }
 
         // If we may read from the memory, consider this a load-like call
         // that must have all writes done in preparation for any reverse-pass
