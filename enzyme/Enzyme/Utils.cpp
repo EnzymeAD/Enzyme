@@ -4150,7 +4150,7 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
   } else {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << "cannot handle unknown trans blas value\n" << V;
+    ss << "cannot handle unknown trans blas value\n" << *V;
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
                          nullptr, nullptr, nullptr);
@@ -4448,119 +4448,162 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   return absres;
 }
 
+/// Emit a call to `puts(message); exit(1)` at the builder's insertion point,
+/// deferring the error to the point at which the offending code would run.
+static void EmitRuntimeError(const std::string &message, Instruction *inst,
+                             IRBuilder<> &B) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                       {getInt8PtrTy(M.getContext())}, false);
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << message << "\n";
+  if (inst)
+    emit_backtrace(inst, ss);
+  auto msg = getString(M, ss.str());
+  auto PutsF = M.getOrInsertFunction("puts", FT);
+  B.CreateCall(PutsF, msg);
+
+  FunctionType *FT2 =
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {Type::getInt32Ty(M.getContext())}, false);
+
+  auto ExitF = M.getOrInsertFunction("exit", FT2);
+  B.CreateCall(ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+}
+
+/// Find the function, and the most precise location within it, to which a
+/// diagnostic about `V` should be attributed.
+static const Function *getDiagnosticFunction(const Value *V,
+                                             DiagnosticLocation &Loc) {
+  if (!V)
+    return nullptr;
+  const Function *F = nullptr;
+  if (auto I = dyn_cast<Instruction>(V)) {
+    if (I->getParent())
+      F = I->getParent()->getParent();
+    if (F && I->getDebugLoc()) {
+      Loc = I->getDebugLoc();
+      return F;
+    }
+  } else if (auto A = dyn_cast<Argument>(V)) {
+    F = A->getParent();
+  } else if (auto BB = dyn_cast<BasicBlock>(V)) {
+    F = BB->getParent();
+  } else {
+    F = dyn_cast<Function>(V);
+  }
+  if (F)
+    Loc = F->getSubprogram();
+  return F;
+}
+
+llvm::Value *EmitError(llvm::StringRef RemarkName, ErrorType Kind,
+                       const std::string &message, const llvm::Value *V,
+                       const void *Data, const llvm::Value *Extra,
+                       llvm::IRBuilder<> *B) {
+  if (CustomErrorHandler)
+    return unwrap(CustomErrorHandler(message.c_str(), wrap(V), Kind, Data,
+                                     wrap(Extra), wrap(B)));
+
+  bool hasIP = B && B->GetInsertBlock() && B->GetInsertBlock()->getParent();
+
+  if (EnzymeRuntimeError && hasIP &&
+      (Kind == ErrorType::NoDerivative || Kind == ErrorType::NoType)) {
+    EmitRuntimeError(
+        message, const_cast<Instruction *>(dyn_cast_or_null<Instruction>(V)),
+        *B);
+    return nullptr;
+  }
+
+  // Attribute the diagnostic to an instruction at fault, else the value at
+  // fault, else wherever we were generating code, else the secondary value.
+  DiagnosticLocation Loc;
+  const Function *F = nullptr;
+  for (auto G : {V, Extra})
+    if (isa_and_nonnull<Instruction>(G) && (F = getDiagnosticFunction(G, Loc)))
+      break;
+  if (!F)
+    F = getDiagnosticFunction(V, Loc);
+  if (!F && hasIP) {
+    F = B->GetInsertBlock()->getParent();
+    if (B->getCurrentDebugLocation())
+      Loc = B->getCurrentDebugLocation();
+    else
+      Loc = F->getSubprogram();
+  }
+  if (!F)
+    F = getDiagnosticFunction(Extra, Loc);
+  if (!F) {
+    for (auto G : {V, Extra})
+      if (auto GV = dyn_cast_or_null<GlobalValue>(G))
+        if ((F = getFirstFunctionDefinition(
+                 const_cast<Module &>(*GV->getParent())))) {
+          Loc = F->getSubprogram();
+          break;
+        }
+  }
+
+  if (!F) {
+    // There is no LLVMContext to be found from which to issue a diagnostic.
+    llvm::errs() << "Enzyme: " << message << "\n";
+    llvm::report_fatal_error("Enzyme: " + RemarkName,
+                             /*gen_crash_diag*/ false);
+  }
+
+  // DiagnosticInfoUnsupported does not copy its message, so keep the backing
+  // storage alive until diagnose() returns.
+  std::string str = "Enzyme: " + message;
+  switch (Kind) {
+  case ErrorType::MixedActivityError:
+    str += MixedActivityHint;
+    LLVM_FALLTHROUGH;
+  // These describe a loss of precision or performance, which we recover from.
+  case ErrorType::TypeDepthExceeded:
+  case ErrorType::GCRewrite:
+    F->getContext().diagnose(EnzymeWarning(str, Loc, F));
+    break;
+  default:
+    F->getContext().diagnose(EnzymeFailure(str, Loc, F));
+    break;
+  }
+  return nullptr;
+}
+
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils,
                                    llvm::IRBuilder<> &Builder2,
                                    llvm::Value *condition) {
-  if (CustomErrorHandler) {
-    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils,
-                                     wrap(condition), wrap(&Builder2)));
-  } else if (EnzymeRuntimeError) {
-    auto &M = *inst.getParent()->getParent()->getParent();
-    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
-                                         {getInt8PtrTy(M.getContext())}, false);
-    std::string str;
-    raw_string_ostream ss(str);
-    ss << message << "\n";
-    emit_backtrace(&inst, ss);
-    auto msg = getString(M, ss.str());
-    ;
-    auto PutsF = M.getOrInsertFunction("puts", FT);
-    Builder2.CreateCall(PutsF, msg);
-
-    FunctionType *FT2 =
-        FunctionType::get(Type::getVoidTy(M.getContext()),
-                          {Type::getInt32Ty(M.getContext())}, false);
-
-    auto ExitF = M.getOrInsertFunction("exit", FT2);
-    Builder2.CreateCall(ExitF,
-                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
-    return nullptr;
-  } else {
-    if (StringRef(message).contains("cannot handle above cast")) {
-      gutils->TR.dump();
-    }
-    EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, message);
-    return nullptr;
+  if (!CustomErrorHandler && !EnzymeRuntimeError &&
+      StringRef(message).contains("cannot handle above cast")) {
+    gutils->TR.dump();
   }
+  return EmitError("NoDerivative", ErrorType::NoDerivative, message, &inst,
+                   gutils, condition, &Builder2);
 }
 
-bool EmitNoDerivativeError(const std::string &message, Value *todiff,
+void EmitNoDerivativeError(const std::string &message, Value *todiff,
                            RequestContext &context) {
   Value *toshow = todiff;
   if (context.req) {
     toshow = context.req;
   }
-  if (CustomErrorHandler) {
-    CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
-    return true;
-  } else if (context.ip && EnzymeRuntimeError) {
-    auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
-    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
-                                         {getInt8PtrTy(M.getContext())}, false);
-    std::string str;
-    raw_string_ostream ss(str);
-    ss << message << "\n";
-    if (auto inst = dyn_cast<Instruction>(todiff))
-      emit_backtrace(inst, ss);
-    auto msg = getString(M, ss.str());
-    auto PutsF = M.getOrInsertFunction("puts", FT);
-    context.ip->CreateCall(PutsF, msg);
-
-    FunctionType *FT2 =
-        FunctionType::get(Type::getVoidTy(M.getContext()),
-                          {Type::getInt32Ty(M.getContext())}, false);
-
-    auto ExitF = M.getOrInsertFunction("exit", FT2);
-    context.ip->CreateCall(
-        ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
-    return true;
-  } else if (context.req) {
-    EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                message);
-    return true;
-  } else if (auto arg = dyn_cast<Instruction>(todiff)) {
-    auto loc = arg->getDebugLoc();
-    EmitFailure("NoDerivative", loc, arg, message);
-    return true;
-  }
-  return false;
+  EmitError("NoDerivative", ErrorType::NoDerivative, message, toshow, nullptr,
+            todiff, context.ip);
 }
 
 void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
-  if (CustomErrorHandler) {
-    CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
-                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
-  } else if (EnzymeRuntimeError) {
-    auto &M = *inst.getParent()->getParent()->getParent();
-    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
-                                         {getInt8PtrTy(M.getContext())}, false);
-    std::string str;
-    raw_string_ostream ss(str);
-    ss << message << "\n";
-    emit_backtrace(&inst, ss);
-    auto msg = getString(M, ss.str());
-    auto PutsF = M.getOrInsertFunction("puts", FT);
-    Builder2.CreateCall(PutsF, msg);
-
-    FunctionType *FT2 =
-        FunctionType::get(Type::getVoidTy(M.getContext()),
-                          {Type::getInt32Ty(M.getContext())}, false);
-
-    auto ExitF = M.getOrInsertFunction("exit", FT2);
-    Builder2.CreateCall(ExitF,
-                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
-  } else {
-    std::string str;
-    raw_string_ostream ss(str);
-    ss << message << "\n";
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << message;
+  if (!CustomErrorHandler && !EnzymeRuntimeError) {
+    ss << "\n";
     gutils->TR.dump(ss);
-    EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
+  EmitError("CannotDeduceType", ErrorType::NoType, ss.str(), &inst,
+            gutils->TR.analyzer, nullptr, &Builder2);
 }
 
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
