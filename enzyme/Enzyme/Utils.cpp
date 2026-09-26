@@ -1064,14 +1064,14 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
   return Atomic;
 }
 
-/// Create function for type that is equivalent to memcpy but adds to
-/// destination rather than a direct copy; dst, src, numelems
-Function *getOrInsertDifferentialFloatMemcpy(
+/// Create function for type that is equivalent to memcpy (or memmove) but adds
+/// to destination rather than a direct copy; dst, src, numelems
+static Function *getOrInsertDifferentialFloatMemTransfer(
     Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
-    bool atomic) {
+    bool atomic, bool memmove) {
   assert(elementType->isFloatingPointTy());
-  std::string name = "__enzyme_memcpy";
+  std::string name = memmove ? "__enzyme_memmove" : "__enzyme_memcpy";
   if (bitwidth != 64)
     name += std::to_string(bitwidth);
   name += "add_" + tofltstr(elementType) + "da" + std::to_string(dstalign) +
@@ -1137,8 +1137,13 @@ Function *getOrInsertDifferentialFloatMemcpy(
     memsetDst = BasicBlock::Create(M.getContext(), "memset_dst", F, body);
   }
 
+  // The ranges of a memmove may overlap, see the loop below. Ranges in
+  // different address spaces are taken not to.
+  Value *backwards = nullptr;
   {
     IRBuilder<> B(entry);
+    if (memmove && dstaddr == srcaddr)
+      backwards = B.CreateICmpULT(dst, src, "backwards");
     Value *cond = B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0));
     if (runtimeActivity) {
       cond = B.CreateOr(cond, dst_inactive);
@@ -1169,7 +1174,20 @@ Function *getOrInsertDifferentialFloatMemcpy(
     idx->addIncoming(ConstantInt::get(num->getType(), 0),
                      runtimeActivity ? checkSrc : entry);
 
-    Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
+    // Each iteration moves the derivative of dst[i] into src[i] and zeroes
+    // dst[i]. If the ranges overlap with dst < src, src[i] is dst[j] for some
+    // j > i, and going front to back would move what was just added there a
+    // second time, to src[j]. So go back to front then: the reverse of the
+    // order in which memmove itself has to copy.
+    Value *i = idx;
+    if (backwards)
+      i = B.CreateSelect(
+          backwards,
+          B.CreateSub(B.CreateSub(num, ConstantInt::get(num->getType(), 1)),
+                      idx),
+          idx, "i");
+
+    Value *dsti = B.CreateInBoundsGEP(elementType, dst, i, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
 
@@ -1212,7 +1230,7 @@ Function *getOrInsertDifferentialFloatMemcpy(
       dsts->setAlignment(Align(dstalign));
     }
 
-    Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(elementType, src, i, "src.i");
     if (atomic) {
       B.CreateAtomicRMW(AtomicRMWInst::BinOp::FAdd, srci, dstl,
                         MaybeAlign(srcalign), AtomicOrdering::Monotonic,
@@ -1237,6 +1255,15 @@ Function *getOrInsertDifferentialFloatMemcpy(
     B.CreateRetVoid();
   }
   return F;
+}
+
+Function *getOrInsertDifferentialFloatMemcpy(
+    Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic) {
+  return getOrInsertDifferentialFloatMemTransfer(
+      M, elementType, dstalign, srcalign, dstaddr, srcaddr, bitwidth,
+      runtimeActivity, atomic, /*memmove*/ false);
 }
 
 Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
@@ -2187,17 +2214,15 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
   return F;
 }
 
-// TODO implement differential memmove
+// EnzymeMemmoveWarning warned about the memcpy fallback this used to be. It is
+// no longer read, but stays because frontends set it (Enzyme.jl's
+// memmove_warning!).
 Function *getOrInsertDifferentialFloatMemmove(
     Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
     unsigned srcaddr, unsigned bitwidth, bool runtimeActivity, bool atomic) {
-  if (EnzymeMemmoveWarning)
-    llvm::errs()
-        << "warning: didn't implement memmove, using memcpy as fallback "
-           "which can result in errors\n";
-  return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth, runtimeActivity,
-                                            atomic);
+  return getOrInsertDifferentialFloatMemTransfer(
+      M, T, dstalign, srcalign, dstaddr, srcaddr, bitwidth, runtimeActivity,
+      atomic, /*memmove*/ true);
 }
 
 FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
