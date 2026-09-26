@@ -22,9 +22,9 @@ declare double @__enzyme_fwddiff(...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractelement <2 x double> %v, i64 0
 ; CHECK-NEXT:   %1 = extractelement <2 x double> %v, i64 1
-; CHECK-NEXT:   %2 = fcmp fast olt double %0, %1
+; CHECK-NEXT:   %2 = fcmp olt double %0, %1
 ; CHECK-NEXT:   %3 = extractelement <2 x double> %"v'", i64 0
 ; CHECK-NEXT:   %4 = extractelement <2 x double> %"v'", i64 1
-; CHECK-NEXT:   %5 = select fast i1 %2, double %4, double %3
+; CHECK-NEXT:   %5 = select i1 %2, double %4, double %3
 ; CHECK-NEXT:   ret double %5
 ; CHECK-NEXT: }

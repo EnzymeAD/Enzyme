@@ -4532,7 +4532,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (auto II = dyn_cast<IntrinsicInst>(cur))
     if (II->getIntrinsicID() == Intrinsic::fmuladd ||
         II->getIntrinsicID() == Intrinsic::fma) {
-      B.setFastMathFlags(getFast());
+      // The expansion is the primal's own arithmetic written out, so it
+      // carries the intrinsic's flags and claims no licence beyond them.
+      B.setFastMathFlags(getFastFrom(II));
       auto mul = pushcse(B.CreateFMul(II->getOperand(0), II->getOperand(1)));
       auto add = pushcse(B.CreateFAdd(mul, II->getOperand(2)));
       replaceAndErase(cur, add);

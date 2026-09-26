@@ -46,8 +46,9 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define internal { double } @diffeg(double %x, double %differeturn)
 ; CHECK-NEXT: invert:
-; CHECK: %[[MUL:.+]] = fmul fast double %differeturn, 3.000000e+00
-; CHECK: insertvalue { double } undef, double %[[MUL]], 0
+; CHECK: %[[MUL:.+]] = fmul double %differeturn, 3.000000e+00
+; CHECK: %[[ACC:.+]] = fadd double 0.000000e+00, %[[MUL]]
+; CHECK: insertvalue { double } undef, double %[[ACC]], 0
 
 ; @tab is a pointer to an unknown pointee, as its initializer is entirely
 ; self referential.

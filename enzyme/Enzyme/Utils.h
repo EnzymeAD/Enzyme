@@ -386,6 +386,14 @@ void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 
+/// Get the LLVM fast math flags a generated instruction is entitled to when
+/// it derives from \p primal: the flags \p primal itself carries, so that a
+/// generated derivative claims no more numerical licence than the primal it
+/// differentiates. A null \p primal, or one that is not a floating point
+/// operator, entitles the generated instruction to no flags. Under
+/// -enzyme-fast-math the blanket licence is granted instead.
+llvm::FastMathFlags getFastFrom(const llvm::Instruction *primal);
+
 /// Pick the maximum value
 template <typename T> static inline T max(T a, T b) {
   if (a > b)
