@@ -22,9 +22,9 @@ attributes #0 = { norecurse nounwind readonly uwtable }
 attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
-; CHECK: define internal double @fwddiffesum(double* nocapture %n, double* nocapture %"n'", double %x, double %"x'") 
+; CHECK: define internal double @fwddiffesum({{ptr|double\*}} {{captures\(none\)|nocapture}} %n, {{ptr|double\*}} {{captures\(none\)|nocapture}} %"n'", double %x, double %"x'") 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %res = atomicrmw fadd double* %n, double %x monotonic
-; CHECK-NEXT:   %0 = atomicrmw fadd double* %"n'", double %"x'" monotonic
+; CHECK-NEXT:   %res = atomicrmw fadd {{ptr|double\*}} %n, double %x monotonic
+; CHECK-NEXT:   %0 = atomicrmw fadd {{ptr|double\*}} %"n'", double %"x'" monotonic
 ; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }

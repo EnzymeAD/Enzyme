@@ -36,7 +36,7 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define internal double @fwddiffesumsquare(double* nocapture readonly %x, double* nocapture %"x'", i64 %n)
+; CHECK: define internal double @fwddiffesumsquare({{ptr|double\*}} {{readonly captures\(none\)|nocapture readonly}} %x, {{ptr|double\*}} {{captures\(none\)|nocapture}} %"x'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %for.body
 
@@ -47,10 +47,10 @@ attributes #2 = { nounwind }
 ; CHECK-DAG:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-DAG:   %[[total011:.+]] = phi{{( fast)?}} double [ 0.000000e+00, %entry ], [ %[[i4:.+]], %for.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 %iv
-; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 %iv
-; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"arrayidx'ipg"
-; CHECK-NEXT:   %[[i0:.+]] = load double, double* %arrayidx, align 8
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, {{ptr|double\*}} %"x'", i64 %iv
+; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, {{ptr|double\*}} %x, i64 %iv
+; CHECK-NEXT:   %[[i1:.+]] = load double, {{ptr|double\*}} %"arrayidx'ipg"
+; CHECK-NEXT:   %[[i0:.+]] = load double, {{ptr|double\*}} %arrayidx, align 8
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1:.+]], %[[i0:.+]]
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2:.+]], %[[i2:.+]]
 ; CHECK-NEXT:   %[[i4]] = fadd fast double %[[i3:.+]], %[[total011]]
