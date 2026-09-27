@@ -131,26 +131,26 @@ bool copyForwardedCalleeAttrs(Function &F) {
   // describing how the callee's own body was compiled (inlining hints, code
   // placement, sanitizers, stack protection, coroutine state, ...) stays put.
   static const Attribute::AttrKind Forwardable[] = {
-      Attribute::Speculatable,
-      Attribute::NoUnwind,
-      Attribute::WillReturn,
-      Attribute::MustProgress,
-      Attribute::NoSync,
-      Attribute::NoFree,
-      Attribute::NoRecurse,
-      Attribute::NoCallback,
-      Attribute::NoReturn,
-      Attribute::Convergent,
+    Attribute::Speculatable,
+    Attribute::NoUnwind,
+    Attribute::WillReturn,
+    Attribute::MustProgress,
+    Attribute::NoSync,
+    Attribute::NoFree,
+    Attribute::NoRecurse,
+    Attribute::NoCallback,
+    Attribute::NoReturn,
+    Attribute::Convergent,
 #if LLVM_VERSION_MAJOR >= 23
-      Attribute::NoCreateUndefOrPoison,
+    Attribute::NoCreateUndefOrPoison,
 #endif
 #if LLVM_VERSION_MAJOR < 16
-      Attribute::ReadNone,
-      Attribute::ReadOnly,
-      Attribute::WriteOnly,
-      Attribute::ArgMemOnly,
-      Attribute::InaccessibleMemOnly,
-      Attribute::InaccessibleMemOrArgMemOnly,
+    Attribute::ReadNone,
+    Attribute::ReadOnly,
+    Attribute::WriteOnly,
+    Attribute::ArgMemOnly,
+    Attribute::InaccessibleMemOnly,
+    Attribute::InaccessibleMemOrArgMemOnly,
 #endif
   };
   for (auto K : Forwardable) {
