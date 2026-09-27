@@ -26,6 +26,7 @@
 
 #include "CacheUtility.h"
 #include "FunctionUtils.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 
 using namespace llvm;
 
@@ -47,6 +48,16 @@ llvm::cl::opt<bool> EfficientMaxCache(
     "enzyme-max-cache", cl::init(false), cl::Hidden,
     cl::desc(
         "Avoid reallocs when possible by potentially overallocating cache"));
+
+llvm::cl::opt<bool> EnzymeSplitSkipEdges(
+    "enzyme-split-skip-edges", cl::init(true), cl::Hidden,
+    cl::desc("Give the edge that skips an inner loop its own block before "
+             "analyzing loop-carried values"));
+
+llvm::cl::opt<bool> EnzymeRewriteAccumulators(
+    "enzyme-rewrite-accumulators", cl::init(true), cl::Hidden,
+    cl::desc("Rewrite a loop-carried counter whose step is an inner loop's "
+             "trip count into a closed form of the induction variable"));
 }
 
 CacheUtility::~CacheUtility() {}
@@ -205,11 +216,250 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
+/// PN is a header phi of L that scalar evolution could not classify. Recognize
+/// an accumulator whose per-iteration step is the trip count of an inner loop,
+/// as in
+///
+///   int idx = 0;
+///   for (i = 0; i < d; i++)
+///     for (j = i + 1; j < d; j++)
+///       ... l[idx++] ...
+///
+/// After loop rotation the latch value of idx reaches PN through a phi that
+/// merges "inner loop skipped" with the inner loop's exit value, which SCEV
+/// does not see through, so PN stays an unknown and would be cached once per
+/// iteration in the reverse pass. Derive the step from that exit value, check
+/// that a skipped inner loop contributes exactly zero, and return PN as a
+/// closed form in the iteration number (a polynomial, quadratic here), or
+/// nullptr when the shape does not match or the proofs fail.
+static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
+                                                  const SCEV *IterationNumber,
+                                                  ScalarEvolution &SE) {
+  if (!EnzymeRewriteAccumulators)
+    return nullptr;
+  if (PN->getNumIncomingValues() != 2)
+    return nullptr;
+  BasicBlock *Preheader = L->getLoopPreheader();
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Preheader || !Latch)
+    return nullptr;
+  Value *Init = PN->getIncomingValueForBlock(Preheader);
+  Value *Next = PN->getIncomingValueForBlock(Latch);
+  const SCEV *InitS = SE.getSCEV(Init);
+  if (!SE.isAvailableAtLoopEntry(InitS, L))
+    return nullptr;
+  const SCEV *PNS = SE.getSCEV(PN);
+
+  // The arms the latch value can take, each with the block it comes from.
+  SmallVector<std::pair<Value *, BasicBlock *>, 2> Arms;
+  if (auto NP = dyn_cast<PHINode>(Next); NP && NP != PN &&
+                                         NP->getParent() != L->getHeader() &&
+                                         L->contains(NP->getParent())) {
+    for (unsigned i = 0; i < NP->getNumIncomingValues(); i++)
+      Arms.emplace_back(NP->getIncomingValue(i), NP->getIncomingBlock(i));
+  } else {
+    Arms.emplace_back(Next, Latch);
+  }
+
+  // The recurrence may be carried in a wider type than PN (e.g. an i32 index
+  // sign-extended to i64 for addressing, then truncated back). Work in that
+  // type, where trunc(ext(PN) + step) - PN cancels exactly.
+  Type *WideTy = PN->getType();
+  bool Signed = true;
+  const SCEV *Step = nullptr;
+  SmallVector<BasicBlock *, 2> ZeroArms;
+  for (auto &Arm : Arms) {
+    Value *V = Arm.first;
+    if (V == PN) {
+      ZeroArms.push_back(Arm.second);
+      continue;
+    }
+    Value *Wide = V;
+    if (auto TI = dyn_cast<TruncInst>(V))
+      Wide = TI->getOperand(0);
+    Type *Ty = Wide->getType();
+    if (!SE.isSCEVable(Ty))
+      return nullptr;
+    // At the scope of L, a value from an inner loop is its exit value.
+    const SCEV *WS = SE.getSCEVAtScope(Wide, L);
+    if (WS == SE.getCouldNotCompute())
+      return nullptr;
+    const SCEV *D = nullptr;
+    bool Sgn = true;
+    for (bool S : {true, false}) {
+      const SCEV *Ext =
+          S ? SE.getNoopOrSignExtend(PNS, Ty) : SE.getNoopOrZeroExtend(PNS, Ty);
+      const SCEV *Cand = SE.getMinusSCEV(WS, Ext);
+      if (!SCEVExprContains(Cand, [&](const SCEV *X) { return X == PNS; })) {
+        D = Cand;
+        Sgn = S;
+        break;
+      }
+    }
+    if (!D)
+      return nullptr;
+    if (Step) {
+      if (D != Step || Ty != WideTy || Sgn != Signed)
+        return nullptr;
+    } else {
+      Step = D;
+      WideTy = Ty;
+      Signed = Sgn;
+    }
+  }
+  if (!Step)
+    return nullptr;
+
+  // The step must be invariant or affine in L's own counter, with nothing
+  // from an inner loop left over.
+  if (SCEVExprContains(Step, [&](const SCEV *X) {
+        auto AR = dyn_cast<SCEVAddRecExpr>(X);
+        return AR && AR->getLoop() != L && !AR->getLoop()->contains(L);
+      }))
+    return nullptr;
+  auto Disp = SE.getLoopDisposition(Step, L);
+  if (Disp == ScalarEvolution::LoopVariant)
+    return nullptr;
+  if (auto AR = dyn_cast<SCEVAddRecExpr>(Step)) {
+    if (AR->getLoop() != L || !AR->isAffine())
+      return nullptr;
+  } else if (Disp != ScalarEvolution::LoopInvariant) {
+    return nullptr;
+  }
+
+  // The closed form adds Step on every iteration, including those where the
+  // inner loop was skipped and PN was carried unchanged, so on those the step
+  // must be exactly zero. Show that in two halves: Step is never negative on
+  // any iteration, and Step is non-positive wherever a skipping edge is taken.
+  if (!ZeroArms.empty()) {
+    auto AR = dyn_cast<SCEVAddRecExpr>(Step);
+    if (!AR)
+      return nullptr;
+    const SCEV *Zero = SE.getZero(WideTy);
+
+    // Step >= 0 everywhere. Ask SCEV first; failing that, an affine step with
+    // a constant increment is monotone, so it suffices to check it at the
+    // first or the last iteration.
+    bool NonNegative = SE.isKnownOnEveryIteration(ICmpInst::ICMP_SGE, AR, Zero);
+    if (!NonNegative) {
+      auto C = dyn_cast<SCEVConstant>(AR->getStepRecurrence(SE));
+      if (!C)
+        return nullptr;
+      if (C->getAPInt().isNonNegative()) {
+        NonNegative = SE.isKnownNonNegative(AR->getStart()) ||
+                      SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SGE,
+                                                  AR->getStart(), Zero);
+      } else {
+        const SCEV *BTC = SE.getBackedgeTakenCount(L);
+        if (BTC == SE.getCouldNotCompute())
+          return nullptr;
+        NonNegative = SE.isKnownNonNegative(AR->evaluateAtIteration(BTC, SE));
+      }
+    }
+    if (!NonNegative)
+      return nullptr;
+
+    // Step <= 0 on each skipping edge. The edge has its own block (see
+    // CanonicalizeLoops), whose only predecessor branches on `icmp P A, B`.
+    // Orient the predicate that holds on the edge as X >= Y, X > Y or X == Y
+    // and require Step == (Y - X) + k for a constant k that then makes Step
+    // non-positive. Both X and Y must be known non-negative so that Y - X
+    // cannot wrap.
+    for (auto B : ZeroArms) {
+      BasicBlock *Pred = B->getSinglePredecessor();
+      if (!Pred)
+        return nullptr;
+      auto BI = dyn_cast<BranchInst>(Pred->getTerminator());
+      if (!BI || !BI->isConditional() ||
+          BI->getSuccessor(0) == BI->getSuccessor(1))
+        return nullptr;
+      auto Cmp = dyn_cast<ICmpInst>(BI->getCondition());
+      if (!Cmp)
+        return nullptr;
+      ICmpInst::Predicate Q = Cmp->getPredicate();
+      if (BI->getSuccessor(1) == B)
+        Q = ICmpInst::getInversePredicate(Q);
+      Value *X = Cmp->getOperand(0), *Y = Cmp->getOperand(1);
+      bool Strict = false, Equal = false;
+      switch (Q) {
+      case ICmpInst::ICMP_UGE:
+      case ICmpInst::ICMP_SGE:
+        break;
+      case ICmpInst::ICMP_ULE:
+      case ICmpInst::ICMP_SLE:
+        std::swap(X, Y);
+        break;
+      case ICmpInst::ICMP_UGT:
+      case ICmpInst::ICMP_SGT:
+        Strict = true;
+        break;
+      case ICmpInst::ICMP_ULT:
+      case ICmpInst::ICMP_SLT:
+        std::swap(X, Y);
+        Strict = true;
+        break;
+      case ICmpInst::ICMP_EQ:
+        Equal = true;
+        break;
+      default:
+        return nullptr;
+      }
+      if (!SE.isSCEVable(X->getType()) || X->getType() != WideTy)
+        return nullptr;
+      const SCEV *XS = SE.getSCEV(X), *YS = SE.getSCEV(Y);
+      auto NonNeg = [&](const SCEV *V) {
+        return SE.isKnownNonNegative(V) ||
+               SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SGE, V, Zero);
+      };
+      if (!Equal && !(NonNeg(XS) && NonNeg(YS)))
+        return nullptr;
+      auto K = dyn_cast<SCEVConstant>(
+          SE.getMinusSCEV(Step, SE.getMinusSCEV(YS, XS)));
+      if (!K)
+        return nullptr;
+      // On the edge, Y - X is 0 (Equal), <= 0 (non-strict) or <= -1 (Strict).
+      if (Equal ? !K->getAPInt().isZero() : K->getAPInt().sgt(Strict ? 1 : 0))
+        return nullptr;
+    }
+  }
+
+  const SCEV *WideInit = Signed ? SE.getNoopOrSignExtend(InitS, WideTy)
+                                : SE.getNoopOrZeroExtend(InitS, WideTy);
+  auto AR = dyn_cast<SCEVAddRecExpr>(
+      SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagAnyWrap));
+  if (!AR || AR->getNumOperands() > 3)
+    return nullptr;
+
+  // Evaluate {Init,+,A,+,B} at iteration I as Init + A*I + B*I*(I-1)/2. Do it
+  // in WideTy rather than through SCEVAddRecExpr::evaluateAtIteration, which
+  // computes the binomial in a wider type that IndVarSimplify would then turn
+  // back into a loop-carried phi. I*(I-1)/2 is formed as
+  //   (I/2)*(I-1) + (I%2)*((I-1)/2)
+  // so that every product is of exact integers and the sum is exact mod 2^W.
+  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, WideTy);
+  const SCEV *Res = AR->getOperand(0);
+  if (AR->getNumOperands() > 1)
+    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(1), I));
+  if (AR->getNumOperands() > 2) {
+    const SCEV *One = SE.getOne(WideTy);
+    const SCEV *Two = SE.getConstant(WideTy, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(2), Tri));
+  }
+  return SE.getTruncateOrNoop(Res, PN->getType());
+}
+
 void RemoveRedundantIVs(
-    BasicBlock *Header, PHINode *CanonicalIV, Instruction *Increment,
+    Loop *L, PHINode *CanonicalIV, Instruction *Increment,
     MustExitScalarEvolution &SE,
     llvm::function_ref<void(Instruction *, Value *)> replacer,
     llvm::function_ref<void(Instruction *)> eraser) {
+  BasicBlock *Header = L->getHeader();
   assert(Header);
   assert(CanonicalIV);
   SmallVector<Instruction *, 8> IVsToRemove;
@@ -224,8 +474,15 @@ void RemoveRedundantIVs(
     if (!SE.isSCEVable(PN->getType()))
       continue;
     const SCEV *S = SE.getSCEV(PN);
-    if (SE.getCouldNotCompute() == S || isa<SCEVUnknown>(S))
-      continue;
+    if (SE.getCouldNotCompute() == S || isa<SCEVUnknown>(S)) {
+      // Evaluate at the canonical IV as an opaque value rather than as its
+      // add-recurrence: otherwise SCEV folds the polynomial back into a
+      // higher-degree recurrence, which the expander would materialize as a
+      // fresh loop-carried phi, defeating the purpose.
+      S = closedFormOfCountedAccumulator(PN, L, SE.getUnknown(CanonicalIV), SE);
+      if (!S)
+        continue;
+    }
     // we may expand code for phi where not legal (computing with
     // subloop expressions). Check that this isn't the case
     if (!SE.dominates(S, Header))
