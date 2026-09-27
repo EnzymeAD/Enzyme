@@ -3246,6 +3246,10 @@ public:
     // Offsets of the form Optional<floating type>, segment start, segment size
     std::vector<std::tuple<Type *, size_t, size_t>> toIterate;
 
+    // Whether the shadow must be zeroed in the reverse sweep as well as the
+    // forward one, because the region is a fresh allocation of unknown type.
+    bool zeroFreshShadowBothSweeps = false;
+
     // Special handling mechanism to bypass TA limitations by supporting
     // arbitrary sized types.
     if (auto MD = hasMetadata(&MS, "enzyme_truetype")) {
@@ -3267,10 +3271,36 @@ public:
               if (arg->hasStructRetAttr())
                 undefMemory = true;
             if (undefMemory) {
+              // Walk backwards from the memset until the allocation (or,
+              // for an sret, the function entry) is reached. The walk only
+              // follows unique predecessors: once a block with several
+              // predecessors is reached, such as a loop header, the memory
+              // may have been written along another path or in an earlier
+              // iteration, so it is conservatively treated as written.
+              bool reachedRoot = false;
+              SmallPtrSet<BasicBlock *, 8> seenBlocks;
+              BasicBlock *curBB = MS.getParent();
               Instruction *cur = MS.getPrevNode();
-              while (cur) {
-                if (cur == root)
+              while (!writtenTo && !reachedRoot) {
+                if (!cur) {
+                  seenBlocks.insert(curBB);
+                  if (isa<Argument>(root) && curBB->isEntryBlock()) {
+                    reachedRoot = true;
+                    break;
+                  }
+                  BasicBlock *pred = curBB->getUniquePredecessor();
+                  if (!pred || seenBlocks.count(pred)) {
+                    writtenTo = true;
+                    break;
+                  }
+                  curBB = pred;
+                  cur = pred->getTerminator();
+                  continue;
+                }
+                if (cur == root) {
+                  reachedRoot = true;
                   break;
+                }
                 if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
                   if (auto II = dyn_cast<IntrinsicInst>(cur)) {
                     if (II->getCalledFunction()->getName() ==
@@ -3278,8 +3308,10 @@ public:
                       if (getBaseObject(II->getOperand(1)) == root) {
                         if (auto CI2 =
                                 dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
+                          if (MCI->getValue().ule(CI2->getValue())) {
+                            reachedRoot = true;
                             break;
+                          }
                         }
                       }
                       cur = cur->getPrevNode();
@@ -3291,8 +3323,10 @@ public:
                       if (getBaseObject(II->getOperand(1)) == root) {
                         if (auto CI2 =
                                 dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
+                          if (MCI->getValue().ule(CI2->getValue())) {
+                            reachedRoot = true;
                             break;
+                          }
                         }
                       }
                       cur = cur->getPrevNode();
@@ -3308,6 +3342,19 @@ public:
               }
 
               if (!writtenTo) {
+                assert(reachedRoot);
+                vd = TypeTree(BaseType::Pointer);
+                vd.insert({-1}, BaseType::Integer);
+              } else if (!isa<Argument>(root)) {
+                // Zeroing a fresh allocation whose contents cannot be typed
+                // and may already have been written (e.g. a scratch buffer
+                // re-zeroed on every loop iteration). The shadow of such an
+                // allocation is created zeroed by Enzyme and never carries a
+                // seed from the caller, so zeroing it in the forward sweep
+                // is harmless whatever the type, and zeroing it again in the
+                // reverse sweep is what a float region needs: the memset
+                // kills every prior value, so no adjoint may flow past it.
+                zeroFreshShadowBothSweeps = true;
                 vd = TypeTree(BaseType::Pointer);
                 vd.insert({-1}, BaseType::Integer);
               }
@@ -3528,8 +3575,9 @@ public:
 
         applyChainRule(BuilderZ, rule, shadow_dst);
       }
-      if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
-                       Mode == DerivativeMode::ReverseModeCombined)) {
+      if ((secretty || zeroFreshShadowBothSweeps) &&
+          (Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ReverseModeCombined)) {
 
         auto Defs =
             gutils->getInvertedBundles(&MS,
