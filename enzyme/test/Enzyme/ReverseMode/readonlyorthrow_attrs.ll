@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme" -S -opaque-pointers | FileCheck %s; fi
 
 ; A Julia-style function: safepoint prologue, a bounds check whose failing path
 ; allocates an exception and throws, and a result written through an sret. It
@@ -60,7 +60,9 @@ attributes #1 = { "enzyme_ReadOnlyOrThrow" }
 attributes #2 = { memory(none) }
 
 ; `nocapture` prints as `captures(none)` from LLVM 21 on, so the arguments
-; are matched loosely.
+; are matched loosely. `setfirst` only gets what Enzyme infers for any
+; function (`nounwind`; its argument is itself only read).
 ; CHECK: define void @lookup(ptr noalias {{.*}}sret({ i64, i64 }) %out, ptr addrspace(11) {{.*}}readonly{{.*}} %r, i64 %i) #[[LOOKUP:[0-9]+]]
-; CHECK: define void @setfirst(ptr addrspace(11) {{[a-z()]+}} %r, i64 %v) {
+; CHECK: define void @setfirst(ptr addrspace(11) {{.*}} %r, i64 %v) #[[SETFIRST:[0-9]+]]
 ; CHECK: attributes #[[LOOKUP]] = { memory(read, argmem: readwrite, inaccessiblemem: readwrite) "enzyme_LocalReadOnlyOrThrow" }
+; CHECK: attributes #[[SETFIRST]] = { nounwind }

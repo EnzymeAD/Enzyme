@@ -1933,10 +1933,10 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
   if (local)
     derived |= MemoryEffects::argMemOnly(ModRefInfo::ModRef);
   F.setMemoryEffects(F.getMemoryEffects() & derived);
-#else
-  if (!local && !F.hasFnAttribute(Attribute::ReadNone))
-    F.addFnAttr(Attribute::ReadOnly);
 #endif
+  // Before LLVM 16 there is no attribute for "reads anything, writes only
+  // inaccessible memory": `readonly` would also let an unused `nounwind` call
+  // be deleted, so only the parameters are annotated there.
   for (auto &arg : F.args()) {
     if (!arg.getType()->isPointerTy())
       continue;
