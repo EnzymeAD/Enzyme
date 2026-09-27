@@ -1,4 +1,5 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load | FileCheck %s --check-prefix=CHECK15; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load | FileCheck %s --check-prefix=CHECK16; fi
 
 source_filename = "start"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -206,48 +207,93 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 !53 = !{!19}
 !54 = !{!"Unknown", i32 -1, !10}
 
-; CHECK: define internal fastcc void @diffea0
-; CHECK-NEXT: bb:
-; CHECK-NEXT:  %i2 = alloca { [1 x [2 x double]], double }, i64 1
-; CHECK-NEXT:  %i3 = call {}*** @julia.get_pgcstack() #13
-; CHECK-NEXT:  %"i4'ipg" = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %"arg1'", i64 0, i64 0, i64 2
-; CHECK-NEXT:  %"i5'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i4'ipg"
-; CHECK-NEXT:  %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
-; CHECK-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
-; CHECK-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
-; CHECK-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'ipl" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc"
-; CHECK-NEXT:  %i15 = load double, double* %i11
-; CHECK-NEXT:  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg"
-; CHECK-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
-; CHECK-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
-; CHECK-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
-; CHECK-NEXT:  %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
-; CHECK-NEXT:  %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
-; CHECK-NEXT:  %i23 = getelementptr inbounds [3 x {} addrspace(10)*], [3 x {} addrspace(10)*] addrspace(11)* %i21, i64 0, i64 0
-; CHECK-NEXT:  %i24 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i23
-; CHECK-NEXT:  %"i25'ipiv" = insertvalue [3 x {} addrspace(10)*] zeroinitializer, {} addrspace(10)* %i24, 0
-; CHECK-NEXT:  %i26 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1, i64 1
-; CHECK-NEXT:  %i27 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i26
-; CHECK-NEXT:  %"i28'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i25'ipiv", {} addrspace(10)* %i27, 1
-; CHECK-NEXT:  %"i29'ipg" = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %"arg1'", i64 0, i64 1, i64 2
-; CHECK-NEXT:  %"i30'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i29'ipg"
-; CHECK-NEXT:  %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'ipl", 2
-; CHECK-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
-; CHECK-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
-; CHECK-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc"
-; CHECK-NEXT:  %i37 = load double, double* %i11
-; CHECK-NEXT:  %0 = fmul fast double %differeturn, %i37
-; CHECK-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl"
-; CHECK-NEXT:  %2 = fadd fast double %1, %0
-; CHECK-NEXT:  store double %2, double addrspace(13)* %"i35'ipl"
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc"
-; CHECK-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc"
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc"
-; CHECK-NEXT:  %4 = fmul fast double %3, %i15
-; CHECK-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl"
-; CHECK-NEXT:  %6 = fadd fast double %5, %4
-; CHECK-NEXT:  store double %6, double addrspace(13)* %"i13'ipl"
-; CHECK-NEXT:  ret void
+; Before LLVM 16 `enzyme_ReadOnlyOrThrow` only annotates parameters, so the
+; call in between still counts as writing and the four pointers stay in the
+; tape; from LLVM 16 on they are reloaded in the reverse pass.
+; CHECK15: define internal fastcc void @diffea0
+; CHECK15-NEXT: bb:
+; CHECK15-NEXT:  %i2 = alloca { [1 x [2 x double]], double }, i64 1, align 8, !enzymejl_allocart !2, !enzyme_type !3, !enzymejl_allocart_name !6
+; CHECK15-NEXT:  %i3 = call {}*** @julia.get_pgcstack() #13
+; CHECK15-NEXT:  %"i5'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 1
+; CHECK15-NEXT:  %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
+; CHECK15-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
+; CHECK15-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
+; CHECK15-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'il_phi" to double addrspace(13)* addrspace(11)*
+; CHECK15-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc"
+; CHECK15-NEXT:  %i15 = load double, double* %i11
+; CHECK15-NEXT:  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg"
+; CHECK15-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
+; CHECK15-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
+; CHECK15-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
+; CHECK15-NEXT:  %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
+; CHECK15-NEXT:  %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
+; CHECK15-NEXT:  %i24 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 2
+; CHECK15-NEXT:  %"i25'ipiv" = insertvalue [3 x {} addrspace(10)*] zeroinitializer, {} addrspace(10)* %i24, 0
+; CHECK15-NEXT:  %i27 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 3
+; CHECK15-NEXT:  %"i28'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i25'ipiv", {} addrspace(10)* %i27, 1
+; CHECK15-NEXT:  %"i30'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 0
+; CHECK15-NEXT:  %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'il_phi", 2
+; CHECK15-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
+; CHECK15-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
+; CHECK15-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
+; CHECK15-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc"
+; CHECK15-NEXT:  %i37 = load double, double* %i11
+; CHECK15-NEXT:  %0 = fmul fast double %differeturn, %i37
+; CHECK15-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl"
+; CHECK15-NEXT:  %2 = fadd fast double %1, %0
+; CHECK15-NEXT:  store double %2, double addrspace(13)* %"i35'ipl"
+; CHECK15-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc"
+; CHECK15-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc"
+; CHECK15-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc"
+; CHECK15-NEXT:  %4 = fmul fast double %3, %i15
+; CHECK15-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl"
+; CHECK15-NEXT:  %6 = fadd fast double %5, %4
+; CHECK15-NEXT:  store double %6, double addrspace(13)* %"i13'ipl"
+; CHECK15-NEXT:  ret void
+; CHECK15-NEXT:}
+
+; CHECK16: define internal fastcc void @diffea0
+; CHECK16-NEXT: bb:
+; CHECK16-NEXT:  %i2 = alloca { [1 x [2 x double]], double }, i64 1
+; CHECK16-NEXT:  %i3 = call {}*** @julia.get_pgcstack() #13
+; CHECK16-NEXT:  %"i4'ipg" = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %"arg1'", i64 0, i64 0, i64 2
+; CHECK16-NEXT:  %"i5'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i4'ipg"
+; CHECK16-NEXT:  %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
+; CHECK16-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
+; CHECK16-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
+; CHECK16-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'ipl" to double addrspace(13)* addrspace(11)*
+; CHECK16-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc"
+; CHECK16-NEXT:  %i15 = load double, double* %i11
+; CHECK16-NEXT:  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg"
+; CHECK16-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
+; CHECK16-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
+; CHECK16-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
+; CHECK16-NEXT:  %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
+; CHECK16-NEXT:  %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
+; CHECK16-NEXT:  %i23 = getelementptr inbounds [3 x {} addrspace(10)*], [3 x {} addrspace(10)*] addrspace(11)* %i21, i64 0, i64 0
+; CHECK16-NEXT:  %i24 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i23
+; CHECK16-NEXT:  %"i25'ipiv" = insertvalue [3 x {} addrspace(10)*] zeroinitializer, {} addrspace(10)* %i24, 0
+; CHECK16-NEXT:  %i26 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1, i64 1
+; CHECK16-NEXT:  %i27 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %i26
+; CHECK16-NEXT:  %"i28'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i25'ipiv", {} addrspace(10)* %i27, 1
+; CHECK16-NEXT:  %"i29'ipg" = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %"arg1'", i64 0, i64 1, i64 2
+; CHECK16-NEXT:  %"i30'ipl" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"i29'ipg"
+; CHECK16-NEXT:  %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'ipl", 2
+; CHECK16-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
+; CHECK16-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
+; CHECK16-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
+; CHECK16-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc"
+; CHECK16-NEXT:  %i37 = load double, double* %i11
+; CHECK16-NEXT:  %0 = fmul fast double %differeturn, %i37
+; CHECK16-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl"
+; CHECK16-NEXT:  %2 = fadd fast double %1, %0
+; CHECK16-NEXT:  store double %2, double addrspace(13)* %"i35'ipl"
+; CHECK16-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc"
+; CHECK16-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc"
+; CHECK16-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc"
+; CHECK16-NEXT:  %4 = fmul fast double %3, %i15
+; CHECK16-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl"
+; CHECK16-NEXT:  %6 = fadd fast double %5, %4
+; CHECK16-NEXT:  store double %6, double addrspace(13)* %"i13'ipl"
+; CHECK16-NEXT:  ret void
 
