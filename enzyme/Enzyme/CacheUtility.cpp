@@ -214,8 +214,82 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
   return std::pair<PHINode *, Instruction *>(nullptr, nullptr);
 }
 
-// Attempt to rewrite all phinode's in the loop in terms of the
-// induction variable
+/// The value of the recurrence AR, of degree at most two, at iteration I, as
+/// a polynomial in I: {Init,+,A,+,B} evaluates to Init + A*I + B*I*(I-1)/2.
+/// This is built in AR's own type rather than through
+/// SCEVAddRecExpr::evaluateAtIteration, which computes the binomial in a wider
+/// type that IndVarSimplify would then turn back into a loop-carried phi;
+/// I*(I-1)/2 is formed as (I/2)*(I-1) + (I%2)*((I-1)/2) so every product is
+/// of exact integers and the sum is exact mod 2^W. Returns nullptr for higher
+/// degrees.
+static const SCEV *closedFormOfRecurrence(const SCEVAddRecExpr *AR,
+                                          const SCEV *IterationNumber,
+                                          ScalarEvolution &SE) {
+  if (AR->getNumOperands() > 3)
+    return nullptr;
+  Type *Ty = AR->getType();
+  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, Ty);
+  const SCEV *Res = AR->getOperand(0);
+  if (AR->getNumOperands() > 1)
+    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(1), I));
+  if (AR->getNumOperands() > 2) {
+    const SCEV *One = SE.getOne(Ty);
+    const SCEV *Two = SE.getConstant(Ty, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(2), Tri));
+  }
+  return Res;
+}
+
+/// Replace every quadratic recurrence inside an expression by its closed form
+/// in the canonical induction variable of its loop, treated as an opaque value.
+///
+/// SCEVExpander expands a recurrence with more than two operands literally,
+/// as nested loop-carried phis (it would otherwise need a canonical IV one bit
+/// wider than the value). Such a phi is as impossible to recompute in the
+/// reverse pass as the accumulator it came from, so e.g. the start value
+/// i*(2*d-i-1)/2 of an inner index, expanded while rewriting the inner phi,
+/// would leave `acc += 2*d-1-2*i` in the outer loop and get cached once per
+/// iteration. closedFormOfRecurrence needs no wider type, so it can take the
+/// case the expander declines.
+struct QuadraticClosedFormRewriter
+    : public SCEVRewriteVisitor<QuadraticClosedFormRewriter> {
+  QuadraticClosedFormRewriter(ScalarEvolution &SE) : SCEVRewriteVisitor(SE) {}
+
+  const SCEV *visitAddRecExpr(const SCEVAddRecExpr *AR) {
+    SmallVector<const SCEV *, 3> Ops;
+    bool Changed = false;
+    for (auto Op : AR->operands()) {
+      const SCEV *NewOp = visit(Op);
+      Changed |= NewOp != Op;
+      Ops.push_back(NewOp);
+    }
+    const SCEV *R = AR;
+    if (Changed)
+#if LLVM_VERSION_MAJOR >= 24
+      R = SE.getAddRecExpr(Ops, AR->getLoop(), SCEV::FlagNone);
+#else
+      R = SE.getAddRecExpr(Ops, AR->getLoop(), SCEV::FlagAnyWrap);
+#endif
+    auto AR2 = dyn_cast<SCEVAddRecExpr>(R);
+    if (!AR2 || AR2->isAffine() || AR2->getNumOperands() != 3)
+      return R;
+    if (!AR2->getType()->isIntegerTy())
+      return R;
+    PHINode *IV = AR2->getLoop()->getCanonicalInductionVariable();
+    if (!IV)
+      return R;
+    if (auto Closed = closedFormOfRecurrence(AR2, SE.getUnknown(IV), SE))
+      return Closed;
+    return R;
+  }
+};
+
 /// PN is a header phi of L that scalar evolution could not classify. Recognize
 /// an accumulator whose per-iteration step is the trip count of an inner loop,
 /// as in
@@ -434,33 +508,16 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
 #else
       SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagAnyWrap));
 #endif
-  if (!AR || AR->getNumOperands() > 3)
+  if (!AR)
     return nullptr;
-
-  // Evaluate {Init,+,A,+,B} at iteration I as Init + A*I + B*I*(I-1)/2. Do it
-  // in WideTy rather than through SCEVAddRecExpr::evaluateAtIteration, which
-  // computes the binomial in a wider type that IndVarSimplify would then turn
-  // back into a loop-carried phi. I*(I-1)/2 is formed as
-  //   (I/2)*(I-1) + (I%2)*((I-1)/2)
-  // so that every product is of exact integers and the sum is exact mod 2^W.
-  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, WideTy);
-  const SCEV *Res = AR->getOperand(0);
-  if (AR->getNumOperands() > 1)
-    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(1), I));
-  if (AR->getNumOperands() > 2) {
-    const SCEV *One = SE.getOne(WideTy);
-    const SCEV *Two = SE.getConstant(WideTy, 2);
-    const SCEV *Half = SE.getUDivExpr(I, Two);
-    const SCEV *IM1 = SE.getMinusSCEV(I, One);
-    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
-    const SCEV *Tri =
-        SE.getAddExpr(SE.getMulExpr(Half, IM1),
-                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
-    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(2), Tri));
-  }
-  return SE.getTruncateOrNoop(Res, PN->getType());
+  const SCEV *Closed = closedFormOfRecurrence(AR, IterationNumber, SE);
+  if (!Closed)
+    return nullptr;
+  return SE.getTruncateOrNoop(Closed, PN->getType());
 }
 
+// Attempt to rewrite all phinode's in the loop in terms of the
+// induction variable
 void RemoveRedundantIVs(
     Loop *L, PHINode *CanonicalIV, Instruction *Increment,
     MustExitScalarEvolution &SE,
@@ -489,6 +546,8 @@ void RemoveRedundantIVs(
       S = closedFormOfCountedAccumulator(PN, L, SE.getUnknown(CanonicalIV), SE);
       if (!S)
         continue;
+    } else if (EnzymeRewriteAccumulators) {
+      S = QuadraticClosedFormRewriter(SE).visit(S);
     }
     // we may expand code for phi where not legal (computing with
     // subloop expressions). Check that this isn't the case
