@@ -81,6 +81,97 @@ void markFunctionInactive(Function &F) {
   }
 }
 
+/// If F is a trivial forwarding wrapper -- one basic block holding a single
+/// call whose operands are F's own arguments in order, followed by a return of
+/// that call's result -- copy the callee's function attributes onto F, except
+/// those that only steer inlining or code placement.
+///
+/// preserveLinkage marks libdevice wrappers such as __nv_sqrt (whose body is
+/// just `call @llvm.nvvm.sqrt.rn.d; ret`) noinline so Enzyme can recognize
+/// them by name. Inlining is how the wrapper would normally pick up the
+/// intrinsic's attributes, and FunctionAttrs never infers `speculatable`, so
+/// without this the wrapper stays an opaque call that LICM cannot hoist and
+/// SimplifyCFG cannot if-convert. In a loop, that forces Enzyme to cache
+/// per-iteration values that would otherwise be loop invariant.
+///
+/// Returns whether F changed.
+bool copyForwardedCalleeAttrs(Function &F) {
+  if (F.isDeclaration() || F.isVarArg() || F.size() != 1)
+    return false;
+  BasicBlock &BB = F.getEntryBlock();
+  if (BB.size() != 2)
+    return false;
+  auto *CI = dyn_cast<CallInst>(&BB.front());
+  auto *RI = dyn_cast<ReturnInst>(BB.getTerminator());
+  if (!CI || !RI)
+    return false;
+  Function *Callee = CI->getCalledFunction();
+  if (!Callee || Callee == &F || CI->arg_size() != F.arg_size())
+    return false;
+  for (unsigned i = 0, e = F.arg_size(); i < e; ++i)
+    if (CI->getArgOperand(i) != F.getArg(i))
+      return false;
+  if (F.getReturnType()->isVoidTy()) {
+    if (RI->getReturnValue())
+      return false;
+  } else if (RI->getReturnValue() != CI) {
+    return false;
+  }
+
+  bool changed = false;
+#if LLVM_VERSION_MAJOR >= 16
+  // F only runs the callee, so its effects are at most the callee's.
+  auto ME = F.getMemoryEffects() & Callee->getMemoryEffects();
+  if (ME != F.getMemoryEffects()) {
+    F.setMemoryEffects(ME);
+    changed = true;
+  }
+#endif
+  // Only semantic guarantees that hold for a call forwarded verbatim. Anything
+  // describing how the callee's own body was compiled (inlining hints, code
+  // placement, sanitizers, stack protection, coroutine state, ...) stays put.
+  static const Attribute::AttrKind Forwardable[] = {
+      Attribute::Speculatable,
+      Attribute::NoUnwind,
+      Attribute::WillReturn,
+      Attribute::MustProgress,
+      Attribute::NoSync,
+      Attribute::NoFree,
+      Attribute::NoRecurse,
+      Attribute::NoCallback,
+      Attribute::NoReturn,
+      Attribute::Convergent,
+#if LLVM_VERSION_MAJOR >= 23
+      Attribute::NoCreateUndefOrPoison,
+#endif
+#if LLVM_VERSION_MAJOR < 16
+      Attribute::ReadNone,
+      Attribute::ReadOnly,
+      Attribute::WriteOnly,
+      Attribute::ArgMemOnly,
+      Attribute::InaccessibleMemOnly,
+      Attribute::InaccessibleMemOrArgMemOnly,
+#endif
+  };
+  for (auto K : Forwardable) {
+    if (!Callee->hasFnAttribute(K) || F.hasFnAttribute(K))
+      continue;
+    F.addFnAttr(K);
+    changed = true;
+  }
+  // llvm.nvvm.sqrt.* (rn/rz/rm/rp, ftz, approx) are declared IntrNoMem but not
+  // IntrSpeculatable upstream, unlike llvm.nvvm.fabs or llvm.sqrt itself, even
+  // though InstCombine later rewrites the rn forms to llvm.sqrt. They have no
+  // side effects or UB (a negative input just yields NaN), so __nv_sqrt and
+  // __nv_sqrtf may be hoisted and if-converted like any other math call.
+  if (startsWith(Callee->getName(), "llvm.nvvm.sqrt.") &&
+      !F.hasFnAttribute(Attribute::Speculatable)) {
+    F.addFnAttr(Attribute::Speculatable);
+    changed = true;
+  }
+  return changed;
+}
+
 //! Returns whether changed.
 bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
@@ -92,6 +183,7 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
     if (Inlining) {
       F.removeFnAttr(Attribute::AlwaysInline);
       F.addFnAttr(Attribute::NoInline);
+      copyForwardedCalleeAttrs(F);
     }
     F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
     F.setLinkage(Function::LinkageTypes::ExternalLinkage);
