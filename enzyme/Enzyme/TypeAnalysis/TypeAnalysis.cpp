@@ -1377,6 +1377,27 @@ void TypeAnalyzer::prepareArgs() {
   }
 }
 
+// An enzyme_type annotation may only name offsets within the value it
+// annotates. A violation is reported through the error handler when one is
+// installed, so that the frontend can turn it into a catchable error, and
+// otherwise stops the analysis with a diagnostic.
+static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
+                                  size_t RegSize, Instruction &I, Value *Val) {
+  for (const auto &pair : TT.getMapping()) {
+    if (pair.first[0] == -1 || (size_t)pair.first[0] < RegSize)
+      continue;
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0]
+       << " beyond the " << RegSize << " bytes of " << *Val << " in " << I;
+    if (CustomErrorHandler)
+      CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::IllegalTypeAnalysis,
+                         (void *)TA, wrap(Val), nullptr);
+    EmitFailure("BadEnzymeType", I.getDebugLoc(), &I, ss.str());
+    llvm::report_fatal_error("Canonicalization failed");
+  }
+}
+
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
@@ -1389,15 +1410,7 @@ void TypeAnalyzer::considerTBAA() {
         auto TT = TypeTree::fromMD(MD);
 
         auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-        for (const auto &pair : TT.getMapping()) {
-          if (pair.first[0] != -1) {
-            if ((size_t)pair.first[0] >= RegSize) {
-              llvm::errs() << " bad enzyme_type " << TT.str()
-                           << " RegSize=" << RegSize << " I:" << I << "\n";
-              llvm::report_fatal_error("Canonicalization failed");
-            }
-          }
-        }
+        checkEnzymeTypeExtent(this, TT, RegSize, I, &I);
         updateAnalysis(&I, TT, &I);
       }
 
@@ -1418,15 +1431,7 @@ void TypeAnalyzer::considerTBAA() {
           auto RegSize = I.getType()->isVoidTy()
                              ? 0
                              : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-          for (const auto &pair : TT.getMapping()) {
-            if (pair.first[0] != -1) {
-              if ((size_t)pair.first[0] >= RegSize) {
-                llvm::errs() << " bad enzyme_type " << TT.str()
-                             << " RegSize=" << RegSize << " I:" << I << "\n";
-                llvm::report_fatal_error("Canonicalization failed");
-              }
-            }
-          }
+          checkEnzymeTypeExtent(this, TT, RegSize, I, call);
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1436,15 +1441,7 @@ void TypeAnalyzer::considerTBAA() {
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
             auto argTy = call->getArgOperand(i)->getType();
             auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call->getArgOperand(i));
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1461,15 +1458,7 @@ void TypeAnalyzer::considerTBAA() {
             auto RegSize = I.getType()->isVoidTy()
                                ? 0
                                : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call);
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1478,19 +1467,10 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
-              auto RegSize = I.getType()->isVoidTy()
-                                 ? 0
-                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-              for (const auto &pair : TT.getMapping()) {
-                if (pair.first[0] != -1) {
-                  if ((size_t)pair.first[0] >= RegSize) {
-                    llvm::errs()
-                        << " bad enzyme_type " << TT.str()
-                        << " RegSize=" << RegSize << " I:" << I << "\n";
-                    llvm::report_fatal_error("Canonicalization failed");
-                  }
-                }
-              }
+              auto argTy = call->getArgOperand(i)->getType();
+              auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
+              checkEnzymeTypeExtent(this, TT, RegSize, I,
+                                    call->getArgOperand(i));
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
