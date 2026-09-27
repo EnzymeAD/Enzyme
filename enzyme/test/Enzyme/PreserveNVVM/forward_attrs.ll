@@ -43,8 +43,8 @@ declare double @llvm.nvvm.sqrt.rn.d(double) #2
 declare float @llvm.nvvm.sqrt.rn.ftz.f(float) #2
 
 attributes #0 = { alwaysinline nounwind }
-attributes #1 = { nofree nosync nounwind speculatable willreturn memory(none) }
-attributes #2 = { nofree nosync nounwind willreturn memory(none) }
+attributes #1 = { nofree nosync nounwind speculatable willreturn readnone }
+attributes #2 = { nofree nosync nounwind willreturn readnone }
 
 ; CHECK: define double @__nv_fabs(double %x) #[[FABS:[0-9]+]]
 ; CHECK: define double @__nv_sqrt(double %x) #[[SQRT:[0-9]+]]

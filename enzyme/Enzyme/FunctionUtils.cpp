@@ -1908,6 +1908,62 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
   return true;
 }
 
+// Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
+// attributes LLVM's alias analysis understands: the function reads any memory,
+// writes only inaccessible memory (the exception it may allocate, GC
+// bookkeeping) and, for the local variant, its `sret`-like arguments; every
+// other pointer argument is `readonly`. Effects a location already had are
+// kept when they are tighter. The derivative of a function marked here does
+// not inherit them: `CloneFunctionWithReturns` builds it afresh and only
+// copies `readonly` onto the primal arguments, which the derivative reads.
+//
+// This is only valid with Julia's setjmp/longjmp exceptions: the analysis
+// permits writes on paths that throw, and there such a write is only
+// observable after control re-enters through a `returns_twice` call, which
+// LLVM already treats as clobbering all memory. With `invoke`/landingpad
+// exception handling the landing pad succeeds the throwing call itself, so
+// the attributes would be wrong.
+static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
+  if (!EnzymeJuliaAddrLoad)
+    return;
+#if LLVM_VERSION_MAJOR >= 16
+  MemoryEffects derived =
+      MemoryEffects::readOnly() |
+      MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+  if (local)
+    derived |= MemoryEffects::argMemOnly(ModRefInfo::ModRef);
+  F.setMemoryEffects(F.getMemoryEffects() & derived);
+#endif
+  // Before LLVM 16 there is no attribute for "reads anything, writes only
+  // inaccessible memory": `readonly` would also let an unused `nounwind` call
+  // be deleted, so only the parameters are annotated there.
+  for (auto &arg : F.args()) {
+    if (!arg.getType()->isPointerTy())
+      continue;
+    if (local) {
+      if (arg.hasStructRetAttr() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_returnRoots")
+              .isValid() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_sret_union_bytes")
+              .isValid())
+        continue;
+    }
+    unsigned argno = arg.getArgNo();
+    if (F.hasParamAttribute(argno, Attribute::ReadNone) ||
+        F.hasParamAttribute(argno, Attribute::ReadOnly))
+      continue;
+    // Never written by us and never read per the existing attribute.
+    if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
+      F.removeParamAttr(argno, Attribute::WriteOnly);
+      F.addParamAttr(argno, Attribute::ReadNone);
+      continue;
+    }
+    F.addParamAttr(argno, Attribute::ReadOnly);
+  }
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2117,6 +2173,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
+    addReadOnlyOrThrowAttributes(F, local);
   }
   return true;
 }
@@ -2274,11 +2331,13 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2)) {
+        bool local = LocalReadOnlyFunctions.contains(F2);
+        if (local) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
         } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
         }
+        addReadOnlyOrThrowAttributes(*F2, local);
         todo.push_back(F2);
         todo_map.erase(F2);
       }
