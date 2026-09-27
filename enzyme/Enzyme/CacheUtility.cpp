@@ -237,7 +237,8 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
                                                   ScalarEvolution &SE) {
   if (!EnzymeRewriteAccumulators)
     return nullptr;
-  if (PN->getNumIncomingValues() != 2)
+  // Integer counters only: a pointer recurrence has no closed form to expand.
+  if (!PN->getType()->isIntegerTy() || PN->getNumIncomingValues() != 2)
     return nullptr;
   BasicBlock *Preheader = L->getLoopPreheader();
   BasicBlock *Latch = L->getLoopLatch();
@@ -278,7 +279,7 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
     if (auto TI = dyn_cast<TruncInst>(V))
       Wide = TI->getOperand(0);
     Type *Ty = Wide->getType();
-    if (!SE.isSCEVable(Ty))
+    if (!Ty->isIntegerTy())
       return nullptr;
     // At the scope of L, a value from an inner loop is its exit value.
     const SCEV *WS = SE.getSCEVAtScope(Wide, L);
@@ -290,6 +291,8 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
       const SCEV *Ext =
           S ? SE.getNoopOrSignExtend(PNS, Ty) : SE.getNoopOrZeroExtend(PNS, Ty);
       const SCEV *Cand = SE.getMinusSCEV(WS, Ext);
+      if (isa<SCEVCouldNotCompute>(Cand))
+        continue;
       if (!SCEVExprContains(Cand, [&](const SCEV *X) { return X == PNS; })) {
         D = Cand;
         Sgn = S;
@@ -369,15 +372,15 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
       BasicBlock *Pred = B->getSinglePredecessor();
       if (!Pred)
         return nullptr;
-      auto BI = dyn_cast<BranchInst>(Pred->getTerminator());
-      if (!BI || !BI->isConditional() ||
-          BI->getSuccessor(0) == BI->getSuccessor(1))
+      Instruction *TI = Pred->getTerminator();
+      if (!isConditionalBranch(TI) ||
+          TI->getSuccessor(0) == TI->getSuccessor(1))
         return nullptr;
-      auto Cmp = dyn_cast<ICmpInst>(BI->getCondition());
+      auto Cmp = dyn_cast<ICmpInst>(getBranchCondition(TI));
       if (!Cmp)
         return nullptr;
       ICmpInst::Predicate Q = Cmp->getPredicate();
-      if (BI->getSuccessor(1) == B)
+      if (TI->getSuccessor(1) == B)
         Q = ICmpInst::getInversePredicate(Q);
       Value *X = Cmp->getOperand(0), *Y = Cmp->getOperand(1);
       bool Strict = false, Equal = false;
@@ -426,7 +429,11 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
   const SCEV *WideInit = Signed ? SE.getNoopOrSignExtend(InitS, WideTy)
                                 : SE.getNoopOrZeroExtend(InitS, WideTy);
   auto AR = dyn_cast<SCEVAddRecExpr>(
+#if LLVM_VERSION_MAJOR >= 24
+      SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagNone));
+#else
       SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagAnyWrap));
+#endif
   if (!AR || AR->getNumOperands() > 3)
     return nullptr;
 

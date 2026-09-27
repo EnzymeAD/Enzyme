@@ -1503,7 +1503,8 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
     if (!Latch)
       continue;
     for (PHINode &PN : L->getHeader()->phis()) {
-      if (PN.getBasicBlockIndex(Latch) < 0)
+      // Only integer counters can be rewritten, so only they need the edge.
+      if (!PN.getType()->isIntegerTy() || PN.getBasicBlockIndex(Latch) < 0)
         continue;
       auto NP = dyn_cast<PHINode>(PN.getIncomingValueForBlock(Latch));
       if (!NP || NP->getParent() == L->getHeader() ||
@@ -1513,9 +1514,9 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
         if (NP->getIncomingValue(i) != &PN)
           continue;
         BasicBlock *B = NP->getIncomingBlock(i);
-        auto BI = dyn_cast<BranchInst>(B->getTerminator());
-        if (!BI || !BI->isConditional() ||
-            BI->getSuccessor(0) == BI->getSuccessor(1))
+        Instruction *TI = B->getTerminator();
+        if (!isConditionalBranch(TI) ||
+            TI->getSuccessor(0) == TI->getSuccessor(1))
           continue;
         SplitEdge(B, NP->getParent(), &DT, &LI);
       }
