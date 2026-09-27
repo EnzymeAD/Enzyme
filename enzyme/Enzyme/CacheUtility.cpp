@@ -25,8 +25,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CacheUtility.h"
+
 #include "FunctionUtils.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include <utility>
 
 using namespace llvm;
 
@@ -222,6 +224,12 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
 /// I*(I-1)/2 is formed as (I/2)*(I-1) + (I%2)*((I-1)/2) so every product is
 /// of exact integers and the sum is exact mod 2^W. Returns nullptr for higher
 /// degrees.
+// The no-wrap flag type of an add recurrence, named without reference to any
+// enumerator (FlagAnyWrap became FlagNone in LLVM 24); its zero value means
+// "no flags" in every version.
+using NoWrapFlagsTy =
+    decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
+
 static const SCEV *closedFormOfRecurrence(const SCEVAddRecExpr *AR,
                                           const SCEV *IterationNumber,
                                           ScalarEvolution &SE) {
@@ -262,20 +270,10 @@ struct QuadraticClosedFormRewriter
   QuadraticClosedFormRewriter(ScalarEvolution &SE) : SCEVRewriteVisitor(SE) {}
 
   const SCEV *visitAddRecExpr(const SCEVAddRecExpr *AR) {
-    SmallVector<const SCEV *, 3> Ops;
-    bool Changed = false;
-    for (auto Op : AR->operands()) {
-      const SCEV *NewOp = visit(Op);
-      Changed |= NewOp != Op;
-      Ops.push_back(NewOp);
-    }
-    const SCEV *R = AR;
-    if (Changed)
-#if LLVM_VERSION_MAJOR >= 24
-      R = SE.getAddRecExpr(Ops, AR->getLoop(), SCEV::FlagNone);
-#else
-      R = SE.getAddRecExpr(Ops, AR->getLoop(), SCEV::FlagAnyWrap);
-#endif
+    // Let the base visitor rewrite the operands (it also copes with the
+    // operand representation of the LLVM version at hand).
+    const SCEV *R =
+        SCEVRewriteVisitor<QuadraticClosedFormRewriter>::visitAddRecExpr(AR);
     auto AR2 = dyn_cast<SCEVAddRecExpr>(R);
     if (!AR2 || AR2->isAffine() || AR2->getNumOperands() != 3)
       return R;
@@ -503,11 +501,7 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
   const SCEV *WideInit = Signed ? SE.getNoopOrSignExtend(InitS, WideTy)
                                 : SE.getNoopOrZeroExtend(InitS, WideTy);
   auto AR = dyn_cast<SCEVAddRecExpr>(
-#if LLVM_VERSION_MAJOR >= 24
-      SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagNone));
-#else
-      SE.getAddRecExpr(WideInit, Step, L, SCEV::FlagAnyWrap));
-#endif
+      SE.getAddRecExpr(WideInit, Step, L, NoWrapFlagsTy(0)));
   if (!AR)
     return nullptr;
   const SCEV *Closed = closedFormOfRecurrence(AR, IterationNumber, SE);
