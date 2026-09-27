@@ -9612,6 +9612,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         idx++;
       }
 
+    } else if (auto cmp = dyn_cast<ICmpInst>(cur);
+               cmp && isa<ConstantPointerNull>(cmp->getOperand(
+                          cmp->getOperand(0) == prev ? 1 : 0))) {
+      // A null check on the allocation (e.g. libstdc++'s deallocation path)
+      // neither reads, writes, nor captures the memory, so it says nothing
+      // about whether the contents can be recreated. Any reallocation is also
+      // non-null, so replaying it in the reverse pass yields the same result.
     } else {
       promotable = false;
       shadowpromotable = false;
