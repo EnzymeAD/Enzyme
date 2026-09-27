@@ -24,6 +24,6 @@ declare double @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %0 = fadd fast double %x, 5.000000e-01
 ; CHECK-NEXT:   %1 = call fast double @cospi(double %0)
 ; CHECK-NEXT:   %2 = fmul fast double %1, %"x'"
-; CHECK-NEXT:   %3 = fmul fast double 0x400921FB54442D1F, %2
+; CHECK-NEXT:   %3 = fmul fast double 0x400921FB54442D18, %2
 ; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }
