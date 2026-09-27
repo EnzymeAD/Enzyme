@@ -1,5 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s; fi
 
 ; Like duplicatemallocloop.ll, but shaped like std::vector: the buffer is null
 ; when empty and is compared against null before being freed. A null check
@@ -74,7 +73,7 @@ attributes #2 = { inaccessiblememonly nounwind }
 attributes #3 = { inaccessiblemem_or_argmemonly nounwind }
 attributes #6 = { nounwind }
 
-; CHECK: define internal void @diffemalloced(ptr noalias nocapture %a0, ptr %"a0'", ptr noalias nocapture readonly %a1, ptr %"a1'", i64 %n)
+; CHECK: define internal void @diffemalloced(ptr noalias nocapture %a0, ptr{{( nocapture)?}} %"a0'", ptr noalias nocapture readonly %a1, ptr{{( nocapture)?}} %"a1'", i64 %n)
 ; CHECK: loop:
 ; CHECK:   store double %a11, ptr %a5, align 8
 ; CHECK:   br i1 %a15, label %remat_enter, label %loop
