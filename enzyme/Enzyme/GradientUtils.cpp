@@ -6900,6 +6900,21 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       // need caching)
       BasicBlock *orig = isOriginal(inst->getParent());
       if (!orig) {
+        // The value was created by the reverse pass itself, for example by a
+        // custom rule extracting one member of a batched shadow into the
+        // reverse builder before looking it up. It has no primal counterpart
+        // to cache or recompute: it is usable wherever it already dominates.
+        if (inst->getParent() == BuilderM.GetInsertBlock()) {
+          if (BuilderM.GetInsertPoint() == BuilderM.GetInsertBlock()->end() ||
+              inst->comesBefore(&*BuilderM.GetInsertPoint()))
+            return inst;
+        } else {
+          // DT was computed before any reverse block existed.
+          DominatorTree ReverseDT(*newFunc);
+          if (ReverseDT.isReachableFromEntry(BuilderM.GetInsertBlock()) &&
+              ReverseDT.dominates(inst, BuilderM.GetInsertBlock()))
+            return inst;
+        }
         llvm::errs() << "oldFunc: " << *oldFunc << "\n";
         llvm::errs() << "newFunc: " << *newFunc << "\n";
         llvm::errs() << "insertBlock: " << *BuilderM.GetInsertBlock() << "\n";
