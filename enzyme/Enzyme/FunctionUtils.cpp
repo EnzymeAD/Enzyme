@@ -1952,9 +1952,14 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
     }
     unsigned argno = arg.getArgNo();
     if (F.hasParamAttribute(argno, Attribute::ReadNone) ||
-        F.hasParamAttribute(argno, Attribute::ReadOnly) ||
-        F.hasParamAttribute(argno, Attribute::WriteOnly))
+        F.hasParamAttribute(argno, Attribute::ReadOnly))
       continue;
+    // Never written by us and never read per the existing attribute.
+    if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
+      F.removeParamAttr(argno, Attribute::WriteOnly);
+      F.addParamAttr(argno, Attribute::ReadNone);
+      continue;
+    }
     F.addParamAttr(argno, Attribute::ReadOnly);
   }
 }
