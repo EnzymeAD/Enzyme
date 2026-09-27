@@ -625,7 +625,11 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       ScalarEvolution::maskFlags(SA->getNoWrapFlags(), SCEV::FlagNUW);
   const SCEV *PreStart = SE->getAddExpr(DiffOps, PreStartFlags);
   const SCEVAddRecExpr *PreAR = dyn_cast<SCEVAddRecExpr>(
+#if LLVM_VERSION_MAJOR >= 24
+      SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagNone));
+#else
       SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagAnyWrap));
+#endif
 
   // "{S,+,X} is <nsw>/<nuw>" and "the backedge is taken at least once" implies
   // "S+X does not sign/unsign-overflow".
@@ -1016,8 +1020,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // bound of the loop (RHS), and the fact that IV does not overflow (which is
   // checked above).
   if (!isLoopInvariant(RHS, L)) {
+#if LLVM_VERSION_MAJOR >= 24
+    const SCEV *MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
 #if LLVM_VERSION_MAJOR >= 16
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      MaxBECount, false /*MaxOrZero*/, Predicates);
@@ -1200,8 +1210,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     MaxBECount = BECountIfBackedgeTaken;
     MaxOrZero = true;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
   }
 
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&

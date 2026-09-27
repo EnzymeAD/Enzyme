@@ -4975,7 +4975,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               if (cmp0->getOperand(1 - i0) == cmp1->getOperand(1 - i1))
                 auto e0 = SE.getSCEV(cmp0->getOperand(i0));
                 auto e1 = SE.getSCEV(cmp1->getOperand(i1));
+#if LLVM_VERSION_MAJOR >= 24
+                auto m = SE.getMinusSCEV(e0, e1, SCEV::FlagsMask);
+#else
                 auto m = SE.getMinusSCEV(e0, e1, SCEV::NoWrapMask);
+#endif
                 if (auto C = dyn_cast<SCEVConstant>(m)) {
                   // if c1 == c2 don't need the and they are equivalent
                   if (C->getValue()->isZero()) {
@@ -6109,7 +6113,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                   cmp2->getPredicate() == cmpOp) {
                 auto c1 = SE.getSCEV(cmp1->getOperand(i1));
                 auto c2 = SE.getSCEV(cmp2->getOperand(i2));
+#if LLVM_VERSION_MAJOR >= 24
+                auto m = SE.getMinusSCEV(c1, c2, SCEV::FlagsMask);
+#else
                 auto m = SE.getMinusSCEV(c1, c2, SCEV::NoWrapMask);
+#endif
                 if (auto C = dyn_cast<SCEVConstant>(m)) {
                   // if c1 == c2 don't need the and they are equivalent
                   if (C->getValue()->isZero()) {
