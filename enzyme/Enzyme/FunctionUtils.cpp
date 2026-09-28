@@ -5698,9 +5698,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                                (mul->hasNoSignedWrap() &&
                                 (cur->getOpcode() == Instruction::AShr ||
                                  cur->getOpcode() == Instruction::SDiv)))) {
+                // (a + C1) /exact C2 == (a /exact C2) + C1 / C2 when the
+                // add does not wrap: a must be divided as well.
+                auto adivI = BinaryOperator::Create(
+                    (Instruction::BinaryOps)cur->getOpcode(),
+                    mul->getOperand(1 - i0), C2, "adiv." + cur->getName());
+                adivI->setIsExact(true);
+                B.Insert(adivI);
+                Value *adiv = pushcse(adivI);
                 auto res = pushcse(B.CreateAdd(
-                    mul->getOperand(1 - i0),
-                    ConstantInt::get(cur->getType(), div),
+                    adiv, ConstantInt::get(cur->getType(), div),
                     "madd." + cur->getName(), mul->hasNoUnsignedWrap(),
                     mul->hasNoSignedWrap()));
                 push(mul);
