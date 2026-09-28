@@ -9744,14 +9744,19 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
 #endif
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
-      SmallVector<Value *, 1> prevSols;
+      SmallVector<std::pair<Value *, Value *>, 1> prevSols;
       for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
         args[induct_idx] = sol;
-        for (auto sol2 : prevSols)
-          condition = B.CreateAnd(condition, B.CreateICmpNE(sol, sol2));
-        prevSols.push_back(sol);
+        Value *origCond = condition;
+        // Skip a solution only if an earlier one with the same value was
+        // actually taken (its own condition held).
+        for (auto [sol2, cond2] : prevSols)
+          condition = B.CreateAnd(
+              condition,
+              B.CreateNot(B.CreateAnd(cond2, B.CreateICmpEQ(sol, sol2))));
+        prevSols.emplace_back(sol, origCond);
         auto BB = B.GetInsertBlock();
         auto B2 = BB->splitBasicBlock(B.GetInsertPoint(), "poststore");
         B2->moveAfter(BB);
