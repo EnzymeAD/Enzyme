@@ -7298,8 +7298,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               bool legal = scev1 == scev2;
               if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
                 if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
-                  if (addRecsCorrespond(ar1, ar2) &&
-                      ar2->getStart() != OrigSE->getCouldNotCompute() &&
+                  if (ar2->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
                       ar2->getStepRecurrence(*OrigSE) !=
                           OrigSE->getCouldNotCompute() &&
