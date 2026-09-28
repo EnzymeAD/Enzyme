@@ -6659,10 +6659,91 @@ public:
     DIFFE_TYPE subretType = gutils->getReturnDiffeType(
         &call, &subretused, &shadowReturnUsed, smode);
 
+    if (Mode == DerivativeMode::ForwardModeSplit &&
+        customFwdSplitCallHandlers.find(funcName) ==
+            customFwdSplitCallHandlers.end() &&
+        (customCallHandlers.find(funcName) != customCallHandlers.end() ||
+         customFwdCallHandlers.find(funcName) != customFwdCallHandlers.end()) &&
+        !(gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call))) {
+      // The augmented forward pass ran the custom augmented handler for this
+      // call, but there is no handler to produce its split forward
+      // derivative. Falling through would treat the declaration as a
+      // differentiable function.
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "in Mode: " << to_string(Mode) << "\n";
+      ss << "no split forward mode call handler registered for " << funcName
+         << "\n"
+         << call;
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+      auto ifound = gutils->invertedPointers.find(&call);
+      if (ifound != gutils->invertedPointers.end()) {
+        auto placeholder = cast<PHINode>(&*ifound->second);
+        auto nullShadow =
+            Constant::getNullValue(gutils->getShadowType(call.getType()));
+        placeholder->replaceAllUsesWith(nullShadow);
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        gutils->invertedPointers.insert(std::make_pair(
+            (const Value *)&call, InvertedPointerVH(gutils, nullShadow)));
+      } else if (!gutils->isConstantValue(&call)) {
+        setDiffe(&call,
+                 Constant::getNullValue(gutils->getShadowType(call.getType())),
+                 Builder2);
+      }
+      eraseIfUnused(call);
+      return;
+    }
+
     if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeError) {
-      auto found = customFwdCallHandlers.find(funcName);
-      if (found != customFwdCallHandlers.end()) {
+        Mode == DerivativeMode::ForwardModeError ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      std::function<bool(Value *&, Value *&)> handler;
+      if (Mode == DerivativeMode::ForwardModeSplit) {
+        auto found = customFwdSplitCallHandlers.find(funcName);
+        if (found != customFwdSplitCallHandlers.end()) {
+          // Recover the tape stored by the custom augmented handler in the
+          // augmented forward pass.
+          Value *tape = nullptr;
+          assert(augmentedReturn);
+          if (augmentedReturn->tapeIndices.find(
+                  std::make_pair(&call, CacheType::Tape)) !=
+              augmentedReturn->tapeIndices.end()) {
+            auto fd = augmentedReturn->subaugmentations.find(&call);
+            assert(fd != augmentedReturn->subaugmentations.end());
+            // The augmented handler path stores the tape's LLVM type in
+            // place of an AugmentedReturn.
+            Type *tapeType = (llvm::Type *)fd->second;
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
+            tape = BuilderZ.CreatePHI(tapeType, 0);
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
+                /*ignoreType*/ true);
+          }
+          auto &fn = found->second;
+          handler = [&, tape](Value *&normalReturn,
+                              Value *&invertedReturn) -> bool {
+            return fn(BuilderZ, &call, *gutils, normalReturn, invertedReturn,
+                      tape);
+          };
+        }
+      } else {
+        auto found = customFwdCallHandlers.find(funcName);
+        if (found != customFwdCallHandlers.end()) {
+          auto &fn = found->second;
+          handler = [&](Value *&normalReturn, Value *&invertedReturn) -> bool {
+            return fn(BuilderZ, &call, *gutils, normalReturn, invertedReturn);
+          };
+        }
+      }
+      if (handler) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
@@ -6671,8 +6752,7 @@ public:
 
         Value *normalReturn = subretused ? newCall : nullptr;
 
-        bool noMod = found->second(BuilderZ, &call, *gutils, normalReturn,
-                                   invertedReturn);
+        bool noMod = handler(normalReturn, invertedReturn);
         if (noMod) {
           if (subretused)
             assert(normalReturn == newCall);

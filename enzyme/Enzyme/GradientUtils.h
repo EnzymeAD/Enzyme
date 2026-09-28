@@ -91,6 +91,14 @@ extern llvm::StringMap<
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
+/// Handlers for the derivative pass of ForwardModeSplit. They are called like
+/// the forward handlers, plus the tape (or null) that the augmented handler in
+/// customCallHandlers stored for the call in the augmented forward pass.
+extern llvm::StringMap<
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+                       llvm::Value *&, llvm::Value *&, llvm::Value *)>>
+    customFwdSplitCallHandlers;
+
 constexpr int IndexMappingError = 0x0000fffd;
 
 /// Classification of what type of use is requested
