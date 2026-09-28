@@ -126,6 +126,18 @@ void batchCloneBlock(
         continue;
     }
 
+    // A cache (in a custom reverse rule) holds batched values once batched.
+    if (auto init = dyn_cast<enzyme::InitOp>(&src)) {
+      if (auto CT = dyn_cast<enzyme::CacheType>(init.getType())) {
+        auto newInit = enzyme::InitOp::create(
+            builder, init.getLoc(),
+            enzyme::CacheType::get(
+                CT.getContext(), applyBatchSizes(CT.getType(), batchSizes)));
+        mapper.map(init.getResult(), newInit.getResult());
+        continue;
+      }
+    }
+
     SmallVector<Value, 8> operands;
     SmallVector<Block *, 2> successors;
 
@@ -197,6 +209,46 @@ void batchCloneRegion(
   }
 }
 
+// A custom reverse rule applied elementwise over a batch: its augmented
+// primal and reverse bodies batched like a function body, its caches holding
+// batched values, its signatures batched.
+static CustomReverseRuleOp batchCloneCustomRule(
+    OpBuilder &builder, CustomReverseRuleOp rule,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  auto batchTypes = [&](TypeRange types) {
+    return llvm::map_to_vector(types, [&](Type Ty) -> Type {
+      return applyBatchSizes(Ty, batchSizes);
+    });
+  };
+  auto batchFunctionType = [&](FunctionType FT) {
+    return FunctionType::get(FT.getContext(), batchTypes(FT.getInputs()),
+                             batchTypes(FT.getResults()));
+  };
+
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(rule);
+  auto newRule = CustomReverseRuleOp::create(
+      builder, rule.getLoc(),
+      StringAttr::get(rule.getContext(), "batched_" + rule.getSymName()),
+      TypeAttr::get(batchFunctionType(rule.getFunctionType())),
+      rule.getActivity(), rule.getRetActivity());
+  SymbolTable table(rule->getParentWithTrait<OpTrait::SymbolTable>());
+  newRule->remove();
+  table.insert(newRule, rule->getIterator());
+
+  IRMapping mapper;
+  batchCloneRegion(builder, &rule.getBody(), &newRule.getBody(), mapper,
+                   batchSizes, batchedFunctionCache);
+  newRule.walk([&](Operation *op) {
+    if (auto AP = dyn_cast<CustomReverseRuleAugmentedPrimalOp>(op))
+      AP.setFunctionType(batchFunctionType(AP.getFunctionType()));
+    else if (auto RO = dyn_cast<CustomReverseRuleReverseOp>(op))
+      RO.setFunctionType(batchFunctionType(RO.getFunctionType()));
+  });
+  return newRule;
+}
+
 FunctionOpInterface batchCloneFunction(
     OpBuilder &builder, FunctionOpInterface F, Twine name,
     llvm::ArrayRef<int64_t> batchSizes,
@@ -240,6 +292,20 @@ FunctionOpInterface batchCloneFunction(
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
   batchedFunctionCache[key] = NewF;
+
+  // The batched callee is differentiated with its rules applied over the
+  // batch. A derived rule belongs to one differentiation of the original.
+  NewF->removeAttr("enzyme.derived_rules");
+  auto rules = lookupCustomReverseRules(F, "enzyme.custom_rule");
+  if (succeeded(rules) && !rules->empty()) {
+    SmallVector<Attribute> refs;
+    for (auto rule : *rules)
+      refs.push_back(FlatSymbolRefAttr::get(
+          batchCloneCustomRule(builder, rule, batchSizes, batchedFunctionCache)
+              .getSymNameAttr()));
+    NewF->setAttr("enzyme.custom_rule",
+                  ArrayAttr::get(NewF->getContext(), refs));
+  }
 
   auto &origReg = F.getFunctionBody();
   auto &newReg = NewF.getFunctionBody();
