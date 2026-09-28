@@ -288,7 +288,7 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
       batchedFunctionCache;
 
   void lowerEnzymeBatchCalls(SymbolTableCollection &symbolTable,
-                             FunctionOpInterface op) {
+                             Operation *op) {
     {
       SmallVector<Operation *> toLower;
       op->walk([&](enzyme::BatchOp dop) { toLower.push_back(dop); });
@@ -316,6 +316,11 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
 void BatchPass::runOnOperation() {
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
-  getOperation()->walk(
-      [&](FunctionOpInterface op) { lowerEnzymeBatchCalls(symbolTable, op); });
+  // Batch calls live in function bodies and in the regions of custom reverse
+  // rules, whose augmented primal and reverse are function bodies too (a
+  // frontend traces them like any other function).
+  getOperation()->walk([&](Operation *op) {
+    if (isa<FunctionOpInterface, enzyme::CustomReverseRuleOp>(op))
+      lowerEnzymeBatchCalls(symbolTable, op);
+  });
 }
