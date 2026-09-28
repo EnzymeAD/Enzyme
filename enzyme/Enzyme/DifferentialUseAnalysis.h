@@ -84,10 +84,6 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
                             const llvm::PHINode *P0,
                             const llvm::Value *incomingVal);
 
-void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
-                           llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo);
-
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *inst, DerivativeMode mode,
