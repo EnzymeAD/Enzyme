@@ -960,6 +960,37 @@ static bool AllJuliaTypes(Type *T) {
   return false;
 }
 
+/// Type of a pointer to an LLVM flang array descriptor (CFI_cdesc_t):
+///   { ptr base_addr, i64 elem_len, i32 version, i8 rank, i8 type,
+///     i8 attribute, i8 extra, [rank x [3 x i64]] dim, <addendum> }
+/// Everything but the base address is integral runtime metadata. The dim
+/// entries are only included when the rank can be read off the type of the
+/// underlying allocation, since the addendum that may follow them holds a
+/// pointer.
+static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
+  TypeTree TT;
+  TT.insert({-1}, BaseType::Pointer);
+  TT.insert({-1, 0}, BaseType::Pointer);
+  const int HeaderSize = 24;
+  int end = HeaderSize;
+
+  Type *T = nullptr;
+  auto base = getBaseObject(desc);
+  if (auto AI = dyn_cast<AllocaInst>(base))
+    T = AI->getAllocatedType();
+  else if (auto GV = dyn_cast<GlobalVariable>(base))
+    T = GV->getValueType();
+  if (auto ST = dyn_cast_or_null<StructType>(T))
+    if (ST->getNumElements() >= 8 &&
+        DL.getStructLayout(ST)->getElementOffset(7) == HeaderSize)
+      if (auto dims = dyn_cast<ArrayType>(ST->getElementType(7)))
+        end += DL.getTypeAllocSize(dims);
+
+  for (int i = DL.getPointerSize(); i < end; i++)
+    TT.insert({-1, i}, BaseType::Integer);
+  return TT;
+}
+
 static bool AnyJuliaTypes(Type *T) {
   if (auto PT = dyn_cast<PointerType>(T)) {
     unsigned AS = PT->getPointerAddressSpace();
@@ -5306,6 +5337,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 
     // Prob Prog
     if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
+      return;
+    }
+
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; i++) {
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 

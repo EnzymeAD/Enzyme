@@ -13,7 +13,9 @@ program main
   real :: y(n), dy(n), yp
 
   x(:) = initial_value
-  dx(:) = 1.0
+  ! Seed a single direction so the derivative is nonzero
+  dx(:) = 0.0
+  dx(n) = 1.0
 
   call norm(n, x, y)
 
@@ -24,7 +26,8 @@ program main
   dy(:) = 0.0
   call enzyme_fwddiff(norm, enzyme_const, n, &
                       enzyme_dup, x, dx, enzyme_dup, y, dy)
-  write(*,"(f6.4)") dy(n)
+  yp = dy(n) * 1.0e+06
+  write(*,"(f6.4)") yp
 
 contains
 
@@ -47,4 +50,4 @@ contains
 end program main
 
 ! CHECK: 1.0000
-! CHECK-NEXT: 0.0000
+! CHECK-NEXT: 0.0500
