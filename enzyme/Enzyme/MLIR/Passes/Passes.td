@@ -210,6 +210,13 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*default=*/"false",
       /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
+    Option<
+      /*C++ variable name=*/"lowerCustomRules",
+      /*CLI argument=*/"lower-custom-rules",
+      /*type=*/"bool",
+      /*default=*/"true",
+      /*description=*/"Once differentiation is done, lower custom reverse rules and the split-mode calls to them to func.func / func.call, as the enzyme pass does"
+    >,
   ];
 }
 
