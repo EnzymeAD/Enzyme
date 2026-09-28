@@ -22,8 +22,7 @@ declare double @__enzyme_fwdsplit(double (double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %[[differet:.+]], i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %[[i1:.+]] = select{{( fast)?}} i1 %[[i0]], double -1.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %x)
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[differet]], %[[i1]]
 ; CHECK-NEXT:   ret double %[[i2]]
 ; CHECK-NEXT: }
