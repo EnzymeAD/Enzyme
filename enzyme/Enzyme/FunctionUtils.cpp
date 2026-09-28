@@ -6033,6 +6033,52 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               }
         }
     }
+    // (x /exact C) == y  ->  x == y * C  if y * C cannot wrap
+    if (fcmp->isEquality())
+      for (int i = 0; i < 2; i++)
+        if (auto div = dyn_cast<BinaryOperator>(fcmp->getOperand(i)))
+          if ((div->getOpcode() == Instruction::LShr ||
+               div->getOpcode() == Instruction::UDiv) &&
+              div->isExact())
+            if (auto C = dyn_cast<ConstantInt>(div->getOperand(1))) {
+              unsigned bw = C->getValue().getBitWidth();
+              APInt mulC = C->getValue();
+              if (div->getOpcode() == Instruction::LShr) {
+                if (mulC.uge(bw))
+                  continue;
+                mulC = APInt(bw, 1) << mulC;
+              }
+              if (mulC.isZero())
+                continue;
+              Value *other = fcmp->getOperand(1 - i);
+              APInt limit = APInt::getMaxValue(bw).udiv(mulC);
+              bool inRange =
+                  SE.isKnownPredicateAt(ICmpInst::ICMP_ULE, SE.getSCEV(other),
+                                        SE.getConstant(limit), cur);
+              if (!inRange && !mulC.isPowerOf2())
+                continue;
+              auto scaled = pushcse(
+                  B.CreateMul(other, ConstantInt::get(other->getType(), mulC),
+                              "scaled." + other->getName(), /*NUW*/ inRange));
+              Value *ncmp = pushcse(B.CreateICmp(fcmp->getPredicate(),
+                                                 div->getOperand(0), scaled));
+              if (!inRange) {
+                // y * 2^k only equals x /exact 2^k if y < 2^(bw - k):
+                //   x == y << k && (y >> (bw - k)) == 0
+                auto hi = pushcse(B.CreateLShr(
+                    other,
+                    ConstantInt::get(other->getType(), bw - mulC.logBase2())));
+                auto zero = ConstantInt::get(other->getType(), 0);
+                if (fcmp->getPredicate() == ICmpInst::ICMP_EQ)
+                  ncmp = pushcse(
+                      B.CreateAnd(ncmp, pushcse(B.CreateICmpEQ(hi, zero))));
+                else
+                  ncmp = pushcse(
+                      B.CreateOr(ncmp, pushcse(B.CreateICmpNE(hi, zero))));
+              }
+              replaceAndErase(cur, ncmp);
+              return "CmpExactDivToMul";
+            }
     if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
       for (int i = 0; i < 2; i++) {
         if (auto C = dyn_cast<ConstantInt>(fcmp->getOperand(i))) {
