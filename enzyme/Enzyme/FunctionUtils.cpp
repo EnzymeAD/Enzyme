@@ -5649,6 +5649,32 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
         //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if
         //  C2 divides C1
+        //  (lshr exact (shl a, C1), C2) is handled as (mul a, 1 << C1)
+        if (mul->getOpcode() == Instruction::Shl)
+          if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(1))) {
+            APInt lhs = APInt(C1->getValue().getBitWidth(), 1)
+                        << C1->getValue();
+            APInt rhs = C2->getValue();
+            if (cur->getOpcode() == Instruction::LShr)
+              rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+            APInt div, rem;
+            if (cur->getOpcode() == Instruction::LShr ||
+                cur->getOpcode() == Instruction::UDiv)
+              APInt::udivrem(lhs, rhs, div, rem);
+            else
+              APInt::sdivrem(lhs, rhs, div, rem);
+            if (rem == 0 && (cur->getOpcode() == Instruction::SDiv
+                                 ? mul->hasNoSignedWrap()
+                                 : mul->hasNoUnsignedWrap())) {
+              auto res = pushcse(B.CreateMul(
+                  mul->getOperand(0), ConstantInt::get(cur->getType(), div),
+                  "shldiv." + cur->getName(), mul->hasNoUnsignedWrap(),
+                  mul->hasNoSignedWrap()));
+              push(mul);
+              replaceAndErase(cur, res);
+              return "IShlDivConst";
+            }
+          }
         if (mul->getOpcode() == Instruction::Mul)
           for (int i0 = 0; i0 < 2; i0++)
             if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
