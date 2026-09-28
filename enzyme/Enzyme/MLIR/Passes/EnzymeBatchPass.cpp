@@ -131,8 +131,8 @@ void batchCloneBlock(
       if (auto CT = dyn_cast<enzyme::CacheType>(init.getType())) {
         auto newInit = enzyme::InitOp::create(
             builder, init.getLoc(),
-            enzyme::CacheType::get(
-                CT.getContext(), applyBatchSizes(CT.getType(), batchSizes)));
+            enzyme::CacheType::get(CT.getContext(),
+                                   applyBatchSizes(CT.getType(), batchSizes)));
         mapper.map(init.getResult(), newInit.getResult());
         continue;
       }

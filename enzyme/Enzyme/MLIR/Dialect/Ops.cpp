@@ -1110,10 +1110,10 @@ mlir::enzyme::getCustomReverseRuleCacheInits(CustomReverseRuleOp rule) {
 
 SmallVector<Type>
 mlir::enzyme::getCustomReverseRuleCacheTypes(CustomReverseRuleOp rule) {
-  return llvm::map_to_vector(
-      getCustomReverseRuleCacheInits(rule), [](InitOp init) -> Type {
-        return cast<CacheType>(init.getType()).getType();
-      });
+  return llvm::map_to_vector(getCustomReverseRuleCacheInits(rule),
+                             [](InitOp init) -> Type {
+                               return cast<CacheType>(init.getType()).getType();
+                             });
 }
 
 // The values a call hands between a rule's augmented primal and its reverse
@@ -1140,10 +1140,9 @@ CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   if (!llvm::equal(global.getFunctionType().getResults(),
                    getOutputs().getTypes()))
-    return emitOpError("results of '")
-           << getFn() << "' have types "
-           << global.getFunctionType().getResults() << ", got "
-           << getOutputs().getTypes();
+    return emitOpError("results of '") << getFn() << "' have types "
+                                       << global.getFunctionType().getResults()
+                                       << ", got " << getOutputs().getTypes();
 
   return verifyRuleCaches(*this, getFn(), global, getCaches().getTypes());
 }

@@ -683,9 +683,9 @@ static bool isActiveActivity(Attribute attr) {
 // arguments and results, so no unused cotangent is computed when a more
 // specific rule exists; ties go to the rule listed first. Null when the callee
 // names no rule that serves the call.
-static CustomReverseRuleOp
-selectCustomRule(FunctionOpInterface fn, ArrayRef<DIFFE_TYPE> ArgActivity,
-                 ArrayRef<DIFFE_TYPE> RetActivity) {
+static CustomReverseRuleOp selectCustomRule(FunctionOpInterface fn,
+                                            ArrayRef<DIFFE_TYPE> ArgActivity,
+                                            ArrayRef<DIFFE_TYPE> RetActivity) {
   auto rules = lookupCustomReverseRules(fn, "enzyme.custom_rule");
   if (failed(rules))
     return nullptr;
@@ -746,9 +746,8 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
   if (!cr) {
     auto authored = lookupCustomReverseRules(fn, "enzyme.custom_rule");
     if (failed(authored))
-      return orig->emitError()
-             << "enzyme.custom_rule of " << fn.getNameAttr()
-             << " must name enzyme.custom_reverse_rule ops";
+      return orig->emitError() << "enzyme.custom_rule of " << fn.getNameAttr()
+                               << " must name enzyme.custom_reverse_rule ops";
 
     if (!authored->empty()) {
       auto diag = orig->emitError()
@@ -877,8 +876,8 @@ getSplitModeRule(Operation *orig, MGradientUtilsReverse *gutils,
         /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
         gutils->verifyPostPasses, gutils->strongZero);
     if (myCr)
-      cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(orig,
-                                                                     myCr);
+      cr =
+          SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(orig, myCr);
   }
 
   if (cr && failed(finalizeCustomReverseRule(cr)))
@@ -906,9 +905,9 @@ static SmallVector<Value> callCacheValuesSplit(Operation *orig,
 
   SmallVector<Value> operands(newOp->getOperands());
 
-  auto primal = CallAugmentedPrimalOp::create(
-      cacheBuilder, orig->getLoc(), newOp->getResultTypes(), cacheTypes,
-      fnAttr, operands);
+  auto primal = CallAugmentedPrimalOp::create(cacheBuilder, orig->getLoc(),
+                                              newOp->getResultTypes(),
+                                              cacheTypes, fnAttr, operands);
 
   for (auto [oldRes, newRes] :
        llvm::zip_equal(newOp->getResults(), primal.getOutputs()))
