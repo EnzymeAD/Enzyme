@@ -9324,6 +9324,24 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     return;
   }
 
+  // Only sparsify the innermost loops that contain sparse accumulates. A loop
+  // around such a loop must still run all of its iterations, so its own
+  // accumulates stay dense. (Its body can also no longer be extracted once the
+  // inner loop has been.)
+  {
+    SmallPtrSet<Loop *, 2> sparseLoops;
+    for (auto &pair : sparseBlocks)
+      sparseLoops.insert(LI.getLoopFor(pair.first));
+    llvm::erase_if(sparseBlocks,
+                   [&](const std::pair<BasicBlock *, Instruction *> &pair) {
+                     auto L = LI.getLoopFor(pair.first);
+                     for (auto L2 : sparseLoops)
+                       if (L2 != L && L->contains(L2))
+                         return true;
+                     return false;
+                   });
+  }
+
   // block, bound, scev for indexset
   std::map<Loop *,
            std::pair<std::pair<PHINode *, PHINode *>,
