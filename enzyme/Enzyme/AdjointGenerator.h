@@ -3206,6 +3206,8 @@ public:
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
+            if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+              cal->setMetadata("enzyme_truetype", m);
 
             if (startsWith(funcName, "memset_pattern") ||
                 startsWith(funcName, "llvm.experimental.memset")) {
@@ -3519,6 +3521,9 @@ public:
           ToCopy2.push_back(LLVMContext::MD_noalias);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3564,6 +3569,9 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
 
           if (startsWith(funcName, "memset_pattern") ||
               startsWith(funcName, "llvm.experimental.memset")) {
@@ -3935,6 +3943,9 @@ public:
                           MTI.getMetadata(LLVMContext::MD_tbaa_struct));
         call->setMetadata(LLVMContext::MD_invariant_group,
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
+        if (auto m = hasMetadata(&MTI, "enzyme_truetype"))
+          if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+            call->setMetadata("enzyme_truetype", sliced);
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
