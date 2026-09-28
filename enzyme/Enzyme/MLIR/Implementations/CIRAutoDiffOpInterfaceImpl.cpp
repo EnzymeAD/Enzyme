@@ -30,7 +30,7 @@ namespace {
 
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *context, cf::ControlFlowDialect *) {
+  registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
     registerInterfaces(context);
   });
 }
