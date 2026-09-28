@@ -8854,17 +8854,27 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
 }
 
 constexpr bool SparseDebug = false;
+// The indices at which `val` holds, for the loop being sparsified.
+//
+// `defaultFloat` is assumed for data-dependent float comparisons, which are
+// ignored: they are taken as true under an `and` and as false under an `or`.
+//
+// `conservative` is assumed for comparisons of indices that cannot be solved.
+// It over-approximates the indices that reach the sparse block: it starts out
+// as `all` when `val` being true leads there and as `none` otherwise, and is
+// flipped by every `not`.
 std::shared_ptr<const Constraints>
 getSparseConditions(bool &legal, Value *val,
                     std::shared_ptr<const Constraints> defaultFloat,
+                    std::shared_ptr<const Constraints> conservative,
                     Instruction *scope, const ConstraintContext &ctx) {
   if (auto I = dyn_cast<Instruction>(val)) {
     // Binary `and` is a bit-wise `umin`.
     if (I->getOpcode() == Instruction::And) {
       auto lhs = getSparseConditions(legal, I->getOperand(0),
-                                     Constraints::all(), I, ctx);
+                                     Constraints::all(), conservative, I, ctx);
       auto rhs = getSparseConditions(legal, I->getOperand(1),
-                                     Constraints::all(), I, ctx);
+                                     Constraints::all(), conservative, I, ctx);
       auto res = lhs->andB(rhs, ctx);
       assert(res);
       assert(ctx.seen.size() == 0);
@@ -8881,9 +8891,9 @@ getSparseConditions(bool &legal, Value *val,
     // Binary `or` is a bit-wise `umax`.
     if (I->getOpcode() == Instruction::Or) {
       auto lhs = getSparseConditions(legal, I->getOperand(0),
-                                     Constraints::none(), I, ctx);
+                                     Constraints::none(), conservative, I, ctx);
       auto rhs = getSparseConditions(legal, I->getOperand(1),
-                                     Constraints::none(), I, ctx);
+                                     Constraints::none(), conservative, I, ctx);
       auto res = lhs->orB(rhs, ctx);
       if (SparseDebug) {
         llvm::errs() << " getSparse(or, " << *I << "), lhs("
@@ -8899,9 +8909,9 @@ getSparseConditions(bool &legal, Value *val,
       for (int i = 0; i < 2; i++) {
         if (auto C = dyn_cast<ConstantInt>(I->getOperand(i)))
           if (C->isOne()) {
-            auto pres =
-                getSparseConditions(legal, I->getOperand(1 - i),
-                                    defaultFloat->notB(ctx), scope, ctx);
+            auto pres = getSparseConditions(
+                legal, I->getOperand(1 - i), defaultFloat->notB(ctx),
+                conservative->notB(ctx), scope, ctx);
             auto res = pres->notB(ctx);
             if (SparseDebug) {
               llvm::errs() << " getSparse(not, " << *I << "), prev ("
@@ -8968,9 +8978,9 @@ getSparseConditions(bool &legal, Value *val,
                     " via ", *sub1);
       if (SparseDebug) {
         llvm::errs() << " getSparse(icmp_dflt, " << *I
-                     << ") = " << *defaultFloat << "\n";
+                     << ") = " << *conservative << "\n";
       }
-      return defaultFloat;
+      return conservative;
     }
 
     // cmp x, 1.0 ->   false/true
@@ -9011,8 +9021,9 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
       if (I->getParent()->getParent() !=
           ctx.loopToSolve->getHeader()->getParent())
         continue;
-      auto parsedCond = getSparseConditions(legal, I->getOperand(0),
-                                            Constraints::none(), nullptr, ctx2);
+      auto parsedCond =
+          getSparseConditions(legal, I->getOperand(0), Constraints::none(),
+                              Constraints::none(), nullptr, ctx2);
       bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());
       if (legal && dominates) {
         if (parsedCond->ty == Type::Compare && !parsedCond->Loop) {
@@ -9309,9 +9320,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     Instruction *context =
         isa<Instruction>(cond) ? cast<Instruction>(cond) : idx;
     ConstraintContext cctx(SE, L, Assumptions, DT);
-    auto solutions = getSparseConditions(
-        legal, cond, negated ? Constraints::all() : Constraints::none(),
-        context, cctx);
+    auto defaultCond = negated ? Constraints::all() : Constraints::none();
+    auto solutions = getSparseConditions(legal, cond, defaultCond, defaultCond,
+                                         context, cctx);
     // llvm::errs() << " solutions pre negate: " << *solutions << "\n";
     if (!negated) {
       solutions = solutions->notB(cctx);
