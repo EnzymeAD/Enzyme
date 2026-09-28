@@ -406,6 +406,27 @@ void RecursivelyReplaceAddressSpace(
           Todo.insert(Todo.begin(), cur);
           continue;
         }
+        // Some incoming values are not derived from the object being moved,
+        // so the phi keeps its address space. If that is a derived (not
+        // tracked) one, the moved object can be cast back to it: the GC
+        // treats a cast from the default address space as an untracked base.
+        // A tracked phi would instead root the stack memory, so is an error.
+        unsigned PAS = cast<PointerType>(P->getType())->getAddressSpace();
+        if (PAS != 10 && PAS != 0) {
+          for (size_t i = 0; i < NumOperands; i++) {
+            if (!replacedOperands[i])
+              continue;
+            IRBuilder<> B(P->getIncomingBlock(i)->getTerminator());
+            P->setIncomingValue(i, B.CreatePointerBitCastOrAddrSpaceCast(
+                                       replacedOperands[i], P->getType()));
+          }
+          for (int i = Todo.size() - 1; i >= 0; i--) {
+            if (std::get<2>(Todo[i]) != P)
+              continue;
+            Todo.erase(Todo.begin() + i);
+          }
+          continue;
+        }
       } else {
         IRBuilder<> B(&(*P->getParent()->getFirstNonPHIOrDbgOrLifetime()));
         auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
