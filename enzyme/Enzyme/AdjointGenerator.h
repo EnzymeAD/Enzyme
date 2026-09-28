@@ -1157,18 +1157,24 @@ public:
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
       if (constantval) {
+        // Bytes of the destination that nothing else types (e.g. the zero
+        // lanes of a constant vector, which type analysis leaves as Anything
+        // and does not propagate to memory) take the stored value's own type.
+        TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          if (auto flt = vd[{(int)i}].isFloat()) {
+          ConcreteType ct = vd[{(int)i}];
+          if (!ct.isKnown())
+            ct = valTT[{(int)i}];
+          if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Pointer) {
+          if (ct == BaseType::Pointer) {
             anyPointer = true;
             i += DL.getPointerSizeInBits() / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Integer ||
-              vd[{(int)i}] == BaseType::Anything) {
+          if (ct == BaseType::Integer || ct == BaseType::Anything) {
             i++;
             continue;
           }
