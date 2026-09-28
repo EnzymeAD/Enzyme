@@ -917,6 +917,30 @@ static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
 // CustomReverseRuleOp
 //===----------------------------------------------------------------------===//
 
+// Whether a rule argument or result of activity `rule` can serve a call value
+// of activity `call`. A const one needs a constant value and a dup one a
+// duplicated value. An active one also serves a constant value: the cotangent
+// the rule computes for a constant operand is dropped, and a constant result
+// is seeded with zero, so one all-active rule serves every activity pattern.
+static bool activityServes(Activity rule, Activity call) {
+  auto isConst = [](Activity a) {
+    return a == Activity::enzyme_const || a == Activity::enzyme_constnoneed;
+  };
+  auto isActive = [](Activity a) {
+    return a == Activity::enzyme_active || a == Activity::enzyme_activenoneed;
+  };
+  auto isDup = [](Activity a) {
+    return a == Activity::enzyme_dup || a == Activity::enzyme_dupnoneed;
+  };
+  if (isConst(rule))
+    return isConst(call);
+  if (isActive(rule))
+    return isActive(call) || isConst(call);
+  if (isDup(rule))
+    return isDup(call);
+  return false;
+}
+
 llvm::LogicalResult CustomReverseRuleOp::activityMatch(
     llvm::ArrayRef<enzyme::Activity> argActivity,
     llvm::ArrayRef<enzyme::Activity> retActivity) {
@@ -927,23 +951,118 @@ llvm::LogicalResult CustomReverseRuleOp::activityMatch(
       selfRetActivity.size() != retActivity.size())
     return failure();
 
-  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity)) {
-    auto iattr = cast<ActivityAttr>(attr);
-    auto val = iattr.getValue();
-
-    if (val == Activity::enzyme_const && act != Activity::enzyme_const)
+  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity))
+    if (!activityServes(cast<ActivityAttr>(attr).getValue(), act))
       return failure();
-  }
 
-  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity)) {
-    auto iattr = cast<ActivityAttr>(attr);
-    auto val = iattr.getValue();
-
-    if (val == Activity::enzyme_const && act != Activity::enzyme_const)
+  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity))
+    if (!activityServes(cast<ActivityAttr>(attr).getValue(), act))
       return failure();
-  }
 
   return success();
+}
+
+bool CustomReverseRuleOp::activityEquals(
+    llvm::ArrayRef<enzyme::Activity> argActivity,
+    llvm::ArrayRef<enzyme::Activity> retActivity) {
+  auto selfArgActivity = getActivity();
+  auto selfRetActivity = getRetActivity();
+
+  if (selfArgActivity.size() != argActivity.size() ||
+      selfRetActivity.size() != retActivity.size())
+    return false;
+
+  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity))
+    if (cast<ActivityAttr>(attr).getValue() != act)
+      return false;
+
+  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity))
+    if (cast<ActivityAttr>(attr).getValue() != act)
+      return false;
+
+  return true;
+}
+
+unsigned CustomReverseRuleOp::numDifferentiated() {
+  unsigned count = 0;
+  for (auto attrs : {getActivity(), getRetActivity()})
+    for (auto attr : attrs) {
+      auto val = cast<ActivityAttr>(attr).getValue();
+      if (val != Activity::enzyme_const && val != Activity::enzyme_constnoneed)
+        count++;
+    }
+  return count;
+}
+
+llvm::FailureOr<llvm::SmallVector<CustomReverseRuleOp>>
+mlir::enzyme::lookupCustomReverseRules(Operation *op,
+                                       llvm::StringRef attrName) {
+  llvm::SmallVector<CustomReverseRuleOp> rules;
+  Attribute attr = op->getAttr(attrName);
+  if (!attr)
+    return rules;
+
+  llvm::SmallVector<Attribute> refs;
+  if (auto arr = dyn_cast<ArrayAttr>(attr))
+    refs.assign(arr.begin(), arr.end());
+  else
+    refs.push_back(attr);
+
+  for (Attribute ref : refs) {
+    auto symbol = dyn_cast<FlatSymbolRefAttr>(ref);
+    if (!symbol)
+      return failure();
+    auto rule = dyn_cast_or_null<CustomReverseRuleOp>(
+        SymbolTable::lookupNearestSymbolFrom(op, symbol));
+    if (!rule)
+      return failure();
+    rules.push_back(rule);
+  }
+  return rules;
+}
+
+void mlir::enzyme::appendCustomReverseRule(Operation *op,
+                                           llvm::StringRef attrName,
+                                           FlatSymbolRefAttr rule) {
+  llvm::SmallVector<Attribute> refs;
+  if (Attribute attr = op->getAttr(attrName)) {
+    if (auto arr = dyn_cast<ArrayAttr>(attr))
+      refs.assign(arr.begin(), arr.end());
+    else
+      refs.push_back(attr);
+  }
+  refs.push_back(rule);
+  op->setAttr(attrName, ArrayAttr::get(op->getContext(), refs));
+}
+
+void mlir::enzyme::removeCustomReverseRule(Operation *op,
+                                           llvm::StringRef attrName,
+                                           llvm::StringRef rule) {
+  Attribute attr = op->getAttr(attrName);
+  if (!attr)
+    return;
+
+  llvm::SmallVector<Attribute> refs;
+  if (auto arr = dyn_cast<ArrayAttr>(attr))
+    refs.assign(arr.begin(), arr.end());
+  else
+    refs.push_back(attr);
+
+  llvm::SmallVector<Attribute> kept;
+  for (Attribute ref : refs) {
+    auto symbol = dyn_cast<FlatSymbolRefAttr>(ref);
+    if (!symbol || symbol.getValue() != rule)
+      kept.push_back(ref);
+  }
+
+  if (kept.size() == refs.size())
+    return;
+  if (kept.empty())
+    op->removeAttr(attrName);
+  else if (kept.size() == 1 && !isa<ArrayAttr>(attr))
+    op->setAttr(attrName, kept.front());
+  else
+    op->setAttr(attrName, ArrayAttr::get(op->getContext(), kept));
 }
 
 //===----------------------------------------------------------------------===//

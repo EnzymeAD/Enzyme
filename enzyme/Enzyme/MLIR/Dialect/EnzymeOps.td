@@ -208,8 +208,14 @@ def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, S
   }];
 
   let extraClassDeclaration = [{
+    // Whether this rule can serve a call with the given activities.
     llvm::LogicalResult activityMatch(llvm::ArrayRef<enzyme::Activity> ArgActivity,
                                       llvm::ArrayRef<enzyme::Activity> RetActivity);
+    // Whether this rule's activities are exactly the given ones.
+    bool activityEquals(llvm::ArrayRef<enzyme::Activity> ArgActivity,
+                        llvm::ArrayRef<enzyme::Activity> RetActivity);
+    // How many arguments and results this rule differentiates.
+    unsigned numDifferentiated();
   }];
 }
 

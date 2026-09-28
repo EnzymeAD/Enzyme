@@ -96,11 +96,35 @@ llvm::SmallVector<mlir::Value, 2> filterGradInputs(SourceOp uop) {
 }
 
 } // namespace detail
+
 } // namespace enzyme
 } // namespace mlir
 
 #define GET_OP_CLASSES
 #include "Dialect/EnzymeOps.h.inc"
+
+// Declared after the op classes: `SmallVector<CustomReverseRuleOp>` needs the
+// complete type.
+namespace mlir {
+namespace enzyme {
+
+// The custom reverse rules the attribute `attrName` of `op` names: either one
+// symbol (`@rule`) or a rule set (`[@rule_a, @rule_b]`), one rule per activity
+// pattern. Fails if a symbol does not name an `enzyme.custom_reverse_rule`.
+llvm::FailureOr<llvm::SmallVector<CustomReverseRuleOp>>
+lookupCustomReverseRules(Operation *op, llvm::StringRef attrName);
+
+// Adds `rule` to the rule set in attribute `attrName` of `op`.
+void appendCustomReverseRule(Operation *op, llvm::StringRef attrName,
+                             FlatSymbolRefAttr rule);
+
+// Removes every reference to `rule` from the rule set in attribute `attrName`
+// of `op`, and the attribute itself once it names no rule.
+void removeCustomReverseRule(Operation *op, llvm::StringRef attrName,
+                             llvm::StringRef rule);
+
+} // namespace enzyme
+} // namespace mlir
 
 // #include "Dialect/EnzymeTypes.h.inc"
 

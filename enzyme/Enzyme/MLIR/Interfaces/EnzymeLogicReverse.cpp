@@ -349,23 +349,27 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   for (auto act : retType)
     retActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
 
-  if (auto existingCustomRule =
-          fn->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule")) {
-    auto CR = symbolTable.lookup<enzyme::CustomReverseRuleOp>(
-        existingCustomRule.getValue());
+  // A rule for exactly this activity is reused: an authored one the callee
+  // names in `enzyme.custom_rule`, or one derived earlier and cached in
+  // `enzyme.derived_rules`. Reuse needs an exact match, because split-mode
+  // callers lay out the tape and the cotangents by the requested activity.
+  {
+    auto getAttrActivity = [](auto attr) {
+      return cast<ActivityAttr>(attr).getValue();
+    };
 
-    if (CR) {
-      auto getAttrActivity = [](auto attr) {
-        return cast<ActivityAttr>(attr).getValue();
-      };
+    SmallVector<Activity> ArgActivity =
+        llvm::map_to_vector(argActivityAttrs, getAttrActivity);
+    SmallVector<Activity> RetActivity =
+        llvm::map_to_vector(retActivityAttrs, getAttrActivity);
 
-      SmallVector<Activity> ArgActivity =
-          llvm::map_to_vector(argActivityAttrs, getAttrActivity);
-      SmallVector<Activity> RetActivity =
-          llvm::map_to_vector(retActivityAttrs, getAttrActivity);
-
-      if (!failed(CR.activityMatch(ArgActivity, RetActivity)))
-        return existingCustomRule;
+    for (StringRef attrName : {"enzyme.custom_rule", "enzyme.derived_rules"}) {
+      auto rules = lookupCustomReverseRules(fn, attrName);
+      if (failed(rules))
+        continue;
+      for (auto CR : *rules)
+        if (CR.activityEquals(ArgActivity, RetActivity))
+          return FlatSymbolRefAttr::get(CR.getSymNameAttr());
     }
   }
 
@@ -407,7 +411,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       argActivityAttr, retActivityAttr);
   ruleNameAttr = symbolTable.insert(customRule);
 
-  fn->setAttr("enzyme.custom_rule", FlatSymbolRefAttr::get(ruleNameAttr));
+  appendCustomReverseRule(fn, "enzyme.derived_rules",
+                          FlatSymbolRefAttr::get(ruleNameAttr));
 
   auto ip = builder.saveInsertionPoint();
   Block *ruleBody = builder.createBlock(&customRule.getBody());
@@ -571,6 +576,16 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   delete gutils;
 
   newFunc->erase();
+
+  // An op without an adjoint has already been diagnosed; drop the partial rule
+  // so no caller can use it, and let the caller report the callee (the
+  // split-mode counterpart of the combined-mode null check).
+  if (!valid) {
+    removeCustomReverseRule(fn, "enzyme.derived_rules",
+                            ruleNameAttr.getValue());
+    customRule->erase();
+    return FlatSymbolRefAttr();
+  }
 
   return FlatSymbolRefAttr::get(ruleNameAttr);
 }

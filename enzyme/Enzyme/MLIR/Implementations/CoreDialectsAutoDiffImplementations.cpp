@@ -636,14 +636,72 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   return success();
 }
 
-// A callee may already carry a hand-written reverse rule; that rule is used
-// as-is instead of one being derived for it.
-static Operation *getCustomRule(FunctionOpInterface func) {
-  auto attr = func->getAttrOfType<FlatSymbolRefAttr>("enzyme.custom_rule");
-  if (!attr)
+// The activities of a call's operands and results, as the caller's activity
+// analysis sees them. A custom reverse rule spells its argument activities as
+// enzyme_dup / enzyme_active / enzyme_const, so dupnoneed is not distinguished
+// here -- a dupnoneed pointer is passed as plain dup, which is conservative.
+static void getCallActivity(Operation *orig, MGradientUtilsReverse *gutils,
+                            std::vector<DIFFE_TYPE> &ArgActivity,
+                            std::vector<DIFFE_TYPE> &RetActivity) {
+  auto activityOf = [&](Value v) {
+    return gutils->isConstantValue(v) ? DIFFE_TYPE::CONSTANT
+           : cast<AutoDiffTypeInterface>(v.getType()).isMutable()
+               ? DIFFE_TYPE::DUP_ARG
+               : DIFFE_TYPE::OUT_DIFF;
+  };
+  for (auto arg : orig->getOperands())
+    ArgActivity.push_back(activityOf(arg));
+  for (auto res : orig->getResults())
+    RetActivity.push_back(activityOf(res));
+}
+
+static Activity diffeTypeToActivity(DIFFE_TYPE act) {
+  switch (act) {
+  case DIFFE_TYPE::CONSTANT:
+    return Activity::enzyme_const;
+  case DIFFE_TYPE::OUT_DIFF:
+    return Activity::enzyme_active;
+  case DIFFE_TYPE::DUP_ARG:
+    return Activity::enzyme_dup;
+  case DIFFE_TYPE::DUP_NONEED:
+    return Activity::enzyme_dupnoneed;
+  default:
+    llvm_unreachable("cannot handle act");
+  }
+}
+
+static bool isActiveActivity(Attribute attr) {
+  auto act = cast<ActivityAttr>(attr).getValue();
+  return act == Activity::enzyme_active || act == Activity::enzyme_activenoneed;
+}
+
+// A callee may carry hand-written reverse rules in `enzyme.custom_rule`: one
+// rule, or a rule set of one rule per activity pattern. The rule used for a
+// call is the one that serves its activities (see
+// CustomReverseRuleOp::activityMatch) while differentiating the fewest
+// arguments and results, so no unused cotangent is computed when a more
+// specific rule exists; ties go to the rule listed first. Null when the callee
+// names no rule that serves the call.
+static CustomReverseRuleOp
+selectCustomRule(FunctionOpInterface fn, ArrayRef<DIFFE_TYPE> ArgActivity,
+                 ArrayRef<DIFFE_TYPE> RetActivity) {
+  auto rules = lookupCustomReverseRules(fn, "enzyme.custom_rule");
+  if (failed(rules))
     return nullptr;
 
-  return SymbolTable::lookupNearestSymbolFrom(func, attr);
+  SmallVector<Activity> ArgAct =
+      llvm::map_to_vector(ArgActivity, diffeTypeToActivity);
+  SmallVector<Activity> RetAct =
+      llvm::map_to_vector(RetActivity, diffeTypeToActivity);
+
+  CustomReverseRuleOp best = nullptr;
+  for (auto rule : *rules) {
+    if (failed(rule.activityMatch(ArgAct, RetAct)))
+      continue;
+    if (!best || rule.numDifferentiated() < best.numDifferentiated())
+      best = rule;
+  }
+  return best;
 }
 
 // Split mode builds the callee's augmented primal and reverse out of a custom
@@ -670,26 +728,8 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
   auto narg = orig->getNumOperands();
   auto nret = orig->getNumResults();
 
-  std::vector<DIFFE_TYPE> RetActivity;
-  for (auto res : orig->getResults()) {
-    RetActivity.push_back(
-        gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
-        : cast<AutoDiffTypeInterface>(res.getType()).isMutable()
-            ? DIFFE_TYPE::DUP_ARG
-            : DIFFE_TYPE::OUT_DIFF);
-  }
-
-  // A custom reverse rule spells its argument activities as enzyme_dup /
-  // enzyme_active / enzyme_const, so dupnoneed is not distinguished here --
-  // a dupnoneed pointer is passed as plain dup, which is conservative.
-  std::vector<DIFFE_TYPE> ArgActivity;
-  for (auto arg : orig->getOperands()) {
-    ArgActivity.push_back(
-        gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
-        : cast<AutoDiffTypeInterface>(arg.getType()).isMutable()
-            ? DIFFE_TYPE::DUP_ARG
-            : DIFFE_TYPE::OUT_DIFF);
-  }
+  std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
+  getCallActivity(orig, gutils, ArgActivity, RetActivity);
 
   if (llvm::any_of(RetActivity,
                    [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
@@ -698,41 +738,32 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
            << "\n";
   }
 
-  CallAugmentedPrimalOp primalCall;
-  CustomReverseRuleOp cr = nullptr;
-  if (Operation *crOp = getCustomRule(fn)) {
-    // The primal was already replaced by an augmented primal in cacheValues;
-    // point it at the rule the callee named.
-    cr = cast<CustomReverseRuleOp>(crOp);
-    primalCall = cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+  // The augmented primal was created in cacheValues. It names the authored
+  // rule chosen there, or a placeholder if none served the call.
+  auto primalCall =
+      cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
+  auto cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(
+      orig, primalCall.getFnAttr());
 
-    auto diffeTypeToActivity = [](DIFFE_TYPE act) {
-      switch (act) {
-      case DIFFE_TYPE::CONSTANT:
-        return Activity::enzyme_const;
-      case DIFFE_TYPE::OUT_DIFF:
-        return Activity::enzyme_active;
-      case DIFFE_TYPE::DUP_ARG:
-        return Activity::enzyme_dup;
-      case DIFFE_TYPE::DUP_NONEED:
-        return Activity::enzyme_dupnoneed;
-      default:
-        llvm_unreachable("cannot handle act");
-      }
-    };
-
-    SmallVector<enzyme::Activity> ArgActivityAct =
-        llvm::map_to_vector(ArgActivity, diffeTypeToActivity);
-    SmallVector<enzyme::Activity> RetActivityAct =
-        llvm::map_to_vector(RetActivity, diffeTypeToActivity);
-
-    if (failed(cr.activityMatch(ArgActivityAct, RetActivityAct)))
+  if (!cr) {
+    auto authored = lookupCustomReverseRules(fn, "enzyme.custom_rule");
+    if (failed(authored))
       return orig->emitError()
-             << "could not find a rule with the right activity (rule activity="
-             << cr.getActivity() << ", ret_activity=" << cr.getRetActivity()
-             << ")";
+             << "enzyme.custom_rule of " << fn.getNameAttr()
+             << " must name enzyme.custom_reverse_rule ops";
 
-  } else {
+    if (!authored->empty()) {
+      auto diag = orig->emitError()
+                  << "could not find a rule with the right activity";
+      for (auto rule : *authored)
+        diag << " (rule activity=" << rule.getActivity()
+             << ", ret_activity=" << rule.getRetActivity() << ")";
+      return diag;
+    }
+
+    // No authored rule: derive one from the callee's body. A rule derived
+    // for the same activity by another call (or an earlier differentiation)
+    // is reused.
     std::vector<bool> overwritten_args(narg, true);
     std::vector<bool> returnShadow(nret, false);
     std::vector<bool> returnPrimal(nret, false);
@@ -748,64 +779,47 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
         overwritten_args, /*augmented*/ nullptr, gutils->omp,
         gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero);
 
-    SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
+    if (!myCr)
+      return orig->emitError()
+             << "failed to create reverse-mode adjoint for callee "
+             << fn.getNameAttr() << "\n";
 
-    primalCall = cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
     primalCall.setFnAttr(myCr);
-
-    cr = cast<CustomReverseRuleOp>(symbolTable.lookup(myCr.getValue()));
+    cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(orig, myCr);
+    if (!cr)
+      return orig->emitError()
+             << "could not derive a reverse rule for " << fn.getNameAttr();
   }
 
-  {
-    auto crArgActivity = cr.getActivity();
-    auto crRetActivity = cr.getRetActivity();
+  auto crArgActivity = cr.getActivity();
+  auto crRetActivity = cr.getRetActivity();
 
-    if (crArgActivity.size() != ArgActivity.size())
-      return orig->emitError()
-             << "cannot apply custom rule for func " << fn.getNameAttr()
-             << " (wrong arg activity size)";
+  if (crArgActivity.size() != ArgActivity.size())
+    return orig->emitError()
+           << "cannot apply custom rule for func " << fn.getNameAttr()
+           << " (wrong arg activity size)";
 
-    if (crRetActivity.size() != RetActivity.size())
-      return orig->emitError()
-             << "cannot apply custom rule to func " << fn.getNameAttr()
-             << " (wrong ret activity size)";
-
-    for (auto [act, crAct] : llvm::zip(ArgActivity, crArgActivity)) {
-      auto iattr = cast<ActivityAttr>(crAct);
-      auto val = iattr.getValue();
-
-      if ((val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF) ||
-          (val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG) ||
-          (val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT))
-        continue;
-
-      return orig->emitError(
-          "custom rule for function does not match operand activities");
-    }
-
-    for (auto [act, crAct] : llvm::zip(RetActivity, crRetActivity)) {
-      auto iattr = cast<ActivityAttr>(crAct);
-      auto val = iattr.getValue();
-
-      if ((val == Activity::enzyme_active && act == DIFFE_TYPE::OUT_DIFF) ||
-          (val == Activity::enzyme_dup && act == DIFFE_TYPE::DUP_ARG) ||
-          (val == Activity::enzyme_const && act == DIFFE_TYPE::CONSTANT))
-        continue;
-
-      return orig->emitError(
-          "custom rule for function does not match result activities");
-    }
-  }
+  if (crRetActivity.size() != RetActivity.size())
+    return orig->emitError()
+           << "cannot apply custom rule to func " << fn.getNameAttr()
+           << " (wrong ret activity size)";
 
   Value tape = gutils->popCache(caches[0], builder);
 
   SmallVector<Value> operands;
   SmallVector<Type> resultTypes;
 
-  for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
-    if (act == DIFFE_TYPE::OUT_DIFF) {
+  // One cotangent per result the rule differentiates. A result the caller
+  // holds constant contributes zero.
+  for (auto [act, res, crAct] :
+       llvm::zip_equal(RetActivity, orig->getResults(), crRetActivity)) {
+    if (!isActiveActivity(crAct))
+      continue;
+    if (act == DIFFE_TYPE::OUT_DIFF)
       operands.push_back(gutils->diffe(res, builder));
-    }
+    else
+      operands.push_back(cast<AutoDiffTypeInterface>(res.getType())
+                             .createNullValue(builder, orig->getLoc()));
   }
 
   {
@@ -813,9 +827,9 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
     builder.setInsertionPoint(primalCall);
 
     int operandIndex = 0;
-    for (auto [act, operand] :
-         llvm::zip_equal(ArgActivity, orig->getOperands())) {
-      if (act == DIFFE_TYPE::OUT_DIFF) {
+    for (auto [act, operand, crAct] :
+         llvm::zip_equal(ArgActivity, orig->getOperands(), crArgActivity)) {
+      if (isActiveActivity(crAct)) {
         resultTypes.push_back(cast<AutoDiffTypeInterface>(operand.getType())
                                   .getShadowType(/*width=*/1));
       }
@@ -831,14 +845,16 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
   auto revCall = CallCustomReverseOp::create(
       builder, orig->getLoc(), resultTypes, cr.getSymName(), operands, tape);
 
+  // The rule returns one cotangent per argument it differentiates. One it
+  // computes for an operand the caller holds constant is dropped.
   int didx = 0;
-  for (auto [act, operand] :
-       llvm::zip_equal(ArgActivity, orig->getOperands())) {
-    if (act == DIFFE_TYPE::OUT_DIFF) {
-      Value diffe = revCall->getResult(didx);
-      gutils->addToDiffe(operand, diffe, builder);
-      didx++;
-    }
+  for (auto [act, operand, crAct] :
+       llvm::zip_equal(ArgActivity, orig->getOperands(), crArgActivity)) {
+    if (!isActiveActivity(crAct))
+      continue;
+    if (act == DIFFE_TYPE::OUT_DIFF)
+      gutils->addToDiffe(operand, revCall->getResult(didx), builder);
+    didx++;
   }
 
   for (auto [act, res] : llvm::zip_equal(RetActivity, orig->getResults())) {
@@ -857,11 +873,15 @@ static SmallVector<Value> callCacheValuesSplit(Operation *orig,
   Operation *newOp = gutils->getNewFromOriginal(orig);
   OpBuilder cacheBuilder(newOp);
 
-  // The rule to call is only known once the adjoint has derived it; until
-  // then the augmented primal names a placeholder.
+  // An authored rule that serves this call's activities is chosen now.
+  // Otherwise the augmented primal names a placeholder until the adjoint
+  // derives a rule, or reports that no authored rule serves the call.
+  std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
+  getCallActivity(orig, gutils, ArgActivity, RetActivity);
+
   StringAttr symName = nullptr;
-  if (Operation *crOp = getCustomRule(fn)) {
-    symName = cast<CustomReverseRuleOp>(crOp).getSymNameAttr();
+  if (auto cr = selectCustomRule(fn, ArgActivity, RetActivity)) {
+    symName = cr.getSymNameAttr();
   } else {
     symName = StringAttr::get(orig->getContext(), "<placeholder>");
   }
