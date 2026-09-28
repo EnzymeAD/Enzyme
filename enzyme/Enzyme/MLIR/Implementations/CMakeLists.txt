@@ -50,6 +50,17 @@ set(LLVM_TARGET_DEFINITIONS EnzymeDerivatives.td)
 enzyme_tablegen(EnzymeDerivatives.inc -gen-mlir-derivatives)
 add_public_tablegen_target(EnzymeDerivativesIncGen)
 
+if(ENZYME_CLANG_HAS_CIR)
+  set(LLVM_TARGET_DEFINITIONS CIRDerivatives.td)
+  enzyme_tablegen(CIRDerivatives.inc -gen-mlir-derivatives)
+  add_public_tablegen_target(CIRDerivativesIncGen)
+  list(APPEND ENZYME_CIR_SOURCES CIRAutoDiffOpInterfaceImpl.cpp)
+  list(APPEND ENZYME_CIR_DEPENDS CIRDerivativesIncGen)
+  list(APPEND ENZYME_CIR_LIBS MLIRCIR)
+endif()
+
+set(LLVM_OPTIONAL_SOURCES CIRAutoDiffOpInterfaceImpl.cpp)
+
 add_mlir_library(
   MLIREnzymeImplementations
   AffineAutoDiffOpInterfaceImpl.cpp
@@ -69,6 +80,7 @@ add_mlir_library(
   MathAutoDiffOpInterfaceImpl.cpp
   GPUAutoDiffOpInterfaceImpl.cpp
   EnzymeAutoDiffOpInterfaceImpl.cpp
+  ${ENZYME_CIR_SOURCES}
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
   AffineDerivativesIncGen
@@ -85,6 +97,7 @@ add_mlir_library(
   MathDerivativesIncGen
   EnzymeDerivativesIncGen
   MLIREnzymeEnumsIncGen
+  ${ENZYME_CIR_DEPENDS}
   LINK_LIBS
   PUBLIC
   MLIRArithDialect
@@ -96,4 +109,5 @@ add_mlir_library(
   MLIREnzymeAutoDiffInterface
   MLIRIR
   MLIRSCFDialect
-  MLIRLinalgDialect)
+  MLIRLinalgDialect
+  ${ENZYME_CIR_LIBS})
