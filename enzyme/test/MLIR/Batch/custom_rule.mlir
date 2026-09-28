@@ -29,8 +29,8 @@ module {
     }
     enzyme.yield
   } attributes {
-    activity = [#enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_active>],
+    activity = [#enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_active>],
     function_type = (tensor<f64>) -> tensor<f64>
   }
 
@@ -46,8 +46,8 @@ module {
 
   func.func @main(%x: tensor<3xf64>, %dy: tensor<3xf64>) -> tensor<3xf64> {
     %dx = enzyme.autodiff @outer(%x, %dy) {
-      activity = [#enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (tensor<3xf64>, tensor<3xf64>) -> tensor<3xf64>
     return %dx : tensor<3xf64>
   }

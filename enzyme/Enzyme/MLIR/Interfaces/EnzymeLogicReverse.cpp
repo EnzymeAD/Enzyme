@@ -408,7 +408,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   OpBuilder builder(fn);
   auto customRule = enzyme::CustomReverseRuleOp::create(
       builder, fn.getLoc(), ruleNameAttr, TypeAttr::get(fn.getFunctionType()),
-      argActivityAttr, retActivityAttr);
+      argActivityAttr, retActivityAttr, /*sym_visibility=*/nullptr);
   ruleNameAttr = symbolTable.insert(customRule);
 
   appendCustomReverseRule(fn, "enzyme.derived_rules",

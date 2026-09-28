@@ -197,9 +197,9 @@ def AutoDiffSplitModeReverseOp : Enzyme_Op<"autodiff_split_mode.reverse",
   }];
 }
 
-def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, Symbol]> {
+def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, SymbolName, SymbolVisibility, Symbol]> {
   let summary = "Parent operation for custom reverse rule declaration.";
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttrOf<FunctionType>:$function_type, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttrOf<FunctionType>:$function_type, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, OptionalAttr<StrAttr>:$sym_visibility);
   let regions = (region AnyRegion:$body);
   let results = (outs);
 

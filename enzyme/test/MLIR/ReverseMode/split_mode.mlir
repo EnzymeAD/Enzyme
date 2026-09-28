@@ -11,16 +11,16 @@ module {
   // Split mode
   func.func @main(%a: f32, %b: f32) -> (f32, f32, f32) {
     %r, %tape = enzyme.autodiff_split_mode.primal @mul(%a, %b) {
-      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
-      ret_activity=[#enzyme<activity enzyme_active>]
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity=[#enzyme.activity<enzyme_active>]
     } : (f32, f32) -> (f32, !enzyme.Tape)
 
     // ---
 
     %dres = arith.constant 1.0 : f32
     %da, %db = enzyme.autodiff_split_mode.reverse @mul(%dres, %tape) {
-      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
-      ret_activity=[#enzyme<activity enzyme_active>]
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity=[#enzyme.activity<enzyme_active>]
     } : (f32, !enzyme.Tape) -> (f32, f32)
 
     return %r, %da, %db : f32, f32, f32

@@ -18,8 +18,8 @@ module {
 
   func.func @main(%a: f64, %b: f64, %dz: f64) -> (f64, f64) {
     %da, %db = enzyme.autodiff @outer(%a, %b, %dz) {
-      activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64, f64) -> (f64, f64)
     return %da, %db : f64, f64
   }
@@ -48,8 +48,8 @@ module {
 
   func.func @main(%a: f64, %b: f64, %dz: f64) -> (f64, f64) {
     %da, %db = enzyme.autodiff @outer(%a, %b, %dz) {
-      activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64, f64) -> (f64, f64)
     return %da, %db : f64, f64
   }
@@ -83,8 +83,8 @@ module {
     }
     enzyme.yield
   } attributes {
-    activity = [#enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_active>],
+    activity = [#enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_active>],
     function_type = (f64) -> f64
   }
 
@@ -97,8 +97,8 @@ module {
 
   func.func @main(%a: f64, %b: f64, %dz: f64) -> (f64, f64) {
     %da, %db = enzyme.autodiff @outer(%a, %b, %dz) {
-      activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64, f64) -> (f64, f64)
     return %da, %db : f64, f64
   }

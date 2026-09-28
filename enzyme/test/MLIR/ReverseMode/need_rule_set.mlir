@@ -23,9 +23,9 @@ module {
 
     enzyme.yield
   } attributes {
-    activity=[#enzyme<activity enzyme_active>,
-              #enzyme<activity enzyme_const>],
-    ret_activity=[#enzyme<activity enzyme_active>],
+    activity=[#enzyme.activity<enzyme_active>,
+              #enzyme.activity<enzyme_const>],
+    ret_activity=[#enzyme.activity<enzyme_active>],
     function_type = (f32, f32) -> f32
   }
 
@@ -37,7 +37,7 @@ module {
 
   func.func @main(%arg0: f32, %arg1: f32) -> f32 {
 
-    // expected-error @below {{could not find a rule with the right activity (rule activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_active>])}}
+    // expected-error @below {{could not find a rule with the right activity (rule activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_active>])}}
     %0 = func.call @f( %arg0, %arg1 ) : (f32, f32) -> f32
 
     return %0 : f32

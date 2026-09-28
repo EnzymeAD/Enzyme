@@ -232,7 +232,7 @@ static CustomReverseRuleOp batchCloneCustomRule(
       builder, rule.getLoc(),
       StringAttr::get(rule.getContext(), "batched_" + rule.getSymName()),
       TypeAttr::get(batchFunctionType(rule.getFunctionType())),
-      rule.getActivity(), rule.getRetActivity());
+      rule.getActivity(), rule.getRetActivity(), rule.getSymVisibilityAttr());
   SymbolTable table(rule->getParentWithTrait<OpTrait::SymbolTable>());
   newRule->remove();
   table.insert(newRule, rule->getIterator());
