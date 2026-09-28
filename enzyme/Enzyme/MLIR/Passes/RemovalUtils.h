@@ -76,6 +76,12 @@ struct CacheInfo {
 // represent.
 LogicalResult finalizeCustomReverseRule(CustomReverseRuleOp rule);
 
+// Lowers every custom reverse rule under `root` to a `<rule>_primal` /
+// `<rule>_reverse` func.func pair, and every call to one to a func.call
+// (the lower-enzyme-custom-rules-to-func pass; the enzyme pass also runs it
+// when it is done, unless `lower-custom-rules=false`).
+LogicalResult lowerCustomReverseRulesToFunc(Operation *root);
+
 // Tries to limit the amount of values cache from block `forward` to `reverse`
 // using a mincut algorithm and heuristics based on the size of values.
 // All pushes must go after `lastFwd`, if non null

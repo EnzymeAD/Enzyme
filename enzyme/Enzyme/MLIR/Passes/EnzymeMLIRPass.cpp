@@ -44,6 +44,9 @@ struct DifferentiatePass
 
   void runOnOperation() override;
 
+  // Whether a differentiation failed (its errors are already reported).
+  bool diffFailed = false;
+
   void getDependentDialects(DialectRegistry &registry) const override {
     mlir::OpPassManager pm;
     mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
@@ -601,6 +604,7 @@ struct DifferentiatePass
         if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
           auto res = HandleAutoDiff(Logic, symbolTable, F);
           if (!res.succeeded()) {
+            diffFailed = true;
             signalPassFailure();
             return;
           }
@@ -625,6 +629,7 @@ struct DifferentiatePass
         if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
           auto res = HandleAutoDiffReverse(Logic, symbolTable, F);
           if (!res.succeeded()) {
+            diffFailed = true;
             signalPassFailure();
             return;
           }
@@ -649,6 +654,7 @@ struct DifferentiatePass
         if (auto F = dyn_cast<enzyme::AutoDiffSplitModePrimalOp>(T)) {
           auto res = HandleSplitModeAutoDiff(Logic, symbolTable, F);
           if (!res.succeeded()) {
+            diffFailed = true;
             signalPassFailure();
             return;
           }
@@ -670,4 +676,11 @@ void DifferentiatePass::runOnOperation() {
     lowerEnzymeCalls(Logic, symbolTable, op);
   });
   getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
+
+  // Split-mode differentiation of a call leaves calls to custom rules; a
+  // pipeline that does not know about them (Reactant's, say) must not see
+  // them.
+  if (lowerCustomRules && !diffFailed &&
+      failed(lowerCustomReverseRulesToFunc(getOperation())))
+    signalPassFailure();
 }

@@ -316,15 +316,15 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
   return success();
 }
 
-void LowerEnzymeCustomRulesToFuncPass::runOnOperation() {
+LogicalResult mlir::enzyme::lowerCustomReverseRulesToFunc(Operation *root) {
   bool failed = false;
-
-  getOperation()->walk([&failed](enzyme::CustomReverseRuleOp revRule) {
+  root->walk([&failed](enzyme::CustomReverseRuleOp revRule) {
     failed |= lowerCustomReverseRuleToFunc(revRule).failed();
   });
+  return success(!failed);
+}
 
-  if (failed) {
+void LowerEnzymeCustomRulesToFuncPass::runOnOperation() {
+  if (failed(lowerCustomReverseRulesToFunc(getOperation())))
     signalPassFailure();
-    return;
-  }
 }
