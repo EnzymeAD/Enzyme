@@ -7593,7 +7593,7 @@ const SCEV *evaluateAtLoopIter(const SCEV *V, ScalarEvolution &SE,
     return V;
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(V)) {
     if (addrec->getLoop() == find) {
-      auto V2 = addrec->evaluateAtIteration(replace, SE);
+      auto V2 = evaluateAtIterationWithoutExt(addrec, replace, SE);
       return evaluateAtLoopIter(V2, SE, find, replace);
     }
   }

@@ -211,46 +211,9 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
   return std::pair<PHINode *, Instruction *>(nullptr, nullptr);
 }
 
-/// The value of the recurrence AR, of degree at most two, at iteration I, as
-/// a polynomial in I: {Init,+,A,+,B} evaluates to Init + A*I + B*I*(I-1)/2.
-/// This is built in AR's own type rather than through
-/// SCEVAddRecExpr::evaluateAtIteration, which computes the binomial in a wider
-/// type that IndVarSimplify would then turn back into a loop-carried phi;
-/// I*(I-1)/2 is formed as (I/2)*(I-1) + (I%2)*((I-1)/2) so every product is
-/// of exact integers and the sum is exact mod 2^W. Returns nullptr for higher
-/// degrees.
-// The no-wrap flag type of an add recurrence, named without reference to any
-// enumerator (FlagAnyWrap became FlagNone in LLVM 24); its zero value means
-// "no flags" in every version.
-using NoWrapFlagsTy =
-    decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
-
-static const SCEV *closedFormOfRecurrence(const SCEVAddRecExpr *AR,
-                                          const SCEV *IterationNumber,
-                                          ScalarEvolution &SE) {
-  if (AR->getNumOperands() > 3)
-    return nullptr;
-  Type *Ty = AR->getType();
-  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, Ty);
-  const SCEV *Res = AR->getOperand(0);
-  if (AR->getNumOperands() > 1)
-    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(1), I));
-  if (AR->getNumOperands() > 2) {
-    const SCEV *One = SE.getOne(Ty);
-    const SCEV *Two = SE.getConstant(Ty, 2);
-    const SCEV *Half = SE.getUDivExpr(I, Two);
-    const SCEV *IM1 = SE.getMinusSCEV(I, One);
-    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
-    const SCEV *Tri =
-        SE.getAddExpr(SE.getMulExpr(Half, IM1),
-                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
-    Res = SE.getAddExpr(Res, SE.getMulExpr(AR->getOperand(2), Tri));
-  }
-  return Res;
-}
-
-/// Replace every quadratic recurrence inside an expression by its closed form
-/// in the canonical induction variable of its loop, treated as an opaque value.
+/// Replace every non-affine recurrence (of degree at most three) inside an
+/// expression by its closed form in the canonical induction variable of its
+/// loop, treated as an opaque value.
 ///
 /// SCEVExpander expands a recurrence with more than two operands literally,
 /// as nested loop-carried phis (it would otherwise need a canonical IV one bit
@@ -258,30 +221,35 @@ static const SCEV *closedFormOfRecurrence(const SCEVAddRecExpr *AR,
 /// reverse pass as the accumulator it came from, so e.g. the start value
 /// i*(2*d-i-1)/2 of an inner index, expanded while rewriting the inner phi,
 /// would leave `acc += 2*d-1-2*i` in the outer loop and get cached once per
-/// iteration. closedFormOfRecurrence needs no wider type, so it can take the
-/// case the expander declines.
-struct QuadraticClosedFormRewriter
-    : public SCEVRewriteVisitor<QuadraticClosedFormRewriter> {
-  QuadraticClosedFormRewriter(ScalarEvolution &SE) : SCEVRewriteVisitor(SE) {}
+/// iteration. evaluateAtIterationWithoutExt needs no wider type, so it can
+/// take the case the expander declines.
+struct NonAffineClosedFormRewriter
+    : public SCEVRewriteVisitor<NonAffineClosedFormRewriter> {
+  NonAffineClosedFormRewriter(ScalarEvolution &SE) : SCEVRewriteVisitor(SE) {}
 
   const SCEV *visitAddRecExpr(const SCEVAddRecExpr *AR) {
     // Let the base visitor rewrite the operands (it also copes with the
     // operand representation of the LLVM version at hand).
     const SCEV *R =
-        SCEVRewriteVisitor<QuadraticClosedFormRewriter>::visitAddRecExpr(AR);
+        SCEVRewriteVisitor<NonAffineClosedFormRewriter>::visitAddRecExpr(AR);
     auto AR2 = dyn_cast<SCEVAddRecExpr>(R);
-    if (!AR2 || AR2->isAffine() || AR2->getNumOperands() != 3)
+    // Beyond degree three the closed form would widen again.
+    if (!AR2 || AR2->isAffine() || AR2->getNumOperands() > 4)
       return R;
     if (!AR2->getType()->isIntegerTy())
       return R;
     PHINode *IV = AR2->getLoop()->getCanonicalInductionVariable();
     if (!IV)
       return R;
-    if (auto Closed = closedFormOfRecurrence(AR2, SE.getUnknown(IV), SE))
-      return Closed;
-    return R;
+    return evaluateAtIterationWithoutExt(AR2, SE.getUnknown(IV), SE);
   }
 };
+
+// The no-wrap flag type of an add recurrence, named without reference to any
+// enumerator (FlagAnyWrap became FlagNone in LLVM 24); its zero value means
+// "no flags" in every version.
+using NoWrapFlagsTy =
+    decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
 
 /// PN is a header phi of L that scalar evolution could not classify. Recognize
 /// an accumulator whose per-iteration step is the trip count of an inner loop,
@@ -512,10 +480,8 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
       SE.getAddRecExpr(WideInit, Step, L, NoWrapFlagsTy(0)));
   if (!AR)
     return nullptr;
-  const SCEV *Closed = closedFormOfRecurrence(AR, IterationNumber, SE);
-  if (!Closed)
-    return nullptr;
-  return SE.getTruncateOrNoop(Closed, PN->getType());
+  return SE.getTruncateOrNoop(
+      evaluateAtIterationWithoutExt(AR, IterationNumber, SE), PN->getType());
 }
 
 // Attempt to rewrite all phinode's in the loop in terms of the
@@ -549,7 +515,7 @@ void RemoveRedundantIVs(
       if (!S)
         continue;
     } else if (EnzymeRewriteAccumulators) {
-      S = QuadraticClosedFormRewriter(SE).visit(S);
+      S = NonAffineClosedFormRewriter(SE).visit(S);
     }
     // we may expand code for phi where not legal (computing with
     // subloop expressions). Check that this isn't the case
