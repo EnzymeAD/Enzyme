@@ -51,11 +51,6 @@ llvm::cl::opt<bool> EfficientMaxCache(
     cl::desc(
         "Avoid reallocs when possible by potentially overallocating cache"));
 
-llvm::cl::opt<bool> EnzymeSplitSkipEdges(
-    "enzyme-split-skip-edges", cl::init(true), cl::Hidden,
-    cl::desc("Give the edge that skips an inner loop its own block before "
-             "analyzing loop-carried values"));
-
 llvm::cl::opt<bool> EnzymeRewriteAccumulators(
     "enzyme-rewrite-accumulators", cl::init(true), cl::Hidden,
     cl::desc("Rewrite a loop-carried counter whose step is an inner loop's "
@@ -325,9 +320,12 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
 
   // The arms the latch value can take, each with the block it comes from.
   SmallVector<std::pair<Value *, BasicBlock *>, 2> Arms;
+  // The block that merges the arms, i.e. where each arm's edge leads.
+  BasicBlock *Merge = Latch;
   if (auto NP = dyn_cast<PHINode>(Next); NP && NP != PN &&
                                          NP->getParent() != L->getHeader() &&
                                          L->contains(NP->getParent())) {
+    Merge = NP->getParent();
     for (unsigned i = 0; i < NP->getNumIncomingValues(); i++)
       Arms.emplace_back(NP->getIncomingValue(i), NP->getIncomingBlock(i));
   } else {
@@ -434,25 +432,35 @@ static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
     if (!NonNegative)
       return nullptr;
 
-    // Step <= 0 on each skipping edge. The edge has its own block (see
-    // CanonicalizeLoops), whose only predecessor branches on `icmp P A, B`.
-    // Orient the predicate that holds on the edge as X >= Y, X > Y or X == Y
-    // and require Step == (Y - X) + k for a constant k that then makes Step
-    // non-positive. Both X and Y must be known non-negative so that Y - X
-    // cannot wrap.
+    // Step <= 0 on each skipping edge. The edge B -> Merge is taken on one
+    // outcome of a branch on `icmp P A, B`: the conditional branch that ends
+    // B, or, when B is a block that exists only to carry the edge, the one
+    // that ends B's single predecessor. Orient the predicate that holds on
+    // the edge as X >= Y, X > Y or X == Y and require Step == (Y - X) + k for
+    // a constant k that then makes Step non-positive. Both X and Y must be
+    // known non-negative so that Y - X cannot wrap.
     for (auto B : ZeroArms) {
-      BasicBlock *Pred = B->getSinglePredecessor();
-      if (!Pred)
-        return nullptr;
-      Instruction *TI = Pred->getTerminator();
-      if (!isConditionalBranch(TI) ||
-          TI->getSuccessor(0) == TI->getSuccessor(1))
+      BasicBlock *Dest = Merge;
+      Instruction *TI = B->getTerminator();
+      if (!isConditionalBranch(TI)) {
+        if (TI->getNumSuccessors() != 1)
+          return nullptr;
+        BasicBlock *Pred = B->getSinglePredecessor();
+        if (!Pred)
+          return nullptr;
+        Dest = B;
+        TI = Pred->getTerminator();
+        if (!isConditionalBranch(TI))
+          return nullptr;
+      }
+      if (TI->getSuccessor(0) == TI->getSuccessor(1) ||
+          (TI->getSuccessor(0) != Dest && TI->getSuccessor(1) != Dest))
         return nullptr;
       auto Cmp = dyn_cast<ICmpInst>(getBranchCondition(TI));
       if (!Cmp)
         return nullptr;
       ICmpInst::Predicate Q = Cmp->getPredicate();
-      if (TI->getSuccessor(1) == B)
+      if (TI->getSuccessor(1) == Dest)
         Q = ICmpInst::getInversePredicate(Q);
       Value *X = Cmp->getOperand(0), *Y = Cmp->getOperand(1);
       bool Strict = false, Equal = false;

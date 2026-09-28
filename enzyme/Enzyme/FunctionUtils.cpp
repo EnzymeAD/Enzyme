@@ -153,8 +153,6 @@ cl::opt<int>
 cl::opt<bool> EnzymeCoalese("enzyme-coalese", cl::init(false), cl::Hidden,
                             cl::desc("Whether to coalese memory allocations"));
 
-extern llvm::cl::opt<bool> EnzymeSplitSkipEdges;
-
 static cl::opt<bool> EnzymePHIRestructure(
     "enzyme-phi-restructure", cl::init(false), cl::Hidden,
     cl::desc("Whether to restructure phi's to have better unwrap behavior"));
@@ -1492,36 +1490,6 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   LoopInfo &LI = FAM.getResult<LoopAnalysis>(*F);
   AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(*F);
   TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
-  // Where a header phi's latch value is a phi that merges "inner loop skipped"
-  // with the inner loop's exit value, give the skipping edge its own block, so
-  // scalar evolution can see the branch condition that guards it (used by
-  // RemoveRedundantIVs to rewrite such accumulators in closed form).
-  for (Loop *L : LI.getLoopsInPreorder()) {
-    if (!EnzymeSplitSkipEdges)
-      break;
-    BasicBlock *Latch = L->getLoopLatch();
-    if (!Latch)
-      continue;
-    for (PHINode &PN : L->getHeader()->phis()) {
-      // Only integer counters can be rewritten, so only they need the edge.
-      if (!PN.getType()->isIntegerTy() || PN.getBasicBlockIndex(Latch) < 0)
-        continue;
-      auto NP = dyn_cast<PHINode>(PN.getIncomingValueForBlock(Latch));
-      if (!NP || NP->getParent() == L->getHeader() ||
-          !L->contains(NP->getParent()))
-        continue;
-      for (unsigned i = 0; i < NP->getNumIncomingValues(); i++) {
-        if (NP->getIncomingValue(i) != &PN)
-          continue;
-        BasicBlock *B = NP->getIncomingBlock(i);
-        Instruction *TI = B->getTerminator();
-        if (!isConditionalBranch(TI) ||
-            TI->getSuccessor(0) == TI->getSuccessor(1))
-          continue;
-        SplitEdge(B, NP->getParent(), &DT, &LI);
-      }
-    }
-  }
   MustExitScalarEvolution SE(*F, TLI, AC, DT, LI);
   for (Loop *L : LI.getLoopsInPreorder()) {
     auto pair =
