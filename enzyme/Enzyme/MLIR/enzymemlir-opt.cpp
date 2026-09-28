@@ -36,6 +36,10 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIROpsDialect.h.inc"
+#endif
+
 #include "Dialect/Dialect.h"
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/LLVMExt/LLVMExt.h"
@@ -79,6 +83,9 @@ int main(int argc, char **argv) {
   registry.insert<mlir::enzyme::EnzymeDialect>();
   registry.insert<mlir::impulse::ImpulseDialect>();
   registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
+#ifdef ENZYME_CLANG_HAS_CIR
+  registry.insert<cir::CIRDialect>();
+#endif
 
   mlir::enzyme::registerenzymePasses();
 

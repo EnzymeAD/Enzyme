@@ -37,4 +37,7 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerTensorDialectAutoDiffInterface(registry);
   enzyme::registerGPUDialectAutoDiffInterface(registry);
   enzyme::registerEnzymeDialectAutoDiffInterface(registry);
+#ifdef ENZYME_CLANG_HAS_CIR
+  enzyme::registerCIRDialectAutoDiffInterface(registry);
+#endif
 }
