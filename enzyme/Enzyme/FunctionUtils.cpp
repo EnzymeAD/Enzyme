@@ -2050,6 +2050,73 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
         if (isLocalReadOnlyOrThrow(CI)) {
+          // A local read-only-or-throw callee may still write through its
+          // sret-like arguments, and those writes land in memory of ours.
+          // Classify them as we would a store of our own: memory local to us
+          // is fine, our own sret-like argument makes us local too (e.g. an
+          // sret passed straight through to the callee after call-slot
+          // optimization), and anything else disqualifies us.
+          if (!isReadOnlyOrThrow(CI)) {
+            auto Callee = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 14
+            size_t nargs = CI->arg_size();
+#else
+            size_t nargs = CI->getNumArgOperands();
+#endif
+            for (size_t i = 0; i < nargs; i++) {
+              Value *arg = CI->getArgOperand(i);
+              if (!arg->getType()->isPointerTy())
+                continue;
+              bool sretLike = CI->paramHasAttr(i, Attribute::StructRet);
+              if (!sretLike && Callee && i < Callee->arg_size()) {
+                sretLike = Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_returnRoots")
+                               .isValid() ||
+                           Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_sret_union_bytes")
+                               .isValid();
+              }
+              if (!sretLike)
+                continue;
+              auto Obj = getBaseObject(arg);
+              if (isa<AllocaInst>(Obj))
+                continue;
+              if (isAllocationCall(Obj, TLI)) {
+                if (local)
+                  continue;
+                if (notCaptured(Obj))
+                  continue;
+                local = true;
+                continue;
+              }
+              if (auto A = dyn_cast<Argument>(Obj)) {
+                if (A->hasStructRetAttr() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_returnRoots")
+                        .isValid() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_sret_union_bytes")
+                        .isValid()) {
+                  local = true;
+                  continue;
+                }
+              }
+              if (EnzymePrintPerf) {
+                EmitWarning("WritingInstruction", I,
+                            "Instruction could write forcing ", F.getName(),
+                            " to not be marked readonly_or_throw per "
+                            "argument ",
+                            i, " of local read-only-or-throw call ", I);
+              }
+              return false;
+            }
+          }
           continue;
         }
         if (isAllocationCall(CI, TLI)) {
