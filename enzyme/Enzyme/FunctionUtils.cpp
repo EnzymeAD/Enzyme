@@ -574,6 +574,71 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
+    if (auto Sel = dyn_cast<SelectInst>(inst)) {
+      // As for a phi: collect which of the two operands derive from the
+      // object being moved, including those still pending in Todo.
+      Value *replacedOperands[2] = {nullptr, nullptr};
+      for (size_t i = 0; i < 2; i++)
+        if (Sel->getOperand(i + 1) == prev)
+          replacedOperands[i] = rep;
+      for (auto tval : Todo) {
+        if (std::get<2>(tval) != Sel)
+          continue;
+        for (size_t i = 0; i < 2; i++)
+          if (Sel->getOperand(i + 1) == std::get<1>(tval))
+            replacedOperands[i] = std::get<0>(tval);
+      }
+      if (replacedOperands[0] && replacedOperands[1]) {
+        IRBuilder<> B(Sel);
+        auto nSel = B.CreateSelect(Sel->getCondition(), replacedOperands[0],
+                                   replacedOperands[1]);
+        nSel->takeName(Sel);
+        for (auto U : Sel->users()) {
+          Todo.push_back(std::make_tuple((Value *)nSel, (Value *)Sel,
+                                         cast<Instruction>(U)));
+        }
+        toErase.push_back(Sel);
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != Sel)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
+        continue;
+      }
+      // The other operand may still be reached through another pending use.
+      bool remainingAreMerges = true;
+      for (auto v : Todo) {
+        if (!isa<PHINode>(std::get<2>(v)) && !isa<SelectInst>(std::get<2>(v))) {
+          remainingAreMerges = false;
+          break;
+        }
+      }
+      if (!remainingAreMerges) {
+        Todo.insert(Todo.begin(), cur);
+        continue;
+      }
+      // One operand is not derived from the object being moved, so the select
+      // keeps its address space. If that is a derived (not tracked) one, the
+      // moved object can be cast back to it: the GC treats a cast from the
+      // default address space as an untracked base. A tracked select would
+      // instead root the stack memory, so is an error.
+      unsigned SAS = cast<PointerType>(Sel->getType())->getAddressSpace();
+      if (SAS != 10 && SAS != 0) {
+        IRBuilder<> B(Sel);
+        for (size_t i = 0; i < 2; i++) {
+          if (!replacedOperands[i])
+            continue;
+          Sel->setOperand(i + 1, B.CreatePointerBitCastOrAddrSpaceCast(
+                                     replacedOperands[i], Sel->getType()));
+        }
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != Sel)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
+        continue;
+      }
+    }
     if (auto cmp = dyn_cast<CmpInst>(inst)) {
       IRBuilder<> B(cmp);
       Value *op0 = cmp->getOperand(0);
