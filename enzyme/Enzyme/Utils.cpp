@@ -2707,6 +2707,54 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
   }
 }
 
+const SCEV *evaluateAtIterationWithoutExt(const SCEVAddRecExpr *AR,
+                                          const SCEV *It, ScalarEvolution &SE) {
+  Type *Ty = AR->getType();
+  unsigned N = AR->getNumOperands();
+  if (!Ty->isIntegerTy() || !It->getType()->isIntegerTy() || N > 4)
+    return AR->evaluateAtIteration(It, SE);
+
+  // The binomial coefficients are formed in the wider of the two types, so
+  // that no bit of the iteration number is dropped before the halving (the
+  // value of I*(I-1)/2 modulo 2^W depends on bit W of I).
+  Type *CalcTy = SE.getTypeSizeInBits(It->getType()) > SE.getTypeSizeInBits(Ty)
+                     ? It->getType()
+                     : Ty;
+  const SCEV *I = SE.getTruncateOrZeroExtend(It, CalcTy);
+  const SCEV *Res = AR->getOperand(0);
+  if (N > 1)
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(1), SE.getTruncateOrNoop(I, Ty)));
+  if (N > 2) {
+    // I*(I-1)/2 as (I/2)*(I-1) + (I%2)*((I-1)/2): whichever of I and I-1 is
+    // even is halved exactly, the other term is then zero.
+    const SCEV *One = SE.getOne(CalcTy);
+    const SCEV *Two = SE.getConstant(CalcTy, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(2), SE.getTruncateOrNoop(Tri, Ty)));
+    if (N > 3) {
+      // I*(I-1)*(I-2)/6 = (I*(I-1)/2) * (I-2) / 3, and exact division by the
+      // odd number 3 is multiplication by its inverse modulo 2^W (found by
+      // Newton iteration, which doubles the number of correct bits each step).
+      unsigned Bits = SE.getTypeSizeInBits(CalcTy);
+      APInt Three(Bits, 3), Inv(Bits, 3);
+      for (unsigned Correct = 3; Correct < Bits; Correct *= 2)
+        Inv *= APInt(Bits, 2) - Three * Inv;
+      const SCEV *Tet = SE.getMulExpr(
+          SE.getMulExpr(Tri, SE.getMinusSCEV(I, Two)), SE.getConstant(Inv));
+      Res = SE.getAddExpr(
+          Res, SE.getMulExpr(AR->getOperand(3), SE.getTruncateOrNoop(Tet, Ty)));
+    }
+  }
+  return Res;
+}
+
 bool overwritesToMemoryReadByLoop(
     llvm::ScalarEvolution &SE, llvm::LoopInfo &LI, llvm::DominatorTree &DT,
     llvm::Instruction *maybeReader, const llvm::SCEV *LoadStart,
@@ -2838,7 +2886,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
               if (ebd == SE.getCouldNotCompute())
                 break;
-              elim = endL->evaluateAtIteration(ebd, SE);
+              elim = evaluateAtIterationWithoutExt(endL, ebd, SE);
               continue;
             }
           }
@@ -2857,7 +2905,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
           if (sbd == SE.getCouldNotCompute())
             break;
-          slim = startL->evaluateAtIteration(sbd, SE);
+          slim = evaluateAtIterationWithoutExt(startL, sbd, SE);
           continue;
         }
       }
