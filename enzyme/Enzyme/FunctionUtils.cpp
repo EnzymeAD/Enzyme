@@ -617,27 +617,6 @@ void RecursivelyReplaceAddressSpace(
         Todo.insert(Todo.begin(), cur);
         continue;
       }
-      // One operand is not derived from the object being moved, so the select
-      // keeps its address space. If that is a derived (not tracked) one, the
-      // moved object can be cast back to it: the GC treats a cast from the
-      // default address space as an untracked base. A tracked select would
-      // instead root the stack memory, so is an error.
-      unsigned SAS = cast<PointerType>(Sel->getType())->getAddressSpace();
-      if (SAS != 10 && SAS != 0) {
-        IRBuilder<> B(Sel);
-        for (size_t i = 0; i < 2; i++) {
-          if (!replacedOperands[i])
-            continue;
-          Sel->setOperand(i + 1, B.CreatePointerBitCastOrAddrSpaceCast(
-                                     replacedOperands[i], Sel->getType()));
-        }
-        for (int i = Todo.size() - 1; i >= 0; i--) {
-          if (std::get<2>(Todo[i]) != Sel)
-            continue;
-          Todo.erase(Todo.begin() + i);
-        }
-        continue;
-      }
     }
     if (auto cmp = dyn_cast<CmpInst>(inst)) {
       IRBuilder<> B(cmp);
