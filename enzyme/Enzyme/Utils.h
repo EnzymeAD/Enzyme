@@ -168,7 +168,9 @@ class TypeResults;
 
 namespace llvm {
 class ScalarEvolution;
-}
+class SCEV;
+class SCEVAddRecExpr;
+} // namespace llvm
 
 enum class ErrorType {
   NoDerivative = 0,
@@ -2939,5 +2941,18 @@ static bool hasTerminator(llvm::BasicBlock *BB) {
   return BB->getTerminator();
 #endif
 }
+
+/// The value of the add recurrence AR at iteration It, like
+/// SCEVAddRecExpr::evaluateAtIteration, but without the widening that its
+/// BinomialCoefficient performs: LLVM computes I*(I-1)/2 in a type one bit
+/// wider than AR so that the halving is exact, and SCEVExpander then has to
+/// materialize a canonical induction variable of that wider type, a new
+/// loop-carried phi. Here the halving is done on whichever of I and I-1 is
+/// even, in the wider of AR's and It's own types, so that every product is of
+/// exact integers and no new type appears. Recurrences of degree at most
+/// three are handled this way; higher degrees fall back to LLVM's version.
+const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
+                                                const llvm::SCEV *It,
+                                                llvm::ScalarEvolution &SE);
 
 #endif // ENZYME_UTILS_H
