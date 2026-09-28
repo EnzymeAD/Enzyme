@@ -8796,8 +8796,6 @@ void GradientUtils::computeMinCache() {
 
     for (Value *V : MinReq) {
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
     }
     for (Value *V : Required) {
       todo.push_back(V);
@@ -8808,8 +8806,6 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      DifferentialUseAnalysis::pushLoopyPHIPreheader(this, V, Intermediates,
-                                                     todo);
       auto I = dyn_cast<Instruction>(V);
       if (!I)
         continue;
