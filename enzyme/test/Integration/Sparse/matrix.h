@@ -1,5 +1,6 @@
 #include <cmath>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <sys/time.h>
 float tdiff(struct timeval *start, struct timeval *end) {
@@ -256,3 +257,46 @@ static T area(const T *__restrict__ u, const T *__restrict__ v, const T *__restr
     cross(cross_product, diff1, diff2);
     return 0.5 * norm<T, 3>(cross_product);
 }
+
+// Compare the sparse Hessian triplets `res` (increments, duplicates are
+// summed) against a dense forward-over-reverse Hessian of `gradf` computed
+// without __enzyme_todense, so that -enzyme-auto-sparsity does not apply to
+// it. Rows r < rows use the tangent e_r (plus e_ringcol for r == 0 if
+// ringcol != 0), the output has `cols` entries. Exits with an error on any
+// mismatch or out-of-range triplet.
+#define CHECK_SPARSE_HESSIAN(res, gradf, N, x, rows, cols, ringcol)            \
+  do {                                                                         \
+    size_t R_ = (rows), C_ = (cols);                                           \
+    double *S_ = (double *)calloc(R_ * C_, sizeof(double));                    \
+    double *H_ = (double *)calloc(R_ * C_, sizeof(double));                    \
+    double *dx_ = (double *)calloc(C_, sizeof(double));                        \
+    double *g_ = (double *)calloc(C_, sizeof(double));                         \
+    int bad_ = 0;                                                              \
+    for (auto &t_ : res) {                                                     \
+      if (t_.row >= R_ || t_.col >= C_) {                                      \
+        printf("out of range: %zu, %zu = %f\n", (size_t)t_.row,                \
+               (size_t)t_.col, (double)t_.val);                                \
+        bad_++;                                                                \
+        continue;                                                              \
+      }                                                                        \
+      S_[t_.row * C_ + t_.col] += t_.val;                                      \
+    }                                                                          \
+    for (size_t r_ = 0; r_ < R_; r_++) {                                       \
+      for (size_t c_ = 0; c_ < C_; c_++) {                                     \
+        dx_[c_] = (c_ == r_) || ((ringcol) != 0 && r_ == 0 && c_ == (ringcol)); \
+        g_[c_] = 0;                                                            \
+      }                                                                        \
+      __enzyme_fwddiff<void>((void *)(gradf), enzyme_const, (N), enzyme_dup,   \
+                             (x), dx_, enzyme_dup, g_, &H_[r_ * C_]);          \
+    }                                                                          \
+    for (size_t i_ = 0; i_ < R_ * C_; i_++)                                    \
+      if (fabs(S_[i_] - H_[i_]) > 1e-8 * (1 + fabs(H_[i_]))) {                  \
+        printf("mismatch [%zu][%zu]: sparse %f dense %f\n", i_ / C_, i_ % C_,  \
+               S_[i_], H_[i_]);                                                \
+        bad_++;                                                                \
+      }                                                                        \
+    if (bad_) {                                                                \
+      printf("%d mismatches\n", bad_);                                         \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
