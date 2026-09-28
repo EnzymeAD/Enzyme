@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-max-tape-fields-by-value=2 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefix=BYVAL; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPloadEnzyme -enzyme-preopt=false -enzyme-max-tape-fields-by-value=2 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPloadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefix=BYVAL; fi
 
 ; A recursive call whose tape holds more scalar fields than the limit hands the
 ; tape to the reverse pass by pointer, instead of loading it in the caller.
