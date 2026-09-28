@@ -1,5 +1,5 @@
 // RUN: %eopt --enzyme-batch %s | FileCheck %s --check-prefix=BATCH
-// RUN: %eopt --enzyme-batch --enzyme --canonicalize %s | FileCheck %s --check-prefix=AD
+// RUN: %eopt --enzyme-batch --enzyme --canonicalize --lower-enzyme-custom-rules-to-func --remove-unnecessary-enzyme-ops --enzyme-simplify-math %s | FileCheck %s --check-prefix=AD
 
 // A scalar function batched over a broadcast calls a callee that carries a
 // custom rule (as a ReactiveKernels scalar derivative rule under Reactant

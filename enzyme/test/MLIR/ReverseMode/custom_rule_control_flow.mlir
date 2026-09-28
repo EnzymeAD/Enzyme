@@ -121,9 +121,9 @@ module {
 
 // CHECK-LABEL: func.func private @diffeouter
 // CHECK-NOT: enzyme.
+// The primal and the reverse branch test the same condition and are merged.
 // CHECK: scf.if
 // CHECK: call @mul_rule_primal
-// CHECK: scf.if
 // CHECK: call @mul_rule_reverse
 // CHECK-LABEL: func.func private @mul_rule_reverse
 // CHECK: arith.constant dense<2.000000e+00>
