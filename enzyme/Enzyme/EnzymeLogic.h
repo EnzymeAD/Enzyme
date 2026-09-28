@@ -119,6 +119,12 @@ public:
 
   std::set<ssize_t> tapeIndiciesToFree;
 
+  //! Loop header PHIs (of the original function) whose tape entry only holds
+  //! the value of the final iteration of their loop (see
+  //! GradientUtils::cacheOnlyLastIteration). Users of the tape must use the
+  //! same cache layout.
+  std::set<const llvm::Instruction *> lastIterationCached;
+
   const std::vector<DIFFE_TYPE> constant_args;
 
   bool shadowReturnUsed;

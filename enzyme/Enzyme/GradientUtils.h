@@ -185,6 +185,16 @@ public:
 
   llvm::SmallPtrSet<llvm::Instruction *, 4> unnecessaryIntermediates;
 
+  /// Loop header PHIs (of the original function) that are cached for the
+  /// reverse pass, but whose value is only required in the reverse pass by
+  /// users outside of their loop. Such users can only observe the value of
+  /// the final iteration, so a single cache slot per iteration of the
+  /// enclosing loops (overwritten on every iteration of the PHI's own loop)
+  /// suffices, instead of a cache with one entry per iteration. Computed when
+  /// creating the augmented forward pass and copied from its AugmentedReturn
+  /// for the passes that consume its tape.
+  llvm::SmallPtrSet<const llvm::Instruction *, 4> cacheOnlyLastIteration;
+
   const std::map<llvm::Instruction *, bool> *can_modref_map;
   const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       *overwritten_args_map_ptr;
@@ -381,6 +391,8 @@ public:
       std::pair<llvm::Instruction *, CacheType> idx,
       std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping,
       llvm::IRBuilder<> &);
+
+  llvm::BasicBlock *getCacheScopeForReverse(llvm::Value *malloc);
 
   llvm::Value *cacheForReverse(llvm::IRBuilder<> &BuilderQ, llvm::Value *malloc,
                                int idx, bool replace = true);
