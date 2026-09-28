@@ -18,6 +18,7 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/Utils.h"
+#include "Passes/RemovalUtils.h"
 #include "Passes/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -714,20 +715,17 @@ static bool splitModeSupported(FunctionOpInterface fn) {
 }
 
 // A call to a func-like callee is differentiated in split mode: the primal
-// becomes a call to the callee's augmented primal, which returns a tape, and
-// the adjoint becomes a call to the callee's reverse, which reads that tape.
+// becomes a call to the callee's augmented primal, which also returns the
+// values the rule caches, and the adjoint becomes a call to the callee's
+// reverse, which takes those values back. The caller caches them like any
+// other value, so a call inside a loop or a branch needs nothing special.
 // Nothing the callee overwrote has to be reconstructed by the caller --
-// whatever the reverse needs was put on the tape while the primal ran.
+// whatever the reverse needs was cached while the primal ran.
 static LogicalResult callReverseHandlerSplit(Operation *orig,
                                              OpBuilder &builder,
                                              MGradientUtilsReverse *gutils,
                                              SmallVector<Value> caches,
                                              FunctionOpInterface fn) {
-  DerivativeMode mode = DerivativeMode::ReverseModeGradient;
-
-  auto narg = orig->getNumOperands();
-  auto nret = orig->getNumResults();
-
   std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
   getCallActivity(orig, gutils, ArgActivity, RetActivity);
 
@@ -738,8 +736,8 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
            << "\n";
   }
 
-  // The augmented primal was created in cacheValues. It names the authored
-  // rule chosen there, or a placeholder if none served the call.
+  // The augmented primal was created in cacheValues, naming the rule chosen
+  // or derived there, or a placeholder if there was none.
   auto primalCall =
       cast<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig));
   auto cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(
@@ -761,34 +759,9 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
       return diag;
     }
 
-    // No authored rule: derive one from the callee's body. A rule derived
-    // for the same activity by another call (or an earlier differentiation)
-    // is reused.
-    std::vector<bool> overwritten_args(narg, true);
-    std::vector<bool> returnShadow(nret, false);
-    std::vector<bool> returnPrimal(nret, false);
-
-    auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
-
-    bool freeMemory = true;
-    size_t width = gutils->width;
-
-    auto myCr = gutils->Logic.CreateSplitModeDiff(
-        fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
-        mode, freeMemory, width, /*addedType*/ nullptr, type_args,
-        overwritten_args, /*augmented*/ nullptr, gutils->omp,
-        gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero);
-
-    if (!myCr)
-      return orig->emitError()
-             << "failed to create reverse-mode adjoint for callee "
-             << fn.getNameAttr() << "\n";
-
-    primalCall.setFnAttr(myCr);
-    cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(orig, myCr);
-    if (!cr)
-      return orig->emitError()
-             << "could not derive a reverse rule for " << fn.getNameAttr();
+    return orig->emitError()
+           << "failed to create reverse-mode adjoint for callee "
+           << fn.getNameAttr() << "\n";
   }
 
   auto crArgActivity = cr.getActivity();
@@ -804,7 +777,9 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
            << "cannot apply custom rule to func " << fn.getNameAttr()
            << " (wrong ret activity size)";
 
-  Value tape = gutils->popCache(caches[0], builder);
+  SmallVector<Value> cacheValues;
+  for (Value cache : caches)
+    cacheValues.push_back(gutils->popCache(cache, builder));
 
   SmallVector<Value> operands;
   SmallVector<Type> resultTypes;
@@ -842,8 +817,9 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
     }
   }
 
-  auto revCall = CallCustomReverseOp::create(
-      builder, orig->getLoc(), resultTypes, cr.getSymName(), operands, tape);
+  auto revCall =
+      CallCustomReverseOp::create(builder, orig->getLoc(), resultTypes,
+                                  cr.getSymName(), operands, cacheValues);
 
   // The rule returns one cotangent per argument it differentiates. One it
   // computes for an operand the caller holds constant is dropped.
@@ -865,41 +841,82 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
   return success();
 }
 
+// The rule a split-mode call uses, fixed before its primal runs: the caller
+// carries the rule's caches as values from the augmented primal to the
+// reverse, so their types must be known here. An authored rule that serves
+// the call's activities is used; otherwise, if the callee names none, a rule
+// is derived from its body (or one derived earlier for the same activity is
+// reused). Null if there is no usable rule; the adjoint reports why.
+static CustomReverseRuleOp
+getSplitModeRule(Operation *orig, MGradientUtilsReverse *gutils,
+                 FunctionOpInterface fn, std::vector<DIFFE_TYPE> &ArgActivity,
+                 std::vector<DIFFE_TYPE> &RetActivity) {
+  CustomReverseRuleOp cr = selectCustomRule(fn, ArgActivity, RetActivity);
+
+  auto authored = lookupCustomReverseRules(fn, "enzyme.custom_rule");
+  bool derive = !cr && succeeded(authored) && authored->empty() &&
+                llvm::none_of(RetActivity, [](DIFFE_TYPE act) {
+                  return act == DIFFE_TYPE::DUP_ARG;
+                });
+  if (derive) {
+    auto narg = orig->getNumOperands();
+    auto nret = orig->getNumResults();
+    std::vector<bool> overwritten_args(narg, true);
+    std::vector<bool> returnShadow(nret, false);
+    std::vector<bool> returnPrimal(nret, false);
+
+    auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+    bool freeMemory = true;
+    size_t width = gutils->width;
+
+    auto myCr = gutils->Logic.CreateSplitModeDiff(
+        fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
+        DerivativeMode::ReverseModeGradient, freeMemory, width,
+        /*addedType*/ nullptr, type_args, overwritten_args,
+        /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
+        gutils->verifyPostPasses, gutils->strongZero);
+    if (myCr)
+      cr = SymbolTable::lookupNearestSymbolFrom<CustomReverseRuleOp>(orig,
+                                                                     myCr);
+  }
+
+  if (cr && failed(finalizeCustomReverseRule(cr)))
+    return nullptr;
+  return cr;
+}
+
 static SmallVector<Value> callCacheValuesSplit(Operation *orig,
                                                MGradientUtilsReverse *gutils,
                                                FunctionOpInterface fn) {
-  SmallVector<Value> cachedArguments;
-
   Operation *newOp = gutils->getNewFromOriginal(orig);
   OpBuilder cacheBuilder(newOp);
 
-  // An authored rule that serves this call's activities is chosen now.
-  // Otherwise the augmented primal names a placeholder until the adjoint
-  // derives a rule, or reports that no authored rule serves the call.
   std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
   getCallActivity(orig, gutils, ArgActivity, RetActivity);
 
-  StringAttr symName = nullptr;
-  if (auto cr = selectCustomRule(fn, ArgActivity, RetActivity)) {
-    symName = cr.getSymNameAttr();
-  } else {
-    symName = StringAttr::get(orig->getContext(), "<placeholder>");
-  }
+  auto cr = getSplitModeRule(orig, gutils, fn, ArgActivity, RetActivity);
+
+  FlatSymbolRefAttr fnAttr =
+      cr ? FlatSymbolRefAttr::get(cr.getSymNameAttr())
+         : FlatSymbolRefAttr::get(orig->getContext(), "<placeholder>");
+  SmallVector<Type> cacheTypes;
+  if (cr)
+    cacheTypes = getCustomReverseRuleCacheTypes(cr);
 
   SmallVector<Value> operands(newOp->getOperands());
 
-  SmallVector<Type> resultTypes(newOp->getResultTypes());
-  resultTypes.push_back(enzyme::TapeType::get(orig->getContext()));
-
-  auto primal = CallAugmentedPrimalOp::create(cacheBuilder, orig->getLoc(),
-                                              resultTypes, symName, operands);
+  auto primal = CallAugmentedPrimalOp::create(
+      cacheBuilder, orig->getLoc(), newOp->getResultTypes(), cacheTypes,
+      fnAttr, operands);
 
   for (auto [oldRes, newRes] :
-       llvm::zip(newOp->getResults(), primal->getResults()))
+       llvm::zip_equal(newOp->getResults(), primal.getOutputs()))
     oldRes.replaceAllUsesWith(newRes);
 
-  Value tape = primal.getTape();
-  cachedArguments.push_back(gutils->initAndPushCache(tape, cacheBuilder));
+  SmallVector<Value> cachedArguments;
+  for (Value cache : primal.getCaches())
+    cachedArguments.push_back(gutils->initAndPushCache(cache, cacheBuilder));
 
   gutils->erase(newOp);
   gutils->originalToNewFnOps[orig] = primal;
@@ -1134,9 +1151,35 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
            << fn.getNameAttr() << "\n";
   }
 
-  if (splitModeSupported(fn))
+  // cacheValues chose the mode: an augmented primal in place of the call
+  // means split mode.
+  if (isa<CallAugmentedPrimalOp>(gutils->getNewFromOriginal(orig)))
     return callReverseHandlerSplit(orig, builder, gutils, caches, fn);
   return callReverseHandlerCombined(orig, builder, gutils, caches, fn);
+}
+
+// Whether a rule for exactly this call's activities is still being derived:
+// the call is reached again from inside that derivation (recursion). The
+// caller of a split-mode call carries the rule's caches as typed values, and
+// those cannot contain themselves, so such a call takes the combined-mode
+// path, which recomputes the callee in its reverse instead.
+static bool splitRuleInProgress(Operation *orig, MGradientUtilsReverse *gutils,
+                                FunctionOpInterface fn) {
+  auto rules = lookupCustomReverseRules(fn, "enzyme.derived_rules");
+  if (failed(rules))
+    return false;
+
+  std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
+  getCallActivity(orig, gutils, ArgActivity, RetActivity);
+  SmallVector<Activity> ArgAct =
+      llvm::map_to_vector(ArgActivity, diffeTypeToActivity);
+  SmallVector<Activity> RetAct =
+      llvm::map_to_vector(RetActivity, diffeTypeToActivity);
+
+  return llvm::any_of(*rules, [&](CustomReverseRuleOp rule) {
+    return rule->hasAttr("enzyme.in_progress") &&
+           rule.activityEquals(ArgAct, RetAct);
+  });
 }
 
 SmallVector<Value> edetail::callCacheValues(Operation *orig,
@@ -1147,7 +1190,7 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
   if (!fn || fn.getFunctionBody().empty())
     return SmallVector<Value>();
 
-  if (splitModeSupported(fn))
+  if (splitModeSupported(fn) && !splitRuleInProgress(orig, gutils, fn))
     return callCacheValuesSplit(orig, gutils, fn);
   return callCacheValuesCombined(orig, gutils, fn);
 }

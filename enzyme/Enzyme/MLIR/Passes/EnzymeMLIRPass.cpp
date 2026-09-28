@@ -495,42 +495,76 @@ struct DifferentiatePass
         /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
         CI.getStrongZero());
 
+    if (!ruleToCall)
+      return CI->emitError()
+             << "failed to create reverse-mode adjoint for callee "
+             << fn.getNameAttr() << "\n";
+    auto rule =
+        SymbolTable::lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+            CI, ruleToCall);
+    if (!rule || failed(finalizeCustomReverseRule(rule)))
+      return failure();
+
+    // The rule's augmented primal returns its caches as typed values. The
+    // tape this op hands to user code stands for them: follow it through
+    // pushes and pops to each reverse, which takes the values back.
     OpBuilder builder(CI);
     auto primalCall = enzyme::CallAugmentedPrimalOp::create(
-        builder, CI.getLoc(), CI->getResultTypes(), ruleToCall,
-        CI.getOperands());
+        builder, CI.getLoc(), CI.getOutputs().getTypes(),
+        getCustomReverseRuleCacheTypes(rule), ruleToCall, CI.getOperands());
     for (auto [oldRes, newRes] :
-         llvm::zip_equal(CI->getResults(), primalCall.getResults())) {
+         llvm::zip_equal(CI.getOutputs(), primalCall.getOutputs())) {
       oldRes.replaceAllUsesWith(newRes);
     }
 
-    CI->erase();
-
     SetVector<Operation *> toDelete;
-
-    tape = primalCall.getTape();
+    llvm::DenseMap<Value, SmallVector<Value>> tapeToCaches;
+    tapeToCaches[tape] = SmallVector<Value>(primalCall.getCaches().begin(),
+                                            primalCall.getCaches().end());
 
     SmallVector<Value, 2> tapeWorklist = {tape};
     while (!tapeWorklist.empty()) {
-      tape = tapeWorklist.back();
-      tapeWorklist.pop_back();
-      for (auto tapeUser : tape.getUsers()) {
+      Value curTape = tapeWorklist.pop_back_val();
+      SmallVector<Value> values = tapeToCaches[curTape];
+      for (auto tapeUser : curTape.getUsers()) {
         if (auto revCall =
                 dyn_cast<enzyme::AutoDiffSplitModeReverseOp>(tapeUser)) {
-
           OpBuilder builder(revCall);
           auto newRevCall = enzyme::CallCustomReverseOp::create(
               builder, revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
-              revCall.getInputs(), tape);
+              revCall.getInputs(), values);
           revCall.replaceAllUsesWith(newRevCall.getResults());
 
           toDelete.insert(revCall);
         } else if (auto pushOp = dyn_cast<enzyme::PushOp>(tapeUser)) {
-          assert(pushOp.getValue() == tape);
-
+          assert(pushOp.getValue() == curTape);
           CacheInfo info(pushOp.getCache());
 
-          tapeWorklist.push_back(info.popOp.getResult());
+          // One cache per value the tape stands for.
+          OpBuilder builder(info.initOp);
+          SmallVector<Value> newCaches;
+          for (Value v : values)
+            newCaches.push_back(enzyme::InitOp::create(
+                builder, info.initOp->getLoc(),
+                enzyme::CacheType::get(v.getContext(), v.getType())));
+
+          builder.setInsertionPoint(info.pushOp);
+          for (auto [v, c] : llvm::zip_equal(values, newCaches))
+            enzyme::PushOp::create(builder, info.pushOp->getLoc(), c, v);
+
+          builder.setInsertionPoint(info.popOp);
+          SmallVector<Value> popped;
+          for (auto [v, c] : llvm::zip_equal(values, newCaches))
+            popped.push_back(enzyme::PopOp::create(
+                builder, info.popOp->getLoc(), v.getType(), c));
+
+          Value poppedTape = info.popOp.getResult();
+          tapeToCaches[poppedTape] = popped;
+          tapeWorklist.push_back(poppedTape);
+
+          toDelete.insert(info.initOp);
+          toDelete.insert(info.pushOp);
+          toDelete.insert(info.popOp);
         } else {
           tapeUser->emitError()
               << "todo: support tape going through this operation";
@@ -539,12 +573,13 @@ struct DifferentiatePass
       }
     }
 
+    // Everything that carried the tape goes, along with the op itself.
     auto worklist = toDelete.takeVector();
-    while (!worklist.empty()) {
-      Operation *op = worklist.back();
+    for (Operation *op : worklist)
+      op->dropAllUses();
+    for (Operation *op : worklist)
       op->erase();
-      worklist.pop_back();
-    }
+    CI->erase();
 
     return success();
   }

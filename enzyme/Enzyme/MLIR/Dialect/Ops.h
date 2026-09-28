@@ -123,6 +123,15 @@ void appendCustomReverseRule(Operation *op, llvm::StringRef attrName,
 void removeCustomReverseRule(Operation *op, llvm::StringRef attrName,
                              llvm::StringRef rule);
 
+// The caches of a custom reverse rule: its top-level `enzyme.init` ops of
+// cache type, in block order. Their element types are the values
+// `enzyme.call_augmented_primal` returns after the primal results, in the same
+// order.
+llvm::SmallVector<InitOp>
+getCustomReverseRuleCacheInits(CustomReverseRuleOp rule);
+llvm::SmallVector<Type>
+getCustomReverseRuleCacheTypes(CustomReverseRuleOp rule);
+
 } // namespace enzyme
 } // namespace mlir
 

@@ -352,7 +352,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   // A rule for exactly this activity is reused: an authored one the callee
   // names in `enzyme.custom_rule`, or one derived earlier and cached in
   // `enzyme.derived_rules`. Reuse needs an exact match, because split-mode
-  // callers lay out the tape and the cotangents by the requested activity.
+  // callers lay out the cotangents by the requested activity.
   {
     auto getAttrActivity = [](auto attr) {
       return cast<ActivityAttr>(attr).getValue();
@@ -413,6 +413,9 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   appendCustomReverseRule(fn, "enzyme.derived_rules",
                           FlatSymbolRefAttr::get(ruleNameAttr));
+  // Until the rule is complete, a call that reaches it again (recursion) must
+  // not read its caches; finalizeCustomReverseRule reports that case.
+  customRule->setAttr("enzyme.in_progress", UnitAttr::get(fn.getContext()));
 
   auto ip = builder.saveInsertionPoint();
   Block *ruleBody = builder.createBlock(&customRule.getBody());
@@ -587,5 +590,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     return FlatSymbolRefAttr();
   }
 
+  customRule->removeAttr("enzyme.in_progress");
   return FlatSymbolRefAttr::get(ruleNameAttr);
 }

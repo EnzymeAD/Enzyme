@@ -64,6 +64,18 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
+// Settles the caches of a custom reverse rule before any call names them.
+// Every cache must be pushed at the top level of the augmented primal and
+// popped at the top level of the reverse; then, unless the rule carries
+// `enzyme.disable_mincut`, the min-cut cache optimization runs on it. Calls
+// read the result through getCustomReverseRuleCacheTypes and pass those values
+// as ordinary SSA values, so the caches must not change afterwards: the rule
+// is marked `enzyme.caches_final` and this is a no-op from then on. A rule
+// still being derived (`enzyme.in_progress`) cannot be settled: a callee that
+// reaches its own derivation again is recursive, which typed caches cannot
+// represent.
+LogicalResult finalizeCustomReverseRule(CustomReverseRuleOp rule);
+
 // Tries to limit the amount of values cache from block `forward` to `reverse`
 // using a mincut algorithm and heuristics based on the size of values.
 // All pushes must go after `lastFwd`, if non null

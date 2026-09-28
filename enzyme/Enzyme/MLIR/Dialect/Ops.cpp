@@ -1096,6 +1096,39 @@ void CustomReverseRuleReverseOp::print(OpAsmPrinter &p) {
 // CallAugmentedPrimalOp
 //===----------------------------------------------------------------------===//
 
+SmallVector<InitOp>
+mlir::enzyme::getCustomReverseRuleCacheInits(CustomReverseRuleOp rule) {
+  SmallVector<InitOp> inits;
+  if (rule.getBody().empty())
+    return inits;
+  for (Operation &op : rule.getBody().front())
+    if (auto init = dyn_cast<InitOp>(op))
+      if (isa<CacheType>(init.getType()))
+        inits.push_back(init);
+  return inits;
+}
+
+SmallVector<Type>
+mlir::enzyme::getCustomReverseRuleCacheTypes(CustomReverseRuleOp rule) {
+  return llvm::map_to_vector(
+      getCustomReverseRuleCacheInits(rule), [](InitOp init) -> Type {
+        return cast<CacheType>(init.getType()).getType();
+      });
+}
+
+// The values a call hands between a rule's augmented primal and its reverse
+// must be the rule's caches, in order.
+static LogicalResult verifyRuleCaches(Operation *op, StringRef fn,
+                                      CustomReverseRuleOp rule,
+                                      TypeRange cacheTypes) {
+  auto expected = getCustomReverseRuleCacheTypes(rule);
+  if (!llvm::equal(expected, cacheTypes))
+    return op->emitOpError("caches of '")
+           << fn << "' have types " << TypeRange(expected) << ", got "
+           << cacheTypes;
+  return success();
+}
+
 LogicalResult
 CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto global =
@@ -1105,7 +1138,14 @@ CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("'")
            << getFn() << "' does not reference a valid custom reverse rule";
 
-  return success();
+  if (!llvm::equal(global.getFunctionType().getResults(),
+                   getOutputs().getTypes()))
+    return emitOpError("results of '")
+           << getFn() << "' have types "
+           << global.getFunctionType().getResults() << ", got "
+           << getOutputs().getTypes();
+
+  return verifyRuleCaches(*this, getFn(), global, getCaches().getTypes());
 }
 
 //===----------------------------------------------------------------------===//
@@ -1121,7 +1161,7 @@ CallCustomReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("'")
            << getFn() << "' does not reference a valid custom reverse rule";
 
-  return success();
+  return verifyRuleCaches(*this, getFn(), global, getCaches().getTypes());
 }
 
 //===----------------------------------------------------------------------===//

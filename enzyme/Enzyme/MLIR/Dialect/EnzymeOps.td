@@ -250,24 +250,43 @@ def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
 }
 
 def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal", [
-    DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "";
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    AttrSizedResultSegments]> {
+  let summary = "Calls the augmented primal of a custom reverse rule";
+  let description = [{
+    Runs the augmented primal of the custom reverse rule `fn` on `inputs`.
+    Returns the primal results (`outputs`), followed by the values the rule
+    caches for its reverse (`caches`): one per `enzyme.init` at the top level
+    of the rule, in order. They are ordinary values, so a caller caches them
+    like any other value (in loops, branches, checkpoints) and hands them back
+    to `enzyme.call_custom_reverse`.
+  }];
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs);
-  let results = (outs Variadic<AnyType>:$outputs, AnyTape:$tape);
+  let results = (outs Variadic<AnyType>:$outputs, Variadic<AnyType>:$caches);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    (`caches` type($caches)^)?
   }];
 }
 
 def CallCustomReverseOp : Enzyme_Op<"call_custom_reverse", [
-    DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape);
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    AttrSizedOperandSegments]> {
+  let summary = "Calls the reverse of a custom reverse rule";
+  let description = [{
+    Runs the reverse of the custom reverse rule `fn`: `inputs` are the
+    cotangents of the results the rule differentiates, `caches` the values
+    the matching `enzyme.call_augmented_primal` returned. Returns the
+    cotangents of the arguments the rule differentiates.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs,
+                       Variadic<AnyType>:$caches);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` operands `)` attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` (`caches` `(` $caches^ `:` type($caches) `)`)?
+    attr-dict `:` functional-type($inputs, results)
   }];
 }
 
