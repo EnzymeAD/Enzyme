@@ -431,7 +431,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
-        } else if (Mode == DerivativeMode::ForwardMode) {
+        } else if constexpr (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
           if (PreserveCustomRuleLinkage)
             preserveLinkage(true, *Fs[1], false);
@@ -439,7 +439,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-        } else if (Mode == DerivativeMode::ForwardModeSplit) {
+        } else if constexpr (Mode == DerivativeMode::ForwardModeSplit) {
           assert(numargs == 3);
           if (PreserveCustomRuleLinkage)
             preserveLinkage(true, *Fs[1], false);
