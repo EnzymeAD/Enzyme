@@ -3036,6 +3036,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
     }
 
+    if (isReadOnlyOrThrow(call))
+      return false;
+
     if (isMemFreeLibMFunction(funcName)) {
       return false;
     }
