@@ -6633,6 +6633,9 @@ public:
         Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       std::function<bool(Value *&, Value *&)> handler;
+      // Shadow of the result created by the custom augmented handler, which
+      // the split handler must use rather than create a new one.
+      Value *augShadow = nullptr;
       if (Mode == DerivativeMode::ForwardModeSplit) {
         auto found = customFwdSplitCallHandlers.find(funcName);
         if (found != customFwdSplitCallHandlers.end()) {
@@ -6658,6 +6661,20 @@ public:
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
                 /*ignoreType*/ true);
           }
+          auto ifound = gutils->invertedPointers.find(&call);
+          if (ifound != gutils->invertedPointers.end() &&
+              augmentedReturn->tapeIndices.find(std::make_pair(
+                  &call, CacheType::Shadow)) !=
+                  augmentedReturn->tapeIndices.end()) {
+            auto placeholder = cast<PHINode>(&*ifound->second);
+            gutils->invertedPointers.erase(ifound);
+            augShadow = gutils->cacheForReverse(
+                BuilderZ, placeholder,
+                getIndex(&call, CacheType::Shadow, BuilderZ));
+            gutils->invertedPointers.insert(
+                std::make_pair((const Value *)&call,
+                               InvertedPointerVH(gutils, augShadow)));
+          }
           auto &fn = found->second;
           handler = [&, tape](Value *&normalReturn,
                               Value *&invertedReturn) -> bool {
@@ -6677,7 +6694,9 @@ public:
       if (handler) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
-        if (ifound != gutils->invertedPointers.end()) {
+        if (augShadow) {
+          invertedReturn = augShadow;
+        } else if (ifound != gutils->invertedPointers.end()) {
           invertedReturn = cast<PHINode>(&*ifound->second);
         }
 
@@ -6691,7 +6710,16 @@ public:
         }
 
         ifound = gutils->invertedPointers.find(&call);
-        if (ifound != gutils->invertedPointers.end()) {
+        if (augShadow) {
+          if (invertedReturn != augShadow) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "split forward mode call handler for " << funcName
+               << " replaced the shadow created in the augmented pass\n"
+               << call;
+            EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+          }
+        } else if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
           if (invertedReturn && invertedReturn != placeholder) {
             if (invertedReturn->getType() !=
