@@ -9097,6 +9097,41 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                    });
   }
 
+  // The body of a sparsified loop is outlined and called once per solution,
+  // so the loop must leave through a single exit and must not define values
+  // that are used after it.
+  for (auto &pair : sparseBlocks) {
+    auto L = LI.getLoopFor(pair.first);
+    auto br = pair.second;
+    if (!L->getUniqueExitBlock()) {
+      legalToSparse = false;
+      EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                  "\nL:", *L,
+                  "\nLoop has more than one exit block (e.g. the error path "
+                  "of a bounds check)");
+      break;
+    }
+    for (auto B : L->blocks()) {
+      for (auto &I : *B)
+        for (auto U : I.users())
+          if (!L->contains(cast<Instruction>(U))) {
+            legalToSparse = false;
+            EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                        "\nL:", *L, "\nValue ", I,
+                        " computed in the loop is used after it: ", *U);
+            break;
+          }
+      if (!legalToSparse)
+        break;
+    }
+    if (!legalToSparse)
+      break;
+  }
+  if (!legalToSparse) {
+    lowerSparsePlaceholders(F);
+    return;
+  }
+
   // block, bound, scev for indexset
   std::map<Loop *,
            std::pair<std::pair<PHINode *, PHINode *>,
