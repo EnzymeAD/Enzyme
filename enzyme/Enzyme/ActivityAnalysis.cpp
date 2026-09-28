@@ -1128,6 +1128,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             if (ConstantValues.find(obj) != ConstantValues.end()) {
               continue;
             }
+            // Memory that is not local to this function (an sret-like
+            // argument of ours passed straight through, a global, a pointer
+            // loaded from elsewhere) is read by whoever owns it once we
+            // return, so its users here say nothing about its activity: go by
+            // the value's own activity instead. Only a local alloca or
+            // allocation can be shown inactive from a lack of active users.
+            if (!isa<AllocaInst>(obj) && !isAllocationCall(obj, TLI)) {
+              if (!isConstantValue(TR, obj)) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " possible active sret-like value not local "
+                                  "to the function ["
+                               << (int)directions << "] from instruction " << *I
+                               << " obj: " << *obj << "\n";
+                legal = false;
+                break;
+              }
+              continue;
+            }
             if (directions != 3) {
               legal = false;
               break;
