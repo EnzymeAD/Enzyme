@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme" -S -opaque-pointers | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme" -S | FileCheck %s; fi
 
 ; A Julia-style function: safepoint prologue, a bounds check whose failing path
 ; allocates an exception and throws, and a result written through an sret. It
