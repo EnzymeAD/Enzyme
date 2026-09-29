@@ -148,7 +148,8 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     OptionalParameter<"ArrayAttr">:$transforms,
     DefaultValuedParameter<"int64_t", "0">:$event_dim
   );
-  let assemblyFormat = "`<` $base (`,` $transforms^)? (`,` `event_dim` `=` $event_dim^)? `>`";
+  // Comma-led optional groups cannot parse `<base, event_dim = k>`.
+  let assemblyFormat = "`<` $base `` custom<DistTail>($transforms, $event_dim) `>`";
 }
 
 def SupportAttr : Impulse_Attr<"Support", "support"> {
@@ -183,7 +184,7 @@ def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {
     DefaultValuedParameter<"bool", "true">:$adapt_step_size,
     DefaultValuedParameter<"bool", "true">:$adapt_mass_matrix
   );
-  let assemblyFormat = "`<` `trajectory_length` `=` $trajectory_length (`,` `adapt_step_size` `=` $adapt_step_size^)? (`,` `adapt_mass_matrix` `=` $adapt_mass_matrix^)? `>`";
+  let assemblyFormat = "`<` struct(params) `>`";
 }
 
 def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
@@ -202,7 +203,7 @@ def NUTSConfigAttr : Impulse_Attr<"NUTSConfig", "nuts_config"> {
     DefaultValuedParameter<"bool", "true">:$adapt_step_size,
     DefaultValuedParameter<"bool", "true">:$adapt_mass_matrix
   );
-  let assemblyFormat = "`<` (`max_tree_depth` `=` $max_tree_depth^)? (`,` `max_delta_energy` `=` $max_delta_energy^)? (`,` `adapt_step_size` `=` $adapt_step_size^)? (`,` `adapt_mass_matrix` `=` $adapt_mass_matrix^)? `>`";
+  let assemblyFormat = "`<` struct(params) `>`";
 }
 
 def GuideKind : I32EnumAttr<"GuideKind",
@@ -270,7 +271,7 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
     // Skips non-finite updates, as `numpyro.SVI.stable_update`.
     DefaultValuedParameter<"bool", "false">:$stable_update
   );
-  let assemblyFormat = "`<` `guide_kind` `=` $guide_kind `,` `optimizer_kind` `=` $optimizer_kind (`,` `num_particles` `=` $num_particles^)? (`,` `init_scale` `=` $init_scale^)? (`,` `adam_b1` `=` $adam_b1^)? (`,` `adam_b2` `=` $adam_b2^)? (`,` `adam_eps` `=` $adam_eps^)? (`,` `clip_norm` `=` $clip_norm^)? (`,` `init_radius` `=` $init_radius^)? (`,` `momentum_mass` `=` $momentum_mass^)? (`,` `rmsprop_gamma` `=` $rmsprop_gamma^)? (`,` `rmsprop_eps` `=` $rmsprop_eps^)? (`,` `stable_update` `=` $stable_update^)? `>`";
+  let assemblyFormat = "`<` struct(params) `>`";
 }
 
 def MHConfigAttr : Impulse_Attr<"MHConfig", "mh_config"> {

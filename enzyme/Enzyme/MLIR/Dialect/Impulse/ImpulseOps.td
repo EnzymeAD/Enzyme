@@ -55,12 +55,10 @@ def SampleOp : Impulse_Op<"sample",
   custom-logpdf escape hatch) carries `fn`; a custom-logpdf site additionally
   carries `logpdf`. The verifier requires either `fn` or `dist` to be present.
 
-  Round-trip limitation: with `fn` absent the pretty form prints as
-  `impulse.sample(%inputs) ...`, which the generic MLIR parser cannot round-trip
-  (the leading `(` after the op name is read as the start of a type). Passes
-  operate on the in-memory op, so this affects only textual `.mlir` inputs; write
-  an fn-absent site in generic op form (`"impulse.sample"(...) {...} : ...`) when
-  a test must parse one from text.
+  With `fn` absent the pretty form is `impulse.sample(%inputs) ...`. The callee
+  is parsed by the `OptionalCallee` directive, which only consumes a `@symbol`,
+  so both spellings round-trip (the same holds for `impulse.infer` and
+  `impulse.infer_region` in custom-logpdf mode).
   }];
 
   let arguments = (ins
@@ -76,7 +74,7 @@ def SampleOp : Impulse_Op<"sample",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    ($fn^)? `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
+    `` custom<OptionalCallee>($fn) `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 
   let hasVerifier = 1;
@@ -346,7 +344,7 @@ def InferOp : Impulse_Op<"infer",
   let results = outputs;
 
   let assemblyFormat = [{
-    ($fn^)?
+    `` custom<OptionalCallee>($fn)
     `(` $inputs `)`
     (`given` $original_trace^)?
     (`constrained_by` $constraint^)?
@@ -436,7 +434,7 @@ def InferRegionOp : Impulse_Op<"infer_region",
   let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
 
   let assemblyFormat = [{
-    ($fn^)?
+    `` custom<OptionalCallee>($fn)
     `(` $inputs `)`
     (`given` $original_trace^)?
     (`constrained_by` $constraint^)?

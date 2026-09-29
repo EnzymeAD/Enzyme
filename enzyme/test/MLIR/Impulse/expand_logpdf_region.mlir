@@ -1,7 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// The infer_region is written in generic op form because its pretty assembly
-// format does not round-trip without a `fn`. The logpdf body uses
+// Only the logpdf region holds the 3.3 constant, so it marks region clones.
 
 module {
   func.func private @model_logpdf(%position : tensor<8xf64>,
