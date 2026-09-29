@@ -82,12 +82,12 @@ module {
 
 // CHECK-LABEL: func.func private @shared_rule_primal(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %cst = arith.constant 4.000000e+00 : f64
-// CHECK-NEXT:    %0 = arith.mulf %cst, %arg0 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %cst : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 // CHECK-LABEL: func.func private @shared_rule_reverse(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %cst = arith.constant 4.000000e+00 : f64
-// CHECK-NEXT:    %0 = arith.mulf %cst, %arg0 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %cst : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 
