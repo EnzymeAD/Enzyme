@@ -125,6 +125,76 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
+/// Whether the address of V may be stored to memory or otherwise escape, and
+/// so may be read back as a pointer loaded from memory.
+static bool mayBeCaptured(const Value *V) {
+  SmallVector<const Value *, 4> todo = {V};
+  SmallPtrSet<const Value *, 4> seen;
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    for (auto &U : cur->uses()) {
+      auto I = dyn_cast<Instruction>(U.getUser());
+      if (!I)
+        return true;
+      if (isa<LoadInst>(I) || isa<ICmpInst>(I))
+        continue;
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        if (SI->getValueOperand() == cur)
+          return true;
+        continue;
+      }
+      if (isa<GetElementPtrInst>(I) || isa<CastInst>(I) || isa<PHINode>(I) ||
+          isa<SelectInst>(I)) {
+        todo.push_back(I);
+        continue;
+      }
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        if (CB->isArgOperand(&U) && isNoCapture(CB, CB->getArgOperandNo(&U)))
+          continue;
+        if (auto II = dyn_cast<IntrinsicInst>(I))
+          if (II->isLifetimeStartOrEnd())
+            continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Whether I only writes to memory local to this function (an alloca or a
+/// noalias argument) whose address is never captured. No pointer loaded from
+/// memory can point to such memory.
+static bool writesOnlyUncapturedLocalMemory(Instruction *I) {
+  Value *ptr = nullptr;
+  if (auto SI = dyn_cast<StoreInst>(I)) {
+    ptr = SI->getPointerOperand();
+  } else if (auto II = dyn_cast<IntrinsicInst>(I)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+      ptr = II->getArgOperand(II->arg_size() - 1);
+      break;
+    case Intrinsic::memset:
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+      ptr = II->getArgOperand(0);
+      break;
+    default:
+      break;
+    }
+  }
+  if (!ptr)
+    return false;
+  auto obj = getBaseObject(ptr);
+  if (isa<AllocaInst>(obj))
+    return !mayBeCaptured(obj);
+  if (auto arg = dyn_cast<Argument>(obj))
+    return arg->hasNoAliasAttr() && !mayBeCaptured(arg);
+  return false;
+}
+
 struct CacheAnalysis {
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
@@ -523,7 +593,10 @@ struct CacheAnalysis {
 
       objs.push_back(obj);
 
-      bool init_safe = !is_value_mustcache_from_origin(obj);
+      // As in is_load_uncacheable, the origin only matters if something may
+      // write after this function returns.
+      bool init_safe =
+          !subsequent_calls_may_write || !is_value_mustcache_from_origin(obj);
       if (!init_safe) {
         auto CD = TR.query(obj)[{-1}];
         if (CD == BaseType::Integer || CD.isFloat())
@@ -577,7 +650,11 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
-      next_subsequent_inst_may_write = true;
+      // A write to uncaptured local memory cannot change memory that the
+      // callee reaches through a pointer loaded from memory. Memory the callee
+      // is passed directly is checked per argument below.
+      if (!writesOnlyUncapturedLocalMemory(inst2))
+        next_subsequent_inst_may_write = true;
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -601,6 +678,9 @@ struct CacheAnalysis {
                         *callsite_op->getArgOperand(i), " uncacheable due to ",
                         *inst2);
           args_safe[i] = false;
+          // The callee only considers overwritten arguments if subsequent
+          // calls may write.
+          next_subsequent_inst_may_write = true;
         }
       }
       return false;
