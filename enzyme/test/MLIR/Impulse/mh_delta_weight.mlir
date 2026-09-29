@@ -1,9 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// gates into delta-weight mode. The regenerate op carries `delta_weight` and
-// returns the weight DELTA of the dirty terms; the accept test compares
-// log(u) against that delta directly, and the carried weight advances by the
-// delta on accept.
+// Score-tail trace: accept on delta - correction (the site's own delta).
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
@@ -25,7 +22,6 @@ module {
   }
 }
 
-// The MH step: accept test on the delta itself; carried weight advances by
 // CHECK-LABEL: func.func @mh
 // CHECK-SAME:      (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STD:.+]]: tensor<f64>)
 // CHECK-DAG:     %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
@@ -33,17 +29,23 @@ module {
 // CHECK-DAG:     %[[TR0:.+]] = arith.constant dense<{{.*}}> : tensor<1x4xf64>
 // CHECK-DAG:     %[[W0:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
 // CHECK:         %[[REGEN:.+]]:4 = call @test.regenerate(%[[TR0]], %[[RNG]], %[[MEAN]], %[[STD]])
-// CHECK-NEXT:    %[[WACC:.+]] = arith.addf %[[REGEN]]#1, %[[W0]] : tensor<f64>
+// CHECK-NEXT:    %[[DSL:.+]] = impulse.slice %[[REGEN]]#1 {limit_indices = array<i64: 1>, start_indices = array<i64: 0>, strides = array<i64: 1>} : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT:    %[[DELTA:.+]] = impulse.reshape %[[DSL]] : (tensor<1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[CSL:.+]] = impulse.slice %[[REGEN]]#1 {limit_indices = array<i64: 2>, start_indices = array<i64: 1>, strides = array<i64: 1>} : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT:    %[[CORR:.+]] = impulse.reshape %[[CSL]] : (tensor<1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[ALPHA:.+]] = arith.subf %[[DELTA]], %[[CORR]] : tensor<f64>
+// CHECK-NEXT:    %[[WACC:.+]] = arith.addf %[[DELTA]], %[[W0]] : tensor<f64>
 // CHECK-NEXT:    %[[NRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZEROF]], %[[ONE]]
 // CHECK-NEXT:    %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
-// CHECK-NEXT:    %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[REGEN]]#1 : tensor<f64>
+// CHECK-NEXT:    %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
 // CHECK-NEXT:    %[[SELTR:.+]] = impulse.select %[[ACC]], %[[REGEN]]#0, %[[TR0]]
 // CHECK-NEXT:    %[[SELWT:.+]] = arith.select %[[ACC]], %[[WACC]], %[[W0]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT:    return %[[SELTR]], %[[SELWT]], %[[NRNG]]
 
-// Site 2 (regenerated) draws fresh and scores ONCE against its stored score.
+// Site 2 is an unobserved leaf: delta equals correction, so always accepted.
 // CHECK-LABEL: func.func @test.regenerate
 // CHECK-SAME:      (%[[TRACE:.+]]: tensor<1x4xf64>, %[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STD:.+]]: tensor<f64>)
+// CHECK-DAG:     %[[PACK0:.+]] = arith.constant dense<0.000000e+00> : tensor<2xf64>
 // CHECK-DAG:     %[[COL3:.+]] = arith.constant dense<3> : tensor<i64>
 // CHECK-DAG:     %[[COL2:.+]] = arith.constant dense<2> : tensor<i64>
 // CHECK-DAG:     %[[ZFULL:.+]] = arith.constant dense<0.000000e+00> : tensor<1x4xf64>
@@ -61,6 +63,7 @@ module {
 // CHECK-NEXT:    %[[LP2N:.+]] = call @logpdf(%[[DRAW]]#1, %[[S1]], %[[STD]])
 // CHECK-NEXT:    %[[D2:.+]] = arith.subf %[[LP2N]], %[[SC2]] : tensor<f64>
 // CHECK-NEXT:    %[[DELTA:.+]] = arith.addf %[[D2]], %[[ZERO]] : tensor<f64>
+// CHECK-NEXT:    %[[CORR:.+]] = arith.addf %[[D2]], %[[ZERO]] : tensor<f64>
 // CHECK-NEXT:    %[[DRAWW:.+]] = impulse.reshape %[[DRAW]]#1 : (tensor<f64>) -> tensor<1x1xf64>
 // CHECK-NEXT:    %[[VALS2:.+]] = impulse.dynamic_update_slice %[[VALS]], %[[DRAWW]], %[[COL0]], %[[COL1]]
 // CHECK-NEXT:    %[[A0:.+]] = impulse.dynamic_update_slice %[[ZFULL]], %[[VALS2]], %[[COL0]], %[[COL0]]
@@ -68,4 +71,8 @@ module {
 // CHECK-NEXT:    %[[A1:.+]] = impulse.dynamic_update_slice %[[A0]], %[[SC1W]], %[[COL0]], %[[COL2]]
 // CHECK-NEXT:    %[[LP2W:.+]] = impulse.reshape %[[LP2N]] : (tensor<f64>) -> tensor<1x1xf64>
 // CHECK-NEXT:    %[[A2:.+]] = impulse.dynamic_update_slice %[[A1]], %[[LP2W]], %[[COL0]], %[[COL3]]
-// CHECK-NEXT:    return %[[A2]], %[[DELTA]], %[[DRAW]]#0, %[[DRAW]]#1
+// CHECK-NEXT:    %[[DFLAT:.+]] = impulse.reshape %[[DELTA]] : (tensor<f64>) -> tensor<1xf64>
+// CHECK-NEXT:    %[[P0:.+]] = impulse.dynamic_update_slice %[[PACK0]], %[[DFLAT]], %[[COL0]] : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT:    %[[CFLAT:.+]] = impulse.reshape %[[CORR]] : (tensor<f64>) -> tensor<1xf64>
+// CHECK-NEXT:    %[[P1:.+]] = impulse.dynamic_update_slice %[[P0]], %[[CFLAT]], %[[COL1]] : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT:    return %[[A2]], %[[P1]], %[[DRAW]]#0, %[[DRAW]]#1

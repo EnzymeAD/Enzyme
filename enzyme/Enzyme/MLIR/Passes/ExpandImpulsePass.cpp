@@ -449,15 +449,58 @@ computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
-// receive disjoint trace column ranges.
+// `offset` advances over both `impulse.if` branches: disjoint trace columns.
 struct BranchCarry {
   Value currTrace;
   Value weight;
   int64_t offset;
+  Value corr = nullptr;
 };
 
 using ProcessSampleFn =
     llvm::function_ref<WalkResult(impulse::SampleOp, BranchCarry &)>;
+
+// kMHHastingsAttr: weight = [weight, log q(fresh) - log q(replaced)].
+// kMHSiteScoresAttr: weight = [liveness; masked log density] per address.
+static constexpr llvm::StringLiteral kMHHastingsAttr = "impulse.mh_hastings";
+static constexpr llvm::StringLiteral kMHSiteScoresAttr =
+    "impulse.mh_site_scores";
+
+static Value scalarAt(OpBuilder &b, Location loc, Value tensor,
+                      ArrayRef<int64_t> index) {
+  auto type = cast<RankedTensorType>(tensor.getType());
+  SmallVector<int64_t> limit, strides(index.size(), 1), ones(index.size(), 1);
+  for (int64_t i : index)
+    limit.push_back(i + 1);
+  Value slice = impulse::SliceOp::create(
+      b, loc, RankedTensorType::get(ones, type.getElementType()), tensor,
+      b.getDenseI64ArrayAttr(index), b.getDenseI64ArrayAttr(limit),
+      b.getDenseI64ArrayAttr(strides));
+  return impulse::ReshapeOp::create(
+      b, loc, RankedTensorType::get({}, type.getElementType()), slice);
+}
+
+static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
+                                Value corr) {
+  auto vecType = RankedTensorType::get({2}, b.getF64Type());
+  auto oneType = RankedTensorType::get({1}, b.getF64Type());
+  auto i64S = RankedTensorType::get({}, b.getI64Type());
+  Value acc = arith::ConstantOp::create(b, loc, vecType,
+                                        DenseElementsAttr::get(vecType, 0.0));
+  for (auto [i, v] : llvm::enumerate(ValueRange{weight, corr})) {
+    Value idx = arith::ConstantOp::create(
+        b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(i)));
+    Value flat = impulse::ReshapeOp::create(b, loc, oneType, v);
+    acc = impulse::DynamicUpdateSliceOp::create(b, loc, vecType, acc, flat,
+                                                ValueRange{idx});
+  }
+  return acc;
+}
+
+static std::pair<Value, Value> unpackHastingsWeight(OpBuilder &b, Location loc,
+                                                    Value packed) {
+  return {scalarAt(b, loc, packed, {0}), scalarAt(b, loc, packed, {1})};
+}
 
 static LogicalResult
 processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
@@ -472,31 +515,35 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                                       ProcessSampleFn processSample,
                                       SmallVectorImpl<Operation *> &toErase) {
   auto loc = ifOp.getLoc();
-  auto scalarType = RankedTensorType::get({}, rewriter.getF64Type());
 
   Value snapTrace = carry.currTrace;
   Value snapWeight = carry.weight;
+  Value snapCorr = carry.corr;
 
   Block &trueBlock = ifOp.getTrueBranch().front();
   carry.currTrace = snapTrace;
   carry.weight = snapWeight;
+  carry.corr = snapCorr;
   if (failed(processImpulseBlock(trueBlock, rewriter, carry, traceType,
                                  processSample, toErase)))
     return failure();
   Value trueTrace = carry.currTrace;
   Value trueWeight = carry.weight;
+  Value trueCorr = carry.corr;
 
   // Keep `carry.offset`: the branches get disjoint trace columns.
   Block &falseBlock = ifOp.getFalseBranch().front();
   carry.currTrace = snapTrace;
   carry.weight = snapWeight;
+  carry.corr = snapCorr;
   if (failed(processImpulseBlock(falseBlock, rewriter, carry, traceType,
                                  processSample, toErase)))
     return failure();
   Value falseTrace = carry.currTrace;
   Value falseWeight = carry.weight;
+  Value falseCorr = carry.corr;
 
-  auto extendYield = [&](Block &b, Value t, Value w) {
+  auto extendYield = [&](Block &b, Value t, Value w, Value c) {
     auto yield = cast<impulse::YieldOp>(b.getTerminator());
     OpBuilder::InsertionGuard g(rewriter);
     rewriter.setInsertionPoint(yield);
@@ -504,17 +551,22 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
                            yield.getOperands().end());
     ops.push_back(t);
     ops.push_back(w);
+    if (c)
+      ops.push_back(c);
     impulse::YieldOp::create(rewriter, yield.getLoc(), ops);
     rewriter.eraseOp(yield);
   };
-  extendYield(trueBlock, trueTrace, trueWeight);
-  extendYield(falseBlock, falseTrace, falseWeight);
+  extendYield(trueBlock, trueTrace, trueWeight, trueCorr);
+  extendYield(falseBlock, falseTrace, falseWeight, falseCorr);
 
   SmallVector<Type> newResultTypes(ifOp.getResultTypes().begin(),
                                    ifOp.getResultTypes().end());
   unsigned oldNumResults = ifOp.getNumResults();
   newResultTypes.push_back(traceType);
-  newResultTypes.push_back(scalarType);
+  // Not always scalar: an MH site-scores regenerate carries a vector.
+  newResultTypes.push_back(snapWeight.getType());
+  if (snapCorr)
+    newResultTypes.push_back(snapCorr.getType());
 
   rewriter.setInsertionPoint(ifOp);
   auto newIf =
@@ -526,6 +578,8 @@ static LogicalResult processImpulseIf(impulse::IfOp ifOp,
 
   carry.currTrace = newIf.getResult(oldNumResults);
   carry.weight = newIf.getResult(oldNumResults + 1);
+  if (snapCorr)
+    carry.corr = newIf.getResult(oldNumResults + 2);
 
   rewriter.replaceOp(ifOp, newIf.getResults().take_front(oldNumResults));
   return success();
@@ -2324,8 +2378,10 @@ struct ExpandImpulsePass
     using mlir::OpRewritePattern<OpT>::OpRewritePattern;
 
     // region at the proposed selected values. Returns (newTrace, newWeight,
-    // rng').
-    std::tuple<Value, Value, Value>
+    // corr, rng'), with corr the Hastings correction (see kMHHastingsAttr):
+    // the selected sites' new minus old densities, read from the logpdf
+    // region's per-site yields.
+    std::tuple<Value, Value, Value, Value>
     proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
                   ArrayAttr selection, ArrayAttr allAddresses) const {
       Region &sampler = op.getSampler();
@@ -2361,6 +2417,9 @@ struct ExpandImpulsePass
       Value curRng = rng;
       Value newTrace = trace;
       DenseMap<Attribute, SmallVector<Value>> proposedSelected;
+      // Program-order ordinal = per-site yield index = score-tail column.
+      SmallVector<int64_t> selectedOrdinals;
+      int64_t siteOrdinal = -1;
 
       for (Operation &o : sBlock.without_terminator()) {
         auto site = dyn_cast<impulse::SampleRegionOp>(&o);
@@ -2368,9 +2427,11 @@ struct ExpandImpulsePass
           b.clone(o, map);
           continue;
         }
+        ++siteOrdinal;
         Attribute addr = site.getAddressAttr();
         int64_t siteOff = traceOffsetOf.lookup(addr);
         if (selectedSet.contains(addr)) {
+          selectedOrdinals.push_back(siteOrdinal);
           Block &sub = site.getSampler().front();
           IRMapping subMap;
           subMap.map(sub.getArgument(0), curRng);
@@ -2453,15 +2514,47 @@ struct ExpandImpulsePass
         }
       }
 
-      return {newTrace, newWeight, curRng};
+      IRMapping oldLpMap;
+      if (traceType.getShape()[1] == positionSize) {
+        unsigned oldArgIdx = 0;
+        for (Attribute addr : selection) {
+          int64_t rOff = traceOffsetOf.lookup(addr);
+          for (Value v : proposedSelected[addr]) {
+            auto vt = cast<RankedTensorType>(v.getType());
+            int64_t n = computeTensorElementCount(vt);
+            Value slice = impulse::SliceOp::create(
+                b, loc, RankedTensorType::get({1, n}, vt.getElementType()),
+                trace, b.getDenseI64ArrayAttr({0, rOff}),
+                b.getDenseI64ArrayAttr({1, rOff + n}),
+                b.getDenseI64ArrayAttr({1, 1}));
+            oldLpMap.map(lpBlock.getArgument(oldArgIdx++),
+                         impulse::ReshapeOp::create(b, loc, vt, slice));
+            rOff += n;
+          }
+        }
+        for (Operation &lo : lpBlock.without_terminator())
+          b.clone(lo, oldLpMap);
+      }
+      Value corr;
+      for (int64_t j : selectedOrdinals) {
+        Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+        Value oldScore =
+            traceType.getShape()[1] == positionSize
+                ? oldLpMap.lookupOrDefault(lpTerm->getOperand(1 + j))
+                : scalarAt(b, loc, trace, {0, positionSize + j});
+        Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
+        corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
+      }
+
+      return {newTrace, newWeight, corr, curRng};
     }
 
-    // yields the full joint.
-    std::tuple<Value, Value, Value>
+    // Weight is the dirty-term delta for a score-tail trace, else the joint.
+    std::tuple<Value, Value, Value, Value>
     proposeFlat(OpBuilder &b, Location loc, OpT op, FunctionOpInterface fn,
                 ArrayRef<Type> fnResultTypes, Value trace, Value rng,
                 ArrayAttr selection, ArrayAttr allAddresses) const {
-      auto weightType = RankedTensorType::get({}, b.getF64Type());
+      auto weightType = RankedTensorType::get({2}, b.getF64Type());
       SmallVector<Type> regenResultTypes{trace.getType(), weightType};
       for (Type t : fnResultTypes)
         regenResultTypes.push_back(t);
@@ -2472,7 +2565,9 @@ struct ExpandImpulsePass
           op.getConstraint(), /*selection=*/allAddresses,
           /*regenerate_addresses=*/selection, op.getConstrainedAddressesAttr(),
           b.getStringAttr(""));
-      return {regen.getNewTrace(), regen.getWeight(), regen.getOutputs()[0]};
+      regen->setAttr(kMHHastingsAttr, b.getUnitAttr());
+      auto [weight, corr] = unpackHastingsWeight(b, loc, regen.getWeight());
+      return {regen.getNewTrace(), weight, corr, regen.getOutputs()[0]};
     }
 
     LogicalResult matchAndRewrite(OpT op,
@@ -2494,6 +2589,15 @@ struct ExpandImpulsePass
         if (op.getSampler().empty() || op.getLogpdf().empty()) {
           op.emitError("Impulse MH: infer_region requires sampler and "
                        "constructed logpdf regions (run sicm first)");
+          return failure();
+        }
+        unsigned numSites = 0;
+        for (Operation &o : op.getSampler().front())
+          numSites += isa<impulse::SampleRegionOp>(&o);
+        if (op.getLogpdf().front().getTerminator()->getNumOperands() !=
+            1 + numSites) {
+          op.emitError("Impulse MH: infer_region logpdf region must yield the "
+                       "joint density followed by one density per site");
           return failure();
         }
       }
@@ -2537,19 +2641,20 @@ struct ExpandImpulsePass
 
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
-        Value newTrace, newWeight, stepRng;
+        Value newTrace, newWeight, corr, stepRng;
         if constexpr (isRegionForm)
-          std::tie(newTrace, newWeight, stepRng) =
+          std::tie(newTrace, newWeight, corr, stepRng) =
               proposeRegion(b, loc, op, trace, rng, selection, allAddresses);
         else
-          std::tie(newTrace, newWeight, stepRng) =
+          std::tie(newTrace, newWeight, corr, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
                           allAddresses);
 
-        Value logAlpha =
+        Value jointRatio =
             deltaFlat
                 ? newWeight
                 : arith::SubFOp::create(b, loc, newWeight, weight).getResult();
+        Value logAlpha = arith::SubFOp::create(b, loc, jointRatio, corr);
         Value acceptWeight =
             deltaFlat
                 ? arith::AddFOp::create(b, loc, weight, newWeight).getResult()
@@ -2674,7 +2779,8 @@ struct ExpandImpulsePass
 
       SmallVector<Type> regenResultTypes;
       regenResultTypes.push_back(traceType);
-      regenResultTypes.push_back(weightType);
+      regenResultTypes.push_back(
+          RankedTensorType::get({2}, rewriter.getF64Type()));
       for (auto t : fn.getResultTypes())
         regenResultTypes.push_back(t);
 
@@ -2690,16 +2796,18 @@ struct ExpandImpulsePass
           /*constrained_addresses*/ mhOp.getConstrainedAddressesAttr(),
           /*name*/ nameAttr);
 
+      regenerateOp->setAttr(kMHHastingsAttr, rewriter.getUnitAttr());
       Value newTrace = regenerateOp.getNewTrace();
-      Value newWeight = regenerateOp.getWeight();
+      auto [newWeight, corr] =
+          unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
       Value newRng = regenerateOp.getOutputs()[0];
 
-      // 2. Compute log_alpha = new_weight - old_weight (the regenerate result
-      // IS the delta in delta-weight mode).
-      Value logAlpha =
+      // 2. Compute log_alpha = new_weight - old_weight - corr
+      Value jointRatio =
           delta ? newWeight
                 : arith::SubFOp::create(rewriter, loc, newWeight, oldWeight)
                       .getResult();
+      Value logAlpha = arith::SubFOp::create(rewriter, loc, jointRatio, corr);
       Value acceptWeight =
           delta ? arith::AddFOp::create(rewriter, loc, oldWeight, newWeight)
                       .getResult()
@@ -3281,10 +3389,27 @@ struct ExpandImpulsePass
     return false;
   }
 
-  // constraint regardless of its (possibly tainted) parameters.
+  // constraint regardless of its (possibly tainted) parameters. With
+  // `throughRegions`, a region op's results (e.g. an `impulse.if` yielding a
+  // tainted value) are tainted when anything nested in it uses a tainted value.
   static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
-                                                ArrayAttr regenerateAddresses) {
+                                                ArrayAttr regenerateAddresses,
+                                                bool throughRegions = false) {
     DenseSet<Value> tainted;
+    auto usesTainted = [&](Operation *op) {
+      if (llvm::any_of(op->getOperands(),
+                       [&](Value v) { return tainted.contains(v); }))
+        return true;
+      if (!throughRegions || op->getNumRegions() == 0)
+        return false;
+      bool found = false;
+      op->walk([&](Operation *inner) {
+        if (llvm::any_of(inner->getOperands(),
+                         [&](Value v) { return tainted.contains(v); }))
+          found = true;
+      });
+      return found;
+    };
     bool changed = true;
     while (changed) {
       changed = false;
@@ -3295,12 +3420,9 @@ struct ExpandImpulsePass
               changed |= tainted.insert(r).second;
           return;
         }
-        for (Value operand : op->getOperands())
-          if (tainted.contains(operand)) {
-            for (Value r : op->getResults())
-              changed |= tainted.insert(r).second;
-            return;
-          }
+        if (usesTainted(op))
+          for (Value r : op->getResults())
+            changed |= tainted.insert(r).second;
       });
     }
     return tainted;
@@ -3409,8 +3531,131 @@ struct ExpandImpulsePass
         }
       }
 
+      ArrayAttr regenAddrs = CI.getRegenerateAddressesAttr();
+      bool hastings = CI->hasAttr(kMHHastingsAttr);
+      ArrayAttr siteScoresAttr =
+          CI->getAttrOfType<ArrayAttr>(kMHSiteScoresAttr);
+      bool scoring = static_cast<bool>(siteScoresAttr);
+      // Site symbol -> column of the scores vector or of `oldInfo`.
+      DenseMap<Attribute, int64_t> siteIndex;
+      Value oldInfo;
+      DenseSet<Value> hTaint;
+      auto enclosingIfs = [&](Operation *op) {
+        SmallVector<impulse::IfOp> ifs;
+        for (Operation *p = op->getParentOp(); p && p != NewF.getOperation();
+             p = p->getParentOp())
+          if (auto ifOp = dyn_cast<impulse::IfOp>(p))
+            ifs.push_back(ifOp);
+        return ifs;
+      };
+      auto inFlippableBranch = [&](Operation *op) {
+        return llvm::any_of(enclosingIfs(op), [&](impulse::IfOp ifOp) {
+          return hTaint.contains(ifOp.getPredicate());
+        });
+      };
+      if (scoring) {
+        for (auto [k, addr] : llvm::enumerate(siteScoresAttr))
+          siteIndex[cast<ArrayAttr>(addr)[0]] = k;
+        auto kType = RankedTensorType::get({2, (int64_t)siteScoresAttr.size()},
+                                           entryBuilder.getF64Type());
+        weightAccumulator = arith::ConstantOp::create(
+            entryBuilder, initLoc, kType, DenseElementsAttr::get(kType, 0.0));
+      } else if (hastings && !deltaMode) {
+        // Sites whose old density cannot be evaluated inline at the new state.
+        hTaint = computeRegenerateTaint(NewF, regenAddrs,
+                                        /*throughRegions=*/true);
+        SmallVector<Attribute> kAddrs;
+        NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
+          if (!s.getDistAttr() && !s.getLogpdfAttr())
+            return;
+          bool needsOld;
+          if (addressInList(s, regenAddrs))
+            needsOld =
+                !enclosingIfs(s).empty() ||
+                llvm::any_of(llvm::drop_begin(s.getInputs()),
+                             [&](Value v) { return hTaint.contains(v); });
+          else
+            needsOld = !(constraint && constrainedAddresses &&
+                         addressInList(s, constrainedAddresses)) &&
+                       inFlippableBranch(s);
+          if (!needsOld)
+            return;
+          siteIndex[s.getSymbolAttr()] = kAddrs.size();
+          kAddrs.push_back(rewriter.getArrayAttr({s.getSymbolAttr()}));
+        });
+        if (!kAddrs.empty()) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPointToStart(&NewF.getFunctionBody().front());
+          auto kType = RankedTensorType::get({2, (int64_t)kAddrs.size()},
+                                             rewriter.getF64Type());
+          SmallVector<Type> scoreTypes{prevTrace.getType(), kType};
+          scoreTypes.append(fn.getResultTypes().begin(),
+                            fn.getResultTypes().end());
+          SmallVector<Value> scoreInputs(
+              NewF.getArguments().drop_front(hasConstraint ? 2 : 1));
+          auto scoreOp = impulse::RegenerateOp::create(
+              rewriter, CI.getLoc(), scoreTypes, CI.getFnAttr(), scoreInputs,
+              prevTrace, constraint, selection, rewriter.getArrayAttr({}),
+              hasConstraint ? constrainedAddresses : ArrayAttr(),
+              rewriter.getStringAttr(""));
+          scoreOp->setAttr(kMHSiteScoresAttr, rewriter.getArrayAttr(kAddrs));
+          oldInfo = scoreOp.getWeight();
+        }
+      }
+      // `oldInfo` column of a flippable latent (kept if live, else redrawn).
+      auto flipLatentIndex = [&](impulse::SampleOp s, bool isSelected) {
+        if (!hastings || isSelected)
+          return (int64_t)-1;
+        auto it = siteIndex.find(s.getSymbolAttr());
+        return it == siteIndex.end() ? (int64_t)-1 : it->second;
+      };
+      auto oldLiveAt = [&](Location loc, int64_t k) -> Value {
+        Value flag = scalarAt(rewriter, loc, oldInfo, {0, k});
+        Value half = arith::ConstantOp::create(
+            rewriter, loc, scalarType, DenseElementsAttr::get(scalarType, 0.5));
+        return arith::CmpFOp::create(rewriter, loc, arith::CmpFPredicate::OGT,
+                                     flag, half);
+      };
+      auto recordSiteScore = [&](Location loc, Value acc, int64_t k,
+                                 Value score) -> Value {
+        auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+        auto t11 = RankedTensorType::get({1, 1}, rewriter.getF64Type());
+        auto idx = [&](int64_t v) -> Value {
+          return arith::ConstantOp::create(
+              rewriter, loc, i64S,
+              DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(v)));
+        };
+        Value one = arith::ConstantOp::create(rewriter, loc, t11,
+                                              DenseElementsAttr::get(t11, 1.0));
+        Value scoreRow = impulse::ReshapeOp::create(rewriter, loc, t11, score);
+        acc = impulse::DynamicUpdateSliceOp::create(
+            rewriter, loc, acc.getType(), acc, one, ValueRange{idx(0), idx(k)});
+        return impulse::DynamicUpdateSliceOp::create(
+            rewriter, loc, acc.getType(), acc, scoreRow,
+            ValueRange{idx(1), idx(k)});
+      };
+      auto sliceOldValues = [&](impulse::SampleOp sampleOp, int64_t offset) {
+        SmallVector<Value> vals(sampleOp.getNumResults());
+        for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+          auto resultType =
+              cast<RankedTensorType>(sampleOp.getResult(i).getType());
+          int64_t n = computeTensorElementCount(resultType);
+          auto sliced = impulse::SliceOp::create(
+              rewriter, sampleOp.getLoc(),
+              RankedTensorType::get({1, n}, resultType.getElementType()),
+              prevTrace, rewriter.getDenseI64ArrayAttr({0, offset}),
+              rewriter.getDenseI64ArrayAttr({1, offset + n}),
+              rewriter.getDenseI64ArrayAttr({1, 1}));
+          vals[i] = impulse::ReshapeOp::create(rewriter, sampleOp.getLoc(),
+                                               resultType, sliced);
+          offset += n;
+        }
+        return vals;
+      };
+
       SmallVector<Operation *> toErase;
-      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset};
+      BranchCarry carry{currTrace, weightAccumulator, currentTraceOffset,
+                        hastings ? Value(zeroWeight) : Value()};
       auto processSample = [&](impulse::SampleOp sampleOp,
                                BranchCarry &carry) -> WalkResult {
         Value &currTrace = carry.currTrace;
@@ -3446,7 +3691,8 @@ struct ExpandImpulsePass
               CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
           sampledValues.resize(sampleOp.getNumResults());
-          if (isSelected) {
+          auto drawFresh = [&]() {
+            SmallVector<Value> drawn(sampleOp.getNumResults());
             if (!impulse::distSamplerEmittable(dist)) {
               auto distFn =
                   cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
@@ -3455,13 +3701,19 @@ struct ExpandImpulsePass
                   rewriter, loc, distFn.getName(), distFn.getResultTypes(),
                   sampleOp.getInputs());
               for (unsigned i = 0; i < distCall.getNumResults(); ++i)
-                sampledValues[i] = distCall.getResult(i);
+                drawn[i] = distCall.getResult(i);
             } else {
               auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
                                                  distArgs, distSampleType);
               for (unsigned i = 0; i < sv.size(); ++i)
-                sampledValues[i] = sv[i];
+                drawn[i] = sv[i];
             }
+            return drawn;
+          };
+          int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
+          Value oldLive;
+          if (isSelected) {
+            sampledValues = drawFresh();
           } else {
             bool isConstrained = false;
             int64_t constrainedOffset = -1;
@@ -3509,7 +3761,19 @@ struct ExpandImpulsePass
                       .getResult();
               extractOffset += numElements;
             }
+            if (flipIdx >= 0) {
+              oldLive = oldLiveAt(loc, flipIdx);
+              SmallVector<Value> drawn = drawFresh();
+              for (unsigned i = 1; i < sampledValues.size(); ++i)
+                sampledValues[i] = impulse::SelectOp::create(
+                    rewriter, loc, sampledValues[i].getType(), oldLive,
+                    sampledValues[i], drawn[i]);
+              sampledValues[0] = drawn[0];
+            }
           }
+          if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
+            for (unsigned i = 1; i < sampledValues.size(); ++i)
+              hTaint.insert(sampledValues[i]);
 
           bool termDirty = isSelected;
           if (deltaMode && !termDirty)
@@ -3539,19 +3803,47 @@ struct ExpandImpulsePass
                     .getResult();
           }
 
-          if (!deltaMode || termDirty) {
+          if (scoring) {
+            auto it = siteIndex.find(sampleOp.getSymbolAttr());
+            if (it != siteIndex.end()) {
+              Value logpdf = impulse::emitDistLogpdf(
+                  rewriter, loc, dist, sampledValues[1], distArgs);
+              weightAccumulator =
+                  recordSiteScore(loc, weightAccumulator, it->second, logpdf);
+            }
+          } else if (!deltaMode || termDirty) {
             Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
                                                    sampledValues[1], distArgs);
-            if (deltaMode) {
-              Value d = arith::SubFOp::create(rewriter, loc, logpdf, oldScore);
-              weightAccumulator =
-                  arith::AddFOp::create(rewriter, loc, weightAccumulator, d);
-            } else {
-              weightAccumulator = arith::AddFOp::create(
-                  rewriter, loc, weightAccumulator, logpdf);
-            }
+            Value contribution =
+                deltaMode
+                    ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
+                          .getResult()
+                    : logpdf;
+            weightAccumulator = arith::AddFOp::create(
+                rewriter, loc, weightAccumulator, contribution);
             if (scoreTailSize > 0)
               siteScores.push_back(logpdf);
+            if (hastings && isSelected) {
+              // A prior draw's proposal density cancels its own term.
+              carry.corr = arith::AddFOp::create(rewriter, loc, carry.corr,
+                                                 contribution);
+              if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
+                // Parameters unchanged by the move: score the old value inline.
+                SmallVector<Value> oldVals =
+                    sliceOldValues(sampleOp, sampleOffset);
+                Value oldLp = impulse::emitDistLogpdf(rewriter, loc, dist,
+                                                      oldVals[1], distArgs);
+                carry.corr =
+                    arith::SubFOp::create(rewriter, loc, carry.corr, oldLp);
+              }
+            } else if (flipIdx >= 0) {
+              // Kept: old density, cancelled via oldInfo; fresh: new density.
+              Value term = arith::SelectOp::create(
+                  rewriter, loc, oldLive,
+                  scalarAt(rewriter, loc, oldInfo, {1, flipIdx}), logpdf);
+              carry.corr =
+                  arith::AddFOp::create(rewriter, loc, carry.corr, term);
+            }
           } else {
             siteScores.push_back(oldScore);
           }
@@ -3692,6 +3984,26 @@ struct ExpandImpulsePass
             }
           }
 
+          int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
+          Value oldLive;
+          if (flipIdx >= 0) {
+            oldLive = oldLiveAt(sampleOp.getLoc(), flipIdx);
+            auto distFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getFnAttr()));
+            auto distCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), distFn.getName(),
+                distFn.getResultTypes(), sampleOp.getInputs());
+            for (unsigned i = 1; i < sampledValues.size(); ++i)
+              sampledValues[i] = impulse::SelectOp::create(
+                  rewriter, sampleOp.getLoc(), sampledValues[i].getType(),
+                  oldLive, sampledValues[i], distCall.getResult(i));
+            sampledValues[0] = distCall.getResult(0);
+          }
+          if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
+            for (unsigned i = 1; i < sampledValues.size(); ++i)
+              hTaint.insert(sampledValues[i]);
+
           auto logpdfFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getLogpdfAttr()));
@@ -3738,7 +4050,17 @@ struct ExpandImpulsePass
                     .getResult();
           }
 
-          if (!deltaMode || termDirty) {
+          if (scoring) {
+            auto it = siteIndex.find(sampleOp.getSymbolAttr());
+            if (it != siteIndex.end()) {
+              auto logpdf = func::CallOp::create(
+                  rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+                  logpdfFn.getResultTypes(), logpdfOperands);
+              weightAccumulator =
+                  recordSiteScore(sampleOp.getLoc(), weightAccumulator,
+                                  it->second, logpdf.getResult(0));
+            }
+          } else if (!deltaMode || termDirty) {
             auto logpdf = func::CallOp::create(
                 rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
@@ -3751,6 +4073,33 @@ struct ExpandImpulsePass
                 rewriter, sampleOp.getLoc(), weightAccumulator, contribution);
             if (scoreTailSize > 0)
               siteScores.push_back(logpdf.getResult(0));
+            if (hastings && isSelected) {
+              // A prior draw's proposal density cancels its own term.
+              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                 carry.corr, contribution);
+              if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
+                // Parameters unchanged by the move: score the old value inline.
+                SmallVector<Value> oldOperands =
+                    sliceOldValues(sampleOp, sampleOffset);
+                oldOperands.erase(oldOperands.begin());
+                for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
+                  oldOperands.push_back(sampleOp.getOperand(i));
+                auto oldLp = func::CallOp::create(
+                    rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+                    logpdfFn.getResultTypes(), oldOperands);
+                carry.corr =
+                    arith::SubFOp::create(rewriter, sampleOp.getLoc(),
+                                          carry.corr, oldLp.getResult(0));
+              }
+            } else if (flipIdx >= 0) {
+              // Kept: old density, cancelled via oldInfo; fresh: new density.
+              Value term = arith::SelectOp::create(
+                  rewriter, sampleOp.getLoc(), oldLive,
+                  scalarAt(rewriter, sampleOp.getLoc(), oldInfo, {1, flipIdx}),
+                  contribution);
+              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                 carry.corr, term);
+            }
           } else {
             siteScores.push_back(oldScore);
           }
@@ -3874,11 +4223,31 @@ struct ExpandImpulsePass
               }
             }
 
+            if (hastings) {
+              bool genHasIf = false;
+              genFn.getFunctionBody().walk(
+                  [&](impulse::IfOp) { genHasIf = true; });
+              bool inputsTainted =
+                  llvm::any_of(llvm::drop_begin(sampleOp.getInputs()),
+                               [&](Value v) { return hTaint.contains(v); });
+              if (inFlippableBranch(sampleOp) ||
+                  (inputsTainted &&
+                   (!subRegenerateAddrs.empty() || genHasIf))) {
+                sampleOp.emitError(
+                    "Impulse: MH over a generative call whose sites can "
+                    "change liveness or parameters under the move is not "
+                    "supported");
+                return WalkResult::interrupt();
+              }
+            }
+
             // Build result types: (new_trace, weight, original_returns...)
             auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
             SmallVector<Type> regenResultTypes;
             regenResultTypes.push_back(subTraceType);
-            regenResultTypes.push_back(scalarTy);
+            regenResultTypes.push_back(
+                hastings ? RankedTensorType::get({2}, rewriter.getF64Type())
+                         : scalarTy);
             for (auto t : genFn.getResultTypes())
               regenResultTypes.push_back(t);
 
@@ -3891,8 +4260,19 @@ struct ExpandImpulsePass
             Value subTrace = nestedRegenerate.getNewTrace();
             Value subWeight = nestedRegenerate.getWeight();
 
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+            if (hastings) {
+              nestedRegenerate->setAttr(kMHHastingsAttr,
+                                        rewriter.getUnitAttr());
+              auto [w, c] =
+                  unpackHastingsWeight(rewriter, sampleOp.getLoc(), subWeight);
+              weightAccumulator = arith::AddFOp::create(
+                  rewriter, sampleOp.getLoc(), weightAccumulator, w);
+              carry.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                 carry.corr, c);
+            } else if (!scoring) {
+              weightAccumulator = arith::AddFOp::create(
+                  rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+            }
 
             auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
             auto row0 = arith::ConstantOp::create(
@@ -3925,6 +4305,7 @@ struct ExpandImpulsePass
       currTrace = carry.currTrace;
       weightAccumulator = carry.weight;
       currentTraceOffset = carry.offset;
+      Value corrAccumulator = carry.corr;
 
       for (Operation *op : toErase)
         rewriter.eraseOp(op);
@@ -3970,13 +4351,36 @@ struct ExpandImpulsePass
           outTrace = acc;
         }
         newRetVals.push_back(outTrace);
-        newRetVals.push_back(weightAccumulator);
+        if (hastings) {
+          Value corr = corrAccumulator;
+          if (oldInfo)
+            for (int64_t k = 0, e = cast<RankedTensorType>(oldInfo.getType())
+                                        .getShape()[1];
+                 k < e; ++k)
+              corr = arith::SubFOp::create(
+                  rewriter, retOp.getLoc(), corr,
+                  scalarAt(rewriter, retOp.getLoc(), oldInfo, {1, k}));
+          newRetVals.push_back(packHastingsWeight(rewriter, retOp.getLoc(),
+                                                  weightAccumulator, corr));
+        } else {
+          newRetVals.push_back(weightAccumulator);
+        }
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
 
         func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
       });
+
+      if (hastings || scoring) {
+        SmallVector<Type> resultTypes;
+        NewF.walk([&](func::ReturnOp retOp) {
+          resultTypes.assign(retOp.getOperandTypes().begin(),
+                             retOp.getOperandTypes().end());
+        });
+        NewF.setType(FunctionType::get(CI.getContext(), NewF.getArgumentTypes(),
+                                       resultTypes));
+      }
 
       rewriter.setInsertionPoint(CI);
       SmallVector<Value> operands;

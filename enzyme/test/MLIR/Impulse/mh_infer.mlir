@@ -1,6 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// engine) and does the accept/reject, matching the legacy `impulse.mh` path.
+// log alpha = new joint - old joint - (the site's new - old density).
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
@@ -32,13 +32,30 @@ module {
 // CHECK-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<{{.*}}> : tensor<1x2xf64>
 // CHECK-DAG: %[[INIT_WEIGHT:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
-// CHECK: %[[REGEN:.+]]:4 = call @test.regenerate(%[[INIT_TRACE]], %[[RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT: %[[WDIFF:.+]] = arith.subf %[[REGEN]]#1, %[[INIT_WEIGHT]] : tensor<f64>
+// CHECK: %[[REGEN:.+]]:4 = call @test.regenerate(%[[INIT_TRACE]], %[[RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<2xf64>, tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[WSL:.+]] = impulse.slice %[[REGEN]]#1 {limit_indices = array<i64: 1>, start_indices = array<i64: 0>, strides = array<i64: 1>} : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[W:.+]] = impulse.reshape %[[WSL]] : (tensor<1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[CSL:.+]] = impulse.slice %[[REGEN]]#1 {limit_indices = array<i64: 2>, start_indices = array<i64: 1>, strides = array<i64: 1>} : (tensor<2xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %[[CORR:.+]] = impulse.reshape %[[CSL]] : (tensor<1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[WDIFF:.+]] = arith.subf %[[W]], %[[INIT_WEIGHT]] : tensor<f64>
+// CHECK-NEXT: %[[ALPHA:.+]] = arith.subf %[[WDIFF]], %[[CORR]] : tensor<f64>
 // CHECK-NEXT: %[[NEWRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
-// CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[WDIFF]] : tensor<f64>
+// CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
 // CHECK-NEXT: %[[SELTR:.+]] = impulse.select %[[ACC]], %[[REGEN]]#0, %[[INIT_TRACE]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
-// CHECK-NEXT: %[[SELWT:.+]] = arith.select %[[ACC]], %[[REGEN]]#1, %[[INIT_WEIGHT]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: %[[SELWT:.+]] = arith.select %[[ACC]], %[[W]], %[[INIT_WEIGHT]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: return %[[SELTR]], %[[ACC]], %[[NEWRNG]], %[[SELWT]] : tensor<1x2xf64>, tensor<i1>, tensor<2xui64>, tensor<f64>
 
 // CHECK-LABEL: func.func @test.regenerate
+// CHECK-SAME: (%[[TR:.+]]: tensor<1x2xf64>, %[[R:.+]]: tensor<2xui64>, %[[M:.+]]: tensor<f64>, %[[SD:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<2xf64>, tensor<2xui64>, tensor<f64>)
+// CHECK-DAG: %[[Z:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK: %[[SSL:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[S:.+]] = impulse.reshape %[[SSL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK: %[[T:.+]]:2 = call @normal(%[[R]], %[[S]], %[[SD]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[LPT:.+]] = call @logpdf(%[[T]]#1, %[[S]], %[[SD]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %{{.+}} = arith.addf %{{.+}}, %[[LPT]] : tensor<f64>
+// CHECK-NEXT: %[[CN:.+]] = arith.addf %[[LPT]], %[[Z]] : tensor<f64>
+// CHECK-NEXT: %[[TOSL:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[TO:.+]] = impulse.reshape %[[TOSL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[LPTO:.+]] = call @logpdf(%[[TO]], %[[S]], %[[SD]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %{{.+}} = arith.subf %[[CN]], %[[LPTO]] : tensor<f64>
