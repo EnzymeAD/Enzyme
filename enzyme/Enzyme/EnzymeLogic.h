@@ -105,6 +105,10 @@ public:
 
   std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices;
 
+  //! Tape indices which hold no data because the value is an argument; maps to
+  //! the original argument index and whether its primal or shadow is wanted
+  std::map<unsigned, std::pair<unsigned, bool>> uncachedTapeArgs;
+
   //! Map from original call to sub augmentation data
   std::map<const llvm::CallInst *, const AugmentedReturn *> subaugmentations;
 

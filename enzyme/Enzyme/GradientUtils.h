@@ -31,6 +31,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <optional>
 
 #include <llvm/Config/llvm-config.h>
 
@@ -315,6 +316,11 @@ public:
 
 private:
   llvm::SmallVector<llvm::WeakTrackingVH, 4> addedTapeVals;
+  /// Tape indices which hold no data because the value is an argument, and so
+  /// is available unchanged in the reverse pass. Maps to the index of the
+  /// argument in the original function, and whether it is the primal or the
+  /// shadow of it which is wanted.
+  std::map<unsigned, std::pair<unsigned, bool>> uncachedTapeArgs;
   unsigned tapeidx;
   llvm::Value *tape;
 
@@ -388,6 +394,24 @@ public:
   llvm::ArrayRef<llvm::WeakTrackingVH> getTapeValues() const {
     return addedTapeVals;
   }
+
+  const std::map<unsigned, std::pair<unsigned, bool>> &
+  getUncachedTapeArgs() const {
+    return uncachedTapeArgs;
+  }
+
+  void setUncachedTapeArgs(
+      const std::map<unsigned, std::pair<unsigned, bool>> &args) {
+    uncachedTapeArgs = args;
+  }
+
+  /// If \p val is an argument of the function being generated, which argument
+  /// of the original function it corresponds to, and whether it is the primal
+  /// or the shadow of it.
+  std::optional<std::pair<unsigned, bool>> originalArgOf(llvm::Value *val);
+
+  /// The counterpart of originalArgOf, in the function being generated now.
+  llvm::Value *argFromOriginal(std::pair<unsigned, bool> arg);
 
 public:
   llvm::AAResults *OrigAA;
