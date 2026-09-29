@@ -231,6 +231,41 @@ struct CacheAnalysis {
         subsequent_calls_may_write(subsequent_calls_may_write),
         overwritten_args(overwritten_args), mode(mode), omp(omp) {}
 
+  /// Whether the memory at obj may be overwritten after this function
+  /// returns. Unknown writes (subsequent_calls_may_write) may overwrite any
+  /// memory not local to this function. Otherwise the caller only wrote to
+  /// its own uncaptured memory, which this function can only reach through an
+  /// argument, so only an argument marked overwritten can be.
+  bool is_origin_overwritten(Value *obj) {
+    if (subsequent_calls_may_write)
+      return is_value_mustcache_from_origin(obj);
+    return is_overwritten_argument(obj);
+  }
+
+  std::map<Value *, bool> seen_argument;
+  bool is_overwritten_argument(Value *obj) {
+    if (auto arg = dyn_cast<Argument>(obj))
+      return arg->getArgNo() < overwritten_args.size() &&
+             overwritten_args[arg->getArgNo()];
+    auto found = seen_argument.find(obj);
+    if (found != seen_argument.end())
+      return found->second;
+    seen_argument[obj] = false;
+    bool overwritten = false;
+    if (auto pn = dyn_cast<PHINode>(obj)) {
+      for (auto &val : pn->incoming_values())
+        if (is_overwritten_argument(getBaseObject(val))) {
+          overwritten = true;
+          break;
+        }
+    } else if (auto si = dyn_cast<SelectInst>(obj)) {
+      overwritten =
+          is_overwritten_argument(getBaseObject(si->getTrueValue())) ||
+          is_overwritten_argument(getBaseObject(si->getFalseValue()));
+    }
+    return seen_argument[obj] = overwritten;
+  }
+
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
       return seen[obj];
@@ -359,10 +394,12 @@ struct CacheAnalysis {
     // may change from a caller.
     bool checkFunction = true;
     if (li.hasMetadata(LLVMContext::MD_invariant_load)) {
-      if (!EnzymeJuliaAddrLoad || !subsequent_calls_may_write)
+      if (!EnzymeJuliaAddrLoad)
         return false;
-      else
-        checkFunction = false;
+      if (!subsequent_calls_may_write &&
+          !is_overwritten_argument(getBaseObject(li.getOperand(0))))
+        return false;
+      checkFunction = false;
     }
 
     // Find the underlying object for the pointer operand of the load
@@ -401,11 +438,8 @@ struct CacheAnalysis {
     if (rematerializableAllocations.count(obj))
       return false;
 
-    // If not running combined, check if pointer operand is overwritten
-    // by a subsequent call (i.e. not this function).
-    bool can_modref = false;
-    if (subsequent_calls_may_write)
-      can_modref = is_value_mustcache_from_origin(obj);
+    // Check if pointer operand is overwritten after this function returns.
+    bool can_modref = is_origin_overwritten(obj);
 
     if (!can_modref && checkFunction) {
       allFollowersOf(&li, [&](Instruction *inst2) {
@@ -593,10 +627,7 @@ struct CacheAnalysis {
 
       objs.push_back(obj);
 
-      // As in is_load_uncacheable, the origin only matters if something may
-      // write after this function returns.
-      bool init_safe =
-          !subsequent_calls_may_write || !is_value_mustcache_from_origin(obj);
+      bool init_safe = !is_origin_overwritten(obj);
       if (!init_safe) {
         auto CD = TR.query(obj)[{-1}];
         if (CD == BaseType::Integer || CD.isFloat())
@@ -650,9 +681,9 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
-      // A write to uncaptured local memory cannot change memory that the
-      // callee reaches through a pointer loaded from memory. Memory the callee
-      // is passed directly is checked per argument below.
+      // A write to uncaptured local memory is not an unknown write: the callee
+      // can only reach that memory through an argument, which is marked
+      // overwritten below.
       if (!writesOnlyUncapturedLocalMemory(inst2))
         next_subsequent_inst_may_write = true;
       for (unsigned i = 0; i < args.size(); ++i) {
@@ -678,9 +709,6 @@ struct CacheAnalysis {
                         *callsite_op->getArgOperand(i), " uncacheable due to ",
                         *inst2);
           args_safe[i] = false;
-          // The callee only considers overwritten arguments if subsequent
-          // calls may write.
-          next_subsequent_inst_may_write = true;
         }
       }
       return false;
