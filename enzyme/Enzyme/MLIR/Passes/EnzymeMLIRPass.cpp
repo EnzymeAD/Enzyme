@@ -54,13 +54,7 @@ struct DifferentiatePass
       pm.getDependentDialects(registry);
     }
 
-    // llvm_ext is what a clone of a pointer is written in -- see
-    // PointerClonableTypeInterface -- so this pass builds ops of it and has to
-    // say so. In a pipeline that raised through llvm_ext it is already loaded,
-    // which is why only running this pass on its own ever noticed.
-    // math is used by derivative rules of ops from other dialects (e.g. the
-    // signed-zero handling of arith.minimumf/arith.maximumf builds
-    // math.copysign), so it may be built even if the input has no math ops.
+    // Derivative rules may build math and llvm_ext ops absent from the input.
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
                     mlir::memref::MemRefDialect, mlir::math::MathDialect,
@@ -677,9 +671,7 @@ void DifferentiatePass::runOnOperation() {
   });
   getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
 
-  // Split-mode differentiation of a call leaves calls to custom rules; a
-  // pipeline that does not know about them (Reactant's, say) must not see
-  // them.
+  // Lower custom-rule calls for pipelines that only handle standard dialects.
   if (lowerCustomRules && !diffFailed &&
       failed(lowerCustomReverseRulesToFunc(getOperation())))
     signalPassFailure();

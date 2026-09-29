@@ -923,15 +923,8 @@ static SmallVector<Value> callCacheValuesSplit(Operation *orig,
   return cachedArguments;
 }
 
-// The combined-mode reverse call runs long after the forward one, against
-// whatever memory looks like by then -- even argument memory may have been
-// overwritten in between, and deciding which of it was is the overwritten-args
-// analysis Enzyme's LLVM side has and this side does not yet. Until it does,
-// only a callee that touches no memory at all is differentiable this way:
-// readnone, or every op in its body free of memory effects. (A func-like
-// callee sidesteps this entirely -- it goes through split mode above.)
-// Whether a memory-effects attribute -- later LLVM's spelling of
-// readnone -- rules out every kind of access.
+// Combined-mode reverse recomputes the callee without overwritten-argument
+// analysis, so only callees without memory effects are supported.
 static bool memoryEffectsNone(LLVM::MemoryEffectsAttr me) {
   return me && me.getArgMem() == LLVM::ModRefInfo::NoModRef &&
          me.getInaccessibleMem() == LLVM::ModRefInfo::NoModRef &&
@@ -1119,12 +1112,7 @@ static SmallVector<Value> callCacheValuesCombined(Operation *orig,
     }
     Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
     cachedArguments.push_back(cache);
-    // A mutable shadow is a value of the forward pass -- a shadow of a
-    // pointer derived inside a loop body, say -- and the reverse pass
-    // cannot always rebuild it. Cache it beside its primal; the shadow
-    // buffer itself is shared, so it is the pointer that is put by, not a
-    // copy. (Groundwork: a memory-touching callee is refused until
-    // overwritten-args support lands, so this does not fire yet.)
+    // Cache the shadow pointer too; the reverse may not be able to rebuild it.
     if (!gutils->isConstantValue(arg) &&
         cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
       Value shadow = gutils->invertPointerM(arg, cacheBuilder);

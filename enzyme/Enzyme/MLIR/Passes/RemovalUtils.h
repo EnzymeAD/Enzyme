@@ -64,22 +64,12 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
-// Settles the caches of a custom reverse rule before any call names them.
-// Every cache must be pushed at the top level of the augmented primal and
-// popped at the top level of the reverse; then, unless the rule carries
-// `enzyme.disable_mincut`, the min-cut cache optimization runs on it. Calls
-// read the result through getCustomReverseRuleCacheTypes and pass those values
-// as ordinary SSA values, so the caches must not change afterwards: the rule
-// is marked `enzyme.caches_final` and this is a no-op from then on. A rule
-// still being derived (`enzyme.in_progress`) cannot be settled: a callee that
-// reaches its own derivation again is recursive, which typed caches cannot
-// represent.
+// Finalize the rule's top-level caches before calls capture their types.
+// Apply min-cut unless disabled, then mark enzyme.caches_final so subsequent
+// calls reuse the same cache layout. Recursive derivations cannot be finalized.
 LogicalResult finalizeCustomReverseRule(CustomReverseRuleOp rule);
 
-// Lowers every custom reverse rule under `root` to a `<rule>_primal` /
-// `<rule>_reverse` func.func pair, and every call to one to a func.call
-// (the lower-enzyme-custom-rules-to-func pass; the enzyme pass also runs it
-// when it is done, unless `lower-custom-rules=false`).
+// Lower custom reverse rules and their calls to func.func and func.call.
 LogicalResult lowerCustomReverseRulesToFunc(Operation *root);
 
 // Tries to limit the amount of values cache from block `forward` to `reverse`
