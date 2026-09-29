@@ -75,9 +75,31 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func private @diffeouter
-// CHECK-DAG: call @mul_both_reverse
-// CHECK-DAG: call @mul_x_reverse
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %cst = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %0:3 = call @mul_both_primal(%arg0, %arg1) : (f64, f64) -> (f64, f64, f64)
+// CHECK-NEXT:    %1:2 = call @mul_x_primal(%cst, %arg1) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %2 = call @mul_x_reverse(%arg2, %1#1) : (f64, f64) -> f64
+// CHECK-NEXT:    %3:2 = call @mul_both_reverse(%arg2, %0#1, %0#2) : (f64, f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %4 = arith.addf %2, %3#1 fastmath<fast> : f64
+// CHECK-NEXT:    return %3#0, %4 : f64, f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_both_reverse(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %cst = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 : f64
+// CHECK-NEXT:    %1 = arith.mulf %0, %cst : f64
+// CHECK-NEXT:    %2 = arith.mulf %arg0, %arg1 : f64
+// CHECK-NEXT:    %3 = arith.mulf %2, %cst : f64
+// CHECK-NEXT:    return %1, %3 : f64, f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_x_reverse(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %cst = arith.constant 5.000000e+00 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg1 : f64
+// CHECK-NEXT:    %1 = arith.mulf %0, %cst : f64
+// CHECK-NEXT:    return %1 : f64
+// CHECK-NEXT:  }
 
 // -----
 
@@ -131,8 +153,21 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func private @diffeouter
-// CHECK: call @mul_both_reverse
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %cst = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %0:3 = call @mul_both_primal(%cst, %arg0) : (f64, f64) -> (f64, f64, f64)
+// CHECK-NEXT:    %1:2 = call @mul_both_reverse(%arg1, %0#1, %0#2) : (f64, f64, f64) -> (f64, f64)
+// CHECK-NEXT:    return %1#1 : f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_both_reverse(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %cst = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 : f64
+// CHECK-NEXT:    %1 = arith.mulf %0, %cst : f64
+// CHECK-NEXT:    %2 = arith.mulf %arg0, %arg1 : f64
+// CHECK-NEXT:    %3 = arith.mulf %2, %cst : f64
+// CHECK-NEXT:    return %1, %3 : f64, f64
+// CHECK-NEXT:  }
 
 // -----
 

@@ -51,8 +51,22 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func private @mul_rule_reverse
-// CHECK: arith.constant dense<2.000000e+00>
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:    %0:3 = call @mul_rule_primal(%arg0, %arg1) : (tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:    %1 = arith.mulf %arg2, %0#0 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %2 = arith.mulf %arg2, %0#0 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %3 = arith.addf %1, %2 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %4:2 = call @mul_rule_reverse(%3, %0#1, %0#2) : (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:    return %4#0, %4#1 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_rule_reverse(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:    %cst = arith.constant dense<2.000000e+00> : tensor<4xf64>
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 : tensor<4xf64>
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %arg1 : tensor<4xf64>
+// CHECK-NEXT:    %2 = arith.mulf %1, %cst : tensor<4xf64>
+// CHECK-NEXT:    return %0, %2 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:  }
 
 // -----
 
@@ -105,8 +119,22 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func private @mul_rule_reverse
-// CHECK: arith.constant dense<2.000000e+00>
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> tensor<4xf64> {
+// CHECK-NEXT:    %0:3 = call @mul_rule_primal(%arg0, %arg1) : (tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:    %1 = arith.mulf %arg2, %0#0 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %2 = arith.mulf %arg2, %0#0 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %3 = arith.addf %1, %2 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:    %4:2 = call @mul_rule_reverse(%3, %0#1, %0#2) : (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:    return %4#1 : tensor<4xf64>
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_rule_reverse(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:    %cst = arith.constant dense<2.000000e+00> : tensor<4xf64>
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 : tensor<4xf64>
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %arg1 : tensor<4xf64>
+// CHECK-NEXT:    %2 = arith.mulf %1, %cst : tensor<4xf64>
+// CHECK-NEXT:    return %0, %2 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:  }
 
 // -----
 
@@ -164,5 +192,37 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func private @mul_rule_reverse
-// CHECK: arith.constant dense<2.000000e+00>
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:    %c2 = arith.constant 2 : index
+// CHECK-NEXT:    %c1 = arith.constant 1 : index
+// CHECK-NEXT:    %c3 = arith.constant 3 : index
+// CHECK-NEXT:    %c0 = arith.constant 0 : index
+// CHECK-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<4xf64>
+// CHECK-NEXT:    %alloc = memref.alloc() : memref<3xtensor<4xf64>>
+// CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<3xtensor<4xf64>>
+// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %arg1) -> (tensor<4xf64>) {
+// CHECK-NEXT:      %2:3 = func.call @mul_rule_primal(%arg0, %arg4) : (tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:      memref.store %2#2, %alloc_0[%arg3] : memref<3xtensor<4xf64>>
+// CHECK-NEXT:      memref.store %2#1, %alloc[%arg3] : memref<3xtensor<4xf64>>
+// CHECK-NEXT:      scf.yield %2#0 : tensor<4xf64>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    %1:2 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %arg2, %arg5 = %cst) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:      %2 = arith.subi %c2, %arg3 : index
+// CHECK-NEXT:      %3 = memref.load %alloc[%2] : memref<3xtensor<4xf64>>
+// CHECK-NEXT:      %4 = memref.load %alloc_0[%2] : memref<3xtensor<4xf64>>
+// CHECK-NEXT:      %5:2 = func.call @mul_rule_reverse(%arg4, %3, %4) : (tensor<4xf64>, tensor<4xf64>, tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>)
+// CHECK-NEXT:      %6 = arith.addf %arg5, %5#0 fastmath<fast> : tensor<4xf64>
+// CHECK-NEXT:      scf.yield %5#1, %6 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    memref.dealloc %alloc_0 : memref<3xtensor<4xf64>>
+// CHECK-NEXT:    memref.dealloc %alloc : memref<3xtensor<4xf64>>
+// CHECK-NEXT:    return %1#1, %1#0 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_rule_reverse(%arg0: tensor<4xf64>, %arg1: tensor<4xf64>, %arg2: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
+// CHECK-NEXT:    %cst = arith.constant dense<2.000000e+00> : tensor<4xf64>
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 : tensor<4xf64>
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %arg1 : tensor<4xf64>
+// CHECK-NEXT:    %2 = arith.mulf %1, %cst : tensor<4xf64>
+// CHECK-NEXT:    return %0, %2 : tensor<4xf64>, tensor<4xf64>
+// CHECK-NEXT:  }

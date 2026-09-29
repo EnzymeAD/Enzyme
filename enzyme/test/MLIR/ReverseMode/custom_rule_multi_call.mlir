@@ -25,7 +25,20 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @main
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %0:2 = call @sq_reverse_rule_primal(%arg0) : (f64) -> (f64, f64)
+// CHECK-NEXT:    %1:2 = call @sq_reverse_rule_primal(%arg1) : (f64) -> (f64, f64)
+// CHECK-NEXT:    %2 = call @sq_reverse_rule_reverse(%arg2, %1#1) : (f64, f64) -> f64
+// CHECK-NEXT:    %3 = call @sq_reverse_rule_reverse(%arg2, %0#1) : (f64, f64) -> f64
+// CHECK-NEXT:    return %3, %2 : f64, f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @sq_reverse_rule_reverse(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg1 fastmath<fast> : f64
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %arg1 fastmath<fast> : f64
+// CHECK-NEXT:    %2 = arith.addf %0, %1 fastmath<fast> : f64
+// CHECK-NEXT:    return %2 : f64
+// CHECK-NEXT:  }
 
 // -----
 
@@ -55,7 +68,26 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @main
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %cst = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %0:3 = call @mul_reverse_rule_0_primal(%arg0, %arg1) : (f64, f64) -> (f64, f64, f64)
+// CHECK-NEXT:    %1:2 = call @mul_reverse_rule_primal(%arg0, %cst) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %2 = call @mul_reverse_rule_reverse(%arg2, %1#1) : (f64, f64) -> f64
+// CHECK-NEXT:    %3:2 = call @mul_reverse_rule_0_reverse(%arg2, %0#1, %0#2) : (f64, f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %4 = arith.addf %2, %3#0 fastmath<fast> : f64
+// CHECK-NEXT:    return %4, %3#1 : f64, f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_reverse_rule_reverse(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg1 fastmath<fast> : f64
+// CHECK-NEXT:    return %0 : f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @mul_reverse_rule_0_reverse(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg2 fastmath<fast> : f64
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %arg1 fastmath<fast> : f64
+// CHECK-NEXT:    return %0, %1 : f64, f64
+// CHECK-NEXT:  }
 
 // -----
 
@@ -104,4 +136,17 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @main
+// CHECK-LABEL:  func.func private @diffeouter(%arg0: f64, %arg1: f64, %arg2: f64) -> (f64, f64) {
+// CHECK-NEXT:    %0:2 = call @sq_rule_primal(%arg0) : (f64) -> (f64, f64)
+// CHECK-NEXT:    %1:2 = call @sq_rule_primal(%arg1) : (f64) -> (f64, f64)
+// CHECK-NEXT:    %2 = call @sq_rule_reverse(%arg2, %1#1) : (f64, f64) -> f64
+// CHECK-NEXT:    %3 = call @sq_rule_reverse(%arg2, %0#1) : (f64, f64) -> f64
+// CHECK-NEXT:    return %3, %2 : f64, f64
+// CHECK-NEXT:  }
+
+// CHECK-LABEL:  func.func private @sq_rule_reverse(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %cst = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %0 = arith.mulf %arg1, %cst : f64
+// CHECK-NEXT:    %1 = arith.mulf %arg0, %0 : f64
+// CHECK-NEXT:    return %1 : f64
+// CHECK-NEXT:  }
