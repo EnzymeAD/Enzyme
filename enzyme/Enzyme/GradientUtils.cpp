@@ -8680,6 +8680,36 @@ void GradientUtils::computeMinCache() {
             }
         }
       }
+      // Most loop contexts are only created after this analysis (creating one
+      // needs the recompute heuristic computed here), yet the reverse pass
+      // expands the trip count of every loop from the same exit counts that
+      // `getContext` computes. Require the values those depend on too, so that
+      // e.g. an allocation whose loaded size bounds a loop is not deemed
+      // unneeded (and replaced by an unresolvable placeholder).
+      for (Loop *L : LI.getLoopsInPreorder()) {
+        if (loopContexts.find(L) != loopContexts.end())
+          continue;
+        SmallVector<BasicBlock *, 8> ExitingBlocks;
+        L->getExitingBlocks(ExitingBlocks);
+        for (BasicBlock *ExitingBlock : ExitingBlocks) {
+          bool reachableExit = false;
+          for (auto *SBB : successors(ExitingBlock))
+            if (!L->contains(SBB) && !SE.GuaranteedUnreachable.count(SBB))
+              reachableExit = true;
+          if (!reachableExit)
+            continue;
+          ScalarEvolution::ExitLimit EL =
+              SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
+          if (EL.ExactNotTaken == SE.getCouldNotCompute())
+            continue;
+          SCEVExprContains(EL.ExactNotTaken, [&](const SCEV *S) {
+            if (auto U = dyn_cast<SCEVUnknown>(S))
+              if (auto inst = dyn_cast<Instruction>(U->getValue()))
+                LoopBoundRequirements.push_back(inst);
+            return false;
+          });
+        }
+      }
       SmallPtrSet<Instruction *, 3> Seen;
       while (LoopBoundRequirements.size()) {
         Instruction *val = LoopBoundRequirements.front();
