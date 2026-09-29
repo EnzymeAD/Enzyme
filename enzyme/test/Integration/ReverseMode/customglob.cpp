@@ -25,7 +25,7 @@ enum class MyMemoryType
 };
 
 __attribute__((enzyme_inactive))
-extern MyMemoryType host_mem_type;
+MyMemoryType host_mem_type;
 
 __attribute__((noinline))
 void* alloc(int size, MyMemoryType mt) {
