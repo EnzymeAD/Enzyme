@@ -43,6 +43,7 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 
@@ -713,6 +714,8 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
   SmallVector<GlobalVariable *, 1> toErase;
+  // Shadows registered by __enzyme_shadow_global.
+  SmallVector<GlobalValue *, 1> declaredShadows;
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
@@ -729,6 +732,50 @@ bool preserveNVVM(bool Begin, Module &M,
                              DerivativeMode::ForwardModeSplit, 3>(
           M, g, toErase, PreserveCustomRuleLinkage);
       changed = true;
+    }
+    if (g.getName().contains("__enzyme_shadow_global")) {
+      // Shadows that the program defines for its globals: a pair
+      // {&global, &shadow}, or an array of such pairs, e.g. in C
+      //   void *__enzyme_shadow_globals[][2] = {{&x, &x_shadow}, ...};
+      // The shadow of a global of type T is a T, or [width x T] for vector
+      // mode. This lets Fortran programs give module variables shadows that
+      // are declared in a separate module, paired by their symbol names.
+      if (g.hasInitializer()) {
+        auto strip = [](Value *V) {
+          while (auto CE = dyn_cast<ConstantExpr>(V))
+            V = CE->getOperand(0);
+          return V;
+        };
+        auto markPair = [&](Constant *pair) {
+          auto CA = dyn_cast<ConstantAggregate>(pair);
+          GlobalVariable *GV = nullptr, *shadow = nullptr;
+          if (CA && CA->getNumOperands() == 2) {
+            GV = dyn_cast<GlobalVariable>(strip(CA->getOperand(0)));
+            shadow = dyn_cast<GlobalVariable>(strip(CA->getOperand(1)));
+          }
+          if (!GV || !shadow) {
+            llvm::errs() << "An __enzyme_shadow_global must hold pairs of "
+                            "global variables {&global, &shadow}: "
+                         << g << "\n";
+            llvm_unreachable("__enzyme_shadow_global");
+          }
+          GV->setMetadata("enzyme_shadow",
+                          MDTuple::get(g.getContext(),
+                                       {ConstantAsMetadata::get(shadow)}));
+          declaredShadows.push_back(shadow);
+        };
+        Constant *init = g.getInitializer();
+        auto CA = dyn_cast<ConstantAggregate>(init);
+        if (CA && CA->getNumOperands() > 0 &&
+            isa<ConstantAggregate>(CA->getOperand(0))) {
+          for (auto &op : CA->operands())
+            markPair(cast<Constant>(op));
+        } else {
+          markPair(init);
+        }
+        toErase.push_back(&g);
+        changed = true;
+      }
     }
     if (g.getName().contains("__enzyme_inactive_global")) {
       if (g.hasInitializer()) {
@@ -983,6 +1030,13 @@ bool preserveNVVM(bool Begin, Module &M,
       }
     }
   }
+
+  // The table was what kept the shadows referenced: without it, a shadow that
+  // the program only writes (e.g. a seed) would be removed as write-only
+  // before the derivatives that read it exist, leaving the enzyme_shadow
+  // metadata dangling.
+  if (!declaredShadows.empty())
+    appendToCompilerUsed(M, declaredShadows);
 
   for (auto G : toErase) {
     for (auto name : {"llvm.used", "llvm.compiler.used"}) {
