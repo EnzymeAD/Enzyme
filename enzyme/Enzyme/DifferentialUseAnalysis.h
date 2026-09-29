@@ -84,9 +84,18 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
                             const llvm::PHINode *P0,
                             const llvm::Value *incomingVal);
 
-void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
-                           llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo);
+/// Provide the start value that the reverse pass of a loopy reduction PHI V
+/// reads from its preheader. The start value, and any single-incoming PHI it
+/// passes through, joins the recompute graph when legalRecompute admits it.
+/// Otherwise it is recorded in MinReq and NeedGraph: it lies outside the
+/// min-cut graph and cannot be rebuilt in the reverse pass, so it is cached.
+void pushLoopyPHIPreheader(
+    const GradientUtils *gutils, llvm::Value *V,
+    llvm::SetVector<llvm::Value *> &Intermediates,
+    std::deque<llvm::Value *> &todo,
+    llvm::function_ref<bool(llvm::Value *)> legalRecompute,
+    llvm::SetVector<llvm::Value *> &MinReq,
+    llvm::SmallPtrSetImpl<llvm::Value *> &NeedGraph);
 
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
