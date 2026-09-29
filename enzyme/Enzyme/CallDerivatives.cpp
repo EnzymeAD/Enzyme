@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
+#include "FlangRuntime.h"
 
 using namespace llvm;
 
@@ -3020,6 +3021,91 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (Mode == DerivativeMode::ReverseModeGradient)
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       return true;
+    }
+
+    // Other LLVM flang runtime functions acting on descriptors (allocation,
+    // pointer association, initialization, copies): the derivative is the
+    // same call on the shadow descriptors. Memory that the call allocates is
+    // zeroed in the shadow, and re-initialized for derived types, whose
+    // components hold descriptors.
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      if ((Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError) &&
+          !gutils->isConstantInstruction(&call)) {
+        SmallVector<int, 2> shadowed;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size() &&
+              !gutils->isConstantValue(call.getArgOperand(i)))
+            shadowed.push_back(i);
+        unsigned expected = 0;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size())
+            expected++;
+        // A copy from an inactive into an active descriptor would need the
+        // shadow to be zeroed rather than copied into: not handled.
+        if (!shadowed.empty() && shadowed.size() == expected) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          auto &M = *called->getParent();
+          auto &C = call.getContext();
+
+          SmallVector<Value *, 8> primalArgs;
+          for (auto &op : call.args())
+            primalArgs.push_back(gutils->getNewFromOriginal(op));
+          SmallVector<Value *, 2> shadows;
+          for (int i : shadowed)
+            shadows.push_back(
+                gutils->invertPointerM(call.getArgOperand(i), Builder2));
+
+          FunctionCallee sizeFn, initFn;
+          if (replay->allocates) {
+            auto I8Ptr = PointerType::getUnqual(C);
+            auto I32 = Type::getInt32Ty(C);
+            sizeFn = M.getOrInsertFunction(
+                "_FortranASize",
+                FunctionType::get(Type::getInt64Ty(C), {I8Ptr, I8Ptr, I32},
+                                  false));
+            initFn = M.getOrInsertFunction(
+                "_FortranAInitialize",
+                FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
+                                  false));
+          }
+
+          for (unsigned w = 0; w < gutils->getWidth(); w++) {
+            SmallVector<Value *, 8> args(primalArgs);
+            for (unsigned k = 0; k < shadowed.size(); k++)
+              args[shadowed[k]] =
+                  gutils->getWidth() > 1
+                      ? gutils->extractMeta(Builder2, shadows[k], w)
+                      : shadows[k];
+            auto dcall = Builder2.CreateCall(called->getFunctionType(),
+                                             called, args);
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+            dcall->setCallingConv(call.getCallingConv());
+
+            if (replay->allocates) {
+              // base_addr and elem_len lead every descriptor.
+              Value *desc = args[0];
+              auto nullp = ConstantPointerNull::get(PointerType::getUnqual(C));
+              auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
+              Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
+              Value *elemLen = Builder2.CreateLoad(
+                  Type::getInt64Ty(C),
+                  Builder2.CreateConstInBoundsGEP1_64(Type::getInt8Ty(C), desc,
+                                                      8));
+              Value *base =
+                  Builder2.CreateLoad(PointerType::getUnqual(C), desc);
+              Builder2.CreateMemSet(base, Builder2.getInt8(0),
+                                    Builder2.CreateMul(count, elemLen),
+                                    MaybeAlign());
+              Builder2.CreateCall(initFn, {desc, nullp, zero32});
+            }
+          }
+
+          eraseIfUnused(call);
+          return true;
+        }
+      }
     }
 
     /*
