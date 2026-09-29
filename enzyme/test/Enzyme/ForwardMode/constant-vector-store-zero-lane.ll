@@ -25,5 +25,5 @@ declare void @free(ptr)
 declare double @__enzyme_fwddiff(...)
 
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'")
-; CHECK: store <2 x double> %{{.+}}, ptr %"hi'ipg", align 8
+; CHECK: store <2 x double> zeroinitializer, ptr %"hi'ipg", align 8
 ; CHECK: ret double
