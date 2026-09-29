@@ -181,6 +181,11 @@ public:
   /// contained loop and return true. If BB is not in a loop, return false
   bool getContext(llvm::BasicBlock *BB, LoopContext &loopContext,
                   bool ReverseLimit);
+  /// Compute the exact backedge-taken count of L (CouldNotCompute if it is
+  /// not statically known) and the maximum number of iterations.
+  std::pair<const llvm::SCEV *, const llvm::SCEV *>
+  computeLoopLimit(llvm::Loop *L);
+
   /// Return whether the given instruction is used as necessary as part of a
   /// loop context This includes as the canonical induction variable or
   /// increment
