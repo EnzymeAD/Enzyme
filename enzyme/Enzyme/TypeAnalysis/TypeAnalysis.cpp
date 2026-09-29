@@ -972,6 +972,33 @@ static bool AllJuliaTypes(Type *T) {
   return false;
 }
 
+/// Type of a pointer to an LLVM flang descriptor (CFI_cdesc_t). All fields
+/// but base_addr are integral; dims are included only when the rank is known
+/// from the allocation type, as a pointer may follow them.
+static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
+  TypeTree TT;
+  TT.insert({-1}, BaseType::Pointer);
+  TT.insert({-1, 0}, BaseType::Pointer);
+  const int HeaderSize = 24;
+  int end = HeaderSize;
+
+  Type *T = nullptr;
+  auto base = getBaseObject(desc);
+  if (auto AI = dyn_cast<AllocaInst>(base))
+    T = AI->getAllocatedType();
+  else if (auto GV = dyn_cast<GlobalVariable>(base))
+    T = GV->getValueType();
+  if (auto ST = dyn_cast_or_null<StructType>(T))
+    if (ST->getNumElements() >= 8 &&
+        DL.getStructLayout(ST)->getElementOffset(7) == HeaderSize)
+      if (auto dims = dyn_cast<ArrayType>(ST->getElementType(7)))
+        end += DL.getTypeAllocSize(dims);
+
+  for (int i = DL.getPointerSize(); i < end; i++)
+    TT.insert({-1, i}, BaseType::Integer);
+  return TT;
+}
+
 static bool AnyJuliaTypes(Type *T) {
   if (auto PT = dyn_cast<PointerType>(T)) {
     unsigned AS = PT->getPointerAddressSpace();
@@ -5551,6 +5578,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 
     // Prob Prog
     if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
+      return;
+    }
+
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; i++) {
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
