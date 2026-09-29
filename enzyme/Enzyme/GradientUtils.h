@@ -611,9 +611,17 @@ public:
                                     : llvm::ArrayType::get(diffType, width);
       llvm::Value *res =
           diffType->isVoidTy() ? nullptr : llvm::UndefValue::get(wrappedType);
+      // The rule for one element may replace an argument (unwrapM replaces a
+      // placeholder shadow with the real one), so extract each element from the
+      // argument's current value rather than from the value passed in.
+      llvm::WeakTrackingVH handles[size] = {args...};
       for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
+        size_t k = 0;
+        auto element = [&](llvm::Value *) -> llvm::Value * {
+          llvm::Value *arg = handles[k++];
+          return arg ? extractMeta(Builder, arg, i) : nullptr;
+        };
+        auto tup = std::tuple<Args...>{element(args)...};
         auto diff = std::apply(rule, std::move(tup));
         if (!diffType->isVoidTy())
           res = Builder.CreateInsertValue(res, diff, {i});
@@ -637,9 +645,15 @@ public:
           assert(llvm::cast<llvm::ArrayType>(vals[i]->getType())
                      ->getNumElements() == width);
 
+      // As above: follow the arguments through replacements by the rule.
+      llvm::WeakTrackingVH handles[size] = {args...};
       for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
+        size_t k = 0;
+        auto element = [&](llvm::Value *) -> llvm::Value * {
+          llvm::Value *arg = handles[k++];
+          return arg ? extractMeta(Builder, arg, i) : nullptr;
+        };
+        auto tup = std::tuple<Args...>{element(args)...};
         std::apply(rule, std::move(tup));
       }
     } else {
