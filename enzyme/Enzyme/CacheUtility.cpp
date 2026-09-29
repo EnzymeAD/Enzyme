@@ -26,6 +26,8 @@
 
 #include "CacheUtility.h"
 
+#include "llvm/IR/PatternMatch.h"
+
 #include "FunctionUtils.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include <utility>
@@ -250,6 +252,41 @@ struct NonAffineClosedFormRewriter
 // "no flags" in every version.
 using NoWrapFlagsTy =
     decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
+
+/// PN is a header phi of L that is negated on every iteration, x_{i+1} = -x_i,
+/// such as the alternating sign of a cofactor expansion. Scalar evolution
+/// cannot express this recurrence, so without a closed form the reverse pass
+/// caches its value once per iteration. At iteration I it is x_0 when I is
+/// even and -x_0 when I is odd, i.e. x_0 * (1 - 2 * (I mod 2)), with the
+/// parity formed as I - 2 * (I / 2) (truncating I keeps its parity).
+static const SCEV *closedFormOfNegatingRecurrence(PHINode *PN, Loop *L,
+                                                  const SCEV *IterationNumber,
+                                                  ScalarEvolution &SE) {
+  using namespace llvm::PatternMatch;
+  if (!EnzymeRewriteAccumulators)
+    return nullptr;
+  auto Ty = dyn_cast<IntegerType>(PN->getType());
+  if (!Ty || Ty->getBitWidth() < 2 || PN->getNumIncomingValues() != 2)
+    return nullptr;
+  BasicBlock *Preheader = L->getLoopPreheader();
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Preheader || !Latch)
+    return nullptr;
+  Value *Next = PN->getIncomingValueForBlock(Latch);
+  if (!match(Next, m_Neg(m_Specific(PN))) &&
+      !match(Next, m_Mul(m_Specific(PN), m_AllOnes())))
+    return nullptr;
+  const SCEV *Init = SE.getSCEV(PN->getIncomingValueForBlock(Preheader));
+  if (!SE.isAvailableAtLoopEntry(Init, L))
+    return nullptr;
+  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, Ty);
+  const SCEV *Two = SE.getConstant(Ty, 2);
+  const SCEV *Parity =
+      SE.getMinusSCEV(I, SE.getMulExpr(Two, SE.getUDivExpr(I, Two)));
+  const SCEV *Factor =
+      SE.getMinusSCEV(SE.getOne(Ty), SE.getMulExpr(Two, Parity));
+  return SE.getMulExpr(Init, Factor);
+}
 
 /// PN is a header phi of L that scalar evolution could not classify. Recognize
 /// an accumulator whose per-iteration step is the trip count of an inner loop,
@@ -511,7 +548,10 @@ void RemoveRedundantIVs(
       // add-recurrence: otherwise SCEV folds the polynomial back into a
       // higher-degree recurrence, which the expander would materialize as a
       // fresh loop-carried phi, defeating the purpose.
-      S = closedFormOfCountedAccumulator(PN, L, SE.getUnknown(CanonicalIV), SE);
+      const SCEV *IterationNumber = SE.getUnknown(CanonicalIV);
+      S = closedFormOfNegatingRecurrence(PN, L, IterationNumber, SE);
+      if (!S)
+        S = closedFormOfCountedAccumulator(PN, L, IterationNumber, SE);
       if (!S)
         continue;
     } else if (EnzymeRewriteAccumulators) {
