@@ -2449,12 +2449,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // void _FortranAAssign(Descriptor &to, const Descriptor &from,
     //                      const char *sourceFile, int sourceLine)
-    // is LLVM flang's assignment between descriptors. It moves data which may
-    // include reals, so it cannot be declared inactive; its derivative is the
-    // same assignment applied to the shadow descriptors. Type analysis marks
-    // the descriptor metadata as integral, so the shadow descriptors carry the
-    // primal's element length, rank, type and bounds, and address the shadow
-    // data.
+    // is LLVM flang's assignment between descriptors; its derivative is the
+    // same assignment applied to the shadow descriptors.
     if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {

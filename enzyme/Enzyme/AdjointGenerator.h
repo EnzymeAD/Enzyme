@@ -1050,11 +1050,7 @@ public:
         }
       }
 
-      // Memory that only holds integers carries no derivative, and its shadow
-      // mirrors the primal. Store the primal value directly rather than the
-      // value's shadow, which may have been built without knowing the value
-      // is integral (e.g. a field of a constant struct that type analysis
-      // only knows as Anything) and so be zero.
+      // The shadow of integer-only memory mirrors the primal.
       if (!diff && vd.isKnown() && !vd.anyPointer(orig_val, DL) &&
           !vd.anyFloat(orig_val, DL)) {
         auto rule = [&val]() { return val; };

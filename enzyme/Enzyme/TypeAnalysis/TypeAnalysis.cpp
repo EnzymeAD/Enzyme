@@ -960,13 +960,9 @@ static bool AllJuliaTypes(Type *T) {
   return false;
 }
 
-/// Type of a pointer to an LLVM flang array descriptor (CFI_cdesc_t):
-///   { ptr base_addr, i64 elem_len, i32 version, i8 rank, i8 type,
-///     i8 attribute, i8 extra, [rank x [3 x i64]] dim, <addendum> }
-/// Everything but the base address is integral runtime metadata. The dim
-/// entries are only included when the rank can be read off the type of the
-/// underlying allocation, since the addendum that may follow them holds a
-/// pointer.
+/// Type of a pointer to an LLVM flang descriptor (CFI_cdesc_t). All fields
+/// but base_addr are integral; dims are included only when the rank is known
+/// from the allocation type, as a pointer may follow them.
 static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
   TypeTree TT;
   TT.insert({-1}, BaseType::Pointer);
