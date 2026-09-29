@@ -23,15 +23,17 @@ declare float @__enzyme_autodiff(...)
 
 ; CHECK: define internal { float, float } @diffetester(float %y, float %x, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-DAG:    %[[a0:.+]] = fmul fast float %y, %y
-; CHECK-DAG:    %[[a1:.+]] = fmul fast float %x, %x
-; CHECK-DAG:   %[[a2:.+]] = fadd fast float %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a3:.+]] = fmul fast float %differeturn, %x
-; CHECK-DAG:   %[[a4:.+]] = fdiv fast float %[[a3]], %[[a2]]
-; CHECK-DAG:   %[[a5:.+]] = fmul fast float %differeturn, %y
-; CHECK-DAG:   %[[a6:.+]] = fdiv fast float %[[a5]], %[[a2]]
-; CHECK-DAG:   %[[a7:.+]] = {{(fneg fast float)|(fsub fast float (-)?0.000000e\+00,)}} %[[a6]]
-; CHECK-DAG:   %[[a8:.+]] = insertvalue { float, float } undef, float %[[a4]], 0
-; CHECK-DAG:   %[[a9:.+]] = insertvalue { float, float } %[[a8]], float %[[a7]], 1
+; CHECK-DAG:    %[[a0:.+]] = fmul float %y, %y
+; CHECK-DAG:    %[[a1:.+]] = fmul float %x, %x
+; CHECK-DAG:   %[[a2:.+]] = fadd float %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a3:.+]] = fmul float %differeturn, %x
+; CHECK-DAG:   %[[a4:.+]] = fdiv float %[[a3]], %[[a2]]
+; CHECK-DAG:   %[[a4b:.+]] = fadd float 0.000000e+00, %[[a4]]
+; CHECK-DAG:   %[[a5:.+]] = fmul float %differeturn, %y
+; CHECK-DAG:   %[[a6:.+]] = fdiv float %[[a5]], %[[a2]]
+; CHECK-DAG:   %[[a7:.+]] = {{(fneg float)|(fsub float (-)?0.000000e\+00,)}} %[[a6]]
+; CHECK-DAG:   %[[a7b:.+]] = fadd float 0.000000e+00, %[[a7]]
+; CHECK-DAG:   %[[a8:.+]] = insertvalue { float, float } undef, float %[[a4b]], 0
+; CHECK-DAG:   %[[a9:.+]] = insertvalue { float, float } %[[a8]], float %[[a7b]], 1
 ; CHECK-DAG:   ret { float, float } %[[a9]]
 ; CHECK-NEXT: }

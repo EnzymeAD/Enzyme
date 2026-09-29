@@ -43,11 +43,11 @@ entry:
 ; CHECK:   %"tmp'ipa1" = alloca <2 x float>
 ; CHECK:   %[[D0:.+]] = extractvalue [2 x float] %differeturn, 0
 ; CHECK:   %[[L0:.+]] = load float, {{.*}}align 4{{.*}}
-; CHECK:   %[[A0:.+]] = fadd fast float %[[L0]], %[[D0]]
+; CHECK:   %[[A0:.+]] = fadd float %[[L0]], %[[D0]]
 ; CHECK:   store float %[[A0]], {{.*}}align 4{{.*}}
 ; CHECK:   %[[D1:.+]] = extractvalue [2 x float] %differeturn, 1
 ; CHECK:   %[[L1:.+]] = load float, {{.*}}align 4{{.*}}
-; CHECK:   %[[A1:.+]] = fadd fast float %[[L1]], %[[D1]]
+; CHECK:   %[[A1:.+]] = fadd float %[[L1]], %[[D1]]
 ; CHECK:   store float %[[A1]], {{.*}}align 4{{.*}}
 ; CHECK:   %[[V0:.+]] = load <2 x float>, {{.*}}align 8{{.*}}
 ; CHECK:   %[[V1:.+]] = load <2 x float>, {{.*}}align 8{{.*}}

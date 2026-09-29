@@ -26,6 +26,6 @@ declare double @__enzyme_fwddiff(double (double)*, double, double)
 
 
 ; CHECK: define internal double @fwddiffefneg(double %x, double %"x'")
-; CHECK-NEXT:   %1 = fneg fast double %"x'"
+; CHECK-NEXT:   %1 = fneg double %"x'"
 ; CHECK-NEXT:   ret double %1
 ; CHECK-NEXT: }

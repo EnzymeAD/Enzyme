@@ -21,18 +21,18 @@ declare double @__enzyme_error_estimate(double (double, double)*, ...)
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = fadd double %x, %y
-; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"x'", %x
-; CHECK-NEXT:   %[[i2:.+]] = fdiv fast double %[[i1]], %[[i0]]
-; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.fabs.f64(double %[[i2]])
-; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %"y'", %y
-; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i4]], %[[i0]]
-; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.fabs.f64(double %[[i5]])
-; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i3]], %[[i6]]
+; CHECK-NEXT:   %[[i1:.+]] = fmul double %"x'", %x
+; CHECK-NEXT:   %[[i2:.+]] = fdiv double %[[i1]], %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = call double @llvm.fabs.f64(double %[[i2]])
+; CHECK-NEXT:   %[[i4:.+]] = fmul double %"y'", %y
+; CHECK-NEXT:   %[[i5:.+]] = fdiv double %[[i4]], %[[i0]]
+; CHECK-NEXT:   %[[i6:.+]] = call double @llvm.fabs.f64(double %[[i5]])
+; CHECK-NEXT:   %[[i7:.+]] = fadd double %[[i3]], %[[i6]]
 ; CHECK-NEXT:   %[[i8:.+]] = bitcast double %[[i0]] to i64
 ; CHECK-NEXT:   %[[i9:.+]] = xor i64 %[[i8]], 1
 ; CHECK-NEXT:   %[[i10:.+]] = bitcast i64 %[[i9]] to double
-; CHECK-NEXT:   %[[i11:.+]] = fsub fast double %[[i0]], %[[i10]]
-; CHECK-NEXT:   %[[i12:.+]] = call fast double @llvm.fabs.f64(double %[[i11]])
-; CHECK-NEXT:   %[[i13:.+]] = call fast double @llvm.maxnum.f64(double %[[i12]], double %[[i7]])
+; CHECK-NEXT:   %[[i11:.+]] = fsub double %[[i0]], %[[i10]]
+; CHECK-NEXT:   %[[i12:.+]] = call double @llvm.fabs.f64(double %[[i11]])
+; CHECK-NEXT:   %[[i13:.+]] = call double @llvm.maxnum.f64(double %[[i12]], double %[[i7]])
 ; CHECK-NEXT:   ret double %[[i13]]
 ; CHECK-NEXT: }

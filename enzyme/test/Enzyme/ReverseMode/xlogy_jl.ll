@@ -21,13 +21,15 @@ declare { double, double } @__enzyme_autodiff(...)
 
 ; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @llvm.log.f64(double %y)
-; CHECK-NEXT:   %1 = fmul fast double %0, %differeturn
-; CHECK-NEXT:   %2 = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %3 = fdiv fast double %x, %y
-; CHECK-NEXT:   %4 = fmul fast double %3, %differeturn
-; CHECK-NEXT:   %5 = select fast i1 %2, double 0.000000e+00, double %4
-; CHECK-NEXT:   %6 = insertvalue { double, double } undef, double %1, 0
-; CHECK-NEXT:   %7 = insertvalue { double, double } %6, double %5, 1
-; CHECK-NEXT:   ret { double, double } %7
+; CHECK-NEXT:   %0 = call double @llvm.log.f64(double %y)
+; CHECK-NEXT:   %1 = fmul double %0, %differeturn
+; CHECK-NEXT:   %2 = fadd double 0.000000e+00, %1
+; CHECK-NEXT:   %3 = fcmp oeq double %x, 0.000000e+00
+; CHECK-NEXT:   %4 = fdiv double %x, %y
+; CHECK-NEXT:   %5 = fmul double %4, %differeturn
+; CHECK-NEXT:   %6 = fadd double 0.000000e+00, %5
+; CHECK-NEXT:   %7 = select i1 %3, double 0.000000e+00, double %6
+; CHECK-NEXT:   %8 = insertvalue { double, double } undef, double %2, 0
+; CHECK-NEXT:   %9 = insertvalue { double, double } %8, double %7, 1
+; CHECK-NEXT:   ret { double, double } %9
 ; CHECK-NEXT: }

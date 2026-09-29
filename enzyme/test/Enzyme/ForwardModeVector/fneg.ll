@@ -22,11 +22,11 @@ entry:
 ; CHECK: define internal [3 x double] @fwddiffe3fneg(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %[[i1:.+]] = fneg fast double %[[i0]]
+; CHECK-NEXT:   %[[i1:.+]] = fneg double %[[i0]]
 ; CHECK-NEXT:   %[[i3:.+]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %[[i4:.+]] = fneg fast double %[[i3]]
+; CHECK-NEXT:   %[[i4:.+]] = fneg double %[[i3]]
 ; CHECK-NEXT:   %[[i6:.+]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %[[i7:.+]] = fneg fast double %[[i6]]
+; CHECK-NEXT:   %[[i7:.+]] = fneg double %[[i6]]
 ; CHECK-NEXT:   %[[i2:.+]] = insertvalue [3 x double] undef, double %[[i1]], 0
 ; CHECK-NEXT:   %[[i5:.+]] = insertvalue [3 x double] %[[i2]], double %[[i4]], 1
 ; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] %[[i5]], double %[[i7]], 2

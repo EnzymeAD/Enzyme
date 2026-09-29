@@ -19,20 +19,20 @@ entry:
 
 ; CHECK: define internal { double, double } @fwddiffesquare(double %xre, double %"xre'", double %xim, double %"xim'", double %yre, double %"yre'", double %yim, double %"yim'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast double %"xre'", %yre
-; CHECK-NEXT:   %1 = fmul fast double %"xim'", %yim
-; CHECK-NEXT:   %2 = fsub fast double %0, %1
-; CHECK-NEXT:   %3 = fmul fast double %"xre'", %yim
-; CHECK-NEXT:   %4 = fmul fast double %yre, %"xim'"
-; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   %6 = fmul fast double %"yre'", %xre
-; CHECK-NEXT:   %7 = fmul fast double %"yim'", %xim
-; CHECK-NEXT:   %8 = fsub fast double %6, %7
-; CHECK-NEXT:   %9 = fmul fast double %"yre'", %xim
-; CHECK-NEXT:   %10 = fmul fast double %xre, %"yim'"
-; CHECK-NEXT:   %11 = fadd fast double %9, %10
-; CHECK-NEXT:   %12 = fadd fast double %2, %8
-; CHECK-NEXT:   %13 = fadd fast double %5, %11
+; CHECK-NEXT:   %0 = fmul double %"xre'", %yre
+; CHECK-NEXT:   %1 = fmul double %"xim'", %yim
+; CHECK-NEXT:   %2 = fsub double %0, %1
+; CHECK-NEXT:   %3 = fmul double %"xre'", %yim
+; CHECK-NEXT:   %4 = fmul double %yre, %"xim'"
+; CHECK-NEXT:   %5 = fadd double %3, %4
+; CHECK-NEXT:   %6 = fmul double %"yre'", %xre
+; CHECK-NEXT:   %7 = fmul double %"yim'", %xim
+; CHECK-NEXT:   %8 = fsub double %6, %7
+; CHECK-NEXT:   %9 = fmul double %"yre'", %xim
+; CHECK-NEXT:   %10 = fmul double %xre, %"yim'"
+; CHECK-NEXT:   %11 = fadd double %9, %10
+; CHECK-NEXT:   %12 = fadd double %2, %8
+; CHECK-NEXT:   %13 = fadd double %5, %11
 ; CHECK-NEXT:   %14 = insertvalue { double, double } undef, double %12, 0
 ; CHECK-NEXT:   %15 = insertvalue { double, double } %14, double %13, 1
 ; CHECK-NEXT:   ret { double, double } %15

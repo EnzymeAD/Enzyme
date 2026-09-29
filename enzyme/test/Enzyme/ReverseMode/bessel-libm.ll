@@ -13,11 +13,12 @@ entry:
 
 ; CHECK: define internal { double } @diffetestj0(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @j1(double %x)
-; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
-; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %0 = call double @j1(double %x)
+; CHECK-NEXT:   %1 = {{(fsub double \-?0.000000e\+00,|fneg double)}} %0
+; CHECK-NEXT:   %2 = fmul double %differeturn, %1
+; CHECK-NEXT:   %3 = fadd double 0.000000e+00, %2
+; CHECK-NEXT:   %4 = insertvalue { double } undef, double %3, 0
+; CHECK-NEXT:   ret { double } %4
 ; CHECK-NEXT: }
 
 
@@ -37,11 +38,12 @@ entry:
 
 ; CHECK: define internal { double } @diffetesty0(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @y1(double %x)
-; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
-; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %0 = call double @y1(double %x)
+; CHECK-NEXT:   %1 = {{(fsub double \-?0.000000e\+00,|fneg double)}} %0
+; CHECK-NEXT:   %2 = fmul double %differeturn, %1
+; CHECK-NEXT:   %3 = fadd double 0.000000e+00, %2
+; CHECK-NEXT:   %4 = insertvalue { double } undef, double %3, 0
+; CHECK-NEXT:   ret { double } %4
 ; CHECK-NEXT: }
 
 define double @test_derivativey0(double %x) {
@@ -62,13 +64,14 @@ entry:
 
 ; CHECK: define internal { double } @diffetestj1(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:    %0 = call fast double @j0(double %x)
-; CHECK-NEXT:    %1 = call fast double @jn(i32 2, double %x)
-; CHECK-NEXT:    %2 = fsub fast double %0, %1
-; CHECK-NEXT:    %3 = fmul fast double 5.000000e-01, %2
-; CHECK-NEXT:    %4 = fmul fast double %differeturn, %3
-; CHECK-NEXT:    %5 = insertvalue { double } undef, double %4, 0
-; CHECK-NEXT:    ret { double } %5
+; CHECK-NEXT:    %0 = call double @j0(double %x)
+; CHECK-NEXT:    %1 = call double @jn(i32 2, double %x)
+; CHECK-NEXT:    %2 = fsub double %0, %1
+; CHECK-NEXT:    %3 = fmul double 5.000000e-01, %2
+; CHECK-NEXT:    %4 = fmul double %differeturn, %3
+; CHECK-NEXT:    %5 = fadd double 0.000000e+00, %4
+; CHECK-NEXT:    %6 = insertvalue { double } undef, double %5, 0
+; CHECK-NEXT:    ret { double } %6
 ; CHECK-NEXT: }
 
 
@@ -88,13 +91,14 @@ entry:
 
 ; CHECK: define internal { double } @diffetesty1(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:    %0 = call fast double @y0(double %x)
-; CHECK-NEXT:    %1 = call fast double @yn(i32 2, double %x)
-; CHECK-NEXT:    %2 = fsub fast double %0, %1
-; CHECK-NEXT:    %3 = fmul fast double 5.000000e-01, %2
-; CHECK-NEXT:    %4 = fmul fast double %differeturn, %3
-; CHECK-NEXT:    %5 = insertvalue { double } undef, double %4, 0
-; CHECK-NEXT:    ret { double } %5
+; CHECK-NEXT:    %0 = call double @y0(double %x)
+; CHECK-NEXT:    %1 = call double @yn(i32 2, double %x)
+; CHECK-NEXT:    %2 = fsub double %0, %1
+; CHECK-NEXT:    %3 = fmul double 5.000000e-01, %2
+; CHECK-NEXT:    %4 = fmul double %differeturn, %3
+; CHECK-NEXT:    %5 = fadd double 0.000000e+00, %4
+; CHECK-NEXT:    %6 = insertvalue { double } undef, double %5, 0
+; CHECK-NEXT:    ret { double } %6
 ; CHECK-NEXT: }
 
 define double @test_derivativey1(double %x) {
@@ -118,14 +122,15 @@ entry:
 ; CHECK: define internal { double } @diffetestjn(i32 %n, double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:    %0 = sub i32 %n, 1
-; CHECK-NEXT:    %1 = call fast double @jn(i32 %0, double %x)
+; CHECK-NEXT:    %1 = call double @jn(i32 %0, double %x)
 ; CHECK-NEXT:    %2 = add i32 %n, 1
-; CHECK-NEXT:    %3 = call fast double @jn(i32 %2, double %x)
-; CHECK-NEXT:    %4 = fsub fast double %1, %3
-; CHECK-NEXT:    %5 = fmul fast double 5.000000e-01, %4
-; CHECK-NEXT:    %6 = fmul fast double %differeturn, %5
-; CHECK-NEXT:    %7 = insertvalue { double } undef, double %6, 0
-; CHECK-NEXT:    ret { double } %7
+; CHECK-NEXT:    %3 = call double @jn(i32 %2, double %x)
+; CHECK-NEXT:    %4 = fsub double %1, %3
+; CHECK-NEXT:    %5 = fmul double 5.000000e-01, %4
+; CHECK-NEXT:    %6 = fmul double %differeturn, %5
+; CHECK-NEXT:    %7 = fadd double 0.000000e+00, %6
+; CHECK-NEXT:    %8 = insertvalue { double } undef, double %7, 0
+; CHECK-NEXT:    ret { double } %8
 ; CHECK-NEXT: }
 
 
@@ -146,14 +151,15 @@ entry:
 ; CHECK: define internal { double } @diffetestyn(i32 %n, double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = sub i32 %n, 1
-; CHECK-NEXT:   %1 = call fast double @yn(i32 %0, double %x)
+; CHECK-NEXT:   %1 = call double @yn(i32 %0, double %x)
 ; CHECK-NEXT:   %2 = add i32 %n, 1
-; CHECK-NEXT:   %3 = call fast double @yn(i32 %2, double %x)
-; CHECK-NEXT:   %4 = fsub fast double %1, %3
-; CHECK-NEXT:   %5 = fmul fast double 5.000000e-01, %4
-; CHECK-NEXT:   %6 = fmul fast double %differeturn, %5
-; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0
-; CHECK-NEXT:   ret { double } %7
+; CHECK-NEXT:   %3 = call double @yn(i32 %2, double %x)
+; CHECK-NEXT:   %4 = fsub double %1, %3
+; CHECK-NEXT:   %5 = fmul double 5.000000e-01, %4
+; CHECK-NEXT:   %6 = fmul double %differeturn, %5
+; CHECK-NEXT:   %7 = fadd double 0.000000e+00, %6
+; CHECK-NEXT:   %8 = insertvalue { double } undef, double %7, 0
+; CHECK-NEXT:   ret { double } %8
 ; CHECK-NEXT: }
 
 define double @test_derivativeyn(i32 %n, double %x) {

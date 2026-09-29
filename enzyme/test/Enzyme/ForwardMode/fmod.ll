@@ -21,12 +21,12 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, double %"y'") 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fdiv fast double %x, %y
-; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.fabs.f64(double %[[i0]])
-; CHECK-NEXT:   %[[i2:.+]] = call fast double @llvm.floor.f64(double %[[i1]])
-; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.copysign.f64(double %[[i2]], double %[[i0]])
-; CHECK-NEXT:   %[[i4:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[i3]]
-; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %"y'", %[[i4]]
-; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %"x'", %[[i5]]
+; CHECK-NEXT:   %[[i0:.+]] = fdiv double %x, %y
+; CHECK-NEXT:   %[[i1:.+]] = call double @llvm.fabs.f64(double %[[i0]])
+; CHECK-NEXT:   %[[i2:.+]] = call double @llvm.floor.f64(double %[[i1]])
+; CHECK-NEXT:   %[[i3:.+]] = call double @llvm.copysign.f64(double %[[i2]], double %[[i0]])
+; CHECK-NEXT:   %[[i4:.+]] = {{(fsub double \-?0.000000e\+00,|fneg double)}} %[[i3]]
+; CHECK-NEXT:   %[[i5:.+]] = fmul double %"y'", %[[i4]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd double %"x'", %[[i5]]
 ; CHECK-NEXT:   ret double %[[i6]]
 ; CHECK-NEXT: }

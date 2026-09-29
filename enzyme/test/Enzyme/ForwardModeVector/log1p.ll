@@ -24,13 +24,13 @@ declare double @log1p(double)
 
 ; CHECK: define internal [3 x double] @fwddiffe3tester(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %x, 1.000000e+00
+; CHECK-NEXT:   %[[i0:.+]] = fadd double %x, 1.000000e+00
 ; CHECK-NEXT:   %[[i1:.+]] = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %[[i2:.+]] = fdiv fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fdiv double %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %[[i4:.+]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i4]], %[[i0]]
+; CHECK-NEXT:   %[[i5:.+]] = fdiv double %[[i4]], %[[i0]]
 ; CHECK-NEXT:   %[[i7:.+]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %[[i8:.+]] = fdiv fast double %[[i7]], %[[i0]]
+; CHECK-NEXT:   %[[i8:.+]] = fdiv double %[[i7]], %[[i0]]
 ; CHECK-NEXT:   %[[i3:.+]] = insertvalue [3 x double] undef, double %[[i2]], 0
 ; CHECK-NEXT:   %[[i6:.+]] = insertvalue [3 x double] %[[i3]], double %[[i5]], 1
 ; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] %[[i6]], double %[[i8]], 2
