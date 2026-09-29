@@ -1,10 +1,10 @@
 ! REQUIRES: fortran
 ! RUN: %fc -flto -O0 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O1 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %fc -flto -O2 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s
+! RUN: %fc -flto -O3 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O3 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %if flangenzyme %{ %fc -O0 -fopenmp %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
-
-! FIXME: O2 and O3 are omitted: Enzyme crashes in AdjointGenerator::visitOMPCall
-!        at those optimization levels.
+! RUN: %if flangenzyme %{ %fc -O2 -fopenmp %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 module squareOMP
   implicit none
