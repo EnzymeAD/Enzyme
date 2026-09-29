@@ -6,6 +6,7 @@ class CirInactiveOp<string m> : InactiveOp<"cir", m>;
 def CirEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::eq">;
 def CirGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::ge">;
 def CirLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::lt">;
+def CirAnd : CirInst<"AndOp">;
 
 // Some constant for de-duplication
 class CirCF<string v> : ConstantFP<v,"cir","ConstantOp">;
@@ -13,6 +14,7 @@ def CirCF0 : CirCF<"0">;
 def CirCF1 : CirCF<"1">;
 def CirCF2 : CirCF<"2">;
 def CirCF10 : CirCF<"10">;
+def CirCFNeg1 : CirCF<"-1">;
 
 def CirFAdd : CirInst<"FAddOp">;
 def CirFSub : CirInst<"FSubOp">;
@@ -70,8 +72,13 @@ def : MLIRDerivative<"cir", "FMulOp", (Op $x, $y),
 def : MLIRDerivative<"cir", "FDivOp", (Op $x, $y),
                     [
                       (CirFDiv (DiffeRet), $y),
-                      (CirFNeg (CirFDiv (CirFMul (DiffeRet), $x), (CirFMul $x, $y)))
-                    ]>;
+                      (CirFNeg (CirFMul (CirFDiv (DiffeRet), $y), (CirFDiv $x, $y)))
+                    ],
+                    (CirFDiv
+                      (CirFSub (SelectIfActive $x, (CirFMul (Shadow $x), $y), (CirCF0 (Shadow $x))),
+                               (SelectIfActive $y, (CirFMul (Shadow $y), $x), (CirCF0 (Shadow $y)))),
+                      (CirFMul $y, $y))
+                  >;
 
 def : MLIRDerivative<"cir", "FMulAddOp", (Op $x, $y, $z),
                     [
@@ -87,6 +94,13 @@ def : MLIRDerivative<"cir", "FMAOp", (Op $x, $y, $z),
                       (DiffeRet),
                     ]>;
 
+def CirIsPosZero : SubRoutine<(Op $x), (CirCmp (CirEQ),
+                                          (CirCopysign (TypeOf $x), (CirCF1 $x), $x),
+                                          (CirCF1 $x))>;
+def CirIsNegZero : SubRoutine<(Op $x), (CirCmp (CirEQ),
+                                          (CirCopysign (TypeOf $x), (CirCF1 $x), $x),
+                                          (CirCFNeg1 $x))>;
+
 def : MLIRDerivative<"cir", "FMaxNumOp", (Op $x, $y),
                     [
                       (CirSelect (CirCmp (CirLT), $x, $y), (CirCF0 $x), (DiffeRet)),
@@ -101,14 +115,30 @@ def : MLIRDerivative<"cir", "FMinNumOp", (Op $x, $y),
 
 def : MLIRDerivative<"cir", "FMaximumOp", (Op $x, $y),
                     [
-                      (CirSelect (CirCmp (CirLT), $x, $y), (CirCF0 $x), (DiffeRet)),
-                      (CirSelect (CirCmp (CirLT), $x, $y), (DiffeRet), (CirCF0 $y)),
+                      (CirSelect (CirCmp (CirLT), $x, $y),
+                        (CirCF0 $x),
+                        (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
+                            (CirCF0 $x),
+                            (DiffeRet))),
+                      (CirSelect (CirCmp (CirLT), $x, $y),
+                        (DiffeRet),
+                        (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
+                            (DiffeRet),
+                            (CirCF0 $x)))
                     ]>;
 
 def : MLIRDerivative<"cir", "FMinimumOp", (Op $x, $y),
                     [
-                      (CirSelect (CirCmp (CirLT), $x, $y), (DiffeRet), (CirCF0 $x)),
-                      (CirSelect (CirCmp (CirLT), $x, $y), (CirCF0 $y), (DiffeRet)),
+                      (CirSelect (CirCmp (CirLT), $x, $y),
+                        (DiffeRet),
+                        (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
+                            (DiffeRet),
+                            (CirCF0 (Shadow $x)))),
+                      (CirSelect (CirCmp (CirLT), $x, $y),
+                        (CirCF0 (Shadow $y)),
+                        (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
+                            (CirCF0 (Shadow $y)),
+                            (DiffeRet)))
                     ]>;
 
 // x - floor(x / y) * y
@@ -230,6 +260,11 @@ def : MLIRDerivative<"cir", "Exp2Op", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"cir", "Exp10Op", (Op $x),
+                    [
+                      (CirFMul (DiffeRet), (CirFMul (CirExp10 $x), (CirLog (CirCF10 $x))))
+                    ]>;
+
 def : MLIRDerivative<"cir", "SqrtOp", (Op $x),
                     [
                       (CirSelect (CirCmp (CirEQ), $x, (CirCF0 $x):$zero), $zero, (CirFDiv (DiffeRet), (CirFMul (CirCF2 $x), (CirSqrt $x))))
@@ -273,7 +308,7 @@ def : MLIRDerivative<"cir", "Log10Op", (Op $x),
 // TODO: Add cir.complex member
 
 // Memory
-// TODO: Cir Cast cannot be single op as they aggregate different conversasion into 1 cir.cast
+// TODO: Cir Cast cannot be single op as they aggregate different conversation into 1 cir.cast
 def : MemoryIdentityOp<"cir", "StoreOp", [1], [0]>;
 def : ReadOnlyIdentityOp<"cir", "LoadOp", [0]>;
 def : AllocationOp<"cir", "AllocaOp">;

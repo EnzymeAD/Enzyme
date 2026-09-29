@@ -440,7 +440,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!isVec);
+        // Relax the assertion to support vector type in MLIR.
+        // It is fine as MLIR always return correct type.
+        assert(!isVec || intrinsic == MLIRDerivatives);
         assert(ext.size() == 0);
         assert(!isva);
         os << ord;
