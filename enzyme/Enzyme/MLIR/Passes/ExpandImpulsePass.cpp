@@ -487,7 +487,9 @@ static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
   auto i64S = RankedTensorType::get({}, b.getI64Type());
   Value acc = arith::ConstantOp::create(b, loc, vecType,
                                         DenseElementsAttr::get(vecType, 0.0));
-  for (auto [i, v] : llvm::enumerate(ValueRange{weight, corr})) {
+  // Named array: a ValueRange over a braced list would dangle in the loop.
+  Value parts[] = {weight, corr};
+  for (auto [i, v] : llvm::enumerate(parts)) {
     Value idx = arith::ConstantOp::create(
         b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(i)));
     Value flat = impulse::ReshapeOp::create(b, loc, oneType, v);
