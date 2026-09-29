@@ -406,6 +406,27 @@ void RecursivelyReplaceAddressSpace(
           Todo.insert(Todo.begin(), cur);
           continue;
         }
+        // Some incoming values are not derived from the object being moved,
+        // so the phi keeps its address space. If that is a derived (not
+        // tracked) one, the moved object can be cast back to it: the GC
+        // treats a cast from the default address space as an untracked base.
+        // A tracked phi would instead root the stack memory, so is an error.
+        unsigned PAS = cast<PointerType>(P->getType())->getAddressSpace();
+        if (PAS != 10 && PAS != 0) {
+          for (size_t i = 0; i < NumOperands; i++) {
+            if (!replacedOperands[i])
+              continue;
+            IRBuilder<> B(P->getIncomingBlock(i)->getTerminator());
+            P->setIncomingValue(i, B.CreatePointerBitCastOrAddrSpaceCast(
+                                       replacedOperands[i], P->getType()));
+          }
+          for (int i = Todo.size() - 1; i >= 0; i--) {
+            if (std::get<2>(Todo[i]) != P)
+              continue;
+            Todo.erase(Todo.begin() + i);
+          }
+          continue;
+        }
       } else {
         IRBuilder<> B(&(*P->getParent()->getFirstNonPHIOrDbgOrLifetime()));
         auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
@@ -571,6 +592,50 @@ void RecursivelyReplaceAddressSpace(
         IRBuilder<> B(IVI);
         auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
         IVI->setOperand(1, Addr);
+        continue;
+      }
+    }
+    if (auto Sel = dyn_cast<SelectInst>(inst)) {
+      // As for a phi: collect which of the two operands derive from the
+      // object being moved, including those still pending in Todo.
+      Value *replacedOperands[2] = {nullptr, nullptr};
+      for (size_t i = 0; i < 2; i++)
+        if (Sel->getOperand(i + 1) == prev)
+          replacedOperands[i] = rep;
+      for (auto tval : Todo) {
+        if (std::get<2>(tval) != Sel)
+          continue;
+        for (size_t i = 0; i < 2; i++)
+          if (Sel->getOperand(i + 1) == std::get<1>(tval))
+            replacedOperands[i] = std::get<0>(tval);
+      }
+      if (replacedOperands[0] && replacedOperands[1]) {
+        IRBuilder<> B(Sel);
+        auto nSel = B.CreateSelect(Sel->getCondition(), replacedOperands[0],
+                                   replacedOperands[1]);
+        nSel->takeName(Sel);
+        for (auto U : Sel->users()) {
+          Todo.push_back(std::make_tuple((Value *)nSel, (Value *)Sel,
+                                         cast<Instruction>(U)));
+        }
+        toErase.push_back(Sel);
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != Sel)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
+        continue;
+      }
+      // The other operand may still be reached through another pending use.
+      bool remainingAreMerges = true;
+      for (auto v : Todo) {
+        if (!isa<PHINode>(std::get<2>(v)) && !isa<SelectInst>(std::get<2>(v))) {
+          remainingAreMerges = false;
+          break;
+        }
+      }
+      if (!remainingAreMerges) {
+        Todo.insert(Todo.begin(), cur);
         continue;
       }
     }
@@ -1497,7 +1562,7 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
     PHINode *CanonicalIV = pair.first;
     assert(CanonicalIV);
     RemoveRedundantIVs(
-        L->getHeader(), CanonicalIV, pair.second, SE,
+        L, CanonicalIV, pair.second, SE,
         [&](Instruction *I, Value *V) { I->replaceAllUsesWith(V); },
         [&](Instruction *I) { I->eraseFromParent(); });
   }
@@ -1908,6 +1973,62 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
   return true;
 }
 
+// Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
+// attributes LLVM's alias analysis understands: the function reads any memory,
+// writes only inaccessible memory (the exception it may allocate, GC
+// bookkeeping) and, for the local variant, its `sret`-like arguments; every
+// other pointer argument is `readonly`. Effects a location already had are
+// kept when they are tighter. The derivative of a function marked here does
+// not inherit them: `CloneFunctionWithReturns` builds it afresh and only
+// copies `readonly` onto the primal arguments, which the derivative reads.
+//
+// This is only valid with Julia's setjmp/longjmp exceptions: the analysis
+// permits writes on paths that throw, and there such a write is only
+// observable after control re-enters through a `returns_twice` call, which
+// LLVM already treats as clobbering all memory. With `invoke`/landingpad
+// exception handling the landing pad succeeds the throwing call itself, so
+// the attributes would be wrong.
+static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
+  if (!EnzymeJuliaAddrLoad)
+    return;
+#if LLVM_VERSION_MAJOR >= 16
+  MemoryEffects derived =
+      MemoryEffects::readOnly() |
+      MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+  if (local)
+    derived |= MemoryEffects::argMemOnly(ModRefInfo::ModRef);
+  F.setMemoryEffects(F.getMemoryEffects() & derived);
+#endif
+  // Before LLVM 16 there is no attribute for "reads anything, writes only
+  // inaccessible memory": `readonly` would also let an unused `nounwind` call
+  // be deleted, so only the parameters are annotated there.
+  for (auto &arg : F.args()) {
+    if (!arg.getType()->isPointerTy())
+      continue;
+    if (local) {
+      if (arg.hasStructRetAttr() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_returnRoots")
+              .isValid() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_sret_union_bytes")
+              .isValid())
+        continue;
+    }
+    unsigned argno = arg.getArgNo();
+    if (F.hasParamAttribute(argno, Attribute::ReadNone) ||
+        F.hasParamAttribute(argno, Attribute::ReadOnly))
+      continue;
+    // Never written by us and never read per the existing attribute.
+    if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
+      F.removeParamAttr(argno, Attribute::WriteOnly);
+      F.addParamAttr(argno, Attribute::ReadNone);
+      continue;
+    }
+    F.addParamAttr(argno, Attribute::ReadOnly);
+  }
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -1994,6 +2115,73 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
         if (isLocalReadOnlyOrThrow(CI)) {
+          // A local read-only-or-throw callee may still write through its
+          // sret-like arguments, and those writes land in memory of ours.
+          // Classify them as we would a store of our own: memory local to us
+          // is fine, our own sret-like argument makes us local too (e.g. an
+          // sret passed straight through to the callee after call-slot
+          // optimization), and anything else disqualifies us.
+          if (!isReadOnlyOrThrow(CI)) {
+            auto Callee = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 14
+            size_t nargs = CI->arg_size();
+#else
+            size_t nargs = CI->getNumArgOperands();
+#endif
+            for (size_t i = 0; i < nargs; i++) {
+              Value *arg = CI->getArgOperand(i);
+              if (!arg->getType()->isPointerTy())
+                continue;
+              bool sretLike = CI->paramHasAttr(i, Attribute::StructRet);
+              if (!sretLike && Callee && i < Callee->arg_size()) {
+                sretLike = Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_returnRoots")
+                               .isValid() ||
+                           Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_sret_union_bytes")
+                               .isValid();
+              }
+              if (!sretLike)
+                continue;
+              auto Obj = getBaseObject(arg);
+              if (isa<AllocaInst>(Obj))
+                continue;
+              if (isAllocationCall(Obj, TLI)) {
+                if (local)
+                  continue;
+                if (notCaptured(Obj))
+                  continue;
+                local = true;
+                continue;
+              }
+              if (auto A = dyn_cast<Argument>(Obj)) {
+                if (A->hasStructRetAttr() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_returnRoots")
+                        .isValid() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_sret_union_bytes")
+                        .isValid()) {
+                  local = true;
+                  continue;
+                }
+              }
+              if (EnzymePrintPerf) {
+                EmitWarning("WritingInstruction", I,
+                            "Instruction could write forcing ", F.getName(),
+                            " to not be marked readonly_or_throw per "
+                            "argument ",
+                            i, " of local read-only-or-throw call ", I);
+              }
+              return false;
+            }
+          }
           continue;
         }
         if (isAllocationCall(CI, TLI)) {
@@ -2117,6 +2305,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
+    addReadOnlyOrThrowAttributes(F, local);
   }
   return true;
 }
@@ -2274,11 +2463,13 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2)) {
+        bool local = LocalReadOnlyFunctions.contains(F2);
+        if (local) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
         } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
         }
+        addReadOnlyOrThrowAttributes(*F2, local);
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -7534,7 +7725,7 @@ const SCEV *evaluateAtLoopIter(const SCEV *V, ScalarEvolution &SE,
     return V;
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(V)) {
     if (addrec->getLoop() == find) {
-      auto V2 = addrec->evaluateAtIteration(replace, SE);
+      auto V2 = evaluateAtIterationWithoutExt(addrec, replace, SE);
       return evaluateAtLoopIter(V2, SE, find, replace);
     }
   }

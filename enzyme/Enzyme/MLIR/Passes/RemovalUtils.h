@@ -138,7 +138,7 @@ static bool hasMinCut(Operation *op) {
   if (op->hasAttr("enzyme.disable_mincut"))
     return false;
 
-  while (op = op->getParentOp())
+  while ((op = op->getParentOp()))
     if (op->hasAttr("enzyme.disable_mincut"))
       return false;
 

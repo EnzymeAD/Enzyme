@@ -428,8 +428,8 @@ InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
-    llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
-    llvm::Instruction *Increment, MustExitScalarEvolution &SE,
+    llvm::Loop *L, llvm::PHINode *CanonicalIV, llvm::Instruction *Increment,
+    MustExitScalarEvolution &SE,
     llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
     llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif

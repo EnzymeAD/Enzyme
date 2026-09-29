@@ -6793,6 +6793,22 @@ end:;
   report_fatal_error("cannot find deal with ptr that isnt arg");
 }
 
+/// Two add recurrences with the same start, step and trip count take the same
+/// sequence of values, so an access indexed by one can stand in for an access
+/// indexed by the other at the same iteration -- provided the iterations are
+/// matched up. That holds for the same loop or for loops that do not contain
+/// one another. It does not for nested loops: in the inner loop, the outer
+/// recurrence stays fixed while the inner one moves (e.g. x[i] and x[j] in
+/// `for i, for j`).
+static bool addRecsCorrespond(const SCEVAddRecExpr *ar1,
+                              const SCEVAddRecExpr *ar2) {
+  auto L1 = ar1->getLoop();
+  auto L2 = ar2->getLoop();
+  if (L1 == L2)
+    return true;
+  return !L1->contains(L2) && !L2->contains(L1);
+}
+
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &incoming_available,
                               bool tryLegalRecomputeCheck, BasicBlock *scope) {
@@ -7164,7 +7180,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
                 if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
-                  if (ar1->getStart() != OrigSE->getCouldNotCompute() &&
+                  if (addRecsCorrespond(ar1, ar2) &&
+                      ar1->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
                       ar1->getStepRecurrence(*OrigSE) !=
                           OrigSE->getCouldNotCompute() &&
@@ -9612,6 +9629,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         idx++;
       }
 
+    } else if (auto cmp = dyn_cast<ICmpInst>(cur);
+               cmp && isa<ConstantPointerNull>(cmp->getOperand(
+                          cmp->getOperand(0) == prev ? 1 : 0))) {
+      // A null check on the allocation (e.g. libstdc++'s deallocation path)
+      // neither reads, writes, nor captures the memory, so it says nothing
+      // about whether the contents can be recreated. Any reallocation is also
+      // non-null, so replaying it in the reverse pass yields the same result.
     } else {
       promotable = false;
       shadowpromotable = false;

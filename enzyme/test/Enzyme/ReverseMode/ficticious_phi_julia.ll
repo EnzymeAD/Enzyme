@@ -34,7 +34,7 @@ define void @test_enzyme() {
 
 attributes #0 = { allocsize(1) }
 
-; CHECK: define internal fastcc { ptr, ptr addrspace(10), ptr addrspace(10) } @augmented_julia_mlogloss_core_3044(ptr addrspace(10) %"pred::Array", ptr addrspace(10) %"pred::Array'", ptr nocapture readonly %tl, ptr nocapture %"tl'")
+; CHECK: define internal fastcc { ptr, ptr addrspace(10), ptr addrspace(10) } @augmented_julia_mlogloss_core_3044(ptr addrspace(10) readonly %"pred::Array", ptr addrspace(10) %"pred::Array'", ptr nocapture readonly %tl, ptr nocapture %"tl'")
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   [[I0:%.+]] = alloca { ptr, ptr addrspace(10), ptr addrspace(10) }, align 8
 ; CHECK-NEXT:   [[MALLOC:%.+]] = tail call noalias nonnull dereferenceable(24) dereferenceable_or_null(24) ptr @malloc(i64 24)
@@ -75,7 +75,7 @@ attributes #0 = { allocsize(1) }
 ; CHECK-NEXT:   [[I12:%.+]] = load { ptr, ptr addrspace(10), ptr addrspace(10) }, ptr [[I0]], align 8
 ; CHECK-NEXT:   ret { ptr, ptr addrspace(10), ptr addrspace(10) } [[I12]]
 
-; CHECK: define internal fastcc void @diffejulia_mlogloss_core_3044(ptr addrspace(10) %"pred::Array", ptr addrspace(10) %"pred::Array'", ptr nocapture readonly %tl, ptr nocapture %"tl'", ptr %tapeArg)
+; CHECK: define internal fastcc void @diffejulia_mlogloss_core_3044(ptr addrspace(10) readonly %"pred::Array", ptr addrspace(10) %"pred::Array'", ptr nocapture readonly %tl, ptr nocapture %"tl'", ptr %tapeArg)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   [[TRUETAPE:%.+]] = load { ptr addrspace(10), ptr addrspace(10), i32 }, ptr %tapeArg, align 8
 ; CHECK-NEXT:   tail call void @free(ptr nonnull %tapeArg)
