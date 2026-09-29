@@ -25,7 +25,8 @@ public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto fltType = cast<ConcreteType>(self);
     return cir::ConstantOp::create(builder, loc, fltType,
-                                     cast<cir::FPAttr>(createNullAttr(self))).getResult();
+                                   cast<cir::FPAttr>(createNullAttr(self)))
+        .getResult();
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
