@@ -61,5 +61,5 @@ bb:
 ; CHECK: define internal void @diffef(i64 %i5, i64* noalias %i4, float* noalias %i13, float* %"i13'", float* noalias %i12, float* %"i12'", i8* %tapeArg)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to i64*
-; CHECK-NEXT:   %i9 = load i64, i64* %0, align 4, !enzyme_mustcache
+; CHECK-NEXT:   %i8 = load i64, i64* %0, align 4, !enzyme_mustcache
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)

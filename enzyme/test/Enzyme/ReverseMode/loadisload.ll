@@ -1695,38 +1695,40 @@ declare void @free(i8* %0)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"iv'ac" = alloca i64, align 8
 ; CHECK-NEXT:   %"iv1'ac" = alloca i64, align 8
-; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i64*, i1** }*
-; CHECK-NEXT:   %truetape = load { i64*, i1** }, { i64*, i1** }* %0, align 8
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i1**, i64* }*
+; CHECK-NEXT:   %truetape = load { i1**, i64* }, { i1**, i64* }* %0, align 8
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"arrayref'de" = alloca float, align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"arrayref'de", align 4
-; CHECK-NEXT:   %1 = extractvalue { i64*, i1** } %truetape, 0
-; CHECK-NEXT:   %mdyncache_fromtape_cache = alloca i64*, align 8
-; CHECK-NEXT:   store i64* %1, i64** %mdyncache_fromtape_cache, align 8
-; CHECK-NEXT:   %2 = extractvalue { i64*, i1** } %truetape, 1
-; CHECK-NEXT:   %mdyncache_fromtape_cache6 = alloca i1**, align 8
-; CHECK-NEXT:   store i1** %2, i1*** %mdyncache_fromtape_cache6, align 8
+; CHECK-NEXT:   %1 = extractvalue { i1**, i64* } %truetape, 0
+; CHECK-NEXT:   %mdyncache_fromtape_cache = alloca i1**, align 8
+; CHECK-NEXT:   store i1** %1, i1*** %mdyncache_fromtape_cache, align 8
+; CHECK-NEXT:   %unbox10_cache = alloca i64*, align 8
+; CHECK-NEXT:   %2 = extractvalue { i1**, i64* } %truetape, 1
+; CHECK-NEXT:   %mdyncache_fromtape_cache20 = alloca i64*, align 8
+; CHECK-NEXT:   store i64* %2, i64** %mdyncache_fromtape_cache20, align 8
 ; CHECK-NEXT:   br label %L68
 
-; CHECK: L68:    
+; CHECK: L68:                                              ; preds = %L123, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %L123 ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %3 = load i64*, i64** %mdyncache_fromtape_cache, align 8
+; CHECK-NEXT:   %3 = load i64*, i64** %mdyncache_fromtape_cache20, align 8
 ; CHECK-NEXT:   %4 = getelementptr inbounds i64, i64* %3, i64 %iv
-; CHECK-NEXT:   %a29 = load i64, i64* %4, align 8
+; CHECK-NEXT:   %unbox10 = load i64, i64* %4, align 8
+; CHECK-NEXT:   %a29 = call i64 @llvm.smin.i64(i64 %unbox10, i64 1)
 ; CHECK-NEXT:   %5 = add nsw i64 %a29, 1
-; CHECK-NEXT:   %6 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
+; CHECK-NEXT:   %6 = load i1**, i1*** %mdyncache_fromtape_cache, align 8
 ; CHECK-NEXT:   %7 = getelementptr inbounds i1*, i1** %6, i64 %iv
 ; CHECK-NEXT:   br label %L86
 
 ; CHECK: L86:                                              ; preds = %L86, %L68
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %L86 ], [ 0, %L68 ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %8 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8,
+; CHECK-NEXT:   %8 = load i1**, i1*** %mdyncache_fromtape_cache, align 8
 ; CHECK-NEXT:   %9 = getelementptr inbounds i1*, i1** %8, i64 %iv
 ; CHECK-NEXT:   %10 = load i1*, i1** %9, align 8
 ; CHECK-NEXT:   %11 = getelementptr inbounds i1, i1* %10, i64 %iv1
-; CHECK-NEXT:   %tapeArg3 = load i1, i1* %11, align 1
+; CHECK-NEXT:   %tapeArg1 = load i1, i1* %11, align 1
 ; CHECK-NEXT:   %.not75 = icmp eq i64 %iv1, %a29
 ; CHECK-NEXT:   br i1 %.not75, label %L123, label %L86
 
@@ -1741,67 +1743,69 @@ declare void @free(i8* %0)
 ; CHECK-NEXT:   %12 = load float, float* %"arrayref'de", align 4
 ; CHECK-NEXT:   %13 = insertvalue { float } undef, float %12, 0
 ; CHECK-NEXT:   %14 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %forfree = load i64*, i64** %mdyncache_fromtape_cache, align 8
-; CHECK-NEXT:   %15 = bitcast i64* %forfree to i8*
+; CHECK-NEXT:   %forfree = load i1**, i1*** %mdyncache_fromtape_cache, align 8
+; CHECK-NEXT:   %15 = bitcast i1** %forfree to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %15)
 ; CHECK-NEXT:   %16 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %forfree7 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
-; CHECK-NEXT:   %17 = bitcast i1** %forfree7 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %17)
+; CHECK-NEXT:   %17 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %forfree21 = load i64*, i64** %mdyncache_fromtape_cache20, align 8
+; CHECK-NEXT:   %18 = bitcast i64* %forfree21 to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %18)
 ; CHECK-NEXT:   ret { float } %13
 
 ; CHECK: invertL68:                                        ; preds = %invertL86
-; CHECK-NEXT:   %18 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %19 = icmp eq i64 %18, 0
-; CHECK-NEXT:   %20 = xor i1 %19, true
-; CHECK-NEXT:   %21 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %22 = load i64, i64* %"iv1'ac", align 8
-; CHECK-NEXT:   %_unwrap = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
-; CHECK-NEXT:   %_unwrap8 = getelementptr inbounds i1*, i1** %_unwrap, i64 %21
-; CHECK-NEXT:   %forfree9 = load i1*, i1** %_unwrap8, align 8
-; CHECK-NEXT:   %23 = bitcast i1* %forfree9 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %23)
-; CHECK-NEXT:   br i1 %19, label %invertentry, label %incinvertL68
+; CHECK-NEXT:   %19 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %20 = icmp eq i64 %19, 0
+; CHECK-NEXT:   %21 = xor i1 %20, true
+; CHECK-NEXT:   %22 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %23 = load i64, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   %_unwrap = load i1**, i1*** %mdyncache_fromtape_cache, align 8
+; CHECK-NEXT:   %_unwrap4 = getelementptr inbounds i1*, i1** %_unwrap, i64 %22
+; CHECK-NEXT:   %forfree5 = load i1*, i1** %_unwrap4, align 8
+; CHECK-NEXT:   %24 = bitcast i1* %forfree5 to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %24)
+; CHECK-NEXT:   br i1 %20, label %invertentry, label %incinvertL68
 
 ; CHECK: incinvertL68:                                     ; preds = %invertL68
-; CHECK-NEXT:   %24 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %25 = add nsw i64 %24, -1
-; CHECK-NEXT:   store i64 %25, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %25 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %26 = add nsw i64 %25, -1
+; CHECK-NEXT:   store i64 %26, i64* %"iv'ac", align 8
 ; CHECK-NEXT:   br label %invertL123
 
 ; CHECK: invertL86:                                        ; preds = %mergeinvertL86_L123, %incinvertL86
-; CHECK-NEXT:   %26 = load i64, i64* %"iv1'ac", align 8
-; CHECK-NEXT:   %27 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %_unwrap12 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
-; CHECK-NEXT:   %_unwrap13 = getelementptr inbounds i1*, i1** %_unwrap12, i64 %27
-; CHECK-NEXT:   %_unwrap14 = load i1*, i1** %_unwrap13, align 8
-; CHECK-NEXT:   %_unwrap15 = getelementptr inbounds i1, i1* %_unwrap14, i64 %26
-; CHECK-NEXT:   %tapeArg3_unwrap = load i1, i1* %_unwrap15, align 1
-; CHECK-NEXT:   %28 = call fastcc { float } @diffejulia_gelu_1439(float %arrayref, i1 %tapeArg3_unwrap)
-; CHECK-NEXT:   %29 = extractvalue { float } %28, 0
-; CHECK-NEXT:   %30 = load float, float* %"arrayref'de", align 4
-; CHECK-NEXT:   %31 = fadd fast float %30, %29
-; CHECK-NEXT:   store float %31, float* %"arrayref'de", align 4
-; CHECK-NEXT:   %32 = load i64, i64* %"iv1'ac", align 8
-; CHECK-NEXT:   %33 = icmp eq i64 %32, 0
-; CHECK-NEXT:   %34 = xor i1 %33, true
-; CHECK-NEXT:   br i1 %33, label %invertL68, label %incinvertL86
+; CHECK-NEXT:   %27 = load i64, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   %28 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %_unwrap8 = load i1**, i1*** %mdyncache_fromtape_cache, align 8
+; CHECK-NEXT:   %_unwrap9 = getelementptr inbounds i1*, i1** %_unwrap8, i64 %28
+; CHECK-NEXT:   %_unwrap10 = load i1*, i1** %_unwrap9, align 8
+; CHECK-NEXT:   %_unwrap11 = getelementptr inbounds i1, i1* %_unwrap10, i64 %27
+; CHECK-NEXT:   %tapeArg1_unwrap = load i1, i1* %_unwrap11, align 1
+; CHECK-NEXT:   %29 = call fastcc { float } @diffejulia_gelu_1439(float %arrayref, i1 %tapeArg1_unwrap)
+; CHECK-NEXT:   %30 = extractvalue { float } %29, 0
+; CHECK-NEXT:   %31 = load float, float* %"arrayref'de", align 4
+; CHECK-NEXT:   %32 = fadd fast float %31, %30
+; CHECK-NEXT:   store float %32, float* %"arrayref'de", align 4
+; CHECK-NEXT:   %33 = load i64, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   %34 = icmp eq i64 %33, 0
+; CHECK-NEXT:   %35 = xor i1 %34, true
+; CHECK-NEXT:   br i1 %34, label %invertL68, label %incinvertL86
 
 ; CHECK: incinvertL86:                                     ; preds = %invertL86
-; CHECK-NEXT:   %35 = load i64, i64* %"iv1'ac", align 8
-; CHECK-NEXT:   %36 = add nsw i64 %35, -1
-; CHECK-NEXT:   store i64 %36, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   %36 = load i64, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   %37 = add nsw i64 %36, -1
+; CHECK-NEXT:   store i64 %37, i64* %"iv1'ac", align 8
 ; CHECK-NEXT:   br label %invertL86
 
 ; CHECK: invertL123:                                       ; preds = %mergeinvertL68_L134, %incinvertL68
-; CHECK-NEXT:   %37 = load i64, i64* %"iv'ac", align 8
-; CHECK-NEXT:   %38 = load i64*, i64** %mdyncache_fromtape_cache, align 8
-; CHECK-NEXT:   %39 = getelementptr inbounds i64, i64* %38, i64 %37
-; CHECK-NEXT:   %40 = load i64, i64* %39, align 8
+; CHECK-NEXT:   %38 = load i64, i64* %"iv'ac", align 8
+; CHECK-NEXT:   %39 = extractvalue { i1**, i64* } %truetape, 1
+; CHECK-NEXT:   %40 = getelementptr inbounds i64, i64* %39, i64 %38
+; CHECK-NEXT:   %41 = load i64, i64* %40, align 8
+; CHECK-NEXT:   %42 = call i64 @llvm.smin.i64(i64 %41, i64 1)
 ; CHECK-NEXT:   br label %mergeinvertL86_L123
 
 ; CHECK: mergeinvertL86_L123:                              ; preds = %invertL123
-; CHECK-NEXT:   store i64 %40, i64* %"iv1'ac", align 8
+; CHECK-NEXT:   store i64 %42, i64* %"iv1'ac", align 8
 ; CHECK-NEXT:   br label %invertL86
 
 ; CHECK: invertL134:                                       ; preds = %L134
@@ -1810,4 +1814,3 @@ declare void @free(i8* %0)
 ; CHECK: mergeinvertL68_L134:                              ; preds = %invertL134
 ; CHECK-NEXT:   store i64 9, i64* %"iv'ac", align 8
 ; CHECK-NEXT:   br label %invertL123
-; CHECK-NEXT: }
