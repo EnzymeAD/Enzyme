@@ -31,6 +31,8 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 
+#include <type_traits>
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
@@ -526,6 +528,12 @@ static const SCEV *getUnsignedOverflowLimitForStep(const SCEV *Step,
                          SE->getUnsignedRangeMax(Step));
 }
 
+// The type of SCEV's wrap flags: SCEVWrapFlags, SCEVNoWrapFlags or
+// SCEVFlags, depending on the LLVM version. Taken from a flag constant, which
+// all versions provide, rather than from an LLVM version check, as the type
+// was renamed several times during LLVM 24's development.
+using SCEVWrapFlags = std::remove_cv_t<decltype(SCEV::FlagNSW)>;
+
 namespace {
 
 struct ExtendOpTraitsBase {
@@ -542,7 +550,7 @@ struct ExtendOpTraitsBase {
 template <typename ExtendOp> struct ExtendOpTraits {
   // Members present:
   //
-  // static const SCEV::NoWrapFlags WrapType;
+  // static const SCEVWrapFlags WrapType;
   //
   // static const ExtendOpTraitsBase::GetExtendExprTy GetExtendExpr;
   //
@@ -553,7 +561,7 @@ template <typename ExtendOp> struct ExtendOpTraits {
 
 template <>
 struct ExtendOpTraits<SCEVSignExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNSW;
+  static const SCEVWrapFlags WrapType = SCEV::FlagNSW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -570,7 +578,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 template <>
 struct ExtendOpTraits<SCEVZeroExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNUW;
+  static const SCEVWrapFlags WrapType = SCEV::FlagNUW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -587,7 +595,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 } // end anonymous namespace
 
-static bool hasFlags(SCEV::NoWrapFlags Flags, SCEV::NoWrapFlags TestFlags) {
+static bool hasFlags(SCEVWrapFlags Flags, SCEVWrapFlags TestFlags) {
   return TestFlags == ScalarEvolution::maskFlags(Flags, TestFlags);
 };
 
@@ -693,10 +701,10 @@ static const SCEV *getExtendAddRecStart(const SCEVAddRecExpr *AR, Type *Ty,
       (SE->*GetExtendExpr)(PreStart, Ty, Depth));
 }
 
-static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
+static SCEVWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
                                                SCEVTypes Type,
                                                const ArrayRef<const SCEV *> Ops,
-                                               SCEV::NoWrapFlags Flags) {
+                                               SCEVWrapFlags Flags) {
   using namespace std::placeholders;
 
   using OBO = OverflowingBinaryOperator;
@@ -707,7 +715,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   assert(CanAnalyze && "don't call from other places!");
 
   auto SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
-  SCEV::NoWrapFlags SignOrUnsignWrap =
+  SCEVWrapFlags SignOrUnsignWrap =
       ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
   // If FlagNSW is true and all the operands are non-negative, infer FlagNUW.
@@ -717,7 +725,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
 
   if (SignOrUnsignWrap == SCEV::FlagNSW && all_of(Ops, IsKnownNonNegative))
     Flags =
-        ScalarEvolution::setFlags(Flags, (SCEV::NoWrapFlags)SignOrUnsignMask);
+        ScalarEvolution::setFlags(Flags, (SCEVWrapFlags)SignOrUnsignMask);
 
   SignOrUnsignWrap = ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
