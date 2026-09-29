@@ -47,6 +47,9 @@ static LogicalResult
 lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
   SymbolTable symbolTable(SymbolTable::getNearestSymbolTable(revRule));
 
+  if (!revRule.getBody().hasOneBlock())
+    return revRule->emitError() << "a custom reverse rule needs one body block";
+
   Block *bodyDef = &revRule.getBody().front();
 
   enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
@@ -68,6 +71,10 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     }
   }
 
+  if (!primal || !reverse)
+    return revRule->emitError() << "a custom reverse rule needs one augmented "
+                                   "primal and one reverse";
+
   bool singleBlock =
       primal.getBody().hasOneBlock() && reverse.getBody().hasOneBlock();
   if (!singleBlock) {
@@ -78,6 +85,10 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
   }
 
   auto funcType = revRule.getFunctionType();
+  if (funcType.getNumInputs() != revRule.getActivity().size() ||
+      funcType.getNumResults() != revRule.getRetActivity().size())
+    return revRule->emitError()
+           << "custom rule activities must match its function type";
 
   SmallVector<mlir::Type> primalArgTypes;
   SmallVector<mlir::Type> primalResultTypes(funcType.getResults().begin(),
@@ -94,9 +105,11 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       reverseArgTypes.push_back(retTy);
       break;
     case mlir::enzyme::Activity::enzyme_const:
+    case mlir::enzyme::Activity::enzyme_constnoneed:
       break;
     default:
-      llvm_unreachable("todo");
+      return revRule->emitError()
+             << "unsupported custom rule return activity " << iattr.getValue();
     }
   }
 
@@ -112,15 +125,19 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       primalArgTypes.push_back(argTy);
       break;
     case mlir::enzyme::Activity::enzyme_const:
+    case mlir::enzyme::Activity::enzyme_constnoneed:
       primalArgTypes.push_back(argTy);
       break;
     case mlir::enzyme::Activity::enzyme_dup:
+    case mlir::enzyme::Activity::enzyme_dupnoneed:
       primalArgTypes.push_back(argTy);
       primalArgTypes.push_back(
           cast<AutoDiffTypeInterface>(argTy).getShadowType(/*width*/ 1));
       break;
     default:
-      llvm_unreachable("todo");
+      return revRule->emitError()
+             << "unsupported custom rule argument activity "
+             << iattr.getValue();
     }
   }
 
@@ -210,8 +227,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     IRMapping mapping;
     OpBuilder builder(&primalFunc.getBody().front(),
                       primalFunc.getBody().front().begin());
-    for (int i = toCopyOnBoth.size() - 1; i >= 0; --i) {
-      auto op = toCopyOnBoth[i];
+    for (Operation *op : toCopyOnBoth) {
       auto newOp = builder.clone(*op, mapping);
       for (auto [newRes, oldRes] :
            llvm::zip_equal(newOp->getResults(), op->getResults())) {
@@ -245,8 +261,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     IRMapping mapping;
     OpBuilder builder(&reverseFunc.getBody().front(),
                       reverseFunc.getBody().front().begin());
-    for (int i = toCopyOnBoth.size() - 1; i >= 0; --i) {
-      auto op = toCopyOnBoth[i];
+    for (Operation *op : toCopyOnBoth) {
       auto newOp = builder.clone(*op, mapping);
       for (auto [newRes, oldRes] :
            llvm::zip_equal(newOp->getResults(), op->getResults())) {

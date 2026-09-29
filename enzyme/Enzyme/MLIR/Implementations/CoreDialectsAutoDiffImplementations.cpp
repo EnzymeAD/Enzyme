@@ -726,6 +726,9 @@ static LogicalResult callReverseHandlerSplit(Operation *orig,
                                              MGradientUtilsReverse *gutils,
                                              SmallVector<Value> caches,
                                              FunctionOpInterface fn) {
+  if (gutils->width != 1)
+    return orig->emitError() << "custom reverse rules only support width 1";
+
   std::vector<DIFFE_TYPE> ArgActivity, RetActivity;
   getCallActivity(orig, gutils, ArgActivity, RetActivity);
 
@@ -850,6 +853,9 @@ static CustomReverseRuleOp
 getSplitModeRule(Operation *orig, MGradientUtilsReverse *gutils,
                  FunctionOpInterface fn, std::vector<DIFFE_TYPE> &ArgActivity,
                  std::vector<DIFFE_TYPE> &RetActivity) {
+  if (gutils->width != 1)
+    return nullptr;
+
   CustomReverseRuleOp cr = selectCustomRule(fn, ArgActivity, RetActivity);
 
   auto authored = lookupCustomReverseRules(fn, "enzyme.custom_rule");
@@ -1165,6 +1171,7 @@ static bool splitRuleInProgress(Operation *orig, MGradientUtilsReverse *gutils,
 
   return llvm::any_of(*rules, [&](CustomReverseRuleOp rule) {
     return rule->hasAttr("enzyme.in_progress") &&
+           rule->hasAttr("enzyme.strong_zero") == gutils->strongZero &&
            rule.activityEquals(ArgAct, RetAct);
   });
 }

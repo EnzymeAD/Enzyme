@@ -56,9 +56,53 @@ module {
 // BATCH-DAG: func.func private @batched_sq(%arg0: tensor<3xf64>) -> tensor<3xf64> attributes {enzyme.custom_rule = [@batched_sq_rule]}
 // BATCH-DAG: enzyme.custom_reverse_rule @batched_sq_rule
 // BATCH-DAG: "enzyme.init"() : () -> !enzyme.Cache<tensor<3xf64>>
+// BATCH-DAG: enzyme.custom_reverse_rule.augmented_primal (%{{.+}}: tensor<3xf64>) -> tensor<3xf64>
+// BATCH-DAG: enzyme.custom_reverse_rule.reverse (%{{.+}}: tensor<3xf64>) -> tensor<3xf64>
 // BATCH-DAG: function_type = (tensor<3xf64>) -> tensor<3xf64>
 
-// AD-DAG: call @batched_sq_rule_primal
-// AD-DAG: call @batched_sq_rule_reverse
-// AD-DAG: dense<3.000000e+00> : tensor<3xf64>
+// AD-LABEL:  func.func @main(%arg0: tensor<3xf64>, %arg1: tensor<3xf64>) -> tensor<3xf64> {
+// AD-NEXT:    %0 = call @diffeouter(%arg0, %arg1) : (tensor<3xf64>, tensor<3xf64>) -> tensor<3xf64>
+// AD-NEXT:    return %0 : tensor<3xf64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @diffeouter(%arg0: tensor<3xf64>, %arg1: tensor<3xf64>) -> tensor<3xf64> {
+// AD-NEXT:    %0:2 = call @batched_elem_reverse_rule_primal(%arg0) : (tensor<3xf64>) -> (tensor<3xf64>, tensor<3xf64>)
+// AD-NEXT:    %1 = call @batched_elem_reverse_rule_reverse(%arg1, %0#1) : (tensor<3xf64>, tensor<3xf64>) -> tensor<3xf64>
+// AD-NEXT:    return %1 : tensor<3xf64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @batched_sq_rule_primal(%arg0: tensor<3xf64>) -> (tensor<3xf64>, tensor<3xf64>) {
+// AD-NEXT:    %0 = arith.mulf %arg0, %arg0 : tensor<3xf64>
+// AD-NEXT:    return %0, %arg0 : tensor<3xf64>, tensor<3xf64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @batched_sq_rule_reverse(%arg0: tensor<3xf64>, %arg1: tensor<3xf64>) -> tensor<3xf64> {
+// AD-NEXT:    %cst = arith.constant dense<3.000000e+00> : tensor<3xf64>
+// AD-NEXT:    %0 = arith.mulf %arg1, %cst : tensor<3xf64>
+// AD-NEXT:    %1 = arith.mulf %arg0, %0 : tensor<3xf64>
+// AD-NEXT:    return %1 : tensor<3xf64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @sq_rule_primal(%arg0: tensor<f64>) -> (tensor<f64>, tensor<f64>) {
+// AD-NEXT:    %0 = arith.mulf %arg0, %arg0 : tensor<f64>
+// AD-NEXT:    return %0, %arg0 : tensor<f64>, tensor<f64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @sq_rule_reverse(%arg0: tensor<f64>, %arg1: tensor<f64>) -> tensor<f64> {
+// AD-NEXT:    %cst = arith.constant dense<3.000000e+00> : tensor<f64>
+// AD-NEXT:    %0 = arith.mulf %arg1, %cst : tensor<f64>
+// AD-NEXT:    %1 = arith.mulf %arg0, %0 : tensor<f64>
+// AD-NEXT:    return %1 : tensor<f64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @batched_elem_reverse_rule_primal(%arg0: tensor<3xf64>) -> (tensor<3xf64>, tensor<3xf64>) {
+// AD-NEXT:    %0:2 = call @batched_sq_rule_primal(%arg0) : (tensor<3xf64>) -> (tensor<3xf64>, tensor<3xf64>)
+// AD-NEXT:    return %0#0, %0#1 : tensor<3xf64>, tensor<3xf64>
+// AD-NEXT:  }
+
+// AD-LABEL:  func.func private @batched_elem_reverse_rule_reverse(%arg0: tensor<3xf64>, %arg1: tensor<3xf64>) -> tensor<3xf64> {
+// AD-NEXT:    %0 = call @batched_sq_rule_reverse(%arg0, %arg1) : (tensor<3xf64>, tensor<3xf64>) -> tensor<3xf64>
+// AD-NEXT:    return %0 : tensor<3xf64>
+// AD-NEXT:  }
+
 // AD-NOT: enzyme.

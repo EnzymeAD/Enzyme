@@ -887,6 +887,9 @@ static ParseResult parseAugmentedFn(OpAsmParser &parser,
           resAttrs)))
     return failure();
 
+  for (const auto &arg : arguments)
+    argTys.push_back(arg.type);
+
   auto *body = result.addRegion();
   if (failed(
           parser.parseRegion(*body, arguments, /*enableNameShadowing*/ false)))

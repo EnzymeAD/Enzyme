@@ -760,6 +760,9 @@ mlir::enzyme::finalizeCustomReverseRule(enzyme::CustomReverseRuleOp rule) {
            << "todo: split-mode differentiation of a recursive call (a rule "
               "whose derivation reaches itself) is not supported";
 
+  if (!rule.getBody().hasOneBlock())
+    return rule->emitError() << "a custom reverse rule needs one body block";
+
   enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
   enzyme::CustomReverseRuleReverseOp reverse = nullptr;
   for (Operation &op : rule.getBody().front()) {
@@ -781,6 +784,10 @@ mlir::enzyme::finalizeCustomReverseRule(enzyme::CustomReverseRuleOp rule) {
 
   SmallVector<CacheInfo> caches;
   for (enzyme::InitOp init : getCustomReverseRuleCacheInits(rule)) {
+    if (std::distance(init.getResult().user_begin(),
+                      init.getResult().user_end()) != 2)
+      return init->emitError()
+             << "a custom rule cache needs one push and one pop";
     CacheInfo info(init.getResult());
     if (!info.pushOp || !info.popOp)
       return init->emitError() << "a custom rule cache needs one push and one "

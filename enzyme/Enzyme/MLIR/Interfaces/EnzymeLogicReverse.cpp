@@ -220,7 +220,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           addedType,
                           type_args,
                           overwritten_args,
-                          omp};
+                          omp,
+                          strongZero};
 
   {
     auto cachedFn = ReverseCachedFunctions.find(tup);
@@ -329,6 +330,11 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
     bool strongZero) {
 
+  if (width != 1) {
+    fn->emitError() << "custom reverse rules only support width 1";
+    return FlatSymbolRefAttr();
+  }
+
   SymbolTable symbolTable(SymbolTable::getNearestSymbolTable(fn));
 
   SmallVector<mlir::Attribute> argAttrs;
@@ -368,7 +374,9 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       if (failed(rules))
         continue;
       for (auto CR : *rules)
-        if (CR.activityEquals(ArgActivity, RetActivity))
+        if (CR.activityEquals(ArgActivity, RetActivity) &&
+            (attrName == "enzyme.custom_rule" ||
+             CR->hasAttr("enzyme.strong_zero") == strongZero))
           return FlatSymbolRefAttr::get(CR.getSymNameAttr());
     }
   }
@@ -410,6 +418,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       builder, fn.getLoc(), ruleNameAttr, TypeAttr::get(fn.getFunctionType()),
       argActivityAttr, retActivityAttr, /*sym_visibility=*/nullptr);
   ruleNameAttr = symbolTable.insert(customRule);
+  if (strongZero)
+    customRule->setAttr("enzyme.strong_zero", UnitAttr::get(fn.getContext()));
 
   appendCustomReverseRule(fn, "enzyme.derived_rules",
                           FlatSymbolRefAttr::get(ruleNameAttr));
