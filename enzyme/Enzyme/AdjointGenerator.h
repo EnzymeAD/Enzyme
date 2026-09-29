@@ -1210,6 +1210,13 @@ public:
         }
       }
 
+      // The shadow of integer-only memory mirrors the primal.
+      if (!diff && vd.isKnown() && !vd.anyPointer(orig_val, DL) &&
+          !vd.anyFloat(orig_val, DL)) {
+        auto rule = [&val]() { return val; };
+        diff = applyChainRule(valType, BuilderZ, rule);
+      }
+
       // TODO type analyze
       if (!diff) {
         diff = gutils->invertPointerM(orig_val, BuilderZ, vd);

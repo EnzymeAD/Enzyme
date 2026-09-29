@@ -3010,6 +3010,37 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    // is LLVM flang's assignment between descriptors; its derivative is the
+    // same assignment applied to the shadow descriptors.
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        if (!gutils->isConstantInstruction(&call)) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          Value *file = gutils->getNewFromOriginal(call.getArgOperand(2));
+          Value *line = gutils->getNewFromOriginal(call.getArgOperand(3));
+          Value *shadowTo =
+              gutils->invertPointerM(call.getArgOperand(0), Builder2);
+          Value *shadowFrom =
+              gutils->invertPointerM(call.getArgOperand(1), Builder2);
+
+          auto rule = [&](Value *sTo, Value *sFrom) {
+            auto dcall = Builder2.CreateCall(called->getFunctionType(), called,
+                                             {sTo, sFrom, file, line});
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+          };
+          applyChainRule(Builder2, rule, shadowTo, shadowFrom);
+
+          eraseIfUnused(call);
+          return true;
+        }
+      }
+    }
+
     /*
      * int gsl_sf_legendre_array_e(const gsl_sf_legendre_t norm,
                                    const size_t lmax,
