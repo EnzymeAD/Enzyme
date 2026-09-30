@@ -643,6 +643,140 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
     NULL,
     NULL};
 
+/* --- Tapenade's binomial scheduler (ADFirstAidKit adBinomial.c). ---
+ *
+ * With ENZYME_CKPT_ADBINOMIAL defined, EnzymeCkptADBinomial drives the loop
+ * with the schedule Tapenade's $AD BINOMIAL-CKP directive would use, for a
+ * like-for-like comparison with a Tapenade adjoint. adBinomial.c is not part
+ * of Enzyme: link the copy that comes with Tapenade (MITgcm ships one in
+ * tools/TAP_support/ADFirstAidKit). adBinomial keeps its sessions on a static
+ * stack, so loops using it may nest but must not interleave, and it allows
+ * about 98 snapshots in all. */
+#ifdef ENZYME_CKPT_ADBINOMIAL
+
+extern void adBinomial_init(int length, int nbSnap, int firstStep);
+extern int adBinomial_next(int *action, int *step);
+
+enum {
+  ENZYME_ADB_PUSHSNAP = 1,
+  ENZYME_ADB_LOOKSNAP = 2,
+  ENZYME_ADB_POPSNAP = 3,
+  ENZYME_ADB_ADVANCE = 4,
+  ENZYME_ADB_FIRSTTURN = 5,
+  ENZYME_ADB_TURN = 6
+};
+
+typedef struct enzyme_ckpt_adbinomial_state {
+  enzyme_ckpt_store store;
+  const EnzymeCkptConfig *config;
+  int64_t steps;
+  /* The snapshot stack: the step each snapshot was taken before. */
+  int64_t depth;
+  int64_t pos[128];
+  int done;
+} enzyme_ckpt_adbinomial_state;
+
+static inline void *enzyme_ckpt_adbinomial_init(void *data, int64_t nsteps,
+                                                uint64_t bytes) {
+  const EnzymeCkptConfig *config = (const EnzymeCkptConfig *)data;
+  enzyme_ckpt_adbinomial_state *s;
+  int64_t snaps = config->snapshots < 1 ? 1 : config->snapshots;
+  if (nsteps < 0)
+    enzyme_ckpt_fail("adBinomial needs the number of steps");
+  if (snaps > 97)
+    enzyme_ckpt_fail("adBinomial allows at most 97 snapshots");
+  s = (enzyme_ckpt_adbinomial_state *)calloc(1, sizeof(*s));
+  enzyme_ckpt_store_init(&s->store, config, bytes);
+  s->config = config;
+  s->steps = nsteps;
+  if (nsteps == 0)
+    s->done = 1;
+  else
+    adBinomial_init((int)nsteps, (int)snaps, 1);
+  return s;
+}
+
+/* adBinomial counts steps from 1 and issues one ADVANCE per step. */
+static inline void enzyme_ckpt_adbinomial_next(void *state,
+                                               EnzymeCkptAction *out) {
+  enzyme_ckpt_adbinomial_state *s = (enzyme_ckpt_adbinomial_state *)state;
+  int action, step;
+  out->cpnum = s->depth - 1;
+  if (s->done || !adBinomial_next(&action, &step)) {
+    s->done = 1;
+    out->flag = ENZYME_CKPT_DONE;
+    out->iteration = out->startiteration = 0;
+  } else {
+    switch (action) {
+    case ENZYME_ADB_PUSHSNAP:
+      if (s->depth == 128)
+        enzyme_ckpt_fail("adBinomial snapshot stack overflow");
+      out->flag = ENZYME_CKPT_STORE;
+      out->iteration = out->startiteration = step;
+      out->cpnum = s->depth;
+      s->pos[s->depth++] = step;
+      break;
+    case ENZYME_ADB_LOOKSNAP:
+    case ENZYME_ADB_POPSNAP:
+      out->flag = ENZYME_CKPT_RESTORE;
+      out->iteration = out->startiteration = s->pos[s->depth - 1];
+      if (action == ENZYME_ADB_POPSNAP)
+        s->depth--;
+      break;
+    case ENZYME_ADB_ADVANCE:
+      out->flag = ENZYME_CKPT_FORWARD;
+      out->startiteration = step - 1;
+      out->iteration = step;
+      break;
+    case ENZYME_ADB_FIRSTTURN:
+    case ENZYME_ADB_TURN:
+      out->flag = action == ENZYME_ADB_FIRSTTURN ? ENZYME_CKPT_FIRSTUTURN
+                                                 : ENZYME_CKPT_UTURN;
+      out->startiteration = step - 1;
+      out->iteration = step;
+      break;
+    default:
+      enzyme_ckpt_fail("unknown adBinomial action");
+    }
+  }
+  enzyme_ckpt_trace(s->config, &s->store, out);
+}
+
+static inline void enzyme_ckpt_adbinomial_store(
+    void *state, int64_t slot, int64_t step, const EnzymeCkptRegion *regions,
+    uint64_t nregions) {
+  (void)step;
+  enzyme_ckpt_store_put(&((enzyme_ckpt_adbinomial_state *)state)->store, slot,
+                        regions, nregions);
+}
+
+static inline void enzyme_ckpt_adbinomial_restore(
+    void *state, int64_t slot, int64_t step, const EnzymeCkptRegion *regions,
+    uint64_t nregions) {
+  (void)step;
+  enzyme_ckpt_store_get(&((enzyme_ckpt_adbinomial_state *)state)->store, slot,
+                        regions, nregions);
+}
+
+static inline void enzyme_ckpt_adbinomial_finalize(void *state) {
+  enzyme_ckpt_adbinomial_state *s = (enzyme_ckpt_adbinomial_state *)state;
+  enzyme_ckpt_finish(s->config, &s->store);
+  free(s);
+}
+
+static const EnzymeCheckpointScheme EnzymeCkptADBinomial = {
+    ENZYME_CKPT_ABI_VERSION,
+    enzyme_ckpt_adbinomial_init,
+    enzyme_ckpt_adbinomial_next,
+    enzyme_ckpt_adbinomial_store,
+    enzyme_ckpt_adbinomial_restore,
+    NULL,
+    enzyme_ckpt_adbinomial_finalize,
+    NULL,
+    NULL};
+
+#endif /* ENZYME_CKPT_ADBINOMIAL */
+
 #ifdef __cplusplus
 }
 #endif
