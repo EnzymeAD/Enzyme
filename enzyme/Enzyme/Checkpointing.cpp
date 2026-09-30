@@ -59,6 +59,11 @@ static constexpr const char *CheckpointRegionsAttr =
     "enzyme_checkpoint_nregions";
 static constexpr const char *CheckpointStepMD = "enzyme_checkpoint_step";
 
+// Slots the driver itself uses: the state the reverse sweep starts from, and
+// the state before the last step.
+static constexpr int64_t EntrySlot = -1;
+static constexpr int64_t LastSlot = -2;
+
 // Values of the protocol in include/enzyme/checkpoint.h.
 enum : int32_t {
   CKPT_STORE = 1,
@@ -82,10 +87,9 @@ enum VTableField : unsigned {
 };
 
 // Fields of the driver's handle. It holds the schedule from the forward to
-// the reverse pass, but neither the step's arguments, nor the regions, nor any
-// tape: each pass gets the arguments and regions from its own arguments, and
-// the tape of the last step travels in Enzyme's tape. Enzyme keeps those for
-// the reverse pass, and a garbage-collected frontend keeps them alive.
+// the reverse pass, but neither the step's arguments nor the regions: each
+// pass gets those from its own arguments, which Enzyme keeps for the reverse
+// pass (and a garbage-collected frontend keeps alive with them).
 enum HandleField : unsigned {
   H_VT = 0,
   H_Data,
@@ -480,7 +484,7 @@ struct DriverTypes {
     StoreFT = FunctionType::get(Void, {I8P, I64, I64, I8P, I64}, false);
     FinalizeFT = FunctionType::get(Void, {I8P}, false);
     StateFT = FunctionType::get(Void, {I8P, I64, I64, I8P}, false);
-    // The primal of step i, or its augmented forward and reverse passes.
+    // The primal of step i, or its derivative.
     StepFT = FunctionType::get(Void, {I8P, I64}, false);
     // vt, data, start, n, regions, nregions, bytes, env, primal
     FwdFT = FunctionType::get(
@@ -568,9 +572,13 @@ struct DriverBuilder {
     B.CreateCall(getIntrinsicDeclaration(F->getParent(), Intrinsic::trap), {});
     B.CreateUnreachable();
   }
+  Value *slot(int64_t s) { return ConstantInt::getSigned(T.I64, s); }
 };
 } // namespace
 
+/// The forward sweep: the schedule up to its first turn. The state before the
+/// last step goes to slot -2, and the last step runs without taping: the
+/// reverse sweep starts by restoring it and running its derivative.
 static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   if (auto *F = M.getFunction("__enzyme_ckpt_fwd"))
     return F;
@@ -630,10 +638,11 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.forwardSteps(primal, env, start, sit, it);
   B.CreateBr(loop);
 
-  // The caller runs the last step with taping; its tape is the first to be
-  // reversed.
   B.SetInsertPoint(turnBB);
-  D.store(T.Handle, h, H_LastJ, B.CreateSub(it, ConstantInt::get(T.I64, 1)));
+  Value *lastj = B.CreateSub(it, ConstantInt::get(T.I64, 1));
+  D.store(T.Handle, h, H_LastJ, lastj);
+  D.snapshot(true, vt, state, D.slot(LastSlot), lastj, regions, nregions, env);
+  D.callFn(primal, T.StepFT, {env, B.CreateAdd(start, lastj)});
   B.CreateRet(h);
 
   // Nothing to reverse (n == 0).
@@ -643,6 +652,9 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   return F;
 }
 
+/// The reverse sweep. It keeps the state it starts from in slot -1, and puts
+/// it back once the schedule is done: the primal state is left as the forward
+/// pass left it.
 static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   if (auto *F = M.getFunction("__enzyme_ckpt_rev"))
     return F;
@@ -659,21 +671,21 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   Value *vt = D.load(T.Handle, h, H_VT, "vt");
   Value *state = D.load(T.Handle, h, H_State, "state");
   Value *start = D.load(T.Handle, h, H_Start, "start");
+  Value *n = D.load(T.Handle, h, H_N, "n");
+  Value *lastj = D.load(T.Handle, h, H_LastJ, "lastj");
   Value *empty = D.load(T.Handle, h, H_Empty, "empty");
+  Value *isEmpty = B.CreateICmpNE(empty, ConstantInt::get(T.I32, 0));
 
-  // The caller has reversed the last step, which leaves the state as the
-  // reverse pass found it. Recomputing the others does not: keep that state in
-  // slot -1, and put it back once the schedule is done.
+  auto *first = D.block("firstuturn");
   auto *loop = D.block("loop");
   auto *finish = D.block("finish");
-  auto *entry = D.block("entry.snapshot");
   auto *free = D.block("free");
-  Value *isEmpty = B.CreateICmpNE(empty, ConstantInt::get(T.I32, 0));
-  Value *entrySlot = ConstantInt::getSigned(T.I64, -1);
-  Value *n = D.load(T.Handle, h, H_N, "n");
-  B.CreateCondBr(isEmpty, finish, entry);
-  B.SetInsertPoint(entry);
-  D.snapshot(true, vt, state, entrySlot, n, regions, nregions, env);
+  B.CreateCondBr(isEmpty, free, first);
+
+  B.SetInsertPoint(first);
+  D.snapshot(true, vt, state, D.slot(EntrySlot), n, regions, nregions, env);
+  D.snapshot(false, vt, state, D.slot(LastSlot), lastj, regions, nregions, env);
+  D.callFn(turn, T.StepFT, {env, B.CreateAdd(start, lastj)});
   B.CreateBr(loop);
 
   B.SetInsertPoint(loop);
@@ -716,10 +728,7 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   B.CreateBr(loop);
 
   B.SetInsertPoint(finish);
-  auto *restoreEntry = D.block("entry.restore");
-  B.CreateCondBr(isEmpty, free, restoreEntry);
-  B.SetInsertPoint(restoreEntry);
-  D.snapshot(false, vt, state, entrySlot, n, regions, nregions, env);
+  D.snapshot(false, vt, state, D.slot(EntrySlot), n, regions, nregions, env);
   B.CreateBr(free);
 
   B.SetInsertPoint(free);
@@ -814,29 +823,32 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
   return true;
 }
 
-static const AugmentedReturn &
-getStepAugmented(EnzymeLogic &Logic, RequestContext context, StepInfo &S,
-                 TypeAnalysis &TA, bool runtimeActivity, bool strongZero,
-                 bool AtomicAdd) {
-  // Later steps overwrite what a step reads: nothing is left uncached.
-  std::vector<bool> overwritten(S.step->arg_size(), true);
-  std::vector<bool> nowrite(S.step->arg_size(), false);
-  return Logic.CreateAugmentedPrimal(
-      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
-      /*returnUsed*/ false, /*shadowReturnUsed*/ false, S.stepTypeInfo,
-      /*subsequent_calls_may_write*/ true, overwritten, nowrite,
-      /*forceAnonymousTape*/ true, runtimeActivity, strongZero, /*width*/ 1,
-      AtomicAdd);
-}
-
-static Type *getTapeType(const AugmentedReturn &aug) {
-  auto found = aug.returns.find(AugmentedStruct::Tape);
-  if (found == aug.returns.end())
-    return nullptr;
-  Type *RT = aug.fn->getReturnType();
-  return found->second == -1
-             ? RT
-             : cast<StructType>(RT)->getElementType(found->second);
+/// The derivative of one step, its forward and reverse passes combined: a
+/// step is reversed right after it is rerun, so it needs no tape.
+static Function *getStepGradient(EnzymeLogic &Logic, RequestContext context,
+                                 StepInfo &S, TypeAnalysis &TA,
+                                 bool runtimeActivity, bool strongZero,
+                                 bool AtomicAdd) {
+  std::vector<bool> overwritten(S.step->arg_size(), false);
+  return Logic.CreatePrimalAndGradient(
+      context,
+      (ReverseCacheKey){.todiff = S.step,
+                        .retType = DIFFE_TYPE::CONSTANT,
+                        .constant_args = S.stepActivity,
+                        .subsequent_calls_may_write = false,
+                        .overwritten_args = overwritten,
+                        .returnUsed = false,
+                        .shadowReturnUsed = false,
+                        .mode = DerivativeMode::ReverseModeCombined,
+                        .width = 1,
+                        .freeMemory = true,
+                        .AtomicAdd = AtomicAdd,
+                        .additionalType = nullptr,
+                        .forceAnonymousTape = false,
+                        .typeInfo = S.stepTypeInfo,
+                        .runtimeActivity = runtimeActivity,
+                        .strongZero = strongZero},
+      TA, /*augmented*/ nullptr);
 }
 
 /// Load the step's arguments (and shadows, if `shadows`) from the env.
@@ -858,75 +870,21 @@ static void loadStepArgs(IRBuilder<> &B, StepInfo &S, Value *env, Value *i,
   }
 }
 
-static Function *createTrampoline(Module &M, FunctionType *FT,
-                                  const Twine &name) {
-  auto *F = Function::Create(FT, GlobalValue::InternalLinkage, name, &M);
-  BasicBlock::Create(M.getContext(), "entry", F);
-  return F;
-}
-
-/// Julia roots the values live across a call through the frame it builds from
-/// the task's GC stack; a function that calls into Julia code with a tape
-/// that is a Julia object in hand needs one.
-static void addGCStack(IRBuilder<> &B, Module &M) {
-  if (auto *F = M.getFunction("julia.get_pgcstack"))
-    B.CreateCall(F->getFunctionType(), F, {});
-}
-
-static Function *getPrimalTrampoline(DriverTypes &T, StepInfo &S) {
+/// `void (env, i)`: step i, run by `callee` with the step's arguments (and
+/// shadows) from the env.
+static Function *getTrampoline(DriverTypes &T, StepInfo &S, StringRef kind,
+                               Function *callee, bool shadows) {
   Module &M = *S.loop->getParent();
-  std::string name =
-      ("enzyme.ckpt.primal." + S.loop->getName() + "." + S.suffix).str();
+  std::string name = ("enzyme.ckpt." + kind + "." + S.loop->getName() + "." +
+                      S.suffix)
+                         .str();
   if (auto *F = M.getFunction(name))
     return F;
-  auto *F = createTrampoline(M, T.StepFT, name);
-  IRBuilder<> B(&F->getEntryBlock());
+  auto *F = Function::Create(T.StepFT, GlobalValue::InternalLinkage, name, &M);
+  IRBuilder<> B(BasicBlock::Create(M.getContext(), "entry", F));
   SmallVector<Value *, 8> args;
-  loadStepArgs(B, S, F->getArg(0), F->getArg(1), /*shadows*/ false, args);
-  B.CreateCall(S.step, args)->setCallingConv(S.step->getCallingConv());
-  B.CreateRetVoid();
-  return F;
-}
-
-/// Run the augmented forward pass of step `i` and return its tape.
-static Value *callAugmentedStep(IRBuilder<> &B, StepInfo &S, Value *env,
-                                Value *i, const AugmentedReturn &aug) {
-  SmallVector<Value *, 8> args;
-  loadStepArgs(B, S, env, i, /*shadows*/ true, args);
-  auto *call = B.CreateCall(aug.fn, args);
-  call->setCallingConv(aug.fn->getCallingConv());
-  auto found = aug.returns.find(AugmentedStruct::Tape);
-  if (found == aug.returns.end())
-    return nullptr;
-  return found->second == -1
-             ? (Value *)call
-             : B.CreateExtractValue(call, (unsigned)found->second);
-}
-
-/// Run the reverse pass of step `i` from its tape.
-static void callReverseStep(IRBuilder<> &B, StepInfo &S, Value *env, Value *i,
-                            Function *rev, Value *tape) {
-  SmallVector<Value *, 8> args;
-  loadStepArgs(B, S, env, i, /*shadows*/ true, args);
-  if (tape)
-    args.push_back(tape);
-  B.CreateCall(rev, args)->setCallingConv(rev->getCallingConv());
-}
-
-/// The augmented forward pass of step `i`, then its reverse pass: the tape
-/// never leaves this function.
-static Function *getTurnTrampoline(DriverTypes &T, StepInfo &S,
-                                   const AugmentedReturn &aug, Function *rev) {
-  Module &M = *S.loop->getParent();
-  std::string name =
-      ("enzyme.ckpt.turn." + S.loop->getName() + "." + S.suffix).str();
-  if (auto *F = M.getFunction(name))
-    return F;
-  auto *F = createTrampoline(M, T.StepFT, name);
-  IRBuilder<> B(&F->getEntryBlock());
-  addGCStack(B, M);
-  Value *tape = callAugmentedStep(B, S, F->getArg(0), F->getArg(1), aug);
-  callReverseStep(B, S, F->getArg(0), F->getArg(1), rev, tape);
+  loadStepArgs(B, S, F->getArg(0), F->getArg(1), shadows, args);
+  B.CreateCall(callee, args)->setCallingConv(callee->getCallingConv());
   B.CreateRetVoid();
   return F;
 }
@@ -1063,33 +1021,6 @@ static void printRegions(StepInfo &S) {
                  << DL.getTypeAllocSize(GV->getValueType()) << " bytes)\n";
 }
 
-/// The tape of a checkpointed loop: the driver's handle and, if the step has
-/// one, the tape of the last step.
-static Type *getLoopTapeType(DriverTypes &T, Type *stepTape) {
-  if (!stepTape)
-    return T.I8P;
-  return StructType::get(T.Ctx, {T.I8P, stepTape});
-}
-
-static Value *loadHandle(IRBuilder<> &B, DriverTypes &T, Value *h,
-                         HandleField idx, const Twine &name) {
-  Value *ptr = B.CreatePointerCast(h, getUnqual(T.Handle));
-  return B.CreateLoad(T.Handle->getElementType(idx),
-                      B.CreateStructGEP(T.Handle, ptr, idx), name);
-}
-
-/// Branch to `turn` if the schedule has a last step, to `after` otherwise, and
-/// return that step's index (valid in `turn`).
-static Value *branchOnLastStep(IRBuilder<> &B, DriverTypes &T, Value *h,
-                               BasicBlock *turn, BasicBlock *after) {
-  Value *empty = loadHandle(B, T, h, H_Empty, "empty");
-  Value *i = B.CreateAdd(loadHandle(B, T, h, H_Start, "start"),
-                         loadHandle(B, T, h, H_LastJ, "lastj"), "last");
-  B.CreateCondBr(B.CreateICmpNE(empty, ConstantInt::get(T.I32, 0)), after,
-                 turn);
-  return i;
-}
-
 Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
                                     Function *loop,
                                     ArrayRef<DIFFE_TYPE> constant_args,
@@ -1104,17 +1035,12 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   StepInfo S(loop);
   if (!getStepInfo(S, constant_args, typeInfo, width, context))
     return nullptr;
-  auto &aug = getStepAugmented(Logic, context, S, TA, runtimeActivity,
-                               strongZero, AtomicAdd);
-  Type *stepTape = getTapeType(aug);
-  Type *tapeTy = getLoopTapeType(T, stepTape);
 
-  auto *FT =
-      FunctionType::get(tapeTy, getInterleavedParams(loop, constant_args), false);
+  auto *FT = FunctionType::get(T.I8P, getInterleavedParams(loop, constant_args),
+                               false);
   auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
                              "augmented_" + loop->getName(), &M);
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
-  addGCStack(B, M);
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
 
@@ -1124,30 +1050,10 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
       {B.CreatePointerCast(primals[2], T.I8P),
        B.CreatePointerCast(primals[3], T.I8P), primals[0], primals[1],
        frame.regions, frame.nregions, frame.bytes, frame.env,
-       B.CreatePointerCast(getPrimalTrampoline(T, S), T.I8P)},
+       B.CreatePointerCast(
+           getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P)},
       "handle");
-
-  // The last step runs with taping here, so that its tape, which may be an
-  // object of a garbage-collected frontend, is only ever in Enzyme's tape.
-  auto *turn = BasicBlock::Create(Ctx, "last", F);
-  auto *done = BasicBlock::Create(Ctx, "done", F);
-  auto *entry = B.GetInsertBlock();
-  Value *i = branchOnLastStep(B, T, h, turn, done);
-  B.SetInsertPoint(turn);
-  Value *tape = callAugmentedStep(B, S, frame.env, i, aug);
-  B.CreateBr(done);
-
-  B.SetInsertPoint(done);
-  if (!stepTape) {
-    B.CreateRet(h);
-    return F;
-  }
-  auto *phi = B.CreatePHI(stepTape, 2, "lasttape");
-  phi->addIncoming(tape, turn);
-  phi->addIncoming(Constant::getNullValue(stepTape), entry);
-  Value *res = B.CreateInsertValue(UndefValue::get(tapeTy), h, 0);
-  res = B.CreateInsertValue(res, phi, 1);
-  B.CreateRet(res);
+  B.CreateRet(h);
   return F;
 }
 
@@ -1162,31 +1068,9 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   StepInfo S(loop);
   if (!getStepInfo(S, key.constant_args, key.typeInfo, key.width, context))
     return nullptr;
-  auto &aug = getStepAugmented(Logic, context, S, TA, key.runtimeActivity,
-                               key.strongZero, key.AtomicAdd);
-  Type *stepTape = getTapeType(aug);
-
-  std::vector<bool> overwritten(S.step->arg_size(), true);
-  Function *rev = Logic.CreatePrimalAndGradient(
-      context,
-      (ReverseCacheKey){.todiff = S.step,
-                        .retType = DIFFE_TYPE::CONSTANT,
-                        .constant_args = S.stepActivity,
-                        .subsequent_calls_may_write = true,
-                        .overwritten_args = overwritten,
-                        .returnUsed = false,
-                        .shadowReturnUsed = false,
-                        .mode = DerivativeMode::ReverseModeGradient,
-                        .width = 1,
-                        .freeMemory = true,
-                        .AtomicAdd = key.AtomicAdd,
-                        .additionalType = stepTape,
-                        .forceAnonymousTape = true,
-                        .typeInfo = S.stepTypeInfo,
-                        .runtimeActivity = key.runtimeActivity,
-                        .strongZero = key.strongZero},
-      TA, &aug);
-  if (!rev)
+  Function *grad = getStepGradient(Logic, context, S, TA, key.runtimeActivity,
+                                   key.strongZero, key.AtomicAdd);
+  if (!grad)
     return nullptr;
 
   auto params = getInterleavedParams(loop, key.constant_args);
@@ -1206,34 +1090,23 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
       FT, GlobalValue::InternalLinkage,
       (combined ? "diffe" : "diffe_rev_") + loop->getName(), &M);
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
-  addGCStack(B, M);
-  Value *tape;
+  Value *h;
   if (combined) {
     SmallVector<Value *, 8> args;
     for (auto &a : F->args())
       args.push_back(&a);
-    tape = B.CreateCall(augF, args, "tape");
+    h = B.CreateCall(augF, args, "handle");
   } else {
-    tape = F->getArg(F->arg_size() - 1);
+    h = B.CreatePointerCast(F->getArg(F->arg_size() - 1), T.I8P);
   }
-  Value *h = stepTape ? B.CreateExtractValue(tape, 0) : tape;
-  h = B.CreatePointerCast(h, T.I8P);
   PassFrame frame = buildFrame(B, F, S, key.constant_args, T);
-
-  // Reverse the last step from its tape, then the rest of the schedule.
-  auto *turn = BasicBlock::Create(Ctx, "last", F);
-  auto *rest = BasicBlock::Create(Ctx, "rest", F);
-  Value *i = branchOnLastStep(B, T, h, turn, rest);
-  B.SetInsertPoint(turn);
-  callReverseStep(B, S, frame.env, i, rev,
-                  stepTape ? B.CreateExtractValue(tape, 1) : nullptr);
-  B.CreateBr(rest);
-
-  B.SetInsertPoint(rest);
-  B.CreateCall(getOrCreateRevDriver(M, T),
-               {h, frame.regions, frame.nregions, frame.env,
-                B.CreatePointerCast(getPrimalTrampoline(T, S), T.I8P),
-                B.CreatePointerCast(getTurnTrampoline(T, S, aug, rev), T.I8P)});
+  B.CreateCall(
+      getOrCreateRevDriver(M, T),
+      {h, frame.regions, frame.nregions, frame.env,
+       B.CreatePointerCast(
+           getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
+       B.CreatePointerCast(getTrampoline(T, S, "turn", grad, /*shadows*/ true),
+                           T.I8P)});
   B.CreateRetVoid();
   return F;
 }
