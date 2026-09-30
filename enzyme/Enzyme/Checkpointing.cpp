@@ -125,18 +125,46 @@ static Function *getStep(const Function *F) {
 // Lowering of the marker
 //===----------------------------------------------------------------------===//
 
-static std::optional<StringRef> markerName(Value *V) {
+/// The name of the marker `V` is, and whether it is passed by reference: a
+/// C caller passes the marker's value, a Fortran caller (implicit interface)
+/// its address, and passes every argument after it by reference too.
+static std::optional<StringRef> markerName(Value *V, bool &byRef) {
   V = V->stripPointerCasts();
-  if (auto *LI = dyn_cast<LoadInst>(V))
+  byRef = true;
+  if (auto *LI = dyn_cast<LoadInst>(V)) {
     V = LI->getPointerOperand()->stripPointerCasts();
+    byRef = false;
+  }
   if (auto *GV = dyn_cast<GlobalVariable>(V))
     return GV->getName();
   return {};
 }
 
+/// Load the integer a by-reference argument points to, as an i64. The width
+/// is that of the variable, where it can be seen, and 64 bits otherwise.
+static Value *loadInteger(IRBuilder<> &B, Value *ptr) {
+  Type *I64 = B.getInt64Ty();
+  Type *T = nullptr;
+  Value *base = getBaseObject(ptr);
+  if (base == ptr->stripPointerCasts()) {
+    if (auto *AI = dyn_cast<AllocaInst>(base))
+      T = AI->getAllocatedType();
+    else if (auto *GV = dyn_cast<GlobalVariable>(base))
+      T = GV->getValueType();
+  }
+  if (!T || !T->isIntegerTy())
+    T = I64;
+  Value *V = B.CreateLoad(T, B.CreatePointerCast(ptr, getUnqual(T)));
+  return B.CreateSExtOrTrunc(V, I64);
+}
+
 static Value *castArg(IRBuilder<> &B, Value *V, Type *T) {
   if (V->getType() == T)
     return V;
+  // A scalar passed by reference to a step that takes it by value.
+  if (V->getType()->isPointerTy() &&
+      (T->isIntegerTy() || T->isFloatingPointTy()))
+    return B.CreateLoad(T, B.CreatePointerCast(V, getUnqual(T)));
   if (V->getType()->isIntegerTy() && T->isIntegerTy())
     return B.CreateSExtOrTrunc(V, T);
   if (V->getType()->isFloatingPointTy() && T->isFloatingPointTy())
@@ -225,12 +253,20 @@ static bool lowerMarker(CallInst *CI) {
   Value *vt = nullptr, *data = nullptr;
   SmallVector<std::pair<Value *, Value *>, 2> regions;
   unsigned idx = 3;
+  IRBuilder<> B(CI);
+  Type *I64 = Type::getInt64Ty(Ctx);
   while (idx < CI->arg_size()) {
-    auto name = markerName(CI->getArgOperand(idx));
+    bool byRef;
+    auto name = markerName(CI->getArgOperand(idx), byRef);
     if (name && *name == "enzyme_scheme") {
       if (idx + 2 >= CI->arg_size())
         return fail("enzyme_scheme needs a scheme and its data");
+      // By reference, the scheme is a variable holding its address, and the
+      // data is the object itself.
       vt = CI->getArgOperand(idx + 1);
+      if (byRef)
+        vt = B.CreateLoad(getInt8PtrTy(Ctx),
+                          B.CreatePointerCast(vt, getUnqual(getInt8PtrTy(Ctx))));
       data = CI->getArgOperand(idx + 2);
       idx += 3;
       continue;
@@ -238,8 +274,10 @@ static bool lowerMarker(CallInst *CI) {
     if (name && *name == "enzyme_checkpoint_region") {
       if (idx + 2 >= CI->arg_size())
         return fail("enzyme_checkpoint_region needs a pointer and a size");
-      regions.emplace_back(CI->getArgOperand(idx + 1),
-                           CI->getArgOperand(idx + 2));
+      Value *bytes = CI->getArgOperand(idx + 2);
+      if (byRef && bytes->getType()->isPointerTy())
+        bytes = loadInteger(B, bytes);
+      regions.emplace_back(CI->getArgOperand(idx + 1), bytes);
       idx += 3;
       continue;
     }
@@ -254,11 +292,12 @@ static bool lowerMarker(CallInst *CI) {
                 " arguments to a step that takes " +
                 Twine(stepFT->getNumParams() - 1) + " after the index");
 
-  IRBuilder<> B(CI);
-  Type *I64 = Type::getInt64Ty(Ctx);
   SmallVector<Value *, 8> args;
-  args.push_back(castArg(B, CI->getArgOperand(1), I64));
-  args.push_back(castArg(B, CI->getArgOperand(2), I64));
+  for (unsigned i = 1; i <= 2; i++) {
+    Value *V = CI->getArgOperand(i);
+    args.push_back(V->getType()->isPointerTy() ? loadInteger(B, V)
+                                               : castArg(B, V, I64));
+  }
   if (!args[0] || !args[1])
     return fail("the start and number of steps must be integers");
   args.push_back(vt);
@@ -300,7 +339,8 @@ bool lowerCheckpointMarkers(Module &M) {
       if (auto *CI = dyn_cast<CallInst>(&I)) {
         auto *callee =
             dyn_cast<Function>(CI->getCalledOperand()->stripPointerCasts());
-        if (callee && callee->getName().starts_with("__enzyme_checkpoint_for"))
+        // Fortran callers use an implicit interface to f__enzyme_...
+        if (callee && callee->getName().contains("__enzyme_checkpoint_for"))
           calls.push_back(CI);
       }
   bool changed = false;
