@@ -1012,9 +1012,10 @@ struct StepInfo {
   std::vector<DIFFE_TYPE> stepActivity;
   FnTypeInfo stepTypeInfo;
   /// The environment: the loop's step arguments, each followed by its shadow
-  /// if it has one.
+  /// (its `width` shadows) if it has one.
   StructType *env;
   std::string suffix;
+  unsigned width = 1;
 
   StepInfo(Function *loop)
       : loop(loop), step(getStep(loop)), firstArg(getFirstStepArg(loop)),
@@ -1022,18 +1023,22 @@ struct StepInfo {
 };
 } // namespace
 
+/// The type of the shadows of a value of type `T` in vector mode of `width`.
+static Type *getShadowType(Type *T, unsigned width) {
+  return width == 1 ? T : ArrayType::get(T, width);
+}
+
 static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
                         const FnTypeInfo &typeInfo, unsigned width,
                         RequestContext &context) {
-  if (width != 1) {
-    EmitNoDerivativeError("checkpointed loops do not support vector mode yet",
-                          S.loop, context);
-    return false;
-  }
+  // In vector mode the shadows come in `width`s, and the step's derivative
+  // takes them so: the schedule and the snapshots, of primal state only, are
+  // the same for all of them.
   LLVMContext &Ctx = S.loop->getContext();
+  S.width = width;
   S.stepActivity.push_back(DIFFE_TYPE::CONSTANT);
   SmallVector<Type *, 8> envTys;
-  S.suffix = "";
+  S.suffix = width == 1 ? "" : ("w" + Twine(width) + ".").str();
   for (unsigned k = S.firstArg; k < S.loop->arg_size(); k++) {
     DIFFE_TYPE act = constant_args[k];
     Type *T = S.loop->getArg(k)->getType();
@@ -1046,7 +1051,7 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
     case DIFFE_TYPE::DUP_NONEED:
       // The step reads its state, so it needs the primal too.
       act = DIFFE_TYPE::DUP_ARG;
-      envTys.push_back(T);
+      envTys.push_back(getShadowType(T, width));
       S.suffix += "d";
       break;
     case DIFFE_TYPE::OUT_DIFF:
@@ -1101,7 +1106,7 @@ static Function *getStepGradient(EnzymeLogic &Logic, RequestContext context,
                         .returnUsed = false,
                         .shadowReturnUsed = false,
                         .mode = DerivativeMode::ReverseModeCombined,
-                        .width = 1,
+                        .width = S.width,
                         .freeMemory = true,
                         .AtomicAdd = AtomicAdd,
                         .additionalType = nullptr,
@@ -1124,8 +1129,10 @@ static void loadStepArgs(IRBuilder<> &B, StepInfo &S, Value *env, Value *i,
     args.push_back(B.CreateLoad(T, B.CreateStructGEP(S.env, env, field)));
     field++;
     if (S.stepActivity[p] == DIFFE_TYPE::DUP_ARG) {
+      // In vector mode, the array of the shadows.
       if (shadows)
-        args.push_back(B.CreateLoad(T, B.CreateStructGEP(S.env, env, field)));
+        args.push_back(B.CreateLoad(S.env->getElementType(field),
+                                    B.CreateStructGEP(S.env, env, field)));
       field++;
     }
   }
@@ -1172,15 +1179,17 @@ static Function *getWhileTrampoline(DriverTypes &T, StepInfo &S) {
 // The augmented forward and reverse passes of the loop
 //===----------------------------------------------------------------------===//
 
-/// The loop's parameter types, each followed by its shadow if duplicated.
+/// The loop's parameter types, each followed by its shadow (or `width` of
+/// them) if duplicated.
 static SmallVector<Type *, 8>
-getInterleavedParams(Function *loop, ArrayRef<DIFFE_TYPE> constant_args) {
+getInterleavedParams(Function *loop, ArrayRef<DIFFE_TYPE> constant_args,
+                     unsigned width) {
   SmallVector<Type *, 8> params;
   for (unsigned k = 0; k < loop->arg_size(); k++) {
     params.push_back(loop->getArg(k)->getType());
     if (constant_args[k] == DIFFE_TYPE::DUP_ARG ||
         constant_args[k] == DIFFE_TYPE::DUP_NONEED)
-      params.push_back(loop->getArg(k)->getType());
+      params.push_back(getShadowType(loop->getArg(k)->getType(), width));
   }
   return params;
 }
@@ -1315,8 +1324,8 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   if (!getStepInfo(S, constant_args, typeInfo, width, context))
     return nullptr;
 
-  auto *FT = FunctionType::get(T.I8P, getInterleavedParams(loop, constant_args),
-                               false);
+  auto *FT = FunctionType::get(
+      T.I8P, getInterleavedParams(loop, constant_args, width), false);
   auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
                              "augmented_" + loop->getName(), &M);
   F->addFnAttr("enzyme_checkpoint_pass");
@@ -1377,7 +1386,7 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   if (!grad)
     return nullptr;
 
-  auto params = getInterleavedParams(loop, key.constant_args);
+  auto params = getInterleavedParams(loop, key.constant_args, key.width);
   bool combined = key.mode == DerivativeMode::ReverseModeCombined;
   Function *augF = nullptr;
   if (combined) {
