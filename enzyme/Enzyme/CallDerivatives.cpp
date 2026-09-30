@@ -4377,11 +4377,24 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    // The shadow pointer is built from the shadows of the extra arguments.
+    // An inactive argument (e.g. an index) is passed as is to every lane.
     SmallVector<Value *, 3> args;
-    for (size_t i = 0; i < 2; i++)
+    SmallVector<bool, 3> argIsShadow;
+    for (size_t i = 0; i < 2; i++) {
       args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-    for (size_t i = 2; i < call.arg_size(); ++i)
-      args.push_back(gutils->invertPointerM(call.getArgOperand(0), BuilderZ));
+      argIsShadow.push_back(false);
+    }
+    for (size_t i = 2; i < call.arg_size(); ++i) {
+      auto arg = call.getArgOperand(i);
+      if (gutils->isConstantValue(arg)) {
+        args.push_back(gutils->getNewFromOriginal(arg));
+        argIsShadow.push_back(false);
+      } else {
+        args.push_back(gutils->invertPointerM(arg, BuilderZ));
+        argIsShadow.push_back(true);
+      }
+    }
 
     Value *res = UndefValue::get(gutils->getShadowType(call.getType()));
     if (gutils->getWidth() == 1) {
@@ -4390,7 +4403,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       for (size_t w = 0; w < gutils->getWidth(); ++w) {
         SmallVector<Value *, 3> targs = {args[0], args[1]};
         for (size_t i = 2; i < call.arg_size(); ++i)
-          targs.push_back(GradientUtils::extractMeta(BuilderZ, args[i], w));
+          targs.push_back(argIsShadow[i]
+                              ? GradientUtils::extractMeta(BuilderZ, args[i], w)
+                              : args[i]);
 
         auto tres = BuilderZ.CreateCall(called, targs);
         res = BuilderZ.CreateInsertValue(res, tres, w);

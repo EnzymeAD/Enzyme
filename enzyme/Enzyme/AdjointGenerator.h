@@ -39,6 +39,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "Checkpointing.h"
 #include "DiffeGradientUtils.h"
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
@@ -786,8 +787,11 @@ public:
       //  have their derivative computed Note that this is too aggressive for
       //  general programs as if the global aliases with an argument something
       //  that is written to, then we will have a logical error
+      //  A global that some code in the module may write is not one of those:
+      //  the write may be in a callee whose derivative, which creates the
+      //  shadow, is only made after this load is visited.
       if (auto arg = dyn_cast<GlobalVariable>(I.getOperand(0))) {
-        if (!hasMetadata(arg, "enzyme_shadow")) {
+        if (!hasMetadata(arg, "enzyme_shadow") && !mayBeWrittenInModule(arg)) {
           return;
         }
       }
@@ -3326,6 +3330,11 @@ public:
                   break;
                 }
                 cur = cur->getPrevNode();
+                // We've hit the start of the block, assume written to by a
+                // previous block.
+                if (cur == nullptr) {
+                  writtenTo = true;
+                }
               }
 
               if (!writtenTo) {
@@ -4234,6 +4243,7 @@ public:
       {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
+        args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(
                 M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
@@ -4261,7 +4271,16 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
+        SmallVector<Value *, 2> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        if (ID == Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+            ID == Intrinsic::nvvm_barrier_cta_sync_aligned_count) {
+          auto *CB = cast<CallBase>(&I);
+          for (Use &arg : CB->args())
+            args.push_back(
+                lookup(gutils->getNewFromOriginal(arg.get()), Builder2));
+        }
+#endif
         auto cal = cast<CallInst>(
             Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
@@ -5211,6 +5230,26 @@ public:
     }
   }
 
+  /// The activity with which argument `i` of `call` is passed. The schedule
+  /// arguments of a checkpointed loop never carry a derivative, whatever the
+  /// values passed: a scheme is a table of function pointers, which would
+  /// otherwise be given a shadow made of the derivatives of those functions.
+  /// Its other arguments are needed in the reverse pass, primal included.
+  DIFFE_TYPE getCallArgDiffeType(llvm::CallInst &call, llvm::Function *called,
+                                 unsigned i, bool foreignFunction) {
+    // Derivatives of a loop function (a forward-mode one, differentiated
+    // again) keep its attributes: its schedule arguments stay inactive.
+    if (called && called->hasFnAttribute("enzyme_checkpoint") &&
+        called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+      return DIFFE_TYPE::CONSTANT;
+    if (isCheckpointLoop(called)) {
+      // The reverse pass reruns steps from the primal arguments.
+      auto ty = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      return ty == DIFFE_TYPE::DUP_NONEED ? DIFFE_TYPE::DUP_ARG : ty;
+    }
+    return gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+  }
+
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
@@ -5297,8 +5336,7 @@ public:
         if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
-        auto argTy =
-            gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+        auto argTy = getCallArgDiffeType(call, called, i, foreignFunction);
 
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
@@ -5572,7 +5610,7 @@ public:
           structAttrs[pre_args.size()].push_back(attr);
         }
 
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      auto argTy = getCallArgDiffeType(call, called, i, foreignFunction);
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;

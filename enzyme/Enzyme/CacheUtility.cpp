@@ -26,6 +26,8 @@
 
 #include "CacheUtility.h"
 
+#include "llvm/IR/PatternMatch.h"
+
 #include "FunctionUtils.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include <utility>
@@ -250,6 +252,41 @@ struct NonAffineClosedFormRewriter
 // "no flags" in every version.
 using NoWrapFlagsTy =
     decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
+
+/// PN is a header phi of L that is negated on every iteration, x_{i+1} = -x_i,
+/// such as the alternating sign of a cofactor expansion. Scalar evolution
+/// cannot express this recurrence, so without a closed form the reverse pass
+/// caches its value once per iteration. At iteration I it is x_0 when I is
+/// even and -x_0 when I is odd, i.e. x_0 * (1 - 2 * (I mod 2)), with the
+/// parity formed as I - 2 * (I / 2) (truncating I keeps its parity).
+static const SCEV *closedFormOfNegatingRecurrence(PHINode *PN, Loop *L,
+                                                  const SCEV *IterationNumber,
+                                                  ScalarEvolution &SE) {
+  using namespace llvm::PatternMatch;
+  if (!EnzymeRewriteAccumulators)
+    return nullptr;
+  auto Ty = dyn_cast<IntegerType>(PN->getType());
+  if (!Ty || Ty->getBitWidth() < 2 || PN->getNumIncomingValues() != 2)
+    return nullptr;
+  BasicBlock *Preheader = L->getLoopPreheader();
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Preheader || !Latch)
+    return nullptr;
+  Value *Next = PN->getIncomingValueForBlock(Latch);
+  if (!match(Next, m_Neg(m_Specific(PN))) &&
+      !match(Next, m_Mul(m_Specific(PN), m_AllOnes())))
+    return nullptr;
+  const SCEV *Init = SE.getSCEV(PN->getIncomingValueForBlock(Preheader));
+  if (!SE.isAvailableAtLoopEntry(Init, L))
+    return nullptr;
+  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, Ty);
+  const SCEV *Two = SE.getConstant(Ty, 2);
+  const SCEV *Parity =
+      SE.getMinusSCEV(I, SE.getMulExpr(Two, SE.getUDivExpr(I, Two)));
+  const SCEV *Factor =
+      SE.getMinusSCEV(SE.getOne(Ty), SE.getMulExpr(Two, Parity));
+  return SE.getMulExpr(Init, Factor);
+}
 
 /// PN is a header phi of L that scalar evolution could not classify. Recognize
 /// an accumulator whose per-iteration step is the trip count of an inner loop,
@@ -511,7 +548,10 @@ void RemoveRedundantIVs(
       // add-recurrence: otherwise SCEV folds the polynomial back into a
       // higher-degree recurrence, which the expander would materialize as a
       // fresh loop-carried phi, defeating the purpose.
-      S = closedFormOfCountedAccumulator(PN, L, SE.getUnknown(CanonicalIV), SE);
+      const SCEV *IterationNumber = SE.getUnknown(CanonicalIV);
+      S = closedFormOfNegatingRecurrence(PN, L, IterationNumber, SE);
+      if (!S)
+        S = closedFormOfCountedAccumulator(PN, L, IterationNumber, SE);
       if (!S)
         continue;
     } else if (EnzymeRewriteAccumulators) {
@@ -779,6 +819,91 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
   return LimitVar;
 }
 
+/// Compute the exact backedge-taken count of L (CouldNotCompute if it is not
+/// statically known) and the maximum number of iterations, ignoring exits that
+/// are guaranteed to reach unreachable.
+std::pair<const SCEV *, const SCEV *> CacheUtility::computeLoopLimit(Loop *L) {
+  const SCEV *MaxIterations = nullptr;
+  const SCEV *MayExitMaxBECount = nullptr;
+
+  SmallVector<BasicBlock *, 8> ExitingBlocks;
+  L->getExitingBlocks(ExitingBlocks);
+
+  // Remove all exiting blocks that are guaranteed
+  // to result in unreachable
+  for (auto &ExitingBlock : ExitingBlocks) {
+    BasicBlock *Exit = nullptr;
+    for (auto *SBB : successors(ExitingBlock)) {
+      if (!L->contains(SBB)) {
+        if (SE.GuaranteedUnreachable.count(SBB))
+          continue;
+        Exit = SBB;
+        break;
+      }
+    }
+    if (!Exit)
+      ExitingBlock = nullptr;
+  }
+  ExitingBlocks.erase(
+      std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
+      ExitingBlocks.end());
+
+  // Compute the exit in the scenarios where an unreachable
+  // is not hit
+  for (BasicBlock *ExitingBlock : ExitingBlocks) {
+    assert(L->contains(ExitingBlock));
+
+    ScalarEvolution::ExitLimit EL =
+        SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
+
+    bool seenHeaders = false;
+    SmallPtrSet<BasicBlock *, 4> Seen;
+    std::deque<BasicBlock *> Todo = {ExitingBlock};
+    while (Todo.size()) {
+      auto cur = Todo.front();
+      Todo.pop_front();
+      if (Seen.count(cur))
+        continue;
+      if (!L->contains(cur))
+        continue;
+      if (cur == L->getHeader()) {
+        seenHeaders = true;
+        break;
+      }
+      for (auto S : successors(cur)) {
+        Todo.push_back(S);
+      }
+    }
+    if (seenHeaders) {
+      if (MaxIterations == nullptr ||
+          MaxIterations == SE.getCouldNotCompute()) {
+        MaxIterations = EL.ExactNotTaken;
+      }
+      if (MaxIterations != SE.getCouldNotCompute()) {
+        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+          MaxIterations =
+              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+        }
+      }
+
+      if (MayExitMaxBECount == nullptr ||
+          EL.ExactNotTaken == SE.getCouldNotCompute())
+        MayExitMaxBECount = EL.ExactNotTaken;
+
+      if (EL.ExactNotTaken != MayExitMaxBECount) {
+        MayExitMaxBECount = SE.getCouldNotCompute();
+      }
+    }
+  }
+  if (MayExitMaxBECount == nullptr) {
+    MayExitMaxBECount = SE.getCouldNotCompute();
+  }
+  if (MaxIterations == nullptr) {
+    MaxIterations = SE.getCouldNotCompute();
+  }
+  return std::make_pair(MayExitMaxBECount, MaxIterations);
+}
+
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
   assert(BB->getParent() == newFunc);
@@ -829,86 +954,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
 
   const SCEV *Limit = nullptr;
   const SCEV *MaxIterations = nullptr;
-  {
-    const SCEV *MayExitMaxBECount = nullptr;
-
-    SmallVector<BasicBlock *, 8> ExitingBlocks;
-    L->getExitingBlocks(ExitingBlocks);
-
-    // Remove all exiting blocks that are guaranteed
-    // to result in unreachable
-    for (auto &ExitingBlock : ExitingBlocks) {
-      BasicBlock *Exit = nullptr;
-      for (auto *SBB : successors(ExitingBlock)) {
-        if (!L->contains(SBB)) {
-          if (SE.GuaranteedUnreachable.count(SBB))
-            continue;
-          Exit = SBB;
-          break;
-        }
-      }
-      if (!Exit)
-        ExitingBlock = nullptr;
-    }
-    ExitingBlocks.erase(
-        std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
-        ExitingBlocks.end());
-
-    // Compute the exit in the scenarios where an unreachable
-    // is not hit
-    for (BasicBlock *ExitingBlock : ExitingBlocks) {
-      assert(L->contains(ExitingBlock));
-
-      ScalarEvolution::ExitLimit EL =
-          SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
-
-      bool seenHeaders = false;
-      SmallPtrSet<BasicBlock *, 4> Seen;
-      std::deque<BasicBlock *> Todo = {ExitingBlock};
-      while (Todo.size()) {
-        auto cur = Todo.front();
-        Todo.pop_front();
-        if (Seen.count(cur))
-          continue;
-        if (!L->contains(cur))
-          continue;
-        if (cur == loopContexts[L].header) {
-          seenHeaders = true;
-          break;
-        }
-        for (auto S : successors(cur)) {
-          Todo.push_back(S);
-        }
-      }
-      if (seenHeaders) {
-        if (MaxIterations == nullptr ||
-            MaxIterations == SE.getCouldNotCompute()) {
-          MaxIterations = EL.ExactNotTaken;
-        }
-        if (MaxIterations != SE.getCouldNotCompute()) {
-          if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
-            MaxIterations =
-                SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
-          }
-        }
-
-        if (MayExitMaxBECount == nullptr ||
-            EL.ExactNotTaken == SE.getCouldNotCompute())
-          MayExitMaxBECount = EL.ExactNotTaken;
-
-        if (EL.ExactNotTaken != MayExitMaxBECount) {
-          MayExitMaxBECount = SE.getCouldNotCompute();
-        }
-      }
-    }
-    if (MayExitMaxBECount == nullptr) {
-      MayExitMaxBECount = SE.getCouldNotCompute();
-    }
-    if (MaxIterations == nullptr) {
-      MaxIterations = SE.getCouldNotCompute();
-    }
-    Limit = MayExitMaxBECount;
-  }
+  std::tie(Limit, MaxIterations) = computeLoopLimit(L);
   assert(Limit);
   Value *LimitVar = nullptr;
 
