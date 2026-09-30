@@ -55,6 +55,16 @@
  * Enzyme differentiates one step at a time, its forward and reverse passes
  * together, so no tape outlives a step.
  *
+ * Forward mode over this reverse mode (Hessian-vector products) runs the same
+ * schedule on the tangents of the steps: every step run forward advances the
+ * state and its tangent, and each turn runs the tangent of the step's
+ * adjoint. The regions then also hold the tangents of the marked regions, so
+ * a snapshot holds the state and its tangent (never the adjoints). The env of
+ * save_state/load_state then holds each argument followed by its tangent,
+ * its shadow and the shadow's tangent, those it has: a scheme that copies the
+ * state itself must copy its tangent too. A global with a derivative cannot
+ * be part of the state in this mode yet.
+ *
  * This header also has three reference schemes, used as
  * `enzyme_scheme, &EnzymeCkptRevolve, &config`:
  *

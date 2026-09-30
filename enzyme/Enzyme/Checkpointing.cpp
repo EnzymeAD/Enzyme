@@ -31,6 +31,9 @@
 //  - Per module: the driver `__enzyme_ckpt_fwd` / `__enzyme_ckpt_rev`, which
 //    runs the scheme's action loop.
 //
+// Forward mode over a pass calls the same driver with trampolines that run
+// the tangents of the step and of its reverse derivative.
+//
 //===----------------------------------------------------------------------===//
 
 #include "Checkpointing.h"
@@ -1588,5 +1591,292 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
                : getTrampoline(T, S, "turn", grad, /*shadows*/ true),
            T.I8P)});
   B.CreateRetVoid();
+  return F;
+}
+
+//===----------------------------------------------------------------------===//
+// Forward mode over the passes: Hessian-vector products
+//===----------------------------------------------------------------------===//
+//
+// The tangent of a pass runs the same schedule, through the same driver, on
+// the tangent of each step: every action that runs a step forward advances
+// both the state and its tangent, and each turn runs the tangent of the
+// step's reverse derivative. A snapshot holds the state and its tangent (the
+// tangents of the regions); never the adjoints, which the reverse sweep
+// consumes as it goes, nor their tangents.
+
+/// `ret (env, i)`: step i, run by `callee` with the fields `fields` of the
+/// env of type `envTy` as its arguments after the index. For a while loop
+/// (`FT` is WhileFT) it returns whether to go on.
+static Function *getEnvTrampoline(Module &M, FunctionType *FT,
+                                  const Twine &name, StructType *envTy,
+                                  ArrayRef<unsigned> fields, Function *callee) {
+  auto *F = Function::Create(FT, GlobalValue::InternalLinkage, name, &M);
+  IRBuilder<> B(BasicBlock::Create(M.getContext(), "entry", F));
+  Value *env = B.CreatePointerCast(F->getArg(0), getUnqual(envTy));
+  SmallVector<Value *, 8> args = {B.CreateSExtOrTrunc(
+      F->getArg(1), callee->getFunctionType()->getParamType(0))};
+  for (unsigned f : fields)
+    args.push_back(B.CreateLoad(envTy->getElementType(f),
+                                B.CreateStructGEP(envTy, env, f)));
+  auto *call = B.CreateCall(callee, args);
+  call->setCallingConv(callee->getCallingConv());
+  if (FT->getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else
+    B.CreateRet(B.CreateZExt(
+        B.CreateICmpNE(call, Constant::getNullValue(call->getType())),
+        FT->getReturnType()));
+  return F;
+}
+
+Function *createCheckpointForward(EnzymeLogic &Logic, RequestContext context,
+                                  Function *pass, DIFFE_TYPE retType,
+                                  ArrayRef<DIFFE_TYPE> constant_args,
+                                  TypeAnalysis &TA, bool returnUsed,
+                                  bool runtimeActivity, bool strongZero,
+                                  unsigned width) {
+  auto found = Logic.CheckpointPasses.find(pass);
+  if (found == Logic.CheckpointPasses.end()) {
+    EmitNoDerivativeError("Forward mode over " + pass->getName().str() +
+                              ", a pass of a checkpointed loop made by "
+                              "another Enzyme instance, is not supported",
+                          pass, context);
+    return nullptr;
+  }
+  // A copy: differentiating the step may add passes of nested loops.
+  EnzymeLogic::CheckpointPass P = found->second;
+  Function *loop = P.loop;
+  Module &M = *loop->getParent();
+  LLVMContext &Ctx = M.getContext();
+  DriverTypes T(Ctx);
+  const unsigned W = width;
+
+  StepInfo S(loop);
+  if (!getStepInfo(S, P.constant_args, P.typeInfo, P.width, context))
+    return nullptr;
+  bool isWhile = isWhileLoop(loop);
+  bool hasTurn = P.kind != EnzymeLogic::CheckpointPass::Augmented;
+
+  // The signature Enzyme's forward mode expects: each argument of the pass,
+  // followed by its tangent if it has one.
+  SmallVector<Type *, 16> params;
+  for (unsigned j = 0; j < pass->arg_size(); j++) {
+    Type *Ty = pass->getArg(j)->getType();
+    params.push_back(Ty);
+    if (constant_args[j] != DIFFE_TYPE::CONSTANT)
+      params.push_back(getShadowType(Ty, W));
+  }
+  // The handle carries no derivative (see notePass). Should the caller
+  // still ask for one, it gets null.
+  bool isAug = P.kind == EnzymeLogic::CheckpointPass::Augmented;
+  bool returnsShadow = isAug && retType != DIFFE_TYPE::CONSTANT;
+  Type *shadowTy = getShadowType(T.I8P, W);
+  Type *retTy = T.Void;
+  if (isAug && returnUsed && returnsShadow)
+    retTy = StructType::get(Ctx, {T.I8P, shadowTy});
+  else if (isAug && returnUsed)
+    retTy = T.I8P;
+  else if (returnsShadow)
+    retTy = shadowTy;
+  auto *FT = FunctionType::get(retTy, params, false);
+  auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
+                             "fwddiffe" + (W > 1 ? Twine(W) : Twine()) +
+                                 pass->getName(),
+                             &M);
+  F->addFnAttr(Attribute::NoInline);
+
+  // Each argument of the loop: its primal and tangent, and its shadow of the
+  // reverse mode (the adjoint) and that shadow's tangent.
+  struct LoopArg {
+    Value *x = nullptr, *dx = nullptr, *s = nullptr, *ds = nullptr;
+  };
+  SmallVector<LoopArg, 8> args(loop->arg_size());
+  Value *handle = nullptr;
+  {
+    auto *A = F->arg_begin();
+    unsigned j = 0;
+    auto next = [&](Value *&primal, Value *&tangent) {
+      primal = A++;
+      tangent = constant_args[j++] != DIFFE_TYPE::CONSTANT ? A++ : nullptr;
+    };
+    for (unsigned k = 0; k < loop->arg_size(); k++) {
+      next(args[k].x, args[k].dx);
+      if (P.constant_args[k] == DIFFE_TYPE::DUP_ARG ||
+          P.constant_args[k] == DIFFE_TYPE::DUP_NONEED)
+        next(args[k].s, args[k].ds);
+    }
+    if (P.kind == EnzymeLogic::CheckpointPass::Reverse) {
+      Value *unused;
+      next(handle, unused);
+    }
+  }
+
+  // The env: for each step argument, its primal, tangent, adjoint and the
+  // adjoint's tangent, those it has. The tangent of the step reads the first
+  // two, the tangent of its reverse derivative all four, in the order of
+  // their arguments.
+  SmallVector<Type *, 16> envTys;
+  SmallVector<Value *, 16> envVals;
+  SmallVector<unsigned, 8> stepFields, turnFields;
+  std::vector<DIFFE_TYPE> stepAct = {DIFFE_TYPE::CONSTANT};
+  std::vector<DIFFE_TYPE> turnAct = {DIFFE_TYPE::CONSTANT};
+  auto addField = [&](Value *V, bool forStep) {
+    if (forStep)
+      stepFields.push_back(envTys.size());
+    turnFields.push_back(envTys.size());
+    envTys.push_back(V->getType());
+    envVals.push_back(V);
+  };
+  for (unsigned k = S.firstArg; k < loop->arg_size(); k++) {
+    auto &a = args[k];
+    auto act = a.dx ? DIFFE_TYPE::DUP_ARG : DIFFE_TYPE::CONSTANT;
+    stepAct.push_back(act);
+    turnAct.push_back(act);
+    addField(a.x, true);
+    if (a.dx)
+      addField(a.dx, true);
+    if (a.s) {
+      turnAct.push_back(a.ds ? DIFFE_TYPE::DUP_ARG : DIFFE_TYPE::CONSTANT);
+      addField(a.s, false);
+      if (a.ds)
+        addField(a.ds, false);
+    }
+  }
+  auto *envTy = StructType::get(Ctx, envTys);
+
+  // The tangent of the step, and of its reverse derivative.
+  Function *tstep = Logic.CreateForwardDiff(
+      context, S.step, DIFFE_TYPE::CONSTANT, stepAct, TA,
+      /*returnValue*/ isWhile, DerivativeMode::ForwardMode,
+      /*freeMemory*/ true, runtimeActivity, strongZero, W,
+      /*additionalArg*/ nullptr, S.stepTypeInfo,
+      /*subsequent_calls_may_write*/ false,
+      std::vector<bool>(S.step->arg_size(), false), /*augmented*/ nullptr);
+  if (!tstep)
+    return nullptr;
+  Function *tturn = nullptr;
+  if (hasTurn) {
+    Function *grad = getStepGradient(Logic, context, S, TA, P.runtimeActivity,
+                                     P.strongZero, P.AtomicAdd);
+    if (!grad)
+      return nullptr;
+    assert(grad->arg_size() == turnAct.size());
+    FnTypeInfo gradTypeInfo(grad);
+    unsigned g = 0;
+    for (unsigned p = 0; p < S.stepActivity.size(); p++) {
+      TypeTree dt = S.stepTypeInfo.Arguments.find(S.step->getArg(p))->second;
+      gradTypeInfo.Arguments.insert({grad->getArg(g), dt});
+      gradTypeInfo.KnownValues.insert({grad->getArg(g), {}});
+      g++;
+      if (S.stepActivity[p] == DIFFE_TYPE::DUP_ARG) {
+        // In vector mode, the shadows come as an array: leave their type to
+        // the analysis.
+        gradTypeInfo.Arguments.insert(
+            {grad->getArg(g), S.width == 1 ? dt : TypeTree()});
+        gradTypeInfo.KnownValues.insert({grad->getArg(g), {}});
+        g++;
+      }
+    }
+    tturn = Logic.CreateForwardDiff(
+        context, grad, DIFFE_TYPE::CONSTANT, turnAct, TA,
+        /*returnValue*/ false, DerivativeMode::ForwardMode,
+        /*freeMemory*/ true, runtimeActivity, strongZero, W,
+        /*additionalArg*/ nullptr, gradTypeInfo,
+        /*subsequent_calls_may_write*/ false,
+        std::vector<bool>(grad->arg_size(), false), /*augmented*/ nullptr);
+    if (!tturn)
+      return nullptr;
+  }
+
+  // The regions: those marked, then their tangents, then the globals.
+  SmallVector<std::pair<Value *, Value *>, 8> marked, tangents;
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
+  for (unsigned r = 0; r < getNumRegions(loop); r++) {
+    auto &ptr = args[LoopFixedParams + 2 * r];
+    Value *size = args[LoopFixedParams + 2 * r + 1].x;
+    marked.emplace_back(ptr.x, size);
+    if (!ptr.dx)
+      continue;
+    for (unsigned w = 0; w < W; w++)
+      tangents.emplace_back(W == 1 ? ptr.dx : B.CreateExtractValue(ptr.dx, w),
+                            size);
+  }
+  marked.append(tangents.begin(), tangents.end());
+  // A global's tangent would be its shadow, but Enzyme gives a global one
+  // shadow for every order of differentiation: the tangent of the state
+  // would share memory with its adjoint, which the reverse derivative of the
+  // step accumulates into. (Forward over reverse of the plain loop gets it
+  // wrong too.) Only a global without a derivative, which has no shadow, can
+  // be snapshotted as before.
+  auto globals = getGlobalRegions(S.step);
+  for (auto *GV : globals) {
+    if (!GV->getMetadata("enzyme_shadow"))
+      continue;
+    EmitNoDerivativeError(
+        "Forward mode over the reverse mode of a checkpointed loop (" +
+            pass->getName().str() + ") is not supported when the step " +
+            "keeps differentiable state in a global (" +
+            GV->getName().str() +
+            "): its tangent and its adjoint would share the global's one "
+            "shadow. Pass the state as an argument (and mark it with "
+            "enzyme_checkpoint_region) instead.",
+        pass, context);
+    break;
+  }
+
+  // The env, and the frame.
+  PassFrame frame;
+  auto *env = B.CreateAlloca(envTy, nullptr, "env");
+  for (unsigned f = 0; f < envVals.size(); f++)
+    B.CreateStore(envVals[f], B.CreateStructGEP(envTy, env, f));
+  frame.env = B.CreatePointerCast(env, T.I8P);
+  buildRegions(B, S, T, marked, globals,
+               "enzyme.ckpt.regions." + S.step->getName(), frame);
+
+  // The trampolines, named after what they call. Each has its own env
+  // layout, so none is shared.
+  Function *tprimal =
+      getEnvTrampoline(M, T.StepFT, "enzyme.ckpt.tangent." + tstep->getName(),
+                       envTy, stepFields, tstep);
+  Value *tprimalP = B.CreatePointerCast(tprimal, T.I8P);
+
+  if (P.kind != EnzymeLogic::CheckpointPass::Reverse) {
+    auto [paths, npaths] = getPathsArg(B, S, T);
+    Value *twhile =
+        isWhile ? B.CreatePointerCast(
+                      getEnvTrampoline(M, T.WhileFT,
+                                       "enzyme.ckpt.tangent_while." +
+                                           tstep->getName(),
+                                       envTy, stepFields, tstep),
+                      T.I8P)
+                : (Value *)ConstantPointerNull::get(T.I8P);
+    handle = B.CreateCall(
+        getOrCreateFwdDriver(M, T),
+        {B.CreatePointerCast(args[2].x, T.I8P),
+         B.CreatePointerCast(args[3].x, T.I8P), args[0].x, args[1].x,
+         frame.regions, frame.nregions, frame.bytes, frame.env, tprimalP,
+         paths, ConstantInt::get(T.I64, npaths), twhile},
+        "handle");
+  }
+  if (hasTurn) {
+    Function *turn = getEnvTrampoline(
+        M, T.StepFT, "enzyme.ckpt.tangent_turn." + tturn->getName(), envTy,
+        turnFields, tturn);
+    B.CreateCall(getOrCreateRevDriver(M, T),
+                 {B.CreatePointerCast(handle, T.I8P), frame.regions,
+                  frame.nregions, frame.env, tprimalP,
+                  B.CreatePointerCast(turn, T.I8P)});
+  }
+  if (retTy->isVoidTy())
+    B.CreateRetVoid();
+  else if (!returnsShadow)
+    B.CreateRet(handle);
+  else if (!returnUsed)
+    B.CreateRet(Constant::getNullValue(shadowTy));
+  else
+    B.CreateRet(B.CreateInsertValue(
+        B.CreateInsertValue(UndefValue::get(retTy), handle, 0),
+        Constant::getNullValue(shadowTy), 1));
   return F;
 }
