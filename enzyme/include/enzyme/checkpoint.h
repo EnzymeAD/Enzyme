@@ -42,6 +42,11 @@
  *              step c.
  *   DONE       the schedule is complete. With n = 0 it is the first action.
  *
+ * Besides the slots the actions name, the reverse sweep stores the state it
+ * starts from in slot -1 and restores it when the schedule is done, so that
+ * the primal state is left as the forward pass left it. store and restore
+ * (or save_state and load_state) must accept slot -1.
+ *
  * This header also has three reference schemes, used as
  * `enzyme_scheme, &EnzymeCkptRevolve, &config`:
  *
@@ -161,9 +166,10 @@ static inline void enzyme_ckpt_fail(const char *msg) {
   abort();
 }
 
-static inline int enzyme_ckpt_on_disk(enzyme_ckpt_store *st, int64_t slot) {
+/* Slot -1 (the state the reverse sweep starts from) is kept at index 0. */
+static inline int enzyme_ckpt_on_disk(enzyme_ckpt_store *st, int64_t idx) {
   return st->config->spill_dir &&
-         (uint64_t)slot * st->bytes >= st->config->mem_budget;
+         (uint64_t)idx * st->bytes >= st->config->mem_budget;
 }
 
 static inline void enzyme_ckpt_path(enzyme_ckpt_store *st, int64_t slot,
@@ -184,11 +190,12 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
   uint64_t r, off = 0;
-  if (slot < 0)
+  int64_t idx = slot + 1;
+  if (slot < -1)
     enzyme_ckpt_fail("negative slot");
-  if (slot >= st->nslots) {
+  if (idx >= st->nslots) {
     int64_t n = st->nslots ? st->nslots : 4, i;
-    while (n <= slot)
+    while (n <= idx)
       n *= 2;
     st->slots = (void **)realloc(st->slots, n * sizeof(void *));
     for (i = st->nslots; i < n; i++)
@@ -198,10 +205,10 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
   for (r = 0; r < nregions; r++)
     if (regions[r].addrspace != 0)
       enzyme_ckpt_fail("reference store only handles address space 0");
-  if (enzyme_ckpt_on_disk(st, slot)) {
+  if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
     FILE *f;
-    enzyme_ckpt_path(st, slot, path, sizeof(path));
+    enzyme_ckpt_path(st, idx, path, sizeof(path));
     f = fopen(path, "wb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
@@ -209,15 +216,17 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
       if (fwrite(regions[r].ptr, 1, regions[r].bytes, f) != regions[r].bytes)
         enzyme_ckpt_fail("short write to spill file");
     fclose(f);
-    st->slots[slot] = (void *)1;
+    st->slots[idx] = (void *)1;
   } else {
-    if (!st->slots[slot])
-      st->slots[slot] = malloc(st->bytes ? st->bytes : 1);
+    if (!st->slots[idx])
+      st->slots[idx] = malloc(st->bytes ? st->bytes : 1);
     for (r = 0; r < nregions; r++) {
-      memcpy((char *)st->slots[slot] + off, regions[r].ptr, regions[r].bytes);
+      memcpy((char *)st->slots[idx] + off, regions[r].ptr, regions[r].bytes);
       off += regions[r].bytes;
     }
   }
+  if (slot < 0)
+    return;
   st->stats.stores++;
   if (slot + 1 > st->used)
     st->used = slot + 1;
@@ -231,12 +240,13 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
   uint64_t r, off = 0;
-  if (slot < 0 || slot >= st->nslots || !st->slots[slot])
+  int64_t idx = slot + 1;
+  if (slot < -1 || idx >= st->nslots || !st->slots[idx])
     enzyme_ckpt_fail("restore of a slot that was never stored");
-  if (enzyme_ckpt_on_disk(st, slot)) {
+  if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
     FILE *f;
-    enzyme_ckpt_path(st, slot, path, sizeof(path));
+    enzyme_ckpt_path(st, idx, path, sizeof(path));
     f = fopen(path, "rb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
@@ -246,11 +256,12 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
     fclose(f);
   } else {
     for (r = 0; r < nregions; r++) {
-      memcpy(regions[r].ptr, (char *)st->slots[slot] + off, regions[r].bytes);
+      memcpy(regions[r].ptr, (char *)st->slots[idx] + off, regions[r].bytes);
       off += regions[r].bytes;
     }
   }
-  st->stats.restores++;
+  if (slot >= 0)
+    st->stats.restores++;
 }
 
 static inline void enzyme_ckpt_store_free(enzyme_ckpt_store *st) {

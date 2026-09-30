@@ -71,6 +71,9 @@ static const char *names[] = {"revolve", "periodic", "store_all"};
 
 typedef struct {
   double du[N];
+  // The state after the gradient: the reverse pass must leave it as the
+  // forward pass did.
+  double u[N], glob[N];
   EnzymeCkptStats stats;
 } Result;
 
@@ -95,6 +98,8 @@ static Result gradient(int64_t n, const EnzymeCheckpointScheme *scheme,
                         &config);
     else
       __enzyme_autodiff((void *)plain, enzyme_dup, u, r.du, enzyme_const, n);
+    memcpy(r.u, u, sizeof(u));
+    memcpy(r.glob, glob, sizeof(glob));
     if (write(fd[1], &r, sizeof(r)) != sizeof(r))
       abort();
     _exit(0);
@@ -129,6 +134,12 @@ int main(void) {
                    ref.du[k]);
             failures++;
           }
+        }
+        if (memcmp(r.u, ref.u, sizeof(r.u)) ||
+            memcmp(r.glob, ref.glob, sizeof(r.glob))) {
+          printf("%s n=%lld snaps=%lld: state after the gradient differs\n",
+                 names[s], (long long)n, (long long)snaps[c]);
+          failures++;
         }
         // Every step is taped exactly once.
         if (r.stats.taped_steps != n) {
