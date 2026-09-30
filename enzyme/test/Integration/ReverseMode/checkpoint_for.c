@@ -150,11 +150,28 @@ int main(void) {
                  (long long)r.stats.taped_steps);
           failures++;
         }
-        // Revolve keeps at most `snaps` snapshots.
-        if (s == 0 && r.stats.max_slots > snaps[c]) {
-          printf("revolve n=%lld snaps=%lld: %lld slots\n", (long long)n,
-                 (long long)snaps[c], (long long)r.stats.max_slots);
-          failures++;
+        // Revolve keeps at most `snaps` snapshots; Periodic one per segment
+        // and those of one segment but its first and last steps; StoreAll
+        // one per step but the last. None needs one for the last step, the
+        // driver keeps it.
+        {
+          int64_t K = snaps[c] < n ? snaps[c] : n, bound = 0;
+          if (s == 0)
+            bound = snaps[c];
+          else if (s == 1 && n > 0)
+            bound = K + (n + K - 1) / K - 2;
+          else if (s == 2 && n > 0)
+            bound = n - 1;
+          if (r.stats.max_slots > bound || r.stats.max_slots > n ||
+              (s == 2 && (r.stats.max_slots != bound ||
+                          r.stats.stores != bound))) {
+            printf("%s n=%lld snaps=%lld: %lld slots, %lld stores, bound "
+                   "%lld\n",
+                   names[s], (long long)n, (long long)snaps[c],
+                   (long long)r.stats.max_slots, (long long)r.stats.stores,
+                   (long long)bound);
+            failures++;
+          }
         }
       }
   }
