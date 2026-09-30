@@ -55,6 +55,7 @@ static SupportKind baseSupport(DistBaseKind base) {
   case DistBaseKind::GAMMA:
   case DistBaseKind::HALF_NORMAL:
   case DistBaseKind::HALF_CAUCHY:
+  case DistBaseKind::HALF_STUDENT_T:
     return SupportKind::POSITIVE;
   case DistBaseKind::DIRICHLET:
     return SupportKind::SIMPLEX;
@@ -96,6 +97,7 @@ bool impulse::distSamplerEmittable(DistAttr dist) {
   switch (dist.getBase()) {
   case DistBaseKind::GAMMA:
   case DistBaseKind::STUDENT_T:
+  case DistBaseKind::HALF_STUDENT_T:
   case DistBaseKind::POISSON:
   case DistBaseKind::DIRICHLET:
     return false;
@@ -327,7 +329,7 @@ Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
 // `lognorm` depends only on the parameters, so it can be hoisted.
 struct LogpdfSplit {
   Value unnormed;
-  Value lognorm; // value-independent normalizer (scalar tensor)
+  Value lognorm; // null when `unnormed` is already the whole log density
 };
 
 Value splatSample(OpBuilder &b, Location loc, RankedTensorType sampleType,
@@ -593,6 +595,33 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
         arith::SubFOp::create(b, loc, splat(std::log(2.0 / M_PI)), logS);
     return {reduce(kernel), reduce(norm)};
   }
+  case DistBaseKind::HALF_STUDENT_T: {
+    Value df = bcast(distArgs[0]);
+    Value scale = bcast(distArgs[1]);
+    Value half = splat(0.5);
+    Value y = arith::DivFOp::create(b, loc, observed, scale);
+    Value logScale = math::LogOp::create(b, loc, scale);
+    Value halfLogDf =
+        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, df));
+    Value z = arith::AddFOp::create(b, loc, logScale, halfLogDf);
+    z = arith::AddFOp::create(b, loc, z, splat(0.5 * std::log(M_PI)));
+    Value halfDf = arith::MulFOp::create(b, loc, half, df);
+    z = arith::AddFOp::create(
+        b, loc, z, impulse::LgammaOp::create(b, loc, halfDf.getType(), halfDf));
+    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
+    Value halfDfp1 = arith::MulFOp::create(b, loc, half, dfp1);
+    z = arith::SubFOp::create(
+        b, loc, z,
+        impulse::LgammaOp::create(b, loc, halfDfp1.getType(), halfDfp1));
+    Value coef = arith::MulFOp::create(b, loc, splat(-0.5), dfp1);
+    Value y2df =
+        arith::DivFOp::create(b, loc, arith::MulFOp::create(b, loc, y, y), df);
+    Value kernel = arith::MulFOp::create(b, loc, coef,
+                                         math::Log1pOp::create(b, loc, y2df));
+    Value lp = arith::SubFOp::create(b, loc, kernel, z);
+    lp = arith::SubFOp::create(b, loc, lp, splat(std::log(0.5)));
+    return {reduce(lp), Value()};
+  }
   case DistBaseKind::DIRICHLET: {
     // The event is the last axis; only lgamma(sum_K alpha) is summed per block.
     int64_t K =
@@ -739,6 +768,8 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
   if (dist.getBase() != DistBaseKind::STD_NORMAL) {
     LogpdfSplit split =
         emitNativeLogpdfSplit(b, loc, dist.getBase(), observed, distArgs);
+    if (!split.lognorm)
+      return split.unnormed;
     return arith::AddFOp::create(b, loc, split.unnormed, split.lognorm);
   }
 

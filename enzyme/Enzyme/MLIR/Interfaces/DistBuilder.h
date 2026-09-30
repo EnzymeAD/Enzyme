@@ -57,9 +57,7 @@ ScaledUnitLowerCholeskyResult
 emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
                             int64_t d, Type elemType);
 
-/// STUDENT_T (draws a Gamma), and POISSON: their bitwise RNG stream cannot be
-/// reproduced without replaying the traced `@trace while` consumption, so those
-/// sites keep their traced sampler while the logpdf is still emitted.
+/// False for rejection-loop samplers, whose RNG stream cannot be replayed.
 bool distSamplerEmittable(DistAttr dist);
 
 /// Returns {newRng, value}.

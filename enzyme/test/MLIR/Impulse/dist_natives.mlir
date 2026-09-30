@@ -113,7 +113,55 @@ module {
       : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
+
+  // NumPyro LeftTruncatedDistribution(StudentT).log_prob operation order.
+  func.func private @hst_s(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    return %r, %sc : tensor<2xui64>, tensor<f64>
+  }
+  func.func @hst_model(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    %o:2 = impulse.sample @hst_s(%r, %df, %sc) {symbol = #impulse.symbol<9>, dist = #impulse.dist<HALF_STUDENT_T>}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
+  }
+  func.func @hst_top(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+    %t, %w, %rng, %v = impulse.generate @hst_model(%r, %df, %sc) given %c {selection = [[#impulse.symbol<9>]], constrained_addresses = [[#impulse.symbol<9>]]}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
+  }
 }
+
+// CHECK-LABEL: func.func @hst_model.generate
+// CHECK-DAG:   %[[HLOGHALF:.+]] = arith.constant dense<-0.69314718055994529> : tensor<f64>
+// CHECK-DAG:   %[[HNEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+// CHECK-DAG:   %[[HONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
+// CHECK-DAG:   %[[HHALFLOGPI:.+]] = arith.constant dense<0.57236494292470008> : tensor<f64>
+// CHECK-DAG:   %[[HHALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
+// CHECK-NOT:   impulse.random
+// CHECK:       %[[HX:.+]] = impulse.reshape %{{.+}} : (tensor<1x1xf64>) -> tensor<f64>
+// y = x / scale; z = log(scale) + 0.5*log(df) + 0.5*log(pi) + lgamma(df/2) - lgamma((df+1)/2):
+// CHECK-NEXT:  %[[HY:.+]] = arith.divf %[[HX]], %arg3 : tensor<f64>
+// CHECK-NEXT:  %[[HLS:.+]] = math.log %arg3 : tensor<f64>
+// CHECK-NEXT:  %[[HLDF:.+]] = math.log %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[HHLDF:.+]] = arith.mulf %[[HLDF]], %[[HHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HZ1:.+]] = arith.addf %[[HLS]], %[[HHLDF]] : tensor<f64>
+// CHECK-NEXT:  %[[HZ2:.+]] = arith.addf %[[HZ1]], %[[HHALFLOGPI]] : tensor<f64>
+// CHECK-NEXT:  %[[HHDF:.+]] = arith.mulf %arg2, %[[HHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HLG1:.+]] = impulse.lgamma %[[HHDF]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[HZ3:.+]] = arith.addf %[[HZ2]], %[[HLG1]] : tensor<f64>
+// CHECK-NEXT:  %[[HDFP1:.+]] = arith.addf %arg2, %[[HONE]] : tensor<f64>
+// CHECK-NEXT:  %[[HHDFP1:.+]] = arith.mulf %[[HDFP1]], %[[HHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HLG2:.+]] = impulse.lgamma %[[HHDFP1]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[HZ:.+]] = arith.subf %[[HZ3]], %[[HLG2]] : tensor<f64>
+// lp = (-0.5*(df+1) * log1p(y*y/df) - z) - log(0.5), returned whole (no split):
+// CHECK-NEXT:  %[[HCOEF:.+]] = arith.mulf %[[HDFP1]], %[[HNEGHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HY2:.+]] = arith.mulf %[[HY]], %[[HY]] : tensor<f64>
+// CHECK-NEXT:  %[[HY2DF:.+]] = arith.divf %[[HY2]], %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[HL1P:.+]] = math.log1p %[[HY2DF]] : tensor<f64>
+// CHECK-NEXT:  %[[HKER:.+]] = arith.mulf %[[HCOEF]], %[[HL1P]] : tensor<f64>
+// CHECK-NEXT:  %[[HLP0:.+]] = arith.subf %[[HKER]], %[[HZ]] : tensor<f64>
+// CHECK-NEXT:  %[[HLP:.+]] = arith.subf %[[HLP0]], %[[HLOGHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HLPR:.+]] = impulse.reshape %[[HLP]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %{{.+}} = arith.addf %[[HLPR]], %{{.+}} : tensor<f64>
 
 // CHECK-LABEL: func.func @gum_model.simulate
 // CHECK-DAG:   %[[GZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
