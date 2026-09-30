@@ -92,28 +92,33 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK: define internal void @diffef(
 ; CHECK:   call void @diffeenzyme.ckpt.for.step(i64 0, i64 %n, ptr %s, ptr %c, ptr %x, i64 32, ptr %x, ptr %"x'")
 
-; CHECK: define internal ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d)
-; CHECK-NEXT:   ret ptr %handle
+; The augmented pass runs the schedule up to its first turn, then the last step
+; with taping; the loop's tape is the driver's handle and that step's tape.
+; CHECK: define internal { ptr, ptr } @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
+; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d)
+; CHECK: last:
+; CHECK:   %[[TAPE:.+]] = call ptr @augmented_step(i64 %last{{.*}}, ptr %{{.*}}, ptr %{{.*}})
+; CHECK: done:
+; CHECK-NEXT:   %lasttape = phi ptr [ %[[TAPE]], %last ], [ null, %entry ]
 
 ; CHECK: define internal void @enzyme.ckpt.primal.enzyme.ckpt.for.step.d(ptr %0, i64 %1)
 ; CHECK:   call void @step(i64 %1, ptr %{{.*}})
 
-; CHECK: define internal ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d(ptr %0, i64 %1)
-; CHECK:   %[[TAPE:.+]] = call ptr @augmented_step(i64 %1, ptr %{{.*}}, ptr %{{.*}})
-; CHECK-NEXT:   ret ptr %[[TAPE]]
-
+; The reverse pass takes the step's arguments from its own, reverses the last
+; step from its tape, then runs the rest of the schedule.
 ; CHECK: define internal void @diffeenzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %handle = call ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; The reverse pass takes the step's arguments from its own.
-; CHECK:        %env = alloca { ptr, ptr }
-; CHECK:        store ptr %6, ptr
-; CHECK:        store ptr %7, ptr
-; CHECK:   call void @__enzyme_ckpt_rev(ptr %handle, ptr %regions, i64 2, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.rev.enzyme.ckpt.for.step.d)
-; CHECK-NEXT:   ret void
+; CHECK:   %tape = call { ptr, ptr } @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
+; CHECK:   %[[H:.+]] = extractvalue { ptr, ptr } %tape, 0
+; CHECK:   %env = alloca { ptr, ptr }
+; CHECK: last:
+; CHECK:   %[[LT:.+]] = extractvalue { ptr, ptr } %tape, 1
+; CHECK:   call void @diffestep(i64 %last{{.*}}, ptr %{{.*}}, ptr %{{.*}}, ptr %[[LT]])
+; CHECK: rest:
+; CHECK-NEXT:   call void @__enzyme_ckpt_rev(ptr %[[H]], ptr %regions, i64 2, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.turn.enzyme.ckpt.for.step.d)
 
-; CHECK: define internal void @enzyme.ckpt.rev.enzyme.ckpt.for.step.d(ptr %0, i64 %1, ptr %2)
-; CHECK:   call void @diffestep(i64 %1, ptr %{{.*}}, ptr %{{.*}}, ptr %2)
+; Other turns run the augmented and reverse passes of a step back to back.
+; CHECK: define internal void @enzyme.ckpt.turn.enzyme.ckpt.for.step.d(ptr %0, i64 %1)
+; CHECK:   %[[T:.+]] = call ptr @augmented_step(i64 %1, ptr %{{.*}}, ptr %{{.*}})
+; CHECK:   call void @diffestep(i64 %1, ptr %{{.*}}, ptr %{{.*}}, ptr %[[T]])
 
 ; CHECK: attributes #[[LOOPATTR]] = { noinline "enzyme_checkpoint"="for" "enzyme_checkpoint_nregions"="1" }
