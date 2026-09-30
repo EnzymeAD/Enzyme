@@ -25,7 +25,17 @@ entry:
 declare double @__enzyme_autodiff(ptr, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
-; CHECK-NOT: unreachable
-; CHECK: call {{(fast )?}}double @llvm.cos.f64(double %x)
-; CHECK: call {{(fast )?}}double @llvm.sin.f64(double %x)
-; CHECK: ret { double }
+; CHECK-NOT: @llvm.sin.
+; CHECK-NOT: @llvm.cos.
+; CHECK:   %[[sc:.+]] = call {{(fast )?}}{ double, double } @llvm.sincos.f64(double %x)
+; CHECK-NEXT:   %[[c:.+]] = extractvalue { double, double } %[[sc]], 1
+; CHECK-NEXT:   %[[ds:.+]] = extractvalue { double, double } %[[dsc:.+]], 0
+; CHECK-NEXT:   %[[cds:.+]] = fmul fast double %[[c]], %[[ds]]
+; CHECK-NEXT:   %[[s:.+]] = extractvalue { double, double } %[[sc]], 0
+; CHECK-NEXT:   %[[dc:.+]] = extractvalue { double, double } %[[dsc]], 1
+; CHECK-NEXT:   %[[sdc:.+]] = fmul fast double %[[s]], %[[dc]]
+; CHECK-NEXT:   %[[nsdc:.+]] = fneg fast double %[[sdc]]
+; CHECK-NEXT:   %[[res:.+]] = fadd fast double %[[cds]], %[[nsdc]]
+; CHECK-NEXT:   %[[ret:.+]] = insertvalue { double } undef, double %[[res]], 0
+; CHECK-NEXT:   ret { double } %[[ret]]
+; CHECK-NEXT: }

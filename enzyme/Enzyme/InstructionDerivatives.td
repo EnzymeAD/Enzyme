@@ -1024,8 +1024,8 @@ def : IntrPattern<(Op $x),
                   [["sincos", "20", ""]],
                   [
                   (
-                   ArrayRet (FMul (Intrinsic<"cos"> $x), (DiffeRet)),
-                            (FNeg (FMul (Intrinsic<"sin"> $x), (DiffeRet)))
+                   ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc)> $x):$callset), (DiffeRet)),
+                            (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet)))
                   )
                   ],
                   (ForwardFromSummedReverse)

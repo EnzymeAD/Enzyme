@@ -19,6 +19,14 @@ entry:
 declare { double, double } @__enzyme_fwddiff(ptr, ...)
 
 ; CHECK: define internal { double, double } @fwddiffetester(double %x, double %"x'")
-; CHECK: call {{(fast )?}}double @llvm.cos.f64(double %x)
-; CHECK: call {{(fast )?}}double @llvm.sin.f64(double %x)
-; CHECK: ret { double, double }
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = call {{(fast )?}}{ double, double } @llvm.sincos.f64(double %x)
+; CHECK-NEXT:   %1 = extractvalue { double, double } %0, 1
+; CHECK-NEXT:   %2 = fmul fast double %1, %"x'"
+; CHECK-NEXT:   %3 = insertvalue { double, double } undef, double %2, 0
+; CHECK-NEXT:   %4 = extractvalue { double, double } %0, 0
+; CHECK-NEXT:   %5 = fmul fast double %4, %"x'"
+; CHECK-NEXT:   %6 = fneg fast double %5
+; CHECK-NEXT:   %7 = insertvalue { double, double } %3, double %6, 1
+; CHECK-NEXT:   ret { double, double } %7
+; CHECK-NEXT: }
