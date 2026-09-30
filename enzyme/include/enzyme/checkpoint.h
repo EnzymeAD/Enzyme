@@ -59,10 +59,10 @@
  * `enzyme_scheme, &EnzymeCkptRevolve, &config`:
  *
  *   EnzymeCkptRevolve   binomial checkpointing, config.snapshots slots
- *   EnzymeCkptPeriodic  config.snapshots segments; the steps of the
- *                         segment being reversed are all stored
- *   EnzymeCkptStoreAll a snapshot before every step (periodic with one
- *                         segment)
+ *   EnzymeCkptPeriodic  config.snapshots segments; the steps of the segment
+ *                       being reversed are all stored
+ *   EnzymeCkptStoreAll  a snapshot before every step (periodic with one
+ *                       segment); also for while loops
  *
  * They keep snapshots in memory, or past config.mem_budget bytes in files
  * under config.spill_dir.
@@ -140,6 +140,17 @@ extern int enzyme_scheme;
 extern int enzyme_checkpoint_region;
 
 void __enzyme_checkpoint_for(void *step, int64_t start, int64_t n, ...);
+
+/* The loop
+ *
+ *     int64_t i = 0;
+ *     while (step(i++, args...));
+ *
+ * with the same markers. Its number of steps is only known when step returns
+ * false: init gets nsteps = -1, and set_nsteps the number of steps once the
+ * loop has ended, after which the schedule continues from the final state to
+ * its first turn. */
+void __enzyme_checkpoint_while(void *step, ...);
 
 /* ---------------------------------------------------------------------- */
 /* Reference schemes                                                       */
@@ -524,6 +535,10 @@ typedef struct enzyme_ckpt_periodic_state {
   int64_t qlen, qpos, qcap;
   int64_t segment; /* the segment whose actions are queued */
   int first;
+  /* A while loop still running: the next step, and whether to store before
+   * it. */
+  int online, pending;
+  int64_t pos;
 } enzyme_ckpt_periodic_state;
 
 static inline int64_t enzyme_ckpt_seg_start(enzyme_ckpt_periodic_state *p,
@@ -602,13 +617,54 @@ static inline void *enzyme_ckpt_periodic_init(void *data, int64_t nsteps,
 
 static inline void *enzyme_ckpt_store_all_init(void *data, int64_t nsteps,
                                                uint64_t bytes) {
-  return enzyme_ckpt_periodic_init_k((const EnzymeCkptConfig *)data, nsteps,
-                                     bytes, 1);
+  enzyme_ckpt_periodic_state *p;
+  if (nsteps >= 0)
+    return enzyme_ckpt_periodic_init_k((const EnzymeCkptConfig *)data, nsteps,
+                                       bytes, 1);
+  /* A while loop: store before every step until it ends. */
+  p = (enzyme_ckpt_periodic_state *)calloc(1, sizeof(*p));
+  enzyme_ckpt_store_init(&p->store, (const EnzymeCkptConfig *)data, bytes);
+  p->config = (const EnzymeCkptConfig *)data;
+  p->steps = -1;
+  p->segments = 1;
+  p->online = 1;
+  p->pending = 1;
+  return p;
+}
+
+/* The loop ended after n steps, with the state before each stored in slot
+ * 1 + j: go back to the last and reverse from there. */
+static inline void enzyme_ckpt_store_all_set_nsteps(void *state, int64_t n) {
+  enzyme_ckpt_periodic_state *p = (enzyme_ckpt_periodic_state *)state;
+  int64_t j;
+  p->online = 0;
+  p->steps = n;
+  p->segment = 0;
+  p->qlen = p->qpos = 0;
+  enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, n - 1, n - 1, n);
+  enzyme_ckpt_push(p, ENZYME_CKPT_FIRSTUTURN, n, n - 1, n);
+  for (j = n - 2; j >= 0; j--) {
+    enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, j, j, 1 + j);
+    enzyme_ckpt_push(p, ENZYME_CKPT_UTURN, j + 1, j, 1 + j);
+  }
 }
 
 static inline void enzyme_ckpt_periodic_next(void *state,
                                              EnzymeCkptAction *out) {
   enzyme_ckpt_periodic_state *p = (enzyme_ckpt_periodic_state *)state;
+  if (p->online) {
+    out->iteration = out->startiteration = p->pos;
+    out->cpnum = 1 + p->pos;
+    if (p->pending) {
+      out->flag = ENZYME_CKPT_STORE;
+    } else {
+      out->flag = ENZYME_CKPT_FORWARD;
+      out->iteration = ++p->pos;
+    }
+    p->pending = !p->pending;
+    enzyme_ckpt_trace(p->config, &p->store, out);
+    return;
+  }
   if (p->qpos == p->qlen) {
     p->qlen = p->qpos = 0;
     if (p->segment == 0 || p->steps == 0) {
@@ -666,7 +722,7 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
     enzyme_ckpt_periodic_next,
     enzyme_ckpt_periodic_store,
     enzyme_ckpt_periodic_restore,
-    NULL,
+    enzyme_ckpt_store_all_set_nsteps,
     enzyme_ckpt_periodic_finalize,
     NULL,
     NULL,

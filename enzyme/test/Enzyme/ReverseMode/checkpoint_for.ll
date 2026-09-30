@@ -100,7 +100,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 
 ; CHECK: define internal ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
 ; The step reads and writes all of what x points to.
-; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.paths.step, i64 3)
+; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.paths.step, i64 3, ptr null)
 ; CHECK-NEXT:   ret ptr %handle
 
 ; CHECK: define internal void @enzyme.ckpt.primal.enzyme.ckpt.for.step.d(ptr %0, i64 %1)
