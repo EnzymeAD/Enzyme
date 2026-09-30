@@ -161,7 +161,7 @@ typedef struct EnzymeCkptStats {
   int64_t taped_steps;   /* steps run with taping (one per step) */
   int64_t stores;
   int64_t restores;
-  int64_t max_slots; /* largest number of slots in use at once */
+  int64_t max_slots; /* largest number of slots holding a snapshot */
   uint64_t max_bytes;
 } EnzymeCkptStats;
 
@@ -217,6 +217,7 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
                                          uint64_t nregions) {
   uint64_t r, off = 0;
   int64_t idx = slot + 2;
+  int fresh;
   if (slot < -2)
     enzyme_ckpt_fail("negative slot");
   if (idx >= st->nslots) {
@@ -231,6 +232,7 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
   for (r = 0; r < nregions; r++)
     if (regions[r].addrspace != 0)
       enzyme_ckpt_fail("reference store only handles address space 0");
+  fresh = st->slots[idx] == NULL;
   if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
     FILE *f;
@@ -254,8 +256,10 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
   if (slot < 0)
     return;
   st->stats.stores++;
-  if (slot + 1 > st->used)
-    st->used = slot + 1;
+  // Slots are kept until the end: those that hold a snapshot, not the highest
+  // slot number, are what the schedule costs.
+  if (fresh)
+    st->used++;
   if (st->used > st->stats.max_slots) {
     st->stats.max_slots = st->used;
     st->stats.max_bytes = (uint64_t)st->used * st->bytes;
@@ -562,21 +566,35 @@ static inline void enzyme_ckpt_push(enzyme_ckpt_periodic_state *p,
   a->cpnum = cpnum;
 }
 
+/* The slot of the state before step j of segment k: the segment's own slot k
+ * for its first step, then slots K on, shared by all segments. */
+static inline int64_t enzyme_ckpt_seg_slot(enzyme_ckpt_periodic_state *p,
+                                           int64_t k, int64_t j) {
+  int64_t s = enzyme_ckpt_seg_start(p, k);
+  return j == s ? k : p->segments + (j - s - 1);
+}
+
 /* Queue the reversal of segment k, whose start is already the state. The last
- * segment's last step is the first u-turn. */
+ * segment's last step is the first u-turn. Every segment but the last already
+ * has its start in slot k, from the forward sweep. */
 static inline void enzyme_ckpt_queue_segment(enzyme_ckpt_periodic_state *p,
                                              int64_t k, int first) {
   int64_t s = enzyme_ckpt_seg_start(p, k), e = enzyme_ckpt_seg_start(p, k + 1);
-  int64_t K = p->segments, j;
+  int64_t j;
   for (j = s; j < e - 1; j++) {
-    enzyme_ckpt_push(p, ENZYME_CKPT_STORE, j, j, K + (j - s));
-    enzyme_ckpt_push(p, ENZYME_CKPT_FORWARD, j + 1, j, K + (j - s));
+    if (j != s || first)
+      enzyme_ckpt_push(p, ENZYME_CKPT_STORE, j, j,
+                       enzyme_ckpt_seg_slot(p, k, j));
+    enzyme_ckpt_push(p, ENZYME_CKPT_FORWARD, j + 1, j,
+                     enzyme_ckpt_seg_slot(p, k, j));
   }
   enzyme_ckpt_push(p, first ? ENZYME_CKPT_FIRSTUTURN : ENZYME_CKPT_UTURN, e,
-                   e - 1, K + (e - 1 - s));
+                   e - 1, enzyme_ckpt_seg_slot(p, k, e - 1));
   for (j = e - 2; j >= s; j--) {
-    enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, j, j, K + (j - s));
-    enzyme_ckpt_push(p, ENZYME_CKPT_UTURN, j + 1, j, K + (j - s));
+    enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, j, j,
+                     enzyme_ckpt_seg_slot(p, k, j));
+    enzyme_ckpt_push(p, ENZYME_CKPT_UTURN, j + 1, j,
+                     enzyme_ckpt_seg_slot(p, k, j));
   }
 }
 
@@ -633,7 +651,7 @@ static inline void *enzyme_ckpt_store_all_init(void *data, int64_t nsteps,
 }
 
 /* The loop ended after n steps, with the state before each stored in slot
- * 1 + j: go back to the last and reverse from there. */
+ * j: go back to the last and reverse from there. */
 static inline void enzyme_ckpt_store_all_set_nsteps(void *state, int64_t n) {
   enzyme_ckpt_periodic_state *p = (enzyme_ckpt_periodic_state *)state;
   int64_t j;
@@ -641,11 +659,11 @@ static inline void enzyme_ckpt_store_all_set_nsteps(void *state, int64_t n) {
   p->steps = n;
   p->segment = 0;
   p->qlen = p->qpos = 0;
-  enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, n - 1, n - 1, n);
-  enzyme_ckpt_push(p, ENZYME_CKPT_FIRSTUTURN, n, n - 1, n);
+  enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, n - 1, n - 1, n - 1);
+  enzyme_ckpt_push(p, ENZYME_CKPT_FIRSTUTURN, n, n - 1, n - 1);
   for (j = n - 2; j >= 0; j--) {
-    enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, j, j, 1 + j);
-    enzyme_ckpt_push(p, ENZYME_CKPT_UTURN, j + 1, j, 1 + j);
+    enzyme_ckpt_push(p, ENZYME_CKPT_RESTORE, j, j, j);
+    enzyme_ckpt_push(p, ENZYME_CKPT_UTURN, j + 1, j, j);
   }
 }
 
@@ -654,7 +672,7 @@ static inline void enzyme_ckpt_periodic_next(void *state,
   enzyme_ckpt_periodic_state *p = (enzyme_ckpt_periodic_state *)state;
   if (p->online) {
     out->iteration = out->startiteration = p->pos;
-    out->cpnum = 1 + p->pos;
+    out->cpnum = p->pos;
     if (p->pending) {
       out->flag = ENZYME_CKPT_STORE;
     } else {
