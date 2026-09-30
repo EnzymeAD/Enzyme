@@ -6685,6 +6685,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     if (startsWith(demangledName, Name))
       return F;
 
+  if (isFlangRuntimeNoFree(F->getName()))
+    return F;
+
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
   case Intrinsic::lifetime_end:

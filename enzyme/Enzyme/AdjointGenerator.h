@@ -1943,7 +1943,13 @@ public:
       size_t l1 = count.getKnownMinValue();
       uint64_t instidx = 0;
 
-      for (size_t idx : SVI.getShuffleMask()) {
+      for (int maskidx : SVI.getShuffleMask()) {
+        // A poison lane (-1) takes no element of the operands.
+        if (maskidx < 0) {
+          ++instidx;
+          continue;
+        }
+        size_t idx = maskidx;
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
 
@@ -3382,6 +3388,16 @@ public:
         }
       }
       if (!vd.isKnownPastPointer()) {
+        // Zeroing memory of unknown type (e.g. adjacent Fortran COMMON
+        // scalars merged into one memset): with float semantics the shadow
+        // is zeroed in the reverse pass, which is also correct for integers.
+        if (auto CV = dyn_cast<ConstantInt>(MS.getArgOperand(1)))
+          if (CV->isZero()) {
+            Type *FT = (size % 8 == 0) ? Type::getDoubleTy(MS.getContext())
+                                       : Type::getFloatTy(MS.getContext());
+            vd = TypeTree(ConcreteType(FT)).Only(-1, &MS);
+            goto known;
+          }
         if (looseTypeAnalysis) {
 #if LLVM_VERSION_MAJOR < 17
           if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
@@ -3702,6 +3718,16 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        // A copy from a constant string (e.g. a Fortran character literal
+        // @_QQcl...) copies integer data.
+        if (auto GV = dyn_cast<GlobalVariable>(getBaseObject(orig_src)))
+          if (GV->isConstant() && GV->hasInitializer())
+            if (auto CDS =
+                    dyn_cast<ConstantDataSequential>(GV->getInitializer()))
+              if (CDS->getElementType()->isIntegerTy(8)) {
+                vd = TypeTree(BaseType::Integer).Only(-1, &MTI);
+                goto known;
+              }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
@@ -6266,6 +6292,13 @@ public:
       if (Mode == DerivativeMode::ReverseModeGradient && subdata) {
         for (size_t i = 0; i < argsInverted.size(); i++) {
           if (subdata->constant_args[i] == argsInverted[i])
+            continue;
+          // A custom augmented forward pass is massaged to take shadows of
+          // its constant arguments (CreateAugmentedPrimal); the custom
+          // reverse pass massages its constant arguments the same way
+          // (CreatePrimalAndGradient), so keep them constant here.
+          if (argsInverted[i] == DIFFE_TYPE::CONSTANT &&
+              hasMetadata(called, "enzyme_gradient"))
             continue;
           assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
           assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);

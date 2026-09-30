@@ -410,6 +410,20 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // LLVM flang runtime I/O (the I/O statement state that _FortranAioBegin*
+  // returns is released by _FortranAioEndIoStatement), character
+  // inquiries, MOD, timing and termination. With -enzyme-global-activity, a call to a function without
+  // body may otherwise return an allocation needed in the reverse pass, and
+  // Enzyme differentiates even inactive calls to it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }

@@ -486,6 +486,45 @@ bool preserveNVVM(bool Begin, Module &M,
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
 
+  // LLVM flang's MOD and MODULO of reals (_FortranAModReal<k>(a, p, file,
+  // line), _FortranAModuloReal<k>): lower them to frem, which Enzyme
+  // differentiates. MOD(a, p) is frem; MODULO(a, p) is frem plus p when the
+  // remainder is nonzero and its sign differs from that of p.
+  if (Begin) {
+    SmallVector<CallInst *, 4> modCalls;
+    for (Function &Caller : M)
+      for (BasicBlock &BB : Caller)
+        for (Instruction &I : BB)
+          if (auto *Call = dyn_cast<CallInst>(&I))
+            if (auto *Callee = Call->getCalledFunction()) {
+              auto name = Callee->getName();
+              if ((name.starts_with("_FortranAModReal") ||
+                   name.starts_with("_FortranAModuloReal")) &&
+                  Call->arg_size() >= 2 &&
+                  Call->getType()->isFloatingPointTy() &&
+                  Call->getArgOperand(0)->getType() == Call->getType() &&
+                  Call->getArgOperand(1)->getType() == Call->getType())
+                modCalls.push_back(Call);
+            }
+    for (CallInst *Call : modCalls) {
+      IRBuilder<> B(Call);
+      Value *a = Call->getArgOperand(0), *p = Call->getArgOperand(1);
+      Value *r = B.CreateFRem(a, p);
+      if (Call->getCalledFunction()->getName().starts_with(
+              "_FortranAModuloReal")) {
+        auto zero = ConstantFP::get(Call->getType(), 0.0);
+        Value *adjust =
+            B.CreateAnd(B.CreateFCmpUNE(r, zero),
+                        B.CreateXor(B.CreateFCmpOLT(r, zero),
+                                    B.CreateFCmpOLT(p, zero)));
+        r = B.CreateSelect(adjust, B.CreateFAdd(r, p), r);
+      }
+      Call->replaceAllUsesWith(r);
+      Call->eraseFromParent();
+      changed = true;
+    }
+  }
+
   // Flang cannot construct the constant function/string aggregate used by
   // __enzyme_function_like. The Fortran binding instead passes a function and
   // a BIND(C) global whose name is enzyme_math_<function>.
@@ -763,6 +802,10 @@ bool preserveNVVM(bool Begin, Module &M,
                           MDTuple::get(g.getContext(),
                                        {ConstantAsMetadata::get(shadow)}));
           declaredShadows.push_back(shadow);
+          // Keep the global itself too: once the table is gone, global SRA
+          // could split it (e.g. a Fortran COMMON block into @blk.0, ...)
+          // into new globals that lack the enzyme_shadow metadata.
+          declaredShadows.push_back(GV);
         };
         Constant *init = g.getInitializer();
         auto CA = dyn_cast<ConstantAggregate>(init);
