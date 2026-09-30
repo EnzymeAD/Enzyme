@@ -5710,7 +5710,9 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       auto ptr = TypeTree(BaseType::Pointer);
       if (shadowHandlers.find(funcName) == shadowHandlers.end() &&
           funcName != "swift_allocObject") {
-        if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        // aligned_alloc(alignment, size) takes the size second.
+        if (auto CI = dyn_cast<ConstantInt>(
+                call.getOperand(funcName == "aligned_alloc" ? 1 : 0))) {
           auto &DL =
               call.getParent()->getParent()->getParent()->getDataLayout();
           auto LoadSize = CI->getZExtValue();
