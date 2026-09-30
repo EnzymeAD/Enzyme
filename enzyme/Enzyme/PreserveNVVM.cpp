@@ -714,7 +714,7 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
   SmallVector<GlobalVariable *, 1> toErase;
-  // Shadows registered by __enzyme_shadow_global.
+  // Globals and shadows registered by __enzyme_shadow_global.
   SmallVector<GlobalValue *, 1> declaredShadows;
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
@@ -763,6 +763,10 @@ bool preserveNVVM(bool Begin, Module &M,
                           MDTuple::get(g.getContext(),
                                        {ConstantAsMetadata::get(shadow)}));
           declaredShadows.push_back(shadow);
+          // Keep the global itself too: once the table is gone, global SRA
+          // could split it (e.g. a Fortran COMMON block into @blk.0, ...)
+          // into new globals that lack the enzyme_shadow metadata.
+          declaredShadows.push_back(GV);
         };
         Constant *init = g.getInitializer();
         auto CA = dyn_cast<ConstantAggregate>(init);
@@ -1031,10 +1035,11 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
 
-  // The table was what kept the shadows referenced: without it, a shadow that
-  // the program only writes (e.g. a seed) would be removed as write-only
-  // before the derivatives that read it exist, leaving the enzyme_shadow
-  // metadata dangling.
+  // The table was what kept the globals and shadows referenced: without it,
+  // a shadow that the program only writes (e.g. a seed) would be removed as
+  // write-only before the derivatives that read it exist, leaving the
+  // enzyme_shadow metadata dangling, and a global could be split into new
+  // globals without that metadata.
   if (!declaredShadows.empty())
     appendToCompilerUsed(M, declaredShadows);
 

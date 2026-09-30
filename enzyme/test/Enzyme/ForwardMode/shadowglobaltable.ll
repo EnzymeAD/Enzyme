@@ -41,6 +41,9 @@ declare double @__enzyme_fwddiff(...)
 ; CHECK: @_QMmo_cfgEdivdamp_fac = dso_local local_unnamed_addr global double 2.500000e-03, align 8, !enzyme_shadow ![[md:[0-9]+]]
 ; CHECK-NOT: @__enzyme_shadow_globals
 
+; Both the global and its shadow are kept.
+; CHECK: @llvm.compiler.used = appending global [2 x ptr] [ptr @_QMmo_ad_shadowsEdivdamp_fac, ptr @_QMmo_cfgEdivdamp_fac], section "llvm.metadata"
+
 ; CHECK: define internal double @fwddiffescale(double %x, double %"x'")
 ; CHECK: load double, ptr @_QMmo_ad_shadowsEdivdamp_fac
 
