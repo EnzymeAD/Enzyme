@@ -1206,7 +1206,11 @@ def : BinopPattern<(Op $x, $y), "FDiv", 0, 0,
                       (CheckedDiv (DiffeRet), $y),
                       (FNeg (CheckedMul (CheckedDiv (DiffeRet), $y), (FDiv $x, $y)))
                     ],
-                    (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                    // (dx - dy * (x / y)) / y rather than (dx * y - dy * x) / (y * y):
+                    // squaring y overflows / underflows for |y| outside ~[1e-154, 1e154],
+                    // and under nested forward mode the denominator of each level is
+                    // squared again (y^(2^n) at order n), giving Inf / Inf = NaN.
+                    (CheckedDiv (FSub (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), (FDiv $x, $y)), (Zero $y))), $y)
                   >;
 
 def : BinopPattern<(Op $x, $y), "FRem", 0, 0,
