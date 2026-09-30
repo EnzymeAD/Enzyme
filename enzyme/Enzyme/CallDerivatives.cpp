@@ -51,10 +51,69 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   using namespace llvm;
 
   assert(called);
-  assert(gutils->getWidth() == 1);
 
   IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
   BuilderZ.setFastMathFlags(getFast());
+
+  // Vector forward mode: the derivative of these calls is the same call on
+  // the shadow buffers (for the reductions, of a sum), so it is replayed once
+  // per lane. All other arguments, including the trailing `ierr` of the
+  // Fortran ABI, are passed as in the call.
+  if (gutils->getWidth() > 1) {
+    bool isReduction = funcName == "MPI_Allreduce" || funcName == "MPI_Reduce";
+    bool replayed = isReduction || funcName == "MPI_Bcast" ||
+                    funcName == "MPI_Send" || funcName == "MPI_Ssend" ||
+                    funcName == "MPI_Recv";
+    // MPI functions with buffers that are not replayed per lane; the others
+    // (MPI_Barrier, MPI_Comm_free, ...) carry no tangents and are handled
+    // below as at width 1.
+    bool unsupported = funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
+                       funcName == "MPI_Wait" || funcName == "MPI_Waitall" ||
+                       funcName == "MPI_Gather" || funcName == "MPI_Scatter" ||
+                       funcName == "MPI_Allgather" ||
+                       funcName == "MPI_Reduce_scatter_block";
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
+        (replayed || unsupported)) {
+      if (!replayed) {
+        std::string s;
+        raw_string_ostream ss(s);
+        ss << funcName << " is not supported in vector forward mode: " << call;
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return;
+      }
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+      // The buffers: sendbuf and recvbuf of the reductions, else the first
+      // argument. An inactive buffer (e.g. MPI_IN_PLACE) is passed as is.
+      unsigned nbuf = isReduction ? 2 : 1;
+      SmallVector<Value *, 2> shadows;
+      for (unsigned i = 0; i < nbuf; i++) {
+        Value *arg = call.getArgOperand(i);
+        shadows.push_back(gutils->isConstantValue(arg)
+                              ? nullptr
+                              : gutils->invertPointerM(arg, Builder2));
+      }
+      for (unsigned l = 0; l < gutils->getWidth(); l++) {
+        SmallVector<Value *, 8> args;
+        for (auto &op : call.args())
+          args.push_back(gutils->getNewFromOriginal(op));
+        for (unsigned i = 0; i < nbuf; i++) {
+          if (!shadows[i])
+            continue;
+          Value *sh = gutils->extractMeta(Builder2, shadows[i], l);
+          if (sh->getType()->isIntegerTy())
+            sh = Builder2.CreateIntToPtr(sh, args[i]->getType());
+          args[i] = sh;
+        }
+        auto dcall = Builder2.CreateCall(call.getFunctionType(),
+                                         call.getCalledOperand(), args);
+        dcall->setCallingConv(call.getCallingConv());
+        dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      }
+      return;
+    }
+  }
 
   // MPI send / recv can only send float/integers
   if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
