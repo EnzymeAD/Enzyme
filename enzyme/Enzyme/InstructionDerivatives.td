@@ -306,12 +306,13 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
-//  1 / y -> -1/y^2 dy
+//  1 / y -> -1/y^2 dy, computed as -(dy / y) / y so that y^2 cannot overflow or
+//  underflow (see the FDiv rule).
 def : CallPattern<(Op $y),
                   ["__nv_frcp_rd", "__nv_frcp_rn", "__nv_frcp_ru", "__nv_frcp_rz",
                    "__nv_drcp_rd", "__nv_drcp_rn", "__nv_drcp_ru", "__nv_drcp_rz"],
                     [
-                      (FNeg (CheckedDiv (DiffeRet), (FMul $y, $y)))
+                      (FNeg (CheckedDiv (CheckedDiv (DiffeRet), $y), $y))
                     ],
                     (ForwardFromSummedReverse),
                     [ReadNone, NoUnwind]
