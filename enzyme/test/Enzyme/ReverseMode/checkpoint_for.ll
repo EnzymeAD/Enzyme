@@ -93,7 +93,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK:   call void @diffeenzyme.ckpt.for.step(i64 0, i64 %n, ptr %s, ptr %c, ptr %x, i64 32, ptr %x, ptr %"x'")
 
 ; CHECK: define internal ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, i64 16, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d)
+; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d)
 ; CHECK-NEXT:   ret ptr %handle
 
 ; CHECK: define internal void @enzyme.ckpt.primal.enzyme.ckpt.for.step.d(ptr %0, i64 %1)
@@ -106,7 +106,11 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK: define internal void @diffeenzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %handle = call ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; CHECK-NEXT:   call void @__enzyme_ckpt_rev(ptr %handle, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.rev.enzyme.ckpt.for.step.d)
+; The reverse pass takes the step's arguments from its own.
+; CHECK:        %env = alloca { ptr, ptr }
+; CHECK:        store ptr %6, ptr
+; CHECK:        store ptr %7, ptr
+; CHECK:   call void @__enzyme_ckpt_rev(ptr %handle, ptr %regions, i64 2, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.aug.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.rev.enzyme.ckpt.for.step.d)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: define internal void @enzyme.ckpt.rev.enzyme.ckpt.for.step.d(ptr %0, i64 %1, ptr %2)

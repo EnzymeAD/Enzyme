@@ -5208,11 +5208,16 @@ public:
   /// arguments of a checkpointed loop never carry a derivative, whatever the
   /// values passed: a scheme is a table of function pointers, which would
   /// otherwise be given a shadow made of the derivatives of those functions.
+  /// Its other arguments are needed in the reverse pass, primal included.
   DIFFE_TYPE getCallArgDiffeType(llvm::CallInst &call, llvm::Function *called,
                                  unsigned i, bool foreignFunction) {
-    if (isCheckpointLoop(called) &&
-        called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
-      return DIFFE_TYPE::CONSTANT;
+    if (isCheckpointLoop(called)) {
+      if (called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+        return DIFFE_TYPE::CONSTANT;
+      // The reverse pass reruns steps from the primal arguments.
+      auto ty = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      return ty == DIFFE_TYPE::DUP_NONEED ? DIFFE_TYPE::DUP_ARG : ty;
+    }
     return gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
   }
 
