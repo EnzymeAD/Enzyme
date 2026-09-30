@@ -132,6 +132,101 @@ public:
       gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
+  /// Which pass(es) emit the shadow counterpart of the store-like
+  /// instruction I into the duplicated memory at orig_ptr: the augmented
+  /// primal (forwardsShadow) and/or the reverse pass (backwardsShadow, for
+  /// shadow allocations only materialized there), and neither of them for
+  /// shadow arguments that must not be written.
+  void shadowStoreSchedule(llvm::Instruction &I, llvm::Value *orig_ptr,
+                           bool &forwardsShadow, bool &backwardsShadow) {
+    backwardsShadow = false;
+    forwardsShadow = true;
+    for (auto pair : gutils->backwardsOnlyShadows) {
+      if (pair.second.stores.count(&I)) {
+        backwardsShadow = true;
+        forwardsShadow = pair.second.primalInitialize;
+        if (auto inst = llvm::dyn_cast<llvm::Instruction>(pair.first))
+          if (!forwardsShadow && pair.second.LI &&
+              pair.second.LI->contains(inst->getParent()))
+            backwardsShadow = false;
+      }
+    }
+
+    if (auto arg = llvm::dyn_cast<llvm::Argument>(getBaseObject(orig_ptr))) {
+      unsigned argNo = arg->getArgNo();
+      if (argNo < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[argNo]) {
+        forwardsShadow = false;
+        backwardsShadow = false;
+      }
+    }
+  }
+
+  /// Resolve the shadow placeholder of the active instruction I in a pass
+  /// which does not otherwise compute its shadow, replacing it by the given
+  /// value (a zero shadow if null).
+  void resolveShadowPlaceholder(llvm::Instruction &I,
+                                llvm::Value *shadow = nullptr) {
+    using namespace llvm;
+    auto ifound = gutils->invertedPointers.find(&I);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    if (!shadow)
+      shadow = Constant::getNullValue(gutils->getShadowType(I.getType()));
+    auto placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    gutils->replaceAWithB(placeholder, shadow);
+    gutils->erase(placeholder);
+    gutils->invertedPointers.insert(
+        std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  }
+
+  /// The ordering with which the reverse pass may read a location that the
+  /// primal modified atomically with the given ordering.
+  static llvm::AtomicOrdering reverseLoadOrdering(llvm::AtomicOrdering order) {
+    if (order == llvm::AtomicOrdering::Release)
+      return llvm::AtomicOrdering::Monotonic;
+    if (order == llvm::AtomicOrdering::AcquireRelease)
+      return llvm::AtomicOrdering::Acquire;
+    return order;
+  }
+
+  /// Reverse-mode adjoint of the value operand val of an atomic modification
+  /// new = old + val (negate == false) or new = old - val (negate == true) of
+  /// the active location ptr by the instruction I, whose result is inactive:
+  /// the adjoint of val is (the negation of) the contents of the shadow
+  /// location, read as loadTy (holding the bits of the floating point type
+  /// FT) with the ordering downgraded for the reverse pass.
+  void addAtomicRMWValueAdjoint(llvm::Instruction &I, llvm::Value *ptr,
+                                llvm::Value *val, llvm::Type *loadTy,
+                                llvm::Type *FT, bool negate, llvm::Align align,
+                                llvm::AtomicOrdering order,
+                                llvm::SyncScope::ID ssid, bool isVolatile) {
+    using namespace llvm;
+    assert(!gutils->isConstantValue(ptr));
+    IRBuilder<> Builder2(&I);
+    getReverseBuilder(Builder2);
+    Value *ip = gutils->invertPointerM(ptr, Builder2);
+    ip = lookup(ip, Builder2);
+    order = reverseLoadOrdering(order);
+
+    auto rule = [&](Value *ip) -> Value * {
+      LoadInst *dif1 = Builder2.CreateLoad(loadTy, ip, isVolatile);
+      dif1->setAlignment(align);
+      dif1->setOrdering(order);
+      dif1->setSyncScopeID(ssid);
+      Value *res = dif1;
+      if (negate) {
+        res = Builder2.CreateBitCast(res, FT);
+        res = Builder2.CreateFNeg(res);
+      }
+      return Builder2.CreateBitCast(res, val->getType());
+    };
+    Value *diff = applyChainRule(val->getType(), Builder2, rule, ip);
+
+    addToDiffe(val, diff, Builder2, FT->getScalarType());
+  }
+
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
                              llvm::Type *intType, llvm::Function *caller) {
     using namespace llvm;
@@ -376,12 +471,13 @@ public:
   void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
     using namespace llvm;
 
-    auto found = gutils->invertedPointers.find(&I);
     if (gutils->isConstantValue(&I)) {
-      assert(found == gutils->invertedPointers.end());
+      // A constant value may have a shadow cached by invertPointerM. It is a
+      // real shadow, not a placeholder, so leave it for reuse.
       return;
     }
 
+    auto found = gutils->invertedPointers.find(&I);
     assert(found != gutils->invertedPointers.end());
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
@@ -873,30 +969,11 @@ public:
            Mode == DerivativeMode::ReverseModeGradient) &&
           gutils->isConstantValue(&I)) {
         if (!gutils->isConstantValue(I.getValOperand())) {
-          assert(!gutils->isConstantValue(I.getPointerOperand()));
-          IRBuilder<> Builder2(&I);
-          getReverseBuilder(Builder2);
-          Value *ip = gutils->invertPointerM(I.getPointerOperand(), Builder2);
-          ip = lookup(ip, Builder2);
-          auto order = I.getOrdering();
-          if (order == AtomicOrdering::Release)
-            order = AtomicOrdering::Monotonic;
-          else if (order == AtomicOrdering::AcquireRelease)
-            order = AtomicOrdering::Acquire;
-
-          auto rule = [&](Value *ip) -> Value * {
-            LoadInst *dif1 =
-                Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
-
-            dif1->setAlignment(I.getAlign());
-            dif1->setOrdering(order);
-            dif1->setSyncScopeID(I.getSyncScopeID());
-            return dif1;
-          };
-          Value *diff = applyChainRule(I.getType(), Builder2, rule, ip);
-
-          addToDiffe(I.getValOperand(), diff, Builder2,
-                     I.getValOperand()->getType()->getScalarType());
+          addAtomicRMWValueAdjoint(
+              I, I.getPointerOperand(), I.getValOperand(), I.getType(),
+              I.getType(), /*negate*/ I.getOperation() == AtomicRMWInst::FSub,
+              I.getAlign(), I.getOrdering(), I.getSyncScopeID(),
+              I.isVolatile());
         }
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
@@ -1080,18 +1157,24 @@ public:
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
       if (constantval) {
+        // Bytes of the destination that nothing else types (e.g. the zero
+        // lanes of a constant vector, which type analysis leaves as Anything
+        // and does not propagate to memory) take the stored value's own type.
+        TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          if (auto flt = vd[{(int)i}].isFloat()) {
+          ConcreteType ct = vd[{(int)i}];
+          if (!ct.isKnown())
+            ct = valTT[{(int)i}];
+          if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Pointer) {
+          if (ct == BaseType::Pointer) {
             anyPointer = true;
             i += DL.getPointerSizeInBits() / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Integer ||
-              vd[{(int)i}] == BaseType::Anything) {
+          if (ct == BaseType::Integer || ct == BaseType::Anything) {
             i++;
             continue;
           }
@@ -1125,6 +1208,13 @@ public:
                                 MixedActivityHint);
           }
         }
+      }
+
+      // The shadow of integer-only memory mirrors the primal.
+      if (!diff && vd.isKnown() && !vd.anyPointer(orig_val, DL) &&
+          !vd.anyFloat(orig_val, DL)) {
+        auto rule = [&val]() { return val; };
+        diff = applyChainRule(valType, BuilderZ, rule);
       }
 
       // TODO type analyze
@@ -1335,27 +1425,8 @@ public:
             }
           }
 
-        bool backwardsShadow = false;
-        bool forwardsShadow = true;
-        for (auto pair : gutils->backwardsOnlyShadows) {
-          if (pair.second.stores.count(&I)) {
-            backwardsShadow = true;
-            forwardsShadow = pair.second.primalInitialize;
-            if (auto inst = dyn_cast<Instruction>(pair.first))
-              if (!forwardsShadow && pair.second.LI &&
-                  pair.second.LI->contains(inst->getParent()))
-                backwardsShadow = false;
-          }
-        }
-
-        if (auto arg = dyn_cast<Argument>(getBaseObject(orig_ptr))) {
-          unsigned argNo = arg->getArgNo();
-          if (argNo < gutils->nowrite_shadows.size() &&
-              gutils->nowrite_shadows[argNo]) {
-            forwardsShadow = false;
-            backwardsShadow = false;
-          }
-        }
+        bool forwardsShadow, backwardsShadow;
+        shadowStoreSchedule(I, orig_ptr, forwardsShadow, backwardsShadow);
 
         if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
@@ -3148,6 +3219,8 @@ public:
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
+            if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+              cal->setMetadata("enzyme_truetype", m);
 
             if (startsWith(funcName, "memset_pattern") ||
                 startsWith(funcName, "llvm.experimental.memset")) {
@@ -3169,27 +3242,8 @@ public:
       return;
     }
 
-    bool backwardsShadow = false;
-    bool forwardsShadow = true;
-    for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.stores.count(&MS)) {
-        backwardsShadow = true;
-        forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = dyn_cast<Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
-            backwardsShadow = false;
-      }
-    }
-
-    if (auto arg = dyn_cast<Argument>(getBaseObject(MS.getOperand(0)))) {
-      unsigned argNo = arg->getArgNo();
-      if (argNo < gutils->nowrite_shadows.size() &&
-          gutils->nowrite_shadows[argNo]) {
-        forwardsShadow = false;
-        backwardsShadow = false;
-      }
-    }
+    bool forwardsShadow, backwardsShadow;
+    shadowStoreSchedule(MS, MS.getOperand(0), forwardsShadow, backwardsShadow);
 
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(MS.getOperand(2))) {
@@ -3266,6 +3320,11 @@ public:
                   break;
                 }
                 cur = cur->getPrevNode();
+                // We've hit the start of the block, assume written to by a
+                // previous block.
+                if (cur == nullptr) {
+                  writtenTo = true;
+                }
               }
 
               if (!writtenTo) {
@@ -3480,6 +3539,9 @@ public:
           ToCopy2.push_back(LLVMContext::MD_noalias);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3525,6 +3587,9 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
 
           if (startsWith(funcName, "memset_pattern") ||
               startsWith(funcName, "llvm.experimental.memset")) {
@@ -3792,27 +3857,8 @@ public:
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
 
-    bool backwardsShadow = false;
-    bool forwardsShadow = true;
-    for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.stores.count(&MTI)) {
-        backwardsShadow = true;
-        forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = dyn_cast<Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
-            backwardsShadow = false;
-      }
-    }
-
-    if (auto arg = dyn_cast<Argument>(getBaseObject(orig_dst))) {
-      unsigned argNo = arg->getArgNo();
-      if (argNo < gutils->nowrite_shadows.size() &&
-          gutils->nowrite_shadows[argNo]) {
-        forwardsShadow = false;
-        backwardsShadow = false;
-      }
-    }
+    bool forwardsShadow, backwardsShadow;
+    shadowStoreSchedule(MTI, orig_dst, forwardsShadow, backwardsShadow);
 
     for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
       auto floatTy = floatTy_ref;
@@ -3915,6 +3961,9 @@ public:
                           MTI.getMetadata(LLVMContext::MD_tbaa_struct));
         call->setMetadata(LLVMContext::MD_invariant_group,
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
+        if (auto m = hasMetadata(&MTI, "enzyme_truetype"))
+          if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+            call->setMetadata("enzyme_truetype", sliced);
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
@@ -4164,6 +4213,7 @@ public:
       {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
+        args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(
                 M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
@@ -4191,7 +4241,16 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
+        SmallVector<Value *, 2> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        if (ID == Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+            ID == Intrinsic::nvvm_barrier_cta_sync_aligned_count) {
+          auto *CB = cast<CallBase>(&I);
+          for (Use &arg : CB->args())
+            args.push_back(
+                lookup(gutils->getNewFromOriginal(arg.get()), Builder2));
+        }
+#endif
         auto cal = cast<CallInst>(
             Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());

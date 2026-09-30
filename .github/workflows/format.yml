@@ -17,8 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
-    - uses: DoozyX/clang-format-lint-action@v0.20
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+    - uses: DoozyX/clang-format-lint-action@bcb4eb2cb0d707ee4f3e5cc3b456eb075f12cf73 # v0.20
       with:
         source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen'
         exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'

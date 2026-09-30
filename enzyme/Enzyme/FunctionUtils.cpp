@@ -406,6 +406,27 @@ void RecursivelyReplaceAddressSpace(
           Todo.insert(Todo.begin(), cur);
           continue;
         }
+        // Some incoming values are not derived from the object being moved,
+        // so the phi keeps its address space. If that is a derived (not
+        // tracked) one, the moved object can be cast back to it: the GC
+        // treats a cast from the default address space as an untracked base.
+        // A tracked phi would instead root the stack memory, so is an error.
+        unsigned PAS = cast<PointerType>(P->getType())->getAddressSpace();
+        if (PAS != 10 && PAS != 0) {
+          for (size_t i = 0; i < NumOperands; i++) {
+            if (!replacedOperands[i])
+              continue;
+            IRBuilder<> B(P->getIncomingBlock(i)->getTerminator());
+            P->setIncomingValue(i, B.CreatePointerBitCastOrAddrSpaceCast(
+                                       replacedOperands[i], P->getType()));
+          }
+          for (int i = Todo.size() - 1; i >= 0; i--) {
+            if (std::get<2>(Todo[i]) != P)
+              continue;
+            Todo.erase(Todo.begin() + i);
+          }
+          continue;
+        }
       } else {
         IRBuilder<> B(&(*P->getParent()->getFirstNonPHIOrDbgOrLifetime()));
         auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
@@ -571,6 +592,50 @@ void RecursivelyReplaceAddressSpace(
         IRBuilder<> B(IVI);
         auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
         IVI->setOperand(1, Addr);
+        continue;
+      }
+    }
+    if (auto Sel = dyn_cast<SelectInst>(inst)) {
+      // As for a phi: collect which of the two operands derive from the
+      // object being moved, including those still pending in Todo.
+      Value *replacedOperands[2] = {nullptr, nullptr};
+      for (size_t i = 0; i < 2; i++)
+        if (Sel->getOperand(i + 1) == prev)
+          replacedOperands[i] = rep;
+      for (auto tval : Todo) {
+        if (std::get<2>(tval) != Sel)
+          continue;
+        for (size_t i = 0; i < 2; i++)
+          if (Sel->getOperand(i + 1) == std::get<1>(tval))
+            replacedOperands[i] = std::get<0>(tval);
+      }
+      if (replacedOperands[0] && replacedOperands[1]) {
+        IRBuilder<> B(Sel);
+        auto nSel = B.CreateSelect(Sel->getCondition(), replacedOperands[0],
+                                   replacedOperands[1]);
+        nSel->takeName(Sel);
+        for (auto U : Sel->users()) {
+          Todo.push_back(std::make_tuple((Value *)nSel, (Value *)Sel,
+                                         cast<Instruction>(U)));
+        }
+        toErase.push_back(Sel);
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != Sel)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
+        continue;
+      }
+      // The other operand may still be reached through another pending use.
+      bool remainingAreMerges = true;
+      for (auto v : Todo) {
+        if (!isa<PHINode>(std::get<2>(v)) && !isa<SelectInst>(std::get<2>(v))) {
+          remainingAreMerges = false;
+          break;
+        }
+      }
+      if (!remainingAreMerges) {
+        Todo.insert(Todo.begin(), cur);
         continue;
       }
     }
@@ -1497,7 +1562,7 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
     PHINode *CanonicalIV = pair.first;
     assert(CanonicalIV);
     RemoveRedundantIVs(
-        L->getHeader(), CanonicalIV, pair.second, SE,
+        L, CanonicalIV, pair.second, SE,
         [&](Instruction *I, Value *V) { I->replaceAllUsesWith(V); },
         [&](Instruction *I) { I->eraseFromParent(); });
   }
@@ -1908,6 +1973,62 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
   return true;
 }
 
+// Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
+// attributes LLVM's alias analysis understands: the function reads any memory,
+// writes only inaccessible memory (the exception it may allocate, GC
+// bookkeeping) and, for the local variant, its `sret`-like arguments; every
+// other pointer argument is `readonly`. Effects a location already had are
+// kept when they are tighter. The derivative of a function marked here does
+// not inherit them: `CloneFunctionWithReturns` builds it afresh and only
+// copies `readonly` onto the primal arguments, which the derivative reads.
+//
+// This is only valid with Julia's setjmp/longjmp exceptions: the analysis
+// permits writes on paths that throw, and there such a write is only
+// observable after control re-enters through a `returns_twice` call, which
+// LLVM already treats as clobbering all memory. With `invoke`/landingpad
+// exception handling the landing pad succeeds the throwing call itself, so
+// the attributes would be wrong.
+static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
+  if (!EnzymeJuliaAddrLoad)
+    return;
+#if LLVM_VERSION_MAJOR >= 16
+  MemoryEffects derived =
+      MemoryEffects::readOnly() |
+      MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+  if (local)
+    derived |= MemoryEffects::argMemOnly(ModRefInfo::ModRef);
+  F.setMemoryEffects(F.getMemoryEffects() & derived);
+#endif
+  // Before LLVM 16 there is no attribute for "reads anything, writes only
+  // inaccessible memory": `readonly` would also let an unused `nounwind` call
+  // be deleted, so only the parameters are annotated there.
+  for (auto &arg : F.args()) {
+    if (!arg.getType()->isPointerTy())
+      continue;
+    if (local) {
+      if (arg.hasStructRetAttr() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_returnRoots")
+              .isValid() ||
+          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+                         "enzymejl_sret_union_bytes")
+              .isValid())
+        continue;
+    }
+    unsigned argno = arg.getArgNo();
+    if (F.hasParamAttribute(argno, Attribute::ReadNone) ||
+        F.hasParamAttribute(argno, Attribute::ReadOnly))
+      continue;
+    // Never written by us and never read per the existing attribute.
+    if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
+      F.removeParamAttr(argno, Attribute::WriteOnly);
+      F.addParamAttr(argno, Attribute::ReadNone);
+      continue;
+    }
+    F.addParamAttr(argno, Attribute::ReadOnly);
+  }
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -1994,12 +2115,79 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
         if (isLocalReadOnlyOrThrow(CI)) {
+          // A local read-only-or-throw callee may still write through its
+          // sret-like arguments, and those writes land in memory of ours.
+          // Classify them as we would a store of our own: memory local to us
+          // is fine, our own sret-like argument makes us local too (e.g. an
+          // sret passed straight through to the callee after call-slot
+          // optimization), and anything else disqualifies us.
+          if (!isReadOnlyOrThrow(CI)) {
+            auto Callee = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 14
+            size_t nargs = CI->arg_size();
+#else
+            size_t nargs = CI->getNumArgOperands();
+#endif
+            for (size_t i = 0; i < nargs; i++) {
+              Value *arg = CI->getArgOperand(i);
+              if (!arg->getType()->isPointerTy())
+                continue;
+              bool sretLike = CI->paramHasAttr(i, Attribute::StructRet);
+              if (!sretLike && Callee && i < Callee->arg_size()) {
+                sretLike = Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_returnRoots")
+                               .isValid() ||
+                           Callee
+                               ->getAttribute(i + AttributeList::FirstArgIndex,
+                                              "enzymejl_sret_union_bytes")
+                               .isValid();
+              }
+              if (!sretLike)
+                continue;
+              auto Obj = getBaseObject(arg);
+              if (isa<AllocaInst>(Obj))
+                continue;
+              if (isAllocationCall(Obj, TLI)) {
+                if (local)
+                  continue;
+                if (notCaptured(Obj))
+                  continue;
+                local = true;
+                continue;
+              }
+              if (auto A = dyn_cast<Argument>(Obj)) {
+                if (A->hasStructRetAttr() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_returnRoots")
+                        .isValid() ||
+                    A->getParent()
+                        ->getAttribute(A->getArgNo() +
+                                           AttributeList::FirstArgIndex,
+                                       "enzymejl_sret_union_bytes")
+                        .isValid()) {
+                  local = true;
+                  continue;
+                }
+              }
+              if (EnzymePrintPerf) {
+                EmitWarning("WritingInstruction", I,
+                            "Instruction could write forcing ", F.getName(),
+                            " to not be marked readonly_or_throw per "
+                            "argument ",
+                            i, " of local read-only-or-throw call ", I);
+              }
+              return false;
+            }
+          }
           continue;
         }
         if (isAllocationCall(CI, TLI)) {
           continue;
         }
-        if (getFuncNameFromCall(CI) == "zeroType") {
+        if (getFuncNameFromCall(CI) == "enzyme_zerotype") {
           auto Obj = getBaseObject(CI->getArgOperand(0));
           // Storing into local memory is fine since it definitionally will not
           // be seen outside the function. Note, even if one stored into x =
@@ -2117,6 +2305,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
+    addReadOnlyOrThrowAttributes(F, local);
   }
   return true;
 }
@@ -2274,11 +2463,13 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2)) {
+        bool local = LocalReadOnlyFunctions.contains(F2);
+        if (local) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
         } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
         }
+        addReadOnlyOrThrowAttributes(*F2, local);
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -2286,6 +2477,379 @@ bool DetectReadonlyOrThrow(Module &M) {
 
     inverse_todo_map.erase(found);
   }
+  return changed;
+}
+
+namespace {
+
+/// Post-dominance over the CFG with the blocks that can only lead to an abort
+/// (see `getGuaranteedUnreachable`) removed.
+///
+/// LLVM's PostDominatorTree treats every `unreachable` as a function exit, and
+/// Julia ends every bounds check in one, so with them left in almost nothing
+/// post-dominates anything.  Those paths never return, which is exactly why
+/// ignoring them is the right model here: what runs after a preserve region
+/// closes only matters on paths that do return.
+class AbortIgnoringPostDom {
+  static constexpr unsigned Undef = ~0U;
+
+  const SmallPtrSetImpl<BasicBlock *> &Unreachable;
+  SmallVector<BasicBlock *, 32> Nodes;
+  DenseMap<BasicBlock *, unsigned> Ids;
+  SmallVector<SmallVector<unsigned, 2>, 32> Succs;
+  SmallVector<SmallVector<unsigned, 2>, 32> Preds;
+  SmallVector<unsigned, 32> Rank; // post-order number in the reversed CFG
+  SmallVector<unsigned, 32> IPDom;
+  unsigned Root; // virtual exit, sitting behind every returning block
+
+  unsigned intersect(unsigned A, unsigned B) const {
+    while (A != B) {
+      while (Rank[A] < Rank[B])
+        A = IPDom[A];
+      while (Rank[B] < Rank[A])
+        B = IPDom[B];
+    }
+    return A;
+  }
+
+public:
+  /// `Unreachable` is the abort-only block set of `F` (see
+  /// `getGuaranteedUnreachable`); it must outlive this object.
+  AbortIgnoringPostDom(Function &F,
+                       const SmallPtrSetImpl<BasicBlock *> &Unreachable)
+      : Unreachable(Unreachable) {
+    Root = 0;
+    if (F.empty() || Unreachable.count(&F.getEntryBlock()))
+      return;
+
+    SmallVector<BasicBlock *, 32> Todo = {&F.getEntryBlock()};
+    Ids[&F.getEntryBlock()] = 0;
+    Nodes.push_back(&F.getEntryBlock());
+    while (!Todo.empty()) {
+      auto BB = Todo.pop_back_val();
+      for (auto Succ : successors(BB)) {
+        if (Unreachable.count(Succ) || Ids.count(Succ))
+          continue;
+        Ids[Succ] = Nodes.size();
+        Nodes.push_back(Succ);
+        Todo.push_back(Succ);
+      }
+    }
+
+    Root = Nodes.size();
+    Succs.resize(Root + 1);
+    Preds.resize(Root + 1);
+    for (unsigned I = 0; I != Root; ++I) {
+      for (auto Succ : successors(Nodes[I])) {
+        auto Found = Ids.find(Succ);
+        if (Found == Ids.end())
+          continue;
+        Succs[I].push_back(Found->second);
+        Preds[Found->second].push_back(I);
+      }
+      // Nothing left to go to in the pruned CFG means this block returns, as
+      // far as this analysis is concerned.
+      if (Succs[I].empty()) {
+        Succs[I].push_back(Root);
+        Preds[Root].push_back(I);
+      }
+    }
+
+    // Post-order of the reversed CFG, walking back from the virtual exit.
+    Rank.assign(Root + 1, Undef);
+    SmallVector<unsigned, 32> Order;
+    SmallVector<std::pair<unsigned, unsigned>, 32> Stack;
+    SmallVector<bool, 32> Seen(Root + 1, false);
+    Stack.push_back({Root, 0});
+    Seen[Root] = true;
+    while (!Stack.empty()) {
+      unsigned Node = Stack.back().first;
+      unsigned &Idx = Stack.back().second;
+      if (Idx < Preds[Node].size()) {
+        unsigned Child = Preds[Node][Idx++];
+        if (!Seen[Child]) {
+          Seen[Child] = true;
+          Stack.push_back({Child, 0});
+        }
+        continue;
+      }
+      Rank[Node] = Order.size();
+      Order.push_back(Node);
+      Stack.pop_back();
+    }
+
+    // Cooper-Harvey-Kennedy, on the reversed CFG.
+    IPDom.assign(Root + 1, Undef);
+    IPDom[Root] = Root;
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (auto It = Order.rbegin(), End = Order.rend(); It != End; ++It) {
+        unsigned Node = *It;
+        if (Node == Root)
+          continue;
+        unsigned New = Undef;
+        for (unsigned Succ : Succs[Node]) {
+          if (IPDom[Succ] == Undef)
+            continue;
+          New = (New == Undef) ? Succ : intersect(Succ, New);
+        }
+        if (New != Undef && New != IPDom[Node]) {
+          IPDom[Node] = New;
+          Changed = true;
+        }
+      }
+    }
+  }
+
+  /// Whether every path through `BB` ends in an abort rather than a return.
+  bool isAbort(BasicBlock *BB) const { return Unreachable.count(BB); }
+
+  /// The nearest block that every returning path out of each of `BBs` runs
+  /// through, or null if there is none.
+  BasicBlock *nearestCommonPostDominator(ArrayRef<BasicBlock *> BBs) const {
+    unsigned Cur = Undef;
+    for (auto BB : BBs) {
+      auto Found = Ids.find(BB);
+      if (Found == Ids.end() || IPDom[Found->second] == Undef)
+        return nullptr;
+      Cur = (Cur == Undef) ? Found->second : intersect(Found->second, Cur);
+    }
+    if (Cur == Undef || Cur == Root)
+      return nullptr;
+    return Nodes[Cur];
+  }
+};
+
+enum class MergeResult { Merged, NoMergePoint, Failed };
+
+} // namespace
+
+/// Whether a returning path leads from the end of `From` back into `To`
+/// without passing through `Avoid`.
+static bool reachesAvoiding(BasicBlock *From, BasicBlock *To, BasicBlock *Avoid,
+                            const AbortIgnoringPostDom &PDT) {
+  SmallPtrSet<BasicBlock *, 16> Seen;
+  SmallVector<BasicBlock *, 16> Todo(succ_begin(From), succ_end(From));
+  while (!Todo.empty()) {
+    auto Cur = Todo.pop_back_val();
+    if (Cur == To)
+      return true;
+    if (Cur == Avoid || PDT.isAbort(Cur) || !Seen.insert(Cur).second)
+      continue;
+    Todo.append(succ_begin(Cur), succ_end(Cur));
+  }
+  return false;
+}
+
+/// Route every `ret` of `F` through one new return block.  Unlike
+/// UnifyFunctionExitNodesPass this leaves the `unreachable`s alone, which the
+/// augmented primal relies on to spot calls that never return.
+static bool unifyReturnBlocks(Function &F) {
+  SmallVector<BasicBlock *, 4> Returning;
+  for (auto &BB : F)
+    if (isa<ReturnInst>(BB.getTerminator()))
+      Returning.push_back(&BB);
+  if (Returning.size() < 2)
+    return false;
+
+  auto NewRet = BasicBlock::Create(F.getContext(), "UnifiedReturnBlock", &F);
+  IRBuilder<> B(NewRet);
+  PHINode *PN = nullptr;
+  if (F.getReturnType()->isVoidTy()) {
+    B.CreateRetVoid();
+  } else {
+    PN = B.CreatePHI(F.getReturnType(), Returning.size(), "UnifiedRetVal");
+    B.CreateRet(PN);
+  }
+  for (auto BB : Returning) {
+    auto Ret = BB->getTerminator();
+    if (PN)
+      PN->addIncoming(Ret->getOperand(0), BB);
+    IRBuilder<>(Ret).CreateBr(NewRet);
+    Ret->eraseFromParent();
+  }
+  return true;
+}
+
+/// Give `Begin` a single returning `llvm.julia.gc_preserve_end` that
+/// post-dominates it, replacing the several ends it currently has.  Ends on
+/// abort-only paths are left as they are: those paths never return, and the
+/// reverse pass drops their blocks wholesale rather than visiting them.
+/// Returns NoMergePoint when only the function exit post-dominates the ends,
+/// and Failed for any other reason not to merge; the function is then left
+/// untouched but for a possible edge split.
+static MergeResult MergeGCPreserveEnds(CallInst *Begin,
+                                       ArrayRef<CallInst *> AllEnds,
+                                       DominatorTree &DT,
+                                       AbortIgnoringPostDom &PDT,
+                                       bool &CFGChanged) {
+  auto BB = Begin->getParent();
+  if (!DT.getNode(BB))
+    return MergeResult::Failed;
+
+  SmallVector<CallInst *, 2> Ends;
+  for (auto End : AllEnds)
+    if (!PDT.isAbort(End->getParent()))
+      Ends.push_back(End);
+  if (Ends.size() < 2)
+    return MergeResult::Failed;
+
+  auto EndFn = Ends[0]->getCalledFunction();
+  if (!EndFn)
+    return MergeResult::Failed;
+
+  // Every returning path out of the region runs through `Merge`.  The begin's
+  // own block takes part so that a path leaving the begin without ever meeting
+  // an end still ends up covered; `Merge` is then a legal home for the end as
+  // long as the begin dominates it.
+  SmallVector<BasicBlock *, 3> Blocks = {BB};
+  for (auto End : Ends)
+    Blocks.push_back(End->getParent());
+  auto Merge = PDT.nearestCommonPostDominator(Blocks);
+  if (!Merge)
+    return MergeResult::NoMergePoint;
+
+  if (!DT.dominates(BB, Merge)) {
+    // `Merge` is also reachable without ever running the begin.  The paths that
+    // did run it all enter `Merge` from inside the begin's dominator subtree,
+    // so splitting those edges off into a block of their own gives a home that
+    // the begin does dominate -- as long as they are the only returning way
+    // out of that subtree, otherwise a path could leave the region without
+    // ever reaching the split block.
+    SmallVector<BasicBlock *, 2> InRegion;
+    for (auto Pred : predecessors(Merge))
+      if (DT.dominates(BB, Pred))
+        InRegion.push_back(Pred);
+    if (InRegion.empty())
+      return MergeResult::Failed;
+
+    for (auto Node : depth_first(DT.getNode(BB)))
+      for (auto Succ : successors(Node->getBlock()))
+        if (Succ != Merge && !DT.dominates(BB, Succ) && !PDT.isAbort(Succ))
+          return MergeResult::Failed;
+
+    Merge = SplitBlockPredecessors(Merge, InRegion, ".gcpreserve", &DT);
+    if (!Merge)
+      return MergeResult::Failed;
+    CFGChanged = true;
+  }
+
+  // Post-dominance does not stop the begin from running again before `Merge`,
+  // e.g. when one end sat on a loop back edge.  Each begin must meet exactly
+  // one end before the next begin, and vice versa.
+  if (Merge != BB && (reachesAvoiding(BB, BB, Merge, PDT) ||
+                      reachesAvoiding(Merge, Merge, BB, PDT)))
+    return MergeResult::Failed;
+
+  // Placing the end at the top of `Merge` is only right if none of the old
+  // ends sit in `Merge` themselves: the region used to cover everything up to
+  // the last of those, so that is where the merged end has to go.
+  Instruction *InsertPt = nullptr;
+  for (auto End : Ends)
+    if (End->getParent() == Merge && (!InsertPt || InsertPt->comesBefore(End)))
+      InsertPt = End;
+  if (!InsertPt)
+    InsertPt = &*Merge->getFirstInsertionPt();
+  if (!DT.dominates(Begin, InsertPt))
+    return MergeResult::Failed;
+
+  IRBuilder<> B(InsertPt);
+  Value *Args[] = {Begin};
+  auto NewEnd = B.CreateCall(EndFn, Args);
+  NewEnd->setCallingConv(Ends[0]->getCallingConv());
+  NewEnd->setAttributes(Ends[0]->getAttributes());
+  NewEnd->setDebugLoc(Ends[0]->getDebugLoc());
+
+  for (auto End : Ends)
+    End->eraseFromParent();
+  return MergeResult::Merged;
+}
+
+/// A pass such as JumpThreading is free to clone a basic block holding an
+/// `llvm.julia.gc_preserve_end`: the token it consumes may legally have many
+/// uses, and only the instruction *producing* a token blocks duplication.  That
+/// leaves a single `llvm.julia.gc_preserve_begin` paired with several ends.
+///
+/// Reverse mode mirrors a preserve region by emitting a `gc_preserve_begin` at
+/// the invert of the end and the matching `gc_preserve_end` at the invert of
+/// the begin, so it needs the end to post-dominate the begin.  With several
+/// ends no mirrored begin dominates the mirrored end, and the differentiated
+/// function fails verification.
+///
+/// Restore the one-end invariant.  The preserved region can only grow, which is
+/// always safe.
+static bool CanonicalizeGCPreserveEnds(Function &F,
+                                       FunctionAnalysisManager &FAM) {
+  SmallVector<CallInst *, 1> Begins;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (getFuncNameFromCall(CI) == "llvm.julia.gc_preserve_begin")
+          Begins.push_back(CI);
+
+  bool changed = false;
+  bool CFGChanged = false;
+  DominatorTree *DT = nullptr;
+  // The merge only ever splits edges into a returning block, and the return
+  // unification only adds one, so the abort-only set stays valid across the
+  // post-dominator rebuilds below.
+  SmallPtrSet<BasicBlock *, 4> Unreachable;
+  std::unique_ptr<AbortIgnoringPostDom> PDT;
+  bool UnifiedExits = false;
+
+  for (auto Begin : Begins) {
+    SmallVector<CallInst *, 2> Ends;
+    for (auto U : Begin->users())
+      if (auto CI = dyn_cast<CallInst>(U))
+        if (getFuncNameFromCall(CI) == "llvm.julia.gc_preserve_end")
+          Ends.push_back(CI);
+    if (Ends.size() < 2)
+      continue;
+
+    if (!DT) {
+      DT = &FAM.getResult<DominatorTreeAnalysis>(F);
+      Unreachable = getGuaranteedUnreachable(&F);
+    }
+    if (!PDT)
+      PDT = std::make_unique<AbortIgnoringPostDom>(F, Unreachable);
+
+    bool Split = false;
+    auto Result = MergeGCPreserveEnds(Begin, Ends, *DT, *PDT, Split);
+    if (Split) {
+      CFGChanged = true;
+      PDT.reset();
+    }
+
+    // Ends that were cloned into separate `end; ret` tails have no common
+    // post-dominator short of the function exit itself.  Give the function a
+    // single return block and try once more; that block, or the edges from the
+    // region into it, is then the place for the merged end.
+    if (Result == MergeResult::NoMergePoint && !UnifiedExits) {
+      UnifiedExits = true;
+      if (unifyReturnBlocks(F)) {
+        FAM.invalidate(F, PreservedAnalyses::none());
+        CFGChanged = true;
+        DT = &FAM.getResult<DominatorTreeAnalysis>(F);
+        PDT = std::make_unique<AbortIgnoringPostDom>(F, Unreachable);
+        Split = false;
+        Result = MergeGCPreserveEnds(Begin, Ends, *DT, *PDT, Split);
+        if (Split)
+          PDT.reset();
+      }
+    }
+    changed |= Result == MergeResult::Merged;
+  }
+
+  if (changed || CFGChanged) {
+    PreservedAnalyses PA;
+    if (CFGChanged)
+      PA.preserve<DominatorTreeAnalysis>();
+    else
+      PA.preserveSet<CFGAnalyses>();
+    FAM.invalidate(F, PA);
+  }
+
   return changed;
 }
 
@@ -2956,6 +3520,12 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
   }
+
+  // Only the reverse pass mirrors preserve regions, so only it needs the
+  // one-end invariant.  The augmented primal and split forward mode share
+  // their preprocessing with it, so everything but plain forward mode runs it.
+  if (mode != DerivativeMode::ForwardMode)
+    CanonicalizeGCPreserveEnds(*NewF, FAM);
 
   {
     SmallPtrSet<Function *, 1> calls_todo;
@@ -4596,7 +5166,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               if (cmp0->getOperand(1 - i0) == cmp1->getOperand(1 - i1))
                 auto e0 = SE.getSCEV(cmp0->getOperand(i0));
                 auto e1 = SE.getSCEV(cmp1->getOperand(i1));
+#if LLVM_VERSION_MAJOR >= 24
+                auto m = SE.getMinusSCEV(e0, e1, SCEV::FlagsMask);
+#else
                 auto m = SE.getMinusSCEV(e0, e1, SCEV::NoWrapMask);
+#endif
                 if (auto C = dyn_cast<SCEVConstant>(m)) {
                   // if c1 == c2 don't need the and they are equivalent
                   if (C->getValue()->isZero()) {
@@ -5730,7 +6304,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                   cmp2->getPredicate() == cmpOp) {
                 auto c1 = SE.getSCEV(cmp1->getOperand(i1));
                 auto c2 = SE.getSCEV(cmp2->getOperand(i2));
+#if LLVM_VERSION_MAJOR >= 24
+                auto m = SE.getMinusSCEV(c1, c2, SCEV::FlagsMask);
+#else
                 auto m = SE.getMinusSCEV(c1, c2, SCEV::NoWrapMask);
+#endif
                 if (auto C = dyn_cast<SCEVConstant>(m)) {
                   // if c1 == c2 don't need the and they are equivalent
                   if (C->getValue()->isZero()) {
@@ -6989,7 +7567,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           continue;
         for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
              iter++) {
-          (*iter)->moveBefore(br);
+          moveBeforeInst(*iter, br);
         }
         auto sel = pushcse(B.CreateSelect(
             getBranchCondition(br), PN->getIncomingValueForBlock(prev),
@@ -7147,7 +7725,7 @@ const SCEV *evaluateAtLoopIter(const SCEV *V, ScalarEvolution &SE,
     return V;
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(V)) {
     if (addrec->getLoop() == find) {
-      auto V2 = addrec->evaluateAtIteration(replace, SE);
+      auto V2 = evaluateAtIterationWithoutExt(addrec, replace, SE);
       return evaluateAtLoopIter(V2, SE, find, replace);
     }
   }

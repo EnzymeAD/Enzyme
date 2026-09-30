@@ -15,7 +15,7 @@ llvm.func @f_llvm(%pp: !llvm.ptr, %out: !llvm.ptr) {
 }
 
 func.func @df_llvm(%pp: !llvm.ptr, %dpp: !llvm.ptr, %out: !llvm.ptr, %dout: !llvm.ptr) {
-  enzyme.autodiff @f_llvm(%pp, %dpp, %out, %dout) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+  enzyme.autodiff @f_llvm(%pp, %dpp, %out, %dout) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
   return
 }
 
@@ -48,7 +48,7 @@ func.func @f_memref(%m: memref<?x!llvm.ptr>, %out: !llvm.ptr) {
 }
 
 func.func @df_memref(%m: memref<?x!llvm.ptr>, %dm: memref<?x!llvm.ptr>, %out: !llvm.ptr, %dout: !llvm.ptr) {
-  enzyme.autodiff @f_memref(%m, %dm, %out, %dout) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (memref<?x!llvm.ptr>, memref<?x!llvm.ptr>, !llvm.ptr, !llvm.ptr) -> ()
+  enzyme.autodiff @f_memref(%m, %dm, %out, %dout) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[] } : (memref<?x!llvm.ptr>, memref<?x!llvm.ptr>, !llvm.ptr, !llvm.ptr) -> ()
   return
 }
 
@@ -79,7 +79,7 @@ func.func @f_affine(%m: memref<?x!llvm.ptr>, %out: !llvm.ptr) {
 }
 
 func.func @df_affine(%m: memref<?x!llvm.ptr>, %dm: memref<?x!llvm.ptr>, %out: !llvm.ptr, %dout: !llvm.ptr) {
-  enzyme.autodiff @f_affine(%m, %dm, %out, %dout) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[] } : (memref<?x!llvm.ptr>, memref<?x!llvm.ptr>, !llvm.ptr, !llvm.ptr) -> ()
+  enzyme.autodiff @f_affine(%m, %dm, %out, %dout) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[] } : (memref<?x!llvm.ptr>, memref<?x!llvm.ptr>, !llvm.ptr, !llvm.ptr) -> ()
   return
 }
 

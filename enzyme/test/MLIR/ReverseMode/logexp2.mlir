@@ -8,8 +8,8 @@ module {
 
   func.func @dlog2(%x: f64, %dy: f64) -> f64 {
     %dx = enzyme.autodiff @log2(%x, %dy) {
-      activity = [#enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64) -> f64
     return %dx : f64
   }
@@ -21,8 +21,8 @@ module {
 
   func.func @dexp2(%x: f64, %dy: f64) -> f64 {
     %dx = enzyme.autodiff @exp2(%x, %dy) {
-      activity = [#enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_activenoneed>]
+      activity = [#enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_activenoneed>]
     } : (f64, f64) -> f64
     return %dx : f64
   }

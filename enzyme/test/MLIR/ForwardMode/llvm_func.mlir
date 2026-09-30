@@ -12,7 +12,7 @@ module {
   }
 
   llvm.func @dsquare(%x: f64, %dx: f64) -> f64 {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> f64
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
     llvm.return %r : f64
   }
 }

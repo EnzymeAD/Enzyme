@@ -529,8 +529,13 @@ static const SCEV *getUnsignedOverflowLimitForStep(const SCEV *Step,
 namespace {
 
 struct ExtendOpTraitsBase {
+#if LLVM_VERSION_MAJOR >= 24
+  typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(SCEVUse, Type *,
+                                                          unsigned);
+#else
   typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(const SCEV *, Type *,
                                                           unsigned);
+#endif
 };
 
 // Used to make code generic over signed and unsigned overflow.
@@ -620,7 +625,11 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       ScalarEvolution::maskFlags(SA->getNoWrapFlags(), SCEV::FlagNUW);
   const SCEV *PreStart = SE->getAddExpr(DiffOps, PreStartFlags);
   const SCEVAddRecExpr *PreAR = dyn_cast<SCEVAddRecExpr>(
+#if LLVM_VERSION_MAJOR >= 24
+      SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagNone));
+#else
       SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagAnyWrap));
+#endif
 
   // "{S,+,X} is <nsw>/<nuw>" and "the backedge is taken at least once" implies
   // "S+X does not sign/unsign-overflow".
@@ -824,7 +833,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
           // if we'd been able to infer the fact just above at that time.
           const SCEV *Step = AR->getStepRecurrence(*this);
           Type *Ty = ZExt->getType();
-          auto *S = getAddRecExpr(
+          auto S = getAddRecExpr(
               getExtendAddRecStart<SCEVZeroExtendExpr>(AR, Ty, this, 0),
               getZeroExtendExpr(Step, Ty, 0), L, AR->getNoWrapFlags());
           IV = dyn_cast<SCEVAddRecExpr>(S);
@@ -1011,8 +1020,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // bound of the loop (RHS), and the fact that IV does not overflow (which is
   // checked above).
   if (!isLoopInvariant(RHS, L)) {
+#if LLVM_VERSION_MAJOR >= 24
+    const SCEV *MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
 #if LLVM_VERSION_MAJOR >= 16
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      MaxBECount, false /*MaxOrZero*/, Predicates);
@@ -1075,7 +1090,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       //
       // FIXME: Should isLoopEntryGuardedByCond do this for us?
       auto CondGT = IsSigned ? ICmpInst::ICMP_SGT : ICmpInst::ICMP_UGT;
-      auto *StartMinusOne =
+      auto StartMinusOne =
           getAddExpr(OrigStart, getMinusOne(OrigStart->getType()));
       return isLoopEntryGuardedByCond(L, CondGT, OrigRHS, StartMinusOne);
     };
@@ -1195,8 +1210,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     MaxBECount = BECountIfBackedgeTaken;
     MaxOrZero = true;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
   }
 
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&

@@ -993,10 +993,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing subroutine " << opName << "\n";
-      SmallVector<bool, 1> vectorValued =
-          prepareArgs(curIndent + INDENT, os, argPattern, pattern, resultRoot,
-                      builder, nameToOrdinal, lookup, retidx, origName,
-                      newFromOriginal, intrinsic, false);
+      SmallVector<bool, 1> vectorValued = prepareArgs(
+          curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
+          nameToOrdinal, lookup, retidx, origName, newFromOriginal, intrinsic);
       bool anyVector = false;
       for (auto b : vectorValued)
         anyVector |= b;

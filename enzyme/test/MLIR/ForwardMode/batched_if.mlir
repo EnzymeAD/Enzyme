@@ -15,7 +15,7 @@ module {
     return %res : f64
   }
   func.func @dsq(%x : f64, %dx : tensor<2xf64>, %c : i1) -> tensor<2xf64> {
-    %r = enzyme.fwddiff @square(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>], width=2 } : (f64, tensor<2xf64>, i1) -> (tensor<2xf64>)
+    %r = enzyme.fwddiff @square(%x, %dx, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>], width=2 } : (f64, tensor<2xf64>, i1) -> (tensor<2xf64>)
     return %r : tensor<2xf64>
   }
 }

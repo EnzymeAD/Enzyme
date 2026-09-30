@@ -1191,6 +1191,8 @@ LogicalResult AffineAtomicRMWOp::canonicalize(AffineAtomicRMWOp op,
 
   auto load = affine::AffineLoadOp::create(
       rewriter, op.getLoc(), op.getMemref(), op.getMap(), op.getIndices());
+  if (auto alignment = op.getAlignmentAttr())
+    load->setAttr("alignment", alignment);
   rewriter.replaceOp(op, load.getResult());
   return success();
 }

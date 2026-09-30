@@ -8,8 +8,8 @@ module {
     return %y : f64
   }
   func.func @test1(%x : f64, %dr1 : f64, %dr2 : f64) -> (f64,f64) {
-    %r, %dx1 = enzyme.autodiff @square(%x, %dr1) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>] } : (f64, f64) -> (f64,f64) 
-    %r2, %dx2 = enzyme.autodiff @square(%x, %dr2) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>] } : (f64, f64) -> (f64,f64) 
+    %r, %dx1 = enzyme.autodiff @square(%x, %dr1) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_active>] } : (f64, f64) -> (f64,f64) 
+    %r2, %dx2 = enzyme.autodiff @square(%x, %dr2) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_active>] } : (f64, f64) -> (f64,f64) 
     return %dx1,%dx2 : f64, f64
   }
 }
@@ -41,8 +41,8 @@ module {
     return %y : tensor<10xf64>
   }
   func.func @test2(%x : tensor<10xf64>, %dr1 : tensor<10xf64>, %dr2 : tensor<10xf64>) -> (tensor<10xf64>,tensor<10xf64>) {
-    %r, %dx1 = enzyme.autodiff @square(%x, %dr1) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>, tensor<10xf64>)
-    %r2, %dx2 = enzyme.autodiff @square(%x, %dr2) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>, tensor<10xf64>)
+    %r, %dx1 = enzyme.autodiff @square(%x, %dr1) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_active>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>, tensor<10xf64>)
+    %r2, %dx2 = enzyme.autodiff @square(%x, %dr2) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_active>]} : (tensor<10xf64>, tensor<10xf64>) -> (tensor<10xf64>, tensor<10xf64>)
     return %dx1,%dx2 : tensor<10xf64>,tensor<10xf64>
   }
 }

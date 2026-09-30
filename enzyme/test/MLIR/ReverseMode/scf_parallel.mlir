@@ -18,7 +18,7 @@ func.func @foo(%x: memref<?xf32> {llvm.noalias}, %y: memref<?xf32> {llvm.noalias
 
 func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
   enzyme.autodiff @foo(%x, %dx, %y, %dy) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return

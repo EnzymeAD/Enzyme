@@ -15,8 +15,8 @@ module {
 }
 
 
+// CHECK: #[[REVERSE_MAP:.+]] = affine_map<(d0) -> (-d0 + 127)>
 // CHECK:  func.func @reduce(%arg0: f32, %arg1: f32) -> f32 {
-// CHECK-NEXT:    %c127 = arith.constant 127 : index
 // CHECK-NEXT:    %cst = arith.constant 1.000000e+00 : f32
 // CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<128xf32>
@@ -26,7 +26,7 @@ module {
 // CHECK-NEXT:      affine.yield %2 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1:2 = affine.for %arg2 = 0 to 128 iter_args(%arg3 = %arg1, %arg4 = %cst_0) -> (f32, f32) {
-// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c127, %arg2 : index
+// CHECK-NEXT:      %[[ridx:.+]] = affine.apply #[[REVERSE_MAP]](%arg2)
 // CHECK-NEXT:      %[[a2:.+]] = memref.load %alloc[%[[ridx]]] : memref<128xf32>
 // CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg3, %arg0 fastmath<fast> : f32
 // CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg3, %[[a2]] fastmath<fast> : f32

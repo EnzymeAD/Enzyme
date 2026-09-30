@@ -13,11 +13,11 @@ module {
     return %r : f64
   }
   func.func @dsquare(%x: f64, %dx: f64) -> f64 {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> f64
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
     return %r : f64
   }
   func.func @ddsquare(%x: f64, %dx: f64, %sx: f64, %sdx: f64) -> f64 {
-    %r = enzyme.fwddiff @dsquare(%x, %dx, %sx, %sdx) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, f64, f64) -> f64
+    %r = enzyme.fwddiff @dsquare(%x, %dx, %sx, %sdx) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64, f64, f64) -> f64
     return %r : f64
   }
 }

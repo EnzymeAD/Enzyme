@@ -18,7 +18,7 @@ module {
   }
 
   func.func @df(%p: !llvm.ptr, %dp: !llvm.ptr, %dr: f64) {
-    enzyme.autodiff @f(%p, %dp, %dr) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (!llvm.ptr, !llvm.ptr, f64) -> ()
+    enzyme.autodiff @f(%p, %dp, %dr) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!llvm.ptr, !llvm.ptr, f64) -> ()
     return
   }
 }

@@ -50,8 +50,8 @@ func.func private @chain(%x: memref<?xf32>, %ub: index) -> f32 {
 
 func.func @dchain(%x: memref<?xf32>, %dx: memref<?xf32>, %ub: index, %dseed: f32) {
   enzyme.autodiff @chain(%x, %dx, %ub, %dseed) {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (memref<?xf32>, memref<?xf32>, index, f32) -> ()
   return
 }

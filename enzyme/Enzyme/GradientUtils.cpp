@@ -744,6 +744,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (available.count(val)) {
     auto avail = available.lookup(val);
+    // A null entry marks a value as explicitly unavailable (e.g. the phi
+    // currently being unrolled, to prevent recursive unrolling).
+    if (!avail)
+      return nullptr;
     assert(avail->getType());
     if (avail->getType() != val->getType()) {
       llvm::errs() << "val: " << *val << "\n";
@@ -1850,10 +1854,23 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                if (!DT.dominates(block2, target))
+                  goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its
               // two targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
@@ -6776,6 +6793,22 @@ end:;
   report_fatal_error("cannot find deal with ptr that isnt arg");
 }
 
+/// Two add recurrences with the same start, step and trip count take the same
+/// sequence of values, so an access indexed by one can stand in for an access
+/// indexed by the other at the same iteration -- provided the iterations are
+/// matched up. That holds for the same loop or for loops that do not contain
+/// one another. It does not for nested loops: in the inner loop, the outer
+/// recurrence stays fixed while the inner one moves (e.g. x[i] and x[j] in
+/// `for i, for j`).
+static bool addRecsCorrespond(const SCEVAddRecExpr *ar1,
+                              const SCEVAddRecExpr *ar2) {
+  auto L1 = ar1->getLoop();
+  auto L2 = ar2->getLoop();
+  if (L1 == L2)
+    return true;
+  return !L1->contains(L2) && !L2->contains(L1);
+}
+
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &incoming_available,
                               bool tryLegalRecomputeCheck, BasicBlock *scope) {
@@ -7147,7 +7180,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
                 if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
-                  if (ar1->getStart() != OrigSE->getCouldNotCompute() &&
+                  if (addRecsCorrespond(ar1, ar2) &&
+                      ar1->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
                       ar1->getStepRecurrence(*OrigSE) !=
                           OrigSE->getCouldNotCompute() &&
@@ -8121,10 +8155,26 @@ void GradientUtils::branchToCorrespondingTarget(
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              // The targets may be reverse blocks (absent from DT), so test
+              // the forward predecessor edges that lead into each target.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                for (const auto &predEdge : targetToPreds.find(target)->second)
+                  if (!DT.dominates(block2, predEdge.first))
+                    goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its two
               // targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
@@ -8533,6 +8583,20 @@ nofast:;
 
 void GradientUtils::computeMinCache() {
   if (EnzymeMinCutCache) {
+    // The reverse pass needs each loop's limit, so compute the contexts of
+    // loops with a statically known limit now for the limits to be marked as
+    // required below. Loops with a dynamic limit are skipped, as creating their
+    // limit cache requires the recompute heuristic computed here.
+    for (auto BB : originalBlocks) {
+      auto L = LI.getLoopFor(BB);
+      if (!L || L->getHeader() != BB || loopContexts.count(L))
+        continue;
+      if (computeLoopLimit(L).first == SE.getCouldNotCompute())
+        continue;
+      LoopContext lc;
+      getContext(BB, lc);
+    }
+
     SetVector<Value *> Recomputes;
 
     std::map<UsageKey, bool> FullSeen;
@@ -9590,6 +9654,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         idx++;
       }
 
+    } else if (auto cmp = dyn_cast<ICmpInst>(cur);
+               cmp && isa<ConstantPointerNull>(cmp->getOperand(
+                          cmp->getOperand(0) == prev ? 1 : 0))) {
+      // A null check on the allocation (e.g. libstdc++'s deallocation path)
+      // neither reads, writes, nor captures the memory, so it says nothing
+      // about whether the contents can be recreated. Any reallocation is also
+      // non-null, so replaying it in the reverse pass yields the same result.
     } else {
       promotable = false;
       shadowpromotable = false;
@@ -10129,9 +10200,14 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    libfunc = TLI.getLibFunc(allocationfn);
+    assert(libfunc != NotLibFunc && "ought find known allocation fn");
+#else
     bool res = TLI.getLibFunc(allocationfn, libfunc);
     (void)res;
     assert(res && "ought find known allocation fn");
+#endif
   }
 
   llvm::LibFunc freefunc;

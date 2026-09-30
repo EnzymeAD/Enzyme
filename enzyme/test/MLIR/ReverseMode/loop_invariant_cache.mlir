@@ -28,7 +28,7 @@ func.func private @loop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?
 
 func.func @dloop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
   enzyme.autodiff @loop_invariant_cache(%ub0, %ub1, %x, %dx, %y, %dy) {
-    activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
   } : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
   return

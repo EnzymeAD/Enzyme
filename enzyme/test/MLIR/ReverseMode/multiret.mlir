@@ -9,12 +9,12 @@ module {
   }
 
   func.func @dsquare(%x: f64, %y : i32, %z : f32, %dx: f64, %dz : f32) -> (f64, f32) {
-    %r:2 = enzyme.autodiff @square(%x, %y, %z, %dx, %dz) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_constnoneed>, #enzyme<activity enzyme_activenoneed>] } : (f64, i32, f32, f64, f32) -> (f64, f32)
+    %r:2 = enzyme.autodiff @square(%x, %y, %z, %dx, %dz) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>, #enzyme.activity<enzyme_constnoneed>, #enzyme.activity<enzyme_activenoneed>] } : (f64, i32, f32, f64, f32) -> (f64, f32)
     return %r#0, %r#1 : f64, f32
   }
 
   func.func @dsquare2(%x: f64, %y : i32, %z : f32, %dx: f64, %dz : f32) -> (f64, i32, f64, f32) {
-    %r:4 = enzyme.autodiff @square(%x, %y, %z, %dx, %dz) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_activenoneed>] } : (f64, i32, f32, f64, f32) -> (f64, i32, f64, f32)
+    %r:4 = enzyme.autodiff @square(%x, %y, %z, %dx, %dz) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_activenoneed>] } : (f64, i32, f32, f64, f32) -> (f64, i32, f64, f32)
     return %r#0, %r#1, %r#2, %r#3 : f64, i32, f64, f32
   }
 }

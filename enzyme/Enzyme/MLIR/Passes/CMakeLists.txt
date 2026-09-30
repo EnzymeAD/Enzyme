@@ -3,44 +3,43 @@ mlir_tablegen(Passes.h.inc -gen-pass-decls -name enzyme)
 add_public_tablegen_target(MLIREnzymePassIncGen)
 add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
-add_mlir_dialect_library(MLIREnzymeTransforms
-    LowerAffineAtomicRmwPass.cpp
-    LowerBinomialProgressPass.cpp
-    EnzymeMLIRPass.cpp
-    EnzymeActivityOpt.cpp
-    ExpandImpulsePass.cpp
-    EnzymeBatchPass.cpp
-    EnzymeBatchDiffPass.cpp
-    EnzymeBatchToTensorPass.cpp
-    EnzymeWrapPass.cpp
-    FlattenEnzymeCaches.cpp
-    InlineEnzymeRegions.cpp
-    HoistEnzymeRegions.cpp
-    HoistLoopAllocations.cpp
-    LowerLLVMExtPass.cpp
-    PrintActivityAnalysis.cpp
-    PrintAliasAnalysis.cpp
-    EnzymeToMemRef.cpp
-    SimplifyMath.cpp
-    SplitMultiResults.cpp
-    AddToOpToIndexAndLoad.cpp
-    AddToOpToSplit.cpp
-    RaiseLLVMExtPass.cpp
-    RemovalUtils.cpp
-    RemoveUnusedEnzymeOps.cpp
-    SimplifyMemrefCache.cpp
-    SinkCheckpointViewsPass.cpp
-    Utils.cpp
-  
+add_mlir_dialect_library(
+  MLIREnzymeTransforms
+  LowerAffineAtomicRmwPass.cpp
+  LowerBinomialProgressPass.cpp
+  EnzymeMLIRPass.cpp
+  EnzymeActivityOpt.cpp
+  ExpandImpulsePass.cpp
+  EnzymeBatchPass.cpp
+  EnzymeBatchDiffPass.cpp
+  EnzymeBatchToTensorPass.cpp
+  EnzymeWrapPass.cpp
+  FlattenEnzymeCaches.cpp
+  InlineEnzymeRegions.cpp
+  HoistEnzymeRegions.cpp
+  HoistLoopAllocations.cpp
+  LowerLLVMExtPass.cpp
+  PrintActivityAnalysis.cpp
+  PrintAliasAnalysis.cpp
+  EnzymeToMemRef.cpp
+  SimplifyMath.cpp
+  SplitMultiResults.cpp
+  AddToOpToIndexAndLoad.cpp
+  AddToOpToSplit.cpp
+  RaiseLLVMExtPass.cpp
+  RemovalUtils.cpp
+  RemoveUnusedEnzymeOps.cpp
+  SimplifyMemrefCache.cpp
+  SinkCheckpointViewsPass.cpp
+  Utils.cpp
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/Affine
-
   DEPENDS
   MLIREnzymePassIncGen
   MLIREnzymeEnumsIncGen
   MLIRImpulseOpsIncGen
-
-  LINK_LIBS PUBLIC
+  LINK_LIBS
+  PUBLIC
   MLIRAffineDialect
   MLIRArithDialect
   MLIRAsyncDialect
@@ -61,7 +60,5 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   MLIRControlFlowInterfaces
   MLIRSCFToControlFlow
   MLIRTransformUtils
-
   MLIREnzymeAutoDiffInterface
-  MLIRImpulse
-)
+  MLIRImpulse)

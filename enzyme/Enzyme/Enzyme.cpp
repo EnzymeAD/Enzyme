@@ -619,7 +619,7 @@ public:
       } else {
         AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
                                              nullptr, DL.getPrefTypeAlign(Ty));
-        primalA->insertBefore(CI);
+        insertBeforeInst(primalA, CI);
         primal = primalA;
       }
 
@@ -2467,11 +2467,11 @@ public:
             IRBuilder<> S1(sel1);
             auto B1 = S1.CreateBr(post);
             CallInst *cloned = cast<CallInst>(CI->clone());
-            cloned->insertBefore(B1);
+            insertBeforeInst(cloned, B1);
             cloned->setOperand(0, si->getTrueValue());
             IRBuilder<> S2(sel2);
             auto B2 = S2.CreateBr(post);
-            CI->moveBefore(B2);
+            moveBeforeInst(CI, B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
               IRBuilder<> P(getFirstNonPHI(post));

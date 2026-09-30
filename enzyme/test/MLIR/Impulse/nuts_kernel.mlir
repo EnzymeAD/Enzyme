@@ -47,7 +47,7 @@ module {
 // CHECK: func.call @test.generate
 // CHECK: arith.negf
 // CHECK: enzyme.yield
-// CHECK: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
+// CHECK: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
 //
 // --- Sampling loop ---
 // CHECK: %[[SLOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>)
@@ -56,7 +56,7 @@ module {
 // CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %[[S_Q:.+]]: tensor<1x1xf64>, %[[S_GRAD:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x2xi1>, %{{.+}}: tensor<1xf64>):
 //
 // --- Momentum sampling ---
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Kinetic energy ---
 // CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
@@ -74,7 +74,7 @@ module {
 // CHECK: } body {
 //
 // --- Direction sampling ---
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK: arith.cmpf olt, {{.*}} : tensor<f64>
 // CHECK: impulse.randomSplit {{.*}} : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 //

@@ -21,8 +21,8 @@ func.func @nested_if(%arg0: f64, %arg1: i1, %arg2: i1) -> f64 {
 func.func @dnested_if(%arg0: f64, %arg1: i1, %arg2: i1, %dres: f64) -> f64 {
   %res = enzyme.autodiff @nested_if(%arg0, %arg1, %arg2, %dres)
     {
-      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>],
-      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>],
+      ret_activity=[#enzyme.activity<enzyme_activenoneed>]
     } : (f64, i1, i1, f64) -> f64
   return %res : f64
 }
@@ -67,8 +67,8 @@ func.func @dsome_res_inactive(%x: f64, %cond: i1, %dres: f64) -> f64 {
   %true = arith.constant true
   %res = enzyme.autodiff @some_res_inactive(%x, %cond, %dres)
     {
-      activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>],
-      ret_activity=[#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_constnoneed>]
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
+      ret_activity=[#enzyme.activity<enzyme_activenoneed>, #enzyme.activity<enzyme_constnoneed>]
     } : (f64, i1, f64) -> (f64)
   return %res : f64
 }
@@ -101,7 +101,7 @@ func.func private @if_overwrite(%cond: i1, %x: memref<f32>) {
 
 func.func @dif_overwrite(%cond: i1, %x: memref<f32>, %dx: memref<f32>) {
   enzyme.autodiff @if_overwrite(%cond, %x, %dx) {
-    activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
+    activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
     ret_activity=[]
   } : (i1, memref<f32>, memref<f32>) -> ()
   return
@@ -155,8 +155,8 @@ func.func private @active_ptr(%cond: i1, %x: !llvm.ptr) -> f32 {
 
 func.func @dif_overwrite(%cond: i1, %x: !llvm.ptr, %dx: !llvm.ptr, %dres: f32) {
   enzyme.autodiff @active_ptr(%cond, %x, %dx, %dres) {
-    activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
-    ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
+    ret_activity=[#enzyme.activity<enzyme_activenoneed>]
   } : (i1, !llvm.ptr, !llvm.ptr, f32) -> ()
   return
 }
@@ -212,7 +212,7 @@ func.func private @if_mincut(%cond: i1, %x: memref<f32>) {
 
 func.func @dif_overwrite(%cond: i1, %x: memref<f32>, %dx: memref<f32>) {
   enzyme.autodiff @if_mincut(%cond, %x, %dx) {
-    activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
+    activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
     ret_activity=[]
   } : (i1, memref<f32>, memref<f32>) -> ()
   return

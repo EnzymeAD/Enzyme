@@ -25,7 +25,7 @@ module {
   }
 
   func.func @dadd(%A: tensor<4xf32>, %dA: tensor<4xf32>,  %B: tensor<4xf32>, %dB: tensor<4xf32>) -> tensor<4xf32> {
-    %r = enzyme.fwddiff @elementwise_add(%A, %dA, %B, %dB) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (tensor<4xf32>, tensor<4xf32>, tensor<4xf32>, tensor<4xf32>) -> (tensor<4xf32>)
+    %r = enzyme.fwddiff @elementwise_add(%A, %dA, %B, %dB) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (tensor<4xf32>, tensor<4xf32>, tensor<4xf32>, tensor<4xf32>) -> (tensor<4xf32>)
     return %r : tensor<4xf32>
   }
 }

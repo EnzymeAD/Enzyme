@@ -13,8 +13,8 @@ func.func @extract_to_diff0(%arg0: !llvm.struct<(f64, f64)>) -> f64 {
 llvm.func @extract(%s: !llvm.struct<(f64, f64)>, %seed: f64)
                   -> !llvm.struct<(f64, f64)> {
   %g = enzyme.autodiff @extract_to_diff0(%s, %seed) {
-    activity = [#enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (!llvm.struct<(f64, f64)>, f64) -> !llvm.struct<(f64, f64)>
   llvm.return %g : !llvm.struct<(f64, f64)>
 }
@@ -80,8 +80,8 @@ func.func @insert_to_diff0(%arg0: f64) -> !llvm.struct<(f64, f64)> {
 
 llvm.func @insert(%x: f64, %seed: !llvm.struct<(f64, f64)>) -> f64 {
   %g = enzyme.autodiff @insert_to_diff0(%x, %seed) {
-    activity = [#enzyme<activity enzyme_active>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+    activity = [#enzyme.activity<enzyme_active>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>]
   } : (f64, !llvm.struct<(f64, f64)>) -> f64
   llvm.return %g : f64
 }

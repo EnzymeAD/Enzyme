@@ -7,7 +7,7 @@ module {
   }
 
   func.func @dsquare(%x: f64, %dr: tensor<2xf64>) -> tensor<2xf64> {
-    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>], width=2 } : (f64, tensor<2xf64>) -> tensor<2xf64>
+    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>], width=2 } : (f64, tensor<2xf64>) -> tensor<2xf64>
     return %r : tensor<2xf64>
   }
 }

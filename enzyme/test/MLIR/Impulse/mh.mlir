@@ -41,14 +41,14 @@ module {
 // CHECK: %[[LOOP:.+]]:3 = scf.for %[[IV:.+]] = %[[C0]] to %[[C1000]] step %[[C1]] iter_args(%[[TR:.+]] = %[[INIT_TRACE]], %[[WT:.+]] = %[[INIT_WEIGHT]], %[[RNG0:.+]] = %[[RNG]]) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>)
 // CHECK-NEXT: %[[REGEN1:.+]]:4 = func.call @test.regenerate_0(%[[TR]], %[[RNG0]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[WDIFF1:.+]] = arith.subf %[[REGEN1]]#1, %[[WT]] : tensor<f64>
-// CHECK-NEXT: %[[RNG1:.+]], %[[U1:.+]] = impulse.random %[[REGEN1]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RNG1:.+]], %[[U1:.+]] = impulse.random %[[REGEN1]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOG1:.+]] = math.log %[[U1]] : tensor<f64>
 // CHECK-NEXT: %[[ACC1:.+]] = arith.cmpf olt, %[[LOG1]], %[[WDIFF1]] : tensor<f64>
 // CHECK-NEXT: %[[SEL_TR1:.+]] = impulse.select %[[ACC1]], %[[REGEN1]]#0, %[[TR]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[SEL_WT1:.+]] = arith.select %[[ACC1]], %[[REGEN1]]#1, %[[WT]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: %[[REGEN2:.+]]:4 = func.call @test.regenerate(%[[SEL_TR1]], %[[RNG1]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[WDIFF2:.+]] = arith.subf %[[REGEN2]]#1, %[[SEL_WT1]] : tensor<f64>
-// CHECK-NEXT: %[[RNG2:.+]], %[[U2:.+]] = impulse.random %[[REGEN2]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RNG2:.+]], %[[U2:.+]] = impulse.random %[[REGEN2]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOG2:.+]] = math.log %[[U2]] : tensor<f64>
 // CHECK-NEXT: %[[ACC2:.+]] = arith.cmpf olt, %[[LOG2]], %[[WDIFF2]] : tensor<f64>
 // CHECK-NEXT: %[[SEL_TR2:.+]] = impulse.select %[[ACC2]], %[[REGEN2]]#0, %[[SEL_TR1]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>

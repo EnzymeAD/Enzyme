@@ -46,7 +46,7 @@ module {
 // CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
 // CHECK: impulse.for
 // CHECK: ^bb0(
-// CHECK: %[[EPS_RNG:.+]], %[[EPS:.+]] = impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x2xf64>)
+// CHECK: %[[EPS_RNG:.+]], %[[EPS:.+]] = impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x2xf64>)
 // CHECK-NEXT: %[[SQRT_2D:.+]] = impulse.reshape %[[MASS_SQRT]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[P:.+]] = arith.mulf %[[SQRT_2D]], %[[EPS]] : tensor<1x2xf64>
 // CHECK-NEXT: %[[INV_2D:.+]] = impulse.reshape %[[INV_MASS]] : (tensor<2xf64>) -> tensor<1x2xf64>
@@ -81,7 +81,7 @@ module {
 // CHECK-NEXT: arith.subf {{.*}} : tensor<f64>
 // CHECK-NEXT: math.exp {{.*}} : tensor<f64>
 // CHECK-NEXT: arith.minimumf {{.*}} : tensor<f64>
-// CHECK-NEXT: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK-NEXT: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT: arith.cmpf olt, {{.*}} : tensor<f64>
 // CHECK-NEXT: impulse.select {{.*}} : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>)
 // CHECK-NEXT: impulse.select {{.*}} : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>)
@@ -93,7 +93,7 @@ module {
 // CHECK-DAG: %[[N_MASS_SQRT:.+]] = arith.constant dense<[0.70710678118654746, 0.57735026918962584]> : tensor<2xf64>
 // CHECK: impulse.for
 // CHECK: ^bb0(
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x2xf64>)
+// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x2xf64>)
 // CHECK-NEXT: %[[N_SQRT_2D:.+]] = impulse.reshape %[[N_MASS_SQRT]] : (tensor<2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[N_P:.+]] = arith.mulf %[[N_SQRT_2D]], {{.*}} : tensor<1x2xf64>
 // CHECK-NEXT: %[[N_INV_2D:.+]] = impulse.reshape %[[N_INV_MASS]] : (tensor<2xf64>) -> tensor<1x2xf64>

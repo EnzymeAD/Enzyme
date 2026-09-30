@@ -15,7 +15,7 @@ module {
 
   func.func @dsquare(%x : !llvm.ptr, %dx : !llvm.ptr, %y : !llvm.ptr, %dy : !llvm.ptr) {
     enzyme.fwddiff @square(%x, %dx, %y, %dy) {
-      activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>],
+      activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
       ret_activity=[]
     } : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
     return

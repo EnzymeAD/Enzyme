@@ -25,7 +25,7 @@ module {
   }
 
   func.func @de(%p: !llvm.ptr, %dp: !llvm.ptr, %c: !llvm.ptr) {
-    enzyme.fwddiff @e(%p, %dp, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+    enzyme.fwddiff @e(%p, %dp, %c) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[] } : (!llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
     return
   }
 }

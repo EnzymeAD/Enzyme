@@ -848,7 +848,8 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     auto I = CE->getAsInstruction();
-    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator());
+    insertBeforeInst(I,
+                     TA.fntypeinfo.Function->getEntryBlock().getTerminator());
 
     // Just analyze this new "instruction" and none of the others
     {
@@ -969,6 +970,33 @@ static bool AllJuliaTypes(Type *T) {
     }
   }
   return false;
+}
+
+/// Type of a pointer to an LLVM flang descriptor (CFI_cdesc_t). All fields
+/// but base_addr are integral; dims are included only when the rank is known
+/// from the allocation type, as a pointer may follow them.
+static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
+  TypeTree TT;
+  TT.insert({-1}, BaseType::Pointer);
+  TT.insert({-1, 0}, BaseType::Pointer);
+  const int HeaderSize = 24;
+  int end = HeaderSize;
+
+  Type *T = nullptr;
+  auto base = getBaseObject(desc);
+  if (auto AI = dyn_cast<AllocaInst>(base))
+    T = AI->getAllocatedType();
+  else if (auto GV = dyn_cast<GlobalVariable>(base))
+    T = GV->getValueType();
+  if (auto ST = dyn_cast_or_null<StructType>(T))
+    if (ST->getNumElements() >= 8 &&
+        DL.getStructLayout(ST)->getElementOffset(7) == HeaderSize)
+      if (auto dims = dyn_cast<ArrayType>(ST->getElementType(7)))
+        end += DL.getTypeAllocSize(dims);
+
+  for (int i = DL.getPointerSize(); i < end; i++)
+    TT.insert({-1, i}, BaseType::Integer);
+  return TT;
 }
 
 static bool AnyJuliaTypes(Type *T) {
@@ -1376,6 +1404,27 @@ void TypeAnalyzer::prepareArgs() {
   }
 }
 
+// An enzyme_type annotation may only name offsets within the value it
+// annotates. A violation is reported through the error handler when one is
+// installed, so that the frontend can turn it into a catchable error, and
+// otherwise stops the analysis with a diagnostic.
+static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
+                                  size_t RegSize, Instruction &I, Value *Val) {
+  for (const auto &pair : TT.getMapping()) {
+    if (pair.first[0] == -1 || (size_t)pair.first[0] < RegSize)
+      continue;
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0]
+       << " beyond the " << RegSize << " bytes of " << *Val << " in " << I;
+    if (CustomErrorHandler)
+      CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::IllegalTypeAnalysis,
+                         (void *)TA, wrap(Val), nullptr);
+    EmitFailure("BadEnzymeType", I.getDebugLoc(), &I, ss.str());
+    llvm::report_fatal_error("Canonicalization failed");
+  }
+}
+
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
@@ -1388,15 +1437,7 @@ void TypeAnalyzer::considerTBAA() {
         auto TT = TypeTree::fromMD(MD);
 
         auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-        for (const auto &pair : TT.getMapping()) {
-          if (pair.first[0] != -1) {
-            if ((size_t)pair.first[0] >= RegSize) {
-              llvm::errs() << " bad enzyme_type " << TT.str()
-                           << " RegSize=" << RegSize << " I:" << I << "\n";
-              llvm::report_fatal_error("Canonicalization failed");
-            }
-          }
-        }
+        checkEnzymeTypeExtent(this, TT, RegSize, I, &I);
         updateAnalysis(&I, TT, &I);
       }
 
@@ -1417,15 +1458,7 @@ void TypeAnalyzer::considerTBAA() {
           auto RegSize = I.getType()->isVoidTy()
                              ? 0
                              : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-          for (const auto &pair : TT.getMapping()) {
-            if (pair.first[0] != -1) {
-              if ((size_t)pair.first[0] >= RegSize) {
-                llvm::errs() << " bad enzyme_type " << TT.str()
-                             << " RegSize=" << RegSize << " I:" << I << "\n";
-                llvm::report_fatal_error("Canonicalization failed");
-              }
-            }
-          }
+          checkEnzymeTypeExtent(this, TT, RegSize, I, call);
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1435,15 +1468,7 @@ void TypeAnalyzer::considerTBAA() {
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
             auto argTy = call->getArgOperand(i)->getType();
             auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call->getArgOperand(i));
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1460,15 +1485,7 @@ void TypeAnalyzer::considerTBAA() {
             auto RegSize = I.getType()->isVoidTy()
                                ? 0
                                : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call);
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1477,19 +1494,10 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
-              auto RegSize = I.getType()->isVoidTy()
-                                 ? 0
-                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-              for (const auto &pair : TT.getMapping()) {
-                if (pair.first[0] != -1) {
-                  if ((size_t)pair.first[0] >= RegSize) {
-                    llvm::errs()
-                        << " bad enzyme_type " << TT.str()
-                        << " RegSize=" << RegSize << " I:" << I << "\n";
-                    llvm::report_fatal_error("Canonicalization failed");
-                  }
-                }
-              }
+              auto argTy = call->getArgOperand(i)->getType();
+              auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
+              checkEnzymeTypeExtent(this, TT, RegSize, I,
+                                    call->getArgOperand(i));
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
@@ -1915,7 +1923,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
     return;
   }
   auto I = CE.getAsInstruction();
-  I->insertBefore(fntypeinfo.Function->getEntryBlock().getTerminator());
+  insertBeforeInst(I, fntypeinfo.Function->getEntryBlock().getTerminator());
   analysis[I] = analysis[&CE];
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
@@ -3018,8 +3026,12 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
   // We don't care about correct MD node numbering here.
+#if LLVM_VERSION_MAJOR >= 24
+  ModuleSlotTracker MST(fntypeinfo.Function->getParent());
+#else
   ModuleSlotTracker MST(fntypeinfo.Function->getParent(),
                         /*ShouldInitializeAllMetadata*/ false);
+#endif
   for (auto &pair : analysis) {
     if (auto F = dyn_cast<Function>(pair.first))
       ss << "@" << F->getName();
@@ -4717,6 +4729,137 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // Julia's atomic modify pseudo-intrinsic (introduced in Julia 1.13):
+    //   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope,
+    //                                          args...)
+    // which atomically performs old = *ptr; new = op(old, args...);
+    // *ptr = new. Both result elements and the return of op have the type of
+    // the pointee of ptr, and op is analyzed interprocedurally to relate the
+    // forwarded arguments with the modified memory.
+    if (startsWith(funcName, "julia.atomicmodify.")) {
+      auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+      auto *RT = cast<StructType>(call.getType());
+      auto *SL = DL.getStructLayout(RT);
+      auto LoadSize = (DL.getTypeSizeInBits(RT->getElementType(0)) + 7) / 8;
+      int Off[2] = {(int)SL->getElementOffset(0), (int)SL->getElementOffset(1)};
+      Value *ptr = call.getArgOperand(0);
+
+      // What is known about the modified location from the pointer. Anything
+      // else known about it (both result elements, the return of op) is
+      // merged into the pointee of ptr through updateAnalysis, which reports
+      // conflicting (float/integer) information instead of asserting, and
+      // reaches the other users of the location on a later iteration.
+      TypeTree Pointee = getAnalysis(ptr).Lookup(LoadSize, DL).PurgeAnything();
+      auto updateLocation = [&](const TypeTree &Loc) {
+        if (!(direction & UP))
+          return;
+        TypeTree Ptr = Loc.ShiftIndices(DL, /*start*/ 0, LoadSize,
+                                        /*addOffset*/ 0)
+                           .Only(-1, &call);
+        Ptr.insert({-1}, BaseType::Pointer);
+        updateAnalysis(ptr, Ptr, &call);
+      };
+      auto updateResult = [&](const TypeTree &Loc) {
+        if (!(direction & DOWN))
+          return;
+        for (int i = 0; i < 2; i++)
+          updateAnalysis(&call, Loc.ShiftIndices(DL, 0, LoadSize, Off[i]),
+                         &call);
+      };
+
+      TypeTree Ret = getAnalysis(&call);
+      for (int i = 0; i < 2; i++)
+        updateLocation(
+            Ret.ShiftIndices(DL, Off[i], LoadSize, 0).PurgeAnything());
+      updateResult(Pointee);
+
+      Function *op = dyn_cast<Function>(call.getArgOperand(1));
+      if (op && !op->empty() && !op->isVarArg() &&
+          call.arg_size() - 3 == op->getFunctionType()->getNumParams()) {
+        // As for visitIPOCall, skip the interprocedural analysis of op once
+        // everything it could tell about the location and the forwarded
+        // arguments has been derived.
+        bool unknown = false;
+        for (size_t i = 0; i < LoadSize;) {
+          auto CT = Pointee[{(int)i}];
+          if (auto flt = CT.isFloat()) {
+            i += (DL.getTypeSizeInBits(flt) + 7) / 8;
+          } else if (CT == BaseType::Pointer) {
+            i += DL.getPointerSize(0);
+          } else if (CT == BaseType::Integer) {
+            i++;
+          } else {
+            unknown = true;
+            break;
+          }
+        }
+        for (size_t i = 4; !unknown && i < call.arg_size(); i++) {
+          Value *arg = call.getArgOperand(i);
+          if (!isa<ConstantData>(arg) && !getAnalysis(arg).IsFullyDetermined())
+            unknown = true;
+        }
+
+        if (unknown) {
+          // The same call information visitIPOCall derives through
+          // getCallInfo, with op's first parameter fed from the location
+          // rather than from a call operand.
+          FnTypeInfo typeInfo(op);
+          size_t argnum = 0;
+          for (auto &arg : op->args()) {
+            Value *src = argnum == 0 ? nullptr : call.getArgOperand(argnum + 3);
+            TypeTree dt = src ? getAnalysis(src) : Pointee;
+            if (arg.getType()->isIntOrIntVectorTy() &&
+                dt.Inner0() == BaseType::Anything && mustRemainInteger(&arg))
+              dt = TypeTree(BaseType::Integer).Only(-1, &call);
+            typeInfo.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&arg, dt));
+            std::set<int64_t> bounded;
+            if (src)
+              for (auto v :
+                   fntypeinfo.knownIntegralValues(src, DT, intseen, SE)) {
+                if (abs(v) > MaxIntOffset)
+                  continue;
+                bounded.insert(v);
+              }
+            typeInfo.KnownValues.insert(
+                std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+            ++argnum;
+          }
+          // The new value stored to the location is op's return.
+          typeInfo.Return = Pointee;
+          typeInfo = preventTypeAnalysisLoops(typeInfo, fntypeinfo.Function);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " starting IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " ending IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeTree OpRet = STR.getReturnAnalysis().PurgeAnything();
+          updateLocation(OpRet);
+          updateResult(OpRet);
+          if (direction & UP) {
+            argnum = 0;
+            for (auto &arg : op->args()) {
+              if (argnum != 0)
+                updateAnalysis(call.getArgOperand(argnum + 3), STR.query(&arg),
+                               &call);
+              ++argnum;
+            }
+          }
+        }
+      }
+      return;
+    }
+
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \
     analyzeFuncTypes(::fn, call, *this);                                       \
@@ -5438,6 +5581,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; i++) {
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
@@ -5549,7 +5707,19 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         Idx++;
       }
       assert(ci->getReturnType()->isPointerTy());
-      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      auto ptr = TypeTree(BaseType::Pointer);
+      if (shadowHandlers.find(funcName) == shadowHandlers.end() &&
+          funcName != "swift_allocObject") {
+        if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+          auto &DL =
+              call.getParent()->getParent()->getParent()->getDataLayout();
+          auto LoadSize = CI->getZExtValue();
+          // Only propagate mappings in range that aren't "Anything" into the
+          // pointer
+          ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+        }
+      }
+      updateAnalysis(&call, ptr.Only(-1, &call), &call);
       return;
     }
     if (funcName == "malloc_usable_size" || funcName == "malloc_size" ||

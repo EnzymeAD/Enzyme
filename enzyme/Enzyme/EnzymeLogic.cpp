@@ -688,7 +688,10 @@ void calculateUnusedValuesInFunction(
   std::map<UsageKey, bool> CacheResults =
       gutils->populateSeenFromKnownRecompute();
   std::map<UsageKey, bool> PrimalSeen;
-  if (mode == DerivativeMode::ReverseModeGradient) {
+  // The passes consuming the tape read cached values from it, so the values
+  // those were computed from are not needed for them.
+  if (mode == DerivativeMode::ReverseModeGradient ||
+      mode == DerivativeMode::ForwardModeSplit) {
     PrimalSeen = CacheResults;
   }
 
@@ -1805,7 +1808,7 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
   while (gutils->inversionAllocs->size() > 0) {
     Instruction *inst = &gutils->inversionAllocs->back();
     if (isa<AllocaInst>(inst))
-      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
+      moveBeforeInst(inst, &gutils->newFunc->getEntryBlock().front());
     else
       inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
   }
@@ -4616,9 +4619,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
 #endif
+      SmallVector<Value *, 1> BarrierArgs = {};
+#if LLVM_VERSION_MAJOR > 20
+      if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
+        BarrierArgs.push_back(ConstantInt::get(
+            Type::getInt32Ty(gutils->newFunc->getContext()), 0));
+#endif
       instbuilder.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          {});
+          BarrierArgs);
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
       IRBuilder<> sbuilder(sharedBlock);
@@ -5224,7 +5233,7 @@ private:
       for (unsigned It = 0; It < Args.size(); It++)
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
-      ClonedI->insertBefore(Return);
+      insertBeforeInst(ClonedI, Return);
     }
   }
 
