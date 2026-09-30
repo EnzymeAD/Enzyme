@@ -1436,6 +1436,44 @@ static std::pair<Value *, uint64_t> getPathsArg(IRBuilder<> &B, StepInfo &S,
   return {B.CreatePointerCast(G, T.I8P), encoded.size()};
 }
 
+/// Mark `F` as a pass of `loop`, and keep how it was made, to differentiate
+/// it again (see createCheckpointForward). The schedule's arguments and the
+/// handle carry no derivative in any mode: they must not get a shadow when
+/// the pass is differentiated again.
+static void notePass(EnzymeLogic &Logic, Function *F,
+                     EnzymeLogic::CheckpointPass::Kind kind, Function *loop,
+                     ArrayRef<DIFFE_TYPE> constant_args,
+                     const FnTypeInfo &typeInfo, unsigned width,
+                     bool runtimeActivity, bool strongZero, bool AtomicAdd) {
+  LLVMContext &Ctx = F->getContext();
+  auto inactive = Attribute::get(Ctx, "enzyme_inactive");
+  F->addFnAttr("enzyme_checkpoint_pass");
+  // Differentiated again, a pass is replaced as a whole: its body, the
+  // driver and the scheme, must stay out of its caller.
+  F->addFnAttr(Attribute::NoInline);
+  unsigned j = 0;
+  for (unsigned k = 0; k < loop->arg_size(); k++) {
+    // The fixed parameters, and the size of each region.
+    if (k < LoopFixedParams ||
+        (k < getFirstStepArg(loop) && (k - LoopFixedParams) % 2 == 1))
+      F->addParamAttr(j, inactive);
+    j++;
+    if (constant_args[k] == DIFFE_TYPE::DUP_ARG ||
+        constant_args[k] == DIFFE_TYPE::DUP_NONEED)
+      j++;
+  }
+  if (kind == EnzymeLogic::CheckpointPass::Reverse)
+    F->addParamAttr(j, inactive);
+  if (kind == EnzymeLogic::CheckpointPass::Augmented)
+    F->addRetAttr(inactive);
+  Logic.CheckpointPasses.insert(std::make_pair(
+      F, EnzymeLogic::CheckpointPass{
+             kind, loop,
+             std::vector<DIFFE_TYPE>(constant_args.begin(),
+                                     constant_args.end()),
+             typeInfo, width, runtimeActivity, strongZero, AtomicAdd}));
+}
+
 Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
                                     Function *loop,
                                     ArrayRef<DIFFE_TYPE> constant_args,
@@ -1455,7 +1493,9 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
       T.I8P, getInterleavedParams(loop, constant_args, width), false);
   auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
                              "augmented_" + loop->getName(), &M);
-  F->addFnAttr("enzyme_checkpoint_pass");
+  notePass(Logic, F, EnzymeLogic::CheckpointPass::Augmented, loop,
+           constant_args, typeInfo, width, runtimeActivity, strongZero,
+           AtomicAdd);
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
@@ -1522,7 +1562,11 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   auto *F = Function::Create(
       FT, GlobalValue::InternalLinkage,
       (combined ? "diffe" : "diffe_rev_") + loop->getName(), &M);
-  F->addFnAttr("enzyme_checkpoint_pass");
+  notePass(Logic, F,
+           combined ? EnzymeLogic::CheckpointPass::Combined
+                    : EnzymeLogic::CheckpointPass::Reverse,
+           loop, key.constant_args, key.typeInfo, key.width,
+           key.runtimeActivity, key.strongZero, key.AtomicAdd);
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
   Value *h;
   if (combined) {

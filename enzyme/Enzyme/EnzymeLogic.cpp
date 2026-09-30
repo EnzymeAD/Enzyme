@@ -6856,5 +6856,6 @@ void EnzymeLogic::clear() {
   ReverseCachedFunctions.clear();
   NoFreeCachedFunctions.clear();
   ForwardCachedFunctions.clear();
+  CheckpointPasses.clear();
   BatchCachedFunctions.clear();
 }
