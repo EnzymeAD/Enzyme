@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="preserve-nvvm,enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; Allocation of a Fortran allocatable through the LLVM flang runtime, as
 ;   allocate(work(n)); work = x
@@ -6,9 +6,8 @@
 ; replays the runtime calls on the shadow descriptor, zeroes the newly
 ; allocated shadow memory and (re)initializes it.
 
-@work = dso_local global { ptr, i64, i32, i8, i8, i8, i8, [1 x [3 x i64]] } { ptr null, i64 8, i32 20240719, i8 1, i8 28, i8 2, i8 0, [1 x [3 x i64]] zeroinitializer }, align 8
+@work = dso_local global { ptr, i64, i32, i8, i8, i8, i8, [1 x [3 x i64]] } { ptr null, i64 8, i32 20240719, i8 1, i8 28, i8 2, i8 0, [1 x [3 x i64]] zeroinitializer }, align 8, !enzyme_shadow !4
 @work_shadow = dso_local global { ptr, i64, i32, i8, i8, i8, i8, [1 x [3 x i64]] } { ptr null, i64 8, i32 20240719, i8 1, i8 28, i8 2, i8 0, [1 x [3 x i64]] zeroinitializer }, align 8
-@__enzyme_shadow_globals = dso_local global [1 x [2 x ptr]] [[2 x ptr] [ptr @work, ptr @work_shadow]]
 
 declare void @_FortranAAllocatableSetBounds(ptr, i32, i64, i64)
 declare i32 @_FortranAAllocatableAllocate(ptr, ptr, i1, ptr, ptr, i32, ptr)
@@ -35,6 +34,7 @@ declare void @__enzyme_fwddiff(...)
 !1 = !{!"descriptor member", !2, i64 0}
 !2 = !{!"any access", !3, i64 0}
 !3 = !{!"Flang function root alloc"}
+!4 = !{ptr @work_shadow}
 
 ; CHECK: define internal void @fwddiffealloc(i64 %n, double %x, double %"x'")
 ; CHECK:   call void @_FortranAAllocatableSetBounds(ptr @work, i32 0, i64 1, i64 %n)
