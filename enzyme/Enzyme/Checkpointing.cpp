@@ -1299,14 +1299,72 @@ struct PassFrame {
 };
 } // namespace
 
+/// The regions array of a pass: `marked` (pointer, size) pairs, then
+/// `globals`, whose entries are copied from a constant table named
+/// `tableName`.
+static void buildRegions(IRBuilder<> &B, StepInfo &S, DriverTypes &T,
+                         ArrayRef<std::pair<Value *, Value *>> marked,
+                         ArrayRef<GlobalVariable *> globals,
+                         const Twine &tableName, PassFrame &frame) {
+  Module &M = *S.loop->getParent();
+  const DataLayout &DL = M.getDataLayout();
+  unsigned nmarked = marked.size();
+  unsigned nregions = nmarked + globals.size();
+  auto *regionArr = ArrayType::get(T.Region, std::max(nregions, 1u));
+  auto *regions = B.CreateAlloca(regionArr, nullptr, "regions");
+  Value *bytes = ConstantInt::get(T.I64, 0);
+  // The globals' entries come from a constant table: a global's address
+  // stored by an instruction outside the functions that use it trips up
+  // activity analysis of those functions.
+  if (!globals.empty()) {
+    SmallVector<Constant *, 8> entries;
+    uint64_t globalBytes = 0;
+    for (auto *GV : globals) {
+      uint64_t size = DL.getTypeAllocSize(GV->getValueType());
+      globalBytes += size;
+      entries.push_back(ConstantStruct::get(
+          T.Region,
+          {ConstantExpr::getPointerBitCastOrAddrSpaceCast(GV, T.I8P),
+           ConstantInt::get(T.I64, size),
+           ConstantInt::get(T.I32, GV->getType()->getPointerAddressSpace()),
+           ConstantInt::get(T.I32, 0)}));
+    }
+    auto *tableTy = ArrayType::get(T.Region, entries.size());
+    auto *init = ConstantArray::get(tableTy, entries);
+    std::string name = tableName.str();
+    auto *table = M.getGlobalVariable(name, /*AllowInternal*/ true);
+    if (!table || table->getInitializer() != init)
+      table = new GlobalVariable(M, tableTy, /*isConstant*/ true,
+                                 GlobalValue::PrivateLinkage, init, name);
+    B.CreateMemCpy(B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, nmarked),
+                   MaybeAlign(1), table, MaybeAlign(1),
+                   DL.getTypeAllocSize(tableTy));
+    bytes = ConstantInt::get(T.I64, globalBytes);
+  }
+  for (unsigned r = 0; r < nmarked; r++) {
+    auto [ptr, size] = marked[r];
+    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+    Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
+    B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
+                  B.CreateStructGEP(T.Region, slot, 0));
+    B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
+    B.CreateStore(ConstantInt::get(T.I32, AS),
+                  B.CreateStructGEP(T.Region, slot, 2));
+    B.CreateStore(ConstantInt::get(T.I32, 0),
+                  B.CreateStructGEP(T.Region, slot, 3));
+    bytes = B.CreateAdd(bytes, size);
+  }
+  frame.regions = B.CreatePointerCast(regions, T.I8P);
+  frame.nregions = ConstantInt::get(T.I64, nregions);
+  frame.bytes = bytes;
+}
+
 /// Map the arguments of `F` (the loop's arguments, each followed by its
 /// shadow if duplicated) to the step's environment and the snapshot regions.
 static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
                             ArrayRef<DIFFE_TYPE> constant_args,
                             DriverTypes &T) {
   Function *loop = S.loop;
-  Module &M = *loop->getParent();
-  const DataLayout &DL = M.getDataLayout();
   PassFrame frame;
 
   SmallVector<Value *, 8> shadows;
@@ -1336,57 +1394,12 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
   frame.env = B.CreatePointerCast(env, T.I8P);
 
   // The regions: those marked at the call, then the globals.
-  auto globals = getGlobalRegions(S.step);
-  unsigned nmarked = getNumRegions(loop);
-  unsigned nregions = nmarked + globals.size();
-  auto *regionArr = ArrayType::get(T.Region, std::max(nregions, 1u));
-  auto *regions = B.CreateAlloca(regionArr, nullptr, "regions");
-  Value *bytes = ConstantInt::get(T.I64, 0);
-  // The globals' entries come from a constant table: a global's address
-  // stored by an instruction outside the functions that use it trips up
-  // activity analysis of those functions.
-  if (!globals.empty()) {
-    SmallVector<Constant *, 8> entries;
-    uint64_t globalBytes = 0;
-    for (auto *GV : globals) {
-      uint64_t size = DL.getTypeAllocSize(GV->getValueType());
-      globalBytes += size;
-      entries.push_back(ConstantStruct::get(
-          T.Region,
-          {ConstantExpr::getPointerBitCastOrAddrSpaceCast(GV, T.I8P),
-           ConstantInt::get(T.I64, size),
-           ConstantInt::get(T.I32, GV->getType()->getPointerAddressSpace()),
-           ConstantInt::get(T.I32, 0)}));
-    }
-    auto *tableTy = ArrayType::get(T.Region, entries.size());
-    std::string name = ("enzyme.ckpt.regions." + S.step->getName()).str();
-    auto *table = M.getGlobalVariable(name, /*AllowInternal*/ true);
-    if (!table || table->getValueType() != tableTy)
-      table = new GlobalVariable(M, tableTy, /*isConstant*/ true,
-                                 GlobalValue::PrivateLinkage,
-                                 ConstantArray::get(tableTy, entries), name);
-    B.CreateMemCpy(B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, nmarked),
-                   MaybeAlign(1), table, MaybeAlign(1),
-                   DL.getTypeAllocSize(tableTy));
-    bytes = ConstantInt::get(T.I64, globalBytes);
-  }
-  for (unsigned r = 0; r < nmarked; r++) {
-    Value *ptr = primals[LoopFixedParams + 2 * r];
-    Value *size = primals[LoopFixedParams + 2 * r + 1];
-    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
-    Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
-    B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
-                  B.CreateStructGEP(T.Region, slot, 0));
-    B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
-    B.CreateStore(ConstantInt::get(T.I32, AS),
-                  B.CreateStructGEP(T.Region, slot, 2));
-    B.CreateStore(ConstantInt::get(T.I32, 0),
-                  B.CreateStructGEP(T.Region, slot, 3));
-    bytes = B.CreateAdd(bytes, size);
-  }
-  frame.regions = B.CreatePointerCast(regions, T.I8P);
-  frame.nregions = ConstantInt::get(T.I64, nregions);
-  frame.bytes = bytes;
+  SmallVector<std::pair<Value *, Value *>, 4> marked;
+  for (unsigned r = 0; r < getNumRegions(loop); r++)
+    marked.emplace_back(primals[LoopFixedParams + 2 * r],
+                        primals[LoopFixedParams + 2 * r + 1]);
+  buildRegions(B, S, T, marked, getGlobalRegions(S.step),
+               "enzyme.ckpt.regions." + S.step->getName(), frame);
   return frame;
 }
 
@@ -1400,6 +1413,27 @@ static void printRegions(StepInfo &S) {
   for (auto *GV : getGlobalRegions(S.step))
     llvm::errs() << "  global " << GV->getName() << " ("
                  << DL.getTypeAllocSize(GV->getValueType()) << " bytes)\n";
+}
+
+/// The access paths of the step's first argument after the index, for
+/// schemes that copy the state themselves, and their number.
+static std::pair<Value *, uint64_t> getPathsArg(IRBuilder<> &B, StepInfo &S,
+                                                DriverTypes &T) {
+  Module &M = *S.loop->getParent();
+  if (S.step->arg_size() < 2 || !S.step->getArg(1)->getType()->isPointerTy())
+    return {ConstantPointerNull::get(T.I8P), 0};
+  auto encoded = encodePaths(getAccessPaths(S.step, 1, /*reads*/ true));
+  if (encoded.empty())
+    return {ConstantPointerNull::get(T.I8P), 0};
+  auto *Ty = ArrayType::get(T.I64, encoded.size());
+  std::string name = ("enzyme.ckpt.paths." + S.step->getName()).str();
+  auto *G = M.getGlobalVariable(name, /*AllowInternal*/ true);
+  if (!G)
+    G = new GlobalVariable(M, Ty, /*isConstant*/ true,
+                           GlobalValue::PrivateLinkage,
+                           ConstantDataArray::get(M.getContext(), encoded),
+                           name);
+  return {B.CreatePointerCast(G, T.I8P), encoded.size()};
 }
 
 Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
@@ -1426,25 +1460,7 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
 
-  // The accesses through the first argument after the index, for schemes
-  // that copy the state themselves.
-  Value *paths = ConstantPointerNull::get(T.I8P);
-  uint64_t npaths = 0;
-  if (S.step->arg_size() > 1 &&
-      S.step->getArg(1)->getType()->isPointerTy()) {
-    auto encoded = encodePaths(getAccessPaths(S.step, 1, /*reads*/ true));
-    npaths = encoded.size();
-    if (npaths) {
-      auto *Ty = ArrayType::get(T.I64, npaths);
-      std::string name = ("enzyme.ckpt.paths." + S.step->getName()).str();
-      auto *G = M.getGlobalVariable(name, /*AllowInternal*/ true);
-      if (!G)
-        G = new GlobalVariable(M, Ty, /*isConstant*/ true,
-                               GlobalValue::PrivateLinkage,
-                               ConstantDataArray::get(Ctx, encoded), name);
-      paths = B.CreatePointerCast(G, T.I8P);
-    }
-  }
+  auto [paths, npaths] = getPathsArg(B, S, T);
 
   auto &primals = frame.primals;
   Value *h = B.CreateCall(
