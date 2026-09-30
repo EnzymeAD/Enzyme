@@ -566,9 +566,7 @@ struct DriverBuilder {
               B.CreateICmpNE(nregions, ConstantInt::get(T.I64, 0)));
   }
   void trap() {
-    B.CreateCall(
-        Intrinsic::getOrInsertDeclaration(F->getParent(), Intrinsic::trap, {}),
-        {});
+    B.CreateCall(getIntrinsicDeclaration(F->getParent(), Intrinsic::trap), {});
     B.CreateUnreachable();
   }
 };
