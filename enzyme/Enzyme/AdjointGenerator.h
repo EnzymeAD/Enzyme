@@ -3320,6 +3320,11 @@ public:
                   break;
                 }
                 cur = cur->getPrevNode();
+                // We've hit the start of the block, assume written to by a
+                // previous block.
+                if (cur == nullptr) {
+                  writtenTo = true;
+                }
               }
 
               if (!writtenTo) {
