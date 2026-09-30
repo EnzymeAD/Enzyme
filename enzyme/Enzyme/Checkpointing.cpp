@@ -105,7 +105,10 @@ enum HandleField : unsigned {
 static constexpr unsigned LoopFixedParams = 4;
 
 bool isCheckpointLoop(const Function *F) {
-  return F && F->hasFnAttribute(CheckpointAttr);
+  // Derivatives cloned from a loop function carry its attributes and
+  // metadata, but not its signature: only the loop function itself counts.
+  return F && F->hasFnAttribute(CheckpointAttr) &&
+         F->getName().starts_with("enzyme.ckpt.");
 }
 
 /// A loop run until its step returns false, rather than a given number of
@@ -1316,6 +1319,7 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
                                false);
   auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
                              "augmented_" + loop->getName(), &M);
+  F->addFnAttr("enzyme_checkpoint_pass");
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
@@ -1389,6 +1393,7 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   auto *F = Function::Create(
       FT, GlobalValue::InternalLinkage,
       (combined ? "diffe" : "diffe_rev_") + loop->getName(), &M);
+  F->addFnAttr("enzyme_checkpoint_pass");
   IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
   Value *h;
   if (combined) {
