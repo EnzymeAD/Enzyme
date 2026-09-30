@@ -14,7 +14,7 @@
 ; CHECK-SAME: i64 0, i64 24, i64 3,
 ; CHECK-SAME: i64 1, i64 0, i64 -1, i64 3,
 ; CHECK-SAME: i64 1, i64 8, i64 -1, i64 1]
-; CHECK: call ptr @__enzyme_ckpt_fwd({{.*}}, ptr @enzyme.ckpt.paths.step, i64 17)
+; CHECK: call ptr @__enzyme_ckpt_fwd({{.*}}, ptr @enzyme.ckpt.paths.step, i64 17, ptr null)
 
 
 @enzyme_scheme = external global i32, align 4

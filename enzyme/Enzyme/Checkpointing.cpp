@@ -108,6 +108,12 @@ bool isCheckpointLoop(const Function *F) {
   return F && F->hasFnAttribute(CheckpointAttr);
 }
 
+/// A loop run until its step returns false, rather than a given number of
+/// times.
+static bool isWhileLoop(const Function *F) {
+  return F->getFnAttribute(CheckpointAttr).getValueAsString() == "while";
+}
+
 static unsigned getNumRegions(const Function *F) {
   unsigned n = 0;
   F->getFnAttribute(CheckpointRegionsAttr)
@@ -181,7 +187,7 @@ static Value *castArg(IRBuilder<> &B, Value *V, Type *T) {
 
 static Function *createLoopFunction(Module &M, Function *step,
                                     ArrayRef<Type *> regionTypes, Type *vtTy,
-                                    Type *dataTy) {
+                                    Type *dataTy, bool isWhile) {
   LLVMContext &Ctx = M.getContext();
   Type *I64 = Type::getInt64Ty(Ctx);
   SmallVector<Type *, 8> params = {I64, I64, vtTy, dataTy};
@@ -194,9 +200,11 @@ static Function *createLoopFunction(Module &M, Function *step,
     params.push_back(stepFT->getParamType(i));
 
   auto *FT = FunctionType::get(Type::getVoidTy(Ctx), params, false);
-  auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
-                             "enzyme.ckpt.for." + step->getName(), &M);
-  F->addFnAttr(CheckpointAttr, "for");
+  auto *F = Function::Create(
+      FT, GlobalValue::InternalLinkage,
+      (isWhile ? "enzyme.ckpt.while." : "enzyme.ckpt.for.") + step->getName(),
+      &M);
+  F->addFnAttr(CheckpointAttr, isWhile ? "while" : "for");
   F->addFnAttr(CheckpointRegionsAttr, std::to_string(regionTypes.size()));
   F->addFnAttr(Attribute::NoInline);
   F->setMetadata(CheckpointStepMD,
@@ -211,7 +219,11 @@ static Function *createLoopFunction(Module &M, Function *step,
   IRBuilder<> B(entry);
   Value *start = F->getArg(0);
   Value *end = B.CreateAdd(start, F->getArg(1), "end");
-  B.CreateCondBr(B.CreateICmpSLT(start, end), body, exit);
+  // A while loop runs its step at least once, and as long as it returns true.
+  if (isWhile)
+    B.CreateBr(body);
+  else
+    B.CreateCondBr(B.CreateICmpSLT(start, end), body, exit);
 
   B.SetInsertPoint(body);
   auto *iv = B.CreatePHI(I64, 2, "i");
@@ -224,40 +236,51 @@ static Function *createLoopFunction(Module &M, Function *step,
   call->setCallingConv(step->getCallingConv());
   auto *next = B.CreateAdd(iv, ConstantInt::get(I64, 1), "i.next");
   iv->addIncoming(next, body);
-  B.CreateCondBr(B.CreateICmpSLT(next, end), body, exit);
+  if (isWhile)
+    B.CreateCondBr(
+        B.CreateICmpNE(call, Constant::getNullValue(call->getType())), body,
+        exit);
+  else
+    B.CreateCondBr(B.CreateICmpSLT(next, end), body, exit);
 
   B.SetInsertPoint(exit);
   B.CreateRetVoid();
   return F;
 }
 
-static bool lowerMarker(CallInst *CI) {
+static bool lowerMarker(CallInst *CI, bool isWhile) {
   Module &M = *CI->getModule();
   LLVMContext &Ctx = M.getContext();
+  const char *marker =
+      isWhile ? "__enzyme_checkpoint_while" : "__enzyme_checkpoint_for";
   auto fail = [&](const Twine &msg) {
     std::string str = msg.str();
     EmitFailure("CheckpointMarker", CI->getDebugLoc(), CI, str);
     return false;
   };
 
-  if (CI->arg_size() < 3)
-    return fail("__enzyme_checkpoint_for needs a step function, a start and "
-                "a number of steps");
+  if (CI->arg_size() < (isWhile ? 1u : 3u))
+    return fail(Twine(marker) + " needs a step function" +
+                (isWhile ? "" : ", a start and a number of steps"));
   Value *stepV = CI->getArgOperand(0)->stripPointerCasts();
   if (auto *GA = dyn_cast<GlobalAlias>(stepV))
     stepV = GA->getAliaseeObject();
   auto *step = dyn_cast<Function>(stepV);
   if (!step)
-    return fail("__enzyme_checkpoint_for needs a known step function");
+    return fail(Twine(marker) + " needs a known step function");
   auto *stepFT = step->getFunctionType();
   if (stepFT->isVarArg() || stepFT->getNumParams() == 0 ||
       !stepFT->getParamType(0)->isIntegerTy())
-    return fail("the step of __enzyme_checkpoint_for must take the step "
-                "index as an integer first argument, by value");
+    return fail(Twine("the step of ") + marker +
+                " must take the step index as an integer first argument, by "
+                "value");
+  if (isWhile && !stepFT->getReturnType()->isIntegerTy())
+    return fail("the step of __enzyme_checkpoint_while must return whether "
+                "to go on, as an integer or bool");
 
   Value *vt = nullptr, *data = nullptr;
   SmallVector<std::pair<Value *, Value *>, 2> regions;
-  unsigned idx = 3;
+  unsigned idx = isWhile ? 1 : 3;
   IRBuilder<> B(CI);
   Type *I64 = Type::getInt64Ty(Ctx);
   while (idx < CI->arg_size()) {
@@ -289,19 +312,25 @@ static bool lowerMarker(CallInst *CI) {
     break;
   }
   if (!vt)
-    return fail("__enzyme_checkpoint_for needs enzyme_scheme, followed by "
-                "the scheme and its data");
+    return fail(Twine(marker) +
+                " needs enzyme_scheme, followed by the scheme and its data");
   unsigned nargs = CI->arg_size() - idx;
   if (nargs + 1 != stepFT->getNumParams())
-    return fail("__enzyme_checkpoint_for passes " + Twine(nargs) +
+    return fail(Twine(marker) + " passes " + Twine(nargs) +
                 " arguments to a step that takes " +
                 Twine(stepFT->getNumParams() - 1) + " after the index");
 
   SmallVector<Value *, 8> args;
-  for (unsigned i = 1; i <= 2; i++) {
-    Value *V = CI->getArgOperand(i);
-    args.push_back(V->getType()->isPointerTy() ? loadInteger(B, V)
-                                               : castArg(B, V, I64));
+  if (isWhile) {
+    // Steps from 0, as many as it takes.
+    args.push_back(ConstantInt::get(I64, 0));
+    args.push_back(ConstantInt::getSigned(I64, -1));
+  } else {
+    for (unsigned i = 1; i <= 2; i++) {
+      Value *V = CI->getArgOperand(i);
+      args.push_back(V->getType()->isPointerTy() ? loadInteger(B, V)
+                                                 : castArg(B, V, I64));
+    }
   }
   if (!args[0] || !args[1])
     return fail("the start and number of steps must be integers");
@@ -322,13 +351,13 @@ static bool lowerMarker(CallInst *CI) {
     Value *a =
         castArg(B, CI->getArgOperand(idx + i), stepFT->getParamType(i + 1));
     if (!a)
-      return fail("argument " + Twine(i) +
-                  " of __enzyme_checkpoint_for does not match the step");
+      return fail("argument " + Twine(i) + " of " + marker +
+                  " does not match the step");
     args.push_back(a);
   }
 
-  Function *loop =
-      createLoopFunction(M, step, regionTypes, vt->getType(), data->getType());
+  Function *loop = createLoopFunction(M, step, regionTypes, vt->getType(),
+                                      data->getType(), isWhile);
   auto *call = B.CreateCall(loop, args);
   call->setDebugLoc(CI->getDebugLoc());
   if (!CI->getType()->isVoidTy())
@@ -338,19 +367,23 @@ static bool lowerMarker(CallInst *CI) {
 }
 
 bool lowerCheckpointMarkers(Module &M) {
-  SmallVector<CallInst *, 4> calls;
+  SmallVector<std::pair<CallInst *, bool>, 4> calls;
   for (Function &F : M)
     for (Instruction &I : instructions(F))
       if (auto *CI = dyn_cast<CallInst>(&I)) {
         auto *callee =
             dyn_cast<Function>(CI->getCalledOperand()->stripPointerCasts());
+        if (!callee)
+          continue;
         // Fortran callers use an implicit interface to f__enzyme_...
-        if (callee && callee->getName().contains("__enzyme_checkpoint_for"))
-          calls.push_back(CI);
+        if (callee->getName().contains("__enzyme_checkpoint_for"))
+          calls.push_back({CI, false});
+        else if (callee->getName().contains("__enzyme_checkpoint_while"))
+          calls.push_back({CI, true});
       }
   bool changed = false;
-  for (auto *CI : calls)
-    changed |= lowerMarker(CI);
+  for (auto [CI, isWhile] : calls)
+    changed |= lowerMarker(CI, isWhile);
   return changed;
 }
 
@@ -642,7 +675,7 @@ struct DriverTypes {
   PointerType *I8P;
   StructType *Action, *Region, *VTable, *Handle;
   FunctionType *InitFT, *NextFT, *StoreFT, *FinalizeFT, *StateFT, *StepFT,
-      *FwdFT, *RevDriverFT, *PathsFT;
+      *FwdFT, *RevDriverFT, *PathsFT, *WhileFT, *NStepsFT;
 
   DriverTypes(LLVMContext &Ctx) : Ctx(Ctx) {
     Void = Type::getVoidTy(Ctx);
@@ -661,10 +694,14 @@ struct DriverTypes {
     StateFT = FunctionType::get(Void, {I8P, I64, I64, I8P}, false);
     // The primal of step i, or its derivative.
     StepFT = FunctionType::get(Void, {I8P, I64}, false);
+    // Step i of a while loop: whether to go on.
+    WhileFT = FunctionType::get(I32, {I8P, I64}, false);
+    NStepsFT = FunctionType::get(Void, {I8P, I64}, false);
     // vt, data, start, n, regions, nregions, bytes, env, primal, paths,
-    // npaths
+    // npaths, primal_while (null for a for loop)
     FwdFT = FunctionType::get(
-        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I8P, I8P, I64}, false);
+        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I8P, I8P, I64, I8P},
+        false);
     PathsFT = FunctionType::get(Void, {I8P, I8P, I64}, false);
     // handle, regions, nregions, env, primal, turn
     RevDriverFT =
@@ -767,7 +804,7 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   auto *A = F->arg_begin();
   Value *vt = A++, *data = A++, *start = A++, *n = A++, *regions = A++,
         *nregions = A++, *bytes = A++, *env = A++, *primal = A++,
-        *paths = A++, *npaths = A++;
+        *paths = A++, *npaths = A++, *primalWhile = A++;
   const DataLayout &DL = M.getDataLayout();
 
   auto *action = B.CreateAlloca(T.Action, nullptr, "action");
@@ -799,11 +836,13 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
 
   auto *bad = D.block("bad");
   auto *storeBB = D.block("store");
+  auto *restoreBB = D.block("restore");
   auto *fwdBB = D.block("forward");
   auto *turnBB = D.block("firstuturn");
   auto *doneBB = D.block("done");
-  auto *SW = B.CreateSwitch(flag, bad, 4);
+  auto *SW = B.CreateSwitch(flag, bad, 5);
   SW->addCase(ConstantInt::get(T.I32, CKPT_STORE), storeBB);
+  SW->addCase(ConstantInt::get(T.I32, CKPT_RESTORE), restoreBB);
   SW->addCase(ConstantInt::get(T.I32, CKPT_FORWARD), fwdBB);
   SW->addCase(ConstantInt::get(T.I32, CKPT_FIRSTUTURN), turnBB);
   SW->addCase(ConstantInt::get(T.I32, CKPT_DONE), doneBB);
@@ -815,9 +854,47 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.snapshot(true, vt, state, cp, it, regions, nregions, env);
   B.CreateBr(loop);
 
+  // Only a while loop's schedule goes back before its first turn, to reach
+  // the state before the last step once the loop has ended.
+  B.SetInsertPoint(restoreBB);
+  D.snapshot(false, vt, state, cp, it, regions, nregions, env);
+  B.CreateBr(loop);
+
   B.SetInsertPoint(fwdBB);
+  auto *forLoop = D.block("forward.for");
+  auto *whileLoop = D.block("forward.while");
+  B.CreateCondBr(B.CreateICmpEQ(primalWhile, ConstantPointerNull::get(T.I8P)),
+                 forLoop, whileLoop);
+  B.SetInsertPoint(forLoop);
   D.forwardSteps(primal, env, start, sit, it);
   B.CreateBr(loop);
+
+  // A while loop may end on the way: the scheme learns how many steps it had,
+  // and plans the rest of the schedule.
+  B.SetInsertPoint(whileLoop);
+  {
+    auto *body = D.block("while.body");
+    auto *next = D.block("while.next");
+    auto *ended = D.block("while.ended");
+    B.CreateCondBr(B.CreateICmpSLT(sit, it), body, loop);
+    B.SetInsertPoint(body);
+    auto *j = B.CreatePHI(T.I64, 2, "j");
+    j->addIncoming(sit, whileLoop);
+    Value *go = B.CreateCall(
+        T.WhileFT, B.CreatePointerCast(primalWhile, getUnqual(T.WhileFT)),
+        {env, B.CreateAdd(start, j)}, "go");
+    Value *j1 = B.CreateAdd(j, ConstantInt::get(T.I64, 1));
+    B.CreateCondBr(B.CreateICmpEQ(go, ConstantInt::get(T.I32, 0)), ended,
+                   next);
+    B.SetInsertPoint(next);
+    j->addIncoming(j1, next);
+    B.CreateCondBr(B.CreateICmpSLT(j1, it), body, loop);
+    B.SetInsertPoint(ended);
+    D.store(T.Handle, h, H_N, j1);
+    D.callIfSet(D.vtFn(vt, VT_SetNSteps, "set_nsteps"), T.NStepsFT,
+                {state, j1});
+    B.CreateBr(loop);
+  }
 
   B.SetInsertPoint(turnBB);
   Value *lastj = B.CreateSub(it, ConstantInt::get(T.I64, 1));
@@ -1070,6 +1147,24 @@ static Function *getTrampoline(DriverTypes &T, StepInfo &S, StringRef kind,
   return F;
 }
 
+/// `i32 (env, i)`: step i of a while loop, returning whether to go on.
+static Function *getWhileTrampoline(DriverTypes &T, StepInfo &S) {
+  Module &M = *S.loop->getParent();
+  std::string name =
+      ("enzyme.ckpt.primal_while." + S.loop->getName() + "." + S.suffix).str();
+  if (auto *F = M.getFunction(name))
+    return F;
+  auto *F = Function::Create(T.WhileFT, GlobalValue::InternalLinkage, name, &M);
+  IRBuilder<> B(BasicBlock::Create(M.getContext(), "entry", F));
+  SmallVector<Value *, 8> args;
+  loadStepArgs(B, S, F->getArg(0), F->getArg(1), /*shadows*/ false, args);
+  auto *call = B.CreateCall(S.step, args);
+  call->setCallingConv(S.step->getCallingConv());
+  B.CreateRet(B.CreateZExt(
+      B.CreateICmpNE(call, Constant::getNullValue(call->getType())), T.I32));
+  return F;
+}
+
 //===----------------------------------------------------------------------===//
 // The augmented forward and reverse passes of the loop
 //===----------------------------------------------------------------------===//
@@ -1253,7 +1348,10 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
        frame.regions, frame.nregions, frame.bytes, frame.env,
        B.CreatePointerCast(
            getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
-       paths, ConstantInt::get(T.I64, npaths)},
+       paths, ConstantInt::get(T.I64, npaths),
+       isWhileLoop(loop)
+           ? B.CreatePointerCast(getWhileTrampoline(T, S), T.I8P)
+           : (Value *)ConstantPointerNull::get(T.I8P)},
       "handle");
   B.CreateRet(h);
   return F;
