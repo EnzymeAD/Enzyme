@@ -7600,15 +7600,23 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   }
 
                   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
+                  // This lookup is in the reverse pass, possibly in blocks
+                  // that an unwrap erases again if it fails: its
+                  // instructions are not part of creating the cache.
                   Value *outer = getCachePointer(
                       AT,
                       /*inForwardPass*/ false, BuilderM, lctx, cache,
-                      /*storeinstorecache*/ true, available,
+                      /*storeinstorecache*/ false, available,
                       /*extraSize*/ nullptr);
+                  // The indices are needed where the load is, so look them
+                  // up at the same scope. At the insertion block, which may
+                  // correspond to a later loop, the lookup of a value of
+                  // this loop would need a cache in that later loop, whose
+                  // limit may in turn need this load.
                   SmallVector<Value *, 2> idxs;
                   for (auto &idx : GEP->indices()) {
                     idxs.push_back(lookupM(idx, BuilderM, available,
-                                           tryLegalRecomputeCheck));
+                                           tryLegalRecomputeCheck, scope));
                   }
 
                   auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
