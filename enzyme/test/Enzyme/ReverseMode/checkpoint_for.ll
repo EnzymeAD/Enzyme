@@ -80,6 +80,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; REGIONS-NOT: param
 
 ; CHECK: @enzyme.ckpt.regions.step = private constant [1 x { ptr, i64, i32, i32 }] [{ ptr, i64, i32, i32 } { ptr @state, i64 32, i32 0, i32 0 }]
+; CHECK: @enzyme.ckpt.paths.step = private constant [3 x i64] [i64 0, i64 -1, i64 3]
 
 ; CHECK: define double @f(
 ; CHECK:   call void @enzyme.ckpt.for.step(i64 0, i64 %n, ptr %s, ptr %c, ptr %x, i64 32, ptr %x)
@@ -98,7 +99,8 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK: define internal void @diffestep(i64 %i, ptr {{.*}}%x, ptr {{.*}}%"x'")
 
 ; CHECK: define internal ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
-; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d)
+; The step reads and writes all of what x points to.
+; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.paths.step, i64 3)
 ; CHECK-NEXT:   ret ptr %handle
 
 ; CHECK: define internal void @enzyme.ckpt.primal.enzyme.ckpt.for.step.d(ptr %0, i64 %1)

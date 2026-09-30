@@ -84,6 +84,7 @@ enum VTableField : unsigned {
   VT_Finalize,
   VT_SaveState,
   VT_LoadState,
+  VT_SetPaths,
 };
 
 // Fields of the driver's handle. It holds the schedule from the forward to
@@ -456,6 +457,180 @@ static SmallVector<GlobalVariable *, 8> getGlobalRegions(Function *step) {
 }
 
 //===----------------------------------------------------------------------===//
+// What a snapshot of an object holds: access paths
+//===----------------------------------------------------------------------===//
+//
+// For a step argument that points to an object graph (a Julia closure, a C
+// struct of pointers), the accesses of the step, as paths from the argument:
+// the byte offsets of the pointer fields followed to reach an object, then the
+// byte offset of the access in it, or "the whole object" where the offset is
+// not a constant. A scheme that copies the state itself can copy just what
+// these reach (see set_paths in enzyme/checkpoint.h).
+
+namespace {
+struct AccessPath {
+  SmallVector<int64_t, 4> path;
+  // Offset of the access in the object reached, or -1 for the whole object.
+  int64_t offset;
+  bool read = false, write = false;
+};
+
+struct PathAnalysis {
+  static constexpr unsigned MaxDepth = 8;
+  std::map<std::pair<SmallVector<int64_t, 4>, int64_t>, AccessPath> accesses;
+  std::set<std::tuple<const Function *, unsigned, SmallVector<int64_t, 4>>>
+      seenArgs;
+
+  void note(ArrayRef<int64_t> path, int64_t offset, bool read, bool write) {
+    SmallVector<int64_t, 4> P(path.begin(), path.end());
+    auto &A = accesses[{P, offset}];
+    A.path = P;
+    A.offset = offset;
+    A.read |= read;
+    A.write |= write;
+  }
+  void whole(ArrayRef<int64_t> path, bool read, bool write) {
+    note(path, -1, read, write);
+  }
+
+  /// Follow the uses of `V`, which points `offset` bytes (-1: unknown) into
+  /// the object at `path`.
+  void visit(Value *V, SmallVector<int64_t, 4> path, int64_t offset) {
+    SmallVector<std::pair<Value *, int64_t>, 8> todo = {{V, offset}};
+    SmallPtrSet<Value *, 16> seen;
+    while (!todo.empty()) {
+      auto [cur, off] = todo.pop_back_val();
+      if (!seen.insert(cur).second)
+        continue;
+      for (User *U : cur->users()) {
+        auto *I = dyn_cast<Instruction>(U);
+        if (!I) {
+          whole(path, true, true);
+          continue;
+        }
+        if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+          const DataLayout &DL = GEP->getModule()->getDataLayout();
+          APInt c(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+          int64_t next = -1;
+          if (off >= 0 && GEP->accumulateConstantOffset(DL, c))
+            next = off + c.getSExtValue();
+          todo.push_back({GEP, next});
+        } else if (isa<CastInst>(I) && I->getType()->isPointerTy()) {
+          todo.push_back({I, off});
+        } else if (isa<PHINode>(I) || isa<SelectInst>(I)) {
+          todo.push_back({I, off});
+        } else if (auto *LI = dyn_cast<LoadInst>(I)) {
+          if (off < 0) {
+            whole(path, true, false);
+          } else if (LI->getType()->isPointerTy() && path.size() < MaxDepth) {
+            // A pointer field: follow it to the object it points to.
+            note(path, off, true, false);
+            auto next = path;
+            next.push_back(off);
+            visit(LI, next, 0);
+          } else {
+            note(path, off, true, false);
+          }
+        } else if (auto *SI = dyn_cast<StoreInst>(I)) {
+          if (SI->getValueOperand() == cur) {
+            // The address escapes into memory.
+            whole(path, true, true);
+          } else if (off < 0 || SI->getValueOperand()->getType()->isPointerTy()) {
+            // A pointer field that is reassigned: the object it pointed to is
+            // no longer reached through it.
+            whole(path, true, true);
+          } else {
+            note(path, off, false, true);
+          }
+        } else if (auto *AI = dyn_cast<AtomicRMWInst>(I)) {
+          (void)AI;
+          if (off < 0)
+            whole(path, true, true);
+          else
+            note(path, off, true, true);
+        } else if (auto *MI = dyn_cast<MemIntrinsic>(I)) {
+          if (MI->getRawDest() == cur)
+            whole(path, false, true);
+          else
+            whole(path, true, false);
+        } else if (auto *CB = dyn_cast<CallBase>(I)) {
+          visitCall(CB, cur, path, off);
+        } else if (isa<ICmpInst>(I)) {
+          continue;
+        } else {
+          whole(path, true, true);
+        }
+      }
+    }
+  }
+
+  void visitCall(CallBase *CB, Value *cur, ArrayRef<int64_t> path,
+                 int64_t off) {
+    SmallVector<int64_t, 4> P(path.begin(), path.end());
+    Function *F = getFunctionFromCall(CB);
+    StringRef name = F ? F->getName() : "";
+    // Julia's GC bookkeeping neither reads nor writes the object's data.
+    if (name == "julia.write_barrier" || name == "julia.write_barrier_binding" ||
+        name == "julia.gc_preserve_begin" || name == "julia.gc_preserve_end" ||
+        name.starts_with("llvm.lifetime") || name.starts_with("llvm.assume"))
+      return;
+    // A pointer into the object, derived from its base.
+    if (name == "julia.gc_loaded") {
+      if (CB->getArgOperand(1) == cur)
+        visit(CB, P, off);
+      return;
+    }
+    if (isa<IntrinsicInst>(CB) && !isa<MemIntrinsic>(CB)) {
+      whole(P, true, true);
+      return;
+    }
+    if (!F || F->empty() || CB->getCalledOperand() == cur) {
+      whole(P, !CB->onlyWritesMemory(), !CB->onlyReadsMemory());
+      return;
+    }
+    for (unsigned i = 0; i < CB->arg_size(); i++) {
+      if (CB->getArgOperand(i) != cur)
+        continue;
+      if (off != 0) {
+        // A pointer into the middle of the object.
+        whole(P, true, true);
+        continue;
+      }
+      if (seenArgs.insert({F, i, P}).second)
+        visit(F->getArg(i), P, 0);
+    }
+  }
+};
+} // namespace
+
+/// The accesses of `step` through its argument `argNo`, and whether each is
+/// kept: writes, and reads too when `reads`.
+static SmallVector<AccessPath, 8> getAccessPaths(Function *step, unsigned argNo,
+                                                 bool reads) {
+  PathAnalysis PA;
+  PA.visit(step->getArg(argNo), {}, 0);
+  SmallVector<AccessPath, 8> result;
+  for (auto &[key, A] : PA.accesses)
+    if (A.write || (reads && A.read))
+      result.push_back(A);
+  return result;
+}
+
+/// The encoding set_paths takes: for each path, its length n, its n offsets,
+/// the offset of the access (-1: the whole object), and flags (1 read, 2
+/// write).
+static SmallVector<int64_t, 32> encodePaths(ArrayRef<AccessPath> paths) {
+  SmallVector<int64_t, 32> out;
+  for (auto &A : paths) {
+    out.push_back(A.path.size());
+    out.append(A.path.begin(), A.path.end());
+    out.push_back(A.offset);
+    out.push_back((A.read ? 1 : 0) | (A.write ? 2 : 0));
+  }
+  return out;
+}
+
+//===----------------------------------------------------------------------===//
 // The driver
 //===----------------------------------------------------------------------===//
 
@@ -467,7 +642,7 @@ struct DriverTypes {
   PointerType *I8P;
   StructType *Action, *Region, *VTable, *Handle;
   FunctionType *InitFT, *NextFT, *StoreFT, *FinalizeFT, *StateFT, *StepFT,
-      *FwdFT, *RevDriverFT;
+      *FwdFT, *RevDriverFT, *PathsFT;
 
   DriverTypes(LLVMContext &Ctx) : Ctx(Ctx) {
     Void = Type::getVoidTy(Ctx);
@@ -476,8 +651,8 @@ struct DriverTypes {
     I8P = getInt8PtrTy(Ctx);
     Action = StructType::get(Ctx, {I32, I64, I64, I64});
     Region = StructType::get(Ctx, {I8P, I64, I32, I32});
-    VTable =
-        StructType::get(Ctx, {I32, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P});
+    VTable = StructType::get(
+        Ctx, {I32, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P});
     Handle = StructType::get(Ctx, {I8P, I8P, I8P, I64, I64, I64, I32});
     InitFT = FunctionType::get(I8P, {I8P, I64, I64}, false);
     NextFT = FunctionType::get(Void, {I8P, getUnqual(Action)}, false);
@@ -486,9 +661,11 @@ struct DriverTypes {
     StateFT = FunctionType::get(Void, {I8P, I64, I64, I8P}, false);
     // The primal of step i, or its derivative.
     StepFT = FunctionType::get(Void, {I8P, I64}, false);
-    // vt, data, start, n, regions, nregions, bytes, env, primal
+    // vt, data, start, n, regions, nregions, bytes, env, primal, paths,
+    // npaths
     FwdFT = FunctionType::get(
-        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I8P}, false);
+        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I8P, I8P, I64}, false);
+    PathsFT = FunctionType::get(Void, {I8P, I8P, I64}, false);
     // handle, regions, nregions, env, primal, turn
     RevDriverFT =
         FunctionType::get(Void, {I8P, I8P, I64, I8P, I8P, I8P}, false);
@@ -589,7 +766,8 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   auto &B = D.B;
   auto *A = F->arg_begin();
   Value *vt = A++, *data = A++, *start = A++, *n = A++, *regions = A++,
-        *nregions = A++, *bytes = A++, *env = A++, *primal = A++;
+        *nregions = A++, *bytes = A++, *env = A++, *primal = A++,
+        *paths = A++, *npaths = A++;
   const DataLayout &DL = M.getDataLayout();
 
   auto *action = B.CreateAlloca(T.Action, nullptr, "action");
@@ -606,6 +784,9 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
       B.CreatePointerCast(D.vtFn(vt, VT_Init, "init"), getUnqual(T.InitFT)),
       {data, n, bytes}, "state");
   D.store(T.Handle, h, H_State, state);
+  D.callIfSet(D.vtFn(vt, VT_SetPaths, "set_paths"), T.PathsFT,
+              {state, paths, npaths},
+              B.CreateICmpNE(npaths, ConstantInt::get(T.I64, 0)));
 
   auto *loop = D.block("loop");
   B.CreateBr(loop);
@@ -1044,6 +1225,26 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
 
+  // The accesses through the first argument after the index, for schemes
+  // that copy the state themselves.
+  Value *paths = ConstantPointerNull::get(T.I8P);
+  uint64_t npaths = 0;
+  if (S.step->arg_size() > 1 &&
+      S.step->getArg(1)->getType()->isPointerTy()) {
+    auto encoded = encodePaths(getAccessPaths(S.step, 1, /*reads*/ true));
+    npaths = encoded.size();
+    if (npaths) {
+      auto *Ty = ArrayType::get(T.I64, npaths);
+      std::string name = ("enzyme.ckpt.paths." + S.step->getName()).str();
+      auto *G = M.getGlobalVariable(name, /*AllowInternal*/ true);
+      if (!G)
+        G = new GlobalVariable(M, Ty, /*isConstant*/ true,
+                               GlobalValue::PrivateLinkage,
+                               ConstantDataArray::get(Ctx, encoded), name);
+      paths = B.CreatePointerCast(G, T.I8P);
+    }
+  }
+
   auto &primals = frame.primals;
   Value *h = B.CreateCall(
       getOrCreateFwdDriver(M, T),
@@ -1051,7 +1252,8 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
        B.CreatePointerCast(primals[3], T.I8P), primals[0], primals[1],
        frame.regions, frame.nregions, frame.bytes, frame.env,
        B.CreatePointerCast(
-           getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P)},
+           getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
+       paths, ConstantInt::get(T.I64, npaths)},
       "handle");
   B.CreateRet(h);
   return F;

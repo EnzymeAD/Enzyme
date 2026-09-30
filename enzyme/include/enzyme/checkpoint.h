@@ -127,6 +127,13 @@ typedef struct EnzymeCheckpointScheme {
    * the arguments after i, each followed by its shadow if it has one. */
   void (*save_state)(void *state, int64_t slot, int64_t step, void *env);
   void (*load_state)(void *state, int64_t slot, int64_t step, void *env);
+  /* Optional, called after init: what the step accesses through the object
+   * its first argument after i points to, so save_state/load_state can copy
+   * just that. paths holds, for each access, the number n of pointer fields
+   * followed from that object, their byte offsets, the byte offset of the
+   * access in the object reached (-1: the whole object, or unknown), and
+   * flags: 1 read, 2 written. An access that is not listed is not made. */
+  void (*set_paths)(void *state, const int64_t *paths, uint64_t len);
 } EnzymeCheckpointScheme;
 
 extern int enzyme_scheme;
@@ -498,6 +505,7 @@ static const EnzymeCheckpointScheme EnzymeCkptRevolve = {
     NULL,
     enzyme_ckpt_revolve_finalize,
     NULL,
+    NULL,
     NULL};
 
 /* --- Periodic: config.snapshots segments. ---
@@ -649,6 +657,7 @@ static const EnzymeCheckpointScheme EnzymeCkptPeriodic = {
     NULL,
     enzyme_ckpt_periodic_finalize,
     NULL,
+    NULL,
     NULL};
 
 static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
@@ -659,6 +668,7 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
     enzyme_ckpt_periodic_restore,
     NULL,
     enzyme_ckpt_periodic_finalize,
+    NULL,
     NULL,
     NULL};
 
@@ -791,6 +801,7 @@ static const EnzymeCheckpointScheme EnzymeCkptADBinomial = {
     enzyme_ckpt_adbinomial_restore,
     NULL,
     enzyme_ckpt_adbinomial_finalize,
+    NULL,
     NULL,
     NULL};
 
