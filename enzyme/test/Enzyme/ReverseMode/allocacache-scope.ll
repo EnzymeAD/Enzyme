@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; In combined mode a load from an array alloca inside a loop may be cached by
 ; copying the whole alloca before the loop (EnzymeLoopInvariantCache). A
@@ -87,7 +87,7 @@ entry:
 ; The alloca is copied once, before the scan loop.
 ; CHECK-LABEL: define internal void @diffef(
 ; CHECK: start:
-; CHECK: %ch_malloccache = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) ptr @malloc(i64 16)
+; CHECK: %{{.*}} = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) ptr @malloc(i64 16)
 ; CHECK: store [16 x i8] %{{.*}}, ptr %{{.*}}, align 16
 ; CHECK: scan:
 
