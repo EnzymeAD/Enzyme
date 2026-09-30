@@ -1157,18 +1157,24 @@ public:
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
       if (constantval) {
+        // Bytes of the destination that nothing else types (e.g. the zero
+        // lanes of a constant vector, which type analysis leaves as Anything
+        // and does not propagate to memory) take the stored value's own type.
+        TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          if (auto flt = vd[{(int)i}].isFloat()) {
+          ConcreteType ct = vd[{(int)i}];
+          if (!ct.isKnown())
+            ct = valTT[{(int)i}];
+          if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Pointer) {
+          if (ct == BaseType::Pointer) {
             anyPointer = true;
             i += DL.getPointerSizeInBits() / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Integer ||
-              vd[{(int)i}] == BaseType::Anything) {
+          if (ct == BaseType::Integer || ct == BaseType::Anything) {
             i++;
             continue;
           }
@@ -1202,6 +1208,13 @@ public:
                                 MixedActivityHint);
           }
         }
+      }
+
+      // The shadow of integer-only memory mirrors the primal.
+      if (!diff && vd.isKnown() && !vd.anyPointer(orig_val, DL) &&
+          !vd.anyFloat(orig_val, DL)) {
+        auto rule = [&val]() { return val; };
+        diff = applyChainRule(valType, BuilderZ, rule);
       }
 
       // TODO type analyze
@@ -3206,6 +3219,8 @@ public:
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
+            if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+              cal->setMetadata("enzyme_truetype", m);
 
             if (startsWith(funcName, "memset_pattern") ||
                 startsWith(funcName, "llvm.experimental.memset")) {
@@ -3519,6 +3534,9 @@ public:
           ToCopy2.push_back(LLVMContext::MD_noalias);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3564,6 +3582,9 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
 
           if (startsWith(funcName, "memset_pattern") ||
               startsWith(funcName, "llvm.experimental.memset")) {
@@ -3935,6 +3956,9 @@ public:
                           MTI.getMetadata(LLVMContext::MD_tbaa_struct));
         call->setMetadata(LLVMContext::MD_invariant_group,
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
+        if (auto m = hasMetadata(&MTI, "enzyme_truetype"))
+          if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+            call->setMetadata("enzyme_truetype", sliced);
         call->setTailCallKind(MTI.getTailCallKind());
       };
 

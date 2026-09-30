@@ -4614,6 +4614,41 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
   }
 }
 
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length) {
+  // Each (type, offset) entry describes the bytes from its offset up to the
+  // next entry's offset.
+  size_t end = start + length;
+  if (end < start)
+    end = SIZE_MAX;
+  llvm::SmallVector<llvm::Metadata *, 8> out;
+  auto I64 = llvm::Type::getInt64Ty(md->getContext());
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    size_t offset =
+        llvm::cast<llvm::ConstantInt>(
+            llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                ->getValue())
+            ->getZExtValue();
+    if (offset >= end)
+      break;
+    size_t next = SIZE_MAX;
+    if (i + 3 < md->getNumOperands())
+      next = llvm::cast<llvm::ConstantInt>(
+                 llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 3))
+                     ->getValue())
+                 ->getZExtValue();
+    if (next <= start)
+      continue;
+    size_t newoff = offset <= start ? 0 : offset - start;
+    out.push_back(md->getOperand(i));
+    out.push_back(
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(I64, newoff)));
+  }
+  if (out.empty())
+    return nullptr;
+  return llvm::MDNode::get(md->getContext(), out);
+}
+
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *md, DerivativeMode Mode, bool const_src) {
   std::vector<std::pair<ConcreteType, size_t>> parsed;
