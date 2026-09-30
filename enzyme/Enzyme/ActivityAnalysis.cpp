@@ -592,7 +592,7 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
       return true;
     }
   }
-  if (KnownInactiveFunctions.count(Name)) {
+  if (KnownInactiveFunctions.count(Name) || isFlangRuntimeQuery(Name)) {
     return true;
   }
 

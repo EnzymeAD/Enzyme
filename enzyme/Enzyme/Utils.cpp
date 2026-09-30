@@ -410,6 +410,16 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // With -enzyme-global-activity a call to a function without body may free
+  // memory or return an allocation needed in the reverse pass, and Enzyme
+  // then differentiates even an inactive call to it.
+  if (isFlangRuntimeQuery(name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
