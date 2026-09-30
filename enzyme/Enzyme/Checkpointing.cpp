@@ -661,11 +661,20 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   Value *start = D.load(T.Handle, h, H_Start, "start");
   Value *empty = D.load(T.Handle, h, H_Empty, "empty");
 
-  // The caller has reversed the last step.
+  // The caller has reversed the last step, which leaves the state as the
+  // reverse pass found it. Recomputing the others does not: keep that state in
+  // slot -1, and put it back once the schedule is done.
   auto *loop = D.block("loop");
   auto *finish = D.block("finish");
-  B.CreateCondBr(B.CreateICmpNE(empty, ConstantInt::get(T.I32, 0)), finish,
-                 loop);
+  auto *entry = D.block("entry.snapshot");
+  auto *free = D.block("free");
+  Value *isEmpty = B.CreateICmpNE(empty, ConstantInt::get(T.I32, 0));
+  Value *entrySlot = ConstantInt::getSigned(T.I64, -1);
+  Value *n = D.load(T.Handle, h, H_N, "n");
+  B.CreateCondBr(isEmpty, finish, entry);
+  B.SetInsertPoint(entry);
+  D.snapshot(true, vt, state, entrySlot, n, regions, nregions, env);
+  B.CreateBr(loop);
 
   B.SetInsertPoint(loop);
   D.callFn(D.vtFn(vt, VT_NextAction, "next"), T.NextFT, {state, action});
@@ -707,6 +716,13 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   B.CreateBr(loop);
 
   B.SetInsertPoint(finish);
+  auto *restoreEntry = D.block("entry.restore");
+  B.CreateCondBr(isEmpty, free, restoreEntry);
+  B.SetInsertPoint(restoreEntry);
+  D.snapshot(false, vt, state, entrySlot, n, regions, nregions, env);
+  B.CreateBr(free);
+
+  B.SetInsertPoint(free);
   D.callIfSet(D.vtFn(vt, VT_Finalize, "finalize"), T.FinalizeFT, {state});
   B.CreateCall(D.Free, {B.CreatePointerCast(h, T.I8P)});
   B.CreateRetVoid();
