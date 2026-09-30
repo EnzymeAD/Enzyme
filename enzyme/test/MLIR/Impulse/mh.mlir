@@ -36,6 +36,8 @@ module {
 // CHECK-DAG: %[[ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<{{.*}}> : tensor<1x2xf64>
 // CHECK-DAG: %[[INIT_WEIGHT:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[I0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG: %[[I1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG: %[[C0:.+]] = arith.constant 0 : index
 // CHECK-DAG: %[[C1:.+]] = arith.constant 1 : index
 // CHECK-DAG: %[[C1000:.+]] = arith.constant 1000 : index
@@ -50,7 +52,10 @@ module {
 // CHECK-NEXT: %[[RNG1:.+]], %[[U1:.+]] = impulse.random %[[REGEN1]]#2, %[[ZERO_F]], %[[ONE]] <rng_distribution = UNIFORM> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOG1:.+]] = math.log %[[U1]] : tensor<f64>
 // CHECK-NEXT: %[[ACC1:.+]] = arith.cmpf olt, %[[LOG1]], %[[ALPHA1]] : tensor<f64>
-// CHECK-NEXT: %[[SEL_TR1:.+]] = impulse.select %[[ACC1]], %[[REGEN1]]#0, %[[TR]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[W1P:.+]] = impulse.slice %[[REGEN1]]#0 {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[W1C:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[W1U:.+]] = impulse.select %[[ACC1]], %[[W1P]], %[[W1C]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[SEL_TR1:.+]] = impulse.dynamic_update_slice %[[TR]], %[[W1U]], %[[I0]], %[[I1]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[SEL_WT1:.+]] = arith.select %[[ACC1]], %[[W1]], %[[WT]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: %[[REGEN2:.+]]:4 = func.call @test.regenerate(%[[SEL_TR1]], %[[RNG1]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<2xf64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[W2S:.+]] = impulse.slice %[[REGEN2]]#1 <start_indices = [0], limit_indices = [1], strides = [1]> : (tensor<2xf64>) -> tensor<1xf64>
@@ -62,7 +67,10 @@ module {
 // CHECK-NEXT: %[[RNG2:.+]], %[[U2:.+]] = impulse.random %[[REGEN2]]#2, %[[ZERO_F]], %[[ONE]] <rng_distribution = UNIFORM> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOG2:.+]] = math.log %[[U2]] : tensor<f64>
 // CHECK-NEXT: %[[ACC2:.+]] = arith.cmpf olt, %[[LOG2]], %[[ALPHA2]] : tensor<f64>
-// CHECK-NEXT: %[[SEL_TR2:.+]] = impulse.select %[[ACC2]], %[[REGEN2]]#0, %[[SEL_TR1]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[W2P:.+]] = impulse.slice %[[REGEN2]]#0 {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[W2C:.+]] = impulse.slice %[[SEL_TR1]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[W2U:.+]] = impulse.select %[[ACC2]], %[[W2P]], %[[W2C]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[SEL_TR2:.+]] = impulse.dynamic_update_slice %[[SEL_TR1]], %[[W2U]], %[[I0]], %[[I0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[SEL_WT2:.+]] = arith.select %[[ACC2]], %[[W2]], %[[SEL_WT1]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: scf.yield %[[SEL_TR2]], %[[SEL_WT2]], %[[RNG2]] : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
 // CHECK-NEXT: }

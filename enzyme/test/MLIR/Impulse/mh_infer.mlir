@@ -30,6 +30,8 @@ module {
 // CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>)
 // CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[I0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG: %[[I1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<{{.*}}> : tensor<1x2xf64>
 // CHECK-DAG: %[[INIT_WEIGHT:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
 // CHECK: %[[REGEN:.+]]:4 = call @test.regenerate(%[[INIT_TRACE]], %[[RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<2xf64>, tensor<2xui64>, tensor<f64>)
@@ -42,7 +44,10 @@ module {
 // CHECK-NEXT: %[[NEWRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
 // CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
-// CHECK-NEXT: %[[SELTR:.+]] = impulse.select %[[ACC]], %[[REGEN]]#0, %[[INIT_TRACE]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[WP:.+]] = impulse.slice %[[REGEN]]#0 {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[WC:.+]] = impulse.slice %[[INIT_TRACE]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[WU:.+]] = impulse.select %[[ACC]], %[[WP]], %[[WC]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[SELTR:.+]] = impulse.dynamic_update_slice %[[INIT_TRACE]], %[[WU]], %[[I0]], %[[I1]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[SELWT:.+]] = arith.select %[[ACC]], %[[W]], %[[INIT_WEIGHT]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT: return %[[SELTR]], %[[ACC]], %[[NEWRNG]], %[[SELWT]] : tensor<1x2xf64>, tensor<i1>, tensor<2xui64>, tensor<f64>
 

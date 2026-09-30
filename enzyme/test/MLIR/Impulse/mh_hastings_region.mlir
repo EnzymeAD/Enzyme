@@ -70,6 +70,7 @@ module {
 
 // CHECK-LABEL: func.func @mh_region_bare
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>, %[[MEAN:[^:]+]]: tensor<f64>, %[[SD:[^:]+]]: tensor<f64>, %[[TR:[^:]+]]: tensor<1x2xf64>, %[[W:[^:]+]]: tensor<f64>)
+// CHECK-DAG: %[[I0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK: %[[RNG1:.+]], %[[S:.+]] = impulse.random %[[RNG]], %[[MEAN]], %[[SD]] {rng_distribution = #impulse<rng_distribution NORMAL>}
 // CHECK: %[[DS:.+]] = arith.subf %[[S]], %[[MEAN]] : tensor<f64>
 // CHECK-NEXT: %[[LPS:.+]] = arith.mulf %[[DS]], %[[DS]] : tensor<f64>
@@ -86,10 +87,16 @@ module {
 // CHECK-NEXT: %{{.+}}, %[[U:.+]] = impulse.random %[[RNG1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>}
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
 // CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
-// CHECK: %{{.+}} = arith.select %[[ACC]], %[[TOT]], %[[W]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: %[[BP:.+]] = impulse.slice %{{.+}} {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[BC:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[BU:.+]] = impulse.select %[[ACC]], %[[BP]], %[[BC]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[OUT:.+]] = impulse.dynamic_update_slice %[[TR]], %[[BU]], %[[I0]], %[[I0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %{{.+}} = arith.select %[[ACC]], %[[TOT]], %[[W]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: return %[[OUT]]
 
 // CHECK-LABEL: func.func @mh_region_tail
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>, %[[MEAN:[^:]+]]: tensor<f64>, %[[SD:[^:]+]]: tensor<f64>, %[[TR:[^:]+]]: tensor<1x4xf64>, %[[W:[^:]+]]: tensor<f64>)
+// CHECK-DAG: %[[I0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK: %[[DS:.+]] = arith.subf %{{.+}}, %[[MEAN]] : tensor<f64>
 // CHECK-NEXT: %[[LPS:.+]] = arith.mulf %[[DS]], %[[DS]] : tensor<f64>
 // CHECK: %[[TOT:.+]] = arith.addf %[[LPS]], %{{.+}} : tensor<f64>
@@ -100,4 +107,13 @@ module {
 // CHECK-NEXT: %[[ALPHA:.+]] = arith.subf %[[WDIFF]], %[[CORR]] : tensor<f64>
 // CHECK-NEXT: %{{.+}}, %[[U:.+]] = impulse.random %{{.+}}, %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>}
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
-// CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
+// CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
+// Written back: the selected column 0 and the whole score tail (2..3).
+// CHECK-NEXT: %[[VP:.+]] = impulse.slice %{{.+}} {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[VC:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[VU:.+]] = impulse.select %[[ACC]], %[[VP]], %[[VC]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[T1:.+]] = impulse.dynamic_update_slice %[[TR]], %[[VU]], %[[I0]], %[[I0]] : (tensor<1x4xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x4xf64>
+// CHECK-NEXT: %[[TP:.+]] = impulse.slice %{{.+}} {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 2>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[TC:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 2>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[TU:.+]] = impulse.select %[[ACC]], %[[TP]], %[[TC]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %{{.+}} = impulse.dynamic_update_slice %[[T1]], %[[TU]], %[[I0]], %[[I2:.+]] : (tensor<1x4xf64>, tensor<1x2xf64>, tensor<i64>, tensor<i64>) -> tensor<1x4xf64>

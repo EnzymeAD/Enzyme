@@ -504,6 +504,91 @@ static std::pair<Value, Value> unpackHastingsWeight(OpBuilder &b, Location loc,
   return {scalarAt(b, loc, packed, {0}), scalarAt(b, loc, packed, {1})};
 }
 
+// Per-window DUS, not select(acc, P, T): untouched columns stay T's for LICM.
+using ColumnWindows = SmallVector<std::pair<int64_t, int64_t>>;
+
+// Merges half-open [start, end) windows.
+static ColumnWindows mergeColumnWindows(ColumnWindows windows) {
+  llvm::sort(windows);
+  ColumnWindows merged;
+  for (auto w : windows) {
+    if (w.first >= w.second)
+      continue;
+    if (!merged.empty() && w.first <= merged.back().second)
+      merged.back().second = std::max(merged.back().second, w.second);
+    else
+      merged.push_back(w);
+  }
+  return merged;
+}
+
+static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
+                                Value proposed, Value accepted,
+                                ArrayRef<std::pair<int64_t, int64_t>> windows) {
+  auto traceType = cast<RankedTensorType>(trace.getType());
+  auto i64S = RankedTensorType::get({}, b.getI64Type());
+  auto idx = [&](int64_t v) -> Value {
+    return arith::ConstantOp::create(
+        b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(v)));
+  };
+  Value out = trace;
+  for (const auto &window : windows) {
+    int64_t start = window.first, end = window.second;
+    auto winType =
+        RankedTensorType::get({1, end - start}, traceType.getElementType());
+    auto sliceOf = [&](Value v) -> Value {
+      return impulse::SliceOp::create(
+          b, loc, winType, v, b.getDenseI64ArrayAttr({0, start}),
+          b.getDenseI64ArrayAttr({1, end}), b.getDenseI64ArrayAttr({1, 1}));
+    };
+    Value propWin = sliceOf(proposed);
+    Value curWin = sliceOf(trace);
+    Value upd =
+        impulse::SelectOp::create(b, loc, winType, accepted, propWin, curWin);
+    out = impulse::DynamicUpdateSliceOp::create(b, loc, traceType, out, upd,
+                                                ValueRange{idx(0), idx(start)});
+  }
+  return out;
+}
+
+// `impulse.if` (its liveness may flip, and a dead slot is zeroed), every
+// generative sub-call's range, and, when a constraint is given, the
+// constrained sites (written from the constraint).
+static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
+                                          ArrayAttr layout,
+                                          ArrayAttr regenerateAddresses,
+                                          ArrayAttr constrainedAddresses,
+                                          bool hasConstraint, int64_t width,
+                                          SymbolTableCollection &symbolTable) {
+  auto sampleMap = buildSampleOpMap(fn);
+  int64_t positionSize =
+      computePositionSizeForSelection(op, fn, layout, symbolTable);
+  bool bare = width == positionSize;
+  auto inList = [](ArrayAttr list, ArrayAttr address) {
+    return list && llvm::is_contained(list.getValue(), address);
+  };
+  ColumnWindows windows;
+  int64_t offset = 0;
+  for (Attribute a : layout) {
+    auto address = cast<ArrayAttr>(a);
+    int64_t size = computePositionSizeForSelection(
+        op, fn, ArrayAttr::get(op->getContext(), {address}), symbolTable);
+    impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
+    bool isDist = site && (site.getDistAttr() || site.getLogpdfAttr());
+    bool changed = inList(regenerateAddresses, address);
+    if (!changed && bare)
+      changed = !isDist || address.size() > 1 ||
+                site->getParentOfType<impulse::IfOp>() ||
+                (hasConstraint && inList(constrainedAddresses, address));
+    if (changed)
+      windows.push_back({offset, offset + size});
+    offset += size;
+  }
+  if (width > positionSize)
+    windows.push_back({positionSize, width});
+  return mergeColumnWindows(windows);
+}
+
 static LogicalResult
 processImpulseBlock(Block &block, PatternRewriter &rewriter, BranchCarry &carry,
                     RankedTensorType traceType, ProcessSampleFn processSample,
@@ -2385,7 +2470,9 @@ struct ExpandImpulsePass
     // region's per-site yields.
     std::tuple<Value, Value, Value, Value>
     proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
-                  ArrayAttr selection, ArrayAttr allAddresses) const {
+                  ArrayAttr selection, ArrayAttr allAddresses,
+                  ColumnWindows &changedColumns) const {
+      changedColumns.clear();
       Region &sampler = op.getSampler();
       Region &logpdf = op.getLogpdf();
       Block &sBlock = sampler.front();
@@ -2434,6 +2521,11 @@ struct ExpandImpulsePass
         int64_t siteOff = traceOffsetOf.lookup(addr);
         if (selectedSet.contains(addr)) {
           selectedOrdinals.push_back(siteOrdinal);
+          int64_t siteSize = 0;
+          for (unsigned k = 1, e = site.getNumResults(); k < e; ++k)
+            siteSize += computeTensorElementCount(
+                cast<RankedTensorType>(site.getResult(k).getType()));
+          changedColumns.push_back({siteOff, siteOff + siteSize});
           Block &sub = site.getSampler().front();
           IRMapping subMap;
           subMap.map(sub.getArgument(0), curRng);
@@ -2548,6 +2640,11 @@ struct ExpandImpulsePass
         corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
       }
 
+      // The selected sites' columns and the whole score tail change.
+      if (traceType.getShape()[1] > positionSize)
+        changedColumns.push_back({positionSize, traceType.getShape()[1]});
+      changedColumns = mergeColumnWindows(changedColumns);
+
       return {newTrace, newWeight, corr, curRng};
     }
 
@@ -2641,12 +2738,20 @@ struct ExpandImpulsePass
         deltaFlat = traceType.getShape()[1] > fullPositionSize;
       }
 
+      // The region form fills this in during the proposal.
+      ColumnWindows changedColumns;
+      if constexpr (!isRegionForm)
+        changedColumns = mhChangedColumnsFlat(
+            op, fn, allAddresses, selection, op.getConstrainedAddressesAttr(),
+            static_cast<bool>(op.getConstraint()), traceType.getShape()[1],
+            symbolTable);
+
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
         Value newTrace, newWeight, corr, stepRng;
         if constexpr (isRegionForm)
-          std::tie(newTrace, newWeight, corr, stepRng) =
-              proposeRegion(b, loc, op, trace, rng, selection, allAddresses);
+          std::tie(newTrace, newWeight, corr, stepRng) = proposeRegion(
+              b, loc, op, trace, rng, selection, allAddresses, changedColumns);
         else
           std::tie(newTrace, newWeight, corr, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
@@ -2673,8 +2778,8 @@ struct ExpandImpulsePass
         Value finalRng = rnd.getOutputRngState();
         Value accepted = arith::CmpFOp::create(
             b, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-        Value selTrace = impulse::SelectOp::create(b, loc, traceType, accepted,
-                                                   newTrace, trace);
+        Value selTrace = writeBackMHWindows(b, loc, trace, newTrace, accepted,
+                                            changedColumns);
         Value selWeight =
             arith::SelectOp::create(b, loc, accepted, acceptWeight, weight);
         return {selTrace, selWeight, finalRng, accepted};
@@ -2834,8 +2939,13 @@ struct ExpandImpulsePass
           rewriter, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
 
       // 5. Select trace and weight based on acceptance
-      auto selectedTrace = impulse::SelectOp::create(
-          rewriter, loc, traceType, accepted, newTrace, oldTrace);
+      Value selectedTrace = writeBackMHWindows(
+          rewriter, loc, oldTrace, newTrace, accepted,
+          mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
+                               mhOp.getConstrainedAddressesAttr(),
+                               static_cast<bool>(mhOp.getConstraint()),
+                               cast<RankedTensorType>(traceType).getShape()[1],
+                               symbolTable));
       auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
                                                     acceptWeight, oldWeight);
 

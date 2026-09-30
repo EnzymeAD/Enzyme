@@ -26,6 +26,8 @@ module {
 // CHECK-SAME:      (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STD:.+]]: tensor<f64>)
 // CHECK-DAG:     %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
 // CHECK-DAG:     %[[ZEROF:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG:     %[[I0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG:     %[[I1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG:     %[[TR0:.+]] = arith.constant dense<{{.*}}> : tensor<1x4xf64>
 // CHECK-DAG:     %[[W0:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
 // CHECK:         %[[REGEN:.+]]:4 = call @test.regenerate(%[[TR0]], %[[RNG]], %[[MEAN]], %[[STD]])
@@ -38,7 +40,10 @@ module {
 // CHECK-NEXT:    %[[NRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZEROF]], %[[ONE]]
 // CHECK-NEXT:    %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
 // CHECK-NEXT:    %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
-// CHECK-NEXT:    %[[SELTR:.+]] = impulse.select %[[ACC]], %[[REGEN]]#0, %[[TR0]]
+// CHECK-NEXT: %[[WP:.+]] = impulse.slice %[[REGEN]]#0 {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x3xf64>
+// CHECK-NEXT: %[[WC:.+]] = impulse.slice %[[TR0]] {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x4xf64>) -> tensor<1x3xf64>
+// CHECK-NEXT: %[[WU:.+]] = impulse.select %[[ACC]], %[[WP]], %[[WC]] : (tensor<i1>, tensor<1x3xf64>, tensor<1x3xf64>) -> tensor<1x3xf64>
+// CHECK-NEXT: %[[SELTR:.+]] = impulse.dynamic_update_slice %[[TR0]], %[[WU]], %[[I0]], %[[I1]] : (tensor<1x4xf64>, tensor<1x3xf64>, tensor<i64>, tensor<i64>) -> tensor<1x4xf64>
 // CHECK-NEXT:    %[[SELWT:.+]] = arith.select %[[ACC]], %[[WACC]], %[[W0]] : tensor<i1>, tensor<f64>
 // CHECK-NEXT:    return %[[SELTR]], %[[SELWT]], %[[NRNG]]
 
