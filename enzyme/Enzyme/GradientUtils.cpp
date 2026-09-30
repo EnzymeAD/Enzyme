@@ -10202,8 +10202,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   llvm::LibFunc freefunc;
 
   switch (libfunc) {
-  case LibFunc_malloc: // malloc(unsigned int);
-  case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_malloc:        // malloc(unsigned int);
+  case LibFunc_valloc:        // valloc(unsigned int);
+  case LibFunc_aligned_alloc: // aligned_alloc(size_t align, size_t size);
     freefunc = LibFunc_free;
     break;
 
