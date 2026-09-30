@@ -5235,9 +5235,12 @@ public:
   /// Its other arguments are needed in the reverse pass, primal included.
   DIFFE_TYPE getCallArgDiffeType(llvm::CallInst &call, llvm::Function *called,
                                  unsigned i, bool foreignFunction) {
+    // Derivatives of a loop function (a forward-mode one, differentiated
+    // again) keep its attributes: its schedule arguments stay inactive.
+    if (called && called->hasFnAttribute("enzyme_checkpoint") &&
+        called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+      return DIFFE_TYPE::CONSTANT;
     if (isCheckpointLoop(called)) {
-      if (called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
-        return DIFFE_TYPE::CONSTANT;
       // The reverse pass reruns steps from the primal arguments.
       auto ty = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
       return ty == DIFFE_TYPE::DUP_NONEED ? DIFFE_TYPE::DUP_ARG : ty;
