@@ -1280,9 +1280,9 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
   return true;
 }
 
-void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
-                           llvm::SetVector<llvm::Value *> &Intermediates,
-                           std::deque<llvm::Value *> &todo) {
+void pushLoopyPHIPreheader(
+    const GradientUtils *gutils, llvm::Value *V,
+    llvm::SmallVectorImpl<llvm::Value *> &preheaderVals) {
   using namespace llvm;
   if (auto P0 = dyn_cast<PHINode>(V)) {
     if (!gutils->OrigLI)
@@ -1335,8 +1335,7 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       // instructions).
       if (!isa<Instruction>(Pstart))
         break;
-      Intermediates.insert(Pstart);
-      todo.push_back(Pstart);
+      preheaderVals.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {
         if (phi->getNumIncomingValues() == 1)
           Pstart = phi->getIncomingValue(0);
