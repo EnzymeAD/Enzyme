@@ -50,6 +50,11 @@
 
 using namespace llvm;
 
+static cl::opt<bool> EnzymeCheckpointSplitSteps(
+    "enzyme-checkpoint-split-steps", cl::init(false), cl::Hidden,
+    cl::desc("Differentiate each checkpointed step as its augmented forward "
+             "pass followed by its reverse pass, instead of in combined mode"));
+
 static cl::opt<bool> EnzymePrintCheckpointRegions(
     "enzyme-print-checkpoint-regions", cl::init(false), cl::Hidden,
     cl::desc("Print the memory each checkpointed loop snapshots"));
@@ -1157,6 +1162,94 @@ static Function *getTrampoline(DriverTypes &T, StepInfo &S, StringRef kind,
   return F;
 }
 
+/// The augmented forward pass of the step, for turns in split mode: the
+/// step is taken as in a loop whose later iterations may overwrite what it
+/// reads, so it caches rather than recomputes, as when the loop is not
+/// checkpointed.
+static const AugmentedReturn *
+getStepAugmented(EnzymeLogic &Logic, RequestContext context, StepInfo &S,
+                 TypeAnalysis &TA, bool runtimeActivity, bool strongZero,
+                 bool AtomicAdd) {
+  std::vector<bool> overwritten(S.step->arg_size(), true);
+  std::vector<bool> nowrite(S.step->arg_size(), false);
+  return &Logic.CreateAugmentedPrimal(
+      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      /*returnUsed*/ false, /*shadowReturnUsed*/ false, S.stepTypeInfo,
+      /*subsequent_calls_may_write*/ true, overwritten, nowrite,
+      /*forceAnonymousTape*/ false, runtimeActivity, strongZero, S.width,
+      AtomicAdd);
+}
+
+/// The tape type of `aug`, or null if it has none.
+static Type *getTapeType(const AugmentedReturn &aug) {
+  auto found = aug.returns.find(AugmentedStruct::Tape);
+  if (found == aug.returns.end())
+    return nullptr;
+  Type *RT = aug.fn->getReturnType();
+  return found->second == -1
+             ? RT
+             : cast<StructType>(RT)->getElementType(found->second);
+}
+
+/// The reverse pass of the step, from the tape of `aug`.
+static Function *getStepReverse(EnzymeLogic &Logic, RequestContext context,
+                                StepInfo &S, TypeAnalysis &TA,
+                                const AugmentedReturn &aug,
+                                bool runtimeActivity, bool strongZero,
+                                bool AtomicAdd) {
+  std::vector<bool> overwritten(S.step->arg_size(), true);
+  return Logic.CreatePrimalAndGradient(
+      context,
+      (ReverseCacheKey){.todiff = S.step,
+                        .retType = DIFFE_TYPE::CONSTANT,
+                        .constant_args = S.stepActivity,
+                        .subsequent_calls_may_write = true,
+                        .overwritten_args = overwritten,
+                        .returnUsed = false,
+                        .shadowReturnUsed = false,
+                        .mode = DerivativeMode::ReverseModeGradient,
+                        .width = S.width,
+                        .freeMemory = true,
+                        .AtomicAdd = AtomicAdd,
+                        .additionalType = getTapeType(aug),
+                        .forceAnonymousTape = false,
+                        .typeInfo = S.stepTypeInfo,
+                        .runtimeActivity = runtimeActivity,
+                        .strongZero = strongZero},
+      TA, &aug);
+}
+
+/// `void (env, i)`: a turn in split mode, the augmented forward pass of step
+/// i and right after it its reverse pass. The tape does not leave the
+/// trampoline.
+static Function *getSplitTurnTrampoline(DriverTypes &T, StepInfo &S,
+                                        const AugmentedReturn &aug,
+                                        Function *rev) {
+  Module &M = *S.loop->getParent();
+  std::string name =
+      ("enzyme.ckpt.splitturn." + S.loop->getName() + "." + S.suffix).str();
+  if (auto *F = M.getFunction(name))
+    return F;
+  auto *F = Function::Create(T.StepFT, GlobalValue::InternalLinkage, name, &M);
+  IRBuilder<> B(BasicBlock::Create(M.getContext(), "entry", F));
+  // In a Julia module the tape may hold Julia objects, which the frame built
+  // from the task's GC stack roots across the reverse pass.
+  if (auto *GCStack = M.getFunction("julia.get_pgcstack"))
+    B.CreateCall(GCStack->getFunctionType(), GCStack, {});
+  SmallVector<Value *, 8> args;
+  loadStepArgs(B, S, F->getArg(0), F->getArg(1), /*shadows*/ true, args);
+  auto *call = B.CreateCall(aug.fn, args);
+  call->setCallingConv(aug.fn->getCallingConv());
+  auto found = aug.returns.find(AugmentedStruct::Tape);
+  if (found != aug.returns.end())
+    args.push_back(found->second == -1
+                       ? (Value *)call
+                       : B.CreateExtractValue(call, (unsigned)found->second));
+  B.CreateCall(rev, args)->setCallingConv(rev->getCallingConv());
+  B.CreateRetVoid();
+  return F;
+}
+
 /// `i32 (env, i)`: step i of a while loop, returning whether to go on.
 static Function *getWhileTrampoline(DriverTypes &T, StepInfo &S) {
   Module &M = *S.loop->getParent();
@@ -1381,8 +1474,19 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   StepInfo S(loop);
   if (!getStepInfo(S, key.constant_args, key.typeInfo, key.width, context))
     return nullptr;
-  Function *grad = getStepGradient(Logic, context, S, TA, key.runtimeActivity,
-                                   key.strongZero, key.AtomicAdd);
+  // What a turn runs: the step's combined derivative, or with
+  // -enzyme-checkpoint-split-steps its augmented and reverse passes.
+  const AugmentedReturn *aug = nullptr;
+  Function *grad = nullptr;
+  if (EnzymeCheckpointSplitSteps) {
+    aug = getStepAugmented(Logic, context, S, TA, key.runtimeActivity,
+                           key.strongZero, key.AtomicAdd);
+    grad = getStepReverse(Logic, context, S, TA, *aug, key.runtimeActivity,
+                          key.strongZero, key.AtomicAdd);
+  } else {
+    grad = getStepGradient(Logic, context, S, TA, key.runtimeActivity,
+                           key.strongZero, key.AtomicAdd);
+  }
   if (!grad)
     return nullptr;
 
@@ -1419,8 +1523,10 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
       {h, frame.regions, frame.nregions, frame.env,
        B.CreatePointerCast(
            getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
-       B.CreatePointerCast(getTrampoline(T, S, "turn", grad, /*shadows*/ true),
-                           T.I8P)});
+       B.CreatePointerCast(
+           aug ? getSplitTurnTrampoline(T, S, *aug, grad)
+               : getTrampoline(T, S, "turn", grad, /*shadows*/ true),
+           T.I8P)});
   B.CreateRetVoid();
   return F;
 }
