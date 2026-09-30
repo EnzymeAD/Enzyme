@@ -1019,6 +1019,18 @@ def : IntrPattern<(Op $x),
                   (ForwardFromSummedReverse)
                   >;
 
+// llvm.sincos(x) = {sin(x), cos(x)}
+def : IntrPattern<(Op $x),
+                  [["sincos", "20", ""]],
+                  [
+                  (
+                   ArrayRet (FMul (Intrinsic<"cos"> $x), (DiffeRet)),
+                            (FNeg (FMul (Intrinsic<"sin"> $x), (DiffeRet)))
+                  )
+                  ],
+                  (ForwardFromSummedReverse)
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["sin"]],
                   [(FMul (DiffeRet), (Intrinsic<"cos"> $x))]  ,

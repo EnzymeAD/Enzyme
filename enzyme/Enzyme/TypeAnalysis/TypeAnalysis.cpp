@@ -5614,6 +5614,46 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // CHARACTER arguments of the LLVM flang I/O runtime: a pointer followed
+    // by its length (internal units, formats, file names, ASCII items). The
+    // memory they point to holds characters, i.e. integers.
+    if (startsWith(funcName, "_FortranAio")) {
+      SmallVector<unsigned, 2> charArgs;
+      StringRef io = funcName.substr(strlen("_FortranAio"));
+      if (io == "BeginInternalListOutput" || io == "BeginInternalListInput")
+        charArgs = {0};
+      else if (io == "BeginInternalFormattedOutput" ||
+               io == "BeginInternalFormattedInput")
+        charArgs = {0, 2};
+      else if (io == "BeginExternalFormattedOutput" ||
+               io == "BeginExternalFormattedInput" || io == "BeginInquireFile")
+        charArgs = {0};
+      else if (io == "OutputAscii" || io == "InputAscii" ||
+               io == "OutputCharacter" || io == "InputCharacter" ||
+               (startsWith(io, "Set") && call.arg_size() == 3))
+        charArgs = {1};
+      bool known = !charArgs.empty();
+      for (unsigned i : charArgs) {
+        if (i + 1 >= call.arg_size() ||
+            !call.getOperand(i)->getType()->isPointerTy() ||
+            !call.getOperand(i + 1)->getType()->isIntegerTy()) {
+          known = false;
+          break;
+        }
+      }
+      if (known) {
+        for (unsigned i : charArgs) {
+          TypeTree chars;
+          chars.insert({-1}, BaseType::Pointer);
+          chars.insert({-1, -1}, BaseType::Integer);
+          updateAnalysis(call.getOperand(i), chars, &call);
+          updateAnalysis(call.getOperand(i + 1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);

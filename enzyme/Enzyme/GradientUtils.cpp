@@ -2752,29 +2752,31 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     }
     assert(idx < 0 ||
            (unsigned)idx < cast<StructType>(tape->getType())->getNumElements());
-    Value *ret =
-        (idx < 0) ? tape : BuilderQ.CreateExtractValue(tape, {(unsigned)idx});
+    // The value's type, without building an extractvalue that a cached
+    // value in a loop would not use: erasing it again can trip an asserting
+    // value handle.
+    Type *retType =
+        (idx < 0) ? tape->getType()
+                  : cast<StructType>(tape->getType())->getElementType(idx);
 
-    if (ret->getType()->isEmptyTy()) {
+    if (retType->isEmptyTy()) {
       if (auto inst = dyn_cast_or_null<Instruction>(malloc)) {
-        if (inst->getType() != ret->getType()) {
+        if (inst->getType() != retType) {
           llvm::errs() << "oldFunc: " << *oldFunc << "\n";
           llvm::errs() << "newFunc: " << *newFunc << "\n";
           llvm::errs() << "inst==malloc: " << *inst << "\n";
-          llvm::errs() << "ret: " << *ret << "\n";
+          llvm::errs() << "retType: " << *retType << "\n";
         }
-        assert(inst->getType() == ret->getType());
+        assert(inst->getType() == retType);
         if (replace) {
-          inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
+          inst->replaceAllUsesWith(UndefValue::get(retType));
           erase(inst);
         }
       }
-      Type *retType = ret->getType();
-      if (replace)
-        if (auto ri = dyn_cast<Instruction>(ret))
-          erase(ri);
       return UndefValue::get(retType);
     }
+
+    Value *ret = nullptr;
 
     LimitContext ctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                      BuilderQ.GetInsertBlock());
@@ -2796,6 +2798,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     }
 
     if (!inLoop) {
+      ret = (idx < 0) ? tape
+                      : BuilderQ.CreateExtractValue(tape, {(unsigned)idx});
       ret->setName(malloc->getName() + "_fromtape");
       if (omp) {
         Value *tid = ompThreadId();
@@ -2804,8 +2808,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         ret = BuilderQ.CreateLoad(malloc->getType(), tPtr);
       }
     } else {
-      if (idx >= 0)
-        erase(cast<Instruction>(ret));
       IRBuilder<> entryBuilder(inversionAllocs);
       entryBuilder.setFastMathFlags(getFast());
       ret = (idx < 0) ? tape
@@ -3037,7 +3039,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             while (ops.size()) {
               auto z = dyn_cast_or_null<Instruction>(ops[0]);
               ops.pop_front();
-              if (z && z->getNumUses() == 0 && !z->isUsedByMetadata()) {
+              // The scope's own allocation stays: scopeMap still refers to
+              // it, and its loads are replaced below.
+              if (z && z != found->first && z->getNumUses() == 0 &&
+                  !z->isUsedByMetadata()) {
                 for (unsigned i = 0; i < z->getNumOperands(); ++i) {
                   ops.push_back(z->getOperand(i));
                 }

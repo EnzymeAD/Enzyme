@@ -2866,17 +2866,28 @@ bool overwritesToMemoryReadByLoop(
               }
 
             // Moreover because otherwise SE cannot "groupScevByComplexity"
-            // we need to ensure that if both slim/elim are AddRecv
-            // they must be in the same loop, or one loop must dominate
-            // the other.
+            // we need to ensure that the loops of all AddRecs in slim and
+            // elim, also those nested inside them, are the same or one
+            // dominates the other.
             if (!eskip) {
-
-              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                auto EH = endL->getLoop()->getHeader();
-                if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = startL->getLoop()->getHeader();
-                  if (EH != SH && !DT.dominates(EH, SH) &&
-                      !DT.dominates(SH, EH))
+              struct CollectLoops {
+                SmallPtrSetImpl<const Loop *> &Loops;
+                bool follow(const SCEV *S) {
+                  if (auto AR = dyn_cast<SCEVAddRecExpr>(S))
+                    Loops.insert(AR->getLoop());
+                  return true;
+                }
+                bool isDone() const { return false; }
+              };
+              SmallPtrSet<const Loop *, 4> Loops;
+              CollectLoops Collect{Loops};
+              visitAll(slim, Collect);
+              visitAll(elim, Collect);
+              for (auto L1 : Loops) {
+                for (auto L2 : Loops) {
+                  auto H1 = L1->getHeader(), H2 = L2->getHeader();
+                  if (H1 != H2 && !DT.dominates(H1, H2) &&
+                      !DT.dominates(H2, H1))
                     eskip = true;
                 }
               }
