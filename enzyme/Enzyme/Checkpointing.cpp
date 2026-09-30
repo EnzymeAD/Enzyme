@@ -81,16 +81,16 @@ enum VTableField : unsigned {
   VT_LoadState,
 };
 
-// Fields of the driver's handle.
+// Fields of the driver's handle. It holds the schedule from the forward to
+// the reverse pass, but not the step's arguments or the regions: each pass
+// gets those from its own arguments, which Enzyme keeps for the reverse pass
+// (and a garbage-collected frontend keeps alive with them).
 enum HandleField : unsigned {
   H_VT = 0,
   H_Data,
   H_State,
   H_Start,
   H_N,
-  H_Regions,
-  H_NRegions,
-  H_Env,
   H_LastTape,
   H_LastJ,
   H_Empty,
@@ -474,8 +474,7 @@ struct DriverTypes {
     Region = StructType::get(Ctx, {I8P, I64, I32, I32});
     VTable =
         StructType::get(Ctx, {I32, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P});
-    Handle = StructType::get(
-        Ctx, {I8P, I8P, I8P, I64, I64, I8P, I64, I8P, I8P, I64, I32});
+    Handle = StructType::get(Ctx, {I8P, I8P, I8P, I64, I64, I8P, I64, I32});
     InitFT = FunctionType::get(I8P, {I8P, I64, I64}, false);
     NextFT = FunctionType::get(Void, {I8P, getUnqual(Action)}, false);
     StoreFT = FunctionType::get(Void, {I8P, I64, I64, I8P, I64}, false);
@@ -484,11 +483,12 @@ struct DriverTypes {
     PrimalFT = FunctionType::get(Void, {I8P, I64}, false);
     AugFT = FunctionType::get(I8P, {I8P, I64}, false);
     RevFT = FunctionType::get(Void, {I8P, I64, I8P}, false);
-    // vt, data, start, n, regions, nregions, bytes, env, envsize, primal, aug
+    // vt, data, start, n, regions, nregions, bytes, env, primal, aug
     FwdFT = FunctionType::get(
-        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I64, I8P, I8P}, false);
-    // handle, primal, aug, rev
-    RevDriverFT = FunctionType::get(Void, {I8P, I8P, I8P, I8P}, false);
+        I8P, {I8P, I8P, I64, I64, I8P, I64, I64, I8P, I8P, I8P}, false);
+    // handle, regions, nregions, env, primal, aug, rev
+    RevDriverFT =
+        FunctionType::get(Void, {I8P, I8P, I64, I8P, I8P, I8P, I8P}, false);
   }
 };
 
@@ -582,8 +582,7 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   auto &B = D.B;
   auto *A = F->arg_begin();
   Value *vt = A++, *data = A++, *start = A++, *n = A++, *regions = A++,
-        *nregions = A++, *bytes = A++, *env = A++, *envsize = A++,
-        *primal = A++, *aug = A++;
+        *nregions = A++, *bytes = A++, *env = A++, *primal = A++, *aug = A++;
   const DataLayout &DL = M.getDataLayout();
 
   auto *action = B.CreateAlloca(T.Action, nullptr, "action");
@@ -593,19 +592,6 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.store(T.Handle, h, H_Data, data);
   D.store(T.Handle, h, H_Start, start);
   D.store(T.Handle, h, H_N, n);
-  D.store(T.Handle, h, H_NRegions, nregions);
-  // The step's arguments and the regions outlive this call.
-  Value *regionBytes = B.CreateMul(
-      nregions, ConstantInt::get(T.I64, DL.getTypeAllocSize(T.Region)));
-  Value *regionCopy = B.CreateCall(
-      D.Malloc, {B.CreateAdd(regionBytes, ConstantInt::get(T.I64, 1))});
-  B.CreateMemCpy(regionCopy, MaybeAlign(1), regions, MaybeAlign(1),
-                 regionBytes);
-  D.store(T.Handle, h, H_Regions, regionCopy);
-  Value *envCopy = B.CreateCall(
-      D.Malloc, {B.CreateAdd(envsize, ConstantInt::get(T.I64, 1))});
-  B.CreateMemCpy(envCopy, MaybeAlign(1), env, MaybeAlign(1), envsize);
-  D.store(T.Handle, h, H_Env, envCopy);
   D.store(T.Handle, h, H_LastTape, ConstantPointerNull::get(T.I8P));
   D.store(T.Handle, h, H_LastJ, ConstantInt::get(T.I64, 0));
   D.store(T.Handle, h, H_Empty, ConstantInt::get(T.I32, 0));
@@ -639,11 +625,11 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.trap();
 
   B.SetInsertPoint(storeBB);
-  D.snapshot(true, vt, state, cp, it, regionCopy, nregions, envCopy);
+  D.snapshot(true, vt, state, cp, it, regions, nregions, env);
   B.CreateBr(loop);
 
   B.SetInsertPoint(fwdBB);
-  D.forwardSteps(primal, envCopy, start, sit, it);
+  D.forwardSteps(primal, env, start, sit, it);
   B.CreateBr(loop);
 
   // The last step runs with taping; its tape is the first to be reversed.
@@ -651,7 +637,7 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   Value *lastj = B.CreateSub(it, ConstantInt::get(T.I64, 1));
   Value *tape =
       B.CreateCall(T.AugFT, B.CreatePointerCast(aug, getUnqual(T.AugFT)),
-                   {envCopy, B.CreateAdd(start, lastj)}, "tape");
+                   {env, B.CreateAdd(start, lastj)}, "tape");
   D.store(T.Handle, h, H_LastTape, tape);
   D.store(T.Handle, h, H_LastJ, lastj);
   B.CreateRet(h);
@@ -672,15 +658,13 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   DriverBuilder D(T, F);
   auto &B = D.B;
   auto *A = F->arg_begin();
-  Value *h = A++, *primal = A++, *aug = A++, *rev = A++;
+  Value *h = A++, *regions = A++, *nregions = A++, *env = A++, *primal = A++,
+        *aug = A++, *rev = A++;
 
   auto *action = B.CreateAlloca(T.Action, nullptr, "action");
   Value *vt = D.load(T.Handle, h, H_VT, "vt");
   Value *state = D.load(T.Handle, h, H_State, "state");
   Value *start = D.load(T.Handle, h, H_Start, "start");
-  Value *regions = D.load(T.Handle, h, H_Regions, "regions");
-  Value *nregions = D.load(T.Handle, h, H_NRegions, "nregions");
-  Value *env = D.load(T.Handle, h, H_Env, "env");
   Value *empty = D.load(T.Handle, h, H_Empty, "empty");
 
   auto *first = D.block("firstuturn");
@@ -738,8 +722,6 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
 
   B.SetInsertPoint(finish);
   D.callIfSet(D.vtFn(vt, VT_Finalize, "finalize"), T.FinalizeFT, {state});
-  B.CreateCall(D.Free, {env});
-  B.CreateCall(D.Free, {regions});
   B.CreateCall(D.Free, {B.CreatePointerCast(h, T.I8P)});
   B.CreateRetVoid();
   return F;
@@ -957,36 +939,33 @@ getInterleavedParams(Function *loop, ArrayRef<DIFFE_TYPE> constant_args) {
   return params;
 }
 
-Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
-                                    Function *loop,
-                                    ArrayRef<DIFFE_TYPE> constant_args,
-                                    TypeAnalysis &TA,
-                                    const FnTypeInfo &typeInfo,
-                                    bool runtimeActivity, bool strongZero,
-                                    unsigned width, bool AtomicAdd) {
+namespace {
+/// What one pass of a checkpointed loop hands the driver, built from that
+/// pass's own arguments.
+struct PassFrame {
+  Value *env;
+  Value *regions;
+  Value *nregions;
+  Value *bytes;
+  SmallVector<Value *, 8> primals;
+};
+} // namespace
+
+/// Map the arguments of `F` (the loop's arguments, each followed by its
+/// shadow if duplicated) to the step's environment and the snapshot regions.
+static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
+                            ArrayRef<DIFFE_TYPE> constant_args,
+                            DriverTypes &T) {
+  Function *loop = S.loop;
   Module &M = *loop->getParent();
-  LLVMContext &Ctx = M.getContext();
   const DataLayout &DL = M.getDataLayout();
-  DriverTypes T(Ctx);
+  PassFrame frame;
 
-  StepInfo S(loop);
-  if (!getStepInfo(S, constant_args, typeInfo, width, context))
-    return nullptr;
-  auto &aug = getStepAugmented(Logic, context, S, TA, runtimeActivity,
-                               strongZero, AtomicAdd);
-
-  auto *FT = FunctionType::get(T.I8P, getInterleavedParams(loop, constant_args),
-                               false);
-  auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
-                             "augmented_" + loop->getName(), &M);
-  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
-
-  // Map each loop parameter to the new arguments.
-  SmallVector<Value *, 8> primals, shadows;
+  SmallVector<Value *, 8> shadows;
   {
     auto *A = F->arg_begin();
     for (unsigned k = 0; k < loop->arg_size(); k++) {
-      primals.push_back(A++);
+      frame.primals.push_back(A++);
       if (constant_args[k] == DIFFE_TYPE::DUP_ARG ||
           constant_args[k] == DIFFE_TYPE::DUP_NONEED)
         shadows.push_back(A++);
@@ -994,6 +973,7 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
         shadows.push_back(nullptr);
     }
   }
+  auto &primals = frame.primals;
 
   // The environment.
   auto *env = B.CreateAlloca(S.env, nullptr, "env");
@@ -1005,6 +985,7 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
         B.CreateStore(shadows[k], B.CreateStructGEP(S.env, env, field++));
     }
   }
+  frame.env = B.CreatePointerCast(env, T.I8P);
 
   // The regions: those marked at the call, then the globals.
   auto globals = getGlobalRegions(S.step);
@@ -1013,18 +994,6 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   auto *regionArr = ArrayType::get(T.Region, std::max(nregions, 1u));
   auto *regions = B.CreateAlloca(regionArr, nullptr, "regions");
   Value *bytes = ConstantInt::get(T.I64, 0);
-  auto setRegion = [&](unsigned r, Value *ptr, Value *size) {
-    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
-    Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
-    B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
-                  B.CreateStructGEP(T.Region, slot, 0));
-    B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
-    B.CreateStore(ConstantInt::get(T.I32, AS),
-                  B.CreateStructGEP(T.Region, slot, 2));
-    B.CreateStore(ConstantInt::get(T.I32, 0),
-                  B.CreateStructGEP(T.Region, slot, 3));
-    bytes = B.CreateAdd(bytes, size);
-  };
   // The globals' entries come from a constant table: a global's address
   // stored by an instruction outside the functions that use it trips up
   // activity analysis of those functions.
@@ -1042,36 +1011,80 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
            ConstantInt::get(T.I32, 0)}));
     }
     auto *tableTy = ArrayType::get(T.Region, entries.size());
-    auto *table = new GlobalVariable(
-        M, tableTy, /*isConstant*/ true, GlobalValue::PrivateLinkage,
-        ConstantArray::get(tableTy, entries),
-        "enzyme.ckpt.regions." + S.step->getName());
+    std::string name = ("enzyme.ckpt.regions." + S.step->getName()).str();
+    auto *table = M.getGlobalVariable(name, /*AllowInternal*/ true);
+    if (!table || table->getValueType() != tableTy)
+      table = new GlobalVariable(M, tableTy, /*isConstant*/ true,
+                                 GlobalValue::PrivateLinkage,
+                                 ConstantArray::get(tableTy, entries), name);
     B.CreateMemCpy(B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, nmarked),
                    MaybeAlign(1), table, MaybeAlign(1),
                    DL.getTypeAllocSize(tableTy));
     bytes = ConstantInt::get(T.I64, globalBytes);
   }
-  for (unsigned r = 0; r < nmarked; r++)
-    setRegion(r, primals[LoopFixedParams + 2 * r],
-              primals[LoopFixedParams + 2 * r + 1]);
-
-  if (EnzymePrintCheckpointRegions) {
-    llvm::errs() << "checkpoint regions of " << S.step->getName() << ":\n";
-    for (unsigned r = 0; r < nmarked; r++)
-      llvm::errs() << "  marked region " << r << "\n";
-    for (auto *GV : globals)
-      llvm::errs() << "  global " << GV->getName() << " ("
-                   << DL.getTypeAllocSize(GV->getValueType()) << " bytes)\n";
+  for (unsigned r = 0; r < nmarked; r++) {
+    Value *ptr = primals[LoopFixedParams + 2 * r];
+    Value *size = primals[LoopFixedParams + 2 * r + 1];
+    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+    Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
+    B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
+                  B.CreateStructGEP(T.Region, slot, 0));
+    B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
+    B.CreateStore(ConstantInt::get(T.I32, AS),
+                  B.CreateStructGEP(T.Region, slot, 2));
+    B.CreateStore(ConstantInt::get(T.I32, 0),
+                  B.CreateStructGEP(T.Region, slot, 3));
+    bytes = B.CreateAdd(bytes, size);
   }
+  frame.regions = B.CreatePointerCast(regions, T.I8P);
+  frame.nregions = ConstantInt::get(T.I64, nregions);
+  frame.bytes = bytes;
+  return frame;
+}
 
-  Function *fwd = getOrCreateFwdDriver(M, T);
+static void printRegions(StepInfo &S) {
+  if (!EnzymePrintCheckpointRegions)
+    return;
+  const DataLayout &DL = S.loop->getParent()->getDataLayout();
+  llvm::errs() << "checkpoint regions of " << S.step->getName() << ":\n";
+  for (unsigned r = 0; r < getNumRegions(S.loop); r++)
+    llvm::errs() << "  marked region " << r << "\n";
+  for (auto *GV : getGlobalRegions(S.step))
+    llvm::errs() << "  global " << GV->getName() << " ("
+                 << DL.getTypeAllocSize(GV->getValueType()) << " bytes)\n";
+}
+
+Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
+                                    Function *loop,
+                                    ArrayRef<DIFFE_TYPE> constant_args,
+                                    TypeAnalysis &TA,
+                                    const FnTypeInfo &typeInfo,
+                                    bool runtimeActivity, bool strongZero,
+                                    unsigned width, bool AtomicAdd) {
+  Module &M = *loop->getParent();
+  LLVMContext &Ctx = M.getContext();
+  DriverTypes T(Ctx);
+
+  StepInfo S(loop);
+  if (!getStepInfo(S, constant_args, typeInfo, width, context))
+    return nullptr;
+  auto &aug = getStepAugmented(Logic, context, S, TA, runtimeActivity,
+                               strongZero, AtomicAdd);
+
+  auto *FT = FunctionType::get(T.I8P, getInterleavedParams(loop, constant_args),
+                               false);
+  auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
+                             "augmented_" + loop->getName(), &M);
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
+  PassFrame frame = buildFrame(B, F, S, constant_args, T);
+  printRegions(S);
+
+  auto &primals = frame.primals;
   Value *h = B.CreateCall(
-      fwd,
+      getOrCreateFwdDriver(M, T),
       {B.CreatePointerCast(primals[2], T.I8P),
        B.CreatePointerCast(primals[3], T.I8P), primals[0], primals[1],
-       B.CreatePointerCast(regions, T.I8P), ConstantInt::get(T.I64, nregions),
-       bytes, B.CreatePointerCast(env, T.I8P),
-       ConstantInt::get(T.I64, DL.getTypeAllocSize(S.env)),
+       frame.regions, frame.nregions, frame.bytes, frame.env,
        B.CreatePointerCast(getPrimalTrampoline(T, S), T.I8P),
        B.CreatePointerCast(getAugTrampoline(T, S, aug), T.I8P)},
       "handle");
@@ -1143,9 +1156,11 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   } else {
     h = B.CreatePointerCast(F->getArg(F->arg_size() - 1), T.I8P);
   }
+  PassFrame frame = buildFrame(B, F, S, key.constant_args, T);
   B.CreateCall(
       getOrCreateRevDriver(M, T),
-      {h, B.CreatePointerCast(getPrimalTrampoline(T, S), T.I8P),
+      {h, frame.regions, frame.nregions, frame.env,
+       B.CreatePointerCast(getPrimalTrampoline(T, S), T.I8P),
        B.CreatePointerCast(getAugTrampoline(T, S, aug), T.I8P),
        B.CreatePointerCast(getRevTrampoline(T, S, rev, tapeType), T.I8P)});
   B.CreateRetVoid();
