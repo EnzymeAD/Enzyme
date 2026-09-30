@@ -34,18 +34,26 @@
  *   FORWARD    (startiteration = a, iteration = b): run steps a, ..., b-1
  *              without taping.
  *   FIRSTUTURN (iteration = b): the state is the one before step b-1, the last
- *              step. Run it with taping; its adjoint is the first of the
- *              reverse sweep. Only in the forward sweep.
+ *              step, whose adjoint is the first of the reverse sweep. Only in
+ *              the forward sweep.
  *   UTURN      (iteration = b): the state is the one before step b-1. Run it
  *              with taping, then its adjoint.
  *   RESTORE    (iteration = c, cpnum = k): load slot k, the state before
  *              step c.
  *   DONE       the schedule is complete. With n = 0 it is the first action.
  *
- * Besides the slots the actions name, the reverse sweep stores the state it
- * starts from in slot -1 and restores it when the schedule is done, so that
- * the primal state is left as the forward pass left it. store and restore
- * (or save_state and load_state) must accept slot -1.
+ * Besides the slots the actions name, the driver uses two of its own, which
+ * store and restore (or save_state and load_state) must accept:
+ *
+ *   slot -2    the state before the last step. At FIRSTUTURN the forward sweep
+ *              stores it and runs the last step without taping; the reverse
+ *              sweep starts by restoring it and differentiating that step.
+ *   slot -1    the state the reverse sweep starts from, restored when the
+ *              schedule is done, so that the primal state is left as the
+ *              forward pass left it.
+ *
+ * Enzyme differentiates one step at a time, its forward and reverse passes
+ * together, so no tape outlives a step.
  *
  * This header also has three reference schemes, used as
  * `enzyme_scheme, &EnzymeCkptRevolve, &config`:
@@ -166,7 +174,7 @@ static inline void enzyme_ckpt_fail(const char *msg) {
   abort();
 }
 
-/* Slot -1 (the state the reverse sweep starts from) is kept at index 0. */
+/* The driver's slots -2 and -1 are kept at indices 0 and 1. */
 static inline int enzyme_ckpt_on_disk(enzyme_ckpt_store *st, int64_t idx) {
   return st->config->spill_dir &&
          (uint64_t)idx * st->bytes >= st->config->mem_budget;
@@ -190,8 +198,8 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
   uint64_t r, off = 0;
-  int64_t idx = slot + 1;
-  if (slot < -1)
+  int64_t idx = slot + 2;
+  if (slot < -2)
     enzyme_ckpt_fail("negative slot");
   if (idx >= st->nslots) {
     int64_t n = st->nslots ? st->nslots : 4, i;
@@ -240,8 +248,8 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
   uint64_t r, off = 0;
-  int64_t idx = slot + 1;
-  if (slot < -1 || idx >= st->nslots || !st->slots[idx])
+  int64_t idx = slot + 2;
+  if (slot < -2 || idx >= st->nslots || !st->slots[idx])
     enzyme_ckpt_fail("restore of a slot that was never stored");
   if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
