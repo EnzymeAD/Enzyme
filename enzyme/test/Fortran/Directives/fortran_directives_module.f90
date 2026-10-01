@@ -5,13 +5,13 @@
 ! that run before Enzyme. double_value is 2x but differentiates like log1p:
 ! 1/(1+x) = 0.3333 at x = 2.
 !
-! REQUIRES: flang_enzyme_mlir, flangenzyme
+! REQUIRES: flang_directives, flangenzyme
 ! RUN: rm -rf %t && mkdir -p %t
-! RUN: %flang_enzyme_driver -cpp -DRULES -O0 -mmlir -enzyme-flang-mlir-ad=false -module-dir %t -c %s -o %t/rules.o
+! RUN: %fc %flangDirectives -cpp -DRULES -O0 -module-dir %t -c %s -o %t/rules.o
 ! RUN: FileCheck %s --check-prefix=MOD < %t/private_rules.mod
-! RUN: %flang_enzyme_driver -cpp -O0 -mmlir -enzyme-flang-mlir-ad=false %loadFlangEnzyme %loadFortran -I%t %s %t/rules.o -o %t/a0 && %t/a0 | FileCheck %s
-! RUN: %flang_enzyme_driver -cpp -DRULES -O2 -mmlir -enzyme-flang-mlir-ad=false -module-dir %t -c %s -o %t/rules2.o
-! RUN: %flang_enzyme_driver -cpp -O2 -mmlir -enzyme-flang-mlir-ad=false %loadFlangEnzyme %loadFortran -I%t %s %t/rules2.o -o %t/a2 && %t/a2 | FileCheck %s
+! RUN: %fc %flangDirectives -cpp -O0 %loadFlangEnzyme %loadFortran -I%t %s %t/rules.o -o %t/a0 && %t/a0 | FileCheck %s
+! RUN: %fc %flangDirectives -cpp -DRULES -O2 -module-dir %t -c %s -o %t/rules2.o
+! RUN: %fc %flangDirectives -cpp -O2 %loadFlangEnzyme %loadFortran -I%t %s %t/rules2.o -o %t/a2 && %t/a2 | FileCheck %s
 
 ! MOD: private::augment_double_value
 ! MOD: private::reverse_double_value
