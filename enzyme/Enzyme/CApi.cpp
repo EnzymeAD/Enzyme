@@ -1318,6 +1318,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   if (!keepReturn) {
     for (auto &B : *NewF) {

@@ -82,6 +82,20 @@ static inline bool isUnconditionalBranch(const llvm::Value *V) {
 #endif
 }
 
+// LLVM 23 persists every function's GUID as `!guid` metadata and
+// CloneFunctionInto copies it, so a derivative clone would share its primal's
+// GUID. LTO keys per-function state by GUID and then mishandles the pair; a
+// definition that is reachable only through the clone (e.g. a registered
+// custom rule) is dropped to a declaration and the link fails. Give a fresh
+// clone a GUID derived from its own name. No-op before LLVM 23.
+static inline void resetClonedGUID(llvm::Function *F) {
+#if LLVM_VERSION_MAJOR >= 23
+  F->reassignGUID();
+#else
+  (void)F;
+#endif
+}
+
 /// The condition of a branch isConditionalBranch says yes to.
 static inline llvm::Value *getBranchCondition(llvm::Value *V) {
 #if LLVM_VERSION_MAJOR >= 24
