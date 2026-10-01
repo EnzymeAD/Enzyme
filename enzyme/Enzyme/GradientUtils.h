@@ -107,6 +107,7 @@ typedef std::pair<const llvm::Value *, QueryType> UsageKey;
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
+extern llvm::cl::opt<bool> EnzymeSeparateCompilation;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
 extern llvm::cl::opt<bool> EnzymeRematerialize;
 }
@@ -544,6 +545,18 @@ public:
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Constant *F, DerivativeMode mode,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
+
+  //! Whether derivatives of \p F are expected to be provided by another
+  //! module under separate compilation (\p F has no body here).
+  static bool usesExternalDerivative(llvm::Function *F,
+                                     llvm::TargetLibraryInfo &TLI);
+
+  //! Linker-visible name of the shadow (derivative table) of \p F under
+  //! separate compilation. Every assumption the derivative is built under is
+  //! part of the name, so a mismatch between modules is a link error.
+  static std::string externalShadowName(llvm::Function *F, DerivativeMode mode,
+                                        bool runtimeActivity, bool strongZero,
+                                        unsigned width, bool AtomicAdd);
 
   static llvm::Constant *GetOrCreateShadowFunction(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,

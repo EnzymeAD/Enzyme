@@ -123,6 +123,12 @@ llvm::cl::opt<bool>
     EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
                          cl::desc("Split phis according to vector size"));
 
+llvm::cl::opt<bool> EnzymeSeparateCompilation(
+    "enzyme-separate-compilation", cl::init(false), cl::Hidden,
+    cl::desc("Differentiate calls to functions without a body in this module "
+             "through externally linked derivative symbols, and export the "
+             "derivative symbols of externally visible functions"));
+
 llvm::cl::opt<bool>
     EnzymePrintDiffUse("enzyme-print-diffuse", cl::init(false), cl::Hidden,
                        cl::desc("Print differential use analysis"));
@@ -4750,6 +4756,66 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   llvm_unreachable("unknown constant to create shadow of");
 }
 
+bool GradientUtils::usesExternalDerivative(Function *F,
+                                           TargetLibraryInfo &TLI) {
+  if (!EnzymeSeparateCompilation)
+    return false;
+  if (!F->isDeclaration() && !F->hasAvailableExternallyLinkage())
+    return false;
+  if (F->isIntrinsic() || F->isVarArg())
+    return false;
+  if (hasMetadata(F, "enzyme_callwrapper") ||
+      hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
+      hasMetadata(F, "enzyme_derivative"))
+    return false;
+  LibFunc LF;
+  if (TLI.getLibFunc(*F, LF))
+    return false;
+  auto name = F->getName();
+  if (name.starts_with("_Fortran") || name.starts_with("__enzyme") ||
+      name.starts_with("llvm."))
+    return false;
+  return true;
+}
+
+std::string GradientUtils::externalShadowName(Function *F, DerivativeMode mode,
+                                              bool runtimeActivity,
+                                              bool strongZero, unsigned width,
+                                              bool AtomicAdd) {
+  std::string name = "__enzyme_sep_";
+  switch (mode) {
+  case DerivativeMode::ForwardMode:
+    name += "fwd";
+    break;
+  case DerivativeMode::ForwardModeError:
+    name += "fwderr";
+    break;
+  case DerivativeMode::ForwardModeSplit:
+    name += "fwdsplit";
+    break;
+  case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeGradient:
+  case DerivativeMode::ReverseModePrimal:
+    name += "rev";
+    break;
+  }
+  name += "_w" + std::to_string(width);
+  if (runtimeActivity)
+    name += "_ra";
+  if (strongZero)
+    name += "_sz";
+  // Forward-mode derivatives never accumulate, so they do not depend on
+  // AtomicAdd.
+  bool reverse = mode == DerivativeMode::ReverseModeCombined ||
+                 mode == DerivativeMode::ReverseModeGradient ||
+                 mode == DerivativeMode::ReverseModePrimal;
+  if (AtomicAdd && reverse)
+    name += "_aa";
+  name += "_";
+  name += F->getName();
+  return name;
+}
+
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
@@ -4762,6 +4828,47 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   //  indirect augmented calls), topLevel MUST be true otherwise subcalls will
   //  not be able to lookup the augmenteddata/subdata (triggering an assertion
   //  failure, among much worse)
+  if (usesExternalDerivative(fn, TLI)) {
+    // Separate compilation: the module defining fn exports its derivatives
+    // under a name that encodes the conventions below. Forward mode stores a
+    // single function pointer; split modes store {augmented, derivative}.
+    auto &Ctx = fn->getContext();
+    auto PT = getInt8PtrTy(Ctx);
+    Type *T = (mode == DerivativeMode::ForwardMode ||
+               mode == DerivativeMode::ForwardModeError)
+                  ? (Type *)PT
+                  : (Type *)StructType::get(Ctx, {PT, PT});
+    auto name = externalShadowName(fn, mode, runtimeActivity, strongZero, width,
+                                   AtomicAdd);
+    auto GV = fn->getParent()->getNamedValue(name);
+    if (GV == nullptr)
+      GV = new GlobalVariable(*fn->getParent(), T, /*isConstant*/ true,
+                              GlobalValue::ExternalLinkage, nullptr, name);
+    return ConstantExpr::getPointerCast(GV, fn->getType());
+  }
+
+  // Under separate compilation, the shadow of an externally visible function
+  // is exported so that other modules can call its derivatives.
+  bool exportShadow = EnzymeSeparateCompilation && !fn->empty() &&
+                      !fn->hasLocalLinkage() &&
+                      !fn->hasAvailableExternallyLinkage();
+  Function *exportedFn = fn;
+  auto shadowLinkage = [&]() {
+    if (!exportShadow)
+      return GlobalValue::LinkageTypes::InternalLinkage;
+    if (exportedFn->hasLinkOnceODRLinkage() || exportedFn->hasWeakODRLinkage())
+      return GlobalValue::LinkageTypes::WeakODRLinkage;
+    if (exportedFn->hasLinkOnceLinkage() || exportedFn->hasWeakLinkage())
+      return GlobalValue::LinkageTypes::WeakAnyLinkage;
+    return GlobalValue::LinkageTypes::ExternalLinkage;
+  };
+  auto shadowName = [&](StringRef prefix) {
+    if (exportShadow)
+      return externalShadowName(exportedFn, mode, runtimeActivity, strongZero,
+                                width, AtomicAdd);
+    return (prefix + "_" + fn->getName() + "'").str();
+  };
+
   bool isRealloc = false;
   if (fn->empty()) {
     if (hasMetadata(fn, "enzyme_callwrapper")) {
@@ -4824,7 +4931,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
              mode == DerivativeMode::ForwardModeError)
                 ? DIFFE_TYPE::DUP_ARG
                 : DIFFE_TYPE::OUT_DIFF;
-    } else if (a.getType()->isIntegerTy() &&
+      // Callers of an external derivative treat every non-floating argument
+      // as duplicated (see GradientUtils::getDiffeType), so an exported
+      // shadow takes a shadow for small integers too.
+    } else if (!exportShadow && a.getType()->isIntegerTy() &&
                cast<IntegerType>(a.getType())->getBitWidth() < 16) {
       typ = DIFFE_TYPE::CONSTANT;
     } else if (a.getType()->isVoidTy() || a.getType()->isEmptyTy()) {
@@ -4883,13 +4993,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
       prefix += std::to_string(width);
     }
 
-    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
+    std::string globalname = shadowName(prefix);
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), newf->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, newf,
-                              globalname);
+                              shadowLinkage(), newf, globalname);
     }
 
     return ConstantExpr::getPointerCast(GV, fn->getType());
@@ -4922,13 +5031,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
 
-    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
+    std::string globalname = shadowName(prefix);
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), cdata->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, cdata,
-                              globalname);
+                              shadowLinkage(), cdata, globalname);
     }
 
     return ConstantExpr::getPointerCast(GV, fn->getType());
@@ -4974,13 +5082,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
-    std::string globalname = ("_enzyme_reverse_" + fn->getName() + "'").str();
+    std::string globalname = shadowName("_enzyme_reverse");
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), cdata->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, cdata,
-                              globalname);
+                              shadowLinkage(), cdata, globalname);
     }
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
