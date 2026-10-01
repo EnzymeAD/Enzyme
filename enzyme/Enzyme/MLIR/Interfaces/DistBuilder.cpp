@@ -531,35 +531,33 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     return {reduce(kernel), reduce(normTerm)};
   }
   case DistBaseKind::STUDENT_T: {
-    // log p = lgamma((df+1)/2) - lgamma(df/2) - 0.5*log(df*pi) - log(scale)
-    //         - (df+1)/2 * log1p(((x-loc)/scale)^2 / df)
     Value df = bcast(distArgs[0]);
     Value locp = bcast(distArgs[1]);
     Value scale = bcast(distArgs[2]);
     Value half = splat(0.5);
     Value y = arith::DivFOp::create(
         b, loc, arith::SubFOp::create(b, loc, observed, locp), scale);
+    Value logScale = math::LogOp::create(b, loc, scale);
+    Value halfLogDf =
+        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, df));
+    Value z = arith::AddFOp::create(b, loc, logScale, halfLogDf);
+    z = arith::AddFOp::create(b, loc, z, splat(0.5 * std::log(M_PI)));
+    Value halfDf = arith::MulFOp::create(b, loc, half, df);
+    z = arith::AddFOp::create(
+        b, loc, z, impulse::LgammaOp::create(b, loc, halfDf.getType(), halfDf));
+    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
+    Value halfDfp1 = arith::MulFOp::create(b, loc, half, dfp1);
+    z = arith::SubFOp::create(
+        b, loc, z,
+        impulse::LgammaOp::create(b, loc, halfDfp1.getType(), halfDfp1));
+    Value coef = arith::MulFOp::create(b, loc, splat(-0.5), dfp1);
     Value y2df =
         arith::DivFOp::create(b, loc, arith::MulFOp::create(b, loc, y, y), df);
-    Value l1p = math::Log1pOp::create(b, loc, y2df);
-    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
-    Value dfp1half = arith::MulFOp::create(b, loc, dfp1, half);
-    Value kernel = arith::NegFOp::create(
-        b, loc, arith::MulFOp::create(b, loc, dfp1half, l1p));
-    Value lgTop =
-        impulse::LgammaOp::create(b, loc, dfp1half.getType(), dfp1half);
-    Value dfhalf = arith::MulFOp::create(b, loc, df, half);
-    Value lgBot = impulse::LgammaOp::create(b, loc, dfhalf.getType(), dfhalf);
-    Value dfpi = arith::MulFOp::create(b, loc, df, splat(M_PI));
-    Value halfLogdfpi =
-        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, dfpi));
-    Value logscale = math::LogOp::create(b, loc, scale);
-    Value normTerm = arith::SubFOp::create(
-        b, loc,
-        arith::SubFOp::create(
-            b, loc, arith::SubFOp::create(b, loc, lgTop, lgBot), halfLogdfpi),
-        logscale);
-    return {reduce(kernel), reduce(normTerm)};
+    Value kernel = arith::MulFOp::create(b, loc, coef,
+                                         math::Log1pOp::create(b, loc, y2df));
+    Value lp =
+        arith::NegFOp::create(b, loc, arith::SubFOp::create(b, loc, z, kernel));
+    return {reduce(lp), Value()};
   }
   case DistBaseKind::POISSON: {
     Value rate = bcast(distArgs[0]);

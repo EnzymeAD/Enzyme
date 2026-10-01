@@ -114,6 +114,21 @@ module {
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
 
+  // NumPyro StudentT.log_prob operation order, as -(z - kernel), for parity.
+  func.func private @st_s(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    return %r, %lc : tensor<2xui64>, tensor<f64>
+  }
+  func.func @st_model(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    %o:2 = impulse.sample @st_s(%r, %df, %lc, %sc) {symbol = #impulse.symbol<10>, dist = #impulse.dist<STUDENT_T>}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
+  }
+  func.func @st_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+    %t, %w, %rng, %v = impulse.generate @st_model(%r, %df, %lc, %sc) given %c {selection = [[#impulse.symbol<10>]], constrained_addresses = [[#impulse.symbol<10>]]}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
+  }
+
   // NumPyro LeftTruncatedDistribution(StudentT).log_prob operation order.
   func.func private @hst_s(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     return %r, %sc : tensor<2xui64>, tensor<f64>
@@ -162,6 +177,39 @@ module {
 // CHECK-NEXT:  %[[HLP:.+]] = arith.subf %[[HLP0]], %[[HLOGHALF]] : tensor<f64>
 // CHECK-NEXT:  %[[HLPR:.+]] = impulse.reshape %[[HLP]] : (tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:  %{{.+}} = arith.addf %[[HLPR]], %{{.+}} : tensor<f64>
+
+// CHECK-LABEL: func.func @st_model.generate
+// CHECK-DAG:   %[[SNEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+// CHECK-DAG:   %[[SONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
+// CHECK-DAG:   %[[SHALFLOGPI:.+]] = arith.constant dense<0.57236494292470008> : tensor<f64>
+// CHECK-DAG:   %[[SHALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
+// CHECK-NOT:   impulse.random
+// CHECK:       %[[SX:.+]] = impulse.reshape %{{.+}} : (tensor<1x1xf64>) -> tensor<f64>
+// y = (x - loc) / scale; z = log(scale) + 0.5*log(df) + 0.5*log(pi) + lgamma(df/2) - lgamma((df+1)/2):
+// CHECK-NEXT:  %[[SDIFF:.+]] = arith.subf %[[SX]], %arg3 : tensor<f64>
+// CHECK-NEXT:  %[[SY:.+]] = arith.divf %[[SDIFF]], %arg4 : tensor<f64>
+// CHECK-NEXT:  %[[SLS:.+]] = math.log %arg4 : tensor<f64>
+// CHECK-NEXT:  %[[SLDF:.+]] = math.log %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[SHLDF:.+]] = arith.mulf %[[SLDF]], %[[SHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[SZ1:.+]] = arith.addf %[[SLS]], %[[SHLDF]] : tensor<f64>
+// CHECK-NEXT:  %[[SZ2:.+]] = arith.addf %[[SZ1]], %[[SHALFLOGPI]] : tensor<f64>
+// CHECK-NEXT:  %[[SHDF:.+]] = arith.mulf %arg2, %[[SHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[SLG1:.+]] = impulse.lgamma %[[SHDF]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[SZ3:.+]] = arith.addf %[[SZ2]], %[[SLG1]] : tensor<f64>
+// CHECK-NEXT:  %[[SDFP1:.+]] = arith.addf %arg2, %[[SONE]] : tensor<f64>
+// CHECK-NEXT:  %[[SHDFP1:.+]] = arith.mulf %[[SDFP1]], %[[SHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[SLG2:.+]] = impulse.lgamma %[[SHDFP1]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[SZ:.+]] = arith.subf %[[SZ3]], %[[SLG2]] : tensor<f64>
+// kernel = -0.5*(df+1) * log1p(y*y/df); lp = -(z - kernel), returned whole:
+// CHECK-NEXT:  %[[SCOEF:.+]] = arith.mulf %[[SDFP1]], %[[SNEGHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[SY2:.+]] = arith.mulf %[[SY]], %[[SY]] : tensor<f64>
+// CHECK-NEXT:  %[[SY2DF:.+]] = arith.divf %[[SY2]], %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[SL1P:.+]] = math.log1p %[[SY2DF]] : tensor<f64>
+// CHECK-NEXT:  %[[SKER:.+]] = arith.mulf %[[SCOEF]], %[[SL1P]] : tensor<f64>
+// CHECK-NEXT:  %[[SZMK:.+]] = arith.subf %[[SZ]], %[[SKER]] : tensor<f64>
+// CHECK-NEXT:  %[[SLP:.+]] = arith.negf %[[SZMK]] : tensor<f64>
+// CHECK-NEXT:  %[[SLPR:.+]] = impulse.reshape %[[SLP]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %{{.+}} = arith.addf %[[SLPR]], %{{.+}} : tensor<f64>
 
 // CHECK-LABEL: func.func @gum_model.simulate
 // CHECK-DAG:   %[[GZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
