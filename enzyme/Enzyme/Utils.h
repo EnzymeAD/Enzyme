@@ -2655,13 +2655,15 @@ bool isNVLoad(const llvm::Value *V);
 
 //! Check if value if b captured after definition before executing inst.
 //! If checkLoadCaptured != 0, also consider catpures of any loads of the value
-//! as a capture (for the number of loads set).
+//! as a capture (for the number of loads set). With TLI, passing the value to
+//! a deallocation function is not a capture.
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured,
-                       llvm::Instruction *startinst = nullptr);
+                       llvm::Instruction *startinst = nullptr,
+                       llvm::TargetLibraryInfo *TLI = nullptr);
 
 //! Check if value if b captured
-bool notCaptured(llvm::Value *V);
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI = nullptr);
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
