@@ -5241,6 +5241,12 @@ public:
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     Module &M = *call.getParent()->getParent()->getParent();
 
+    // Under separate compilation, a callee without a body in this module is
+    // differentiated through the derivative table its defining module
+    // exports, exactly like an indirect call.
+    if (called && GradientUtils::usesExternalDerivative(called, gutils->TLI))
+      called = nullptr;
+
     bool foreignFunction = called == nullptr;
 
     FnTypeInfo nextTypeInfo(called);

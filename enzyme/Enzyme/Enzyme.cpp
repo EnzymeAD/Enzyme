@@ -38,6 +38,8 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include <optional>
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
@@ -121,6 +123,19 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
     cl::desc(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
+
+llvm::cl::opt<std::string> EnzymeExportDerivatives(
+    "enzyme-export-derivatives", cl::init(""), cl::Hidden,
+    cl::desc("With -enzyme-separate-compilation, export derivatives of every "
+             "externally visible function defined in the module for the "
+             "given comma-separated modes (forward, forwardsplit, reverse). "
+             "Functions can also request this individually with the "
+             "\"enzyme_export_derivative\" attribute."));
+
+llvm::cl::opt<std::string> EnzymeExportList(
+    "enzyme-export-list", cl::init(""), cl::Hidden,
+    cl::desc("With -enzyme-export-derivatives, only export functions whose "
+             "names are listed (one per line) in this file"));
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -2715,6 +2730,78 @@ public:
     return Changed;
   }
 
+  /// Separate compilation: create the derivative tables other modules
+  /// reference for functions defined here (see
+  /// GradientUtils::externalShadowName). Which modes to export comes from
+  /// -enzyme-export-derivatives for all externally visible functions, or from
+  /// a function's "enzyme_export_derivative" attribute.
+  bool exportDerivatives(Module &M) {
+    if (!EnzymeSeparateCompilation)
+      return false;
+    auto parseModes = [](StringRef str, SmallVectorImpl<DerivativeMode> &out) {
+      SmallVector<StringRef, 3> parts;
+      str.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        part = part.trim();
+        if (part == "forward")
+          out.push_back(DerivativeMode::ForwardMode);
+        else if (part == "forwardsplit")
+          out.push_back(DerivativeMode::ForwardModeSplit);
+        else if (part == "reverse")
+          out.push_back(DerivativeMode::ReverseModeGradient);
+        else
+          report_fatal_error(Twine("unknown derivative mode to export: ") +
+                             part);
+      }
+    };
+    SmallVector<DerivativeMode, 3> allModes;
+    parseModes(EnzymeExportDerivatives, allModes);
+
+    std::optional<StringSet<>> exportList;
+    if (!EnzymeExportList.empty()) {
+      auto buf = MemoryBuffer::getFile(EnzymeExportList);
+      if (!buf)
+        report_fatal_error(Twine("could not read -enzyme-export-list file ") +
+                           EnzymeExportList);
+      exportList.emplace();
+      SmallVector<StringRef, 32> lines;
+      (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+      for (auto line : lines)
+        if (!line.trim().empty())
+          exportList->insert(line.trim());
+    }
+
+    SmallVector<std::pair<Function *, SmallVector<DerivativeMode, 3>>, 4> todo;
+    for (Function &F : M) {
+      if (F.empty() || F.hasLocalLinkage() || F.hasAvailableExternallyLinkage())
+        continue;
+      if (F.getName().starts_with("__enzyme") || F.getName() == "main")
+        continue;
+      SmallVector<DerivativeMode, 3> modes;
+      if (F.hasFnAttribute("enzyme_export_derivative"))
+        parseModes(
+            F.getFnAttribute("enzyme_export_derivative").getValueAsString(),
+            modes);
+      else if (!exportList || exportList->contains(F.getName()))
+        modes = allModes;
+      if (!modes.empty())
+        todo.emplace_back(&F, modes);
+    }
+    if (todo.empty())
+      return false;
+
+    TypeAnalysis TA(Logic);
+    bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
+    for (auto &[F, modes] : todo)
+      for (auto mode : modes)
+        GradientUtils::GetOrCreateShadowFunction(
+            RequestContext(), Logic,
+            Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, mode,
+            /*runtimeActivity*/ false, /*strongZero*/ false, /*width*/ 1,
+            AtomicAdd);
+    return true;
+  }
+
   bool run(Module &M) {
     Logic.clear();
 
@@ -2776,6 +2863,8 @@ public:
 
       changed |= lowerEnzymeCalls(F, done);
     }
+
+    changed |= exportDerivatives(M);
 
     for (Function &F : M) {
       if (F.empty())
