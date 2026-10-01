@@ -4554,7 +4554,10 @@ public:
             nowrite_shadows.back() = true;
           }
         }
-        if (isAllocationCall(baseOp, gutils->TLI)) {
+        // A call through an external derivative passes a shadow for every
+        // non-floating argument, including constant allocations.
+        if (isAllocationCall(baseOp, gutils->TLI) &&
+            !(foreignFunction && gutils->isConstantValue(baseOp))) {
           assert(!gutils->isConstantValue(baseOp));
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModeGradient ||
@@ -5737,7 +5740,10 @@ public:
             nowrite_shadows.back() = true;
           }
         }
-        if (isAllocationCall(baseOp, gutils->TLI)) {
+        // A call through an external derivative passes a shadow for every
+        // non-floating argument, including constant allocations.
+        if (isAllocationCall(baseOp, gutils->TLI) &&
+            !(foreignFunction && gutils->isConstantValue(baseOp))) {
           assert(!gutils->isConstantValue(baseOp));
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModeGradient ||
