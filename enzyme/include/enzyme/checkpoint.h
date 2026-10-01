@@ -847,6 +847,146 @@ __enzyme_checkpoint_builtin(int64_t mode) {
   return mode == 2 ? &EnzymeCkptRevolve : &EnzymeCkptPeriodic;
 }
 
+/* --- A schedule without a driver. ---
+ *
+ * For a caller that keeps the snapshots itself and needs only the actions,
+ * with scalar arguments (Enzyme-MLIR, whose snapshots live in its own
+ * buffers, calls these from the IR it generates):
+ *
+ *   void *h = __enzyme_ckpt_schedule_begin(mode, budget, nsteps);
+ *   while (__enzyme_ckpt_schedule_next(h) != ENZYME_CKPT_DONE)
+ *     ... __enzyme_ckpt_schedule_iteration(h), _start(h), _slot(h) ...
+ *   __enzyme_ckpt_schedule_end(h);
+ *
+ * mode is 1 for EnzymeCkptPeriodic, 2 for EnzymeCkptRevolve and 3 for
+ * EnzymeCkptStoreAll; budget is config.snapshots, or, if it is not
+ * positive, the square root of nsteps (at least 1), the default of an
+ * annotated loop without a count. The scheme's store and restore are not
+ * called: at STORE the caller saves the state into slot _slot(h), at RESTORE
+ * it loads it back. The slots the actions name are 0 to
+ * __enzyme_ckpt_schedule_slots(h) - 1. Slots -2 and -1 of the driver are the
+ * caller's own business.
+ *
+ * The definitions are compiled where ENZYME_CHECKPOINT_RUNTIME is defined,
+ * as weak symbols, so that more than one file of a program may do so. With
+ * ENZYME_CKPT_VERBOSE=1 in the environment a schedule prints a summary when
+ * it ends, with 2 also every action. */
+void *__enzyme_ckpt_schedule_begin(int64_t mode, int64_t budget,
+                                   int64_t nsteps);
+int32_t __enzyme_ckpt_schedule_next(void *h);
+int32_t __enzyme_ckpt_schedule_flag(void *h);
+int64_t __enzyme_ckpt_schedule_iteration(void *h);
+int64_t __enzyme_ckpt_schedule_start(void *h);
+int64_t __enzyme_ckpt_schedule_slot(void *h);
+int64_t __enzyme_ckpt_schedule_slots(void *h);
+void __enzyme_ckpt_schedule_end(void *h);
+
+#ifdef ENZYME_CHECKPOINT_RUNTIME
+
+typedef struct enzyme_ckpt_schedule {
+  const EnzymeCheckpointScheme *scheme;
+  void *state;
+  EnzymeCkptConfig config;
+  EnzymeCkptAction action;
+  EnzymeCkptStats stats;
+  int verbose;
+  int64_t slots;
+} enzyme_ckpt_schedule;
+
+__attribute__((weak)) void *
+__enzyme_ckpt_schedule_begin(int64_t mode, int64_t budget, int64_t nsteps) {
+  enzyme_ckpt_schedule *s;
+  const char *verbose = getenv("ENZYME_CKPT_VERBOSE");
+  int64_t k, len;
+  if (nsteps < 0)
+    enzyme_ckpt_fail("a schedule needs the number of steps");
+  if (budget < 1) {
+    for (budget = 1; (budget + 1) * (budget + 1) <= nsteps; budget++)
+      ;
+  }
+  s = (enzyme_ckpt_schedule *)calloc(1, sizeof(*s));
+  s->config.snapshots = budget;
+  s->config.stats = &s->stats;
+  s->verbose = verbose ? atoi(verbose) : 0;
+  /* The slots the reference schemes name, as they count them in init. */
+  switch (mode) {
+  case 1:
+  case 3:
+    s->scheme = mode == 1 ? &EnzymeCkptPeriodic : &EnzymeCkptStoreAll;
+    k = mode == 3 ? 1 : budget < nsteps ? budget : nsteps;
+    if (k < 1)
+      k = 1;
+    len = (nsteps + k - 1) / k;
+    /* Segment starts, then the steps of one segment but its first. */
+    s->slots = k + (len > 1 ? len - 1 : 0);
+    break;
+  case 2:
+    s->scheme = &EnzymeCkptRevolve;
+    s->slots = budget < nsteps ? budget : nsteps;
+    if (s->slots < 1)
+      s->slots = 1;
+    break;
+  default:
+    enzyme_ckpt_fail("unknown built-in scheme");
+  }
+  s->state = s->scheme->init(&s->config, nsteps, 0);
+  s->action.flag = ENZYME_CKPT_NONE;
+  return s;
+}
+
+__attribute__((weak)) int32_t __enzyme_ckpt_schedule_next(void *h) {
+  enzyme_ckpt_schedule *s = (enzyme_ckpt_schedule *)h;
+  s->scheme->next_action(s->state, &s->action);
+  if (s->action.flag == ENZYME_CKPT_ERROR || s->action.flag == ENZYME_CKPT_NONE)
+    enzyme_ckpt_fail("the scheme returned no action");
+  if ((s->action.flag == ENZYME_CKPT_STORE ||
+       s->action.flag == ENZYME_CKPT_RESTORE) &&
+      (s->action.cpnum < 0 || s->action.cpnum >= s->slots))
+    enzyme_ckpt_fail("the scheme named a slot out of range");
+  if (s->verbose > 1)
+    fprintf(stderr, "action %s %lld %lld %lld\n",
+            enzyme_ckpt_flag_name(s->action.flag),
+            (long long)s->action.iteration, (long long)s->action.startiteration,
+            (long long)s->action.cpnum);
+  return s->action.flag;
+}
+
+__attribute__((weak)) int32_t __enzyme_ckpt_schedule_flag(void *h) {
+  return ((enzyme_ckpt_schedule *)h)->action.flag;
+}
+
+__attribute__((weak)) int64_t __enzyme_ckpt_schedule_iteration(void *h) {
+  return ((enzyme_ckpt_schedule *)h)->action.iteration;
+}
+
+__attribute__((weak)) int64_t __enzyme_ckpt_schedule_start(void *h) {
+  return ((enzyme_ckpt_schedule *)h)->action.startiteration;
+}
+
+__attribute__((weak)) int64_t __enzyme_ckpt_schedule_slot(void *h) {
+  return ((enzyme_ckpt_schedule *)h)->action.cpnum;
+}
+
+__attribute__((weak)) int64_t __enzyme_ckpt_schedule_slots(void *h) {
+  return ((enzyme_ckpt_schedule *)h)->slots;
+}
+
+__attribute__((weak)) void __enzyme_ckpt_schedule_end(void *h) {
+  enzyme_ckpt_schedule *s = (enzyme_ckpt_schedule *)h;
+  /* Fills in s->stats, but for the stores and restores, which the scheme
+   * counts when it makes them itself. */
+  s->scheme->finalize(s->state);
+  if (s->verbose > 0)
+    fprintf(stderr,
+            "enzyme checkpoint: %lld forward steps, %lld taped steps, "
+            "%lld slots\n",
+            (long long)s->stats.forward_steps, (long long)s->stats.taped_steps,
+            (long long)s->slots);
+  free(s);
+}
+
+#endif /* ENZYME_CHECKPOINT_RUNTIME */
+
 /* --- Tapenade's binomial scheduler (ADFirstAidKit adBinomial.c). ---
  *
  * With ENZYME_CKPT_ADBINOMIAL defined, EnzymeCkptADBinomial drives the loop

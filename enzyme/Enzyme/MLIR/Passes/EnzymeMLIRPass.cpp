@@ -57,11 +57,14 @@ struct DifferentiatePass
     // math is used by derivative rules of ops from other dialects (e.g. the
     // signed-zero handling of arith.minimumf/arith.maximumf builds
     // math.copysign), so it may be built even if the input has no math ops.
+    // func is what a loop checkpointed with the runtime schedule calls it
+    // with.
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
                     mlir::memref::MemRefDialect, mlir::math::MathDialect,
                     mlir::enzyme::EnzymeDialect, mlir::LLVM::LLVMDialect,
-                    mlir::enzyme::llvm_ext::LLVMExtDialect>();
+                    mlir::enzyme::llvm_ext::LLVMExtDialect,
+                    mlir::func::FuncDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,

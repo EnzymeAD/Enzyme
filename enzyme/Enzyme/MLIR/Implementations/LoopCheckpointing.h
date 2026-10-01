@@ -18,9 +18,12 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -77,7 +80,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // Names of the attributes the checkpointing directives are read from. A
   // downstream project differentiating its own loop op spells them with its
   // own prefix (Enzyme-JAX uses `enzymexla.*`), so every access below goes
-  // through these three hooks rather than a literal.
+  // through these hooks rather than a literal.
   static StringRef enableCheckpointingAttrName() {
     return "enzyme.enable_checkpointing";
   }
@@ -93,6 +96,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     return "enzyme.checkpoint_period";
   }
 
+  // Take the schedule from enzyme/checkpoint.h at run time instead of
+  // compiling it into the IR; see the runtime schedule section below.
+  static StringRef checkpointRuntimeAttrName() {
+    return "enzyme.checkpoint_runtime";
+  }
+
   // A loop created while differentiating `oldOp` is still doing that loop's
   // work, so it inherits what was set on it. The checkpointing directives are
   // left behind, since the rewrite has already acted on them.
@@ -102,7 +111,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       auto name = attr.getName();
       if (name != FinalClass::enableCheckpointingAttrName() &&
           name != FinalClass::binomialCheckpointingAttrName() &&
-          name != FinalClass::checkpointPeriodAttrName())
+          name != FinalClass::checkpointPeriodAttrName() &&
+          name != FinalClass::checkpointRuntimeAttrName())
         newOp->setAttr(name, attr.getValue());
     }
   }
@@ -141,6 +151,21 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   static bool needsBinomialCheckpointing(OpName forOp) {
     return FinalClass::checkpointingEnabled(forOp) &&
            FinalClass::hasBinomialAttr(forOp);
+  }
+
+  // Whether this dialect's loops can take their schedule from the runtime.
+  // The action loop counts in `index` and replays the body with scf.for, so
+  // a dialect opts in once that is known to work for it; the others keep the
+  // compiled schedule when the attribute is set.
+  static bool supportsRuntimeSchedule() { return false; }
+
+  static bool needsRuntimeCheckpointing(OpName forOp) {
+    if (!FinalClass::checkpointingEnabled(forOp) ||
+        !FinalClass::supportsRuntimeSchedule())
+      return false;
+    Attribute a = forOp->getAttr(FinalClass::checkpointRuntimeAttrName());
+    auto b = dyn_cast_or_null<BoolAttr>(a);
+    return a && (!b || b.getValue());
   }
 
   static std::optional<int64_t> getCheckpointBudget(OpName forOp) {
@@ -888,6 +913,132 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       p->moveBefore(before);
   }
 
+  // Differentiate one step of `forOp`, from `state`, the state before it, at
+  // induction variable `iv`: the step is rematerialized at the builder's
+  // insertion point and its adjoint emitted after it, seeded with `adjoints`
+  // (one per active iter arg). Returns the adjoints of `state`. `seeds` binds
+  // the values the body reads from above, `stepBlock` is the block the step's
+  // gradient slots are local to, and `cacheAnchor` the op a dialect places
+  // the caches of the body's reverse rules relative to.
+  static SmallVector<Value>
+  differentiateStep(OpBuilder &builder, MGradientUtilsReverse *gutils,
+                    OpName forOp, ValueRange state, Value iv,
+                    const IRMapping &seeds, Block *stepBlock,
+                    Operation *cacheAnchor, ArrayRef<bool> operandsActive,
+                    ValueRange adjoints, bool &valid) {
+    IRMapping mapping = seeds;
+    for (auto &&[oldArg, newArg] : llvm::zip_equal(
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
+             state))
+      mapping.map(oldArg, newArg);
+    mapping.map(FinalClass::getInductionVar(forOp), iv);
+
+    // Re-materialize primal ops of this step for the reverse visitor.
+    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
+                               mapping);
+
+    // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
+    // per active mutable value, positioned in the single augmented primal --
+    // which the forward checkpointing has since erased, leaving those entries
+    // dangling (a later invertPointerM() would hand out freed IR). Re-seed a
+    // placeholder per body value here, in this per-step reconstruction: that
+    // is where the shadow that replaces it legitimately lives, and where the
+    // shadows of the outside refs the caller bound dominate it. Hoisting the
+    // originals out of the loop instead cannot work, precisely because those
+    // source shadows are per-iteration values inside the reverse loop.
+    SmallVector<Value> reseededShadowKeys;
+    {
+      OpBuilder::InsertionGuard g4(builder);
+      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
+        for (Value res : inner->getResults()) {
+          if (gutils->isConstantValue(res))
+            continue;
+          Type shadowTy = gutils->getShadowType(res.getType());
+          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
+          if (!iface || !iface.isMutable())
+            continue;
+          Value newRes = mapping.lookupOrNull(res);
+          if (!newRes)
+            continue;
+          if (Operation *defOp = newRes.getDefiningOp())
+            builder.setInsertionPointAfter(defOp);
+          else
+            continue;
+          auto ph =
+              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
+          gutils->invertedPointers.map(res, ph);
+          reseededShadowKeys.push_back(res);
+        }
+      });
+    }
+
+    // Reset every (non-mutable) intermediate gradient slot to zero at the
+    // start of each reverse step and zero the diffe of the yielded
+    // operands; the loop-carried gradient is supplied via the outer carried
+    // adjoints. Without this, scalar gradient slots (e.g. the diffe of a
+    // value loaded from an enzyme_dup'ed memref) leak across reverse
+    // iterations and over-accumulate into the external shadow. Mirrors the
+    // non-checkpointed reverse path.
+    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
+    FinalClass::primeStepGradients(builder, gutils,
+                                   FinalClass::getBodyBlock(forOp),
+                                   stepBlock, operandsActive);
+
+    // Seed adjoints of the yielded operands from the outer carried
+    // gradients.
+    unsigned revIdx = 0;
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
+      if (active) {
+        gutils->addToDiffe(operand, adjoints[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
+    first++; // skip terminator
+    auto last = FinalClass::getBodyBlock(forOp)->rend();
+    {
+      // Same as in reversePeriodic: a cache a body op's reverse rule asks for
+      // is per-step, so it is created outside the remat loop.
+      SegmentCacheCreatorGuard cacheGuard(gutils, cacheAnchor);
+      for (auto it = first; it != last; ++it)
+        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+    }
+
+    // Placeholders re-seeded above are consumed by setInvertedPointer (which
+    // RAUWs and erases them) only for values some rule actually asked to
+    // invert. Drop the unused remainder rather than leaving
+    // enzyme.placeholder litter in the output -- keyed by the original
+    // value, so invertedPointers never keeps an entry pointing at IR we just
+    // erased. A resolved entry no longer names a PlaceholderOp, which is
+    // what distinguishes it (its op is already gone, so we must not
+    // dereference the recorded pointer).
+    for (Value orig : reseededShadowKeys) {
+      Value cur = gutils->invertedPointers.lookupOrNull(orig);
+      if (!cur)
+        continue;
+      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
+      if (ph && ph->use_empty()) {
+        gutils->invertedPointers.erase(orig);
+        ph->erase();
+      }
+    }
+
+    SmallVector<Value> newAdjoints;
+    for (auto &&[active, arg] : llvm::zip_equal(
+             operandsActive,
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
+      if (active) {
+        newAdjoints.push_back(gutils->diffe(arg, builder));
+        if (!gutils->isConstantValue(arg))
+          gutils->zeroDiffe(arg, builder);
+      }
+    }
+
+    return newAdjoints;
+  }
+
   // Reverse pass for binomial (Revolve) checkpointing. Iterates all N steps
   // in reverse; for each step it reconstructs the state just before that
   // step from the top checkpoint (recursively re-placing finer checkpoints
@@ -1157,127 +1308,21 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         FinalClass::emitAdd(builder, loc, startV,
                             FinalClass::emitMul(builder, loc, stepV, stepAdjC));
 
-    mapping = IRMapping();
-
+    IRMapping seeds;
     for (auto [ref, cached] :
          llvm::zip_equal(immutableRefs, immutableRefsCaches))
-      mapping.map(ref, cached);
+      seeds.map(ref, cached);
 
-    // Re-bind after the mapping reset above; the shadows were bound once,
-    // before revOuter, and do not need rebinding per iteration.
+    // The shadows were bound once, before revOuter, and do not need
+    // rebinding per iteration.
     for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-      mapping.map(ref, workClones[r]);
-
-    for (auto &&[oldArg, newArg] : llvm::zip_equal(
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
-             reconState))
-      mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
-
-    // Re-materialize primal ops of this step for the reverse visitor.
-    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
-                               mapping);
-
-    // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
-    // per active mutable value, positioned in the single augmented primal --
-    // which cacheBinomial has since erased, leaving those entries dangling
-    // (a later invertPointerM() would hand out freed IR). Re-seed a
-    // placeholder per body value here, in this per-step reconstruction: that
-    // is where the shadow that replaces it legitimately lives, and where the
-    // per-iteration popCache shadows of the outside refs (bound above)
-    // dominate it. Hoisting the originals out of the loop instead cannot
-    // work, precisely because those source shadows are per-iteration values
-    // inside revOuter.
-    SmallVector<Value> reseededShadowKeys;
-    {
-      OpBuilder::InsertionGuard g4(builder);
-      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
-        for (Value res : inner->getResults()) {
-          if (gutils->isConstantValue(res))
-            continue;
-          Type shadowTy = gutils->getShadowType(res.getType());
-          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
-          if (!iface || !iface.isMutable())
-            continue;
-          Value newRes = mapping.lookupOrNull(res);
-          if (!newRes)
-            continue;
-          if (Operation *defOp = newRes.getDefiningOp())
-            builder.setInsertionPointAfter(defOp);
-          else
-            continue;
-          auto ph =
-              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
-          gutils->invertedPointers.map(res, ph);
-          reseededShadowKeys.push_back(res);
-        }
-      });
-    }
-
-    // Reset every (non-mutable) intermediate gradient slot to zero at the
-    // start of each reverse step and zero the diffe of the yielded
-    // operands; the loop-carried gradient is supplied via the outer carried
-    // adjoints. Without this, scalar gradient slots (e.g. the diffe of a
-    // value loaded from an enzyme_dup'ed memref) leak across reverse
-    // iterations and over-accumulate into the external shadow. Mirrors the
-    // non-checkpointed reverse path.
-    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
-    FinalClass::primeStepGradients(builder, gutils,
-                                   FinalClass::getBodyBlock(forOp),
-                                   revOuter.body, operandsActive);
-
-    // Seed adjoints of the yielded operands from the outer carried
-    // gradients.
-    unsigned revIdx = 0;
-    for (auto &&[active, operand] : llvm::zip_equal(
-             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
-      if (active) {
-        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
-        revIdx++;
-      }
-    }
+      seeds.map(ref, workClones[r]);
 
     bool valid = true;
-    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
-    first++; // skip terminator
-    auto last = FinalClass::getBodyBlock(forOp)->rend();
-    {
-      // Same as in reversePeriodic: a cache a body op's reverse rule asks for
-      // is per-step, so it is created outside the remat loop.
-      SegmentCacheCreatorGuard cacheGuard(gutils, revWhile.op);
-      for (auto it = first; it != last; ++it)
-        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
-    }
-
-    // Placeholders re-seeded above are consumed by setInvertedPointer (which
-    // RAUWs and erases them) only for values some rule actually asked to
-    // invert. Drop the unused remainder rather than leaving
-    // enzyme.placeholder litter in the output -- keyed by the original
-    // value, so invertedPointers never keeps an entry pointing at IR we just
-    // erased. A resolved entry no longer names a PlaceholderOp, which is
-    // what distinguishes it (its op is already gone, so we must not
-    // dereference the recorded pointer).
-    for (Value orig : reseededShadowKeys) {
-      Value cur = gutils->invertedPointers.lookupOrNull(orig);
-      if (!cur)
-        continue;
-      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
-      if (ph && ph->use_empty()) {
-        gutils->invertedPointers.erase(orig);
-        ph->erase();
-      }
-    }
-
-    SmallVector<Value> newAdjoints;
-    for (auto &&[active, arg] : llvm::zip_equal(
-             operandsActive,
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
-      if (active) {
-        newAdjoints.push_back(gutils->diffe(arg, builder));
-        if (!gutils->isConstantValue(arg))
-          gutils->zeroDiffe(arg, builder);
-      }
-    }
+    SmallVector<Value> newAdjoints =
+        differentiateStep(builder, gutils, forOp, reconState, ivAdj, seeds,
+                          revOuter.body, revWhile.op, operandsActive, adjArgs,
+                          valid);
 
     SmallVector<Value> outerYields;
     outerYields.push_back(newSp);
@@ -1288,7 +1333,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     builder.setInsertionPointAfter(revOuter.op);
 
-    revIdx = 0;
+    unsigned revIdx = 0;
     auto revOuterResults = revOuter.results();
     auto forOpInits = FinalClass::getInits(forOp);
     for (auto &&[active, arg] : llvm::zip_equal(operandsActive, forOpInits)) {
@@ -1823,12 +1868,595 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   }
 
   //===--------------------------------------------------------------------===//
+  // Runtime schedule.
+  //
+  // With checkpointRuntimeAttrName() set, the schedule is not compiled into
+  // the IR: it comes at run time from the reference schemes of
+  // enzyme/checkpoint.h, which LLVM Enzyme drives its checkpointed loops
+  // with, through the scalar entry points __enzyme_ckpt_schedule_*. A
+  // binomial loop runs Revolve (mode 2), any other periodic checkpointing
+  // (mode 1), with the period as the budget either way. Only the schedule
+  // comes from there: the snapshots stay in buffers allocated here, with as
+  // many rows as the schedule names slots, and hold what the compiled
+  // schemes hold -- the iter args and a clone of every mutable ref.
+  //
+  // The schedule runs as Revolve's action loop, an scf.while dispatching on
+  // the action with an scf.index_switch, split between the forward and the
+  // reverse pass as the LLVM driver splits it:
+  //
+  //   forward pass  STORE and FORWARD until FIRSTUTURN. The state before the
+  //                 last step then goes to the row past the schedule's slots
+  //                 (the driver's slot -2), and the last step runs untaped,
+  //                 for the loop's results.
+  //   reverse pass  load that row and start from FIRSTUTURN; then UTURN (one
+  //                 step rematerialized and differentiated at once), STORE,
+  //                 RESTORE and FORWARD until DONE.
+  //
+  // The schedule handle is cached from one pass to the other, as the driver
+  // hands over its scheme state. A fresh schedule replayed to its first turn
+  // would give the same actions for the reference schemes, but not for one
+  // with state of its own, and would replay every forward action. The
+  // driver's slot -1 is not needed: the reverse pass replays into iter args
+  // of its own and into working clones of the mutable refs, so what the
+  // forward pass left is never overwritten.
+  //===--------------------------------------------------------------------===//
+
+  // Action flags of enzyme/checkpoint.h.
+  static constexpr int64_t kCkptStore = 1, kCkptRestore = 2, kCkptForward = 3,
+                           kCkptFirstUTurn = 4, kCkptUTurn = 5, kCkptDone = 7;
+
+  // The mode and budget __enzyme_ckpt_schedule_begin is called with. A
+  // periodic loop without a period gets the number of segments the compiled
+  // schedule would cut it into. With a trip count known only at run time,
+  // where the compiled schedule has no default, budget 0 has the runtime
+  // take its square root, as LLVM Enzyme does for a loop without a count.
+  static std::pair<int64_t, int64_t> getRuntimeScheme(OpName forOp) {
+    auto budget = FinalClass::getCheckpointBudget(forOp);
+    if (FinalClass::hasBinomialAttr(forOp))
+      return {2, *budget};
+    if (budget && *budget > 0)
+      return {1, *budget};
+    if (FinalClass::getConstantNumberOfIterations(forOp))
+      return {1, FinalClass::getStaticPeriodicSchedule(forOp).numSegments()};
+    return {1, 0};
+  }
+
+  // Call `name` of the checkpointing runtime, declaring it private in the
+  // symbol table of the function being differentiated if it is not yet.
+  static Value callCkptRuntime(OpBuilder &b, Location loc,
+                               MGradientUtilsReverse *gutils, StringRef name,
+                               Type result, ValueRange args) {
+    Operation *table =
+        SymbolTable::getNearestSymbolTable(gutils->oldFunc->getParentOp());
+    Operation *sym = SymbolTable::lookupSymbolIn(table, name);
+    auto fn = dyn_cast_or_null<func::FuncOp>(sym);
+    assert((fn || !sym) && "checkpoint runtime symbol is not a func.func");
+    if (!fn) {
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPointToStart(&table->getRegion(0).front());
+      SmallVector<Type> results;
+      if (result)
+        results.push_back(result);
+      fn = func::FuncOp::create(b, loc, name,
+                                b.getFunctionType(args.getTypes(), results));
+      fn.setPrivate();
+    }
+    auto call = func::CallOp::create(b, loc, fn, args);
+    return result ? call.getResult(0) : Value();
+  }
+
+  // A getter of the current action, as an index.
+  static Value ckptAction(OpBuilder &b, Location loc,
+                          MGradientUtilsReverse *gutils, StringRef name,
+                          Value h) {
+    Type t = name.ends_with("flag") ? (Type)b.getI32Type() : b.getI64Type();
+    Value v = callCkptRuntime(b, loc, gutils, name, t, h);
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+  }
+
+  // The rows of the snapshots of `proto`: checkpointBufferType, with as many
+  // rows as the schedule needs at run time.
+  static Value allocRuntimeStore(OpBuilder &b, Location loc, Value rows,
+                                 Value proto) {
+    SmallVector<Value> dynSizes{rows};
+    if (auto mt = dyn_cast<MemRefType>(proto.getType()))
+      for (int64_t i = 0, e = mt.getRank(); i < e; ++i)
+        if (mt.isDynamicDim(i))
+          dynSizes.push_back(memref::DimOp::create(b, loc, proto, i));
+    return memref::AllocOp::create(
+        b, loc, checkpointBufferType(ShapedType::kDynamic, proto.getType()),
+        dynSizes);
+  }
+
+  // allocCloneSlots, cloneSlot and freeCloneSlots with a number of rows known
+  // only at run time.
+  static Value allocCloneRows(OpBuilder &b, Location loc, Value rows,
+                              Value proto) {
+    auto iface = cast<ClonableTypeInterface>(proto.getType());
+    if (iface.implementsBatchAllocation(proto, rows))
+      return iface.batchAllocate(b, loc, proto, rows);
+    Value buf = memref::AllocOp::create(
+        b, loc, MemRefType::get({ShapedType::kDynamic}, proto.getType()),
+        ValueRange{rows});
+    Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
+    auto loop = scf::ForOp::create(b, loc, c0, rows, c1);
+    OpBuilder::InsertionGuard g(b);
+    b.setInsertionPoint(loop.getBody()->getTerminator());
+    memref::StoreOp::create(b, loc, iface.cloneValue(b, proto), buf,
+                            ValueRange{loop.getInductionVar()});
+    return buf;
+  }
+
+  static Value cloneRow(OpBuilder &b, Location loc, Value base, Value buf,
+                        Value row, Value rows) {
+    auto iface = cast<ClonableTypeInterface>(base.getType());
+    if (iface.implementsBatchAllocation(base, rows))
+      return iface.deriveSubElement(b, loc, base, buf, row);
+    return memref::LoadOp::create(b, loc, buf, ValueRange{row});
+  }
+
+  static void freeCloneRows(OpBuilder &b, Location loc, Value base, Value buf,
+                            Value rows) {
+    auto iface = cast<ClonableTypeInterface>(base.getType());
+    if (iface.implementsBatchAllocation(base, rows)) {
+      iface.freeClonedValue(b, buf);
+      return;
+    }
+    Value c0 = arith::ConstantIndexOp::create(b, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(b, loc, 1);
+    auto loop = scf::ForOp::create(b, loc, c0, rows, c1);
+    {
+      OpBuilder::InsertionGuard g(b);
+      b.setInsertionPoint(loop.getBody()->getTerminator());
+      iface.freeClonedValue(
+          b, memref::LoadOp::create(b, loc, buf, loop.getInductionVar()));
+    }
+    memref::DeallocOp::create(b, loc, buf);
+  }
+
+  // The storage of a runtime schedule's snapshots: one store per iter arg and
+  // one clone buffer per mutable ref, each with `rows` rows. `live` are the
+  // mutable refs as the replays write through them, `bases` what their clone
+  // buffers were allocated from.
+  struct RuntimeSnapshots {
+    SmallVector<Value> stores, mutBufs, live, bases;
+    Value rows;
+
+    void store(OpBuilder &b, Location loc, Value row, ValueRange state) const {
+      for (auto &&[s, val] : llvm::zip_equal(stores, state))
+        storeCheckpoint(b, loc, s, row, val);
+      for (auto &&[buf, ref, base] : llvm::zip_equal(mutBufs, live, bases))
+        cast<ClonableTypeInterface>(ref.getType())
+            .copyValue(b, cloneRow(b, loc, base, buf, row, rows), ref);
+    }
+
+    SmallVector<Value> load(OpBuilder &b, Location loc, Value row,
+                            TypeRange types) const {
+      SmallVector<Value> state;
+      for (auto &&[s, ty] : llvm::zip_equal(stores, types))
+        state.push_back(loadCheckpoint(b, loc, s, row, ty));
+      for (auto &&[buf, ref, base] : llvm::zip_equal(mutBufs, live, bases))
+        cast<ClonableTypeInterface>(ref.getType())
+            .copyValue(b, ref, cloneRow(b, loc, base, buf, row, rows));
+      return state;
+    }
+  };
+
+  // Run steps [lb, ub) of `loop` from `state` untaped, and return the state
+  // after them. `seeds` binds the values the body reads from above.
+  static SmallVector<Value>
+  emitRuntimeReplay(OpBuilder &b, Location loc, OpName loop, Value lb, Value ub,
+                    Value startV, Value stepV, ValueRange state,
+                    const IRMapping &seeds, MGradientUtilsReverse *gutils) {
+    Value c1 = FinalClass::emitConst(b, loc, 1);
+    auto replay = FinalClass::createScaffoldForLoop(b, loc, lb, ub, c1, state);
+    FinalClass::preserveAttributesButCheckpointing(replay.op, loop);
+    OpBuilder::InsertionGuard g(b);
+    b.setInsertionPointToStart(replay.body);
+    Value j = FinalClass::castToType(b, loc, replay.getIV(), stepV.getType());
+    Value iv = FinalClass::emitAdd(b, loc, startV,
+                                   FinalClass::emitMul(b, loc, stepV, j));
+    Block *body = FinalClass::getBodyBlock(loop);
+    IRMapping mapping = seeds;
+    for (auto &&[oldArg, newArg] :
+         llvm::zip_equal(body->getArguments().drop_front(), replay.args()))
+      mapping.map(oldArg, newArg);
+    mapping.map(FinalClass::getInductionVar(loop), iv);
+    copyBlockWithoutTerminator(b, body, gutils, mapping);
+    SmallVector<Value> yields;
+    for (auto operand :
+         FinalClass::getCarriedTerminatorOperands(body->getTerminator()))
+      yields.push_back(mapping.lookupOrDefault(operand));
+    FinalClass::finalizeScaffoldLoop(b, loc, replay, yields);
+    return SmallVector<Value>(replay.results());
+  }
+
+  // An scf.index_switch on `flag` over `cases`, with an empty block in each
+  // region, for the caller to fill and terminate.
+  static scf::IndexSwitchOp createActionSwitch(OpBuilder &b, Location loc,
+                                               TypeRange types, Value flag,
+                                               ArrayRef<int64_t> cases) {
+    auto sw =
+        scf::IndexSwitchOp::create(b, loc, types, flag, cases, cases.size());
+    sw.getDefaultRegion().emplaceBlock();
+    for (Region &r : sw.getCaseRegions())
+      r.emplaceBlock();
+    return sw;
+  }
+
+  // Forward pass of a runtime schedule; see the section comment. Returns the
+  // caches for reverseRuntime, laid out as BinomialCacheLayout with the
+  // schedule handle where binomial has its index store.
+  static SmallVector<Value> cacheRuntime(OpName forOp, int64_t mode,
+                                         int64_t budget,
+                                         MGradientUtilsReverse *gutils) {
+    Location loc = forOp.getLoc();
+    bool isDynamic =
+        !FinalClass::getConstantNumberOfIterations(forOp).has_value();
+
+    auto newForOp = cast<OpName>(gutils->getNewFromOriginal(forOp));
+    OpBuilder builder(newForOp);
+    Type idxTy = builder.getIndexType();
+    Type i64Ty = builder.getI64Type();
+    Type ptrTy = LLVM::LLVMPointerType::get(builder.getContext());
+
+    Value numItersV, startV, stepV;
+    if (isDynamic) {
+      startV = FinalClass::materializeLowerBound(builder, loc, forOp, gutils);
+      stepV = FinalClass::materializeStep(builder, loc, forOp, gutils);
+      numItersV = FinalClass::castToType(
+          builder, loc,
+          FinalClass::getNumIterationsValue(builder, loc, forOp, gutils),
+          idxTy);
+    } else {
+      numItersV = FinalClass::emitConst(
+          builder, loc,
+          FinalClass::getConstantNumberOfIterations(forOp).value());
+      startV = FinalClass::emitConst(builder, loc,
+                                     FinalClass::getConstantStart(forOp));
+      stepV = FinalClass::emitConst(builder, loc,
+                                    FinalClass::getConstantStep(forOp));
+    }
+    Value c0 = FinalClass::emitConst(builder, loc, 0);
+    Value c1 = FinalClass::emitConst(builder, loc, 1);
+
+    SmallVector<Value> immutableRefs, mutableRefs;
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
+                                           isDynamic, gutils);
+
+    // newForOp's body is copied into the replays below and then erased; the
+    // placeholders in it have to outlive it, once.
+    hoistPlaceholdersBefore(newForOp, newForOp);
+
+    Value h = callCkptRuntime(
+        builder, loc, gutils, "__enzyme_ckpt_schedule_begin", ptrTy,
+        {arith::ConstantIntOp::create(builder, loc, i64Ty, mode),
+         arith::ConstantIntOp::create(builder, loc, i64Ty, budget),
+         arith::IndexCastOp::create(builder, loc, i64Ty, numItersV)});
+
+    // The slots the schedule names, and one more for the state before the
+    // last step.
+    RuntimeSnapshots snaps;
+    Value lastRow =
+        ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_slots", h);
+    snaps.rows = FinalClass::emitAdd(builder, loc, lastRow, c1);
+    auto inits = FinalClass::getInits(newForOp);
+    for (auto init : inits)
+      snaps.stores.push_back(allocRuntimeStore(builder, loc, snaps.rows, init));
+    for (auto ref : mutableRefs) {
+      Value v = gutils->getNewFromOriginal(ref);
+      snaps.mutBufs.push_back(allocCloneRows(builder, loc, snaps.rows, v));
+      snaps.live.push_back(v);
+      snaps.bases.push_back(v);
+    }
+
+    // The action loop up to the first turn, carrying the state.
+    SmallVector<Type> stateTys = llvm::to_vector(inits.getTypes());
+    SmallVector<Type> loopTys{idxTy};
+    loopTys.append(stateTys);
+    auto loop = scf::WhileOp::create(builder, loc, loopTys, inits);
+    FinalClass::preserveAttributesButCheckpointing(loop, forOp);
+    {
+      OpBuilder::InsertionGuard g(builder);
+      Block *before =
+          builder.createBlock(&loop.getBefore(), {}, stateTys,
+                              SmallVector<Location>(stateTys.size(), loc));
+      Value flag = arith::IndexCastOp::create(
+          builder, loc, idxTy,
+          callCkptRuntime(builder, loc, gutils, "__enzyme_ckpt_schedule_next",
+                          builder.getI32Type(), h));
+      auto ne = [&](int64_t f) -> Value {
+        return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                     flag,
+                                     FinalClass::emitConst(builder, loc, f));
+      };
+      Value more = arith::AndIOp::create(builder, loc, ne(kCkptFirstUTurn),
+                                         ne(kCkptDone));
+      SmallVector<Value> condArgs{flag};
+      condArgs.append(before->getArguments().begin(),
+                      before->getArguments().end());
+      scf::ConditionOp::create(builder, loc, more, condArgs);
+
+      Block *after =
+          builder.createBlock(&loop.getAfter(), {}, loopTys,
+                              SmallVector<Location>(loopTys.size(), loc));
+      auto state = after->getArguments().drop_front();
+      Value it = ckptAction(builder, loc, gutils,
+                            "__enzyme_ckpt_schedule_iteration", h);
+      Value st =
+          ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_start", h);
+      Value slot =
+          ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_slot", h);
+      // The reference schemes do not restore before their first turn; the
+      // schedule of a while loop would.
+      auto sw =
+          createActionSwitch(builder, loc, stateTys, after->getArgument(0),
+                             {kCkptStore, kCkptRestore, kCkptForward});
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(0));
+      snaps.store(builder, loc, slot, state);
+      scf::YieldOp::create(builder, loc, state);
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(1));
+      scf::YieldOp::create(builder, loc,
+                           snaps.load(builder, loc, slot, stateTys));
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(2));
+      scf::YieldOp::create(builder, loc,
+                           emitRuntimeReplay(builder, loc, newForOp, st, it,
+                                             startV, stepV, state, IRMapping(),
+                                             gutils));
+      builder.setInsertionPointToEnd(&sw.getDefaultBlock());
+      scf::YieldOp::create(builder, loc, state);
+      builder.setInsertionPointAfter(sw);
+      scf::YieldOp::create(builder, loc, sw.getResults());
+    }
+
+    // At FIRSTUTURN (iteration n) the state is the one before the last step:
+    // keep it for the reverse pass and take the step. At DONE (n == 0) there
+    // is no step; the row is stored all the same, and never used.
+    auto loopState = loop.getResults().drop_front();
+    snaps.store(builder, loc, lastRow, loopState);
+    Value isTurn = FinalClass::emitCmpEQ(
+        builder, loc, loop.getResult(0),
+        FinalClass::emitConst(builder, loc, kCkptFirstUTurn));
+    Value n =
+        ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_iteration", h);
+    Value lastEnd = FinalClass::emitSelect(builder, loc, isTurn, n, c0);
+    Value lastBegin = FinalClass::emitSelect(
+        builder, loc, isTurn, FinalClass::emitSub(builder, loc, n, c1), c0);
+    SmallVector<Value> results =
+        emitRuntimeReplay(builder, loc, newForOp, lastBegin, lastEnd, startV,
+                          stepV, loopState, IRMapping(), gutils);
+
+    SmallVector<Value> caches;
+    for (auto s : snaps.stores)
+      caches.push_back(gutils->initAndPushCache(s, builder));
+    caches.push_back(gutils->initAndPushCache(h, builder));
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      caches.push_back(gutils->initAndPushCache(snaps.mutBufs[r], builder));
+      if (layout.mutableActive[r])
+        caches.push_back(gutils->initAndPushCache(
+            gutils->invertPointerM(ref, builder), builder));
+    }
+    for (auto ref : immutableRefs)
+      caches.push_back(
+          gutils->initAndPushCache(gutils->getNewFromOriginal(ref), builder));
+    if (isDynamic) {
+      caches.push_back(gutils->initAndPushCache(numItersV, builder));
+      caches.push_back(gutils->initAndPushCache(startV, builder));
+      caches.push_back(gutils->initAndPushCache(stepV, builder));
+    }
+    assert(caches.size() == layout.size() && "runtime cache layout mismatch");
+
+    gutils->replaceOrigOpWith(forOp, FinalClass::getPrimalResults(
+                                         builder, loc, forOp, results, gutils));
+    gutils->erase(newForOp);
+    gutils->originalToNewFnOps[forOp] = loop;
+    return caches;
+  }
+
+  // Reverse pass of a runtime schedule; see the section comment.
+  static LogicalResult reverseRuntime(OpName forOp, OpBuilder &builder,
+                                      MGradientUtilsReverse *gutils,
+                                      SmallVector<Value> caches,
+                                      ArrayRef<bool> operandsActive,
+                                      ArrayRef<Value> incomingGradients) {
+    Location loc = forOp.getLoc();
+    bool isDynamic =
+        !FinalClass::getConstantNumberOfIterations(forOp).has_value();
+    Block *body = FinalClass::getBodyBlock(forOp);
+    size_t numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+    size_t numAdj = incomingGradients.size();
+    Type idxTy = builder.getIndexType();
+
+    SmallVector<Value> immutableRefs, mutableRefs;
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
+                                           isDynamic, gutils);
+    assert(caches.size() == layout.size() && "runtime cache layout mismatch");
+
+    // What is bound below for the replays -- the shadows of the mutable refs,
+    // and through the seeds the replays publish the refs themselves -- must
+    // not outlive this function: the ops before the loop, visited after it,
+    // expect the caller's values.
+    SmallVector<std::pair<Value, Value>> savedShadows, savedNew;
+    for (auto ref : mutableRefs)
+      savedShadows.emplace_back(ref,
+                                gutils->invertedPointers.lookupOrNull(ref));
+    for (auto ref : llvm::concat<Value>(mutableRefs, immutableRefs))
+      savedNew.emplace_back(ref, gutils->originalToNewFn.lookupOrNull(ref));
+    auto restoreBindings = llvm::scope_exit([&]() {
+      for (auto &[ref, prev] : savedShadows) {
+        if (prev)
+          gutils->invertedPointers.map(ref, prev);
+        else
+          gutils->invertedPointers.erase(ref);
+      }
+      for (auto &[ref, prev] : savedNew) {
+        if (prev)
+          gutils->originalToNewFn.map(ref, prev);
+        else
+          gutils->originalToNewFn.erase(ref);
+      }
+    });
+
+    RuntimeSnapshots snaps;
+    for (size_t j = 0; j < numIterArgs; ++j)
+      snaps.stores.push_back(
+          gutils->popCache(caches[layout.ckptBuf(j)], builder));
+    Value h = gutils->popCache(caches[layout.idxBuf()], builder);
+
+    IRMapping seeds;
+    for (auto &&[i, ref] : llvm::enumerate(immutableRefs))
+      seeds.map(ref, gutils->popCache(caches[layout.immutable(i)], builder));
+
+    Value startV, stepV;
+    if (isDynamic) {
+      startV = gutils->popCache(caches[layout.start()], builder);
+      stepV = gutils->popCache(caches[layout.step()], builder);
+    } else {
+      startV = FinalClass::emitConst(builder, loc,
+                                     FinalClass::getConstantStart(forOp));
+      stepV = FinalClass::emitConst(builder, loc,
+                                    FinalClass::getConstantStep(forOp));
+    }
+    Value c1 = FinalClass::emitConst(builder, loc, 1);
+    Value lastRow =
+        ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_slots", h);
+    snaps.rows = FinalClass::emitAdd(builder, loc, lastRow, c1);
+
+    // The replays write through working clones of the mutable refs, never
+    // the refs themselves, which hold what the forward pass left.
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      Value base = gutils->getNewFromOriginal(ref);
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      snaps.mutBufs.push_back(
+          gutils->popCache(caches[layout.cloneBuf(r)], builder));
+      snaps.bases.push_back(base);
+      snaps.live.push_back(iface.cloneValue(builder, base));
+      seeds.map(ref, snaps.live.back());
+      if (layout.mutableActive[r])
+        gutils->invertedPointers.map(
+            ref, gutils->popCache(caches[layout.shadow(r)], builder));
+    }
+
+    // The reverse sweep starts from the state before the last step, at the
+    // FIRSTUTURN the forward pass stopped at (at DONE if there was no step).
+    SmallVector<Type> stateTys =
+        llvm::to_vector(TypeRange(body->getArgumentTypes()).drop_front());
+    SmallVector<Value> inits{
+        ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_flag", h)};
+    inits.append(snaps.load(builder, loc, lastRow, stateTys));
+    inits.append(incomingGradients.begin(), incomingGradients.end());
+    SmallVector<Type> loopTys = llvm::to_vector(ValueRange(inits).getTypes());
+
+    auto loop = scf::WhileOp::create(builder, loc, loopTys, inits);
+    FinalClass::preserveAttributesButCheckpointing(loop, forOp);
+    bool valid = true;
+    {
+      OpBuilder::InsertionGuard g(builder);
+      SmallVector<Location> locs(loopTys.size(), loc);
+      Block *before = builder.createBlock(&loop.getBefore(), {}, loopTys, locs);
+      Value more = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::ne, before->getArgument(0),
+          FinalClass::emitConst(builder, loc, kCkptDone));
+      scf::ConditionOp::create(builder, loc, more, before->getArguments());
+
+      Block *after = builder.createBlock(&loop.getAfter(), {}, loopTys, locs);
+      auto state = after->getArguments().slice(1, numIterArgs);
+      auto adj = after->getArguments().slice(1 + numIterArgs, numAdj);
+      Value it = ckptAction(builder, loc, gutils,
+                            "__enzyme_ckpt_schedule_iteration", h);
+      Value st =
+          ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_start", h);
+      Value slot =
+          ckptAction(builder, loc, gutils, "__enzyme_ckpt_schedule_slot", h);
+      // The state before the first turn's step was loaded above; from here
+      // it is a u-turn like any other.
+      Value isFirst = FinalClass::emitCmpEQ(
+          builder, loc, after->getArgument(0),
+          FinalClass::emitConst(builder, loc, kCkptFirstUTurn));
+      Value flag = FinalClass::emitSelect(
+          builder, loc, isFirst,
+          FinalClass::emitConst(builder, loc, kCkptUTurn),
+          after->getArgument(0));
+      auto sw = createActionSwitch(
+          builder, loc, TypeRange(loopTys).drop_front(), flag,
+          {kCkptStore, kCkptRestore, kCkptForward, kCkptUTurn});
+      auto yield = [&](ValueRange s, ValueRange a) {
+        SmallVector<Value> v(s.begin(), s.end());
+        v.append(a.begin(), a.end());
+        scf::YieldOp::create(builder, loc, v);
+      };
+
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(0));
+      snaps.store(builder, loc, slot, state);
+      yield(state, adj);
+
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(1));
+      yield(snaps.load(builder, loc, slot, stateTys), adj);
+
+      builder.setInsertionPointToEnd(&sw.getCaseBlock(2));
+      yield(emitRuntimeReplay(builder, loc, forOp, st, it, startV, stepV, state,
+                              seeds, gutils),
+            adj);
+
+      // UTURN: the step before `iteration`, from the state before it.
+      Block *turn = &sw.getCaseBlock(3);
+      builder.setInsertionPointToEnd(turn);
+      Value j = FinalClass::castToType(
+          builder, loc, FinalClass::emitSub(builder, loc, it, c1),
+          stepV.getType());
+      Value iv = FinalClass::emitAdd(
+          builder, loc, startV, FinalClass::emitMul(builder, loc, stepV, j));
+      SmallVector<Value> newAdj =
+          differentiateStep(builder, gutils, forOp, state, iv, seeds, turn,
+                            loop, operandsActive, adj, valid);
+      yield(state, newAdj);
+
+      builder.setInsertionPointToEnd(&sw.getDefaultBlock());
+      yield(state, adj);
+
+      builder.setInsertionPointAfter(sw);
+      SmallVector<Value> next{arith::IndexCastOp::create(
+          builder, loc, idxTy,
+          callCkptRuntime(builder, loc, gutils, "__enzyme_ckpt_schedule_next",
+                          builder.getI32Type(), h))};
+      next.append(sw.getResults().begin(), sw.getResults().end());
+      scf::YieldOp::create(builder, loc, next);
+    }
+
+    auto adjResults = loop.getResults().take_back(numAdj);
+    unsigned revIdx = 0;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, FinalClass::getInits(forOp))) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, adjResults[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    for (auto s : snaps.stores)
+      memref::DeallocOp::create(builder, loc, s);
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      cast<ClonableTypeInterface>(ref.getType())
+          .freeClonedValue(builder, snaps.live[r]);
+      freeCloneRows(builder, loc, snaps.bases[r], snaps.mutBufs[r], snaps.rows);
+    }
+    callCkptRuntime(builder, loc, gutils, "__enzyme_ckpt_schedule_end", nullptr,
+                    h);
+    return success(valid);
+  }
+
+  //===--------------------------------------------------------------------===//
   // Entry points
   //===--------------------------------------------------------------------===//
 
   static std::optional<SmallVector<Value>>
   tryCacheValues(OpName forOp, Operation *op, MGradientUtilsReverse *gutils) {
-    if (!FinalClass::needsBinomialCheckpointing(forOp) &&
+    bool runtime = FinalClass::needsRuntimeCheckpointing(forOp);
+    if (!runtime && !FinalClass::needsBinomialCheckpointing(forOp) &&
         !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
@@ -1870,7 +2498,14 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
             cacheBuilder));
         return dummyCaches;
       }
+      if (runtime)
+        return cacheRuntime(forOp, 2, *budget, gutils);
       return cacheBinomial(forOp, *budget, gutils);
+    }
+
+    if (runtime) {
+      auto [mode, budget] = getRuntimeScheme(forOp);
+      return cacheRuntime(forOp, mode, budget, gutils);
     }
 
     if (FinalClass::needsCheckpointing(forOp))
@@ -1883,7 +2518,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       OpName forOp, Operation *op, OpBuilder &builder,
       MGradientUtilsReverse *gutils, SmallVector<Value> caches,
       ArrayRef<bool> operandsActive, ArrayRef<Value> incomingGradients) {
-    if (!FinalClass::needsBinomialCheckpointing(forOp) &&
+    bool runtime = FinalClass::needsRuntimeCheckpointing(forOp);
+    if (!runtime && !FinalClass::needsBinomialCheckpointing(forOp) &&
         !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
@@ -1902,9 +2538,16 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                         << " attribute greater than 1";
         return failure();
       }
+      if (runtime)
+        return reverseRuntime(forOp, builder, gutils, caches, operandsActive,
+                              incomingGradients);
       return reverseBinomial(forOp, *budget, builder, gutils, caches,
                              operandsActive, incomingGradients);
     }
+
+    if (runtime)
+      return reverseRuntime(forOp, builder, gutils, caches, operandsActive,
+                            incomingGradients);
 
     if (FinalClass::needsCheckpointing(forOp))
       return reversePeriodic(forOp, op, builder, gutils, caches, operandsActive,
