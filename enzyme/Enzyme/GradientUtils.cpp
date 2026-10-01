@@ -9863,6 +9863,36 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     }
   }
 
+  // Wide form (kept for ICON's reverse mode until a targeted fix lands): any
+  // non-repeatable writing call, including ones in `stores`.
+  // A load or load-like call that may read what a non-repeatable writing
+  // call stored (e.g. a Fortran READ into a local, or a local filled in by a
+  // subroutine) cannot be recomputed by replaying the stores in the reverse
+  // pass. Keep such an allocation out of rematerialization, so
+  // that the loaded value is cached instead.
+  if (storingOps.size()) {
+    SetVector<Instruction *> loadInsts;
+    for (auto LI : loads)
+      loadInsts.insert(LI);
+    // Calls that read the allocation through a pointer argument too, e.g. a
+    // custom derivative given a local that another call filled in.
+    for (auto &LLC : loadLikeCalls)
+      loadInsts.insert(LLC.loadCall);
+    for (auto WC : storingOps) {
+      SmallVector<Instruction *, 2> results;
+      mayExecuteAfter(results, WC, loadInsts, outer);
+      for (auto res : results) {
+        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI,
+                                     *OrigDT, res, WC, outer)) {
+          EmitWarning("NotPromotable", *res, " Could not promote allocation ",
+                      *V, " due to load ", *res,
+                      " of memory written by non-repeatable call ", *WC);
+          return;
+        }
+      }
+    }
+  }
+
   rematerializableAllocations[V] = Rematerializer(
       loads, loadLikeCalls, stores, frees, outer, nonRepeatableWritingCall);
 }
