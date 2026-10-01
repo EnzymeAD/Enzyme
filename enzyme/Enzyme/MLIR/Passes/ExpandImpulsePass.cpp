@@ -551,9 +551,7 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
   return out;
 }
 
-// `impulse.if` (its liveness may flip, and a dead slot is zeroed), every
-// generative sub-call's range, and, when a constraint is given, the
-// constrained sites (written from the constraint).
+// Bare traces also change at branch sites (liveness flips) and sub-calls.
 static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
                                           ArrayAttr layout,
                                           ArrayAttr regenerateAddresses,
@@ -576,10 +574,10 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
     impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
     bool isDist = site && (site.getDistAttr() || site.getLogpdfAttr());
     bool changed = inList(regenerateAddresses, address);
+    // Constrained sites outside branches read the old trace (readsConstraint).
     if (!changed && bare)
       changed = !isDist || address.size() > 1 ||
-                site->getParentOfType<impulse::IfOp>() ||
-                (hasConstraint && inList(constrainedAddresses, address));
+                site->getParentOfType<impulse::IfOp>();
     if (changed)
       windows.push_back({offset, offset + size});
     offset += size;
@@ -3714,6 +3712,12 @@ struct ExpandImpulsePass
           oldInfo = scoreOp.getWeight();
         }
       }
+      // In MH, constraint entries outside branches may be latent init values.
+      auto readsConstraint = [&](impulse::SampleOp s) {
+        if (!constraint || !constrainedAddresses)
+          return false;
+        return !(hastings || scoring) || !enclosingIfs(s).empty();
+      };
       // `oldInfo` column of a flippable latent (kept if live, else redrawn).
       auto flipLatentIndex = [&](impulse::SampleOp s, bool isSelected) {
         if (!hastings || isSelected)
@@ -3829,7 +3833,7 @@ struct ExpandImpulsePass
           } else {
             bool isConstrained = false;
             int64_t constrainedOffset = -1;
-            if (constraint && constrainedAddresses) {
+            if (readsConstraint(sampleOp)) {
               for (auto addr : constrainedAddresses) {
                 auto address = cast<ArrayAttr>(addr);
                 if (!address.empty() &&
@@ -4045,7 +4049,7 @@ struct ExpandImpulsePass
           } else {
             bool isConstrained = false;
             int64_t constrainedOffset = -1;
-            if (constraint && constrainedAddresses) {
+            if (readsConstraint(sampleOp)) {
               for (auto addr : constrainedAddresses) {
                 auto address = cast<ArrayAttr>(addr);
                 if (!address.empty() &&
