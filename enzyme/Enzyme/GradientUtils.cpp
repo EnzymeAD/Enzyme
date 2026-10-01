@@ -9495,6 +9495,19 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         shadowPointerLoads.push_back(cur);
       }
       loads.push_back(load);
+
+      // The data pointer of a Julia array (an addrspace(13) pointer) is set
+      // by the allocator rather than by a store replayed here, and the memory
+      // it points to belongs to the allocation: replaying the allocation
+      // yields a fresh, unfilled buffer. Accesses through this pointer are
+      // therefore accesses to the allocation, so the stores through it must
+      // be replayed and the loads through it must be reloadable, just like
+      // the accesses through julia.gc_loaded on newer Julia versions.
+      if (load->getType()->isPointerTy() &&
+          load->getType()->getPointerAddressSpace() == 13)
+        for (auto u : load->users())
+          if (auto I = dyn_cast<Instruction>(u))
+            todo.push_back(std::make_pair(I, (Value *)load));
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
       // TODO only add store to shadow iff non float type
       if (store->getValueOperand() == prev) {
