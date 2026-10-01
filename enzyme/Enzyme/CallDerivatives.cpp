@@ -46,15 +46,71 @@ static bool hasSingleGCPreserveEnd(CallInst *Begin, GradientUtils *gutils) {
   return Ends == 1;
 }
 
+/// Forward mode of an MPI call whose derivative is the same call with the
+/// buffers \p ShadowArgs replaced by their shadows (for the reductions, of a
+/// sum). At vector width > 1 the call is replayed once per lane. All other
+/// arguments, including the trailing `ierr` of the Fortran ABI, are passed as
+/// in the original call. An inactive constant buffer, such as MPI_IN_PLACE or
+/// MPI_STATUS_IGNORE, is passed unchanged.
+static void createMPIForwardCall(CallInst &call, ArrayRef<unsigned> ShadowArgs,
+                                 GradientUtils *gutils, IRBuilder<> &Builder2) {
+  std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+  SmallVector<Value *, 2> shadows;
+  for (unsigned i : ShadowArgs) {
+    Value *arg = call.getArgOperand(i);
+    if (isa<Constant>(arg) && gutils->isConstantValue(arg)) {
+      shadows.push_back(nullptr);
+      continue;
+    }
+    BundleTypes[i] = ValueType::Shadow;
+    shadows.push_back(gutils->invertPointerM(arg, Builder2));
+  }
+  auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                         /*lookup*/ false);
+
+  for (unsigned l = 0; l < gutils->getWidth(); l++) {
+    SmallVector<Value *, 8> args;
+    for (auto &op : call.args())
+      args.push_back(gutils->getNewFromOriginal(op));
+    for (auto en : llvm::enumerate(ShadowArgs)) {
+      Value *sh = shadows[en.index()];
+      if (!sh)
+        continue;
+      if (gutils->getWidth() > 1)
+        sh = gutils->extractMeta(Builder2, sh, l);
+      Type *T = args[en.value()]->getType();
+      if (sh->getType()->isIntegerTy())
+        sh = Builder2.CreateIntToPtr(sh, T);
+      else if (sh->getType() != T)
+        sh = Builder2.CreatePointerCast(sh, T);
+      args[en.value()] = sh;
+    }
+    auto dcall = Builder2.CreateCall(call.getFunctionType(),
+                                     call.getCalledOperand(), args, Defs);
+    dcall->setCallingConv(call.getCallingConv());
+    dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+  }
+}
+
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  llvm::StringRef funcName) {
   using namespace llvm;
 
   assert(called);
-  assert(gutils->getWidth() == 1);
 
   IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
   BuilderZ.setFastMathFlags(getFast());
+
+  // In forward mode, the derivative of an MPI call is the call on the shadows,
+  // which is replayed per lane at vector width > 1 (createMPIForwardCall).
+  if (gutils->getWidth() > 1 && Mode != DerivativeMode::ForwardMode &&
+      Mode != DerivativeMode::ForwardModeError) {
+    std::string s;
+    raw_string_ostream ss(s);
+    ss << funcName << " is not supported in vector reverse mode: " << call;
+    EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+    return;
+  }
 
   // MPI send / recv can only send float/integers
   if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
@@ -316,34 +372,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         assert(!gutils->isConstantValue(call.getOperand(0)));
         assert(!gutils->isConstantValue(call.getOperand(6)));
 
-        Value *buf = gutils->invertPointerM(call.getOperand(0), Builder2);
-        Value *count = gutils->getNewFromOriginal(call.getOperand(1));
-        Value *datatype = gutils->getNewFromOriginal(call.getOperand(2));
-        Value *source = gutils->getNewFromOriginal(call.getOperand(3));
-        Value *tag = gutils->getNewFromOriginal(call.getOperand(4));
-        Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
-        Value *request = gutils->invertPointerM(call.getOperand(6), Builder2);
-
-        Value *args[] = {
-            /*buf*/ buf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*source*/ source,
-            /*tag*/ tag,
-            /*comm*/ comm,
-            /*request*/ request,
-        };
-
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::Shadow},
-            Builder2, /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*buf*/ 0, /*request*/ 6}, gutils,
+                             Builder2);
         return;
       }
     }
@@ -466,19 +496,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       assert(!gutils->isConstantValue(call.getOperand(0)));
 
-      Value *request = gutils->invertPointerM(call.getArgOperand(0), Builder2);
-      Value *status = gutils->invertPointerM(call.getArgOperand(1), Builder2);
-
-      Value *args[] = {/*request*/ request,
-                       /*status*/ status};
-
-      auto Defs = gutils->getInvertedBundles(
-          &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
-          /*lookup*/ false);
-
-      auto callval = call.getCalledOperand();
-
-      Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+      createMPIForwardCall(call, {/*request*/ 0, /*status*/ 1}, gutils,
+                           Builder2);
       return;
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -625,31 +644,11 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     } else if (Mode == DerivativeMode::ForwardMode ||
                Mode == DerivativeMode::ForwardModeError) {
       IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
 
       assert(!gutils->isConstantValue(call.getOperand(1)));
 
-      Value *count = gutils->getNewFromOriginal(call.getOperand(0));
-      Value *array_of_requests =
-          gutils->invertPointerM(call.getOperand(1), Builder2);
-      if (array_of_requests->getType()->isIntegerTy()) {
-        array_of_requests = Builder2.CreateIntToPtr(
-            array_of_requests, getUnqual(getInt8PtrTy(call.getContext())));
-      }
-
-      Value *args[] = {
-          /*count*/ count,
-          /*array_of_requests*/ array_of_requests,
-      };
-
-      auto Defs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::None, ValueType::None, ValueType::None, ValueType::None,
-           ValueType::None, ValueType::None, ValueType::Shadow},
-          Builder2, /*lookup*/ false);
-
-      auto callval = call.getCalledOperand();
-
-      Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+      createMPIForwardCall(call, {/*array_of_requests*/ 1}, gutils, Builder2);
       return;
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -677,7 +676,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
-      Value *shadowOrig = shadow;
       if (shadow->getType()->isIntegerTy())
         shadow =
             Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
@@ -721,19 +719,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        // The Fortran ABI appends an `ierr` argument: pass all arguments of
-        // the call, with the shadow in place of the buffer.
-        SmallVector<Value *, 8> args = {/*buf*/ shadowOrig};
-        for (size_t i = 1, e = call.arg_size(); i < e; i++)
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*buf*/ 0}, gutils, Builder2);
         return;
       }
 
@@ -834,21 +820,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        // The Fortran ABI appends an `ierr` argument: pass all arguments of
-        // the call, with the shadow in place of the buffer.
-        SmallVector<Value *, 8> args = {shadow};
-        for (size_t i = 1, e = call.arg_size(); i < e; i++)
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        BundleTypes[6] = ValueType::None;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ !forwardMode);
-
-        auto callval = call.getCalledOperand();
-
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*buf*/ 0}, gutils, Builder2);
         return;
       }
 
@@ -953,19 +925,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        // The Fortran ABI appends an `ierr` argument: pass all arguments of
-        // the call, with the shadow in place of the buffer.
-        SmallVector<Value *, 8> args = {/*buffer*/ shadow};
-        for (size_t i = 1, e = call.arg_size(); i < e; i++)
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*buffer*/ 0}, gutils, Builder2);
         return;
       }
 
@@ -1262,21 +1222,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *rank = MPI_COMM_RANK(comm, Builder2, rootVal->getType(), called);
 
       if (forwardMode) {
-        SmallVector<Value *, 8> args = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*recvbuf*/ shadow_recvbuf,
-        };
-        for (size_t i = 2, e = call.arg_size(); i < e; i++)
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        BundleTypes[1] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 1}, gutils,
+                             Builder2);
         return;
       }
 
@@ -1553,22 +1500,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *countVal = fortranABI ? Builder2.CreateLoad(i32Ty, count) : count;
 
       if (forwardMode) {
-        SmallVector<Value *, 8> args = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*recvbuf*/ shadow_recvbuf,
-        };
-        for (size_t i = 2, e = call.arg_size(); i < e; i++)
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        BundleTypes[1] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 1}, gutils,
+                             Builder2);
         return;
       }
 
@@ -1732,28 +1665,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
-        // Account for extra `ierr` argument in Fortran ABI
-        SmallVector<Value *, 8> args_vec = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*sendcount*/ gutils->getNewFromOriginal(orig_sendcount),
-            /*sendtype*/ sendtype,
-            /*recvbuf*/ shadow_recvbuf,
-            /*recvcount*/ gutils->getNewFromOriginal(orig_recvcount),
-            /*recvtype*/ recvtype,
-            /*root*/ gutils->getNewFromOriginal(orig_root),
-            /*comm*/ comm,
-        };
-        for (size_t i = 8, e = call.arg_size(); i < e; i++)
-          args_vec.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        BundleTypes[3] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args_vec, Defs);
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 3}, gutils,
+                             Builder2);
         return;
       }
 
@@ -1955,28 +1868,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
-        // Account for extra `ierr` argument in Fortran ABI
-        SmallVector<Value *, 8> args_vec = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*sendcount*/ gutils->getNewFromOriginal(orig_sendcount),
-            /*sendtype*/ sendtype,
-            /*recvbuf*/ shadow_recvbuf,
-            /*recvcount*/ gutils->getNewFromOriginal(orig_recvcount),
-            /*recvtype*/ recvtype,
-            /*root*/ gutils->getNewFromOriginal(orig_root),
-            /*comm*/ comm,
-        };
-        for (size_t i = 8, e = call.arg_size(); i < e; i++)
-          args_vec.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-
-        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
-        BundleTypes[0] = ValueType::Shadow;
-        BundleTypes[3] = ValueType::Shadow;
-        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
-                                               /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args_vec, Defs);
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 3}, gutils,
+                             Builder2);
         return;
       }
       // Get the length for the allocation of the intermediate buffer
@@ -2200,25 +2093,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
-        Value *args[] = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*sendcount*/ sendcount,
-            /*sendtype*/ sendtype,
-            /*recvbuf*/ shadow_recvbuf,
-            /*recvcount*/ recvcount,
-            /*recvtype*/ recvtype,
-            /*comm*/ comm,
-        };
-
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal},
-            Builder2, /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 3}, gutils,
+                             Builder2);
         return;
       }
       // Get the length for the allocation of the intermediate buffer
