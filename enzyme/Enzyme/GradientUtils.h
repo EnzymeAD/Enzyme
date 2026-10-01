@@ -551,6 +551,12 @@ public:
   static bool usesExternalDerivative(llvm::Function *F,
                                      llvm::TargetLibraryInfo &TLI);
 
+  //! Activity with which argument \p i of \p call is passed. Under separate
+  //! compilation, a parameter the callee declares "enzyme_inactive" gets no
+  //! shadow even when the callee's derivative comes from another module.
+  DIFFE_TYPE getCallArgDiffeType(llvm::CallBase &call, unsigned i,
+                                 bool foreignFunction) const;
+
   //! Linker-visible name of the shadow (derivative table) of \p F under
   //! separate compilation. Every assumption the derivative is built under is
   //! part of the name, so a mismatch between modules is a link error.
