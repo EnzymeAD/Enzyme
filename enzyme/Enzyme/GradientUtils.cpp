@@ -6350,6 +6350,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       li->setVolatile(arg->isVolatile());
       li->setOrdering(arg->getOrdering());
       li->setSyncScopeID(arg->getSyncScopeID());
+      // With a vector width > 1 the shadow registered for `arg` is the
+      // aggregate of these per-lane loads, so hasUninverted cannot map a lane
+      // back to `arg`. Record it here so that legalRecompute applies the same
+      // overwrite check to each lane as to `arg`.
+      if (getWidth() > 1)
+        unwrappedLoads[li] = arg;
       idx++;
       return li;
     };
