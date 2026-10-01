@@ -2117,38 +2117,6 @@ static inline bool isNoAlias(const llvm::Value *val) {
   return false;
 }
 
-/// Queries of the LLVM flang runtime for the time, the command line and the
-/// environment. They are inactive, free no memory and return no memory that
-/// the program must free.
-static inline bool isFlangRuntimeQuery(llvm::StringRef name) {
-  // clang-format off
-  static const char *names[] = {
-      // time
-      "_FortranACpuTime",
-      "_FortranADateAndTime",
-      "_FortranAEtime",
-      "_FortranASystemClockCount",
-      "_FortranASystemClockCountRate",
-      "_FortranASystemClockCountMax",
-      "_FortranATimef",
-      // command line and environment
-      "_FortranAArgumentCount",
-      "_FortranAGetCommand",
-      "_FortranAGetCommandArgument",
-      "_FortranAGetEnvVariable",
-      "_FortranAGetCwd",
-      "_FortranAHostnm",
-      "_FortranAGetPID",
-      "_FortranAGetUID",
-      "_FortranAGetGID",
-  };
-  // clang-format on
-  for (auto n : names)
-    if (name == n)
-      return true;
-  return false;
-}
-
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
     return true;

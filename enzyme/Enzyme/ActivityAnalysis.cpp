@@ -374,6 +374,24 @@ static const StringSet<> KnownInactiveFunctions = {
     "__cudaPushCallConfiguration",
     "__cudaPopCallConfiguration",
     "cudaGetLastError",
+    // LLVM flang runtime: time
+    "_FortranACpuTime",
+    "_FortranADateAndTime",
+    "_FortranAEtime",
+    "_FortranASystemClockCount",
+    "_FortranASystemClockCountRate",
+    "_FortranASystemClockCountMax",
+    "_FortranATimef",
+    // LLVM flang runtime: command line and environment
+    "_FortranAArgumentCount",
+    "_FortranAGetCommand",
+    "_FortranAGetCommandArgument",
+    "_FortranAGetEnvVariable",
+    "_FortranAGetCwd",
+    "_FortranAHostnm",
+    "_FortranAGetPID",
+    "_FortranAGetUID",
+    "_FortranAGetGID",
 };
 
 static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -592,7 +610,7 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
       return true;
     }
   }
-  if (KnownInactiveFunctions.count(Name) || isFlangRuntimeQuery(Name)) {
+  if (KnownInactiveFunctions.count(Name)) {
     return true;
   }
 

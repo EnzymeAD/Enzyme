@@ -413,7 +413,28 @@ bool attributeKnownFunctions(llvm::Function &F) {
   // With -enzyme-global-activity a call to a function without body may free
   // memory or return an allocation needed in the reverse pass, and Enzyme
   // then differentiates even an inactive call to it.
-  if (isFlangRuntimeQuery(name)) {
+  // These LLVM flang runtime queries are also in KnownInactiveFunctions.
+  const char *FlangRuntimeQueries[] = {
+      // LLVM flang runtime: time
+      "_FortranACpuTime",
+      "_FortranADateAndTime",
+      "_FortranAEtime",
+      "_FortranASystemClockCount",
+      "_FortranASystemClockCountRate",
+      "_FortranASystemClockCountMax",
+      "_FortranATimef",
+      // LLVM flang runtime: command line and environment
+      "_FortranAArgumentCount",
+      "_FortranAGetCommand",
+      "_FortranAGetCommandArgument",
+      "_FortranAGetEnvVariable",
+      "_FortranAGetCwd",
+      "_FortranAHostnm",
+      "_FortranAGetPID",
+      "_FortranAGetUID",
+      "_FortranAGetGID",
+  };
+  if (llvm::is_contained(FlangRuntimeQueries, name)) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
     F.addAttribute(
