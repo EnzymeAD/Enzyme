@@ -6035,15 +6035,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
     } else if (arg->getOpcode() == Instruction::GetElementPtr) {
-      if (auto C = dyn_cast<Constant>(ip)) {
-        auto rule = [&arg, &C]() {
+      if (isa<Constant>(ip)) {
+        // ip holds one shadow per lane at width > 1 (an array constant)
+        auto rule = [&arg](Value *ip) {
           SmallVector<Constant *, 8> NewOps;
           for (unsigned i = 0, e = arg->getNumOperands(); i != e; ++i)
-            NewOps.push_back(i == 0 ? C : arg->getOperand(i));
+            NewOps.push_back(i == 0 ? cast<Constant>(ip) : arg->getOperand(i));
           return cast<Value>(arg->getWithOperands(NewOps));
         };
 
-        return applyChainRule(arg->getType(), bb, rule);
+        return applyChainRule(arg->getType(), bb, rule, ip);
       } else {
         SmallVector<Value *, 4> invertargs;
         for (unsigned i = 0; i < arg->getNumOperands() - 1; ++i) {
