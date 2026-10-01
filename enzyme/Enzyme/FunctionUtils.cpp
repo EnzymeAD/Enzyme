@@ -1778,16 +1778,18 @@ static bool isReturnLikeParam(const Function &F, unsigned argno) {
 }
 
 // Whether a derivative of F comes from a custom rule rather than from F's
-// body. Such a rule (augmented forward, reverse, or the forward-mode
-// replacement) may read a parameter the body never reads, so the body alone
-// cannot justify marking a parameter writeonly or readnone, except for one
-// that only carries the result. A marking the function already carries is
-// kept: it was stated deliberately. A function marked
-// enzyme_custom_full_attributes is exempt: the frontend states that its rule
-// accesses no more than the body does (Enzyme.jl sets it for @easy_rule, whose
-// rule only combines the inputs the way the body does).
+// body: one registered by a frontend (Enzyme.jl marks the function
+// enzyme_math=enzyme_custom) or through metadata
+// (__enzyme_register_derivative and friends). Such a rule (augmented forward,
+// reverse, or the forward-mode replacement) may read a parameter the body
+// never reads, so the body alone cannot justify marking a parameter writeonly
+// or readnone, except for one that only carries the result. A marking the
+// function already carries is kept: it was stated deliberately. A function
+// marked enzyme_custom_full_attributes is exempt: the frontend states that its
+// rule accesses no more than the body does (Enzyme.jl sets it for @easy_rule,
+// whose rule only combines the inputs the way the body does).
 static bool mayReadThroughCustomRule(Function &F, unsigned argno) {
-  if (getFuncName(&F) != "enzyme_custom")
+  if (getFuncName(&F) != "enzyme_custom" && !hasCustomRuleMetadata(&F))
     return false;
   if (F.hasFnAttribute("enzyme_custom_full_attributes"))
     return false;
