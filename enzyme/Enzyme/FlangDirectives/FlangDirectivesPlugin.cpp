@@ -32,7 +32,14 @@
 
 #include "mlir/Pass/PassManager.h"
 
+#include "llvm/Support/CommandLine.h"
+
 namespace {
+
+static llvm::cl::opt<bool> typeAnnotations(
+    "enzyme-fir-type-annotations", llvm::cl::init(true),
+    llvm::cl::desc("Carry the Fortran types that LLVM IR erases to LLVM "
+                   "Enzyme's type analysis"));
 
 // The !DIR$ ENZYME directives (see FortranDirectives.cpp).
 static void registerEnzymeDirectives() {
@@ -70,7 +77,8 @@ struct EnzymeFlangDirectivesRegistration {
           // declare) at the end of the FIR pipeline.
           config.registerFIROptLastEPCallbacks(
               [](mlir::PassManager &pm, llvm::OptimizationLevel) {
-                pm.addPass(mlir::enzyme::createFIRTypeAnnotationsPass());
+                if (typeAnnotations)
+                  pm.addPass(mlir::enzyme::createFIRTypeAnnotationsPass());
               });
         });
   }
