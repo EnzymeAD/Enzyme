@@ -114,6 +114,13 @@ public:
                             llvm::Value *storeInto,
                             llvm::MDNode *InvariantMD) override;
 
+  /// Free a cache in split forward mode, which has no reverse pass.
+  llvm::CallInst *freeCacheAtReturns(const SubLimitType &sublimits, int i,
+                                     llvm::AllocaInst *alloc, llvm::Type *T,
+                                     llvm::ConstantInt *byteSizeOfType,
+                                     llvm::Value *storeInto,
+                                     llvm::MDNode *InvariantMD);
+
   /// align is the alignment that should be specified for load/store to pointer
   void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
                              llvm::Type *addingType, unsigned start,
