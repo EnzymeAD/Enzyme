@@ -20,7 +20,7 @@ entry:
 ; CHECK: caller - {} |{[-1]:Integer}:{}
 ; CHECK-NEXT: i128 %n: {[-1]:Integer}
 ; CHECK-NEXT: entry
-; CHECK-NEXT:   %m = and i128 %n, -1133381790946770133450753: {[-1]:Anything}
+; CHECK-NEXT:   %m = and i128 %n, -1133381790946770133450753: {[-1]:Integer}
 ; CHECK-NEXT:   %v = or i128 %m, 302240678275694148452352: {[-1]:Anything}
 ; CHECK-NEXT:   call void @f(i128 %v): {}
 ; CHECK-NEXT:   ret void: {}
