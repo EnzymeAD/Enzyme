@@ -46,9 +46,7 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %differeturn, %r
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i0]], %[[i1]]
 ; CHECK-NEXT:   %[[i3:.+]] = call { double } @fixgradient_scale(double %x, double %c, double %[[i2]], {} undef)
-; CHECK-NEXT:   %[[i4:.+]] = extractvalue { double } %[[i3]], 0
-; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[i4]], 0
-; CHECK-NEXT:   ret { double } %[[i5]]
+; CHECK:        ret { double }
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double } @fixgradient_scale(double %arg0, double %arg1, double %postarg0, {} %postarg1)

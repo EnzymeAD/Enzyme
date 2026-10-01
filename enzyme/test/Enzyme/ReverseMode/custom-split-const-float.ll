@@ -65,9 +65,7 @@ declare double @__enzyme_autodiff(...)
 ; CHECK: define internal { double } @diffecaller(double %x, double %c, double %differeturn, {} %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = call { double } @fixgradient_scale(double %x, double %c, double %differeturn, {} undef)
-; CHECK-NEXT:   %[[i1:.+]] = extractvalue { double } %[[i0]], 0
-; CHECK-NEXT:   %[[i2:.+]] = insertvalue { double } undef, double %[[i1]], 0
-; CHECK-NEXT:   ret { double } %[[i2]]
+; CHECK:        ret { double }
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double } @fixgradient_scale(double %arg0, double %arg1, double %postarg0, {} %postarg1)
