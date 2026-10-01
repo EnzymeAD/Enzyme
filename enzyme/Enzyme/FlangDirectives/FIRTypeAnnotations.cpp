@@ -417,6 +417,37 @@ static Type originalType(Value v) {
   return v.getType();
 }
 
+// Whether the data that `v` (an address or a descriptor) refers to may be
+// storage associated with data of other types: a member of a COMMON block or
+// of an EQUIVALENCE group, i.e. a variable declared with storage. The memory
+// of such a variable can be typed differently elsewhere (MITgcm's
+// /EE_BUFFERS_GLOBAL/: a REAL*8 and a REAL*4 buffer that Enzyme's type
+// analysis takes together), so its data type is better left unsaid.
+static bool storageAssociated(Value v) {
+  for (int depth = 0; v && depth < 64; ++depth) {
+    Operation *def = v.getDefiningOp();
+    if (!def)
+      return false; // a dummy argument
+    if (auto decl = dyn_cast<fir::FortranVariableStorageOpInterface>(def))
+      return decl.getStorage() != nullptr;
+    if (auto op = dyn_cast<fir::ConvertOp>(def))
+      v = op.getValue();
+    else if (auto op = dyn_cast<fir::EmboxOp>(def))
+      v = op.getMemref();
+    else if (auto op = dyn_cast<fir::ReboxOp>(def))
+      v = op.getBox();
+    else if (auto op = dyn_cast<fir::BoxAddrOp>(def))
+      v = op.getVal();
+    else if (auto op = dyn_cast<fir::CoordinateOp>(def))
+      v = op.getRef();
+    else if (auto op = dyn_cast<fir::ArrayCoorOp>(def))
+      v = op.getMemref();
+    else
+      return false; // e.g. a load of a POINTER or ALLOCATABLE
+  }
+  return false;
+}
+
 static llvm::cl::opt<bool> annotateDescriptorData(
     "enzyme-fir-arg-descriptor-data-types", llvm::cl::init(true),
     llvm::cl::desc("With -enzyme-fir-arg-types, also annotate the type of "
@@ -641,11 +672,16 @@ struct FIRTypeAnnotationsPass
         // Only what the conversions for the call erased: an operand of its
         // own type (e.g. an I/O cookie, !fir.ref<i8>) is opaque.
         Type original = originalType(arg);
-        std::string t =
-            original != arg.getType() ||
-                    isa<fir::BaseBoxType>(fir::unwrapRefType(original))
-                ? pointerArgType(original, dl)
-                : "";
+        bool erased = original != arg.getType() ||
+                      isa<fir::BaseBoxType>(fir::unwrapRefType(original));
+        std::string t;
+        if (erased && !storageAssociated(arg))
+          t = pointerArgType(original, dl);
+        else if (erased &&
+                 isa<fir::BaseBoxType>(fir::unwrapRefType(original)))
+          // Storage associated: the layout of the descriptor, but not the
+          // type of its data.
+          t = pointerArgType(original, dl, /*descriptorData=*/false);
         any |= !t.empty();
         types.push_back(StringAttr::get(ctx, t));
       }

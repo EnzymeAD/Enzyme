@@ -5,6 +5,7 @@
 ! REQUIRES: flang_directives
 ! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s --check-prefixes=CHECK,O0
 ! RUN: %fc -fc1 %flangFc1Directives -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=CHECK
+! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=RT
 
 ! COMMON blocks: the type at each member offset, if the declares lay out all
 ! of the block and agree. /mixed/ is real at offset 0 in one subroutine and
@@ -71,6 +72,21 @@ end subroutine
 ! the I/O cookie (an opaque pointer of its own type) is left alone.
 ! O0-DAG: call void @_FortranAAssign{{[A-Za-z]*}}(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@float, [-1,8]:Integer, [-1,16]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer, [-1,24]:Integer, [-1,32]:Integer, [-1,40]:Integer}"
 ! CHECK-DAG: call {{.*}}@_FortranAioOutputAscii(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}"
+! Data storage associated with data of other types (a COMMON block or
+! EQUIVALENCE member) keeps its descriptor layout but not its data type:
+! RT-LABEL: define void @read_common_
+! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
+! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@float, [-1,8]:Integer,
+subroutine read_common(u, n)
+  integer :: u, n, i
+  real(8) :: c8(4)
+  real(4) :: c4(4)
+  common /rbufs/ c8, c4
+  real(4) :: loc(4)
+  read(u) (c4(i), i=1,n)
+  read(u) loc
+end subroutine
+
 subroutine copy(a, b, name)
   real, allocatable :: a(:)
   real, intent(in) :: b(:)
