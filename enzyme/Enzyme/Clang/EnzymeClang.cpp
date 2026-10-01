@@ -783,8 +783,8 @@ struct EnzymeShadowAttrInfo : public ParsedAttrInfo {
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
     auto error = [&](StringRef msg) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "%0");
+      unsigned ID =
+          S.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
       S.Diag(Attr.getLoc(), ID) << msg;
       return AttributeNotApplied;
     };

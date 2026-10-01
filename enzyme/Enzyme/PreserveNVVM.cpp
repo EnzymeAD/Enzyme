@@ -759,9 +759,9 @@ bool preserveNVVM(bool Begin, Module &M,
                        << g << "\n";
           llvm_unreachable("__enzyme_shadow_global");
         }
-        GV->setMetadata("enzyme_shadow",
-                        MDTuple::get(g.getContext(),
-                                     {ConstantAsMetadata::get(shadow)}));
+        GV->setMetadata(
+            "enzyme_shadow",
+            MDTuple::get(g.getContext(), {ConstantAsMetadata::get(shadow)}));
         declaredShadows.push_back(shadow);
         // Keep the global itself too: once the pair is gone, global SRA
         // could split it (e.g. a Fortran COMMON block into @blk.0, ...)
