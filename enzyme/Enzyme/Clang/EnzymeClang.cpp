@@ -731,7 +731,7 @@ void registerEnzymeShadowGlobal(Sema &S, VarDecl *VD, VarDecl *Shadow) {
                                     FPOptionsOverride());
   };
   Expr *pair[] = {addressOf(VD), addressOf(Shadow)};
-  auto init = new (AST) InitListExpr(AST, loc, pair, loc);
+  auto init = cast<InitListExpr>(S.BuildInitList(loc, pair, loc).get());
   auto T = AST.getConstantArrayType(AST.VoidPtrTy, llvm::APInt(32, 2), nullptr,
 #if LLVM_VERSION_MAJOR >= 18
                                     ArraySizeModifier::Normal,
@@ -799,8 +799,15 @@ struct EnzymeShadowAttrInfo : public ParsedAttrInfo {
     if (Attr.isArgIdent(0)) {
       // A plain name reaches a plugin attribute unresolved.
       auto IL = Attr.getArgAsIdent(0);
+#if LLVM_VERSION_MAJOR >= 21
+      auto Ident = IL->getIdentifierInfo();
+      auto IdentLoc = IL->getLoc();
+#else
+      auto Ident = IL->Ident;
+      auto IdentLoc = IL->Loc;
+#endif
       Shadow = dyn_cast_or_null<VarDecl>(S.LookupSingleName(
-          S.getCurScope(), IL->Ident, IL->Loc, Sema::LookupOrdinaryName));
+          S.getCurScope(), Ident, IdentLoc, Sema::LookupOrdinaryName));
     } else if (auto DR = dyn_cast<DeclRefExpr>(
                    Attr.getArgAsExpr(0)->IgnoreParenImpCasts())) {
       Shadow = dyn_cast<VarDecl>(DR->getDecl());
