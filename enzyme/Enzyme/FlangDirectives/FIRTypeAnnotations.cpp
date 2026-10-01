@@ -143,6 +143,8 @@ static llvm::MDNode *typeTreeToMD(const TypePaths &tree,
 constexpr StringLiteral kTypeAttr = "enzyme.type";
 constexpr StringLiteral kArgTypesAttr = "enzyme.arg_types";
 constexpr StringLiteral kRetTypeAttr = "enzyme.ret_type";
+// On a function: the types of its local variables, by name.
+constexpr StringLiteral kLocalTypesAttr = "enzyme.local_types";
 
 struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
@@ -178,6 +180,25 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
         if (!f->getReturnType()->isVoidTy())
           f->addRetAttr(llvm::Attribute::get(f->getContext(), "enzyme_type",
                                              str.getValue()));
+      return success();
+    }
+    if (attribute.getName() == kLocalTypesAttr) {
+      // Converted after the body of the function: its values are mapped.
+      auto types = dyn_cast<DictionaryAttr>(attribute.getValue());
+      if (!types)
+        return success();
+      op->walk([&](LLVM::AllocaOp alloca) {
+        auto name = alloca->getAttrOfType<StringAttr>("bindc_name");
+        auto t = name ? types.getAs<StringAttr>(name) : StringAttr();
+        std::optional<TypePaths> tree =
+            t ? parseTypeTree(t.getValue()) : std::nullopt;
+        if (!tree)
+          return;
+        if (auto *inst = dyn_cast_or_null<llvm::Instruction>(
+                moduleTranslation.lookupValue(alloca.getResult())))
+          inst->setMetadata("enzyme_type",
+                            typeTreeToMD(*tree, inst->getContext()));
+      });
       return success();
     }
     if (attribute.getName() != kTypeAttr)
@@ -450,10 +471,28 @@ static constexpr int64_t kLayoutBudget = 1 << 14;
 // stay unannotated.
 static constexpr int64_t kMaxTypeOffset = 500;
 
+// What to annotate, each on its own (all of it with
+// -enzyme-fir-type-annotations, see FlangDirectivesPlugin.cpp).
 static llvm::cl::opt<bool> annotateProcArgs(
     "enzyme-fir-arg-types", llvm::cl::init(true),
     llvm::cl::desc("Annotate the arguments and results of procedures with "
                    "their Fortran types for LLVM Enzyme (enzyme_type)"));
+static llvm::cl::opt<bool> annotateCommon(
+    "enzyme-fir-common-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate COMMON blocks with the types of their members "
+                   "for LLVM Enzyme (!enzyme_type)"));
+static llvm::cl::opt<bool> annotateRuntimeCalls(
+    "enzyme-fir-runtime-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate the arguments of calls to the flang runtime "
+                   "with their Fortran types for LLVM Enzyme (enzyme_type)"));
+static llvm::cl::opt<bool> annotateLocals(
+    "enzyme-fir-local-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate local CHARACTER variables as character data for "
+                   "LLVM Enzyme (!enzyme_type)"));
+static llvm::cl::opt<bool> annotateLiterals(
+    "enzyme-fir-literal-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate character literals as character data for LLVM "
+                   "Enzyme (!enzyme_type)"));
 
 struct FIRTypeAnnotationsPass
     : public PassWrapper<FIRTypeAnnotationsPass, OperationPass<ModuleOp>> {
@@ -495,6 +534,8 @@ struct FIRTypeAnnotationsPass
     };
     std::map<Operation *, Layout> layouts;
     module.walk([&](fir::FortranVariableStorageOpInterface decl) {
+      if (!annotateCommon)
+        return;
       Value storage = decl.getStorage();
       if (!storage)
         return;
@@ -550,7 +591,7 @@ struct FIRTypeAnnotationsPass
     // descriptors, character data), which the runtime's C signatures erase.
     module.walk([&](fir::CallOp call) {
       auto callee = call.getCallee();
-      if (!callee ||
+      if (!annotateRuntimeCalls || !callee ||
           !callee->getLeafReference().getValue().starts_with("_Fortran"))
         return;
       SmallVector<Attribute> types;
@@ -584,7 +625,14 @@ struct FIRTypeAnnotationsPass
           continue;
         FunctionType fty = fn.getFunctionType();
         for (auto [i, ty] : llvm::enumerate(fty.getInputs())) {
-          std::string t = procArgType(ty, dl);
+          // A CHARACTER dummy: flang passes the address of the data (where
+          // the attribute moves with the argument) and its length after all
+          // other arguments. The length is left alone: typed Integer, it
+          // made Enzyme take `and len, 0x7fffffff` for possibly floating
+          // point and fail (MITgcm ILNBLNK).
+          std::string t = isa<fir::BoxCharType>(ty)
+                              ? std::string("{[-1]:Pointer, [-1,-1]:Integer}")
+                              : procArgType(ty, dl);
           if (!t.empty() && !fn.getArgAttr(i, kTypeAttr))
             fn.setArgAttr(i, kTypeAttr, StringAttr::get(ctx, t));
         }
@@ -595,9 +643,27 @@ struct FIRTypeAnnotationsPass
         }
       }
 
+    // Local CHARACTER variables: character data throughout (copied with
+    // untyped memcpys). The conversion of fir.alloca to LLVM keeps only its
+    // name, so the function lists its variables by name.
+    if (annotateLocals)
+      for (auto fn : module.getOps<func::FuncOp>()) {
+        SmallVector<NamedAttribute> locals;
+        fn.walk([&](fir::AllocaOp alloca) {
+          auto name = alloca.getBindcName();
+          if (name && isa<fir::CharacterType>(
+                          fir::unwrapSequenceType(alloca.getInType())))
+            locals.push_back(NamedAttribute(
+                StringAttr::get(ctx, *name),
+                StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}")));
+        });
+        if (!locals.empty())
+          fn->setAttr(kLocalTypesAttr, DictionaryAttr::get(ctx, locals));
+      }
+
     // Character literals: character data throughout.
     for (fir::GlobalOp global : module.getOps<fir::GlobalOp>())
-      if (isa<fir::CharacterType>(global.getType()) &&
+      if (annotateLiterals && isa<fir::CharacterType>(global.getType()) &&
           !global->hasAttr(kTypeAttr))
         global->setAttr(
             kTypeAttr, StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}"));

@@ -4,12 +4,18 @@
 ! every offset (an array); a descriptor field by field; by value, the scalar.
 ! Module procedures get them also where only declared (as in a unit that uses
 ! the module), external procedures only where defined (a declaration may come
-! from an implicit interface). Polymorphic, assumed-type and assumed-rank
-! dummies, derived types and CHARACTER descriptors are left alone.
+! from an implicit interface). A CHARACTER dummy is character data; its
+! hidden length is left alone (typed Integer, Enzyme took a mask of it for a
+! possibly floating-point operation). Polymorphic, assumed-type and
+! assumed-rank dummies and derived types are left alone. Local CHARACTER
+! variables are character data too.
 !
 ! REQUIRES: flang_directives
 ! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s
 ! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
+! The other annotations off, these on:
+! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-common-types=false -mmlir -enzyme-fir-runtime-types=false -mmlir -enzyme-fir-literal-types=false -O0 -emit-llvm %s -o - | FileCheck %s
+! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-local-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOLOCAL
 
 ! OFF-NOT: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}"
 
@@ -25,7 +31,7 @@ contains
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float}" %1,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Integer}" %2,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Integer}" %3,
-! CHECK-SAME: ptr noalias %4,
+! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}" %4,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" %5,
 ! CHECK-SAME: i64 %6)
   subroutine scalars(x8, x4, i, l, c, z)
@@ -84,11 +90,17 @@ end module
 
 ! CHECK-LABEL: define void @user_(
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %0)
+! CHECK: alloca [64 x i8], i64 1, align 1, !enzyme_type ![[CHR:[0-9]+]]
+! NOLOCAL-NOT: alloca [64 x i8], align 1, !enzyme_type
 subroutine user(y)
   use m, only: t
   real(8) :: y
+  character(len=64) :: buf
   external :: ext
-  call ext(y, 1.0)
+  buf = 'x'
+  call ext(y, 1.0, buf)
 end subroutine
+! CHECK: declare void @ext_(ptr, ptr, ptr, i64)
+! CHECK: ![[CHR]] = !{!"Unknown", i32 -1, ![[CHRP:[0-9]+]]}
+! CHECK: ![[CHRP]] = !{!"Pointer", i32 -1, ![[INT:[0-9]+]]}
 
-! CHECK-DAG: declare void @ext_(ptr, ptr)
