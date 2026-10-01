@@ -2988,6 +2988,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   SmallVector<ReturnInst *, 4> Returns;
   CloneFunctionInto(NewF, nf, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   IRBuilder<> ib(getFirstNonPHI(&NewF->getEntryBlock()));
 
@@ -5888,6 +5889,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   CloneFunctionInto(NewF, totrunc, originalToNewFn,
                     CloneFunctionChangeType::LocalChangesOnly, Returns, "",
                     nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -5995,6 +5997,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   CloneFunctionInto(NewF, tobatch, vmap,
                     CloneFunctionChangeType::LocalChangesOnly, Returns, "",
                     nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -6836,6 +6839,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   SmallVector<ReturnInst *, 4> Returns;
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
   NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
