@@ -26,5 +26,5 @@ entry:
 ; CHECK: define internal [2 x double] @fwddiffe2mulglobal(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'ipl" = load double, ptr getelementptr inbounds ([4 x double], ptr @dglobal, i64 0, i64 2), align 8
-; CHECK-NEXT:   %"'ipl1" = load double, ptr getelementptr inbounds ([2 x [4 x double]], ptr @dglobal, i32 0, i32 1, i64 2), align 8
+; CHECK-NEXT:   %"'ipl1" = load double, ptr getelementptr inbounds ({{(\[4 x double\], ptr getelementptr inbounds \()?}}[2 x [4 x double]], ptr @dglobal, i32 0, i32 1{{(\), i64 0)?}}, i64 2), align 8
 ; CHECK-NEXT:   %[[a0:.+]] = load double, ptr getelementptr inbounds ([4 x double], ptr @global, i64 0, i64 2), align 8
