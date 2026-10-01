@@ -5112,9 +5112,10 @@ Function *EnzymeLogic::CreateForwardDiff(
       Value *additionalValue = v;
       assert(augmenteddata);
 
-      // TODO VERIFY THIS
-      if (augmenteddata->tapeType &&
-          augmenteddata->tapeType != additionalValue->getType()) {
+      // The augmented pass returned a pointer to memory holding the tape.
+      // Do not compare types to decide this: with opaque pointers a tape that
+      // is itself a single pointer has the same type as that memory.
+      if (augmenteddata->tapeType) {
         IRBuilder<> BuilderZ(gutils->inversionAllocs);
         if (!augmenteddata->tapeType->isEmptyTy()) {
           auto tapep = BuilderZ.CreatePointerCast(
