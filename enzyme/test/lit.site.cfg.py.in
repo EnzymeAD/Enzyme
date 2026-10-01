@@ -165,7 +165,8 @@ flang_directives_plugin = ('@ENZYME_BINARY_DIR@/Enzyme/FlangDirectives/FlangEnzy
                            + config.llvm_ver + config.llvm_shlib_ext)
 config.substitutions.append(('%flangDirectives',
                              ' -Xflang -load -Xflang ' + flang_directives_plugin))
-config.substitutions.append(('%fc1Directives', ' -load ' + flang_directives_plugin))
+# (not %fc...: lit substitutes %fc first, as a prefix)
+config.substitutions.append(('%flangFc1Directives', ' -load ' + flang_directives_plugin))
 # Full LTO with Enzyme in the link (lld), the route of large Fortran codes
 # whose directives and rules span translation units. lld parses -mllvm options
 # before it loads plugins, hence the plugin twice.

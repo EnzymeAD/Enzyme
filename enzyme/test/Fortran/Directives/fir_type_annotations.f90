@@ -3,8 +3,8 @@
 ! metadata and "enzyme_type" attributes.
 !
 ! REQUIRES: flang_directives
-! RUN: %fc -fc1 %fc1Directives -O0 -emit-llvm %s -o - | FileCheck %s --check-prefixes=CHECK,O0
-! RUN: %fc -fc1 %fc1Directives -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=CHECK
+! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s --check-prefixes=CHECK,O0
+! RUN: %fc -fc1 %flangFc1Directives -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=CHECK
 
 ! COMMON blocks: the type at each member offset. /mixed/ is real at offset 0
 ! in one subroutine and integer in the other, so offset 0 stays unknown.

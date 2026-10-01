@@ -10,11 +10,11 @@
 ! LTO link; Enzyme reads and removes them.
 !
 ! REQUIRES: flang_directives, flangenzyme
-! RUN: %fc -fc1 %fc1Directives -emit-fir %loadFortran %s -o - | FileCheck %s --check-prefix=FIR
-! RUN: %fc %flangDirectives -O0 %loadFlangEnzyme %loadFortran %s -o %t0 && %t0 | FileCheck %s
-! RUN: %fc %flangDirectives -O2 %loadFlangEnzyme %loadFortran %s -o %t2 && %t2 | FileCheck %s
+! RUN: %fc -fc1 %flangFc1Directives -cpp -DFIR_ONLY -emit-fir %s -o - | FileCheck %s --check-prefix=FIR
+! RUN: %fc %flangDirectives -cpp -O0 %loadFlangEnzyme %loadFortran %s -o %t0 && %t0 | FileCheck %s
+! RUN: %fc %flangDirectives -cpp -O2 %loadFlangEnzyme %loadFortran %s -o %t2 && %t2 | FileCheck %s
 ! With LTO, Enzyme runs only in the link, after the optimization of each unit.
-! RUN: %fc %flangDirectives -O2 -flto=full %loadFortran -c %s -o %t.o
+! RUN: %fc %flangDirectives -cpp -O2 -flto=full %loadFortran -c %s -o %t.o
 ! RUN: %fc -O2 %lldEnzyme %t.o -o %t3 && %t3 | FileCheck %s
 
 ! FIR-DAG: fir.global weak @ext_double_.__enzyme_register_gradient
@@ -76,6 +76,7 @@ real function scaled(x)
   scaled = x * ext_scale(x)
 end function
 
+#ifndef FIR_ONLY
 program main
   use enzyme, only: enzyme_autodiff
   implicit none
@@ -90,6 +91,7 @@ program main
   call enzyme_autodiff(scaled, x, dx)
   print '(F6.4)', dx
 end program
+#endif
 
 ! CHECK: 0.3333
 ! CHECK: 3.0000

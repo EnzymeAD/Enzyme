@@ -5,7 +5,7 @@
 !
 ! REQUIRES: flang_directives
 ! RUN: rm -rf %t && mkdir -p %t
-! RUN: %fc -fc1 %fc1Directives -emit-fir \
+! RUN: %fc -fc1 %flangFc1Directives -emit-fir \
 ! RUN:   -module-dir %t %s -o - | FileCheck %s
 ! RUN: FileCheck %s --check-prefix=MOD < %t/rules.mod
 

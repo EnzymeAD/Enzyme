@@ -1,7 +1,7 @@
 ! The plugin registers the arguments of each directive; flang checks them.
 !
 ! REQUIRES: flang_directives
-! RUN: not %fc -fc1 %fc1Directives -fsyntax-only %s 2>&1 | FileCheck %s
+! RUN: not %fc -fc1 %flangFc1Directives -fsyntax-only %s 2>&1 | FileCheck %s
 
 module m
   implicit none
