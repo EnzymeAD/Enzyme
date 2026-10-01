@@ -8903,9 +8903,20 @@ void GradientUtils::computeMinCache() {
       auto found = rematerializableAllocations.find(I);
       if (found != rematerializableAllocations.end()) {
         for (auto store : found->second.stores) {
-          for (auto &operand : store->operands()) {
+          // Look through the address computation, whose indices are needed
+          // to replay the store.
+          SmallVector<Value *, 4> operands(store->operands());
+          SmallPtrSet<Value *, 4> seenOperands;
+          while (operands.size()) {
+            auto operand = operands.pop_back_val();
+            if (!seenOperands.insert(operand).second)
+              continue;
             if (Intermediates.count(operand)) {
               todo.push_back(operand);
+            } else if (isa<GetElementPtrInst>(operand) ||
+                       isa<CastInst>(operand)) {
+              for (auto &op : cast<Instruction>(operand)->operands())
+                operands.push_back(op);
             }
           }
         }
