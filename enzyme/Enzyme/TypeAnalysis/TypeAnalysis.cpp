@@ -4134,6 +4134,25 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
         &I);
     return;
 
+  case Intrinsic::lround:
+  case Intrinsic::llround:
+  case Intrinsic::lrint:
+  case Intrinsic::llrint:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::fptosi_sat:
+  case Intrinsic::fptoui_sat:
+#endif
+    // A floating point value converted to an integer, as with fptosi.
+    // No direction check as always valid
+    updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+    // No direction check as always valid
+    updateAnalysis(
+        I.getOperand(0),
+        TypeTree(ConcreteType(I.getOperand(0)->getType()->getScalarType()))
+            .Only(-1, &I),
+        &I);
+    return;
+
   case Intrinsic::fmuladd:
   case Intrinsic::fma:
     // No direction check as always valid
