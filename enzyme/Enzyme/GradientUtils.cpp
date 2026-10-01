@@ -4922,6 +4922,15 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     TypeTree TT;
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
+    // Types declared on the signature (e.g. from Fortran explicit interfaces
+    // or Julia) hold for every caller, so they can seed a call-site
+    // independent derivative.
+    if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type"))
+      TT |= TypeTree::parse(
+          fn->getAttributes()
+              .getParamAttr(a.getArgNo(), "enzyme_type")
+              .getValueAsString(),
+          fn->getContext());
     type_args.Arguments.insert(std::pair<Argument *, TypeTree>(&a, TT));
     type_args.KnownValues.insert(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
