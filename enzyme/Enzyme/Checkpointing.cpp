@@ -81,6 +81,8 @@ static constexpr const char *CheckpointAttr = "enzyme_checkpoint";
 static constexpr const char *CheckpointRegionsAttr =
     "enzyme_checkpoint_nregions";
 static constexpr const char *CheckpointStepMD = "enzyme_checkpoint_step";
+static constexpr const char *CheckpointRegionSpacesAttr =
+    "enzyme_checkpoint_region_spaces";
 
 // Slots the driver itself uses: the state the reverse sweep starts from, and
 // the state before the last step.
@@ -461,17 +463,23 @@ getKnownAllocation(Value *V, Instruction *IP, DominatorTree &DT) {
   return {};
 }
 
-/// The arguments of `step` it may write through, and a write through a
+/// The arguments of `step` it may write through, and a store through a
 /// pointer that is none of its arguments, globals or stack slots, if any.
+/// Pointers of unknown origin passed to a call are not counted: they are
+/// as often opaque handles (a stream, a file, a communicator), and what the
+/// callee writes through memory it is not visibly given cannot be seen here
+/// in any case; that is what __enzyme_ptr_size_hint is for.
 static Instruction *getWrittenArgs(Function *step,
                                    SmallPtrSetImpl<Argument *> &written) {
   Instruction *unknown = nullptr;
-  auto note = [&](Value *ptr, Instruction *I) {
+  auto note = [&](Value *ptr, Instruction *I, bool direct = true) {
     Value *base = getBaseObject(ptr);
     if (auto *A = dyn_cast<Argument>(base))
       written.insert(A);
-    else if (!isa<GlobalVariable>(base) && !isa<AllocaInst>(base) &&
-             !unknown)
+    // A function (a kernel launched, a callback) is not memory written.
+    else if (direct && !isa<GlobalVariable>(base) &&
+             !isa<AllocaInst>(base) && !isa<Function>(base) &&
+             !isa<ConstantPointerNull>(base) && !unknown)
       unknown = I;
   };
   for (Instruction &I : instructions(step)) {
@@ -489,10 +497,42 @@ static Instruction *getWrittenArgs(Function *step,
       for (unsigned i = 0; i < CB->arg_size(); i++)
         if (CB->getArgOperand(i)->getType()->isPointerTy() &&
             !CB->onlyReadsMemory(i))
-          note(CB->getArgOperand(i), &I);
+          note(CB->getArgOperand(i), &I, /*direct*/ false);
     }
   }
   return unknown;
+}
+
+static bool isPtrSizeHint(const Function *F) {
+  return F && F->getName().contains("__enzyme_ptr_size_hint");
+}
+
+/// The object `V` points into, its size and its memory space from a call
+/// `__enzyme_ptr_size_hint(ptr, bytes[, space])` in front of `IP`, as
+/// Enzyme-MLIR reads it: the extent of an allocation Enzyme did not see made,
+/// and the memory space it really is in (a cudaMalloc'ed buffer is a plain
+/// pointer).
+static std::optional<std::tuple<Value *, Value *, unsigned>>
+getSizeHint(Value *V, Instruction *IP, DominatorTree &DT) {
+  Value *base = getBaseObject(V);
+  for (Instruction &I : instructions(*IP->getFunction())) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    if (!CI || !isPtrSizeHint(getFunctionFromCall(CI)) || CI->arg_size() < 2 ||
+        getBaseObject(CI->getArgOperand(0)) != base || !DT.dominates(CI, IP))
+      continue;
+    unsigned space = 0;
+    if (CI->arg_size() > 2) {
+      auto *C = dyn_cast<ConstantInt>(CI->getArgOperand(2));
+      if (!C)
+        continue;
+      space = C->getZExtValue();
+    }
+    IRBuilder<> B(IP);
+    return std::make_tuple(
+        CI->getArgOperand(0),
+        B.CreateZExtOrTrunc(CI->getArgOperand(1), B.getInt64Ty()), space);
+  }
+  return {};
 }
 
 /// Outline the loop around the annotation `marker` into a checkpointed loop.
@@ -722,18 +762,25 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   // What a snapshot holds besides the globals.
   SmallPtrSet<Argument *, 8> written;
   if (Instruction *I = getWrittenArgs(step, written)) {
-    (void)I;
+    std::string inst;
+    raw_string_ostream ss(inst);
+    ss << *I;
     step->eraseFromParent();
     return fail("a checkpointed loop writes through a pointer it loads from "
-                "memory, whose extent is not known; give the regions with "
-                "__enzyme_checkpoint_for");
+                "memory, whose extent is not known (" + ss.str() +
+                "); give the regions with __enzyme_checkpoint_for");
   }
-  SmallVector<std::pair<Value *, Value *>, 4> regions;
+  SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions;
   SmallPtrSet<Value *, 4> seen;
   for (auto [i, V] : enumerate(liveins)) {
     if (!V->getType()->isPointerTy())
       continue;
     bool w = written.count(step->getArg(i + 1));
+    if (auto hint = getSizeHint(V, IP, DT)) {
+      if (seen.insert(getBaseObject(V)).second)
+        regions.push_back(*hint);
+      continue;
+    }
     auto alloc = getKnownAllocation(V, IP, DT);
     if (!alloc) {
       if (w) {
@@ -742,15 +789,16 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
         V->printAsOperand(ss, false);
         step->eraseFromParent();
         return fail("a checkpointed loop writes through " + ss.str() +
-                    ", whose extent is not known before it; give the "
-                    "regions with __enzyme_checkpoint_for");
+                    ", whose extent is not known before it; give it with "
+                    "__enzyme_ptr_size_hint, or the regions with "
+                    "__enzyme_checkpoint_for");
       }
       continue;
     }
     // Stack slots always: they are the loop's own state.
     if ((w || isa<AllocaInst>(alloc->first)) &&
         seen.insert(alloc->first).second)
-      regions.push_back(*alloc);
+      regions.push_back({alloc->first, alloc->second, 0});
   }
 
   // The scheme: the reference one of enzyme/checkpoint.h if it is here, or
@@ -765,12 +813,20 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
          G.getName().ends_with(table)))
       vt = &G;
   if (!vt) {
-    auto *call = B.CreateCall(
-        M.getOrInsertFunction("__enzyme_checkpoint_builtin",
-                              FunctionType::get(Ptr, {I64}, false)),
-        {ConstantInt::get(I64, mode)});
-    // The scheme carries no derivative.
+    FunctionCallee builtin = M.getOrInsertFunction(
+        "__enzyme_checkpoint_builtin", FunctionType::get(Ptr, {I64}, false));
+    // The scheme carries no derivative, wherever it is defined, and the call
+    // only returns the address of a constant table.
+    if (auto *F = dyn_cast<Function>(builtin.getCallee())) {
+      F->addFnAttr(Attribute::get(Ctx, "enzyme_inactive"));
+      F->addFnAttr(Attribute::get(Ctx, "enzyme_no_escaping_allocation"));
+      F->setDoesNotAccessMemory();
+      F->setDoesNotThrow();
+      F->setWillReturn();
+    }
+    auto *call = B.CreateCall(builtin, {ConstantInt::get(I64, mode)});
     call->addFnAttr(Attribute::get(Ctx, "enzyme_inactive"));
+    call->setDoesNotAccessMemory();
     call->setMetadata("enzyme_inactive", MDNode::get(Ctx, {}));
     vt = call;
   }
@@ -801,15 +857,21 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
 
   SmallVector<Type *, 4> regionTypes;
   SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), nsteps, vt, cfg};
-  for (auto &R : regions) {
-    regionTypes.push_back(R.first->getType());
-    args.push_back(R.first);
-    args.push_back(R.second);
+  std::string spaces;
+  bool device = false;
+  for (auto &[ptr, bytes, space] : regions) {
+    regionTypes.push_back(ptr->getType());
+    args.push_back(ptr);
+    args.push_back(bytes);
+    spaces += (spaces.empty() ? "" : ",") + std::to_string(space);
+    device |= space != 0;
   }
   for (Value *V : liveins)
     args.push_back(V);
   Function *loop = createLoopFunction(M, step, regionTypes, vt->getType(),
                                       cfg->getType(), /*isWhile*/ false);
+  if (device)
+    loop->addFnAttr(CheckpointRegionSpacesAttr, spaces);
   B.CreateCall(loop, args)->setDebugLoc(loc);
 
   // The loop is now the call.
@@ -846,6 +908,14 @@ static bool outlineAnnotatedLoops(Module &M) {
 
 bool lowerCheckpointMarkers(Module &M) {
   bool annotated = outlineAnnotatedLoops(M);
+  // The size hints have been read; they have no run-time effect.
+  for (Function &F : M)
+    for (Instruction &I : make_early_inc_range(instructions(F)))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (isPtrSizeHint(getFunctionFromCall(CI))) {
+          CI->eraseFromParent();
+          annotated = true;
+        }
   SmallVector<std::pair<CallInst *, bool>, 4> calls;
   for (Function &F : M)
     for (Instruction &I : instructions(F))
@@ -1841,10 +1911,24 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
                    DL.getTypeAllocSize(tableTy));
     bytes = ConstantInt::get(T.I64, globalBytes);
   }
+  // The memory space of a marked region is its pointer's, unless the loop
+  // says otherwise (a device buffer behind a plain host pointer, from
+  // __enzyme_ptr_size_hint).
+  SmallVector<unsigned, 4> spaces;
+  if (loop->hasFnAttribute(CheckpointRegionSpacesAttr)) {
+    SmallVector<StringRef, 4> parts;
+    loop->getFnAttribute(CheckpointRegionSpacesAttr)
+        .getValueAsString()
+        .split(parts, ',');
+    for (StringRef part : parts)
+      spaces.push_back(std::stoul(part.str()));
+  }
   for (unsigned r = 0; r < nmarked; r++) {
     Value *ptr = primals[LoopFixedParams + 2 * r];
     Value *size = primals[LoopFixedParams + 2 * r + 1];
-    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+    unsigned AS = r < spaces.size()
+                      ? spaces[r]
+                      : cast<PointerType>(ptr->getType())->getAddressSpace();
     Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
     B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
                   B.CreateStructGEP(T.Region, slot, 0));

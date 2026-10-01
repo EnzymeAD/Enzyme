@@ -10,7 +10,9 @@
 // scalar carried from one iteration to the next. The gradient and the value
 // must be those of the same loop without the annotation, for every mode,
 // including the default (periodic, with the square root of the number of
-// steps as the budget).
+// steps as the budget). The loop of `hinted` writes through a pointer
+// argument, whose extent __enzyme_ptr_size_hint gives, and is annotated with
+// the GNU spelling, as in Enzyme-GPU-Tests' LBM.
 
 #include <enzyme/checkpoint.h>
 #include <math.h>
@@ -57,6 +59,50 @@ double g;
   }
 
 RUN(plain, )
+
+#ifdef CXX
+extern "C" void __enzyme_ptr_size_hint(void *, size_t, size_t);
+#else
+void __enzyme_ptr_size_hint(void *, size_t, size_t);
+#endif
+
+// The state behind a pointer argument: the caller's array.
+__attribute__((noinline)) static void hinted_loop(double *u, long n) {
+  double acc = 0;
+  __enzyme_ptr_size_hint(u, N * sizeof(double), 0);
+  __attribute__((enzyme_checkpointing_enable("binomial", 3)))
+  for (long i = 0; i < n; i++) BODY
+  u[0] += acc;
+}
+__attribute__((noinline)) double hinted(const double *x, long n) {
+  double *u = (double *)malloc(N * sizeof(double));
+  for (int k = 0; k < N; k++)
+    u[k] = x[k];
+  g = 0.5;
+  hinted_loop(u, n);
+  double r = g;
+  for (int k = 0; k < N; k++)
+    r += u[k] * u[k];
+  free(u);
+  return r;
+}
+__attribute__((noinline)) static void plain_hinted_loop(double *u, long n) {
+  double acc = 0;
+  for (long i = 0; i < n; i++) BODY
+  u[0] += acc;
+}
+__attribute__((noinline)) double plain_hinted(const double *x, long n) {
+  double *u = (double *)malloc(N * sizeof(double));
+  for (int k = 0; k < N; k++)
+    u[k] = x[k];
+  g = 0.5;
+  plain_hinted_loop(u, n);
+  double r = g;
+  for (int k = 0; k < N; k++)
+    r += u[k] * u[k];
+  free(u);
+  return r;
+}
 RUN(binomial, CKPT("binomial", 2))
 RUN(regular, CKPT("regular", 3))
 RUN(dflt, CKPT0)
@@ -71,6 +117,8 @@ GRAD(plain)
 GRAD(binomial)
 GRAD(regular)
 GRAD(dflt)
+GRAD(hinted)
+GRAD(plain_hinted)
 typedef double (*fn)(const double *, long);
 typedef void (*gfn)(long, double *);
 
@@ -80,6 +128,22 @@ int main(void) {
   gfn gs[] = {grad_binomial, grad_regular, grad_dflt};
   const char *names[] = {"binomial", "regular", "default"};
   int failures = 0;
+  for (unsigned a = 0; a < 5; a++) {
+    double x[N] = {0.3, 0.7, 1.1, 1.5};
+    double want[N], got[N];
+    if (hinted(x, steps[a]) != plain_hinted(x, steps[a])) {
+      printf("hinted n=%ld: primal differs\n", steps[a]);
+      failures++;
+    }
+    grad_plain_hinted(steps[a], want);
+    grad_hinted(steps[a], got);
+    for (int k = 0; k < N; k++)
+      if (!(fabs(got[k] - want[k]) <= 1e-12 * (fabs(want[k]) + 1e-300))) {
+        printf("hinted n=%ld: dx[%d] = %.17g, expected %.17g\n", steps[a], k,
+               got[k], want[k]);
+        failures++;
+      }
+  }
   for (unsigned a = 0; a < 5; a++) {
     double want[N], got[N];
     double x[N] = {0.3, 0.7, 1.1, 1.5};

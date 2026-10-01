@@ -24,4 +24,4 @@ exit:
   ret void
 }
 
-; CHECK: a checkpointed loop writes through %p, whose extent is not known before it; give the regions with __enzyme_checkpoint_for
+; CHECK: a checkpointed loop writes through %p, whose extent is not known before it; give it with __enzyme_ptr_size_hint, or the regions with __enzyme_checkpoint_for

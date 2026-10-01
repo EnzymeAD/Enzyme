@@ -212,6 +212,43 @@ static inline void enzyme_ckpt_store_init(enzyme_ckpt_store *st,
   st->config = config;
 }
 
+/* A region in an address space other than 0 is device memory, which the
+ * store copies to and from host memory with enzyme_ckpt_device_copy: with
+ * ENZYME_CKPT_CUDA defined where the schemes are compiled, cudaMemcpy. */
+#ifdef ENZYME_CKPT_CUDA
+#include <cuda_runtime_api.h>
+static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
+                                           uint64_t bytes) {
+  if (cudaMemcpy(dst, src, bytes, cudaMemcpyDefault) != cudaSuccess)
+    enzyme_ckpt_fail("cudaMemcpy of a snapshot failed");
+}
+#else
+static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
+                                           uint64_t bytes) {
+  (void)dst;
+  (void)src;
+  (void)bytes;
+  enzyme_ckpt_fail("snapshots of device memory need the schemes compiled "
+                   "with ENZYME_CKPT_CUDA");
+}
+#endif
+
+static inline void enzyme_ckpt_copy_out(void *dst,
+                                        const EnzymeCkptRegion *region) {
+  if (region->addrspace)
+    enzyme_ckpt_device_copy(dst, region->ptr, region->bytes);
+  else
+    memcpy(dst, region->ptr, region->bytes);
+}
+
+static inline void enzyme_ckpt_copy_in(const EnzymeCkptRegion *region,
+                                       const void *src) {
+  if (region->addrspace)
+    enzyme_ckpt_device_copy(region->ptr, src, region->bytes);
+  else
+    memcpy(region->ptr, src, region->bytes);
+}
+
 static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
@@ -229,9 +266,6 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
       st->slots[i] = NULL;
     st->nslots = n;
   }
-  for (r = 0; r < nregions; r++)
-    if (regions[r].addrspace != 0)
-      enzyme_ckpt_fail("reference store only handles address space 0");
   fresh = st->slots[idx] == NULL;
   if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
@@ -240,16 +274,24 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
     f = fopen(path, "wb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
-    for (r = 0; r < nregions; r++)
-      if (fwrite(regions[r].ptr, 1, regions[r].bytes, f) != regions[r].bytes)
+    for (r = 0; r < nregions; r++) {
+      void *buf = regions[r].ptr;
+      if (regions[r].addrspace) {
+        buf = malloc(regions[r].bytes ? regions[r].bytes : 1);
+        enzyme_ckpt_copy_out(buf, &regions[r]);
+      }
+      if (fwrite(buf, 1, regions[r].bytes, f) != regions[r].bytes)
         enzyme_ckpt_fail("short write to spill file");
+      if (buf != regions[r].ptr)
+        free(buf);
+    }
     fclose(f);
     st->slots[idx] = (void *)1;
   } else {
     if (!st->slots[idx])
       st->slots[idx] = malloc(st->bytes ? st->bytes : 1);
     for (r = 0; r < nregions; r++) {
-      memcpy((char *)st->slots[idx] + off, regions[r].ptr, regions[r].bytes);
+      enzyme_ckpt_copy_out((char *)st->slots[idx] + off, &regions[r]);
       off += regions[r].bytes;
     }
   }
@@ -280,13 +322,21 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
     f = fopen(path, "rb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
-    for (r = 0; r < nregions; r++)
-      if (fread(regions[r].ptr, 1, regions[r].bytes, f) != regions[r].bytes)
+    for (r = 0; r < nregions; r++) {
+      void *buf = regions[r].addrspace
+                      ? malloc(regions[r].bytes ? regions[r].bytes : 1)
+                      : regions[r].ptr;
+      if (fread(buf, 1, regions[r].bytes, f) != regions[r].bytes)
         enzyme_ckpt_fail("short read from spill file");
+      if (buf != regions[r].ptr) {
+        enzyme_ckpt_copy_in(&regions[r], buf);
+        free(buf);
+      }
+    }
     fclose(f);
   } else {
     for (r = 0; r < nregions; r++) {
-      memcpy(regions[r].ptr, (char *)st->slots[idx] + off, regions[r].bytes);
+      enzyme_ckpt_copy_in(&regions[r], (char *)st->slots[idx] + off);
       off += regions[r].bytes;
     }
   }
