@@ -4756,6 +4756,16 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   llvm_unreachable("unknown constant to create shadow of");
 }
 
+DIFFE_TYPE GradientUtils::getCallArgDiffeType(CallBase &call, unsigned i,
+                                              bool foreignFunction) const {
+  if (foreignFunction && EnzymeSeparateCompilation)
+    if (auto F = getFunctionFromCall(&call))
+      if (usesExternalDerivative(F, TLI) &&
+          F->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+        return DIFFE_TYPE::CONSTANT;
+  return getDiffeType(call.getArgOperand(i), foreignFunction);
+}
+
 bool GradientUtils::usesExternalDerivative(Function *F,
                                            TargetLibraryInfo &TLI) {
   if (!EnzymeSeparateCompilation)
@@ -4820,6 +4830,20 @@ std::string GradientUtils::externalShadowName(Function *F, DerivativeMode mode,
                  mode == DerivativeMode::ReverseModePrimal;
   if (AtomicAdd && reverse)
     name += "_aa";
+  // Parameters declared inactive get no shadow; which ones is part of the
+  // calling convention: _c<hex mask of their indices, lowest first>.
+  std::string mask;
+  for (unsigned i = 0, e = F->arg_size(); i < e; i += 4) {
+    unsigned nibble = 0;
+    for (unsigned j = 0; j < 4 && i + j < e; ++j)
+      if (F->getAttributes().hasParamAttr(i + j, "enzyme_inactive"))
+        nibble |= 1u << j;
+    mask += "0123456789abcdef"[nibble];
+  }
+  while (!mask.empty() && mask.back() == '0')
+    mask.pop_back();
+  if (!mask.empty())
+    name += "_c" + mask;
   name += "_";
   name += F->getName();
   return name;
@@ -4944,7 +4968,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     type_args.KnownValues.insert(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
     DIFFE_TYPE typ;
-    if (a.getType()->isFPOrFPVectorTy()) {
+    if (exportShadow &&
+        fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_inactive")) {
+      typ = DIFFE_TYPE::CONSTANT;
+    } else if (a.getType()->isFPOrFPVectorTy()) {
       typ = (mode == DerivativeMode::ForwardMode ||
              mode == DerivativeMode::ForwardModeError)
                 ? DIFFE_TYPE::DUP_ARG

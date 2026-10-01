@@ -144,6 +144,13 @@ llvm::cl::opt<bool> EnzymeExportStrongZero(
     cl::desc("With -enzyme-export-derivatives, also export the strong-zero "
              "(_sz) variant of every exported derivative"));
 
+llvm::cl::opt<std::string> EnzymeInactiveParams(
+    "enzyme-inactive-params", cl::init(""), cl::Hidden,
+    cl::desc("File of \"<function> <i>,<j>,...\" lines: mark these "
+             "parameters \"enzyme_inactive\" wherever the function is "
+             "defined or declared (a whole-program plan for separate "
+             "compilation, so that every module agrees)"));
+
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
     cl::desc("Only export functions listed in this file, one per line, each "
@@ -2885,8 +2892,38 @@ public:
     return true;
   }
 
+  /// -enzyme-inactive-params: parameters known (from a whole-program plan)
+  /// never to carry derivatives.
+  void applyInactiveParams(Module &M) {
+    if (EnzymeInactiveParams.empty())
+      return;
+    auto buf = MemoryBuffer::getFile(EnzymeInactiveParams);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-inactive-params file ") +
+                         EnzymeInactiveParams);
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines) {
+      auto [name, idxs] = line.trim().split(' ');
+      auto F = M.getFunction(name);
+      if (!F)
+        continue;
+      SmallVector<StringRef, 8> parts;
+      idxs.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        unsigned i;
+        if (part.trim().getAsInteger(10, i) || i >= F->arg_size())
+          report_fatal_error(Twine("bad parameter index in "
+                                   "-enzyme-inactive-params for ") +
+                             name + ": " + part);
+        F->addParamAttr(i, Attribute::get(F->getContext(), "enzyme_inactive"));
+      }
+    }
+  }
+
   bool run(Module &M) {
     Logic.clear();
+    applyInactiveParams(M);
 
     for (Function &F : make_early_inc_range(M)) {
       attributeKnownFunctions(F);

@@ -807,10 +807,17 @@ bool legalCombinedForwardReverse(
 std::pair<llvm::SmallVector<llvm::Type *, 4>,
           llvm::SmallVector<llvm::Type *, 4>>
 getDefaultFunctionTypeForAugmentation(llvm::FunctionType *called,
-                                      bool returnUsed, DIFFE_TYPE retType);
+                                      bool returnUsed, DIFFE_TYPE retType,
+                                      llvm::ArrayRef<DIFFE_TYPE> tys = {});
 
 std::pair<llvm::SmallVector<llvm::Type *, 4>,
           llvm::SmallVector<llvm::Type *, 4>>
 getDefaultFunctionTypeForGradient(llvm::FunctionType *called,
                                   DIFFE_TYPE retType);
+
+std::pair<llvm::SmallVector<llvm::Type *, 4>,
+          llvm::SmallVector<llvm::Type *, 4>>
+getDefaultFunctionTypeForGradient(llvm::FunctionType *called,
+                                  DIFFE_TYPE retType,
+                                  llvm::ArrayRef<DIFFE_TYPE> tys);
 #endif
