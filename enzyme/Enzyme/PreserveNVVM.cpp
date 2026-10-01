@@ -242,6 +242,7 @@ template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        SmallVectorImpl<GlobalVariable *> &globalsToErase,
+                       SmallVectorImpl<GlobalValue *> &declaredRules,
                        bool PreserveCustomRuleLinkage) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
@@ -276,6 +277,15 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
             llvm_unreachable(handlername);
           }
         }
+
+        // A rule that is only declared here (defined in another translation
+        // unit, e.g. a Fortran module procedure) is referenced only by the
+        // metadata below once the registration is erased, so it would be
+        // removed as a dead prototype before the derivatives that call it
+        // exist, leaving the metadata dangling.
+        for (size_t i = 1; i < numargs; i++)
+          if (Fs[i]->isDeclaration())
+            declaredRules.push_back(Fs[i]);
 
         SmallSet<size_t, 1> byref;
 
@@ -802,23 +812,24 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
   SmallVector<GlobalVariable *, 1> toErase;
-  // Globals and shadows registered by __enzyme_shadow_global.
+  // Globals and shadows registered by __enzyme_shadow_global, and custom
+  // rules that are only declared, which must survive until Enzyme runs.
   SmallVector<GlobalValue *, 1> declaredShadows;
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
                              DerivativeMode::ReverseModeGradient, 3>(
-          M, g, toErase, PreserveCustomRuleLinkage);
+          M, g, toErase, declaredShadows, PreserveCustomRuleLinkage);
       changed = true;
     } else if (g.getName().contains(derivative_handler_name)) {
       handleCustomDerivative<derivative_handler_name,
                              DerivativeMode::ForwardMode, 2>(
-          M, g, toErase, PreserveCustomRuleLinkage);
+          M, g, toErase, declaredShadows, PreserveCustomRuleLinkage);
       changed = true;
     } else if (g.getName().contains(splitderivative_handler_name)) {
       handleCustomDerivative<splitderivative_handler_name,
                              DerivativeMode::ForwardModeSplit, 3>(
-          M, g, toErase, PreserveCustomRuleLinkage);
+          M, g, toErase, declaredShadows, PreserveCustomRuleLinkage);
       changed = true;
     }
     if (g.getName().contains("__enzyme_shadow_global")) {

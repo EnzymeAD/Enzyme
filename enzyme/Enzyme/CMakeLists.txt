@@ -346,3 +346,7 @@ endif()
 if(ENZYME_MLIR)
   add_subdirectory(MLIR)
 endif()
+
+if(ENZYME_FLANG_DIRECTIVES)
+  add_subdirectory(FlangDirectives)
+endif()
