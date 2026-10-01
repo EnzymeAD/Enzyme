@@ -125,48 +125,12 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
-/// Whether the address of V may be stored to memory or otherwise escape, and
-/// so may be read back as a pointer loaded from memory.
-static bool mayBeCaptured(const Value *V) {
-  SmallVector<const Value *, 4> todo = {V};
-  SmallPtrSet<const Value *, 4> seen;
-  while (!todo.empty()) {
-    auto cur = todo.pop_back_val();
-    if (!seen.insert(cur).second)
-      continue;
-    for (auto &U : cur->uses()) {
-      auto I = dyn_cast<Instruction>(U.getUser());
-      if (!I)
-        return true;
-      if (isa<LoadInst>(I) || isa<ICmpInst>(I))
-        continue;
-      if (auto SI = dyn_cast<StoreInst>(I)) {
-        if (SI->getValueOperand() == cur)
-          return true;
-        continue;
-      }
-      if (isa<GetElementPtrInst>(I) || isa<CastInst>(I) || isa<PHINode>(I) ||
-          isa<SelectInst>(I)) {
-        todo.push_back(I);
-        continue;
-      }
-      if (auto CB = dyn_cast<CallBase>(I)) {
-        if (CB->isArgOperand(&U) && isNoCapture(CB, CB->getArgOperandNo(&U)))
-          continue;
-        if (auto II = dyn_cast<IntrinsicInst>(I))
-          if (II->isLifetimeStartOrEnd())
-            continue;
-      }
-      return true;
-    }
-  }
-  return false;
-}
-
-/// Whether I only writes to memory local to this function (an alloca or a
-/// noalias argument) whose address is never captured. No pointer loaded from
-/// memory can point to such memory.
-static bool writesOnlyUncapturedLocalMemory(Instruction *I) {
+/// Whether I writes only to memory local to this function (an alloca, an
+/// allocation made here, or a noalias argument) whose address is never
+/// captured, or does not write at all (a lifetime marker). No pointer loaded
+/// from memory can point to such memory.
+static bool writesOnlyUncapturedLocalMemory(Instruction *I,
+                                            TargetLibraryInfo &TLI) {
   Value *ptr = nullptr;
   if (auto SI = dyn_cast<StoreInst>(I)) {
     ptr = SI->getPointerOperand();
@@ -174,8 +138,8 @@ static bool writesOnlyUncapturedLocalMemory(Instruction *I) {
     switch (II->getIntrinsicID()) {
     case Intrinsic::lifetime_start:
     case Intrinsic::lifetime_end:
-      ptr = II->getArgOperand(II->arg_size() - 1);
-      break;
+      // Marks the memory's lifetime without writing anything into it.
+      return true;
     case Intrinsic::memset:
     case Intrinsic::memcpy:
     case Intrinsic::memmove:
@@ -188,10 +152,10 @@ static bool writesOnlyUncapturedLocalMemory(Instruction *I) {
   if (!ptr)
     return false;
   auto obj = getBaseObject(ptr);
-  if (isa<AllocaInst>(obj))
-    return !mayBeCaptured(obj);
+  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
+    return notCaptured(obj, &TLI);
   if (auto arg = dyn_cast<Argument>(obj))
-    return arg->hasNoAliasAttr() && !mayBeCaptured(arg);
+    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
   return false;
 }
 
@@ -684,7 +648,7 @@ struct CacheAnalysis {
       // A write to uncaptured local memory is not an unknown write: the callee
       // can only reach that memory through an argument, which is marked
       // overwritten below.
-      if (!writesOnlyUncapturedLocalMemory(inst2))
+      if (!writesOnlyUncapturedLocalMemory(inst2, TLI))
         next_subsequent_inst_may_write = true;
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
