@@ -4,12 +4,15 @@
 ! every offset (an array); a descriptor field by field; by value, the scalar.
 ! Module procedures get them also where only declared (as in a unit that uses
 ! the module), external procedures only where defined (a declaration may come
-! from an implicit interface). Polymorphic, assumed-type and assumed-rank
-! dummies, derived types and CHARACTER descriptors are left alone.
+! from an implicit interface). A CHARACTER dummy is character data, its hidden
+! length an Integer. Polymorphic, assumed-type and assumed-rank dummies and
+! derived types are left alone.
 !
 ! REQUIRES: flang_directives
 ! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s
 ! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
+! The other annotations off, these on:
+! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-common-types=false -mmlir -enzyme-fir-runtime-types=false -mmlir -enzyme-fir-literal-types=false -O0 -emit-llvm %s -o - | FileCheck %s
 
 ! OFF-NOT: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}"
 
@@ -25,9 +28,9 @@ contains
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float}" %1,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Integer}" %2,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Integer}" %3,
-! CHECK-SAME: ptr noalias %4,
+! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}" %4,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" %5,
-! CHECK-SAME: i64 %6)
+! CHECK-SAME: i64 "enzyme_type"="{[-1]:Integer}" %6)
   subroutine scalars(x8, x4, i, l, c, z)
     real(8) :: x8
     real(4) :: x4

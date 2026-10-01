@@ -39,7 +39,8 @@ namespace {
 static llvm::cl::opt<bool> typeAnnotations(
     "enzyme-fir-type-annotations", llvm::cl::init(true),
     llvm::cl::desc("Carry the Fortran types that LLVM IR erases to LLVM "
-                   "Enzyme's type analysis"));
+                   "Enzyme's type analysis (all kinds; each kind has its own "
+                   "-enzyme-fir-{arg,common,runtime,literal}-types)"));
 
 // The !DIR$ ENZYME directives (see FortranDirectives.cpp).
 static void registerEnzymeDirectives() {

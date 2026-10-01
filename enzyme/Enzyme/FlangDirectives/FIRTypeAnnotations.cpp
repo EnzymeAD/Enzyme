@@ -143,6 +143,8 @@ static llvm::MDNode *typeTreeToMD(const TypePaths &tree,
 constexpr StringLiteral kTypeAttr = "enzyme.type";
 constexpr StringLiteral kArgTypesAttr = "enzyme.arg_types";
 constexpr StringLiteral kRetTypeAttr = "enzyme.ret_type";
+// How many CHARACTER lengths a function takes after its other arguments.
+constexpr StringLiteral kCharLengthsAttr = "enzyme.char_lengths";
 
 struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
@@ -178,6 +180,22 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
         if (!f->getReturnType()->isVoidTy())
           f->addRetAttr(llvm::Attribute::get(f->getContext(), "enzyme_type",
                                              str.getValue()));
+      return success();
+    }
+    if (attribute.getName() == kCharLengthsAttr) {
+      auto n = dyn_cast<IntegerAttr>(attribute.getValue());
+      auto fn = dyn_cast<LLVM::LLVMFuncOp>(op);
+      llvm::Function *f =
+          fn ? moduleTranslation.lookupFunction(fn.getName()) : nullptr;
+      if (!n || !f)
+        return success();
+      unsigned count = n.getInt();
+      for (unsigned i = f->arg_size() - std::min<unsigned>(count, f->arg_size());
+           i < f->arg_size(); ++i)
+        if (f->getArg(i)->getType()->isIntegerTy())
+          f->addParamAttr(i, llvm::Attribute::get(f->getContext(),
+                                                  "enzyme_type",
+                                                  "{[-1]:Integer}"));
       return success();
     }
     if (attribute.getName() != kTypeAttr)
@@ -450,10 +468,24 @@ static constexpr int64_t kLayoutBudget = 1 << 14;
 // stay unannotated.
 static constexpr int64_t kMaxTypeOffset = 500;
 
+// What to annotate, each on its own (all of it with
+// -enzyme-fir-type-annotations, see FlangDirectivesPlugin.cpp).
 static llvm::cl::opt<bool> annotateProcArgs(
     "enzyme-fir-arg-types", llvm::cl::init(true),
     llvm::cl::desc("Annotate the arguments and results of procedures with "
                    "their Fortran types for LLVM Enzyme (enzyme_type)"));
+static llvm::cl::opt<bool> annotateCommon(
+    "enzyme-fir-common-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate COMMON blocks with the types of their members "
+                   "for LLVM Enzyme (!enzyme_type)"));
+static llvm::cl::opt<bool> annotateRuntimeCalls(
+    "enzyme-fir-runtime-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate the arguments of calls to the flang runtime "
+                   "with their Fortran types for LLVM Enzyme (enzyme_type)"));
+static llvm::cl::opt<bool> annotateLiterals(
+    "enzyme-fir-literal-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate character literals as character data for LLVM "
+                   "Enzyme (!enzyme_type)"));
 
 struct FIRTypeAnnotationsPass
     : public PassWrapper<FIRTypeAnnotationsPass, OperationPass<ModuleOp>> {
@@ -495,6 +527,8 @@ struct FIRTypeAnnotationsPass
     };
     std::map<Operation *, Layout> layouts;
     module.walk([&](fir::FortranVariableStorageOpInterface decl) {
+      if (!annotateCommon)
+        return;
       Value storage = decl.getStorage();
       if (!storage)
         return;
@@ -550,7 +584,7 @@ struct FIRTypeAnnotationsPass
     // descriptors, character data), which the runtime's C signatures erase.
     module.walk([&](fir::CallOp call) {
       auto callee = call.getCallee();
-      if (!callee ||
+      if (!annotateRuntimeCalls || !callee ||
           !callee->getLeafReference().getValue().starts_with("_Fortran"))
         return;
       SmallVector<Attribute> types;
@@ -583,11 +617,21 @@ struct FIRTypeAnnotationsPass
                  .second.modules.size())
           continue;
         FunctionType fty = fn.getFunctionType();
+        int64_t charLengths = 0;
         for (auto [i, ty] : llvm::enumerate(fty.getInputs())) {
-          std::string t = procArgType(ty, dl);
+          // A CHARACTER dummy: flang passes the address of the data (where
+          // the attribute moves with the argument) and its length after all
+          // other arguments.
+          std::string t = isa<fir::BoxCharType>(ty)
+                              ? std::string("{[-1]:Pointer, [-1,-1]:Integer}")
+                              : procArgType(ty, dl);
+          charLengths += isa<fir::BoxCharType>(ty);
           if (!t.empty() && !fn.getArgAttr(i, kTypeAttr))
             fn.setArgAttr(i, kTypeAttr, StringAttr::get(ctx, t));
         }
+        if (charLengths)
+          fn->setAttr(kCharLengthsAttr,
+                      IntegerAttr::get(IntegerType::get(ctx, 64), charLengths));
         if (fty.getNumResults() == 1) {
           std::string t = procArgType(fty.getResult(0), dl);
           if (!t.empty())
@@ -597,7 +641,7 @@ struct FIRTypeAnnotationsPass
 
     // Character literals: character data throughout.
     for (fir::GlobalOp global : module.getOps<fir::GlobalOp>())
-      if (isa<fir::CharacterType>(global.getType()) &&
+      if (annotateLiterals && isa<fir::CharacterType>(global.getType()) &&
           !global->hasAttr(kTypeAttr))
         global->setAttr(
             kTypeAttr, StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}"));
