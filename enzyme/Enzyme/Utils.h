@@ -1607,19 +1607,22 @@ llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
 
+// Whether a custom derivative was registered for the function or call through
+// metadata (__enzyme_register_derivative and friends).
+template <typename T> static inline bool hasCustomRuleMetadata(const T *V) {
+  return hasMetadata(V, "enzyme_augment") ||
+         hasMetadata(V, "enzyme_gradient") ||
+         hasMetadata(V, "enzyme_derivative") ||
+         hasMetadata(V, "enzyme_splitderivative");
+}
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
 
-  if (CI->hasFnAttr("enzyme_preserve_primal") ||
-      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
-      hasMetadata(CI, "enzyme_derivative") ||
-      hasMetadata(CI, "enzyme_splitderivative") ||
-      (F &&
-       (F->hasFnAttribute("enzyme_preserve_primal") ||
-        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
-        hasMetadata(F, "enzyme_derivative") ||
-        hasMetadata(F, "enzyme_splitderivative"))) ||
+  if (CI->hasFnAttr("enzyme_preserve_primal") || hasCustomRuleMetadata(CI) ||
+      (F && (F->hasFnAttribute("enzyme_preserve_primal") ||
+             hasCustomRuleMetadata(F))) ||
       !F) {
     return true;
   }
