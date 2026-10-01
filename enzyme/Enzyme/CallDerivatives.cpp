@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
+#include "FlangRuntime.h"
 
 using namespace llvm;
 
@@ -2905,6 +2906,205 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
           };
           applyChainRule(Builder2, rule, shadowTo, shadowFrom);
+
+          eraseIfUnused(call);
+          return true;
+        }
+      }
+    }
+
+    // void _FortranAEtime(const Descriptor *values, const Descriptor *time,
+    //                     const char *sourceFile, int line)
+    // is LLVM flang's ETIME. Its results are inactive, but it overwrites the
+    // real(4) elements values(1:2) and time, whose shadow must then be zero:
+    // after the call in forward mode, and in the reverse pass.
+    if (funcName == "_FortranAEtime" && call.arg_size() == 4 &&
+        (!gutils->isConstantValue(call.getArgOperand(0)) ||
+         !gutils->isConstantValue(call.getArgOperand(1))) &&
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ReverseModePrimal ||
+         Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ReverseModeCombined)) {
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      Type *I8PtrTy = getInt8PtrTy(call.getContext());
+      Type *IdxTy = DL.getIntPtrType(call.getContext());
+      unsigned P = DL.getPointerSize();
+      // Offsets in a CFI descriptor: base_addr, and extent and sm of dim[0],
+      // which follows elem_len, version, rank, type, attribute and extra.
+      unsigned DimOff = 2 * P + 8;
+
+      // The shadow elements to zero, or null where the shadow is the primal
+      // or the element does not exist.
+      auto shadowElements = [&](IRBuilder<> &B) {
+        auto field = [&](Value *desc, Type *T, unsigned off) {
+          Value *p = B.CreatePointerCast(desc, I8PtrTy);
+          p = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), p, off);
+          return B.CreateLoad(T, B.CreatePointerCast(p, getUnqual(T)));
+        };
+        SmallVector<Value *, 6> elems;
+        for (unsigned i = 0; i < 2; ++i) {
+          Value *orig = call.getArgOperand(i);
+          if (gutils->isConstantValue(orig))
+            continue;
+          Value *desc = gutils->getNewFromOriginal(orig);
+          Value *sdescs = gutils->invertPointerM(orig, B);
+          Value *base = field(desc, I8PtrTy, 0);
+          for (unsigned w = 0; w < gutils->getWidth(); ++w) {
+            Value *sdesc = gutils->getWidth() == 1
+                               ? sdescs
+                               : gutils->extractMeta(B, sdescs, w);
+            Value *sbase = field(sdesc, I8PtrTy, 0);
+            Value *valid = B.CreateAnd(B.CreateICmpNE(sbase, base),
+                                       B.CreateIsNotNull(sbase));
+            auto add = [&](Value *cond, Value *addr) {
+              elems.push_back(B.CreateSelect(
+                  cond, addr, Constant::getNullValue(I8PtrTy)));
+            };
+            if (i == 1) {
+              add(valid, sbase);
+              continue;
+            }
+            Value *extent = field(desc, IdxTy, DimOff + P);
+            Value *sm = field(desc, IdxTy, DimOff + 2 * P);
+            add(B.CreateAnd(valid, B.CreateICmpSGE(
+                                       extent, ConstantInt::get(IdxTy, 1))),
+                sbase);
+            add(B.CreateAnd(valid, B.CreateICmpSGE(
+                                       extent, ConstantInt::get(IdxTy, 2))),
+                B.CreateInBoundsGEP(B.getInt8Ty(), sbase, sm));
+          }
+        }
+        return elems;
+      };
+      auto zero = [&](IRBuilder<> &B, Value *addr) {
+        auto VT = FixedVectorType::get(B.getFloatTy(), 1);
+        B.CreateMaskedStore(Constant::getNullValue(VT),
+                            B.CreatePointerCast(addr, getUnqual(VT)), Align(4),
+                            B.CreateVectorSplat(1, B.CreateIsNotNull(addr)));
+      };
+
+      if (Mode == DerivativeMode::ForwardMode) {
+        IRBuilder<> B(newCall->getNextNode());
+        for (auto addr : shadowElements(B))
+          zero(B, addr);
+        return true;
+      }
+
+      unsigned N = 0;
+      for (unsigned i = 0; i < 2; ++i)
+        if (!gutils->isConstantValue(call.getArgOperand(i)))
+          N += (i == 0 ? 2 : 1) * gutils->getWidth();
+      Type *TapeTy = ArrayType::get(I8PtrTy, N);
+      Value *tape;
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        tape = BuilderZ.CreatePHI(TapeTy, 0);
+      } else {
+        tape = UndefValue::get(TapeTy);
+        auto elems = shadowElements(BuilderZ);
+        for (unsigned i = 0; i < N; ++i)
+          tape = BuilderZ.CreateInsertValue(tape, elems[i], i);
+        if (auto I = dyn_cast<Instruction>(tape))
+          gutils->TapesToPreventRecomputation.insert(I);
+      }
+      tape = gutils->cacheForReverse(BuilderZ, tape,
+                                     getIndex(&call, CacheType::Tape, BuilderZ));
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        tape = lookup(tape, Builder2);
+        for (unsigned i = 0; i < N; ++i)
+          zero(Builder2, Builder2.CreateExtractValue(tape, i));
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return true;
+    }
+
+    // Other LLVM flang runtime functions acting on descriptors (allocation,
+    // pointer association, initialization, copies): the derivative is the
+    // same call on the shadow descriptors. Memory that the call allocates is
+    // zeroed in the shadow, and re-initialized for derived types, whose
+    // components hold descriptors.
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      if ((Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError) &&
+          !gutils->isConstantInstruction(&call)) {
+        SmallVector<int, 2> shadowed;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size() &&
+              !gutils->isConstantValue(call.getArgOperand(i)))
+            shadowed.push_back(i);
+        unsigned expected = 0;
+        for (int i : replay->shadowArgs)
+          if (i >= 0 && (unsigned)i < call.arg_size())
+            expected++;
+        // All descriptors inactive: nothing to replay, the primal call is all
+        // there is (e.g. allocating an inactive variable next to an active
+        // one in the same statement).
+        if (shadowed.empty())
+          return true;
+        // A copy from an inactive into an active descriptor would need the
+        // shadow to be zeroed rather than copied into: not handled.
+        if (shadowed.size() == expected) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          auto &M = *called->getParent();
+          auto &C = call.getContext();
+
+          SmallVector<Value *, 8> primalArgs;
+          for (auto &op : call.args())
+            primalArgs.push_back(gutils->getNewFromOriginal(op));
+          SmallVector<Value *, 2> shadows;
+          for (int i : shadowed)
+            shadows.push_back(
+                gutils->invertPointerM(call.getArgOperand(i), Builder2));
+
+          FunctionCallee sizeFn, initFn;
+          if (replay->allocates) {
+            auto I8Ptr = PointerType::getUnqual(C);
+            auto I32 = Type::getInt32Ty(C);
+            sizeFn = M.getOrInsertFunction(
+                "_FortranASize",
+                FunctionType::get(Type::getInt64Ty(C), {I8Ptr, I8Ptr, I32},
+                                  false));
+            initFn = M.getOrInsertFunction(
+                "_FortranAInitialize",
+                FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
+                                  false));
+          }
+
+          for (unsigned w = 0; w < gutils->getWidth(); w++) {
+            SmallVector<Value *, 8> args(primalArgs);
+            for (unsigned k = 0; k < shadowed.size(); k++)
+              args[shadowed[k]] =
+                  gutils->getWidth() > 1
+                      ? gutils->extractMeta(Builder2, shadows[k], w)
+                      : shadows[k];
+            auto dcall = Builder2.CreateCall(called->getFunctionType(),
+                                             called, args);
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+            dcall->setCallingConv(call.getCallingConv());
+
+            if (replay->allocates) {
+              // base_addr and elem_len lead every descriptor.
+              Value *desc = args[0];
+              auto nullp = ConstantPointerNull::get(PointerType::getUnqual(C));
+              auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
+              Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
+              Value *elemLen = Builder2.CreateLoad(
+                  Type::getInt64Ty(C),
+                  Builder2.CreateConstInBoundsGEP1_64(Type::getInt8Ty(C), desc,
+                                                      8));
+              Value *base =
+                  Builder2.CreateLoad(PointerType::getUnqual(C), desc);
+              Builder2.CreateMemSet(base, Builder2.getInt8(0),
+                                    Builder2.CreateMul(count, elemLen),
+                                    MaybeAlign());
+              Builder2.CreateCall(initFn, {desc, nullp, zero32});
+            }
+          }
 
           eraseIfUnused(call);
           return true;

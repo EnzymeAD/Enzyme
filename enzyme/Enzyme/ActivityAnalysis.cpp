@@ -229,6 +229,7 @@ bool isInactiveCall(CallBase &CI) {
   // clang-format off
 static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    "_FortranAio", // LLVM flang I/O
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -242,6 +243,28 @@ static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 static const StringSet<> KnownInactiveFunctions = {
+    // LLVM flang runtime: inquiries, character operations and termination
+    "_FortranASize",
+    "_FortranASizeDim",
+    "_FortranAIsContiguous",
+    "_FortranAPointerIsAssociated",
+    "_FortranAPointerIsAssociatedWith",
+    "_FortranAAllocatableCheckAllocated",
+    "_FortranAAllocatableCheckLengthParameter",
+    "_FortranAPointerCheckLengthParameter",
+    "_FortranAClassIs",
+    "_FortranASameTypeAs",
+    "_FortranAExtendsTypeOf",
+    "_FortranATrim",
+    "_FortranAIndex1",
+    "_FortranAAdjustl",
+    "_FortranAAdjustr",
+    "_FortranACharacterCompareScalar1",
+    "_FortranAStopStatement",
+    "_FortranAStopStatementText",
+    "_FortranAReportFatalUserError",
+    "_FortranAExit",
+    "_FortranAAbort",
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -374,6 +397,24 @@ static const StringSet<> KnownInactiveFunctions = {
     "__cudaPushCallConfiguration",
     "__cudaPopCallConfiguration",
     "cudaGetLastError",
+    // LLVM flang runtime: time
+    "_FortranACpuTime",
+    "_FortranADateAndTime",
+    // _FortranAEtime overwrites active memory, see CallDerivatives.cpp
+    "_FortranASystemClockCount",
+    "_FortranASystemClockCountRate",
+    "_FortranASystemClockCountMax",
+    "_FortranATimef",
+    // LLVM flang runtime: command line and environment
+    "_FortranAArgumentCount",
+    "_FortranAGetCommand",
+    "_FortranAGetCommandArgument",
+    "_FortranAGetEnvVariable",
+    "_FortranAGetCwd",
+    "_FortranAHostnm",
+    "_FortranAGetPID",
+    "_FortranAGetUID",
+    "_FortranAGetGID",
 };
 
 static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
