@@ -38,6 +38,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include "EnzymeSummary.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <optional>
@@ -139,8 +140,10 @@ llvm::cl::opt<bool> EnzymeExportStrongZero(
 
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
-    cl::desc("With -enzyme-export-derivatives, only export functions whose "
-             "names are listed (one per line) in this file"));
+    cl::desc("Only export functions listed in this file, one per line, each "
+             "optionally followed by the variants to export, e.g. "
+             "\"foo reverse,reverse+sz\" (default: those of "
+             "-enzyme-export-derivatives)"));
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -2762,7 +2765,43 @@ public:
     SmallVector<DerivativeMode, 3> allModes;
     parseModes(EnzymeExportDerivatives, allModes);
 
-    std::optional<StringSet<>> exportList;
+    // One variant of a derivative: the mode and the conventions it is built
+    // under (all part of the exported symbol's name).
+    struct Variant {
+      DerivativeMode mode;
+      bool strongZero = false;
+      bool runtimeActivity = false;
+      unsigned width = 1;
+    };
+    // A token is <mode>[+sz][+ra][+w<N>], e.g. "reverse+sz" or "forward+w2".
+    auto parseVariants = [&](StringRef str, SmallVectorImpl<Variant> &out) {
+      SmallVector<StringRef, 3> parts;
+      str.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        SmallVector<StringRef, 3> flags;
+        part.trim().split(flags, '+', -1, /*KeepEmpty*/ false);
+        if (flags.empty())
+          continue;
+        SmallVector<DerivativeMode, 1> mode;
+        parseModes(flags[0], mode);
+        Variant v{mode[0]};
+        for (auto flag : ArrayRef<StringRef>(flags).drop_front()) {
+          if (flag == "sz")
+            v.strongZero = true;
+          else if (flag == "ra")
+            v.runtimeActivity = true;
+          else if (!flag.starts_with("w") ||
+                   flag.drop_front().getAsInteger(10, v.width))
+            report_fatal_error(Twine("unknown derivative variant flag: ") +
+                               flag);
+        }
+        out.push_back(v);
+      }
+    };
+
+    // -enzyme-export-list: one function per line, optionally followed by the
+    // variants to export (otherwise those of -enzyme-export-derivatives).
+    std::optional<StringMap<SmallVector<Variant, 4>>> exportList;
     if (!EnzymeExportList.empty()) {
       auto buf = MemoryBuffer::getFile(EnzymeExportList);
       if (!buf)
@@ -2771,12 +2810,26 @@ public:
       exportList.emplace();
       SmallVector<StringRef, 32> lines;
       (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
-      for (auto line : lines)
-        if (!line.trim().empty())
-          exportList->insert(line.trim());
+      for (auto line : lines) {
+        line = line.trim();
+        if (line.empty())
+          continue;
+        auto [name, variants] = line.split(' ');
+        if (variants.empty())
+          std::tie(name, variants) = line.split('\t');
+        (*exportList)[name.trim()];
+        parseVariants(variants.trim(), (*exportList)[name.trim()]);
+      }
     }
 
-    SmallVector<std::pair<Function *, SmallVector<DerivativeMode, 3>>, 4> todo;
+    // Variants of -enzyme-export-derivatives (and -enzyme-export-strong-zero)
+    SmallVector<Variant, 4> defaultVariants;
+    for (auto mode : allModes)
+      for (bool strongZero : {false, true})
+        if (!strongZero || EnzymeExportStrongZero)
+          defaultVariants.push_back(Variant{mode, strongZero});
+
+    SmallVector<std::pair<Function *, SmallVector<Variant, 4>>, 4> todo;
     for (Function &F : M) {
       if (F.empty() || F.hasLocalLinkage() || F.hasAvailableExternallyLinkage())
         continue;
@@ -2790,31 +2843,39 @@ public:
           hasMetadata(&F, "enzyme_derivative") ||
           F.hasFnAttribute("enzyme_inactive"))
         continue;
-      SmallVector<DerivativeMode, 3> modes;
-      if (F.hasFnAttribute("enzyme_export_derivative"))
-        parseModes(
+      SmallVector<Variant, 4> variants;
+      if (F.hasFnAttribute("enzyme_export_derivative")) {
+        parseVariants(
             F.getFnAttribute("enzyme_export_derivative").getValueAsString(),
-            modes);
-      else if (!exportList || exportList->contains(F.getName()))
-        modes = allModes;
-      if (!modes.empty())
-        todo.emplace_back(&F, modes);
+            variants);
+        if (EnzymeExportStrongZero)
+          for (size_t i = 0, e = variants.size(); i < e; ++i)
+            if (!variants[i].strongZero) {
+              auto v = variants[i];
+              v.strongZero = true;
+              variants.push_back(v);
+            }
+      } else if (!exportList)
+        variants = defaultVariants;
+      else {
+        auto found = exportList->find(F.getName());
+        if (found != exportList->end())
+          variants = found->second.empty() ? defaultVariants : found->second;
+      }
+      if (!variants.empty())
+        todo.emplace_back(&F, variants);
     }
     if (todo.empty())
       return false;
 
     TypeAnalysis TA(Logic);
     bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
-    for (auto &[F, modes] : todo)
-      for (auto mode : modes)
-        for (bool strongZero : {false, true}) {
-          if (strongZero && !EnzymeExportStrongZero)
-            continue;
-          GradientUtils::GetOrCreateShadowFunction(
-              RequestContext(), Logic,
-              Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, mode,
-              /*runtimeActivity*/ false, strongZero, /*width*/ 1, AtomicAdd);
-        }
+    for (auto &[F, variants] : todo)
+      for (auto &v : variants)
+        GradientUtils::GetOrCreateShadowFunction(
+            RequestContext(), Logic,
+            Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, v.mode,
+            v.runtimeActivity, v.strongZero, v.width, AtomicAdd);
     return true;
   }
 
@@ -3593,6 +3654,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "enzyme-summary") {
+          MPM.addPass(EnzymeSummaryNewPM());
           return true;
         }
         if (Name == "preserve-nvvm-end") {
