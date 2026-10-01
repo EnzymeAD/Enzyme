@@ -8,9 +8,9 @@
 
 ! COMMON blocks: the type at each member offset, if the declares lay out all
 ! of the block and agree. /mixed/ is real at offset 0 in one subroutine and
-! integer in the other, and /bufs/ has a REAL*4 member beyond the layout
-! budget: they stay unknown (Enzyme would take the type known at many
-! offsets, REAL*8 for /bufs/, as the type of all of the block).
+! integer in the other, and /bufs/ is larger than the offsets Enzyme's type
+! analysis keeps (500 bytes): they stay unknown (Enzyme would take REAL*8,
+! the type it keeps for /bufs/, for all of the block).
 ! CHECK-DAG: @state_ = {{.*}}global [12 x i8] {{.*}}!enzyme_type ![[STATE:[0-9]+]]
 ! CHECK-DAG: ![[STATE]] = !{!"Unknown", i32 -1, ![[STATEP:[0-9]+]]}
 ! CHECK-DAG: ![[STATEP]] = !{!"Pointer", i32 0, ![[DBL:[0-9]+]], i32 8, ![[INT:[0-9]+]]}

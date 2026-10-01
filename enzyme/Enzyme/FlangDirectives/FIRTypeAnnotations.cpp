@@ -367,6 +367,12 @@ static Type originalType(Value v) {
 // stays unannotated rather than blowing up the metadata.
 static constexpr int64_t kLayoutBudget = 1 << 14;
 
+// Enzyme's type analysis drops offsets beyond -enzyme-max-type-offset
+// (default 500), and then takes the types it keeps for the whole block (e.g.
+// a REAL*8 array followed by a REAL*4 one all for REAL*8). Larger blocks
+// stay unannotated.
+static constexpr int64_t kMaxTypeOffset = 500;
+
 struct FIRTypeAnnotationsPass
     : public PassWrapper<FIRTypeAnnotationsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FIRTypeAnnotationsPass)
@@ -395,12 +401,10 @@ struct FIRTypeAnnotationsPass
 
     // COMMON (and other storage-associated) globals: the member layout from
     // every declare naming the global as its storage.
-    // The layout is all or nothing: Enzyme's type analysis takes a type that
-    // is known at many offsets of a block as the type of the whole block
-    // (e.g. Float@double for a block whose first member is a large REAL*8
-    // array and whose second, beyond the budget, a REAL*4 one). So a block
-    // is annotated only if the declares of the unit lay out all of its bytes,
-    // and agree.
+    // The layout is all or nothing: Enzyme's type analysis takes the types
+    // it knows at some offsets of a block for the whole block. So a block is
+    // annotated only if the declares of the unit lay out all of its bytes,
+    // and agree, and it fits in Enzyme's type offsets.
     struct Layout {
       std::map<int64_t, std::string> types;
       // [begin, end) of the bytes the declares lay out
@@ -450,7 +454,8 @@ struct FIRTypeAnnotationsPass
           break;
         reached = std::max(reached, end);
       }
-      if (!globalSize || reached < *globalSize)
+      if (!globalSize || reached < *globalSize ||
+          *globalSize > kMaxTypeOffset)
         continue;
       TypePaths tree{{{-1}, "Pointer"}};
       for (auto &[off, t] : layout.types)
