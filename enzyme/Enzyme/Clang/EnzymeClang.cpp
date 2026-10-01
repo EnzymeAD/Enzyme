@@ -731,7 +731,7 @@ void registerEnzymeShadowGlobal(Sema &S, VarDecl *VD, VarDecl *Shadow) {
                                     FPOptionsOverride());
   };
   Expr *pair[] = {addressOf(VD), addressOf(Shadow)};
-  auto init = cast<InitListExpr>(S.BuildInitList(loc, pair, loc).get());
+  auto init = cast<InitListExpr>(S.ActOnInitList(loc, pair, loc).get());
   auto T = AST.getConstantArrayType(AST.VoidPtrTy, llvm::APInt(32, 2), nullptr,
 #if LLVM_VERSION_MAJOR >= 18
                                     ArraySizeModifier::Normal,
