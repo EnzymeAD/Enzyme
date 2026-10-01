@@ -19,7 +19,7 @@ module {
     return %r#1 : f64
   }
   func.func @dwhile(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @while(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @while(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r : f64
   }
   // CHECK: @fwddiffewhile
@@ -35,7 +35,7 @@ module {
   // CHECK:   } do {
   // CHECK:   ^bb0(%[[arg2:.+]]: index, %[[arg3:.+]]: f64, %[[arg4:.+]]: f64):
   // CHECK:     %[[v1:.+]] = arith.addi %[[arg2]], %[[c1]] : index
-  // CHECK:     %[[v2:.+]] = arith.addf %[[arg4]], %[[arg1]] : f64
+  // CHECK:     %[[v2:.+]] = arith.addf %[[arg4]], %[[arg1]] fastmath<fast> : f64
   // CHECK:     %[[v3:.+]] = arith.addf %[[arg3]], %[[arg0]] : f64
   // CHECK:     scf.yield %[[v1]], %[[v3]], %[[v2]] : index, f64, f64
   // CHECK:   }

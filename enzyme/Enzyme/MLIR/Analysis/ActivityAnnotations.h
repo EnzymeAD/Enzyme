@@ -238,6 +238,29 @@ public:
   bool inferFromAutodiff = false;
 };
 
+LogicalResult
+reverseToposortCallgraph(CallableOpInterface callee,
+                         SymbolTableCollection *symbolTable,
+                         SmallVectorImpl<CallableOpInterface> &sorted);
+void traversePointsToSets(const enzyme::AliasClassSet &start,
+                          const enzyme::PointsToSets &pointsToSets,
+                          function_ref<void(DistinctAttr)> visit);
+
+LogicalResult runActivityAnnotationsForFunction(FunctionOpInterface funcOp,
+                                                DataFlowSolver &solver);
+void computeSummaries(
+    FunctionOpInterface funcOp, DataFlowSolver &solver,
+    enzyme::PointsToSets &p2sets, enzyme::ForwardOriginsMap &forwardOriginsMap,
+    enzyme::BackwardOriginsMap &backwardOriginsMap,
+    SmallVectorImpl<enzyme::ForwardOriginsLattice> &returnOperandOrigins,
+    SmallVectorImpl<enzyme::AliasClassLattice> &returnAliasClasses);
+void serializeSummaries(
+    Operation *op, const enzyme::PointsToSets &p2sets,
+    const enzyme::ForwardOriginsMap &forwardOriginsMap,
+    ArrayRef<enzyme::ForwardOriginsLattice> returnOperandOrigins,
+    ArrayRef<enzyme::AliasClassLattice> returnAliasClasses);
+void removeSummaries(Operation *op);
+
 void runActivityAnnotations(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argActivities = {},
     const ActivityPrinterConfig &config = ActivityPrinterConfig());

@@ -42,7 +42,7 @@ define double @_take(ptr %a0, i1 %a1) {
 ; CHECK-NEXT:   br i1 %a1, label %.lr.ph, label %.lr.ph1.peel.next
 
 ; CHECK: .lr.ph1.peel.next:                                ; preds = %0
-; CHECK-NEXT:   %.pre = load double, ptr %a4, align 8, !alias.scope !10, !noalias !13
+; CHECK-NEXT:   %.pre = load double, ptr %a4, align 8, !alias.scope ![[SCOPE:[0-9]+]], !noalias ![[NOALIAS:[0-9]+]]
 ; CHECK-NEXT:   %.fca.0.insert = insertvalue { ptr, double } poison, ptr %malloccall, 0
 ; CHECK-NEXT:   %.fca.1.insert = insertvalue { ptr, double } %.fca.0.insert, double %.pre, 1
 ; CHECK-NEXT:   ret { ptr, double } %.fca.1.insert

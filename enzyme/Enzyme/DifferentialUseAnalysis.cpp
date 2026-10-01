@@ -324,7 +324,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (!shadow)
-    if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
+    if (isa<CmpInst>(user) || isAnyBranch(user) || isa<ReturnInst>(user) ||
         isa<FPExtInst>(user) || isa<FPTruncInst>(user)
         // isa<ExtractElement>(use) ||
         // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
@@ -1142,7 +1142,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           if (!gutils->TR.anyPointer(a))
             continue;
 
-          auto vd = gutils->TR.query(a);
+          const auto &vd = gutils->TR.query(a);
 
           if (!vd[{-1, -1}].isPossiblePointer())
             continue;
@@ -1258,15 +1258,10 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
         !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
       isLoopyReduction = true;
     }
-  } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-    for (int i = 0; i < 2; i++) {
-      if (SI->getOperand(i + 1) == P0 &&
-          !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
-        isLoopyReduction = true;
-        break;
-      }
-    }
   }
+  // A select reduction (e.g. a running max) is differentiated through the
+  // index of the last selecting iteration and never reads the start value's
+  // primal, so only the division form needs it.
   if (!isLoopyReduction)
     return false;
 
@@ -1318,14 +1313,6 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
           !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
         isLoopyReduction = true;
       }
-    } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-      for (int i = 0; i < 2; i++) {
-        if (SI->getOperand(i + 1) == P0 &&
-            !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
-          isLoopyReduction = true;
-          break;
-        }
-      }
     }
     if (!isLoopyReduction)
       return;
@@ -1343,6 +1330,11 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       return;
 
     while (Pstart) {
+      // Constants and arguments are always available in the reverse pass, and
+      // thus need not be added to the recompute graph (which only contains
+      // instructions).
+      if (!isa<Instruction>(Pstart))
+        break;
       Intermediates.insert(Pstart);
       todo.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {

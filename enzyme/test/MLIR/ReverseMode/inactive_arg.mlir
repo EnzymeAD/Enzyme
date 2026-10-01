@@ -19,11 +19,14 @@ module {
 // CHECK-NEXT:    %[[ZERO:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %[[CACHE:.+]] = "enzyme.init"() : () -> !enzyme.Cache<i32>
 //      CHECK:    %[[COND:.+]] = arith.cmpf ogt, %[[X]], %[[ZERO]] : f32
-//      CHECK:    cf.cond_br %[[COND]], ^bb1(%[[CST0]] : i32), ^bb1(%[[CST1]] : i32)
-//      CHECK:  ^bb1(%[[BLOCKARG:.+]]: i32): // 2 preds: ^bb0, ^bb0
-// CHECK-NEXT:    "enzyme.push"(%[[CACHE]], %[[BLOCKARG]]) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    cf.br ^bb2
-//      CHECK:  ^bb2: // pred: ^bb1
+//      CHECK:    cf.cond_br %[[COND]], ^bb1, ^bb2
+//      CHECK:  ^bb1: // pred: ^bb0
+// CHECK-NEXT:    "enzyme.push"(%[[CACHE]], %[[CST0]]) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    cf.br ^bb3
+//      CHECK:  ^bb2: // pred: ^bb0
+// CHECK-NEXT:    "enzyme.push"(%[[CACHE]], %[[CST1]]) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    cf.br ^bb3
+//      CHECK:  ^bb3: // 2 preds: ^bb1, ^bb2
 //      CHECK:    %[[INCOMING:.+]] = "enzyme.pop"(%[[CACHE]]) : (!enzyme.Cache<i32>) -> i32
 // CHECK-NEXT:    %[[COND2:.+]] = arith.cmpi eq, %[[INCOMING]], %[[CST1]] : i32
 // CHECK-NEXT:    %[[GRAD:.+]] = arith.select %[[COND2]], %[[DIFFE]], %[[ZERO]] : f32

@@ -107,7 +107,7 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body.i ], [ 0, %for.body.i.i.i ]
 ; CHECK-NEXT:   %res.i.0 = phi double [ %add.i23.i, %for.body.i ], [ 0.000000e+00, %for.body.i.i.i ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %tmp28 = load double, double* %tmp19, align 8, !alias.scope !10, !noalias !13
+; CHECK-NEXT:   %tmp28 = load double, double* %tmp19, align 8, !alias.scope ![[SCOPE_10:[0-9]+]], !noalias ![[NOALIAS_13:[0-9]+]]
 ; CHECK-NEXT:   %mul.i.i.i37.i = fmul double %tmp28, %tmp28
 ; CHECK-NEXT:   %add.i23.i = fadd double %res.i.0, %mul.i.i.i37.i
 ; CHECK-NEXT:   %cmp.i.i.i45 = icmp ne i64 %iv.next2, 4

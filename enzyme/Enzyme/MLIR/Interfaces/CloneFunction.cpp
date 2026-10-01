@@ -252,6 +252,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   SymbolTable table(parent);
   table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
+  cast<AutoDiffFunctionInterface>(*NewF).detachFromPrimalDefinition();
 
   cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
 

@@ -19,8 +19,8 @@ llvm.func @kernel(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f64, %arg3: f64) {
     %4 = llvm.fmul %3, %a1 : f64
     enzyme.yield %4 : f64
   } attributes {
-    activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_activenoneed>],
+    activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_activenoneed>],
     fn = "compute"
   } : (!llvm.ptr, !llvm.ptr, f64, f64) -> ()
   llvm.return
@@ -31,7 +31,7 @@ llvm.func @kernel(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f64, %arg3: f64) {
 // CHECK-NEXT:   llvm.return
 // CHECK-NEXT: }
 
-// CHECK:      func.func @kernel_to_diff0(%arg0: !llvm.ptr, %arg1: f64) -> f64 {
+// CHECK:      func.func private @kernel_to_diff0(%arg0: !llvm.ptr, %arg1: f64) -> f64 {
 // CHECK-NEXT:   %[[V0:.+]] = llvm.load %arg0 : !llvm.ptr -> !llvm.struct<(i64, i64)>
 // CHECK-NEXT:   %[[V1:.+]] = llvm.extractvalue %[[V0]][0] : !llvm.struct<(i64, i64)>
 // CHECK-NEXT:   %[[V2:.+]] = llvm.inttoptr %[[V1]] : i64 to !llvm.ptr

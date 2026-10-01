@@ -60,8 +60,8 @@ pass14:
 ; CHECK-NEXT:   %_augmented = call fastcc i8* @augmented_d(double** nocapture nofree writeonly %bc, i64 %val)
 ; CHECK-NEXT:   %2 = getelementptr inbounds { i8*, double }, { i8*, double }* %tapemem, i32 0, i32 0
 ; CHECK-NEXT:   store i8* %_augmented, i8** %2, align 8
-; CHECK-NEXT:   %ptr = load double*, double** %bc, align 8, !alias.scope !0, !noalias !3
-; CHECK-NEXT:   %cst = load double, double* %ptr, align 8, !alias.scope !5, !noalias !8
+; CHECK-NEXT:   %ptr = load double*, double** %bc, align 8, !alias.scope ![[SCOPE_0:[0-9]+]], !noalias ![[NOALIAS_3:[0-9]+]]
+; CHECK-NEXT:   %cst = load double, double* %ptr, align 8, !alias.scope ![[SCOPE_5:[0-9]+]], !noalias ![[NOALIAS_8:[0-9]+]]
 ; CHECK-NEXT:   %3 = getelementptr inbounds { i8*, double }, { i8*, double }* %tapemem, i32 0, i32 1
 ; CHECK-NEXT:   store double %cst, double* %3, align 8
 ; CHECK-NEXT:   %mul = fmul double %cst, %x

@@ -38,14 +38,18 @@ jobs:
           apt-get update
           apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         path: 'Enzyme'
 
-    - uses: actions/checkout@v4
+    - name: Checkout LLVM repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         repository: 'llvm/llvm-project'
-        ref: 'b713aaedb6eedd7d20f666038d945e50eafd4c27'
+        ref: 'e56c2cefc3e7978de4a2d799fa3abec77d75af21'
         path: 'llvm-project'
 
     - name: Set BASE_DIR
@@ -66,10 +70,12 @@ jobs:
 
     - name: Cache MLIR
       id: cache-mlir
-      uses: actions/cache@v4
+      uses: wsmoses/gcp-cache@main
       with:
         path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
+        gcp-bucket: enzyme-ci-transient
+        gcp-prefix: enzyme-mlir/
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'

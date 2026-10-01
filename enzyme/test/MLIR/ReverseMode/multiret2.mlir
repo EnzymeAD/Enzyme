@@ -41,8 +41,8 @@ module {
 
   func.func @test(%arg0: f64, %seed: f64) -> f64 {
     %r:2 = enzyme.autodiff @outer_to_diff(%arg0, %seed) {
-      activity = [#enzyme<activity enzyme_active>],
-      ret_activity = [#enzyme<activity enzyme_active>]
+      activity = [#enzyme.activity<enzyme_active>],
+      ret_activity = [#enzyme.activity<enzyme_active>]
     } : (f64, f64) -> (f64, f64)
     return %r#1 : f64
   }

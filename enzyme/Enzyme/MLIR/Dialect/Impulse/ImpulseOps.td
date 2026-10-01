@@ -225,10 +225,11 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     The `selection` attribute determines which addresses to sample via HMC/NUTS.
     All sample addresses are included in the trace tensor for consistency.
 
-    Returns: (trace, diagnostics, rng, final_position, final_gradient,
+    Returns: (trace, diagnostics, log_densities, rng, final_position, final_gradient,
               final_potential_energy, final_step_size, final_inverse_mass_matrix)
     - trace: tensor<num_samples x position_size x f64>
-    - diagnostics: tensor<num_samples x i1> - placeholder for future expansion
+    - diagnostics: tensor<num_samples x 2 x i1> - placeholder for future expansion
+    - log_densities: tensor<num_samples x f64> - log densities of samples
     - rng: updated RNG state
     - final_position: tensor<1 x position_size x f64> - position after last sample
     - final_gradient: tensor<1 x position_size x f64> - gradient at final position
@@ -272,18 +273,13 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs
-    AnyRankedTensor:$trace,
-    AnyRankedTensor:$diagnostics,
-    AnyType:$output_rng_state,
-    AnyRankedTensor:$final_position,
-    AnyRankedTensor:$final_gradient,
-    AnyRankedTensor:$final_potential_energy,
-    AnyRankedTensor:$final_step_size,
-    AnyRankedTensor:$final_inverse_mass_matrix,
+  let results = (outs AnyRankedTensor:$trace, AnyRankedTensor:$diagnostics,
+      AnyRankedTensor:$log_densities, AnyType:$output_rng_state,
+      AnyRankedTensor:$final_position, AnyRankedTensor:$final_gradient,
+      AnyRankedTensor:$final_potential_energy, AnyRankedTensor:$final_step_size,
+      AnyRankedTensor:$final_inverse_mass_matrix,
 
-    Variadic<AnyRankedTensor>:$adaptation_state_out
-  );
+      Variadic<AnyRankedTensor>:$adaptation_state_out);
 
   let assemblyFormat = [{
     ($fn^)?

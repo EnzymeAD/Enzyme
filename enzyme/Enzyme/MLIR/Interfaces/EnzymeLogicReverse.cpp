@@ -1,3 +1,4 @@
+#include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -58,7 +59,8 @@ LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
     OpBuilder augmentBuilder(gutils->getNewFromOriginal(op));
-    ifaceOp.createShadowValues(augmentBuilder, gutils);
+    if (failed(ifaceOp.createShadowValues(augmentBuilder, gutils)))
+      return failure();
     return ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
   }
   op->emitError() << "could not compute the adjoint for this operation " << *op;
@@ -173,8 +175,6 @@ LogicalResult MEnzymeLogic::differentiate(
     llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
   gutils->registerCacheCreatorHook(cacheCreator);
-  auto scope = llvm::make_scope_exit(
-      [&]() { gutils->deregisterCacheCreatorHook(cacheCreator); });
 
   gutils->createReverseModeBlocks(oldRegion, newRegion);
 
@@ -186,6 +186,8 @@ LogicalResult MEnzymeLogic::differentiate(
     valid &= visitChildren(&oBB, reverseBB, gutils).succeeded();
     handlePredecessors(&oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
   }
+
+  gutils->deregisterCacheCreatorHook(cacheCreator);
   return success(valid);
 }
 
@@ -193,14 +195,16 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
-    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
-    bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
-    bool strongZero) {
+    DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
+    mlir::Type addedType, MFnTypeInfo type_args,
+    std::vector<bool> overwritten_args, void *augmented, bool omp,
+    llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
+    bool markReadonly) {
 
   if (fn.getFunctionBody().empty()) {
-    llvm::errs() << fn << "\n";
-    llvm_unreachable("Differentiating empty function");
+    fn.emitError() << "cannot differentiate a function without a body: "
+                   << fn.getNameAttr() << "\n";
+    return nullptr;
   }
 
   MReverseCacheKey tup = {fn,
@@ -210,10 +214,11 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           returnShadows,
                           mode,
                           freeMemory,
+                          atomicAdd,
                           static_cast<unsigned>(width),
                           addedType,
                           type_args,
-                          volatile_args,
+                          overwritten_args,
                           omp};
 
   {
@@ -229,6 +234,13 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       retType, constants, addedType, omp, postpasses, verifyPostPasses,
       strongZero);
+  if (markReadonly) {
+    markReadOnlyLoads(gutils->oldFunc, [&](Operation *origOp) {
+      gutils->getNewFromOriginal(origOp)->setAttr(
+          "enzyme.readonly", UnitAttr::get(origOp->getContext()));
+    });
+  }
+  gutils->AtomicAdd = atomicAdd;
 
   ReverseCachedFunctions[tup] = gutils->newFunc;
 

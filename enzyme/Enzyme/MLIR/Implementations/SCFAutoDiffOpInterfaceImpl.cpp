@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Implementations/LoopCheckpointing.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
@@ -26,6 +27,7 @@
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include <array>
 #include <functional>
 
 using namespace mlir;
@@ -125,6 +127,13 @@ public:
         rewriter, otherForOp->getLoc(), otherForOp.getLowerBound(),
         otherForOp.getUpperBound(), otherForOp.getStep(), operands);
 
+    // The rebuilt loop is the same loop with extra iteration arguments, so it
+    // keeps everything that was set on it. Without this, anything the caller
+    // put there -- enzyme.disable_mincut in particular -- is dropped the moment
+    // the removal pass needs to widen the loop.
+    newOtherForOp->setDiscardableAttrs(
+        otherForOp->getDiscardableAttrDictionary());
+
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
     rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
                                        0, otherForOp->getNumResults()));
@@ -144,29 +153,194 @@ public:
 
 struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
-                                                       scf::ForOp> {
-private:
-  static Value makeIntConstant(Location loc, OpBuilder builder, int64_t val,
-                               Type ty) {
-    return arith::ConstantOp::create(builder, loc, IntegerAttr::get(ty, val))
-        .getResult();
-  };
+                                                       scf::ForOp>,
+      public LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp> {
+  // ---- hooks required by LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp>
+  // ----
 
-  static void preserveAttributesButCheckpointing(Operation *newOp,
-                                                 Operation *oldOp) {
-    for (auto attr : oldOp->getDiscardableAttrs()) {
-      if (attr.getName() != "enzyme.enable_checkpointing")
-        newOp->setAttr(attr.getName(), attr.getValue());
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(scf::ForOp forOp) {
+    return ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp);
+  }
+
+  static Value materializeLowerBound(OpBuilder &, Location, scf::ForOp forOp,
+                                     MGradientUtilsReverse *gutils) {
+    return gutils->getNewFromOriginal(forOp.getLowerBound());
+  }
+
+  static Value materializeUpperBound(OpBuilder &, Location, scf::ForOp forOp,
+                                     MGradientUtilsReverse *gutils) {
+    return gutils->getNewFromOriginal(forOp.getUpperBound());
+  }
+
+  static Value materializeStep(OpBuilder &, Location, scf::ForOp forOp,
+                               MGradientUtilsReverse *gutils) {
+    return gutils->getNewFromOriginal(forOp.getStep());
+  }
+
+  static int64_t getConstantStart(scf::ForOp forOp) {
+    llvm::APInt v;
+    (void)matchPattern(forOp.getLowerBound(), m_ConstantInt(&v));
+    return v.getSExtValue();
+  }
+
+  static int64_t getConstantStep(scf::ForOp forOp) {
+    llvm::APInt v;
+    (void)matchPattern(forOp.getStep(), m_ConstantInt(&v));
+    return v.getSExtValue();
+  }
+
+  static LogicalResult requireSingleResultBounds(scf::ForOp) {
+    return success();
+  }
+
+  static void cloneOp(OpBuilder &builder, Operation &op, IRMapping &mapping) {
+    builder.clone(op, mapping);
+  }
+
+  // ---- periodic-scaffold hooks (see LoopCheckpointing.h doc comment) ----
+  // All of these reproduce this file's pre-existing periodic-checkpointing
+  // formulas verbatim (including the known reverse-formula defect noted in
+  // the header) -- this is a pure refactor for scf.for, not a behavior
+  // change.
+
+  static scf::ForOp createConstantScaffoldLoop(OpBuilder &builder, Location loc,
+                                               int64_t lb, int64_t ub,
+                                               int64_t step, ValueRange inits) {
+    // Creation order (step, then ub, then lb): canonicalize's constant
+    // placement is sensitive to it, since constants aren't freely reordered,
+    // so keeping one order here is what keeps the two scaffolds' constants
+    // laid out the same way.
+    Value stepV = arith::ConstantIndexOp::create(builder, loc, step);
+    Value ubV = arith::ConstantIndexOp::create(builder, loc, ub);
+    Value lbV = arith::ConstantIndexOp::create(builder, loc, lb);
+    return scf::ForOp::create(builder, loc, lbV, ubV, stepV, inits);
+  }
+
+  // Both outer loops count segments: one iteration per checkpoint, so the trip
+  // count is the stated period. It stays a compile-time constant even when the
+  // trip count of the loop being differentiated is not -- that is what reading
+  // the period as a segment count buys -- which is what lets the checkpoint
+  // storage these loops push one entry to per iteration be sized statically.
+  static scf::ForOp createForwardOuterLoop(OpBuilder &builder, Location loc,
+                                           const PeriodicSchedule &sched,
+                                           ValueRange inits) {
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
+  }
+
+  static scf::ForOp createReverseOuterLoop(OpBuilder &builder, Location loc,
+                                           const PeriodicSchedule &sched,
+                                           ValueRange inits) {
+    return createConstantScaffoldLoop(builder, loc, 0, sched.numSegments(), 1,
+                                      inits);
+  }
+
+  // {segment base, segment length}, for the segment `outerIV` indexes. Both are
+  // emitted once here, at the top of the outer body, and handed back to the
+  // hooks that need them -- which is also what keeps the base from being
+  // computed twice, once for the segment loop's bound and once for the
+  // induction variable derived from it.
+  static SmallVector<Value>
+  computeForwardSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
+                            const PeriodicSchedule &sched) {
+    Value base = segmentBase(builder, loc, sched, outerIV);
+    return {base, segmentLength(builder, loc, sched, base)};
+  }
+
+  // The reverse replays the segments back to front, so its own counter names
+  // segment numSegments() - 1 - i. Same two values as the forward direction,
+  // from there on.
+  //
+  // numSegments() - 1, not nOuter: the two coincide only when there *is* a
+  // trailing segment. Without one (a period that divides the trip count, or a
+  // perfect-square sqrt split) nOuter - i names a segment one past the end, and
+  // the replayed segment's induction variable comes out shifted by a whole
+  // period -- silently, since the value is dead whenever the loop body does not
+  // read its induction variable, which is why no test caught it.
+  static SmallVector<Value>
+  computeReverseSegmentHint(OpBuilder &builder, Location loc, Value outerIV,
+                            const PeriodicSchedule &sched) {
+    Value lastSegment =
+        arith::ConstantIndexOp::create(builder, loc, sched.numSegments() - 1);
+    Value index = arith::SubIOp::create(builder, loc, lastSegment, outerIV);
+    Value base = segmentBase(builder, loc, sched, index);
+    return {base, segmentLength(builder, loc, sched, base)};
+  }
+
+  static scf::ForOp createSegmentLoop(OpBuilder &builder, Location loc,
+                                      ArrayRef<Value> hint, ValueRange inits) {
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+    return scf::ForOp::create(builder, loc, zero, hint[1], one, inits);
+  }
+
+  static scf::ForOp createForwardSegmentLoop(OpBuilder &builder, Location loc,
+                                             Value, ArrayRef<Value> fwdHint,
+                                             const PeriodicSchedule &,
+                                             ValueRange inits) {
+    return createSegmentLoop(builder, loc, fwdHint, inits);
+  }
+
+  static scf::ForOp createReverseSegmentLoop(OpBuilder &builder, Location loc,
+                                             Value, ArrayRef<Value> revHint,
+                                             const PeriodicSchedule &,
+                                             ValueRange inits) {
+    return createSegmentLoop(builder, loc, revHint, inits);
+  }
+
+  static scf::ForOp createLoopWithSameBounds(OpBuilder &builder, Location loc,
+                                             scf::ForOp templateLoop,
+                                             ValueRange inits) {
+    return scf::ForOp::create(builder, loc, templateLoop.getLowerBound(),
+                              templateLoop.getUpperBound(),
+                              templateLoop.getStep(), inits);
+  }
+
+  // start + step * (segment base + localIV): the original loop's own induction
+  // variable at the iteration this replay step stands for. Both directions
+  // count iterations from the same place, so both ask for it the same way.
+  static Value segmentIV(OpBuilder &builder, Location loc, scf::ForOp forOp,
+                         const PeriodicSchedule &sched, ArrayRef<Value> hint,
+                         Value localIV) {
+    Value flatIV = arith::AddIOp::create(builder, loc, hint[0], localIV);
+    if (sched.isDynamic()) {
+      flatIV = castToType(builder, loc, flatIV, sched.stepV.getType());
+      return arith::AddIOp::create(
+          builder, loc, sched.startV,
+          arith::MulIOp::create(builder, loc, sched.stepV, flatIV));
     }
+    Value startCst =
+        arith::ConstantIndexOp::create(builder, loc, getConstantStart(forOp));
+    Value stepCst =
+        arith::ConstantIndexOp::create(builder, loc, getConstantStep(forOp));
+    return arith::AddIOp::create(
+        builder, loc, arith::MulIOp::create(builder, loc, flatIV, stepCst),
+        startCst);
   }
 
-  static bool needsCheckpointing(scf::ForOp forOp) {
-    return forOp->hasAttrOfType<BoolAttr>("enzyme.enable_checkpointing") &&
-           forOp->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing")
-               .getValue() &&
-           ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp)
-               .has_value();
+  static Value computeForwardSegmentIV(OpBuilder &builder, Location loc,
+                                       scf::ForOp forOp, Value /*outerIV*/,
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
+                                       ArrayRef<Value> fwdHint) {
+    return segmentIV(builder, loc, forOp, sched, fwdHint, localIV);
   }
+
+  static Value computeReverseSegmentIV(OpBuilder &builder, Location loc,
+                                       scf::ForOp forOp, Value /*outerIV*/,
+                                       Value localIV,
+                                       const PeriodicSchedule &sched,
+                                       ArrayRef<Value> revHint) {
+    return segmentIV(builder, loc, forOp, sched, revHint, localIV);
+  }
+
+  static void createScaffoldYield(OpBuilder &builder, Location loc,
+                                  ValueRange operands) {
+    scf::YieldOp::create(builder, loc, operands);
+  }
+
+  // preserveAttributesButCheckpointing is inherited from LoopCheckpointing.
 
 public:
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
@@ -196,207 +370,9 @@ public:
       }
     }
 
-    if (needsCheckpointing(forOp)) {
-      int64_t numIters =
-          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
-      int64_t nInner = std::sqrt(numIters), nOuter = nInner;
-      int64_t trailingIters = numIters - nInner * nOuter;
-
-      bool hasTrailing = trailingIters > 0;
-
-      auto numIterArgs = forOp.getNumRegionIterArgs();
-
-      SetVector<Value> outsideRefs;
-      getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
-
-      SmallVector<Value> immutableRefs;
-      SmallVector<Value> mutableRefs;
-
-      for (auto ref : outsideRefs) {
-        if (isa<ClonableTypeInterface>(ref.getType()))
-          mutableRefs.push_back(ref);
-        else
-          immutableRefs.push_back(ref);
-      }
-
-      IRMapping &mapping = gutils->originalToNewFn;
-
-      assert(outsideRefs.size() == caches.size() - numIterArgs);
-
-      for (auto [i, ref] : llvm::enumerate(immutableRefs)) {
-        Value refVal = gutils->popCache(
-            caches[numIterArgs + mutableRefs.size() + i], builder);
-        mapping.map(ref, refVal);
-      }
-
-      auto ivTy = forOp.getLowerBound().getType();
-      Value outerUB = makeIntConstant(forOp.getLowerBound().getLoc(), builder,
-                                      nOuter + hasTrailing, ivTy);
-      auto revOuter = scf::ForOp::create(
-          builder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0, ivTy),
-          outerUB,
-          makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy),
-          incomingGradients);
-      preserveAttributesButCheckpointing(revOuter, forOp);
-
-      OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToEnd(revOuter.getBody());
-
-      SmallVector<Value> cachedOutsideRefs;
-      for (auto [i, ref] : llvm::enumerate(mutableRefs)) {
-        Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
-        cachedOutsideRefs.push_back(refVal);
-        mapping.map(ref, refVal);
-      }
-
-      Location loc = forOp.getInductionVar().getLoc();
-      Value currentOuterStep = arith::SubIOp::create(
-          builder, loc, makeIntConstant(loc, builder, nOuter, ivTy),
-          revOuter.getInductionVar());
-
-      SmallVector<Value> initArgs(numIterArgs, nullptr);
-      for (size_t i = 0; i < numIterArgs; ++i) {
-        initArgs[i] = gutils->popCache(caches[i], builder);
-      }
-
-      auto nInnerCst = makeIntConstant(forOp.getLowerBound().getLoc(), builder,
-                                       nInner, ivTy);
-      Value zero = makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0,
-                                   ivTy),
-            one = makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1,
-                                  ivTy);
-
-      Value nInnerUB = nInnerCst;
-      if (trailingIters > 0) {
-        // this is the first reverse iteration
-        Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = arith::SelectOp::create(
-            builder, loc,
-            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
-                                  revOuter.getInductionVar(), zero),
-            makeIntConstant(loc, builder, trailingIters, ivTy), nInnerCst);
-      }
-
-      auto revInner = scf::ForOp::create(builder, forOp.getLoc(), zero,
-                                         nInnerUB, one, initArgs);
-      preserveAttributesButCheckpointing(revInner, forOp);
-
-      llvm::APInt stepI;
-      if (!matchPattern(forOp.getStep(), m_ConstantInt(&stepI))) {
-        op->emitError() << "step size is not known constant\n";
-        return failure();
-      }
-
-      llvm::APInt startI;
-      if (!matchPattern(forOp.getLowerBound(), m_ConstantInt(&startI))) {
-        op->emitError() << "lower bound is not known constant\n";
-        return failure();
-      }
-
-      builder.setInsertionPointToEnd(revInner.getBody());
-
-      Value currentIV = arith::AddIOp::create(
-          builder, loc,
-          arith::MulIOp::create(
-              builder, loc,
-              arith::AddIOp::create(builder, loc,
-                                    arith::MulIOp::create(builder, loc,
-                                                          currentOuterStep,
-                                                          nInnerCst),
-                                    revInner.getInductionVar()),
-              arith::ConstantOp::create(builder, loc,
-                                        IntegerAttr::get(ivTy, stepI))),
-          arith::ConstantOp::create(builder, loc,
-                                    IntegerAttr::get(ivTy, startI)));
-
-      for (auto [oldArg, newArg] :
-           llvm::zip_equal(forOp.getBody()->getArguments(),
-                           revInner.getBody()->getArguments()))
-        mapping.map(oldArg, newArg);
-      mapping.map(forOp.getInductionVar(), currentIV);
-
-      for (auto &it : *forOp.getBody()) {
-        auto newOp = builder.clone(it, mapping);
-        gutils->originalToNewFnOps[&it] = newOp;
-      }
-
-      builder.setInsertionPointToEnd(revOuter.getBody());
-
-      for (auto outsideRef : cachedOutsideRefs) {
-        if (auto cachableT =
-                dyn_cast<ClonableTypeInterface>(outsideRef.getType())) {
-          cachableT.freeClonedValue(builder, outsideRef);
-        }
-      }
-
-      auto revLoop =
-          scf::ForOp::create(builder, forOp.getLoc(), zero, nInnerUB, one,
-                             revOuter.getBody()->getArguments().drop_front());
-      preserveAttributesButCheckpointing(revLoop, forOp);
-
-      Block *revLoopBody = revLoop.getBody();
-      builder.setInsertionPointToEnd(revLoopBody);
-
-      int revIdx = 1;
-      for (auto &&[active, operand] :
-           llvm::zip_equal(operandsActive,
-                           forOp.getBody()->getTerminator()->getOperands())) {
-        if (active) {
-          gutils->addToDiffe(operand, revLoopBody->getArgument(revIdx),
-                             builder);
-          revIdx++;
-        }
-      }
-
-      Block *origBody = forOp.getBody();
-
-      bool valid = true;
-
-      auto first = origBody->rbegin();
-      first++; // skip terminator
-
-      auto last = origBody->rend();
-
-      for (auto it = first; it != last; ++it) {
-        Operation *op = &*it;
-        valid &= gutils->Logic.visitChild(op, builder, gutils).succeeded();
-      }
-
-      SmallVector<Value> newResults;
-      for (auto &&[active, arg] : llvm::zip_equal(
-               operandsActive, origBody->getArguments().drop_front())) {
-        if (active) {
-          newResults.push_back(gutils->diffe(arg, builder));
-          if (!gutils->isConstantValue(arg))
-            gutils->zeroDiffe(arg, builder);
-        }
-      }
-
-      builder.setInsertionPointToEnd(revLoopBody);
-      scf::YieldOp::create(builder, forOp.getBody()->getTerminator()->getLoc(),
-                           newResults);
-
-      builder.setInsertionPointToEnd(revOuter.getBody());
-      scf::YieldOp::create(builder, forOp.getBody()->getTerminator()->getLoc(),
-                           revLoop.getResults());
-
-      builder.setInsertionPointAfter(revOuter);
-
-      revIdx = 0;
-      for (auto &&[active, arg] : llvm::zip_equal(
-               operandsActive,
-               op->getOperands().slice(3, op->getNumOperands() - 3))) {
-        if (active) {
-          if (!gutils->isConstantValue(arg)) {
-            gutils->addToDiffe(arg, revOuter->getResult(revIdx), builder);
-          }
-          revIdx++;
-        }
-      }
-
-      return success(valid);
-    }
+    if (auto r = tryCreateReverseModeAdjoint(forOp, op, builder, gutils, caches,
+                                             operandsActive, incomingGradients))
+      return *r;
 
     auto start = gutils->popCache(caches[0], builder);
     auto end = gutils->popCache(caches[1], builder);
@@ -490,135 +466,12 @@ public:
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
+
+    if (auto r = tryCacheValues(forOp, op, gutils))
+      return *r;
+
     Operation *newOp = gutils->getNewFromOriginal(op);
     OpBuilder cacheBuilder(newOp);
-
-    if (needsCheckpointing(forOp)) {
-      int64_t numIters =
-          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
-      int64_t nInner = std::sqrt(numIters), nOuter = nInner;
-      int64_t trailingIters = numIters - nInner * nOuter;
-      bool hasTrailing = trailingIters > 0;
-
-      SetVector<Value> outsideRefs;
-      getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
-
-      SmallVector<Value> immutableRefs;
-      SmallVector<Value> mutableRefs;
-
-      for (auto ref : outsideRefs) {
-        if (isa<ClonableTypeInterface>(ref.getType()))
-          mutableRefs.push_back(ref);
-        else
-          immutableRefs.push_back(ref);
-      }
-
-      SmallVector<Value> caches;
-
-      scf::ForOp newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-
-      Type ty = forOp.getLowerBound().getType();
-      auto outerFwd = scf::ForOp::create(
-          cacheBuilder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
-          makeIntConstant(forOp.getUpperBound().getLoc(), cacheBuilder,
-                          nInner * (nOuter + hasTrailing), ty),
-          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, nInner, ty),
-          newForOp.getInitArgs());
-      preserveAttributesButCheckpointing(outerFwd, forOp);
-
-      cacheBuilder.setInsertionPointToStart(outerFwd.getBody());
-      auto nInnerCst = makeIntConstant(forOp.getUpperBound().getLoc(),
-                                       cacheBuilder, nInner, ty);
-
-      Value nInnerUB = nInnerCst;
-      if (trailingIters > 0) {
-        // if this is the last iteration, then the inner
-        // loop will only make trailingIters iterations
-        Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = arith::SelectOp::create(
-            cacheBuilder, loc,
-            arith::CmpIOp::create(
-                cacheBuilder, loc, arith::CmpIPredicate::eq,
-                outerFwd.getInductionVar(),
-                makeIntConstant(loc, cacheBuilder, nInner * nOuter, ty)),
-            makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
-      }
-
-      IRMapping &mapping = gutils->originalToNewFn;
-
-      SmallVector<Value> mutableRefsCaches;
-      for (auto ref : mutableRefs) {
-        auto iface = cast<ClonableTypeInterface>(ref.getType());
-        auto clone =
-            iface.cloneValue(cacheBuilder, mapping.lookupOrDefault(ref));
-        mutableRefsCaches.push_back(
-            gutils->initAndPushCache(clone, cacheBuilder));
-      }
-
-      auto innerFwd = scf::ForOp::create(
-          cacheBuilder, op->getLoc(),
-          makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
-          nInnerUB,
-          makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty),
-          outerFwd.getBody()->getArguments().drop_front());
-      preserveAttributesButCheckpointing(innerFwd, forOp);
-
-      cacheBuilder.setInsertionPointToEnd(innerFwd.getBody());
-
-      Location loc = forOp.getInductionVar().getLoc();
-      auto currentIV = arith::MulIOp::create(
-          cacheBuilder, loc,
-          arith::AddIOp::create(
-              cacheBuilder, loc,
-              arith::MulIOp::create(cacheBuilder, loc,
-                                    outerFwd.getInductionVar(), nInnerCst),
-              innerFwd.getInductionVar()),
-          newForOp.getStep());
-
-      for (auto [oldArg, newArg] :
-           llvm::zip_equal(forOp.getBody()->getArguments(),
-                           innerFwd.getBody()->getArguments()))
-        mapping.map(oldArg, newArg);
-      mapping.map(forOp.getInductionVar(), currentIV);
-
-      for (auto &it : *forOp.getBody())
-        cacheBuilder.clone(it, mapping);
-
-      cacheBuilder.setInsertionPointToEnd(outerFwd.getBody());
-      for (auto initArg : innerFwd.getInitArgs())
-        caches.push_back(gutils->initAndPushCache(initArg, cacheBuilder));
-
-      scf::YieldOp::create(cacheBuilder,
-                           forOp.getBody()->getTerminator()->getLoc(),
-                           innerFwd->getResults());
-
-      cacheBuilder.setInsertionPointAfter(outerFwd);
-
-      caches.append(mutableRefsCaches);
-
-      for (auto ref : immutableRefs)
-        caches.push_back(gutils->initAndPushCache(mapping.lookupOrDefault(ref),
-                                                  cacheBuilder));
-
-      gutils->replaceOrigOpWith(op, outerFwd.getResults());
-      gutils->erase(newForOp);
-      gutils->originalToNewFnOps[op] = outerFwd;
-
-      // caches is composed of:
-      // [
-      //  <caches of iter args>...,
-      //  <caches of mutable values>...,
-      //  <caches of immutable values>...,
-      // ]
-      //
-      // TODO: we don't need to cache refs of arith.constants
-      // ....  which we can "clone" just before the inner forward
-      // ....  in the reverse pass.
-      // ....  create an interface that mincut can also use?
-
-      return caches;
-    }
 
     SmallVector<Value> caches;
 
@@ -637,9 +490,10 @@ public:
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     // auto forOp = cast<scf::ForOp>(op);
+    return success();
   }
 };
 
@@ -735,6 +589,9 @@ struct ParallelOpEnzymeOpsRemover
     auto newOtherParOp = scf::ParallelOp::create(
         rewriter, otherParallelOp.getLoc(), otherParallelOp.getLowerBound(),
         otherParallelOp.getUpperBound(), otherParallelOp.getStep(), operands);
+
+    newOtherParOp->setDiscardableAttrs(
+        otherParallelOp->getDiscardableAttrDictionary());
 
     newOtherParOp.getRegion().takeBody(otherParallelOp.getRegion());
     rewriter.replaceOp(
@@ -852,8 +709,10 @@ struct ParallelOpInterfaceReverse
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return success();
+  }
 };
 
 struct IfOpEnzymeOpsRemover
@@ -992,12 +851,12 @@ struct IfOpInterfaceReverse
     return SmallVector<Value>{cacheCond};
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
     // TODO: consider making this generic for RegionBranchOpInterface
     auto ifOp = cast<scf::IfOp>(op);
     if (ifOp.getNumResults() == 0)
-      return;
+      return success();
 
     auto newIf = cast<scf::IfOp>(gutils->getNewFromOriginal(ifOp));
     SmallVector<Type> newResultTypes;
@@ -1057,6 +916,7 @@ struct IfOpInterfaceReverse
     }
     newIf.replaceAllUsesWith(augmentedResults);
     newIf.erase();
+    return success();
   }
 };
 

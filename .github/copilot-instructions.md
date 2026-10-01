@@ -70,6 +70,8 @@ ninja
 - `ENZYME_ENABLE_PLUGINS`: Enable Clang/LLD/Opt plugins (default: ON)
 - `ENZYME_BC_LOADER`: Enable bitcode loader (default: ON)
 - `ENZYME_CLANG`: Build enzyme clang plugin (default: ON)
+- `ENZYME_FLANG`: Build enzyme flang plugin (default: OFF)
+- `ENZYME_FORTRAN`: Build the Fortran bindings and enable the Fortran tests (default: OFF)
 - `ENZYME_MLIR`: Build enzyme MLIR plugin (default: OFF)
 - `ENZYME_STATIC_LIB`: Build static library (default: OFF)
 

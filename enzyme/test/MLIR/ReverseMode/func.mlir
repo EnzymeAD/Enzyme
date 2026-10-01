@@ -27,7 +27,7 @@ module {
 // CHECK-NEXT:    %1:2 = call @inactive(%arg0, %c10_i32) : (f32, i32) -> (f32, i32)
 // CHECK-NEXT:    %2 = call @diffeinactive(%arg0, %c10_i32, %arg1) : (f32, i32, f32) -> f32
 // CHECK-NEXT:    %3 = call @diffesquare(%arg0, %arg1) : (f32, f32) -> f32
-// CHECK-NEXT:    %4 = arith.addf %2, %3 : f32
+// CHECK-NEXT:    %4 = arith.addf %2, %3 fastmath<fast> : f32
 // CHECK-NEXT:    return %4 : f32
 // CHECK-NEXT:  }
 
@@ -37,8 +37,8 @@ module {
 // CHECK-NEXT:  }
 
 // CHECK:  func.func private @diffesquare(%arg0: f32, %arg1: f32) -> f32 {
-// CHECK-NEXT:    %0 = arith.mulf %arg1, %arg0 : f32
-// CHECK-NEXT:    %1 = arith.mulf %arg1, %arg0 : f32
-// CHECK-NEXT:    %2 = arith.addf %0, %1 : f32
+// CHECK-NEXT:    %0 = arith.mulf %arg1, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:    %1 = arith.mulf %arg1, %arg0 fastmath<fast> : f32
+// CHECK-NEXT:    %2 = arith.addf %0, %1 fastmath<fast> : f32
 // CHECK-NEXT:    return %2 : f32
 // CHECK-NEXT:  }

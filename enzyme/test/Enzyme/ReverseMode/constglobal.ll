@@ -112,8 +112,8 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 
 ; CHECK: define internal void @diffe_ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, inrange i32 0, i32 2), ptr %"this'", align 8, !alias.scope !7, !noalias !10
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this, align 8, !alias.scope !10, !noalias !7
+; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, inrange i32 0, i32 2), ptr %"this'", align 8, !alias.scope ![[ASC:[0-9]+]], !noalias ![[NA:[0-9]+]]
+; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this, align 8, !alias.scope ![[NA]], !noalias ![[ASC]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry

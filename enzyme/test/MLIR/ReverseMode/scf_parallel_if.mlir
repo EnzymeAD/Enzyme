@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --cse | FileCheck %s
+// RUN: %eopt %s --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --flatten-enzyme-caches --canonicalize --cse | FileCheck %s
 
 module {
   func.func @scale(%arg0: memref<?xf64>, %arg1: memref<?xf64>, %arg2: memref<?xf64>) {
@@ -19,9 +19,9 @@ module {
 
   func.func @dscale(%arg0: memref<?xf64>, %arg1: memref<?xf64>, %arg2: memref<?xf64>, %arg3: memref<?xf64>, %arg4: memref<?xf64>) {
     enzyme.autodiff @scale(%arg0, %arg3, %arg1, %arg2, %arg4) {
-        activity=[#enzyme<activity enzyme_dup>, 
-                  #enzyme<activity enzyme_const>, 
-                  #enzyme<activity enzyme_dup>],
+        activity=[#enzyme.activity<enzyme_dup>, 
+                  #enzyme.activity<enzyme_const>, 
+                  #enzyme.activity<enzyme_dup>],
         ret_activity=[]
       } : (memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>) -> ()
 
@@ -48,8 +48,8 @@ module {
   // CHECK:       %[[x1:.+]] = memref.load %[[alloc]][%[[arg5]]] : memref<?xf64>
   // CHECK:       %[[x2:.+]] = memref.load %arg4[%[[arg5]]] : memref<?xf64>
   // CHECK:       memref.store %[[cst]], %arg4[%[[arg5]]] : memref<?xf64>
-  // CHECK:       %[[x3:.+]] = arith.mulf %[[x2]], %[[x1]] : f64
-  // CHECK:       %[[x4:.+]] = memref.atomic_rmw addf %[[x3]], %arg1[%[[arg5]]] : (f64, memref<?xf64>) -> f64
+  // CHECK:       %[[x3:.+]] = arith.mulf %[[x2]], %[[x1]] fastmath<fast> : f64
+  // CHECK:       %[[x4:.+]] = enzyme.atomic_rmw addf %[[x3]], %arg1[%[[arg5]]] monotonic fastmath<fast> : (f64, memref<?xf64>) -> f64
   // CHECK:       scf.reduce 
   // CHECK:     }
   // CHECK:     memref.dealloc %[[alloc]] : memref<?xf64>

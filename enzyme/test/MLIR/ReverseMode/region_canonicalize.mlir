@@ -7,7 +7,7 @@ func.func @test1(%vx : f64, %dout : f64) -> f64 {
     ^bb0(%x : f64):
       %y = arith.mulf %x2, %x2 : f64
       enzyme.yield %y : f64 
-  } attributes { activity = [#enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_active>] }: (f64,f64) -> f64
+  } attributes { activity = [#enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_active>] }: (f64,f64) -> f64
   return %out : f64
 }
 
@@ -17,7 +17,7 @@ func.func @test1(%vx : f64, %dout : f64) -> f64 {
 // CHECK-NEXT:   %1 = enzyme.autodiff_region(%arg1) {
 // CHECK-NEXT:     %2 = arith.mulf %0, %0 : f64
 // CHECK-NEXT:     enzyme.yield %2 : f64
-// CHECK-NEXT:   } attributes {activity = [], ret_activity = [#enzyme<activity enzyme_active>]} : (f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [], ret_activity = [#enzyme.activity<enzyme_active>]} : (f64) -> f64
 // CHECK-NEXT:   return %1 : f64
 // CHECK-NEXT: }
 
@@ -29,8 +29,8 @@ func.func @test() -> tensor<f64> {
   ^bb0(%x: tensor<f64>):
     enzyme.yield %x : tensor<f64>
   } attributes {
-    activity = [#enzyme<activity enzyme_const>],
-    ret_activity = [#enzyme<activity enzyme_const>]
+    activity = [#enzyme.activity<enzyme_const>],
+    ret_activity = [#enzyme.activity<enzyme_const>]
   } : (tensor<f64>) -> tensor<f64>
   return %out : tensor<f64>
 }
@@ -41,6 +41,6 @@ func.func @test() -> tensor<f64> {
 //CHECK-NEXT:   %0 = enzyme.autodiff_region(%cst) {
 //CHECK-NEXT:   ^bb0(%arg0: tensor<f64>):
 //CHECK-NEXT:     enzyme.yield %arg0 : tensor<f64>
-//CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_const>]} : (tensor<f64>) -> tensor<f64>
+//CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_const>]} : (tensor<f64>) -> tensor<f64>
 //CHECK-NEXT:   return %0 : tensor<f64>
 //CHECK-NEXT: }

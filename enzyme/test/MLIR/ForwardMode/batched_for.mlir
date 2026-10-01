@@ -13,7 +13,7 @@ module {
     return %r : f64
   }
   func.func @dsq(%x : f64, %dx : tensor<2xf64>) -> tensor<2xf64> {
-    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>], width=2 } : (f64, tensor<2xf64>) -> (tensor<2xf64>)
+    %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>], width=2 } : (f64, tensor<2xf64>) -> (tensor<2xf64>)
     return %r : tensor<2xf64>
   }
 }
@@ -25,7 +25,7 @@ module {
 // CHECK-DAG:     %[[c1:.+]] = arith.constant 1 : index
 // CHECK-DAG:     %[[c10:.+]] = arith.constant 10 : index
 // CHECK-NEXT:     %[[i0:.+]]:2 = scf.for %[[arg2:.+]] = %[[c0]] to %[[c10]] step %[[c1]] iter_args(%[[arg3:.+]] = %[[cst_0]], %[[arg4:.+]] = %[[cst]]) -> (f64, tensor<2xf64>) {
-// CHECK-NEXT:       %[[i1:.+]] = arith.addf %[[arg4]], %[[arg1]] : tensor<2xf64>
+// CHECK-NEXT:       %[[i1:.+]] = arith.addf %[[arg4]], %[[arg1]] fastmath<fast> : tensor<2xf64>
 // CHECK-NEXT:       %[[i2:.+]] = arith.addf %[[arg3]], %[[arg0]] : f64
 // CHECK-NEXT:       scf.yield %[[i2]], %[[i1]] : f64, tensor<2xf64>
 // CHECK-NEXT:     }

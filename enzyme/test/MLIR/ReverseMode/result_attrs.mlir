@@ -10,8 +10,8 @@ module {
 
   func.func @main_ad(%arg0: i32, %arg1: f32, %arg2: f32) -> (f32, f32) {
     %r:2 = enzyme.autodiff @main(%arg0, %arg1, %arg2) {
-      activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>],
-      ret_activity=[#enzyme<activity enzyme_constnoneed>, #enzyme<activity enzyme_active>]
+      activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>],
+      ret_activity=[#enzyme.activity<enzyme_constnoneed>, #enzyme.activity<enzyme_active>]
     } : (i32, f32, f32) -> (f32, f32)
     return %r#0, %r#1 : f32, f32
   }
@@ -19,8 +19,8 @@ module {
 
 // CHECK:  func.func private @diffemain(%arg0: i32, %arg1: f32, %arg2: f32) -> (f32 {sdy.sharding = 2 : i64}, f32) {
 // CHECK:    %0 = arith.mulf %arg1, %arg1 : f32
-// CHECK:    %1 = arith.mulf %arg2, %arg1 : f32
-// CHECK:    %2 = arith.mulf %arg2, %arg1 : f32
-// CHECK:    %3 = arith.addf %1, %2 : f32
+// CHECK:    %1 = arith.mulf %arg2, %arg1 fastmath<fast> : f32
+// CHECK:    %2 = arith.mulf %arg2, %arg1 fastmath<fast> : f32
+// CHECK:    %3 = arith.addf %1, %2 fastmath<fast> : f32
 // CHECK:    return %0, %3 : f32, f32
 // CHECK:  }

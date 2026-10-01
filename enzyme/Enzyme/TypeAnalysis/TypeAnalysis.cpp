@@ -39,6 +39,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
+#include "llvm/ProfileData/InstrProf.h"
+
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -58,7 +60,6 @@
 #include "../FunctionUtils.h"
 #include "../LibraryFuncs.h"
 
-#include "RustDebugInfo.h"
 #include "TBAA.h"
 
 #include <math.h>
@@ -99,8 +100,13 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
     {"sin", Intrinsic::sin},
+#if LLVM_VERSION_MAJOR >= 19
+    {"tan", Intrinsic::tan},
+    {"acos", Intrinsic::acos},
+#else
     {"tan", Intrinsic::not_intrinsic},
     {"acos", Intrinsic::not_intrinsic},
+#endif
     {"__nv_frcp_rd", Intrinsic::not_intrinsic},
     {"__nv_frcp_rn", Intrinsic::not_intrinsic},
     {"__nv_frcp_ru", Intrinsic::not_intrinsic},
@@ -109,9 +115,17 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"__nv_drcp_rn", Intrinsic::not_intrinsic},
     {"__nv_drcp_ru", Intrinsic::not_intrinsic},
     {"__nv_drcp_rz", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"asin", Intrinsic::asin},
+#else
     {"asin", Intrinsic::not_intrinsic},
+#endif
     {"__nv_asin", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"atan", Intrinsic::atan},
+#else
     {"atan", Intrinsic::not_intrinsic},
+#endif
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 19
@@ -128,7 +142,11 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"atanh", Intrinsic::not_intrinsic},
     {"exp", Intrinsic::exp},
     {"exp2", Intrinsic::exp2},
+#if LLVM_VERSION_MAJOR >= 18
+    {"exp10", Intrinsic::exp10},
+#else
     {"exp10", Intrinsic::not_intrinsic},
+#endif
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
     {"expm1", Intrinsic::not_intrinsic},
@@ -552,7 +570,8 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
                 if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
                         SE.getConstant(Iters->getType(), i, /*signed*/ false),
                         SE))) {
-                  insert(Val->getAPInt().getSExtValue());
+                  if (Val->getAPInt().getSignificantBits() <= 64)
+                    insert(Val->getAPInt().getSExtValue());
                 }
               }
               return intseen[val];
@@ -749,19 +768,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                       7) /
                      8;
 
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(Val->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
-      };
-      auto g2 = GetElementPtrInst::Create(
-          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, Val->getType(), i);
       if (auto VT = dyn_cast<VectorType>(Val->getType()))
         if (VT->getElementType()->isIntegerTy(1))
           Off = i / 8;
@@ -801,19 +808,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                       7) /
                      8;
 
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(Val->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
-      };
-      auto g2 = GetElementPtrInst::Create(
-          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, Val->getType(), i);
 
       getConstantAnalysis(Op, TA, analysis);
       auto mid = analysis[Op];
@@ -825,8 +820,6 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       Result |= mid.ShiftIndices(DL, /*init offset*/ 0,
                                  /*maxSize*/ ObjSize,
                                  /*addOffset*/ Off);
-
-      Result |= mid;
     }
     Result.CanonicalizeInPlace(
         (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
@@ -855,7 +848,8 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     auto I = CE->getAsInstruction();
-    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator());
+    insertBeforeInst(I,
+                     TA.fntypeinfo.Function->getEntryBlock().getTerminator());
 
     // Just analyze this new "instruction" and none of the others
     {
@@ -874,6 +868,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (auto MD = GV->getMetadata("enzyme_type")) {
+      analysis[Val] |= TypeTree::fromMD(MD);
+      return;
+    }
 
     if (GV->getName() == "__cxa_thread_atexit_impl") {
       analysis[Val] = TypeTree(BaseType::Pointer).Only(-1, nullptr);
@@ -889,15 +887,47 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    // from julia code, the world age counter is an integer
+    if (GV->getName() == "jl_world_counter" ||
+        GV->getName() == "ijl_world_counter") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+
+    if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+    // A fixed constant global is a pointer to its initializer
+    if (GV->isConstant() && GV->hasInitializer()) {
+      // Record that this global is a pointer before analyzing its initializer.
+      // An initializer which refers back to its own global (such as a relative
+      // pointer jump table) would otherwise recurse forever, as the type of a
+      // global is only recorded once its initializer has been fully analyzed.
+      // Seeding with the fact that a global is a pointer is always correct, so
+      // any type deduced from it remains sound, and the seed is refined into
+      // the full type below once the initializer has been analyzed.
+      TypeTree seed;
+      seed.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", seed.toMD(GV->getContext()));
+
+      getConstantAnalysis(GV->getInitializer(), TA, analysis);
+      TypeTree constTT = analysis[GV->getInitializer()].Only(-1, nullptr);
+      constTT.insert({-1}, ConcreteType(BaseType::Pointer));
+      GV->setMetadata("enzyme_type", constTT.toMD(GV->getContext()));
+      analysis[Val] |= constTT;
+      return;
+    }
+
     TypeTree &Result = analysis[Val];
     Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
-    // A fixed constant global is a pointer to its initializer
-    if (GV->isConstant() && GV->hasInitializer()) {
-      getConstantAnalysis(GV->getInitializer(), TA, analysis);
-      Result |= analysis[GV->getInitializer()].Only(-1, nullptr);
-      return;
-    }
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
       auto globalSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
@@ -940,6 +970,33 @@ static bool AllJuliaTypes(Type *T) {
     }
   }
   return false;
+}
+
+/// Type of a pointer to an LLVM flang descriptor (CFI_cdesc_t). All fields
+/// but base_addr are integral; dims are included only when the rank is known
+/// from the allocation type, as a pointer may follow them.
+static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
+  TypeTree TT;
+  TT.insert({-1}, BaseType::Pointer);
+  TT.insert({-1, 0}, BaseType::Pointer);
+  const int HeaderSize = 24;
+  int end = HeaderSize;
+
+  Type *T = nullptr;
+  auto base = getBaseObject(desc);
+  if (auto AI = dyn_cast<AllocaInst>(base))
+    T = AI->getAllocatedType();
+  else if (auto GV = dyn_cast<GlobalVariable>(base))
+    T = GV->getValueType();
+  if (auto ST = dyn_cast_or_null<StructType>(T))
+    if (ST->getNumElements() >= 8 &&
+        DL.getStructLayout(ST)->getElementOffset(7) == HeaderSize)
+      if (auto dims = dyn_cast<ArrayType>(ST->getElementType(7)))
+        end += DL.getTypeAllocSize(dims);
+
+  for (int i = DL.getPointerSize(); i < end; i++)
+    TT.insert({-1, i}, BaseType::Integer);
+  return TT;
 }
 
 static bool AnyJuliaTypes(Type *T) {
@@ -991,32 +1048,22 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(T)) {
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
-      vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), 1));
-      auto ud = UndefValue::get(getUnqual(AT));
-      auto g2 = GetElementPtrInst::Create(T, ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      delete g2;
+      // Array elements are laid out at successive multiples of the element's
+      // alloc size, which is what a gep [0, 1] into the array would compute.
+      size_t stride = DL.getTypeAllocSize(AT->getElementType());
       for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.emplace_back(AT->getElementType(),
-                          offset + i * ai.getLimitedValue());
+        todo.emplace_back(AT->getElementType(), offset + i * stride);
       }
 
       continue;
     }
     if (auto ST = dyn_cast<StructType>(T)) {
-      auto ud = UndefValue::get(getUnqual(ST));
+      // The struct layout already records each field's offset, which is what a
+      // gep [0, i] into the struct would compute.
+      auto SL = DL.getStructLayout(ST);
       for (size_t i = 0; i < ST->getNumElements(); i++) {
-        SmallVector<Value *, 4> vec;
-        vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
-        vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), i));
-        auto g2 = GetElementPtrInst::Create(T, ud, vec);
-        APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(DL, ai);
-        delete g2;
-        todo.emplace_back(ST->getElementType(i), offset + ai.getLimitedValue());
+        todo.emplace_back(ST->getElementType(i),
+                          offset + (size_t)SL->getElementOffset(i));
       }
 
       continue;
@@ -1024,12 +1071,15 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
   }
 }
 
-TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
+const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
   // Integers with fewer than 16 bits (size of half)
   // must be integral, since it cannot possibly represent a float or pointer
   if (!isa<UndefValue>(Val) && Val->getType()->isIntegerTy() &&
-      cast<IntegerType>(Val->getType())->getBitWidth() < 16)
-    return TypeTree(BaseType::Integer).Only(-1, nullptr);
+      cast<IntegerType>(Val->getType())->getBitWidth() < 16) {
+    static const TypeTree SmallInt =
+        TypeTree(BaseType::Integer).Only(-1, nullptr);
+    return SmallInt;
+  }
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
     if (EnzymeJuliaAddrLoad)
@@ -1123,8 +1173,11 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
-    if (hasMetadata(GV, "enzyme_ta_norecur"))
+    if (hasMetadata(GV, "enzyme_ta_norecur")) {
+      if (EnzymePrintType)
+        llvm::errs() << "Skipping updateAnalysis " << GV->getName() << "\n";
       return;
+    }
   }
 
   if (auto CE = dyn_cast<ConstantExpr>(Val)) {
@@ -1206,6 +1259,24 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
+
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (!isa<StructType>(GV->getValueType()) ||
+        !cast<StructType>(GV->getValueType())->isOpaque()) {
+      auto allocSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
+      if (EnzymePrintType) {
+        llvm::errs() << " pre global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+      Data = Data.Lookup(allocSize, DL)
+                 .Only(-1, dyn_cast_or_null<Instruction>(Origin));
+      if (EnzymePrintType) {
+        llvm::errs() << " post global update input " << Data.str()
+                     << " for global of size " << allocSize << "\n";
+      }
+    }
+  }
+
   bool Changed =
       analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 
@@ -1333,6 +1404,27 @@ void TypeAnalyzer::prepareArgs() {
   }
 }
 
+// An enzyme_type annotation may only name offsets within the value it
+// annotates. A violation is reported through the error handler when one is
+// installed, so that the frontend can turn it into a catchable error, and
+// otherwise stops the analysis with a diagnostic.
+static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
+                                  size_t RegSize, Instruction &I, Value *Val) {
+  for (const auto &pair : TT.getMapping()) {
+    if (pair.first[0] == -1 || (size_t)pair.first[0] < RegSize)
+      continue;
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0]
+       << " beyond the " << RegSize << " bytes of " << *Val << " in " << I;
+    if (CustomErrorHandler)
+      CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::IllegalTypeAnalysis,
+                         (void *)TA, wrap(Val), nullptr);
+    EmitFailure("BadEnzymeType", I.getDebugLoc(), &I, ss.str());
+    llvm::report_fatal_error("Canonicalization failed");
+  }
+}
+
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
@@ -1345,15 +1437,7 @@ void TypeAnalyzer::considerTBAA() {
         auto TT = TypeTree::fromMD(MD);
 
         auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-        for (const auto &pair : TT.getMapping()) {
-          if (pair.first[0] != -1) {
-            if ((size_t)pair.first[0] >= RegSize) {
-              llvm::errs() << " bad enzyme_type " << TT.str()
-                           << " RegSize=" << RegSize << " I:" << I << "\n";
-              llvm::report_fatal_error("Canonicalization failed");
-            }
-          }
-        }
+        checkEnzymeTypeExtent(this, TT, RegSize, I, &I);
         updateAnalysis(&I, TT, &I);
       }
 
@@ -1374,15 +1458,7 @@ void TypeAnalyzer::considerTBAA() {
           auto RegSize = I.getType()->isVoidTy()
                              ? 0
                              : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-          for (const auto &pair : TT.getMapping()) {
-            if (pair.first[0] != -1) {
-              if ((size_t)pair.first[0] >= RegSize) {
-                llvm::errs() << " bad enzyme_type " << TT.str()
-                             << " RegSize=" << RegSize << " I:" << I << "\n";
-                llvm::report_fatal_error("Canonicalization failed");
-              }
-            }
-          }
+          checkEnzymeTypeExtent(this, TT, RegSize, I, call);
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1392,15 +1468,7 @@ void TypeAnalyzer::considerTBAA() {
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
             auto argTy = call->getArgOperand(i)->getType();
             auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call->getArgOperand(i));
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1417,15 +1485,7 @@ void TypeAnalyzer::considerTBAA() {
             auto RegSize = I.getType()->isVoidTy()
                                ? 0
                                : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call);
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1434,19 +1494,10 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
-              auto RegSize = I.getType()->isVoidTy()
-                                 ? 0
-                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-              for (const auto &pair : TT.getMapping()) {
-                if (pair.first[0] != -1) {
-                  if ((size_t)pair.first[0] >= RegSize) {
-                    llvm::errs()
-                        << " bad enzyme_type " << TT.str()
-                        << " RegSize=" << RegSize << " I:" << I << "\n";
-                    llvm::report_fatal_error("Canonicalization failed");
-                  }
-                }
-              }
+              auto argTy = call->getArgOperand(i)->getType();
+              auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
+              checkEnzymeTypeExtent(this, TT, RegSize, I,
+                                    call->getArgOperand(i));
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
@@ -1523,21 +1574,22 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
-                                         "jl_alloc_array_1d",
-                                         "jl_alloc_array_2d",
-                                         "jl_alloc_array_3d",
-                                         "ijl_alloc_array_1d",
-                                         "ijl_alloc_array_2d",
-                                         "ijl_alloc_array_3d",
-                                         "jl_gc_alloc_typed",
-                                         "ijl_gc_alloc_typed",
-                                         "jl_alloc_genericmemory",
-                                         "ijl_alloc_genericmemory",
-                                         "jl_alloc_genericmemory_unchecked",
-                                         "ijl_alloc_genericmemory_unchecked",
-                                         "jl_new_array",
-                                         "ijl_new_array"};
+          static const StringSet<> JuliaKnownTypes = {
+              "julia.gc_alloc_obj",
+              "jl_alloc_array_1d",
+              "jl_alloc_array_2d",
+              "jl_alloc_array_3d",
+              "ijl_alloc_array_1d",
+              "ijl_alloc_array_2d",
+              "ijl_alloc_array_3d",
+              "jl_gc_alloc_typed",
+              "ijl_gc_alloc_typed",
+              "jl_alloc_genericmemory",
+              "ijl_alloc_genericmemory",
+              "jl_alloc_genericmemory_unchecked",
+              "ijl_alloc_genericmemory_unchecked",
+              "jl_new_array",
+              "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;
@@ -1871,7 +1923,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
     return;
   }
   auto I = CE.getAsInstruction();
-  I->insertBefore(fntypeinfo.Function->getEntryBlock().getTerminator());
+  insertBeforeInst(I, fntypeinfo.Function->getEntryBlock().getTerminator());
   analysis[I] = analysis[&CE];
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
@@ -2741,7 +2793,7 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
 
   } else {
     if (direction & DOWN) {
-      TypeTree vecAnalysis = getAnalysis(I.getVectorOperand());
+      const TypeTree &vecAnalysis = getAnalysis(I.getVectorOperand());
       // TODO merge of anythings (see selectinst)
       TypeTree res = vecAnalysis.Lookup(size, dl);
       updateAnalysis(&I, res.Only(-1, &I), &I);
@@ -2839,16 +2891,8 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
   for (size_t i = 0; i < mask.size(); ++i) {
     int newOff;
     {
-      Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-                       ConstantInt::get(Type::getInt64Ty(I.getContext()), i)};
-      auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-      auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-      APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(dl, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-      newOff = (int)ai.getLimitedValue();
+      newOff =
+          (int)getAggregateElementOffset(dl, I.getOperand(0)->getType(), i);
       // there is a bug in LLVM, this is the correct offset
       if (cast<VectorType>(I.getOperand(lhs)->getType())
               ->getElementType()
@@ -2871,24 +2915,14 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
       }
     } else {
       if ((size_t)mask[i] < numFirst) {
-        Value *vec[2] = {
-            ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-            ConstantInt::get(Type::getInt64Ty(I.getContext()), mask[i])};
-        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-        auto g2 =
-            GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(dl, ai);
-        // Using destructor rather than eraseFromParent
-        //   as g2 has no parent
-        int oldOff = (int)ai.getLimitedValue();
+        int oldOff = (int)getAggregateElementOffset(
+            dl, I.getOperand(0)->getType(), mask[i]);
         // there is a bug in LLVM, this is the correct offset
         if (cast<VectorType>(I.getOperand(lhs)->getType())
                 ->getElementType()
                 ->isIntegerTy(1)) {
           oldOff = mask[i] / 8;
         }
-        delete g2;
         if (direction & UP) {
           updateAnalysis(I.getOperand(lhs),
                          getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
@@ -2899,24 +2933,14 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
                         .ShiftIndices(dl, oldOff, size, newOff);
         }
       } else {
-        Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
-                         ConstantInt::get(Type::getInt64Ty(I.getContext()),
-                                          mask[i] - numFirst)};
-        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-        auto g2 =
-            GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-        g2->accumulateConstantOffset(dl, ai);
-        // Using destructor rather than eraseFromParent
-        //   as g2 has no parent
-        int oldOff = (int)ai.getLimitedValue();
+        int oldOff = (int)getAggregateElementOffset(
+            dl, I.getOperand(0)->getType(), mask[i] - numFirst);
         // there is a bug in LLVM, this is the correct offset
         if (cast<VectorType>(I.getOperand(lhs)->getType())
                 ->getElementType()
                 ->isIntegerTy(1)) {
           oldOff = (mask[i] - numFirst) / 8;
         }
-        delete g2;
         if (direction & UP) {
           updateAnalysis(I.getOperand(rhs),
                          getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
@@ -2937,20 +2961,9 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
 
 void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
-  SmallVector<Value *, 4> vec;
-  vec.push_back(ConstantInt::get(Type::getInt64Ty(I.getContext()), 0));
-  for (auto ind : I.indices()) {
-    vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
-  }
-  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-  auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, ai);
-  // Using destructor rather than eraseFromParent
-  //   as g2 has no parent
-  delete g2;
 
-  int off = (int)ai.getLimitedValue();
+  int off = (int)getAggregateElementOffset(dl, I.getOperand(0)->getType(),
+                                           I.getIndices());
   int size = dl.getTypeSizeInBits(I.getType()) / 8;
 
   if (direction & DOWN)
@@ -2966,56 +2979,32 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
 
 void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
-  SmallVector<Value *, 4> vec = {
-      ConstantInt::get(Type::getInt64Ty(I.getContext()), 0)};
-  for (auto ind : I.indices()) {
-    vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
-  }
-  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
-  auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, ai);
-  delete g2;
-  // Using destructor rather than eraseFromParent
-  //   as g2 has no parent
+  auto AggTy = I.getOperand(0)->getType();
+
+  int off = (int)getAggregateElementOffset(dl, AggTy, I.getIndices());
 
   // Compute the offset at the next logical element [e.g. adding 1 to the last
-  // index, carrying the value on overflow]
-  for (ssize_t i = vec.size() - 1; i >= 0; i--) {
-    auto CI = cast<ConstantInt>(vec[i]);
-    auto val = CI->getZExtValue();
-    if (i == 0) {
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
+  // index, carrying the value on overflow]. Carrying past the outermost index
+  // lands one past the aggregate itself.
+  SmallVector<unsigned, 4> next(I.getIndices().begin(), I.getIndices().end());
+  size_t endOff = dl.getTypeAllocSize(AggTy);
+  for (ssize_t i = next.size() - 1; i >= 0; i--) {
+    auto subTy = ExtractValueInst::getIndexedType(
+        AggTy, ArrayRef<unsigned>(next).slice(0, i));
+    unsigned numElements = isa<StructType>(subTy)
+                               ? cast<StructType>(subTy)->getNumElements()
+                               : cast<ArrayType>(subTy)->getNumElements();
+    if (next[i] + 1 == numElements) {
+      next.truncate(i);
+      continue;
     }
-    auto subTy = GetElementPtrInst::getIndexedType(
-        I.getOperand(0)->getType(), ArrayRef<Value *>(vec).slice(0, i));
-    if (auto ST = dyn_cast<StructType>(subTy)) {
-      if (val + 1 == ST->getNumElements()) {
-        vec.erase(vec.begin() + i, vec.end());
-        continue;
-      }
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
-    } else {
-      auto AT = cast<ArrayType>(subTy);
-      if (val + 1 == AT->getNumElements()) {
-        vec.erase(vec.begin() + i, vec.end());
-        continue;
-      }
-      vec[i] = ConstantInt::get(CI->getType(), val + 1);
-      break;
-    }
+    next[i]++;
+    endOff = getAggregateElementOffset(dl, AggTy, next);
+    break;
   }
-  g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-  APInt aiend(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-  g2->accumulateConstantOffset(dl, aiend);
-  delete g2;
-
-  int off = (int)ai.getLimitedValue();
 
   int agg_size = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
-  int ins_size = (int)(aiend - ai).getLimitedValue();
+  int ins_size = (int)(endOff - off);
   int ins2_size =
       (dl.getTypeSizeInBits(I.getInsertedValueOperand()->getType()) + 7) / 8;
 
@@ -3037,8 +3026,12 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
   // We don't care about correct MD node numbering here.
+#if LLVM_VERSION_MAJOR >= 24
+  ModuleSlotTracker MST(fntypeinfo.Function->getParent());
+#else
   ModuleSlotTracker MST(fntypeinfo.Function->getParent(),
                         /*ShouldInitializeAllMetadata*/ false);
+#endif
   for (auto &pair : analysis) {
     if (auto F = dyn_cast<Function>(pair.first))
       ss << "@" << F->getName();
@@ -3413,10 +3406,14 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           bool isNegMask = false;
           if (Args[i]) {
             if (auto CI = dyn_cast<ConstantInt>(Args[i])) {
-              int64_t andval = CI->getSExtValue();
-              if (andval < 0 && andval >= -64) {
-                Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
-                isNegMask = true;
+              // Masks wider than 64 bits (e.g. on i128) cannot be a small
+              // negative number, and getSExtValue would assert on them.
+              if (CI->getValue().getSignificantBits() <= 64) {
+                int64_t andval = CI->getSExtValue();
+                if (andval < 0 && andval >= -64) {
+                  Result = (i == 0 ? AnalysisRHS : AnalysisLHS);
+                  isNegMask = true;
+                }
               }
             }
             if (!isNegMask) {
@@ -4100,6 +4097,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 18
+  case Intrinsic::exp10:
+#endif
 #if LLVM_VERSION_MAJOR >= 19
   case Intrinsic::sinh:
   case Intrinsic::cosh:
@@ -4729,6 +4729,137 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // Julia's atomic modify pseudo-intrinsic (introduced in Julia 1.13):
+    //   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope,
+    //                                          args...)
+    // which atomically performs old = *ptr; new = op(old, args...);
+    // *ptr = new. Both result elements and the return of op have the type of
+    // the pointee of ptr, and op is analyzed interprocedurally to relate the
+    // forwarded arguments with the modified memory.
+    if (startsWith(funcName, "julia.atomicmodify.")) {
+      auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+      auto *RT = cast<StructType>(call.getType());
+      auto *SL = DL.getStructLayout(RT);
+      auto LoadSize = (DL.getTypeSizeInBits(RT->getElementType(0)) + 7) / 8;
+      int Off[2] = {(int)SL->getElementOffset(0), (int)SL->getElementOffset(1)};
+      Value *ptr = call.getArgOperand(0);
+
+      // What is known about the modified location from the pointer. Anything
+      // else known about it (both result elements, the return of op) is
+      // merged into the pointee of ptr through updateAnalysis, which reports
+      // conflicting (float/integer) information instead of asserting, and
+      // reaches the other users of the location on a later iteration.
+      TypeTree Pointee = getAnalysis(ptr).Lookup(LoadSize, DL).PurgeAnything();
+      auto updateLocation = [&](const TypeTree &Loc) {
+        if (!(direction & UP))
+          return;
+        TypeTree Ptr = Loc.ShiftIndices(DL, /*start*/ 0, LoadSize,
+                                        /*addOffset*/ 0)
+                           .Only(-1, &call);
+        Ptr.insert({-1}, BaseType::Pointer);
+        updateAnalysis(ptr, Ptr, &call);
+      };
+      auto updateResult = [&](const TypeTree &Loc) {
+        if (!(direction & DOWN))
+          return;
+        for (int i = 0; i < 2; i++)
+          updateAnalysis(&call, Loc.ShiftIndices(DL, 0, LoadSize, Off[i]),
+                         &call);
+      };
+
+      TypeTree Ret = getAnalysis(&call);
+      for (int i = 0; i < 2; i++)
+        updateLocation(
+            Ret.ShiftIndices(DL, Off[i], LoadSize, 0).PurgeAnything());
+      updateResult(Pointee);
+
+      Function *op = dyn_cast<Function>(call.getArgOperand(1));
+      if (op && !op->empty() && !op->isVarArg() &&
+          call.arg_size() - 3 == op->getFunctionType()->getNumParams()) {
+        // As for visitIPOCall, skip the interprocedural analysis of op once
+        // everything it could tell about the location and the forwarded
+        // arguments has been derived.
+        bool unknown = false;
+        for (size_t i = 0; i < LoadSize;) {
+          auto CT = Pointee[{(int)i}];
+          if (auto flt = CT.isFloat()) {
+            i += (DL.getTypeSizeInBits(flt) + 7) / 8;
+          } else if (CT == BaseType::Pointer) {
+            i += DL.getPointerSize(0);
+          } else if (CT == BaseType::Integer) {
+            i++;
+          } else {
+            unknown = true;
+            break;
+          }
+        }
+        for (size_t i = 4; !unknown && i < call.arg_size(); i++) {
+          Value *arg = call.getArgOperand(i);
+          if (!isa<ConstantData>(arg) && !getAnalysis(arg).IsFullyDetermined())
+            unknown = true;
+        }
+
+        if (unknown) {
+          // The same call information visitIPOCall derives through
+          // getCallInfo, with op's first parameter fed from the location
+          // rather than from a call operand.
+          FnTypeInfo typeInfo(op);
+          size_t argnum = 0;
+          for (auto &arg : op->args()) {
+            Value *src = argnum == 0 ? nullptr : call.getArgOperand(argnum + 3);
+            TypeTree dt = src ? getAnalysis(src) : Pointee;
+            if (arg.getType()->isIntOrIntVectorTy() &&
+                dt.Inner0() == BaseType::Anything && mustRemainInteger(&arg))
+              dt = TypeTree(BaseType::Integer).Only(-1, &call);
+            typeInfo.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&arg, dt));
+            std::set<int64_t> bounded;
+            if (src)
+              for (auto v :
+                   fntypeinfo.knownIntegralValues(src, DT, intseen, SE)) {
+                if (abs(v) > MaxIntOffset)
+                  continue;
+                bounded.insert(v);
+              }
+            typeInfo.KnownValues.insert(
+                std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+            ++argnum;
+          }
+          // The new value stored to the location is op's return.
+          typeInfo.Return = Pointee;
+          typeInfo = preventTypeAnalysisLoops(typeInfo, fntypeinfo.Function);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " starting IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+
+          if (EnzymePrintType) {
+            llvm::errs() << " ending IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
+
+          TypeTree OpRet = STR.getReturnAnalysis().PurgeAnything();
+          updateLocation(OpRet);
+          updateResult(OpRet);
+          if (direction & UP) {
+            argnum = 0;
+            for (auto &arg : op->args()) {
+              if (argnum != 0)
+                updateAnalysis(call.getArgOperand(argnum + 3), STR.query(&arg),
+                               &call);
+              ++argnum;
+            }
+          }
+        }
+      }
+      return;
+    }
+
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \
     analyzeFuncTypes(::fn, call, *this);                                       \
@@ -5184,27 +5315,33 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Reduce" || funcName == "PMPI_Reduce") {
+    if (canonicalizeMPIName(funcName) == "MPI_Reduce") {
+      bool fortranABI = isFortranMPICall(funcName);
       TypeTree buf = TypeTree(BaseType::Pointer);
 
-      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
-        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-          C = CE->getOperand(0);
-        }
-        if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_double") {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_float") {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
-            buf.insert({0}, BaseType::Integer);
+      // The C ABI passes the datatype handle by value, allowing the buffer
+      // element type to be deduced from it. The Fortran ABI passes it by
+      // reference, where its classification remains a pointer.
+      if (!fortranABI) {
+        if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+            C = CE->getOperand(0);
           }
-        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
-          // MPICH
-          if (CI->getValue() == 1275070475) {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (CI->getValue() == 1275069450) {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          if (auto GV = dyn_cast<GlobalVariable>(C)) {
+            if (GV->getName() == "ompi_mpi_double") {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_float") {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+              buf.insert({0}, BaseType::Integer);
+            }
+          } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+            // MPICH
+            if (CI->getValue() == 1275070475) {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (CI->getValue() == 1275069450) {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            }
           }
         }
       }
@@ -5215,37 +5352,75 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
       updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
-      // count
-      updateAnalysis(call.getOperand(2),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      // datatype
-      // op
-      // comm
-      // result
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        // The C ABI passes the count argument by value and returns an error
+        // code. The Fortran ABI passes it by reference (with an extra
+        // trailing `ierr` argument) and is void, so the operand keeps just
+        // its pointer classification; the pointee type is deduced from the
+        // stores that initialize it.
+        // count
+        updateAnalysis(call.getOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        // datatype
+        // op
+        // comm
+        // result
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
+      // The data copied between the send and receive buffers has the same
+      // underlying element type. Propagate type information between the two
+      // buffers so that a buffer whose contents are otherwise unobserved
+      // (e.g. a dummy argument that is only referenced by the MPI call)
+      // inherits it.
+      if (direction & UP) {
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree res = getAnalysis(call.getOperand(0))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, 1, 0);
+        TypeTree res2 = getAnalysis(call.getOperand(1))
+                            .PurgeAnything()
+                            .Data0()
+                            .ShiftIndices(dl, 0, 1, 0);
+        bool Legal = true;
+        res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+        if (Legal) {
+          res.insert({}, BaseType::Pointer);
+          res = res.Only(-1, &call);
+          updateAnalysis(call.getOperand(0), res, &call);
+          updateAnalysis(call.getOperand(1), res, &call);
+        }
+      }
       return;
     }
-    if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
+    if (canonicalizeMPIName(funcName) == "MPI_Allreduce") {
+      bool fortranABI = isFortranMPICall(funcName);
       TypeTree buf = TypeTree(BaseType::Pointer);
 
-      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
-        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-          C = CE->getOperand(0);
-        }
-        if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_double") {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_float") {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
-            buf.insert({0}, BaseType::Integer);
+      // The C ABI passes the datatype handle by value, allowing the buffer
+      // element type to be deduced from it. The Fortran ABI passes it by
+      // reference, where its classification remains a pointer.
+      if (!fortranABI) {
+        if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+            C = CE->getOperand(0);
           }
-        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
-          // MPICH
-          if (CI->getValue() == 1275070475) {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (CI->getValue() == 1275069450) {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          if (auto GV = dyn_cast<GlobalVariable>(C)) {
+            if (GV->getName() == "ompi_mpi_double") {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_float") {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+              buf.insert({0}, BaseType::Integer);
+            }
+          } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+            // MPICH
+            if (CI->getValue() == 1275070475) {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (CI->getValue() == 1275069450) {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            }
           }
         }
       }
@@ -5255,14 +5430,46 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
       updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
-      // count
-      updateAnalysis(call.getOperand(2),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      // datatype
-      // op
-      // comm
-      // result
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        // The C ABI passes the count argument by value and returns an error
+        // code. The Fortran ABI passes it by reference (with an extra
+        // trailing `ierr` argument) and is void, so the operand keeps just
+        // its pointer classification; the pointee type is deduced from the
+        // stores that initialize it.
+        // count
+        updateAnalysis(call.getOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        // datatype
+        // op
+        // comm
+        // result
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
+      // The data copied between the send and receive buffers has the same
+      // underlying element type. Propagate type information between the two
+      // buffers so that a buffer whose contents are otherwise unobserved
+      // (e.g. a dummy argument that is only referenced by the MPI call)
+      // inherits it.
+      if (direction & UP) {
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree res = getAnalysis(call.getOperand(0))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, 1, 0);
+        TypeTree res2 = getAnalysis(call.getOperand(1))
+                            .PurgeAnything()
+                            .Data0()
+                            .ShiftIndices(dl, 0, 1, 0);
+        bool Legal = true;
+        res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+        if (Legal) {
+          res.insert({}, BaseType::Pointer);
+          res = res.Only(-1, &call);
+          updateAnalysis(call.getOperand(0), res, &call);
+          updateAnalysis(call.getOperand(1), res, &call);
+        }
+      }
       return;
     }
     if (funcName == "MPI_Sendrecv_replace") {
@@ -5307,18 +5514,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Gather" || funcName == "MPI_Scatter") {
+    if (canonicalizeMPIName(funcName) == "MPI_Gather" ||
+        canonicalizeMPIName(funcName) == "MPI_Scatter") {
+      bool fortranABI = isFortranMPICall(funcName);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(3),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(4),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(6),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        // The C ABI passes the count and root arguments by value and returns
+        // an error code. The Fortran ABI passes them all by reference (with
+        // an extra trailing `ierr` argument) and is void, so those operands
+        // keep just their pointer classification; their pointee types are
+        // deduced from the stores that initialize them.
+        updateAnalysis(call.getOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(4),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(6),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
+      // The data copied between the send and receive buffers has the same
+      // underlying element type. Propagate type information between the two
+      // buffers so that a buffer whose contents are otherwise unobserved
+      // (e.g. a dummy argument that is only referenced by the MPI call)
+      // inherits it.
+      if (direction & UP) {
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree res = getAnalysis(call.getOperand(0))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, 1, 0);
+        TypeTree res2 = getAnalysis(call.getOperand(3))
+                            .PurgeAnything()
+                            .Data0()
+                            .ShiftIndices(dl, 0, 1, 0);
+        bool Legal = true;
+        res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+        if (Legal) {
+          res.insert({}, BaseType::Pointer);
+          res = res.Only(-1, &call);
+          updateAnalysis(call.getOperand(0), res, &call);
+          updateAnalysis(call.getOperand(3), res, &call);
+        }
+      }
       return;
     }
     if (funcName == "MPI_Allgather") {
@@ -5337,6 +5578,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 
     // Prob Prog
     if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
+      return;
+    }
+
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; i++) {
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
@@ -5451,7 +5707,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         Idx++;
       }
       assert(ci->getReturnType()->isPointerTy());
-      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      auto ptr = TypeTree(BaseType::Pointer);
+      if (shadowHandlers.find(funcName) == shadowHandlers.end() &&
+          funcName != "swift_allocObject") {
+        // aligned_alloc(alignment, size) takes the size second.
+        if (auto CI = dyn_cast<ConstantInt>(
+                call.getOperand(funcName == "aligned_alloc" ? 1 : 0))) {
+          auto &DL =
+              call.getParent()->getParent()->getParent()->getDataLayout();
+          auto LoadSize = CI->getZExtValue();
+          // Only propagate mappings in range that aren't "Anything" into the
+          // pointer
+          ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+        }
+      }
+      updateAnalysis(&call, ptr.Only(-1, &call), &call);
       return;
     }
     if (funcName == "malloc_usable_size" || funcName == "malloc_size" ||
@@ -5536,8 +5806,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (isDeallocationFunction(funcName, TLI)) {
+      bool cudaFree = isCudaDeallocationFunction(funcName);
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
+        // The allocation freed by the CUDA driver API is a CUdeviceptr, an
+        // integer at the LLVM level, but still a pointer.
+        if (Idx == 0 && cudaFree) {
+          updateAnalysis(call.getOperand(Idx),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          Idx++;
+          continue;
+        }
         if (Arg.getType()->isIntegerTy()) {
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -5769,30 +6048,13 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           auto T = ST->getTypeAtIndex(i);
           ConcreteType CT(BaseType::Unknown);
 
-          Value *vec[2] = {
-              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
-              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
-          auto ud = UndefValue::get(getUnqual(ST));
-          auto g2 = GetElementPtrInst::Create(ST, ud, vec);
-          APInt ai(DL.getIndexSizeInBits(0), 0);
-          g2->accumulateConstantOffset(DL, ai);
-          delete g2;
-          size_t Offset = ai.getZExtValue();
+          size_t Offset = getAggregateElementOffset(DL, ST, i);
 
           size_t nextOffset;
           if (i + 1 == ST->getNumElements())
             nextOffset = (DL.getTypeSizeInBits(ST) + 7) / 8;
-          else {
-            Value *vec[2] = {
-                ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
-                ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
-            auto ud = UndefValue::get(getUnqual(ST));
-            auto g2 = GetElementPtrInst::Create(ST, ud, vec);
-            APInt ai(DL.getIndexSizeInBits(0), 0);
-            g2->accumulateConstantOffset(DL, ai);
-            delete g2;
-            nextOffset = ai.getZExtValue();
-          }
+          else
+            nextOffset = getAggregateElementOffset(DL, ST, i + 1);
 
           if (T->isFloatingPointTy()) {
             CT = T;
@@ -6205,9 +6467,6 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   }
 
   analysis.prepareArgs();
-  if (RustTypeRules) {
-    analysis.considerRustDebugInfo();
-  }
   analysis.considerTBAA();
   analysis.run();
 
@@ -6252,7 +6511,7 @@ FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
   return analyzer->getCallInfo(CI, fn);
 }
 
-TypeTree TypeResults::query(Value *val) const {
+const TypeTree &TypeResults::query(Value *val) const {
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val)) {
     assert(inst->getParent()->getParent() == analyzer->fntypeinfo.Function);
@@ -6287,7 +6546,7 @@ size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
 bool TypeResults::allFloat(Value *val) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt.isFloat();
@@ -6316,7 +6575,7 @@ bool TypeResults::allFloat(Value *val) const {
 bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (!anythingIsFloat && dt == BaseType::Anything)
     return false;
@@ -6355,7 +6614,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
 bool TypeResults::anyPointer(Value *val) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt == BaseType::Pointer;
@@ -6393,7 +6652,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
                                   bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   auto dt = q[{0}];
   /*
   size_t ObjSize = 1;
@@ -6423,7 +6682,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
 Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val);
+  const auto &q = query(val);
   Type *ty = q[{-1}].isFloat();
   for (size_t i = start; i < num; ++i) {
     auto ty2 = q[{(int)i}].isFloat();
@@ -6483,24 +6742,6 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   return dt;
 }
 
-/// Parse the debug info generated by rustc and retrieve useful type info if
-/// possible
-void TypeAnalyzer::considerRustDebugInfo() {
-  DataLayout DL = fntypeinfo.Function->getParent()->getDataLayout();
-  for (BasicBlock &BB : *fntypeinfo.Function) {
-    for (Instruction &I : BB) {
-      if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(&I)) {
-        TypeTree TT = parseDIType(*DDI, DL);
-        if (!TT.isKnown()) {
-          continue;
-        }
-        TT |= TypeTree(BaseType::Pointer);
-        updateAnalysis(DDI->getAddress(), TT.Only(-1, &I), DDI);
-      }
-    }
-  }
-}
-
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer) {
   if (ET->isIntOrIntVectorTy()) {
@@ -6523,20 +6764,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     for (size_t i = 0; i < ST->getNumElements(); i++) {
       auto SubT =
           defaultTypeTreeForLLVM(ST->getElementType(i), I, intIsPointer);
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(ST, UndefValue::get(getUnqual(ST)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
       auto size = (DL.getTypeSizeInBits(ST->getElementType(i)) + 7) / 8;
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, ST, i);
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }
     return Out;
@@ -6547,19 +6776,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < AT->getNumElements(); i++) {
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, AT, i);
       auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }
@@ -6577,19 +6794,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < numElems; i++) {
-      Value *vec[2] = {
-          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
-          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
-      };
-      auto g2 =
-          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      int Off = (int)ai.getLimitedValue();
+      int Off = (int)getAggregateElementOffset(DL, AT, i);
       auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
       Out |= SubT.ShiftIndices(DL, 0, size, Off);
     }

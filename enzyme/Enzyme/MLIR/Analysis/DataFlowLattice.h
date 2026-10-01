@@ -253,31 +253,24 @@ public:
   ChangeResult join(const AbstractDenseLattice &other) {
     const auto &rhs =
         static_cast<const MapOfSetsLattice<KeyT, ElementT> &>(other);
-    llvm::SmallDenseSet<DistinctAttr> keys;
-    auto lhsRange = llvm::make_first_range(map);
-    auto rhsRange = llvm::make_first_range(rhs.map);
-    keys.insert(lhsRange.begin(), lhsRange.end());
-    keys.insert(rhsRange.begin(), rhsRange.end());
 
+    // Joining with itself says nothing new, and the loop below walks the other
+    // side's map while inserting into this one, which the rehash would not
+    // survive. Say the first, which settles the second.
+    if (this == &rhs)
+      return ChangeResult::NoChange;
+
+    // A key only this side has is left as it is, so only the other side's keys
+    // are worth walking. Taking the union of both first meant every join cost
+    // the size of what had been accumulated, which in a fixpoint is joined into
+    // over and over by something small.
     ChangeResult result = ChangeResult::NoChange;
-    for (DistinctAttr key : keys) {
-      auto lhsIt = map.find(key);
-      auto rhsIt = rhs.map.find(key);
-      assert(lhsIt != map.end() || rhsIt != rhs.map.end());
-
-      // If present in both, join.
-      if (lhsIt != map.end() && rhsIt != rhs.map.end()) {
-        result |= lhsIt->getSecond().join(rhsIt->getSecond());
-        continue;
-      }
-
-      // Copy from RHS if available only there.
-      if (lhsIt == map.end()) {
-        map.try_emplace(rhsIt->getFirst(), rhsIt->getSecond());
+    for (const auto &it : rhs.map) {
+      auto [lhsIt, inserted] = map.try_emplace(it.getFirst(), it.getSecond());
+      if (inserted)
         result = ChangeResult::Change;
-      }
-
-      // Do nothing if available only in LHS.
+      else
+        result |= lhsIt->getSecond().join(it.getSecond());
     }
     return result;
   }
@@ -339,18 +332,22 @@ private:
 
     for (const auto &[srcClass, destClasses] : map) {
       SmallVector<Attribute> pair = {srcClass};
-      SmallVector<Attribute> aliasClasses;
+      // Unknown and undefined are said as the bare marker string, the way
+      // serializeSetNaive says them and the way the readers of these summaries
+      // look for them. Wrapped in the list they read as one more element of a
+      // known set, and get cast to whatever the elements are supposed to be.
       if (destClasses.isUnknown()) {
-        aliasClasses.push_back(StringAttr::get(ctx, unknownSetString));
+        pair.push_back(StringAttr::get(ctx, unknownSetString));
       } else if (destClasses.isUndefined()) {
-        aliasClasses.push_back(StringAttr::get(ctx, undefinedSetString));
+        pair.push_back(StringAttr::get(ctx, undefinedSetString));
       } else {
+        SmallVector<Attribute> aliasClasses;
         for (const Attribute &destClass : destClasses.getElements()) {
           aliasClasses.push_back(destClass);
         }
         llvm::sort(aliasClasses, sortAttributes);
+        pair.push_back(ArrayAttr::get(ctx, aliasClasses));
       }
-      pair.push_back(ArrayAttr::get(ctx, aliasClasses));
       pointsToArray.push_back(ArrayAttr::get(ctx, pair));
     }
     llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {

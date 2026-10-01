@@ -7,7 +7,7 @@ func.func @test1(%vx : f64, %dout : f64) -> f64 {
   ^bb0(%x : f64, %xx : f64):
       %y = arith.mulf %xx, %xx : f64
       enzyme.yield %y : f64 
-  } attributes { activity = [#enzyme<activity enzyme_const>,#enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] }: (f64,f64) -> f64
+  } attributes { activity = [#enzyme.activity<enzyme_const>,#enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }: (f64,f64) -> f64
   return %out : f64
 }
 
@@ -18,6 +18,6 @@ func.func @test1(%vx : f64, %dout : f64) -> f64 {
 // CHECK-NEXT:   ^bb0(%arg2: f64):
 // CHECK-NEXT:     %2 = arith.mulf %arg2, %arg2 : f64
 // CHECK-NEXT:     enzyme.yield %2 : f64
-// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64) -> f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]} : (f64) -> f64
 // CHECK-NEXT:   return %1 : f64
 // CHECK-NEXT: }

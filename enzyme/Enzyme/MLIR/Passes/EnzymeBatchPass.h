@@ -18,13 +18,22 @@ struct BatchCacheKey {
   FunctionOpInterface function;
   SmallVector<int64_t> batchSizes;
 
-  // for use in std::map:
   bool operator<(const BatchCacheKey &other) const {
-    if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName())
-      return const_cast<FunctionOpInterface &>(function).getName() <
+    Operation *thisSymbolTable = SymbolTable::getNearestSymbolTable(function),
+              *otherSymbolTable =
+                  SymbolTable::getNearestSymbolTable(other.function);
+    if (thisSymbolTable != otherSymbolTable)
+      return std::less<Operation *>()(thisSymbolTable, otherSymbolTable);
+
+    auto thisName = const_cast<FunctionOpInterface &>(function).getName(),
+         otherName =
              const_cast<FunctionOpInterface &>(other.function).getName();
-    return batchSizes < other.batchSizes;
+    if (thisName != otherName)
+      return thisName < otherName;
+
+    return std::lexicographical_compare(batchSizes.begin(), batchSizes.end(),
+                                        other.batchSizes.begin(),
+                                        other.batchSizes.end());
   }
 };
 

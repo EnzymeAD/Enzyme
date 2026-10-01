@@ -47,7 +47,14 @@ struct RaiseLLVMExtPass
           auto name = StringAttr::get(&getContext(), "__enzyme_ptr_size_hint");
           auto uses = SymbolTable::getSymbolUses(name, st);
 
-          if (!uses)
+          // getSymbolUses returns an empty (not nullopt) range when the
+          // symbol simply isn't referenced anywhere in this module, which is
+          // the common case (most translation units never call
+          // __enzyme_ptr_size_hint); only bail out on the lookup+cast below
+          // if there's actually a use to process, since symtable.lookup(name)
+          // returns null when the symbol isn't declared in this module at
+          // all, and casting that to FunctionOpInterface crashes.
+          if (!uses || uses->empty())
             return;
 
           auto fn = cast<FunctionOpInterface>(symtable.lookup(name));
@@ -66,9 +73,62 @@ struct RaiseLLVMExtPass
               return;
             }
 
+            auto args = call.getArgOperands();
+            if (args.size() < 2 || args.size() > 3) {
+              failed = true;
+              call.emitError() << "__enzyme_ptr_size_hint expects (ptr, size) "
+                                  "or (ptr, size, addrspace), got "
+                               << args.size() << " arguments";
+              return;
+            }
+
+            auto ptrTy = dyn_cast<LLVM::LLVMPointerType>(args[0].getType());
+            if (!ptrTy) {
+              failed = true;
+              call.emitError()
+                  << "first argument of __enzyme_ptr_size_hint is not a "
+                     "pointer";
+              return;
+            }
+
             OpBuilder builder(call);
-            llvm_ext::PtrSizeHintOp::create(
-                builder, call.getLoc(), call.getOperand(0), call.getOperand(1));
+            Value ptr = args[0];
+
+            // The optional third argument names the memory space the pointer
+            // really addresses. The callers that need it are the ones whose
+            // frontend cannot put that space in the type -- a cudaMalloc'd
+            // buffer is a plain `float *`, address space 0 like every other
+            // host pointer in CUDA C -- so rather than rejecting an annotation
+            // that disagrees with the type, hint an llvm.addrspacecast to the
+            // annotated space. Everything downstream keeps taking the memory
+            // space from a pointer's own type: the clone of this allocation is
+            // made from the cast, so it is allocated and copied with the device
+            // runtime instead of malloc/memcpy.
+            if (args.size() == 3) {
+              APInt space;
+              if (!matchPattern(args[2], m_ConstantInt(&space))) {
+                failed = true;
+                call.emitError() << "address space argument of "
+                                    "__enzyme_ptr_size_hint is not a constant";
+                return;
+              }
+              if (space.isNegative()) {
+                failed = true;
+                call.emitError() << "address space argument of "
+                                    "__enzyme_ptr_size_hint is negative: "
+                                 << space.getSExtValue();
+                return;
+              }
+              if (space.getZExtValue() != ptrTy.getAddressSpace()) {
+                auto castTy = LLVM::LLVMPointerType::get(
+                    &getContext(), (unsigned)space.getZExtValue());
+                ptr = LLVM::AddrSpaceCastOp::create(builder, call.getLoc(),
+                                                    castTy, ptr);
+              }
+            }
+
+            llvm_ext::PtrSizeHintOp::create(builder, call.getLoc(), ptr,
+                                            args[1]);
 
             call.erase();
           }

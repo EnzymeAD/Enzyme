@@ -11,18 +11,18 @@ module {
   }
 
   // CHECK-LABEL: func.func @hmc
-  func.func @hmc(%rng : tensor<2xui64>, %rate : tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
+  func.func @hmc(%rng : tensor<2xui64>, %rate : tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[1.0, 1.0]]> : tensor<1x2xf64>
 
     %inverse_mass_matrix = arith.constant dense<[[1.0, 0.0], [0.0, 1.0]]> : tensor<2x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %res:8 = impulse.infer @test(%rng, %rate) given %init_trace
+    %res:9 = impulse.infer @test(%rng, %rate) given %init_trace
       inverse_mass_matrix = %inverse_mass_matrix
       step_size = %step_size
       { hmc_config = #impulse.hmc_config<trajectory_length = 1.000000e+00 : f64>, name = "hmc", selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], all_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>, tensor<2x2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
-    return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
+      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>, tensor<2x2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+    return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
 

@@ -172,7 +172,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
   }
-  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+  // Canonical MPI name across calling conventions (C "MPI_Recv", "PMPI_Recv"
+  // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
+  // ABIs; the Fortran ABI only appends a trailing `ierr` argument.
+  StringRef canonMPIName = canonicalizeMPIName(F.getName());
+  if (canonMPIName == "MPI_Irecv") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -205,7 +209,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     }
   }
   auto name = getFuncName(&F);
-  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+  if (canonMPIName == "MPI_Isend") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -237,8 +241,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
-      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+  if (canonMPIName == "MPI_Comm_rank" || canonMPIName == "MPI_Comm_size") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -267,7 +270,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+  if (canonMPIName == "MPI_Wait") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -282,7 +285,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+  if (canonMPIName == "MPI_Waitall") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -311,7 +314,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 
       {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
   {
-    auto found = MPI_TYPE_ARGS.find(name.str());
+    auto found = MPI_TYPE_ARGS.find(canonMPIName.str());
     if (found != MPI_TYPE_ARGS.end()) {
       for (auto user : F.users()) {
         if (auto CI = dyn_cast<CallBase>(user))
@@ -518,10 +521,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
   Value *gVal;
 
-  Value *prevSize =
-      B.CreateSelect(B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1)),
-                     ConstantInt::get(next->getType(), 0),
-                     B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
+  Value *halfNext = B.CreateLShr(next, ConstantInt::get(next->getType(), 1));
+  Value *isFirstSize =
+      B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1));
+  Value *prevSize = B.CreateSelect(
+      isFirstSize, ConstantInt::get(next->getType(), 0), halfNext);
 
   auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
   bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
@@ -541,8 +545,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     gVal = CreateAllocation(B, RT, elSize, "", nullptr, &SubZero);
 
     Type *bTy =
-        PointerType::get(Type::getInt8Ty(gVal->getContext()),
-                         cast<PointerType>(gVal->getType())->getAddressSpace());
+        getPointerType(Type::getInt8Ty(gVal->getContext()),
+                       cast<PointerType>(gVal->getType())->getAddressSpace());
     gVal = B.CreatePointerCast(gVal, bTy);
     auto pVal = B.CreatePointerCast(ptr, gVal->getType());
 
@@ -622,7 +626,30 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   Value *res;
   auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
   auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
-  auto Align = ConstantInt::get(Count->getType(), AlignI);
+
+  // On 32-bit targets (wasm32-wasi, 32-bit ARM/x86, etc.) the C ABI's
+  // malloc takes size_t = i32; if upstream tape-cache math widened
+  // Count to i64, feeding it straight into CreateMalloc emits
+  // `call i8* @malloc(i64 ...)` against wasi-libc's `malloc(i32)` and
+  // traps at load with signature_mismatch:malloc. Truncate Count to the
+  // target IntPtrType only when Count is WIDER than IntPtrTy -- narrower
+  // Counts are already handled correctly by LLVM's usual i64-widening
+  // before the malloc call on 64-bit hosts, and altering that path would
+  // rearrange the golden IR that existing FileCheck tests record.
+  //
+  // CustomAllocator is a user-supplied callback whose type contract we
+  // preserve unchanged.
+  Type *IntPtrTy = M.getDataLayout().getIntPtrType(M.getContext(), 0);
+  Value *AllocCount = Count;
+  Type *AllocSizeTy = Count->getType();
+  if (!CustomAllocator && AllocSizeTy->isIntegerTy() &&
+      IntPtrTy->isIntegerTy() &&
+      AllocSizeTy->getIntegerBitWidth() > IntPtrTy->getIntegerBitWidth()) {
+    AllocCount = Builder.CreateTrunc(Count, IntPtrTy, Name + ".size");
+    AllocSizeTy = IntPtrTy;
+  }
+  auto Align = ConstantInt::get(AllocSizeTy, AlignI);
+
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
@@ -645,17 +672,19 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       ZeroMem = nullptr;
     }
   } else {
-#if LLVM_VERSION_MAJOR > 17
+#if LLVM_VERSION_MAJOR >= 24
+    res = Builder.CreateMalloc(AllocSizeTy, Align, AllocCount, nullptr, Name);
+#elif LLVM_VERSION_MAJOR > 17
     res =
-        Builder.CreateMalloc(Count->getType(), T, Align, Count, nullptr, Name);
+        Builder.CreateMalloc(AllocSizeTy, T, Align, AllocCount, nullptr, Name);
 #else
     if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
-      res = CallInst::CreateMalloc(Builder.GetInsertBlock(), Count->getType(),
-                                   T, Align, Count, nullptr, Name);
+      res = CallInst::CreateMalloc(Builder.GetInsertBlock(), AllocSizeTy, T,
+                                   Align, AllocCount, nullptr, Name);
       Builder.SetInsertPoint(Builder.GetInsertBlock());
     } else {
-      res = CallInst::CreateMalloc(&*Builder.GetInsertPoint(), Count->getType(),
-                                   T, Align, Count, nullptr, Name);
+      res = CallInst::CreateMalloc(&*Builder.GetInsertPoint(), AllocSizeTy, T,
+                                   Align, AllocCount, nullptr, Name);
     }
     if (!cast<Instruction>(res)->getParent())
       Builder.Insert(cast<Instruction>(res));
@@ -666,11 +695,14 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       malloccall = cast<CallInst>(cast<Instruction>(res)->getOperand(0));
     }
 
-    // Assert computation of size of array doesn't wrap
+    // Assert computation of size of array doesn't wrap.  Match against the
+    // (possibly-cast) size operand `AllocCount` that CreateMalloc actually
+    // consumed -- on 64-bit hosts where no cast was needed this is still
+    // pointer-equal to `Count`, so the identity check still fires.
     if (auto BI = dyn_cast<BinaryOperator>(malloccall->getArgOperand(0))) {
       if (BI->getOpcode() == BinaryOperator::Mul) {
-        if ((BI->getOperand(0) == Align && BI->getOperand(1) == Count) ||
-            (BI->getOperand(1) == Align && BI->getOperand(0) == Count))
+        if ((BI->getOperand(0) == Align && BI->getOperand(1) == AllocCount) ||
+            (BI->getOperand(1) == Align && BI->getOperand(0) == AllocCount))
           BI->setHasNoSignedWrap(true);
         BI->setHasNoUnsignedWrap(true);
       }
@@ -725,11 +757,17 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
 #endif
     if (needsCast)
       tozero = Builder.CreatePointerCast(
-          tozero, PointerType::get(Type::getInt8Ty(PT->getContext()),
-                                   PT->getAddressSpace()));
+          tozero, getPointerType(Type::getInt8Ty(PT->getContext()),
+                                 PT->getAddressSpace()));
+    // Use AllocCount (the possibly-cast size operand feeding CreateMalloc),
+    // not the pre-cast Count. When we did cast (wasm32 case), Count is
+    // wider than IntPtrTy and mixing it with Align (IntPtrTy) here would
+    // emit invalid IR like `mul i32 8, i64 %n`. On 64-bit hosts where no
+    // cast was needed, AllocCount is pointer-equal to Count so behavior
+    // matches the pre-patch code.
     Value *args[] = {
         tozero, ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),
-        Builder.CreateMul(Align, Count, "", true, true),
+        Builder.CreateMul(Align, AllocCount, "", true, true),
         ConstantInt::getFalse(malloccall->getContext())};
     Type *tys[] = {args[0]->getType(), args[2]->getType()};
 
@@ -1004,14 +1042,34 @@ IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
     return IntegerType::get(ctx, 32);
 }
 
+bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
+  if (!AtomicAdd)
+    return false;
+  if (!origptr || !newFunc)
+    return AtomicAdd;
+
+  auto TmpOrig = getBaseObject(origptr);
+
+  // atomics
+  bool Atomic = AtomicAdd;
+  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
+
+  // No need to do atomic on local memory for CUDA since it can't be raced
+  // upon
+  if (isa<AllocaInst>(TmpOrig) &&
+      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+       Arch == Triple::amd_target)) {
+    Atomic = false;
+  }
+  return Atomic;
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
-Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
-                                             unsigned dstalign,
-                                             unsigned srcalign,
-                                             unsigned dstaddr, unsigned srcaddr,
-                                             unsigned bitwidth,
-                                             bool runtimeActivity) {
+Function *getOrInsertDifferentialFloatMemcpy(
+    Module &M, Type *elementType, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
+    bool atomic) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
@@ -1024,8 +1082,10 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     name += "sadd" + std::to_string(srcaddr);
   if (runtimeActivity)
     name += "_runtime_activity";
-  std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
-                                PointerType::get(elementType, srcaddr),
+  if (atomic)
+    name += "_atomic";
+  std::vector<Type *> argTys = {getPointerType(elementType, dstaddr),
+                                getPointerType(elementType, srcaddr),
                                 IntegerType::get(M.getContext(), bitwidth)};
   if (runtimeActivity) {
     argTys.push_back(Type::getInt1Ty(M.getContext())); // dst_inactive
@@ -1090,7 +1150,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
       B.SetInsertPoint(memsetDst);
       auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
       Value *dst_i8 = B.CreatePointerCast(
-          dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
+          dst, getPointerType(Type::getInt8Ty(M.getContext()), dstaddr));
       B.CreateMemSet(dst_i8, B.getInt8(0),
                      B.CreateMul(num, ConstantInt::get(num->getType(), elSize),
                                  "", /*HasNUW*/ true, /*HasNSW*/ true),
@@ -1153,11 +1213,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     }
 
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-    StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
-    if (srcalign) {
-      srcl->setAlignment(Align(srcalign));
-      srcs->setAlignment(Align(srcalign));
+    if (atomic) {
+      B.CreateAtomicRMW(AtomicRMWInst::BinOp::FAdd, srci, dstl,
+                        MaybeAlign(srcalign), AtomicOrdering::Monotonic,
+                        SyncScope::System);
+    } else {
+      LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+      StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
+      if (srcalign) {
+        srcl->setAlignment(Align(srcalign));
+        srcs->setAlignment(Align(srcalign));
+      }
     }
 
     Value *next =
@@ -1205,8 +1271,8 @@ Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
     if (fpType != ptr->getType()->getPointerElementType()) {
       ptr = B.CreatePointerCast(
           ptr,
-          PointerType::get(
-              fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
+          getPointerType(fpType,
+                         cast<PointerType>(ptr->getType())->getAddressSpace()));
     }
 #if LLVM_VERSION_MAJOR >= 15
   }
@@ -1305,27 +1371,39 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   auto i_plus_one = LB.CreateAdd(i, one, "", true, true);
   i->addIncoming(i_plus_one, loop);
 
-  Value *copyArgs[] = {
-      to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
-                       EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
-                         CreateSelect(LB, islowerarg, i_plus_one, i),
-                         CreateSelect(LB, islowerarg, i, i_plus_one)),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
-                             CreateSelect(LB, islowerarg, one, zero),
-                             CreateSelect(LB, islowerarg, zero, one)),
-          byRef, cublas, nullptr, EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
-                         CreateSelect(LB, islowerarg, i, i_plus_one),
-                         CreateSelect(LB, islowerarg, i_plus_one, i)),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
-                             CreateSelect(LB, islowerarg, zero, one),
-                             CreateSelect(LB, islowerarg, one, zero)),
-          byRef, cublas, nullptr, EB)};
+  // Each lookup_with_layout's two selects are bound in the order they are
+  // emitted; the array elements themselves stay in place, since a braced
+  // initializer is evaluated left to right.
+  Value *countArg = to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef,
+                                     cublas, nullptr, EB);
+
+  Value *aCol = CreateSelect(LB, islowerarg, i, i_plus_one);
+  Value *aRow = CreateSelect(LB, islowerarg, i_plus_one, i);
+  Value *aArg =
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg, aRow, aCol);
+
+  Value *incACol = CreateSelect(LB, islowerarg, zero, one);
+  Value *incARow = CreateSelect(LB, islowerarg, one, zero);
+  Value *incAArg =
+      to_blas_callconv(LB,
+                       lookup_with_layout(LB, fpType, layoutarg, nullptr,
+                                          ldaarg, incARow, incACol),
+                       byRef, cublas, nullptr, EB);
+
+  Value *bCol = CreateSelect(LB, islowerarg, i_plus_one, i);
+  Value *bRow = CreateSelect(LB, islowerarg, i, i_plus_one);
+  Value *bArg =
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg, bRow, bCol);
+
+  Value *incBCol = CreateSelect(LB, islowerarg, one, zero);
+  Value *incBRow = CreateSelect(LB, islowerarg, zero, one);
+  Value *incBArg =
+      to_blas_callconv(LB,
+                       lookup_with_layout(LB, fpType, layoutarg, nullptr,
+                                          ldaarg, incBRow, incBCol),
+                       byRef, cublas, nullptr, EB);
+
+  Value *copyArgs[] = {countArg, aArg, incAArg, bArg, incBArg};
 
   Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
                      copyArgs[2]->getType(), copyArgs[3]->getType(),
@@ -1488,7 +1566,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
     if (byRef) {
       auto VP = B1.CreatePointerCast(
           blasalpha,
-          PointerType::get(
+          getPointerType(
               fpTy,
               cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
@@ -1499,15 +1577,15 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
     IRBuilder<> B2(init);
     Value *xfloat = B2.CreatePointerCast(
         blasx,
-        PointerType::get(
-            fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
+        getPointerType(fpTy,
+                       cast<PointerType>(blasx->getType())->getAddressSpace()));
     Value *dyfloat = B2.CreatePointerCast(
         blasdy,
-        PointerType::get(
+        getPointerType(
             fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
     Value *dAPfloat = B2.CreatePointerCast(
         blasdAP,
-        PointerType::get(
+        getPointerType(
             fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
     B2.CreateCondBr(is_l, lower_code, uper_code);
 
@@ -1667,10 +1745,10 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B2.setFastMathFlags(getFast());
     Value *lda = load_if_ref(B2, IT, blaslda, byRef);
     Value *Afloat = B2.CreatePointerCast(
-        matA, PointerType::get(
+        matA, getPointerType(
                   fpTy, cast<PointerType>(matA->getType())->getAddressSpace()));
     Value *Bfloat = B2.CreatePointerCast(
-        matB, PointerType::get(
+        matB, getPointerType(
                   fpTy, cast<PointerType>(matB->getType())->getAddressSpace()));
     B2.CreateCondBr(B2.CreateICmpEQ(m, lda), fastPath, body);
 
@@ -2112,13 +2190,24 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 // TODO implement differential memmove
 Function *getOrInsertDifferentialFloatMemmove(
     Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
-    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity) {
+    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity, bool atomic) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
            "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth, runtimeActivity);
+                                            srcaddr, bitwidth, runtimeActivity,
+                                            atomic);
+}
+
+FunctionCallee getOrInsertPerCallingConv(Module &M, Function *templateFn,
+                                         StringRef callee, FunctionType *FT) {
+  auto res = M.getOrInsertFunction(
+      getRenamedPerCallingConv(templateFn->getName(), callee), FT);
+  if (auto F = dyn_cast<Function>(res.getCallee()))
+    if (!F->hasFnAttribute("enzyme_math"))
+      F->addFnAttr("enzyme_math", callee);
+  return res;
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
@@ -2175,8 +2264,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  addFunctionNoCapture(F, 0);
-  addFunctionNoCapture(F, 1);
+  // A CUdeviceptr is passed as an integer, which cannot carry nocapture.
+  if (Ty->isPointerTy()) {
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
@@ -2232,7 +2324,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   assert(V->getType()->isIntegerTy());
   IntegerType *T = cast<IntegerType>(V->getType());
-  V = B.CreateAdd(V, ConstantInt::get(T, -1));
+  V = B.CreateAdd(V, ConstantInt::get(T, -1, /*IsSigned*/ true));
   for (size_t i = 1; i < T->getBitWidth(); i *= 2) {
     V = B.CreateOr(V, B.CreateLShr(V, ConstantInt::get(T, i)));
   }
@@ -2415,9 +2507,10 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   return F;
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, IRBuilder<> &B2) {
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
+                                   llvm::Type *OpPtr, llvm::Type *OpType,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
   auto FlT = CT.isFloat();
@@ -2497,10 +2590,13 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   llvm::Type *rtypes[] = {getInt8PtrTy(M.getContext()), intType, OpPtr};
   FunctionType *RFT = FunctionType::get(intType, rtypes, false);
 
-  Constant *RF = M.getNamedValue("MPI_Op_create");
+  std::string opCreate =
+      getRenamedPerCallingConv(templateFn->getName(), "MPI_Op_create");
+  Constant *RF = M.getNamedValue(opCreate);
   if (!RF) {
-    RF =
-        cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
+    RF = cast<Function>(
+        getOrInsertPerCallingConv(M, templateFn, "MPI_Op_create", RFT)
+            .getCallee());
   } else {
     RF = ConstantExpr::getBitCast(RF, getUnqual(RFT));
   }
@@ -2552,7 +2648,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<Instruction *> &stores,
+                     const llvm::SetVector<Instruction *> &stores,
                      const llvm::Loop *region) {
   using namespace llvm;
   std::map<BasicBlock *, SmallVector<Instruction *, 1>> maybeBlocks;
@@ -2609,6 +2705,54 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
       todo.push_back(B);
     }
   }
+}
+
+const SCEV *evaluateAtIterationWithoutExt(const SCEVAddRecExpr *AR,
+                                          const SCEV *It, ScalarEvolution &SE) {
+  Type *Ty = AR->getType();
+  unsigned N = AR->getNumOperands();
+  if (!Ty->isIntegerTy() || !It->getType()->isIntegerTy() || N > 4)
+    return AR->evaluateAtIteration(It, SE);
+
+  // The binomial coefficients are formed in the wider of the two types, so
+  // that no bit of the iteration number is dropped before the halving (the
+  // value of I*(I-1)/2 modulo 2^W depends on bit W of I).
+  Type *CalcTy = SE.getTypeSizeInBits(It->getType()) > SE.getTypeSizeInBits(Ty)
+                     ? It->getType()
+                     : Ty;
+  const SCEV *I = SE.getTruncateOrZeroExtend(It, CalcTy);
+  const SCEV *Res = AR->getOperand(0);
+  if (N > 1)
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(1), SE.getTruncateOrNoop(I, Ty)));
+  if (N > 2) {
+    // I*(I-1)/2 as (I/2)*(I-1) + (I%2)*((I-1)/2): whichever of I and I-1 is
+    // even is halved exactly, the other term is then zero.
+    const SCEV *One = SE.getOne(CalcTy);
+    const SCEV *Two = SE.getConstant(CalcTy, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(2), SE.getTruncateOrNoop(Tri, Ty)));
+    if (N > 3) {
+      // I*(I-1)*(I-2)/6 = (I*(I-1)/2) * (I-2) / 3, and exact division by the
+      // odd number 3 is multiplication by its inverse modulo 2^W (found by
+      // Newton iteration, which doubles the number of correct bits each step).
+      unsigned Bits = SE.getTypeSizeInBits(CalcTy);
+      APInt Three(Bits, 3), Inv(Bits, 3);
+      for (unsigned Correct = 3; Correct < Bits; Correct *= 2)
+        Inv *= APInt(Bits, 2) - Three * Inv;
+      const SCEV *Tet = SE.getMulExpr(
+          SE.getMulExpr(Tri, SE.getMinusSCEV(I, Two)), SE.getConstant(Inv));
+      Res = SE.getAddExpr(
+          Res, SE.getMulExpr(AR->getOperand(3), SE.getTruncateOrNoop(Tet, Ty)));
+    }
+  }
+  return Res;
 }
 
 bool overwritesToMemoryReadByLoop(
@@ -2742,7 +2886,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
               if (ebd == SE.getCouldNotCompute())
                 break;
-              elim = endL->evaluateAtIteration(ebd, SE);
+              elim = evaluateAtIterationWithoutExt(endL, ebd, SE);
               continue;
             }
           }
@@ -2761,7 +2905,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
           if (sbd == SE.getCouldNotCompute())
             break;
-          slim = startL->evaluateAtIteration(sbd, SE);
+          slim = evaluateAtIterationWithoutExt(startL, sbd, SE);
           continue;
         }
       }
@@ -2939,6 +3083,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         isDeallocationFunction(funcName, TLI)) {
       return false;
     }
+
+    if (isReadOnlyOrThrow(call))
+      return false;
 
     if (isMemFreeLibMFunction(funcName)) {
       return false;
@@ -3476,22 +3623,8 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
       auto offset = preOffset;
 
       auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(EVI->getContext()), 0));
-      for (auto ind : EVI->getIndices()) {
-        vec.push_back(
-            ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
-      }
-      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
-      auto g2 =
-          GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      offset += (size_t)ai.getLimitedValue();
+      offset += (size_t)getAggregateElementOffset(
+          DL, EVI->getOperand(0)->getType(), EVI->getIndices());
 
       if (valSz == 0) {
         auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
@@ -3597,66 +3730,97 @@ Function *getFirstFunctionDefinition(Module &M) {
   return nullptr;
 }
 
+/// Decompose `in` as `prefix + floatType + stem + suffix` using the supplied
+/// tables, setting the out-parameters to the entries that matched.
+///
+/// No name the tables in `extractBLAS` can spell decomposes in more than one
+/// way, so peeling the fixed parts off either end of `in` and looking up what
+/// remains is equivalent to comparing `in` against every name the tables can
+/// generate -- but it allocates nothing. That matters: `extractBLAS` runs for
+/// every call instruction visited by type analysis and by
+/// `is_use_directly_needed_in_reverse`, and materialising the ~1200 candidate
+/// `std::string`s per query dominated compile time on call-heavy modules that
+/// contain no BLAS at all.
+static bool matchBLASName(StringRef in, ArrayRef<const char *> prefixes,
+                          ArrayRef<const char *> floatTypes,
+                          ArrayRef<const char *> stems,
+                          ArrayRef<const char *> suffixes,
+                          const char *&prefixOut, const char *&floatTypeOut,
+                          const char *&stemOut, const char *&suffixOut) {
+  for (const char *p : prefixes) {
+    StringRef afterPrefix = in;
+    if (!afterPrefix.consume_front(p))
+      continue;
+    for (const char *t : floatTypes) {
+      StringRef afterType = afterPrefix;
+      if (!afterType.consume_front(t))
+        continue;
+      for (const char *s : suffixes) {
+        StringRef stem = afterType;
+        if (!stem.consume_back(s))
+          continue;
+        for (const char *f : stems) {
+          if (stem != f)
+            continue;
+          prefixOut = p;
+          floatTypeOut = t;
+          stemOut = f;
+          suffixOut = s;
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {
+  static const char *extractable[] = {
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
   };
-  const char *floatType[] = {"s", "d", "c", "z"};
-  const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
-  const char *suffixes[] = {"", "_", "64_", "_64_"};
-  for (auto t : floatType) {
-    for (auto f : extractable) {
-      for (auto p : prefixes) {
-        for (auto s : suffixes) {
-          if (in == (Twine(p) + t + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t, p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *floatType[] = {"s", "d", "c", "z"};
+  static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
+  static const char *suffixes[] = {"", "_", "64_", "_64_"};
+
+  const char *p = nullptr, *t = nullptr, *f = nullptr, *s = nullptr;
+  if (matchBLASName(in, prefixes, floatType, extractable, suffixes, p, t, f,
+                    s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
-  const char *cuFFloatType[] = {"s", "d", "c", "z"};
-  const char *cuCPrefixes[] = {"cublas"};
-  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
-  for (auto t : llvm::enumerate(cuCFloatType)) {
-    for (auto f : extractable) {
-      for (auto p : cuCPrefixes) {
-        for (auto s : cuSuffixes) {
-          if (in == (Twine(p) + t.value() + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t.value(), p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  static const char *cuCPrefixes[] = {"cublas"};
+  static const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
+  if (matchBLASName(in, cuCPrefixes, cuCFloatType, extractable, cuSuffixes, p,
+                    t, f, s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // Fortran interface to cublas
-  const char *cuFPrefixes[] = {"cublas_"};
-  for (auto t : cuFFloatType) {
-    for (auto f : extractable) {
-      for (auto p : cuFPrefixes) {
-        if (in == (Twine(p) + t + f).str()) {
-          return BlasInfo{
-              t, p, "", f, false,
-          };
-        }
-      }
-    }
+  static const char *cuFFloatType[] = {"s", "d", "c", "z"};
+  static const char *cuFPrefixes[] = {"cublas_"};
+  static const char *cuFSuffixes[] = {""};
+  if (matchBLASName(in, cuFPrefixes, cuFFloatType, extractable, cuFSuffixes, p,
+                    t, f, s)) {
+    return BlasInfo{
+        t, p, "", f, false,
+    };
   }
+
   return {};
 }
 
@@ -3790,12 +3954,12 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(
-        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+        arg, getPointerType(ty, PT->getAddressSpace()), "pcld." + name);
 #else
-  auto PT2 = PointerType::get(ty, PT->getAddressSpace());
+  auto PT2 = getPointerType(ty, PT->getAddressSpace());
   if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
     arg = BuilderZ.CreatePointerCast(
-        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+        arg, getPointerType(ty, PT->getAddressSpace()), "pcld." + name);
 #endif
 #endif
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
@@ -4121,8 +4285,8 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
     V = B.CreateIntToPtr(V, getUnqual(intType));
   else
     V = B.CreatePointerCast(
-        V, PointerType::get(
-               intType, cast<PointerType>(V->getType())->getAddressSpace()));
+        V, getPointerType(intType,
+                          cast<PointerType>(V->getType())->getAddressSpace()));
   return B.CreateLoad(intType, V);
 }
 
@@ -4450,6 +4614,41 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
   }
 }
 
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length) {
+  // Each (type, offset) entry describes the bytes from its offset up to the
+  // next entry's offset.
+  size_t end = start + length;
+  if (end < start)
+    end = SIZE_MAX;
+  llvm::SmallVector<llvm::Metadata *, 8> out;
+  auto I64 = llvm::Type::getInt64Ty(md->getContext());
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    size_t offset =
+        llvm::cast<llvm::ConstantInt>(
+            llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                ->getValue())
+            ->getZExtValue();
+    if (offset >= end)
+      break;
+    size_t next = SIZE_MAX;
+    if (i + 3 < md->getNumOperands())
+      next = llvm::cast<llvm::ConstantInt>(
+                 llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 3))
+                     ->getValue())
+                 ->getZExtValue();
+    if (next <= start)
+      continue;
+    size_t newoff = offset <= start ? 0 : offset - start;
+    out.push_back(md->getOperand(i));
+    out.push_back(
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(I64, newoff)));
+  }
+  if (out.empty())
+    return nullptr;
+  return llvm::MDNode::get(md->getContext(), out);
+}
+
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *md, DerivativeMode Mode, bool const_src) {
   std::vector<std::pair<ConcreteType, size_t>> parsed;
@@ -4544,14 +4743,16 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures, Instruction *startinst) {
+                       size_t checkLoadCaptures, Instruction *startinst,
+                       llvm::TargetLibraryInfo *TLI) {
+  // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
     VI = dyn_cast<Instruction>(V);
-  if (!VI)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  else
+  if (VI)
     VI = VI->getNextNode();
+  else if (inst)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
   if (inst) {
     SmallVector<BasicBlock *, 1> todo;
@@ -4614,6 +4815,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     }
 
     if (auto CI = dyn_cast<CallBase>(UI)) {
+      // Freeing the memory does not capture it.
+      if (TLI && level == 0 && isDeallocationCall(CI, *TLI))
+        continue;
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -4626,7 +4830,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
           return false;
         }
       }
-      return true;
+      // This call does not capture; keep checking the remaining users.
+      continue;
     }
 
     if (isa<CmpInst>(UI)) {
@@ -4652,7 +4857,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
-bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
+  return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
+}
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
@@ -4882,8 +5089,8 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       case SRetRootMovement::SRetValueToRootPointer: {
         Value *outloc = GradientUtils::extractMeta(B, sret, path);
         outloc = B.CreatePointerCast(
-            outloc, PointerType::get(StructType::get(outloc->getContext(), {}),
-                                     Tracked));
+            outloc,
+            getPointerType(StructType::get(outloc->getContext(), {}), Tracked));
         B.CreateStore(outloc, loc);
         break;
       }
@@ -4949,7 +5156,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
     assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
     if (PT->getAddressSpace() == 10 && extracted.size()) {
       extracted.insert(extracted.begin(), obj);
-      auto JLT = PointerType::get(StructType::get(PT->getContext(), {}), 10);
+      auto JLT = getPointerType(StructType::get(PT->getContext(), {}), 10);
       auto FT = FunctionType::get(JLT, {}, true);
       auto wb =
           B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(

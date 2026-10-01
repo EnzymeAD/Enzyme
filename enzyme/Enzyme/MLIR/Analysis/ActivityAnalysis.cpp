@@ -1,4 +1,5 @@
 #include "ActivityAnalysis.h"
+#include "Dialect/Dialect.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -256,6 +257,209 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::is_constant,
 };
 
+enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
+    DataFlowSolver &solver, FunctionOpInterface funcOp,
+    ArrayRef<DIFFE_TYPE> argActivity, ArrayRef<DIFFE_TYPE> returnActivity)
+    : funcOp(funcOp), solver(solver), p2sets(nullptr),
+      forwardOriginsMap(nullptr), backwardOriginsMap(nullptr),
+      argActivity(argActivity), returnActivity(returnActivity) {
+
+  // Do things naively for now, computing the dataflow states multiple times
+  SymbolTableCollection symbolTable;
+  SmallVector<CallableOpInterface> sorted;
+  // TODO: Fallback to a whole module activity analysis in the presence of
+  // cycles
+  (void)reverseToposortCallgraph(funcOp, &symbolTable, sorted);
+
+  StringRef pointerSummaryName = EnzymeDialect::getPointerSummaryAttrName();
+  for (CallableOpInterface node : sorted) {
+    // A serialized summary lets CALLERS of this function reuse the analysis,
+    // but the function being differentiated needs its own per-value solver
+    // states regardless: nested differentiation reaches here with funcOp
+    // already summarized by an enclosing analysis, and skipping it left
+    // every value looking inactive -- the second derivative of anything was
+    // zero. Strip the stale self-summary first so the fresh analysis does
+    // not read it as callee information about itself.
+    if (!node.getCallableRegion() ||
+        (node->hasAttr(pointerSummaryName) && node.getOperation() != funcOp))
+      continue;
+    if (node.getOperation() == funcOp && node->hasAttr(pointerSummaryName))
+      removeSummaries(node);
+
+    auto childFunc = cast<FunctionOpInterface>(node.getOperation());
+    if (failed(runActivityAnnotationsForFunction(childFunc, solver))) {
+      assert(false && "dataflow solver failed\n");
+    }
+
+    enzyme::PointsToSets childP2Sets(nullptr);
+    enzyme::ForwardOriginsMap childFwdOrigins(nullptr);
+    enzyme::BackwardOriginsMap childBwdOrigins(nullptr);
+    size_t numResults = childFunc.getResultTypes().size();
+    SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
+        numResults, ForwardOriginsLattice(nullptr));
+    SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
+        numResults, AliasClassLattice(nullptr));
+    computeSummaries(childFunc, solver, childP2Sets, childFwdOrigins,
+                     childBwdOrigins, returnOperandOrigins, returnAliasClasses);
+    serializeSummaries(childFunc, childP2Sets, childFwdOrigins,
+                       returnOperandOrigins, returnAliasClasses);
+    if (node.getOperation() == funcOp) {
+      (void)p2sets.join(childP2Sets);
+      (void)forwardOriginsMap.join(childFwdOrigins);
+      (void)backwardOriginsMap.meet(childBwdOrigins);
+    }
+  }
+}
+
+bool enzyme::DataFlowActivityAnalyzer::isOriginActive(OriginAttr origin) {
+  if (auto argOriginAttr = dyn_cast<ArgumentOriginAttr>(origin)) {
+    return llvm::is_contained(
+        {DIFFE_TYPE::DUP_ARG, DIFFE_TYPE::DUP_NONEED, DIFFE_TYPE::OUT_DIFF},
+        argActivity[argOriginAttr.getArgNumber()]);
+  }
+  auto retOriginAttr = cast<ReturnOriginAttr>(origin);
+  return llvm::is_contained(
+      {DIFFE_TYPE::DUP_ARG, DIFFE_TYPE::DUP_NONEED, DIFFE_TYPE::OUT_DIFF},
+      returnActivity[retOriginAttr.getReturnNumber()]);
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActiveDataState(
+    Value v, ForwardOriginsLattice &sources, BackwardOriginsLattice &sinks) {
+  (void)sources.join(*solver.getOrCreateState<ForwardOriginsLattice>(v));
+  (void)sinks.meet(*solver.getOrCreateState<BackwardOriginsLattice>(v));
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActivePointerState(
+    const AliasClassSet &aliasClasses, ForwardOriginsLattice &sources,
+    BackwardOriginsLattice &sinks) {
+  traversePointsToSets(aliasClasses, p2sets, [&](DistinctAttr aliasClass) {
+    (void)sources.merge(forwardOriginsMap.getOrigins(aliasClass));
+    (void)sinks.merge(backwardOriginsMap.getOrigins(aliasClass));
+  });
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActiveValueState(
+    Value v, ForwardOriginsLattice &sources, BackwardOriginsLattice &sinks) {
+  if (isa<LLVM::LLVMPointerType, MemRefType>(v.getType())) {
+    auto *aliasClasses = solver.getOrCreateState<AliasClassLattice>(v);
+    joinActivePointerState(aliasClasses->getAliasClassesObject(), sources,
+                           sinks);
+  } else {
+    joinActiveDataState(v, sources, sinks);
+  }
+}
+
+std::optional<Value> getStored(Operation *op);
+
+bool enzyme::DataFlowActivityAnalyzer::isInactiveOperation(Operation *op) {
+  auto cached = inactiveOpCache.find(op);
+  if (cached != inactiveOpCache.end())
+    return cached->second;
+  // An operation is active if it propagates active data.
+  ForwardOriginsLattice sources(nullptr);
+  BackwardOriginsLattice sinks(nullptr);
+  if (isPure(op)) {
+    // A pure operation can only propagate active data via its results
+    for (OpResult result : op->getResults()) {
+      joinActiveDataState(result, sources, sinks);
+    }
+  } else {
+    // As a special case, storing an active pointer makes the operation active
+    // (otherwise Enzyme will ignore it). For example, `getelementptr
+    // %activeptr` is *inactive*, while `store %activeptr` is *active*.
+    if (hasEffect<MemoryEffects::Write>(op)) {
+      if (auto storedVal = getStored(op)) {
+        auto *storedClass =
+            solver.getOrCreateState<AliasClassLattice>(*storedVal);
+        joinActivePointerState(storedClass->getAliasClassesObject(), sources,
+                               sinks);
+      }
+    } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+      auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
+      if (callable->hasAttr(
+              EnzymeDialect::getDenseActivityAnnotationAttrName())) {
+        for (Value operand : callOp.getArgOperands())
+          joinActiveValueState(operand, sources, sinks);
+      }
+      // TODO: We need to determine if the body of the function contains active
+      // instructions
+    } else if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+      // An operation with recursive memory effects is active if it contains an
+      // active operation
+      for (Region &region : op->getRegions()) {
+        for (Operation &bodyOp : region.getOps()) {
+          if (!isInactiveOperation(&bodyOp)) {
+            return false;
+          }
+        }
+      }
+    }
+
+    // Default: the op is active iff any of its operands or results are
+    // active data.
+    for (Value operand : op->getOperands())
+      joinActiveDataState(operand, sources, sinks);
+    for (OpResult result : op->getResults())
+      joinActiveDataState(result, sources, sinks);
+  }
+
+  auto latticeIsActive = [this](const SparseSetLattice<OriginAttr> &lattice) {
+    if (lattice.isUnknown())
+      return true;
+    if (lattice.isUndefined())
+      return false;
+    return llvm::any_of(lattice.getElements(), [this](OriginAttr origin) {
+      return isOriginActive(origin);
+    });
+  };
+  bool activeOp = latticeIsActive(sources) && latticeIsActive(sinks);
+  bool result = !activeOp;
+  inactiveOpCache[op] = result;
+  return result;
+}
+
+bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
+  // Activity of function arguments is given by the user
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    if (blockArg.getOwner() == &funcOp.getFunctionBody().front())
+      return argActivity[blockArg.getArgNumber()] == DIFFE_TYPE::CONSTANT;
+  }
+
+  auto cached = inactiveValueCache.find(value);
+  if (cached != inactiveValueCache.end())
+    return cached->second;
+
+  ForwardOriginsLattice sources(nullptr);
+  BackwardOriginsLattice sinks(nullptr);
+  joinActiveValueState(value, sources, sinks);
+
+  bool activeSource = false;
+  if (sources.isUnknown()) {
+    activeSource = true;
+  } else if (sources.isUndefined()) {
+    activeSource = false;
+  } else {
+    activeSource =
+        llvm::any_of(sources.getOrigins(), [this](OriginAttr origin) {
+          return isOriginActive(origin);
+        });
+  }
+  bool activeSink = false;
+  if (sinks.isUnknown()) {
+    activeSink = true;
+  } else if (sinks.isUndefined()) {
+    activeSink = false;
+  } else {
+    activeSink = llvm::any_of(sinks.getOrigins(), [this](OriginAttr origin) {
+      return isOriginActive(origin);
+    });
+  }
+  bool activeVal = activeSource && activeSink;
+  bool result = !activeVal;
+  inactiveValueCache[value] = result;
+  return result;
+}
+
 static Operation *getFunctionFromCall(CallOpInterface iface) {
   auto symbol = dyn_cast<SymbolRefAttr>(iface.getCallableForCallee());
   if (!symbol)
@@ -286,7 +490,7 @@ static bool isReadOnly(Operation *op) {
     // memory.
     SmallVector<MemoryEffects::EffectInstance, 1> effects;
     effectInterface.getEffects(effects);
-    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+    if (!llvm::all_of(effects, [](const MemoryEffects::EffectInstance &it) {
           return isa<MemoryEffects::Read>(it.getEffect());
         })) {
       return false;
@@ -1631,9 +1835,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     containsPointer = false;
   // if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
 
-  // TODO: this should be an MLIR type interface connected to type analysis.
-  if (!isa<LLVM::LLVMPointerType, MemRefType>(Val.getType()))
+  auto typeIface = dyn_cast<AutoDiffTypeInterface>(Val.getType());
+  if (!typeIface || !typeIface.isMutable()) {
     containsPointer = false;
+  }
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
     containsPointer = false;
@@ -2271,21 +2476,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         if (EnzymePrintActivity)
           llvm::errs() << "potential active store: " << *op << " Val=" << Val
                        << "\n";
-        if (auto SI = dyn_cast<LLVM::StoreOp>(op)) {
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValue());
+        if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+          bool cop = !Hypothesis->isConstantValue(TR, SI.getStoredValue());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << Val << "\n";
-          potentialStore = true;
-          if (cop)
-            potentiallyActiveStore = true;
-        } else if (auto SI = dyn_cast<memref::StoreOp>(op)) {
-          // FIXME: this is a copy-pasta form above to work with MLIR memrefs.
-          bool cop = !Hypothesis->isConstantValue(TR, SI.getValueToStore());
-          if (EnzymePrintActivity)
-            llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
+                         << " - " << *op << " of "
                          << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
@@ -2607,17 +2802,19 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   if (EnzymePrintActivity)
     llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *op << "\n";
 
-  if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
-    if (isConstantValue(TR, store.getValue()) ||
-        isConstantValue(TR, store.getAddr())) {
+  // if either src or dst is inactive, there cannot be a transfer of active
+  // values and thus the store is inactive
+  if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
+    if (isConstantValue(TR, store.getStoredValue()) ||
+        isConstantValue(TR, store.getStoredPointer())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as store operand is inactive"
                      << *op << "\n";
       return true;
     }
     if (inactArg) {
-      inactArg->insert(store.getValue());
-      inactArg->insert(store.getAddr());
+      inactArg->insert(store.getStoredValue());
+      inactArg->insert(store.getStoredPointer());
     }
     return false;
   }
@@ -3551,13 +3748,13 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
       }
     }
 
-    if (auto SI = dyn_cast<LLVM::StoreOp>(a)) {
+    if (auto SI = dyn_cast<enzyme::StoreLikeInterface>(a)) {
       // If we are being stored into, not storing this value
       // this case can be skipped
-      if (SI.getValue() != val) {
+      if (SI.getStoredValue() != val) {
         if (!ignoreStoresInto) {
-          // Storing into active value, return true
-          if (!isConstantValue(TR, SI.getValue())) {
+          // Active value stored into `val` (the pointer): `val` is active.
+          if (!isConstantValue(TR, SI.getStoredValue())) {
             StoredOrReturnedCache[key] = true;
             if (EnzymePrintActivity)
               llvm::errs() << " </ASOR" << (int)directions
@@ -3569,8 +3766,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
         }
         continue;
       } else {
-        // Storing into active memory, return true
-        if (!isConstantValue(TR, SI.getAddr())) {
+        // `val` is stored into active memory: active.
+        if (!isConstantValue(TR, SI.getStoredPointer())) {
           StoredOrReturnedCache[key] = true;
           if (EnzymePrintActivity)
             llvm::errs() << " </ASOR" << (int)directions
