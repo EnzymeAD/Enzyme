@@ -6328,11 +6328,14 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
                             Value *res = nullptr;
                             if (interOp == Instruction::Add)
-                              res = pushcse(B.CreateSub(ia == 0 ? b : c,
-                                                        ia == 0 ? c : b));
+                              // a + b == c  <=>  a == c - b
+                              res = pushcse(B.CreateSub(c, b));
+                            else if (ia == 0)
+                              // b - a == c  <=>  a == b - c
+                              res = pushcse(B.CreateSub(b, c));
                             else
-                              res = pushcse(B.CreateAdd(ia == 0 ? b : c,
-                                                        ia == 0 ? c : b));
+                              // a - b == c  <=>  a == c + b
+                              res = pushcse(B.CreateAdd(c, b));
 
                             auto lhs = pushcse(B.CreateCmp(cmpOp, a, res));
                             auto rhs = pushcse(B.CreateCmp(cmpOp, d, res));
