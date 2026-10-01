@@ -16,15 +16,6 @@ the per-module Enzyme step (opt -enzyme-separate-compilation):
 usage: enzyme_thinlink.py --out DIR SUMMARY.json...
 Writes DIR/<module>.exports, DIR/no_escape.c, DIR/plan.json and prints a
 report.
-
-Typical flow (one summary per object, named <module>.json):
-  ld.lld --thinlto-index-only=index.txt ... *.o      # the link's modules
-  opt -load-pass-plugin=LLVMEnzyme-N.so -passes=enzyme-summary \
-      -enzyme-summary-out=sum/<module>.json -disable-output <module>.o
-  enzyme_thinlink.py --out plan sum/*.json
-  opt ... -passes=preserve-nvvm,enzyme,preserve-nvvm-end \
-      -enzyme-separate-compilation \
-      -enzyme-export-list=plan/<module>.exports <module>.o   # per module
 """
 import argparse
 import json
@@ -54,9 +45,95 @@ def is_runtime(name):
     return name.startswith(("_Fortran", "__enzyme", "llvm."))
 
 
+def infer_activity(fsum, local):
+    """Compose the per-function floating-point effects over the call graph
+    (to a fixpoint; recursion is fine). Returns per function: per argument
+    read/write/escape, globals read/written, unknown effects, and for each
+    function that is active (writes floating-point data, returns a float or
+    has unknown effects) the first reason found."""
+    act = {}
+    for n, f in list(fsum.items()) + [(k[1], v) for k, v in local.items()]:
+        fa = f["activity"]
+        act[n] = {"args": [{"r": x["read"], "w": x["write"], "e": x["escape"]}
+                           for x in fa["args"]],
+                  "gr": set(fa["globals_read"]), "gw": set(fa["globals_write"]),
+                  "unknown": fa["unknown"], "returns_fp": fa["returns_fp"],
+                  "frees": fa["frees"], "edges": fa["edges"], "ar": False,
+                  "calls": f["calls"]}
+    no_ir = set()
+    changed = True
+    while changed:
+        changed = False
+        for n, a in act.items():
+            def setf(d, k, v=True):
+                nonlocal changed
+                if v and not d[k]:
+                    d[k] = True
+                    changed = True
+            for root, callee, k in a["edges"]:
+                c = act.get(callee)
+                if c is None:
+                    # no IR: assume it reads and writes what it is given
+                    no_ir.add(callee)
+                    r = w = True
+                    e = False
+                elif k < len(c["args"]):
+                    r, w, e = c["args"][k]["r"], c["args"][k]["w"], c["args"][k]["e"]
+                else:
+                    r = w = e = False
+                if root[0] == "a":
+                    x = a["args"][int(root[1:])]
+                    setf(x, "r", r)
+                    setf(x, "w", w)
+                    setf(x, "e", e)
+                else:
+                    g = root[1:]
+                    if r and g not in a["gr"]:
+                        a["gr"].add(g); changed = True
+                    if w and g not in a["gw"]:
+                        a["gw"].add(g); changed = True
+                if e:
+                    setf(a, "unknown")
+            for callee in a["calls"]:
+                c = act.get(callee)
+                if c is None:
+                    continue
+                if not c["gr"] <= a["gr"]:
+                    a["gr"] |= c["gr"]; changed = True
+                if not c["gw"] <= a["gw"]:
+                    a["gw"] |= c["gw"]; changed = True
+                setf(a, "unknown", c["unknown"])
+                setf(a, "frees", c["frees"])
+                if c["ar"]:
+                    setf(a, "ar", a["returns_fp"])
+            # A returned float may carry a derivative only if it can depend
+            # on floating-point data from outside: an argument, a global, an
+            # unknown effect, or a callee's active return.
+            setf(a, "ar", a["returns_fp"] and (
+                a["unknown"] or bool(a["gr"]) or any(x["r"] for x in a["args"])))
+    why = {}
+    for n, a in act.items():
+        if a["unknown"]:
+            why[n] = "unknown effects"
+        elif a["ar"]:
+            why[n] = "returns a float computed from outside data"
+        elif a["gw"]:
+            why[n] = "writes " + ",".join(sorted(a["gw"])[:3])
+        elif any(x["w"] for x in a["args"]):
+            why[n] = "writes argument " + ",".join(
+                str(i) for i, x in enumerate(a["args"]) if x["w"])
+    act["__no_ir__"] = no_ir
+    return {k: v for k, v in act.items() if k != "__no_ir__"}, why
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
+    ap.add_argument("--inactive", choices=["registered", "inferred", "both"],
+                    default="registered",
+                    help="which inactive functions stop the walk and get "
+                         "registered: the __enzyme_inactivefn registrations, "
+                         "those inferred from the summaries, or both")
     ap.add_argument("summaries", nargs="+")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -84,7 +161,13 @@ def main():
     for s in mods.values():
         for k, names in s["registrations"].items():
             regs[k] |= set(names)
-    inactive = regs["inactive"] | {n for n, f in fsum.items() if f["inactive"]}
+
+    act, why = infer_activity(fsum, local)
+    inferred = {n for n, x in act.items() if n not in why}
+    registered = regs["inactive"] | {n for n, f in fsum.items() if f["inactive"]}
+    inactive = {"registered": registered, "inferred": inferred,
+                "both": registered | inferred}[a.inactive]
+
     custom = regs["custom_rule"]
 
     def callees(mod, name):
@@ -159,7 +242,7 @@ def main():
             return True
         return any(escapes(g, seen) for g in f["calls"] if g in fsum)
     no_escape, escape, unknown = [], [], []
-    for g in sorted(regs["inactive"]):
+    for g in sorted(inactive):
         r = escapes(g, set())
         (no_escape if r is False else escape if r else unknown).append(g)
     with open(os.path.join(a.out, "no_escape.c"), "w") as f:
@@ -168,6 +251,38 @@ def main():
         for g in no_escape:
             f.write(f"extern void {g}(void); __attribute__((used)) void "
                     f"*__enzyme_no_escaping_allocation_{g} = (void *){g};\n")
+
+    # Registrations of the inactive functions this plan uses (replaces the
+    # build's own list when --inactive=inferred).
+    with open(os.path.join(a.out, "inactive.c"), "w") as f:
+        f.write("/* Generated by enzyme_thinlink.py: inactive routines "
+                f"({a.inactive}). */\n")
+        for g in sorted(inactive):
+            if g not in fsum and g not in regs["inactive"]:
+                continue
+            f.write(f"extern void {g}(void);\n")
+            f.write(f"__attribute__((used)) void *__enzyme_inactivefn_{g} = "
+                    f"(void *){g};\n")
+            if not act.get(g, {}).get("frees", True):
+                f.write(f"__attribute__((used)) void *__enzyme_nofree_{g} = "
+                        f"(void *){g};\n")
+            if g in no_escape:
+                f.write(f"__attribute__((used)) void "
+                        f"*__enzyme_no_escaping_allocation_{g} = (void *){g};\n")
+
+    # Parameters of exported functions that never carry floating-point data:
+    # no shadow, on both sides of every module boundary.
+    with open(os.path.join(a.out, "inactive_params.txt"), "w") as f:
+        nparams = 0
+        for m, e in sorted(exports.items()):
+            for g in sorted(e):
+                if g not in act:
+                    continue
+                idx = [str(i) for i, x in enumerate(act[g]["args"])
+                       if not (x["r"] or x["w"] or x["e"])]
+                if idx:
+                    f.write(f"{g} {','.join(idx)}\n")
+                    nparams += len(idx)
 
     # COMMON blocks (shadowed through the build's shadow table).
     common = {}
@@ -201,6 +316,23 @@ def main():
     print(f"custom rules: {sorted(custom)}")
     print(f"callees without IR, not inactive/runtime: {sorted(missing)[:20]} ({len(missing)})")
     print(f"COMMON blocks: {len(common)}")
+    tot = sum(len(act[g]["args"]) for e in exports.values() for g in e if g in act)
+    print(f"inactive parameters of exported functions: {nparams} of {tot}")
+    reach = {f for (_, f) in need}
+    print(f"inactive mode: {a.inactive}; registered {len(registered)}, "
+          f"inferred {len(inferred)} (of {len(act)} functions with IR)")
+    only_reg = sorted(registered - inferred)
+    only_inf = sorted((inferred - registered) & (reach | {g for (m, f) in need
+                      for g in callees(m, f)}))
+    print(f"registered but inferred active ({len(only_reg)}):")
+    for g in only_reg:
+        print(f"    {g}: {why.get(g, 'no IR')}")
+    print(f"inferred inactive, not registered, called from the closure "
+          f"({len(only_inf)}): {only_inf}")
+    plan["inferred_inactive"] = sorted(inferred)
+    plan["registered_inactive_inferred_active"] = {g: why.get(g, "no IR")
+                                                   for g in only_reg}
+    json.dump(plan, open(os.path.join(a.out, "plan.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":
