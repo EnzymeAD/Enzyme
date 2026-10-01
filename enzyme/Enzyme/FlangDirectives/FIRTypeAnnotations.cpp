@@ -34,10 +34,12 @@
 #include "FlangDirectives.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
+#include "flang/Optimizer/Support/InternalNames.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/Dialect/FortranVariableInterface.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -49,6 +51,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <map>
 #include <optional>
@@ -139,6 +142,7 @@ static llvm::MDNode *typeTreeToMD(const TypePaths &tree,
 
 constexpr StringLiteral kTypeAttr = "enzyme.type";
 constexpr StringLiteral kArgTypesAttr = "enzyme.arg_types";
+constexpr StringLiteral kRetTypeAttr = "enzyme.ret_type";
 
 struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
@@ -162,6 +166,18 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
               call->addParamAttr(i, llvm::Attribute::get(call->getContext(),
                                                          "enzyme_type",
                                                          s.getValue()));
+      return success();
+    }
+    if (attribute.getName() == kRetTypeAttr) {
+      auto str = dyn_cast<StringAttr>(attribute.getValue());
+      auto fn = dyn_cast<LLVM::LLVMFuncOp>(op);
+      if (!str || !fn)
+        return op->emitError() << kRetTypeAttr << " must be a string on a "
+                               << "function";
+      if (llvm::Function *f = moduleTranslation.lookupFunction(fn.getName()))
+        if (!f->getReturnType()->isVoidTy())
+          f->addRetAttr(llvm::Attribute::get(f->getContext(), "enzyme_type",
+                                             str.getValue()));
       return success();
     }
     if (attribute.getName() != kTypeAttr)
@@ -357,10 +373,71 @@ static std::string pointerArgType(Type ty, const DataLayout &dl) {
 
 // The FIR type a call operand had before flang converted it for the call
 // (e.g. !fir.box<!fir.array<?xf32>> before !fir.box<none>).
+static constexpr int64_t kMaxTypeOffsetForArgs = 16;
+
 static Type originalType(Value v) {
   while (auto cvt = v.getDefiningOp<fir::ConvertOp>())
     v = cvt.getValue();
   return v.getType();
+}
+
+// The TypeTree of a value of FIR type `ty` passed to or returned from a
+// procedure, in the encoding Enzyme.jl uses for its arguments, or "" if
+// there is nothing certain to say. By reference, the pointee is laid out from
+// offset 0 ({[-1]:Pointer, [-1,0]:Float@double} for a REAL*8 scalar), an
+// array of scalars at every offset ([-1,-1]), a descriptor field by field
+// (as for runtime calls). Polymorphic and assumed-type/-rank entities, and
+// derived types, are left alone.
+static std::string procArgType(Type ty, const DataLayout &dl) {
+  // By value: a scalar.
+  if (!fir::isa_ref_type(ty) && !isa<fir::BaseBoxType>(ty)) {
+    if (auto ct = dyn_cast<mlir::ComplexType>(ty))
+      ty = ct.getElementType();
+    if (auto sc = scalarType(ty, dl))
+      return printTypeTree({{{-1}, sc->first}});
+    return "";
+  }
+  Type pointee = fir::unwrapRefType(ty);
+  if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
+    Type ele = fir::unwrapPassByRefType(box.getEleTy());
+    if (isa<fir::ClassType>(box) || fir::isAssumedType(ty) ||
+        isa<NoneType>(fir::unwrapSequenceType(ele)))
+      return "";
+    if (auto seq = dyn_cast<fir::SequenceType>(ele);
+        seq && seq.hasUnknownShape())
+      return ""; // assumed rank
+    if (!dataType(box, dl))
+      return "";
+    return pointerArgType(ty, dl);
+  }
+  if (!fir::isa_ref_type(ty))
+    return "";
+  TypePaths tree{{{-1}, "Pointer"}};
+  if (auto seq = dyn_cast<fir::SequenceType>(pointee)) {
+    Type ele = seq.getEleTy();
+    if (auto ct = dyn_cast<mlir::ComplexType>(ele))
+      ele = ct.getElementType();
+    if (isa<fir::CharacterType>(ele)) {
+      tree[{-1, -1}] = "Integer";
+      return printTypeTree(tree);
+    }
+    auto sc = scalarType(ele, dl);
+    if (!sc)
+      return "";
+    tree[{-1, -1}] = sc->first;
+    return printTypeTree(tree);
+  }
+  if (isa<fir::CharacterType>(pointee)) {
+    tree[{-1, -1}] = "Integer";
+    return printTypeTree(tree);
+  }
+  std::map<int64_t, std::string> layout;
+  int64_t budget = kMaxTypeOffsetForArgs;
+  if (!addLayout(pointee, 0, dl, layout, budget))
+    return "";
+  for (auto &[off, t] : layout)
+    tree[{-1, (int)off}] = t;
+  return printTypeTree(tree);
 }
 
 // How many layout entries one COMMON block may get; a block of large arrays
@@ -372,6 +449,11 @@ static constexpr int64_t kLayoutBudget = 1 << 14;
 // a REAL*8 array followed by a REAL*4 one all for REAL*8). Larger blocks
 // stay unannotated.
 static constexpr int64_t kMaxTypeOffset = 500;
+
+static llvm::cl::opt<bool> annotateProcArgs(
+    "enzyme-fir-arg-types", llvm::cl::init(true),
+    llvm::cl::desc("Annotate the arguments and results of procedures with "
+                   "their Fortran types for LLVM Enzyme (enzyme_type)"));
 
 struct FIRTypeAnnotationsPass
     : public PassWrapper<FIRTypeAnnotationsPass, OperationPass<ModuleOp>> {
@@ -488,6 +570,30 @@ struct FIRTypeAnnotationsPass
       if (any)
         call->setAttr(kArgTypesAttr, ArrayAttr::get(ctx, types));
     });
+
+    // Procedures: the types of their dummy arguments and results. Module
+    // procedures also where they are only declared (from the module file),
+    // so that units agree; an external procedure only where it is defined,
+    // since a declaration may have been made up from the actual arguments of
+    // a call through an implicit interface.
+    if (annotateProcArgs)
+      for (auto fn : module.getOps<func::FuncOp>()) {
+        if (fn.isDeclaration() &&
+            !fir::NameUniquer::deconstruct(fn.getSymName())
+                 .second.modules.size())
+          continue;
+        FunctionType fty = fn.getFunctionType();
+        for (auto [i, ty] : llvm::enumerate(fty.getInputs())) {
+          std::string t = procArgType(ty, dl);
+          if (!t.empty() && !fn.getArgAttr(i, kTypeAttr))
+            fn.setArgAttr(i, kTypeAttr, StringAttr::get(ctx, t));
+        }
+        if (fty.getNumResults() == 1) {
+          std::string t = procArgType(fty.getResult(0), dl);
+          if (!t.empty())
+            fn->setAttr(kRetTypeAttr, StringAttr::get(ctx, t));
+        }
+      }
 
     // Character literals: character data throughout.
     for (fir::GlobalOp global : module.getOps<fir::GlobalOp>())
