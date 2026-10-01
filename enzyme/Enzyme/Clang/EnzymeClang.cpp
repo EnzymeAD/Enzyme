@@ -298,6 +298,7 @@ public:
       return;
     auto name = V->getName();
     if (!(name.contains("__enzyme_inactive_global") ||
+          name.contains("__enzyme_shadow_global") ||
           name.contains("__enzyme_inactivefn") ||
           name.contains("__enzyme_inactivenoblockfn") ||
           name.contains("__enzyme_shouldrecompute") ||
@@ -699,6 +700,145 @@ struct EnzymeNoTypeAnalysisAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo>
     enzyme_notypeanalysis("enzyme_notypeanalysis", "");
+
+/// Pair the global VD with its shadow, as the global
+///   void *__enzyme_shadow_global_<name>[2] = {&VD, &Shadow};
+/// which the preprocessing pass turns into enzyme_shadow metadata on VD.
+/// Every translation unit that sees the attribute emits the pair, as each one
+/// that differentiates through VD needs the metadata.
+void registerEnzymeShadowGlobal(Sema &S, VarDecl *VD, VarDecl *Shadow) {
+  auto &AST = S.getASTContext();
+  auto loc = VD->getLocation();
+
+  DeclContext *declCtx = VD->getDeclContext();
+  for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+    if (tmpCtx->isRecord()) {
+      declCtx = tmpCtx->getParent();
+    }
+  }
+
+  auto addressOf = [&](VarDecl *D) -> Expr * {
+    auto T = D->getType();
+    auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, D, false,
+                                  loc, T, ExprValueKind::VK_LValue, D,
+                                  /*TemplateArgs*/ nullptr);
+    auto addr = UnaryOperator::Create(
+        AST, DR, UnaryOperatorKind::UO_AddrOf, AST.getPointerType(T),
+        ExprValueKind::VK_PRValue, clang::ExprObjectKind::OK_Ordinary, loc,
+        /*canoverflow*/ false, FPOptionsOverride());
+    return ImplicitCastExpr::Create(AST, AST.VoidPtrTy, CastKind::CK_BitCast,
+                                    addr, nullptr, ExprValueKind::VK_PRValue,
+                                    FPOptionsOverride());
+  };
+  Expr *pair[] = {addressOf(VD), addressOf(Shadow)};
+  auto init = new (AST) InitListExpr(AST, loc, pair, loc);
+  auto T = AST.getConstantArrayType(AST.VoidPtrTy, llvm::APInt(32, 2), nullptr,
+#if LLVM_VERSION_MAJOR >= 18
+                                    ArraySizeModifier::Normal,
+#else
+                                    ArrayType::Normal,
+#endif
+                                    0);
+  init->setType(T);
+
+  auto &Id = AST.Idents.get(
+      ("__enzyme_shadow_global_" + VD->getQualifiedNameAsString()));
+  auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, nullptr, SC_None);
+  V->setStorageClass(SC_PrivateExtern);
+  V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+  V->setInit(init);
+  S.MarkVariableReferenced(loc, V);
+  S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+}
+
+struct EnzymeShadowAttrInfo : public ParsedAttrInfo {
+  EnzymeShadowAttrInfo() {
+    OptArgs = 1;
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_shadow"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_shadow"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_shadow"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_shadow"},
+      {ParsedAttr::AS_CXX11, "enzyme::shadow"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    if (isGlobalDecl(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "global variables";
+    return false;
+  }
+
+  /// `__attribute__((enzyme_shadow(x_shadow))) double x;` (or, from Clang 18,
+  /// `double x [[enzyme_shadow(x_shadow)]];`) declares the global x_shadow
+  /// as the shadow of x: of the same type as x, or an array of width
+  /// elements of that type for vector mode.
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    auto error = [&](StringRef msg) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error, "%0");
+      S.Diag(Attr.getLoc(), ID) << msg;
+      return AttributeNotApplied;
+    };
+    if (Attr.getNumArgs() != 1)
+      // Clang drops the arguments of a plugin's [[...]] attribute (before
+      // Clang 18, and in a scope such as [[enzyme::shadow(x)]] after).
+      return error("'enzyme_shadow' attribute requires the global variable "
+                   "holding the shadow as its argument, as in "
+                   "__attribute__((enzyme_shadow(x_shadow)))");
+    auto VD = cast<VarDecl>(D);
+    VarDecl *Shadow = nullptr;
+    if (Attr.isArgIdent(0)) {
+      // A plain name reaches a plugin attribute unresolved.
+      auto IL = Attr.getArgAsIdent(0);
+      Shadow = dyn_cast_or_null<VarDecl>(S.LookupSingleName(
+          S.getCurScope(), IL->Ident, IL->Loc, Sema::LookupOrdinaryName));
+    } else if (auto DR = dyn_cast<DeclRefExpr>(
+                   Attr.getArgAsExpr(0)->IgnoreParenImpCasts())) {
+      Shadow = dyn_cast<VarDecl>(DR->getDecl());
+    }
+    if (!Shadow || !Shadow->hasGlobalStorage())
+      return error("the argument of 'enzyme_shadow' must be a global "
+                   "variable");
+    if (VD->getType()->isDependentType() ||
+        Shadow->getType()->isDependentType())
+      return error("'enzyme_shadow' does not support templated globals");
+
+    auto &AST = S.getASTContext();
+    auto T = VD->getType();
+    auto ST = Shadow->getType();
+    bool matches = AST.hasSameUnqualifiedType(T, ST);
+    if (!matches)
+      if (auto AT = AST.getAsConstantArrayType(ST))
+        matches = AST.hasSameUnqualifiedType(T, AT->getElementType());
+    if (!matches)
+      return error("the shadow given to 'enzyme_shadow' must have the type "
+                   "of the global, or be an array of that type (one element "
+                   "per vector lane)");
+
+    // A redeclaration carrying the attribute again pairs the same global.
+    for (auto R : VD->redecls())
+      if (R != VD)
+        for (auto A : R->specific_attrs<AnnotateAttr>())
+          if (A->getAnnotation() == "enzyme_shadow")
+            return AttributeApplied;
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_shadow", nullptr, 0,
+                                    Attr.getRange()));
+    registerEnzymeShadowGlobal(S, VD, Shadow);
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeShadowAttrInfo>
+    enzyme_shadow("enzyme_shadow", "");
 
 } // namespace
 
