@@ -1,6 +1,7 @@
 ! REQUIRES: fortran
 ! UNSUPPORTED: ifx
-! RUN: %fc -flto -O0 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme -passes="preserve-nvvm,enzyme,preserve-nvvm-end" -o %t.ll
+! RUN: %fc -flto -O0 -c %loadFortran %s -o %t.bc
+! RUN: %opt %loadEnzyme -passes="preserve-nvvm,enzyme,preserve-nvvm-end" %t.bc -o %t.ll
 ! RUN: %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t3 && %t3 | FileCheck %s %}
