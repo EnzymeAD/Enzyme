@@ -888,6 +888,132 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       p->moveBefore(before);
   }
 
+  // Differentiate one step of `forOp`, from `state`, the state before it, at
+  // induction variable `iv`: the step is rematerialized at the builder's
+  // insertion point and its adjoint emitted after it, seeded with `adjoints`
+  // (one per active iter arg). Returns the adjoints of `state`. `seeds` binds
+  // the values the body reads from above, `stepBlock` is the block the step's
+  // gradient slots are local to, and `cacheAnchor` the op a dialect places
+  // the caches of the body's reverse rules relative to.
+  static SmallVector<Value>
+  differentiateStep(OpBuilder &builder, MGradientUtilsReverse *gutils,
+                    OpName forOp, ValueRange state, Value iv,
+                    const IRMapping &seeds, Block *stepBlock,
+                    Operation *cacheAnchor, ArrayRef<bool> operandsActive,
+                    ValueRange adjoints, bool &valid) {
+    IRMapping mapping = seeds;
+    for (auto &&[oldArg, newArg] : llvm::zip_equal(
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
+             state))
+      mapping.map(oldArg, newArg);
+    mapping.map(FinalClass::getInductionVar(forOp), iv);
+
+    // Re-materialize primal ops of this step for the reverse visitor.
+    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
+                               mapping);
+
+    // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
+    // per active mutable value, positioned in the single augmented primal --
+    // which the forward checkpointing has since erased, leaving those entries
+    // dangling (a later invertPointerM() would hand out freed IR). Re-seed a
+    // placeholder per body value here, in this per-step reconstruction: that
+    // is where the shadow that replaces it legitimately lives, and where the
+    // shadows of the outside refs the caller bound dominate it. Hoisting the
+    // originals out of the loop instead cannot work, precisely because those
+    // source shadows are per-iteration values inside the reverse loop.
+    SmallVector<Value> reseededShadowKeys;
+    {
+      OpBuilder::InsertionGuard g4(builder);
+      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
+        for (Value res : inner->getResults()) {
+          if (gutils->isConstantValue(res))
+            continue;
+          Type shadowTy = gutils->getShadowType(res.getType());
+          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
+          if (!iface || !iface.isMutable())
+            continue;
+          Value newRes = mapping.lookupOrNull(res);
+          if (!newRes)
+            continue;
+          if (Operation *defOp = newRes.getDefiningOp())
+            builder.setInsertionPointAfter(defOp);
+          else
+            continue;
+          auto ph =
+              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
+          gutils->invertedPointers.map(res, ph);
+          reseededShadowKeys.push_back(res);
+        }
+      });
+    }
+
+    // Reset every (non-mutable) intermediate gradient slot to zero at the
+    // start of each reverse step and zero the diffe of the yielded
+    // operands; the loop-carried gradient is supplied via the outer carried
+    // adjoints. Without this, scalar gradient slots (e.g. the diffe of a
+    // value loaded from an enzyme_dup'ed memref) leak across reverse
+    // iterations and over-accumulate into the external shadow. Mirrors the
+    // non-checkpointed reverse path.
+    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
+    FinalClass::primeStepGradients(builder, gutils,
+                                   FinalClass::getBodyBlock(forOp),
+                                   stepBlock, operandsActive);
+
+    // Seed adjoints of the yielded operands from the outer carried
+    // gradients.
+    unsigned revIdx = 0;
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
+      if (active) {
+        gutils->addToDiffe(operand, adjoints[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
+    first++; // skip terminator
+    auto last = FinalClass::getBodyBlock(forOp)->rend();
+    {
+      // Same as in reversePeriodic: a cache a body op's reverse rule asks for
+      // is per-step, so it is created outside the remat loop.
+      SegmentCacheCreatorGuard cacheGuard(gutils, cacheAnchor);
+      for (auto it = first; it != last; ++it)
+        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+    }
+
+    // Placeholders re-seeded above are consumed by setInvertedPointer (which
+    // RAUWs and erases them) only for values some rule actually asked to
+    // invert. Drop the unused remainder rather than leaving
+    // enzyme.placeholder litter in the output -- keyed by the original
+    // value, so invertedPointers never keeps an entry pointing at IR we just
+    // erased. A resolved entry no longer names a PlaceholderOp, which is
+    // what distinguishes it (its op is already gone, so we must not
+    // dereference the recorded pointer).
+    for (Value orig : reseededShadowKeys) {
+      Value cur = gutils->invertedPointers.lookupOrNull(orig);
+      if (!cur)
+        continue;
+      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
+      if (ph && ph->use_empty()) {
+        gutils->invertedPointers.erase(orig);
+        ph->erase();
+      }
+    }
+
+    SmallVector<Value> newAdjoints;
+    for (auto &&[active, arg] : llvm::zip_equal(
+             operandsActive,
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
+      if (active) {
+        newAdjoints.push_back(gutils->diffe(arg, builder));
+        if (!gutils->isConstantValue(arg))
+          gutils->zeroDiffe(arg, builder);
+      }
+    }
+
+    return newAdjoints;
+  }
+
   // Reverse pass for binomial (Revolve) checkpointing. Iterates all N steps
   // in reverse; for each step it reconstructs the state just before that
   // step from the top checkpoint (recursively re-placing finer checkpoints
@@ -1157,127 +1283,21 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         FinalClass::emitAdd(builder, loc, startV,
                             FinalClass::emitMul(builder, loc, stepV, stepAdjC));
 
-    mapping = IRMapping();
-
+    IRMapping seeds;
     for (auto [ref, cached] :
          llvm::zip_equal(immutableRefs, immutableRefsCaches))
-      mapping.map(ref, cached);
+      seeds.map(ref, cached);
 
-    // Re-bind after the mapping reset above; the shadows were bound once,
-    // before revOuter, and do not need rebinding per iteration.
+    // The shadows were bound once, before revOuter, and do not need
+    // rebinding per iteration.
     for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-      mapping.map(ref, workClones[r]);
-
-    for (auto &&[oldArg, newArg] : llvm::zip_equal(
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
-             reconState))
-      mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
-
-    // Re-materialize primal ops of this step for the reverse visitor.
-    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
-                               mapping);
-
-    // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
-    // per active mutable value, positioned in the single augmented primal --
-    // which cacheBinomial has since erased, leaving those entries dangling
-    // (a later invertPointerM() would hand out freed IR). Re-seed a
-    // placeholder per body value here, in this per-step reconstruction: that
-    // is where the shadow that replaces it legitimately lives, and where the
-    // per-iteration popCache shadows of the outside refs (bound above)
-    // dominate it. Hoisting the originals out of the loop instead cannot
-    // work, precisely because those source shadows are per-iteration values
-    // inside revOuter.
-    SmallVector<Value> reseededShadowKeys;
-    {
-      OpBuilder::InsertionGuard g4(builder);
-      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
-        for (Value res : inner->getResults()) {
-          if (gutils->isConstantValue(res))
-            continue;
-          Type shadowTy = gutils->getShadowType(res.getType());
-          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
-          if (!iface || !iface.isMutable())
-            continue;
-          Value newRes = mapping.lookupOrNull(res);
-          if (!newRes)
-            continue;
-          if (Operation *defOp = newRes.getDefiningOp())
-            builder.setInsertionPointAfter(defOp);
-          else
-            continue;
-          auto ph =
-              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
-          gutils->invertedPointers.map(res, ph);
-          reseededShadowKeys.push_back(res);
-        }
-      });
-    }
-
-    // Reset every (non-mutable) intermediate gradient slot to zero at the
-    // start of each reverse step and zero the diffe of the yielded
-    // operands; the loop-carried gradient is supplied via the outer carried
-    // adjoints. Without this, scalar gradient slots (e.g. the diffe of a
-    // value loaded from an enzyme_dup'ed memref) leak across reverse
-    // iterations and over-accumulate into the external shadow. Mirrors the
-    // non-checkpointed reverse path.
-    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
-    FinalClass::primeStepGradients(builder, gutils,
-                                   FinalClass::getBodyBlock(forOp),
-                                   revOuter.body, operandsActive);
-
-    // Seed adjoints of the yielded operands from the outer carried
-    // gradients.
-    unsigned revIdx = 0;
-    for (auto &&[active, operand] : llvm::zip_equal(
-             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
-      if (active) {
-        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
-        revIdx++;
-      }
-    }
+      seeds.map(ref, workClones[r]);
 
     bool valid = true;
-    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
-    first++; // skip terminator
-    auto last = FinalClass::getBodyBlock(forOp)->rend();
-    {
-      // Same as in reversePeriodic: a cache a body op's reverse rule asks for
-      // is per-step, so it is created outside the remat loop.
-      SegmentCacheCreatorGuard cacheGuard(gutils, revWhile.op);
-      for (auto it = first; it != last; ++it)
-        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
-    }
-
-    // Placeholders re-seeded above are consumed by setInvertedPointer (which
-    // RAUWs and erases them) only for values some rule actually asked to
-    // invert. Drop the unused remainder rather than leaving
-    // enzyme.placeholder litter in the output -- keyed by the original
-    // value, so invertedPointers never keeps an entry pointing at IR we just
-    // erased. A resolved entry no longer names a PlaceholderOp, which is
-    // what distinguishes it (its op is already gone, so we must not
-    // dereference the recorded pointer).
-    for (Value orig : reseededShadowKeys) {
-      Value cur = gutils->invertedPointers.lookupOrNull(orig);
-      if (!cur)
-        continue;
-      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
-      if (ph && ph->use_empty()) {
-        gutils->invertedPointers.erase(orig);
-        ph->erase();
-      }
-    }
-
-    SmallVector<Value> newAdjoints;
-    for (auto &&[active, arg] : llvm::zip_equal(
-             operandsActive,
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
-      if (active) {
-        newAdjoints.push_back(gutils->diffe(arg, builder));
-        if (!gutils->isConstantValue(arg))
-          gutils->zeroDiffe(arg, builder);
-      }
-    }
+    SmallVector<Value> newAdjoints =
+        differentiateStep(builder, gutils, forOp, reconState, ivAdj, seeds,
+                          revOuter.body, revWhile.op, operandsActive, adjArgs,
+                          valid);
 
     SmallVector<Value> outerYields;
     outerYields.push_back(newSp);
@@ -1288,7 +1308,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     builder.setInsertionPointAfter(revOuter.op);
 
-    revIdx = 0;
+    unsigned revIdx = 0;
     auto revOuterResults = revOuter.results();
     auto forOpInits = FinalClass::getInits(forOp);
     for (auto &&[active, arg] : llvm::zip_equal(operandsActive, forOpInits)) {
