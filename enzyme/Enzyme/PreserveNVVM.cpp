@@ -645,6 +645,17 @@ bool preserveNVVM(bool Begin, Module &M,
               continue;
             }
 
+            if (AS == "enzyme_no_escaping_allocation" && Func) {
+              Func->addAttribute(
+                  AttributeList::FunctionIndex,
+                  Attribute::get(Func->getContext(),
+                                 "enzyme_no_escaping_allocation"));
+              changed = true;
+              preserveLinkage(Begin, *Func);
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
             if (startsWith(AS, "enzyme_function_like") && Func) {
               auto val = AS.substr(1 + AS.find('='));
               handleFunctionLike(Begin, Func, val);
@@ -691,6 +702,7 @@ bool preserveNVVM(bool Begin, Module &M,
     if (customRule && !PreserveCustomRuleLinkage)
       continue;
     if (customRule || g.getName().contains("__enzyme_nofree") ||
+        g.getName().contains("__enzyme_no_escaping_allocation") ||
         g.getName().contains("__enzyme_inactivefn") ||
         g.getName().contains("__enzyme_sparse_accumulate") ||
         g.getName().contains("__enzyme_function_like") ||
@@ -862,6 +874,40 @@ bool preserveNVVM(bool Begin, Module &M,
                        << g << "\n"
                        << *V << "\n";
           llvm_unreachable("__enzyme_sparse_accumulate");
+        }
+      }
+    }
+    // A function none of whose allocations escape into its arguments or
+    // return value, e.g. an inactive routine that frees its own temporaries.
+    // Calls to it then need no augmented forward pass to free them in the
+    // reverse pass, which -enzyme-global-activity otherwise always creates
+    // for a function without a body.
+    if (g.getName().contains("__enzyme_no_escaping_allocation")) {
+      if (g.hasInitializer()) {
+        Value *V = g.getInitializer();
+        while (1) {
+          if (auto CE = dyn_cast<ConstantExpr>(V)) {
+            V = CE->getOperand(0);
+            continue;
+          }
+          if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+            V = CA->getOperand(0);
+            continue;
+          }
+          break;
+        }
+        if (auto F = dyn_cast<Function>(V)) {
+          F->addAttribute(
+              AttributeList::FunctionIndex,
+              Attribute::get(g.getContext(), "enzyme_no_escaping_allocation"));
+          toErase.push_back(&g);
+          changed = true;
+        } else {
+          llvm::errs() << "Param of __enzyme_no_escaping_allocation must be a "
+                          "constant function"
+                       << g << "\n"
+                       << *V << "\n";
+          llvm_unreachable("__enzyme_no_escaping_allocation");
         }
       }
     }
