@@ -3397,6 +3397,16 @@ public:
         }
       }
       if (!vd.isKnownPastPointer()) {
+        // Zeroing memory of unknown type (e.g. adjacent Fortran COMMON
+        // scalars merged into one memset): with float semantics the shadow
+        // is zeroed in the reverse pass, which is also correct for integers.
+        if (auto CV = dyn_cast<ConstantInt>(MS.getArgOperand(1)))
+          if (CV->isZero()) {
+            Type *FT = (size % 8 == 0) ? Type::getDoubleTy(MS.getContext())
+                                       : Type::getFloatTy(MS.getContext());
+            vd = TypeTree(ConcreteType(FT)).Only(-1, &MS);
+            goto known;
+          }
         if (looseTypeAnalysis) {
 #if LLVM_VERSION_MAJOR < 17
           if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
