@@ -350,21 +350,14 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 
+// tanh'(x) = sech(x)^2 = 4u / (1 + u)^2 with u = exp(-2|x|). 1 - tanh(x)^2
+// cancels to 0 once tanh(x) rounds to 1 (|x| > 9 in float, > 19 in double),
+// and 1 / cosh(x)^2 gives NaN in higher derivatives once cosh overflows
+// (#2836). u never overflows, and 1 + u is in [1, 2]. exp is the intrinsic:
+// a libm companion would inherit tanh's attributes (SameTypesFunc).
 def : CallPattern<(Op $x),
-                  ["tanh"],
-                  [(FMul (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))],
-                  (ForwardFromSummedReverse),
-                  [ReadNone, NoUnwind]
-                  >;
-def : CallPattern<(Op $x),
-                  ["tanhf"],
-                  [(FMul (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))],
-                  (ForwardFromSummedReverse),
-                  [ReadNone, NoUnwind]
-                  >;
-def : CallPattern<(Op $x),
-                  ["tanhl"],
-                  [(FMul (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))],
+                  ["tanh", "tanhf", "tanhl"],
+                  [(FDiv (FMul (DiffeRet), (FMul (ConstantFP<"4.0"> $x), (FExp (FMul (ConstantFP<"-2.0"> $x), (Intrinsic<"fabs"> $x))):$u)), (FMul (FAdd (ConstantFP<"1.0"> $x), $u):$v, $v))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -1001,9 +994,10 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   [ReadNone, NoUnwind]
                   >;
 
+// as for tanh above
 def : IntrPattern<(Op $x),
                   [["tanh", "19", ""]],
-                  [(FMul (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul(Intrinsic<"tanh"> $x):$c, $c)))],
+                  [(FDiv (FMul (DiffeRet), (FMul (ConstantFP<"4.0"> $x), (FExp (FMul (ConstantFP<"-2.0"> $x), (Intrinsic<"fabs"> $x))):$u)), (FMul (FAdd (ConstantFP<"1.0"> $x), $u):$v, $v))],
                   (ForwardFromSummedReverse)
                   >;
 
