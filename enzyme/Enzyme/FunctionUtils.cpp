@@ -8837,6 +8837,69 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
   return InnerTy(new Constraints(v, isEqual, Loop, false));
 }
 
+// Automatic sparsity rewrites sums and products as calls to the
+// __enzyme_sum / __enzyme_product placeholders. Turn them back into
+// arithmetic, whether or not the sparsification succeeded.
+static void lowerSparsePlaceholders(llvm::Function &F) {
+  for (auto &F2 : F.getParent()->functions()) {
+    if (startsWith(F2.getName(), "__enzyme_product")) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = v->getType()->isIntegerTy() ? B.CreateMul(res, v)
+                                              : B.CreateFMul(res, v);
+          }
+        }
+        CB->replaceAllUsesWith(res);
+        toErase.push_back(CB);
+      }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
+    } else if (startsWith(F2.getName(), "__enzyme_sum")) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = v->getType()->isIntegerTy() ? B.CreateAdd(res, v)
+                                              : B.CreateFAdd(res, v);
+          }
+        }
+        CB->replaceAllUsesWith(res);
+        toErase.push_back(CB);
+      }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
+    }
+  }
+}
+
+// Remove the enzyme.sparse.inbounds markers of a sparsification that was
+// abandoned.
+static void eraseSparseInbounds(llvm::Function &F) {
+  SmallVector<CallInst *, 1> toErase;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction())
+          if (Fn->getName() == "enzyme.sparse.inbounds")
+            toErase.push_back(CI);
+  for (auto CI : toErase)
+    CI->eraseFromParent();
+}
+
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                       SetVector<BasicBlock *> &toDenseBlocks) {
 
@@ -8973,6 +9036,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
 
   if (!legalToSparse) {
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -8992,6 +9056,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           Assumptions.push_back(II);
 
   bool sawError = false;
+  SmallVector<std::pair<Instruction *, Value *>, 1> origConditions;
 
   for (auto [blk, br] : sparseBlocks) {
     auto L = LI.getLoopFor(blk);
@@ -9105,11 +9170,16 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     if (!negated)
       nidx = B.CreateNot(nidx);
 
+    origConditions.emplace_back(br, cond);
     setBranchCondition(br, nidx);
     forSparsification[L].second.emplace_back(blk, solutions);
   }
 
   if (sawError) {
+    // Undo the rewrite of the branches that were already sparsified.
+    for (auto &[br, cond] : origConditions)
+      setBranchCondition(br, cond);
+    eraseSparseInbounds(F);
     for (auto &pair : forSparsification) {
       for (auto PN : {pair.second.first.first, pair.second.first.second}) {
         PN->replaceAllUsesWith(UndefValue::get(PN->getType()));
@@ -9120,6 +9190,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       llvm::errs() << F << "\n";
       report_fatal_error("function failed verification (6)");
     }
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -9127,6 +9198,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto context = &F.getEntryBlock().front();
     EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F,
                 "\n Found no stores for sparsification");
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -9312,47 +9384,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
   }
 
-  for (auto &F2 : F.getParent()->functions()) {
-    if (startsWith(F2.getName(), "__enzyme_product")) {
-      SmallVector<Instruction *, 1> toErase;
-      for (llvm::User *I : F2.users()) {
-        auto CB = cast<CallBase>(I);
-        IRBuilder<> B(CB);
-        B.setFastMathFlags(getFast());
-        Value *res = nullptr;
-        for (auto v : callOperands(CB)) {
-          if (res == nullptr)
-            res = v;
-          else {
-            res = B.CreateFMul(res, v);
-          }
-        }
-        CB->replaceAllUsesWith(res);
-        toErase.push_back(CB);
-      }
-      for (auto CB : toErase)
-        CB->eraseFromParent();
-    } else if (startsWith(F2.getName(), "__enzyme_sum")) {
-      SmallVector<Instruction *, 1> toErase;
-      for (llvm::User *I : F2.users()) {
-        auto CB = cast<CallBase>(I);
-        IRBuilder<> B(CB);
-        B.setFastMathFlags(getFast());
-        Value *res = nullptr;
-        for (auto v : callOperands(CB)) {
-          if (res == nullptr)
-            res = v;
-          else {
-            res = B.CreateFAdd(res, v);
-          }
-        }
-        CB->replaceAllUsesWith(res);
-        toErase.push_back(CB);
-      }
-      for (auto CB : toErase)
-        CB->eraseFromParent();
-    }
-  }
+  lowerSparsePlaceholders(F);
 }
 
 void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
