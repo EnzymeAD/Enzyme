@@ -68,29 +68,44 @@ end subroutine
 ! CHECK-DAG: @names_ = {{.*}}global [2048 x i8] {{.*}}!enzyme_type ![[CHARS]]{{$}}
 
 ! Runtime calls: what the conversions for the call erased. A descriptor is
-! typed field by field, with its element type; character data is Integer;
-! the I/O cookie (an opaque pointer of its own type) is left alone.
+! typed field by field, with the type of its data if that is a whole object
+! (here a local ALLOCATABLE); character data is Integer; the I/O cookie (an
+! opaque pointer of its own type) is left alone.
 ! O0-DAG: call void @_FortranAAssign{{[A-Za-z]*}}(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@float, [-1,8]:Integer, [-1,16]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer, [-1,24]:Integer, [-1,32]:Integer, [-1,40]:Integer}"
-! CHECK-DAG: call {{.*}}@_FortranAioOutputAscii(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}"
-! Data storage associated with data of other types (a COMMON block or
-! EQUIVALENCE member) keeps its descriptor layout but not its data type:
+! CHECK-DAG: call {{.*}}@_FortranAioOutputAscii(ptr %{{[0-9]+}}, ptr {{(nonnull )?}}"enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}"
+subroutine copy(b, n)
+  real, intent(in) :: b(:)
+  integer :: n
+  real, allocatable :: a(:)
+  character(len=16) :: name
+  name = 'copy'
+  a = b
+  print *, name, a(n)
+end subroutine
+
+! Data that may be part of a larger object of other types (a member of a
+! COMMON block or EQUIVALENCE group, a component, a dummy argument) keeps its
+! descriptor layout but not the type of its data: Enzyme's types have no
+! extent.
 ! RT-LABEL: define void @read_common_
 ! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
 ! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@float, [-1,8]:Integer,
-subroutine read_common(u, n)
+! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
+! RT: call {{.*}}@_FortranAioInputDescriptor(ptr %{{[0-9]+}}, ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
+subroutine read_common(u, n, d)
+  type :: t
+    character(len=8) :: name
+    real(4) :: x(4)
+  end type
   integer :: u, n, i
+  real(4) :: d(4)
   real(8) :: c8(4)
   real(4) :: c4(4)
   common /rbufs/ c8, c4
   real(4) :: loc(4)
+  type(t) :: v
   read(u) (c4(i), i=1,n)
   read(u) loc
-end subroutine
-
-subroutine copy(a, b, name)
-  real, allocatable :: a(:)
-  real, intent(in) :: b(:)
-  character(len=*), intent(in) :: name
-  a = b
-  print *, name, a(1)
+  read(u) d
+  read(u) v%x
 end subroutine
