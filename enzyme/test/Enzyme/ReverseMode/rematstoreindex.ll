@@ -57,17 +57,17 @@ define void @df(ptr %x, ptr %dx, i64 %n) {
 attributes #0 = { nofree "enzyme_inactive" "enzyme_no_escaping_allocation" }
 
 ; CHECK: define internal { i32, ptr } @augmented_f(ptr {{.*}}%x, ptr {{.*}}%"x'", i64 %n)
-; CHECK:   call void @read_int(ptr %idx)
-; CHECK-NEXT:   %i = load i32, ptr %idx, align 4
+; CHECK:   call void @read_int(ptr [[IDX:%[a-z0-9]+]])
+; CHECK-NEXT:   %i = load i32, ptr [[IDX]], align 4
 ; CHECK-NEXT:   store i32 %i, ptr %0, align 4
 
 ; CHECK: define internal void @diffef(ptr {{.*}}%x, ptr {{.*}}%"x'", i64 %n, { i32, ptr } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %arr = alloca [2 x i32], i64 1, align 4
-; CHECK:   store i32 0, ptr %arr, align 4
-; CHECK-NEXT:   %arr1 = getelementptr i32, ptr %arr, i64 1
+; CHECK-NEXT:   [[ARR:%[a-z0-9]+]] = alloca [2 x i32], i64 1, align 4
+; CHECK:   store i32 0, ptr [[ARR]], align 4
+; CHECK-NEXT:   %arr1 = getelementptr i32, ptr [[ARR]], i64 1
 ; CHECK-NEXT:   store i32 0, ptr %arr1, align 4
 ; CHECK-NEXT:   %i = extractvalue { i32, ptr } %tapeArg, 0
 ; CHECK-NEXT:   %ie = sext i32 %i to i64
-; CHECK-NEXT:   %slot = getelementptr i32, ptr %arr, i64 %ie
+; CHECK-NEXT:   %slot = getelementptr i32, ptr [[ARR]], i64 %ie
 ; CHECK-NEXT:   store i32 1, ptr %slot, align 4
