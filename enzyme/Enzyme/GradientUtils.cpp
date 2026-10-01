@@ -7601,10 +7601,13 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   }
 
                   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
+                  // This lookup is in the reverse pass, possibly in blocks
+                  // that an unwrap erases again if it fails: its
+                  // instructions are not part of creating the cache.
                   Value *outer = getCachePointer(
                       AT,
                       /*inForwardPass*/ false, BuilderM, lctx, cache,
-                      /*storeinstorecache*/ true, available,
+                      /*storeinstorecache*/ false, available,
                       /*extraSize*/ nullptr);
                   SmallVector<Value *, 2> idxs;
                   for (auto &idx : GEP->indices()) {
