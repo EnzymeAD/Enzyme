@@ -6691,6 +6691,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     if (startsWith(demangledName, Name))
       return F;
 
+  // These LLVM flang runtime functions do not free memory of the program.
+  // They are not marked nofree, since the I/O runtime frees its own I/O
+  // statement state.
+  if (isFlangRuntimeNoFree(F->getName()))
+    return F;
+
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
   case Intrinsic::lifetime_end:
