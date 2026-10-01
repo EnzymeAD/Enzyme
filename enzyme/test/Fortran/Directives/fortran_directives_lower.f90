@@ -5,7 +5,7 @@
 !
 ! REQUIRES: flang_directives
 ! RUN: rm -rf %t && mkdir -p %t
-! RUN: %fc -fc1 %fc1Directives -emit-fir \
+! RUN: %fc -fc1 %flangFc1Directives -emit-fir \
 ! RUN:   -module-dir %t %s -o - | FileCheck %s
 ! RUN: FileCheck %s --check-prefix=MOD < %t/rules.mod
 
@@ -47,14 +47,14 @@ end module
 
 ! The plugin's pass turns them into the markers Enzyme reads.
 ! CHECK-DAG: fir.global @_QMrulesEg {fir.directives = [{args = {shadow = @_QMrulesEg_d}, keyword = "shadow", prefix = "enzyme"}]} : f32
-! CHECK-DAG: fir.global weak @_QMrulesEg.__enzyme_shadow_global : tuple<!fir.llvm_ptr<i8>, !fir.llvm_ptr<i8>>
+! CHECK-DAG: fir.global weak @__enzyme_shadow_global._QMrulesEg : tuple<!fir.llvm_ptr<i8>, !fir.llvm_ptr<i8>>
 ! CHECK-DAG: func.func @_QMrulesPf({{.*}}fir.directives = [{args = {augmented = @_QMrulesPf_aug, reverse = @_QMrulesPf_rev}, keyword = "custom_rule", prefix = "enzyme"}]
-! CHECK-DAG: fir.global weak @_QMrulesPf.__enzyme_register_gradient : tuple<!fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>>
-! CHECK-DAG: func.func @_QMrulesPtimer(){{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]{{.*}}llvm.passthrough = ["enzyme_inactive"]
-! CHECK-DAG: fir.global weak @_QMrulesPtimer.__enzyme_inactivefn
-! CHECK-DAG: fir.global weak @_QMrulesPtimer.__enzyme_nofree
+! CHECK-DAG: fir.global weak @__enzyme_register_gradient._QMrulesPf : tuple<!fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>>
+! CHECK-DAG: func.func @_QMrulesPtimer(){{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]{{.*}}llvm.passthrough = ["enzyme_inactive", "noinline"]
+! CHECK-DAG: fir.global weak @__enzyme_inactivefn._QMrulesPtimer
+! CHECK-DAG: fir.global weak @__enzyme_nofree._QMrulesPtimer
 ! CHECK-DAG: fir.global common @blk_({{.*}}fir.directives = [{args = {shadow = @blk_d_}, keyword = "shadow", prefix = "enzyme"}]
-! CHECK-DAG: fir.global weak @blk_.__enzyme_shadow_global
+! CHECK-DAG: fir.global weak @__enzyme_shadow_global.blk_
 
 ! The module file keeps them, naming their subjects, for the units using it.
 ! MOD-DAG: !dir$ enzyme custom_rule(f, augmented=f_aug, reverse=f_rev)
