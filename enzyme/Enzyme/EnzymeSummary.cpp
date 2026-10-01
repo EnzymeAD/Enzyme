@@ -275,18 +275,45 @@ private:
     return R;
   }
 
+  /// A global that holds no floating-point data: its "enzyme_type" (e.g.
+  /// a COMMON block annotated by flang) has no floating-point part, or it is
+  /// a module-local variable whose IR type has none (flang types those).
+  bool intTypedGlobal(const std::string &Name) const {
+    auto *G = F.getParent()->getGlobalVariable(Name, /*AllowInternal*/ true);
+    if (!G)
+      return false;
+    if (auto *MD = G->getMetadata("enzyme_type")) {
+      SmallVector<const MDNode *, 4> todo = {MD};
+      while (!todo.empty()) {
+        auto *N = todo.pop_back_val();
+        for (auto &Op : N->operands()) {
+          if (auto *S = dyn_cast_or_null<MDString>(Op.get()))
+            if (S->getString().contains("Float"))
+              return false;
+          if (auto *Sub = dyn_cast_or_null<MDNode>(Op.get()))
+            todo.push_back(Sub);
+        }
+      }
+      return true;
+    }
+    return G->hasLocalLinkage() && !carriesFloat(G->getValueType());
+  }
   void read(const Roots &R, bool Untyped = false) {
     for (auto i : R.Args)
       if (!(Untyped && IntTyped.count(i)))
         ArgRead[i] = true;
-    GlobalRead.insert(R.Globals.begin(), R.Globals.end());
+    for (auto &G : R.Globals)
+      if (!(Untyped && intTypedGlobal(G)))
+        GlobalRead.insert(G);
     Unknown |= R.Unknown;
   }
   void write(const Roots &R, bool Untyped = false) {
     for (auto i : R.Args)
       if (!(Untyped && IntTyped.count(i)))
         ArgWrite[i] = true;
-    GlobalWrite.insert(R.Globals.begin(), R.Globals.end());
+    for (auto &G : R.Globals)
+      if (!(Untyped && intTypedGlobal(G)))
+        GlobalWrite.insert(G);
     Unknown |= R.Unknown;
   }
   void escape(const Roots &R) {
@@ -375,11 +402,12 @@ private:
       for (auto &A : CB->args()) {
         if (!A->getType()->isPointerTy() || NoFP)
           continue;
+        // the runtime's C signatures are untyped: declared types decide
         auto R = roots(A);
         if (!Out)
-          write(R);
+          write(R, /*Untyped*/ true);
         if (!In)
-          read(R);
+          read(R, /*Untyped*/ true);
       }
       return;
     }
