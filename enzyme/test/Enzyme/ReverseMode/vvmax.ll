@@ -53,5 +53,10 @@ attributes #2 = { nounwind }
 !2 = !{!"omnipotent char", !3, i64 0}
 !3 = !{!"Simple C++ TBAA"}
 
-; CHECK: define internal void @differmax(double* %arg, double* %"arg'", i64 %arg1, double %differeturn)
-; CHECK:  %"tmp50!manual_lcssa" = phi i8* [ %tmp50, %bb88 ], [ %tmp50, %bb81 ], [ undef, %entry ]
+; The inner pointer comparison does not dominate end. Cache the incoming edge
+; instead of unconditionally reconstructing the comparison in the reverse pass.
+; CHECK-LABEL: define internal void @differmax(
+; CHECK: end:
+; CHECK-NEXT: %[[EDGE:.+]] = phi i8 [ {{[0-9]+}}, %bb81 ], [ {{[0-9]+}}, %bb88 ], [ {{[0-9]+}}, %entry ]
+; CHECK: invertend:
+; CHECK-NEXT: switch i8 %[[EDGE]], label %invert
