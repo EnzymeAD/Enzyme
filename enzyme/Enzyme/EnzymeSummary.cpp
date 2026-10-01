@@ -43,6 +43,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
+#include <tuple>
+#include <vector>
 #include <set>
 #include <string>
 
@@ -166,6 +168,235 @@ json::Value signatureType(const AttributeList &AL, unsigned ArgNo) {
   return nullptr;
 }
 
+
+/// Where a pointer may point: into the memory reachable from an argument or
+/// a global (dereferences collapsed, as in ActivityAnalysis.jl's pseudo
+/// classes), into local memory, or anywhere.
+struct Roots {
+  std::set<unsigned> Args;
+  std::set<std::string> Globals;
+  bool Unknown = false;
+  void merge(const Roots &O) {
+    Args.insert(O.Args.begin(), O.Args.end());
+    Globals.insert(O.Globals.begin(), O.Globals.end());
+    Unknown |= O.Unknown;
+  }
+  bool nonLocal() const { return Unknown || !Args.empty() || !Globals.empty(); }
+};
+
+/// Effects on floating-point data of one function, before composing with
+/// its callees: per argument and per global, whether it may read or write
+/// floating-point data there (a store of a constant counts: it overwrites a
+/// value that may have a derivative), and symbolic edges for what callees
+/// do with it.
+class ActivityFacts {
+public:
+  ActivityFacts(Function &F) : F(F) {
+    ArgRead.assign(F.arg_size(), false);
+    ArgWrite.assign(F.arg_size(), false);
+    ArgEscape.assign(F.arg_size(), false);
+    for (auto &A : F.args()) {
+      // An argument whose declared type has no floating-point part cannot
+      // carry derivatives through untyped copies.
+      if (F.getAttributes().hasParamAttr(A.getArgNo(), "enzyme_type")) {
+        auto T = F.getAttributes()
+                     .getParamAttr(A.getArgNo(), "enzyme_type")
+                     .getValueAsString();
+        if (!T.contains("Float"))
+          IntTyped.insert(A.getArgNo());
+      }
+    }
+    for (auto &I : instructions(F))
+      visit(I);
+  }
+
+  json::Object toJSON() const {
+    json::Array Args;
+    for (unsigned i = 0; i < ArgRead.size(); ++i)
+      Args.push_back(json::Object{{"read", (bool)ArgRead[i]},
+                                  {"write", (bool)ArgWrite[i]},
+                                  {"escape", (bool)ArgEscape[i]}});
+    json::Array Edges;
+    for (auto &[Root, Callee, Idx] : Edges_)
+      Edges.push_back(json::Array{Root, Callee, Idx});
+    return json::Object{{"args", std::move(Args)},
+                        {"globals_read", toArray(GlobalRead)},
+                        {"globals_write", toArray(GlobalWrite)},
+                        {"edges", std::move(Edges)},
+                        {"unknown", Unknown},
+                        {"returns_fp", F.getReturnType()->isFPOrFPVectorTy()},
+                        {"frees", Frees}};
+  }
+
+private:
+  Function &F;
+  std::vector<bool> ArgRead, ArgWrite, ArgEscape;
+  std::set<unsigned> IntTyped;
+  std::set<std::string> GlobalRead, GlobalWrite;
+  // (root: "a<i>" or "g<name>", callee, parameter index)
+  std::set<std::tuple<std::string, std::string, unsigned>> Edges_;
+  bool Unknown = false, Frees = false;
+  std::map<const Value *, Roots> Memo;
+
+  Roots roots(const Value *V) {
+    auto found = Memo.find(V);
+    if (found != Memo.end())
+      return found->second;
+    Memo[V] = Roots(); // cycles (phis) contribute nothing new
+    Roots R;
+    V = V->stripPointerCasts();
+    if (auto *GEP = dyn_cast<GEPOperator>(V))
+      R = roots(GEP->getPointerOperand());
+    else if (auto *A = dyn_cast<Argument>(V))
+      R.Args.insert(A->getArgNo());
+    else if (auto *G = dyn_cast<GlobalVariable>(V)) {
+      if (!G->isConstant())
+        R.Globals.insert(G->getName().str());
+    } else if (isa<AllocaInst>(V) || isa<Constant>(V))
+      ;
+    else if (auto *L = dyn_cast<LoadInst>(V))
+      R = roots(L->getPointerOperand()); // dereferences collapsed
+    else if (auto *P = dyn_cast<PHINode>(V)) {
+      for (auto &In : P->incoming_values())
+        R.merge(roots(In));
+    } else if (auto *S = dyn_cast<SelectInst>(V)) {
+      R = roots(S->getTrueValue());
+      R.merge(roots(S->getFalseValue()));
+    } else if (auto *CB = dyn_cast<CallBase>(V)) {
+      auto *Callee =
+          dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+      StringRef N = Callee ? Callee->getName() : "";
+      // fresh memory, and the flang runtime's own handles (I/O cookies)
+      if (!(isAllocationName(N) || N.starts_with("_Fortran")))
+        R.Unknown = true;
+    } else
+      R.Unknown = true;
+    Memo[V] = R;
+    return R;
+  }
+
+  void read(const Roots &R, bool Untyped = false) {
+    for (auto i : R.Args)
+      if (!(Untyped && IntTyped.count(i)))
+        ArgRead[i] = true;
+    GlobalRead.insert(R.Globals.begin(), R.Globals.end());
+    Unknown |= R.Unknown;
+  }
+  void write(const Roots &R, bool Untyped = false) {
+    for (auto i : R.Args)
+      if (!(Untyped && IntTyped.count(i)))
+        ArgWrite[i] = true;
+    GlobalWrite.insert(R.Globals.begin(), R.Globals.end());
+    Unknown |= R.Unknown;
+  }
+  void escape(const Roots &R) {
+    for (auto i : R.Args)
+      ArgEscape[i] = true;
+    if (!R.Globals.empty())
+      Unknown = true;
+  }
+
+  static bool carriesFloat(Type *T) {
+    if (T->isFPOrFPVectorTy())
+      return true;
+    if (auto *ST = dyn_cast<StructType>(T)) {
+      for (auto *E : ST->elements())
+        if (carriesFloat(E))
+          return true;
+      return false;
+    }
+    if (auto *AT = dyn_cast<ArrayType>(T))
+      return carriesFloat(AT->getElementType());
+    return false;
+  }
+
+  void visit(Instruction &I) {
+    if (auto *L = dyn_cast<LoadInst>(&I)) {
+      if (carriesFloat(L->getType()))
+        read(roots(L->getPointerOperand()));
+      return;
+    }
+    if (auto *S = dyn_cast<StoreInst>(&I)) {
+      Value *V = S->getValueOperand();
+      bool FP = carriesFloat(V->getType());
+      if (auto *BC = dyn_cast<BitCastInst>(V))
+        FP |= carriesFloat(BC->getSrcTy());
+      if (FP)
+        write(roots(S->getPointerOperand()));
+      else if (V->getType()->isPointerTy() &&
+               roots(S->getPointerOperand()).nonLocal())
+        escape(roots(V));
+      return;
+    }
+    if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
+      write(roots(MT->getDest()), /*Untyped*/ true);
+      read(roots(MT->getSource()), /*Untyped*/ true);
+      return;
+    }
+    if (auto *MS = dyn_cast<MemSetInst>(&I)) {
+      write(roots(MS->getDest()), /*Untyped*/ true);
+      return;
+    }
+    if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I)) {
+      Unknown = true;
+      return;
+    }
+    if (auto *R = dyn_cast<ReturnInst>(&I)) {
+      if (auto *V = R->getReturnValue())
+        if (V->getType()->isPointerTy())
+          escape(roots(V));
+      return;
+    }
+    auto *CB = dyn_cast<CallBase>(&I);
+    if (!CB || isa<IntrinsicInst>(&I))
+      return;
+    auto *Callee =
+        dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+    if (!Callee) {
+      Unknown = true;
+      return;
+    }
+    StringRef N = Callee->getName();
+    if (N == "free" || N.starts_with("_FortranAAllocatableDeallocate") ||
+        N.starts_with("_FortranAPointerDeallocate"))
+      Frees = true;
+    if (N.starts_with("__enzyme") || isAllocationName(N) || N == "free")
+      return;
+    if (N.starts_with("_Fortran")) {
+      // The flang runtime: I/O of characters, integers and logicals moves no
+      // floating-point data; other transfers may.
+      bool NoFP = N.contains("Ascii") || N.contains("Integer") ||
+                  N.contains("Logical") || N.contains("Character");
+      bool IO = N.starts_with("_FortranAio");
+      bool In = IO && N.contains("Input");
+      bool Out = IO && N.contains("Output");
+      if (IO && !In && !Out)
+        return; // Begin/End/Set...: the statement's control
+      for (auto &A : CB->args()) {
+        if (!A->getType()->isPointerTy() || NoFP)
+          continue;
+        auto R = roots(A);
+        if (!Out)
+          write(R);
+        if (!In)
+          read(R);
+      }
+      return;
+    }
+    for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
+      Value *A = CB->getArgOperand(k);
+      if (!A->getType()->isPointerTy())
+        continue;
+      auto R = roots(A);
+      Unknown |= R.Unknown;
+      for (auto i : R.Args)
+        Edges_.insert({"a" + std::to_string(i), N.str(), k});
+      for (auto &G : R.Globals)
+        Edges_.insert({"g" + G, N.str(), k});
+    }
+  }
+};
+
 json::Object summarizeFunction(Function &F) {
   std::set<std::string> Calls, Refs, Globals;
   bool FP = false, MemTransfer = false, Allocates = false;
@@ -226,6 +457,7 @@ json::Object summarizeFunction(Function &F) {
       {"inactive", F.hasFnAttribute("enzyme_inactive")},
       {"nofree", F.hasFnAttribute(Attribute::NoFree)},
       {"no_escape", F.hasFnAttribute("enzyme_no_escaping_allocation")},
+      {"activity", ActivityFacts(F).toJSON()},
   };
 }
 
