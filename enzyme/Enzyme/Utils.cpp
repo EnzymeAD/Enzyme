@@ -111,6 +111,31 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
+
+bool isFlangRuntimeNoFree(llvm::StringRef name) {
+  for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
+                      "_FortranAModuloInteger", "_FortranAModuloReal"})
+    if (name.starts_with(prefix))
+      return true;
+  static const char *Names[] = {
+      "_FortranAFlush",
+      "_FortranAIndex1",
+      "_FortranAIndex2",
+      "_FortranAIndex4",
+      "_FortranAScan1",
+      "_FortranAScan2",
+      "_FortranAScan4",
+      "_FortranAVerify1",
+      "_FortranAVerify2",
+      "_FortranAVerify4",
+      "_FortranACharacterCompareScalar",
+      "_FortranACharacterCompareScalar1",
+      "_FortranACharacterCompareScalar2",
+      "_FortranACharacterCompareScalar4",
+  };
+  return llvm::is_contained(Names, name);
+}
+
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
@@ -437,6 +462,18 @@ bool attributeKnownFunctions(llvm::Function &F) {
   if (llvm::is_contained(FlangRuntimeQueries, name)) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions do not free memory of the program
+  // (see isFlangRuntimeNoFree, used by CreateNoFree) and, like the
+  // termination calls, do not return or store an allocation into it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
     F.addAttribute(
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
