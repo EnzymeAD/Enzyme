@@ -1,0 +1,19 @@
+; Module of @g for thinlink.ll (not a test itself).
+
+; @g squares x[0]; it only reads the count n as an integer.
+define void @g(ptr %x, ptr %n) {
+  %k = load i32, ptr %n
+  %v = load double, ptr %x
+  %m = fmul double %v, %v
+  store double %m, ptr %x
+  call void @h(ptr %n)
+  ret void
+}
+
+; @h moves no floating-point data: inferred inactive.
+define void @h(ptr %n) {
+  %k = load i32, ptr %n
+  %k1 = add i32 %k, 1
+  store i32 %k1, ptr %n
+  ret void
+}
