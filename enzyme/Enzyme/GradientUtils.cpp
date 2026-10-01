@@ -4764,13 +4764,22 @@ bool GradientUtils::usesExternalDerivative(Function *F,
     return false;
   if (F->isIntrinsic() || F->isVarArg())
     return false;
+  // Declared inactive (e.g. __enzyme_inactivefn registrations): no
+  // derivative exists or is needed.
+  if (F->hasFnAttribute("enzyme_inactive"))
+    return false;
   if (hasMetadata(F, "enzyme_callwrapper") ||
       hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
       hasMetadata(F, "enzyme_derivative"))
     return false;
+#if LLVM_VERSION_MAJOR >= 24
+  if (TLI.getLibFunc(*F) != NotLibFunc)
+    return false;
+#else
   LibFunc LF;
   if (TLI.getLibFunc(*F, LF))
     return false;
+#endif
   auto name = F->getName();
   if (name.starts_with("_Fortran") || name.starts_with("__enzyme") ||
       name.starts_with("llvm."))

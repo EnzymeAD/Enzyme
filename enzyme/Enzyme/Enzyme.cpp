@@ -138,6 +138,11 @@ llvm::cl::opt<std::string> EnzymeExportDerivatives(
              "Functions can also request this individually with the "
              "\"enzyme_export_derivative\" attribute."));
 
+llvm::cl::opt<bool> EnzymeExportStrongZero(
+    "enzyme-export-strong-zero", cl::init(false), cl::Hidden,
+    cl::desc("With -enzyme-export-derivatives, also export the strong-zero "
+             "(_sz) variant of every exported derivative"));
+
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
     cl::desc("With -enzyme-export-derivatives, only export functions whose "
@@ -2783,6 +2788,14 @@ public:
         continue;
       if (F.getName().starts_with("__enzyme") || F.getName() == "main")
         continue;
+      // Functions with a custom derivative: callers use the rule itself
+      // (see GradientUtils::usesExternalDerivative), nothing to export.
+      if (hasMetadata(&F, "enzyme_callwrapper") ||
+          hasMetadata(&F, "enzyme_augment") ||
+          hasMetadata(&F, "enzyme_gradient") ||
+          hasMetadata(&F, "enzyme_derivative") ||
+          F.hasFnAttribute("enzyme_inactive"))
+        continue;
       SmallVector<DerivativeMode, 3> modes;
       if (F.hasFnAttribute("enzyme_export_derivative"))
         parseModes(
@@ -2800,11 +2813,14 @@ public:
     bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
     for (auto &[F, modes] : todo)
       for (auto mode : modes)
-        GradientUtils::GetOrCreateShadowFunction(
-            RequestContext(), Logic,
-            Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, mode,
-            /*runtimeActivity*/ false, /*strongZero*/ false, /*width*/ 1,
-            AtomicAdd);
+        for (bool strongZero : {false, true}) {
+          if (strongZero && !EnzymeExportStrongZero)
+            continue;
+          GradientUtils::GetOrCreateShadowFunction(
+              RequestContext(), Logic,
+              Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, mode,
+              /*runtimeActivity*/ false, strongZero, /*width*/ 1, AtomicAdd);
+        }
     return true;
   }
 
