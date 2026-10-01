@@ -6088,10 +6088,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           invertargs.push_back(b);
         }
 
-        auto rule = [&bb, &arg, &invertargs](Value *ip) {
-          // TODO mark this the same inbounds as the original
-          return bb.CreateGEP(cast<GEPOperator>(ip)->getSourceElementType(), ip,
-                              invertargs, arg->getName() + "'ipg");
+        // The shadow of the base is not a constant, e.g. an alloca standing
+        // in for a global only this function touches, so the GEP becomes an
+        // instruction. Its source element type is the original GEP's.
+        auto GEP = cast<GEPOperator>(arg);
+        auto rule = [&bb, &arg, &invertargs, GEP](Value *ip) {
+          if (GEP->isInBounds())
+            return bb.CreateInBoundsGEP(GEP->getSourceElementType(), ip,
+                                        invertargs, arg->getName() + "'ipg");
+          return bb.CreateGEP(GEP->getSourceElementType(), ip, invertargs,
+                              arg->getName() + "'ipg");
         };
 
         Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
