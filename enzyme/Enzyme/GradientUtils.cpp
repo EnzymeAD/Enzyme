@@ -7564,11 +7564,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       /*inForwardPass*/ false, BuilderM, lctx, cache,
                       /*storeinstorecache*/ true, available,
                       /*extraSize*/ nullptr);
-                  // The indices are needed where the load is, so look them
-                  // up at the same scope. At the insertion block, which may
-                  // correspond to a later loop, the lookup of a value of
-                  // this loop would need a cache in that later loop, whose
-                  // limit may in turn need this load.
                   SmallVector<Value *, 2> idxs;
                   for (auto &idx : GEP->indices()) {
                     idxs.push_back(lookupM(idx, BuilderM, available,
