@@ -16,6 +16,10 @@
 //                                        __enzyme_inactivefn and
 //                                        __enzyme_nofree registrations
 //   !dir$ enzyme inactive(var | /blk/)   __enzyme_inactive_global registration
+//   !dir$ enzyme no_escaping_allocation [(proc)]
+//                                        __enzyme_no_escaping_allocation
+//                                        registration (no allocation of the
+//                                        procedure outlives it)
 //   !dir$ enzyme shadow(var, shadow=s)   __enzyme_shadow_global pair {&var, &s}
 //   !dir$ enzyme shadow(/blk/, shadow=/blk_d/)  the same, block to block
 //   !dir$ enzyme custom_rule [(proc)] (augmented=a, reverse=r)
@@ -129,6 +133,15 @@ static LogicalResult lowerDirective(ModuleOp module, Operation *subject,
   StringRef subjectName = SymbolTable::getSymbolName(subject).getValue();
   Location loc = subject->getLoc();
 
+  if (keyword == "no_escaping_allocation") {
+    if (!isa<func::FuncOp>(subject))
+      return emitError(loc)
+             << "enzyme no_escaping_allocation applies to a procedure";
+    return createRegistration(
+        module, loc,
+        registrationName("__enzyme_no_escaping_allocation", subjectName),
+        {subjectSym});
+  }
   if (keyword == "inactive") {
     if (isa<func::FuncOp>(subject)) {
       // Read by Enzyme-MLIR; LLVM Enzyme reads the registration, which also

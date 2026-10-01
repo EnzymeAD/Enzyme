@@ -49,6 +49,8 @@ static void registerEnzymeDirectives() {
     return PluginDirectiveArg{keyword, PluginDirectiveArgKind::Procedure};
   };
   registerPluginDirective({"enzyme", "inactive", PluginDirectiveSubject::Any});
+  registerPluginDirective({"enzyme", "no_escaping_allocation",
+                           PluginDirectiveSubject::Procedure});
   registerPluginDirective(
       {"enzyme",
        "custom_rule",

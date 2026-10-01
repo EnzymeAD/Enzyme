@@ -34,6 +34,7 @@ contains
   end subroutine
   real function timer()
     !dir$ enzyme inactive
+    !dir$ enzyme no_escaping_allocation
     timer = 0.0
   end function
   subroutine uses_common()
@@ -50,9 +51,10 @@ end module
 ! CHECK-DAG: fir.global weak @__enzyme_shadow_global._QMrulesEg : tuple<!fir.llvm_ptr<i8>, !fir.llvm_ptr<i8>>
 ! CHECK-DAG: func.func @_QMrulesPf({{.*}}fir.directives = [{args = {augmented = @_QMrulesPf_aug, reverse = @_QMrulesPf_rev}, keyword = "custom_rule", prefix = "enzyme"}]
 ! CHECK-DAG: fir.global weak @__enzyme_register_gradient._QMrulesPf : tuple<!fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>>
-! CHECK-DAG: func.func @_QMrulesPtimer(){{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]{{.*}}llvm.passthrough = ["enzyme_inactive", "noinline"]
+! CHECK-DAG: func.func @_QMrulesPtimer(){{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}, {args = {}, keyword = "no_escaping_allocation", prefix = "enzyme"}]{{.*}}llvm.passthrough = ["enzyme_inactive", "noinline"]
 ! CHECK-DAG: fir.global weak @__enzyme_inactivefn._QMrulesPtimer
 ! CHECK-DAG: fir.global weak @__enzyme_nofree._QMrulesPtimer
+! CHECK-DAG: fir.global weak @__enzyme_no_escaping_allocation._QMrulesPtimer
 ! CHECK-DAG: fir.global common @blk_({{.*}}fir.directives = [{args = {shadow = @blk_d_}, keyword = "shadow", prefix = "enzyme"}]
 ! CHECK-DAG: fir.global weak @__enzyme_shadow_global.blk_
 
@@ -60,3 +62,4 @@ end module
 ! MOD-DAG: !dir$ enzyme custom_rule(f, augmented=f_aug, reverse=f_rev)
 ! MOD-DAG: !dir$ enzyme shadow(g, shadow=g_d)
 ! MOD-DAG: !dir$ enzyme inactive(timer)
+! MOD-DAG: !dir$ enzyme no_escaping_allocation(timer)
