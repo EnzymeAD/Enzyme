@@ -4250,8 +4250,14 @@ Function *getProductIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
+#if LLVM_VERSION_MAJOR >= 16
+  AL = AL.addAttribute(
+      T->getContext(), AttributeList::FunctionIndex,
+      Attribute::getWithMemoryEffects(T->getContext(), MemoryEffects::none()));
+#else
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::ReadNone);
+#endif
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::NoUnwind);
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
@@ -4275,8 +4281,14 @@ Function *getSumIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
+#if LLVM_VERSION_MAJOR >= 16
+  AL = AL.addAttribute(
+      T->getContext(), AttributeList::FunctionIndex,
+      Attribute::getWithMemoryEffects(T->getContext(), MemoryEffects::none()));
+#else
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::ReadNone);
+#endif
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::NoUnwind);
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
