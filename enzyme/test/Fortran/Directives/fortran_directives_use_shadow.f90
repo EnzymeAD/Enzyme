@@ -17,7 +17,7 @@
 ! The unit of the registrations only declares the variables.
 ! FIR-DAG: fir.global @_QMstateEg {fir.directives = [{args = {shadow = @_QMshadowsEg_d}, keyword = "shadow", prefix = "enzyme"}]} : f32{{$}}
 ! FIR-DAG: fir.global @_QMshadowsEg_d : f32{{$}}
-! FIR-DAG: fir.global weak @"__enzyme_shadow_global._QMstateEg"
+! FIR-DAG: fir.global weak @__enzyme_shadow_global._QMstateEg
 
 #ifdef MODS
 module state

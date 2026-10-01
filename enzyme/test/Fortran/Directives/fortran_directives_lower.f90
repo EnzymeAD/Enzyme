@@ -47,14 +47,14 @@ end module
 
 ! The plugin's pass turns them into the markers Enzyme reads.
 ! CHECK-DAG: fir.global @_QMrulesEg {fir.directives = [{args = {shadow = @_QMrulesEg_d}, keyword = "shadow", prefix = "enzyme"}]} : f32
-! CHECK-DAG: fir.global weak @"__enzyme_shadow_global._QMrulesEg" : tuple<!fir.llvm_ptr<i8>, !fir.llvm_ptr<i8>>
+! CHECK-DAG: fir.global weak @__enzyme_shadow_global._QMrulesEg : tuple<!fir.llvm_ptr<i8>, !fir.llvm_ptr<i8>>
 ! CHECK-DAG: func.func @_QMrulesPf({{.*}}fir.directives = [{args = {augmented = @_QMrulesPf_aug, reverse = @_QMrulesPf_rev}, keyword = "custom_rule", prefix = "enzyme"}]
-! CHECK-DAG: fir.global weak @"__enzyme_register_gradient._QMrulesPf" : tuple<!fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>>
+! CHECK-DAG: fir.global weak @__enzyme_register_gradient._QMrulesPf : tuple<!fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>, !fir.boxproc<() -> ()>>
 ! CHECK-DAG: func.func @_QMrulesPtimer(){{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]{{.*}}llvm.passthrough = ["enzyme_inactive", "noinline"]
-! CHECK-DAG: fir.global weak @"__enzyme_inactivefn._QMrulesPtimer"
-! CHECK-DAG: fir.global weak @"__enzyme_nofree._QMrulesPtimer"
+! CHECK-DAG: fir.global weak @__enzyme_inactivefn._QMrulesPtimer
+! CHECK-DAG: fir.global weak @__enzyme_nofree._QMrulesPtimer
 ! CHECK-DAG: fir.global common @blk_({{.*}}fir.directives = [{args = {shadow = @blk_d_}, keyword = "shadow", prefix = "enzyme"}]
-! CHECK-DAG: fir.global weak @"__enzyme_shadow_global.blk_"
+! CHECK-DAG: fir.global weak @__enzyme_shadow_global.blk_
 
 ! The module file keeps them, naming their subjects, for the units using it.
 ! MOD-DAG: !dir$ enzyme custom_rule(f, augmented=f_aug, reverse=f_rev)

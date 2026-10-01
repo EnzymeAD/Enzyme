@@ -17,9 +17,9 @@
 ! RUN: %fc %flangDirectives -cpp -O2 -flto=full %loadFortran -c %s -o %t.o
 ! RUN: %fc -O2 %lldEnzyme '-Wl,--undefined-glob=__enzyme_*' %t.o -o %t3 && %t3 | FileCheck %s
 
-! FIR-DAG: fir.global weak @"__enzyme_register_gradient._QPext_double"
-! FIR-DAG: fir.global weak @"__enzyme_inactivefn._QPext_scale"
-! FIR-DAG: fir.global weak @"__enzyme_nofree._QPext_scale"
+! FIR-DAG: fir.global weak @__enzyme_register_gradient._QPext_double
+! FIR-DAG: fir.global weak @__enzyme_inactivefn._QPext_scale
+! FIR-DAG: fir.global weak @__enzyme_nofree._QPext_scale
 
 module registrations
   implicit none
