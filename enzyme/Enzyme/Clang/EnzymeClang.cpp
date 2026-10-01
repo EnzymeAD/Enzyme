@@ -22,6 +22,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <limits>
+
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -377,6 +379,184 @@ ParsedAttrInfo::AttrHandling handleEnzymeMarkerAttr(Sema &S, Decl *D,
     registerEnzymeDeclIfNotDefinedHere(S, D);
   return ParsedAttrInfo::AttributeApplied;
 }
+
+#if LLVM_VERSION_MAJOR >= 17
+// Loop annotations, as in Reactant: the attribute on a for statement becomes
+// a call at the top of the loop body, which Enzyme reads the directive from
+// (and Enzyme-JAX raises into loop attributes of Enzyme-MLIR).
+
+static bool ExpectForStatement(Sema &S, const ParsedAttr &Attr,
+                               const Stmt *St) {
+  if (!isa<ForStmt>(St)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+        << Attr << Attr.isRegularKeywordAttribute() << ExpectedForLoopStatement;
+    return false;
+  }
+  return true;
+}
+
+static void emitFunctionCall(Sema &S, Stmt *St, std::string FunctionName,
+                             llvm::ArrayRef<uint64_t> argValues) {
+  auto &AST = S.getASTContext();
+  SourceLocation loc;
+
+  DeclContext *declCtx = S.getCurLexicalContext();
+  for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+    if (tmpCtx->isRecord()) {
+      declCtx = tmpCtx->getParent();
+    }
+  }
+
+  // create global variable at translation unit level
+  auto &Id = AST.Idents.get(FunctionName);
+
+  std::vector<QualType> ParamTypes(argValues.size(), AST.getNSUIntegerType());
+  auto FunctionType = AST.getFunctionType(AST.VoidTy, ParamTypes, {});
+
+  DeclarationName name(&Id);
+  DeclarationNameInfo nameInfo(name, loc);
+  StorageClass SC = SC_PrivateExtern;
+  FunctionDecl *F = FunctionDecl::Create(
+      AST, declCtx, loc, nameInfo, FunctionType, nullptr, SC, false, false,
+      false, ConstexprSpecKind::Unspecified, {});
+  SmallVector<ParmVarDecl *> Params;
+  for (size_t i = 0; i < argValues.size(); i++) {
+    auto &ParamName =
+        AST.Idents.get(i == 0 ? "enable" : ("arg" + std::to_string(i)));
+    auto P =
+        ParmVarDecl::Create(AST, F, loc, loc, &ParamName,
+                            AST.getNSUIntegerType(), nullptr, SC_None, nullptr);
+    Params.push_back(P);
+  }
+  F->setParams(Params);
+  F->setStorageClass(SC);
+  F->addAttr(clang::UsedAttr::CreateImplicit(AST));
+
+  S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(F));
+
+  TemplateArgumentListInfo *TemplateArgs = nullptr;
+
+  auto rval = ExprValueKind::VK_PRValue;
+
+  auto ForSt = cast<ForStmt>(St);
+  Stmt *body = ForSt->getBody();
+
+  SmallVector<Stmt *> Stmts;
+
+  auto FT = AST.getPointerType(F->getType());
+  auto DR = DeclRefExpr::Create(
+      AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(F), false, loc,
+      F->getType(), ExprValueKind::VK_LValue, cast<NamedDecl>(F), TemplateArgs);
+  Expr *expr =
+      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
+                               nullptr, rval, FPOptionsOverride());
+
+  SmallVector<Expr *> Args;
+  for (uint64_t argValue : argValues) {
+    Args.push_back(IntegerLiteral::Create(AST, llvm::APInt(64, argValue),
+                                          AST.getNSUIntegerType(), loc));
+  }
+  auto BO = CallExpr::Create(AST, expr, Args, F->getType(), rval, loc, {});
+
+  Stmts.push_back(BO);
+  Stmts.push_back(body);
+
+  CompoundStmt *newBody = CompoundStmt::Create(AST, Stmts, {}, loc, loc);
+  ForSt->setBody(newBody);
+}
+
+struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
+  EnzymeLoopCheckpointingEnableAttrInfo() {
+    OptArgs = 2;
+    // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
+    // [[plugin::example]] supported.
+    static constexpr Spelling S[] = {
+        {ParsedAttr::AS_GNU, "enzyme_checkpointing_enable"},
+#if LLVM_VERSION_MAJOR > 17
+        {ParsedAttr::AS_C23, "enzyme_checkpointing_enable"},
+#else
+        {ParsedAttr::AS_C2x, "enzyme_checkpointing_enable"},
+#endif
+        {ParsedAttr::AS_CXX11, "enzyme_checkpointing_enable"},
+        {ParsedAttr::AS_CXX11, "enzyme::checkpointing_enable"}};
+    Spellings = S;
+  }
+
+  bool diagAppertainsToStmt(Sema &S, const ParsedAttr &Attr,
+                            const Stmt *St) const override {
+    return ExpectForStatement(S, Attr, St);
+  }
+
+  AttrHandling handleStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &Attr,
+                                   class Attr *&Result) const override {
+    unsigned NumArgs = Attr.getNumArgs();
+    if (NumArgs > 2) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_checkpointing_enable' takes at most two arguments "
+          "(a mode string and an optional integer)");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+
+    uint64_t Mode = 1; // default: regular
+    if (NumArgs >= 1) {
+      auto *Arg0 = Attr.getArgAsExpr(0);
+      StringLiteral *Literal =
+          dyn_cast<StringLiteral>(Arg0->IgnoreParenCasts());
+      if (!Literal) {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "first argument to 'enzyme_checkpointing_enable' must be a "
+            "string literal, either \"binomial\" or \"regular\"");
+        S.Diag(Attr.getLoc(), ID);
+        return AttributeNotApplied;
+      }
+      StringRef Mode0 = Literal->getString();
+      if (Mode0 == "binomial") {
+        Mode = 2;
+      } else if (Mode0 == "regular") {
+        Mode = 1;
+      } else {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "unknown checkpointing mode '%0', expected \"binomial\" or "
+            "\"regular\"");
+        S.Diag(Attr.getLoc(), ID) << Mode0;
+        return AttributeNotApplied;
+      }
+    }
+
+    // __enzyme_set_checkpointing is declared afresh (bypassing normal
+    // redeclaration merging) at every attributed loop, so every call site
+    // must agree on the same arity -- otherwise codegen can reuse an
+    // earlier, differently-typed declaration for a later call, producing
+    // invalid IR. Always emit both arguments, defaulting the count to a
+    // sentinel (all bits set) when the caller didn't provide one, since 0
+    // is a plausible real count.
+    uint64_t Count = std::numeric_limits<uint64_t>::max();
+    if (NumArgs >= 2) {
+      auto *Arg1 = Attr.getArgAsExpr(1);
+      clang::Expr::EvalResult EvalRes;
+      if (!Arg1->EvaluateAsInt(EvalRes, S.getASTContext())) {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "second argument to 'enzyme_checkpointing_enable' must be an "
+            "integer constant");
+        S.Diag(Attr.getLoc(), ID);
+        return AttributeNotApplied;
+      }
+      Count = EvalRes.Val.getInt().getZExtValue();
+    }
+
+    emitFunctionCall(S, St, "__enzyme_set_checkpointing", {Mode, Count});
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeLoopCheckpointingEnableAttrInfo>
+    XCheckpointing("enzyme_checkpointing_enable", "");
+#endif // LLVM_VERSION_MAJOR >= 17
 
 struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   EnzymeFunctionLikeAttrInfo() {

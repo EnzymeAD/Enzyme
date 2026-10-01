@@ -181,7 +181,10 @@ typedef struct EnzymeCkptConfig {
 typedef struct enzyme_ckpt_store {
   uint64_t bytes;
   int64_t nslots;
+  /* Per slot, in memory: the host regions, and the device regions in a
+   * buffer on the device. */
   void **slots;
+  void **dslots;
   const EnzymeCkptConfig *config;
   int64_t used;
   EnzymeCkptStats stats;
@@ -212,6 +215,59 @@ static inline void enzyme_ckpt_store_init(enzyme_ckpt_store *st,
   st->config = config;
 }
 
+/* A region in an address space other than 0 is device memory. A slot in
+ * memory keeps it on the device, in a buffer allocated at the slot's first
+ * store and copied into and out of device to device; a slot spilled to disk
+ * goes through host memory. With ENZYME_CKPT_CUDA defined where the schemes
+ * are compiled, these are cudaMalloc, cudaFree and cudaMemcpy. */
+#ifdef ENZYME_CKPT_CUDA
+#include <cuda_runtime_api.h>
+static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
+                                           uint64_t bytes) {
+  if (cudaMemcpy(dst, src, bytes, cudaMemcpyDefault) != cudaSuccess)
+    enzyme_ckpt_fail("cudaMemcpy of a snapshot failed");
+}
+static inline void *enzyme_ckpt_device_alloc(uint64_t bytes) {
+  void *p = NULL;
+  if (cudaMalloc(&p, bytes ? bytes : 1) != cudaSuccess)
+    enzyme_ckpt_fail("cudaMalloc of a snapshot slot failed");
+  return p;
+}
+static inline void enzyme_ckpt_device_free(void *p) { cudaFree(p); }
+#else
+static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
+                                           uint64_t bytes) {
+  (void)dst;
+  (void)src;
+  (void)bytes;
+  enzyme_ckpt_fail("snapshots of device memory need the schemes compiled "
+                   "with ENZYME_CKPT_CUDA");
+}
+static inline void *enzyme_ckpt_device_alloc(uint64_t bytes) {
+  (void)bytes;
+  enzyme_ckpt_fail("snapshots of device memory need the schemes compiled "
+                   "with ENZYME_CKPT_CUDA");
+  return NULL;
+}
+static inline void enzyme_ckpt_device_free(void *p) { (void)p; }
+#endif
+
+static inline void enzyme_ckpt_copy_out(void *dst,
+                                        const EnzymeCkptRegion *region) {
+  if (region->addrspace)
+    enzyme_ckpt_device_copy(dst, region->ptr, region->bytes);
+  else
+    memcpy(dst, region->ptr, region->bytes);
+}
+
+static inline void enzyme_ckpt_copy_in(const EnzymeCkptRegion *region,
+                                       const void *src) {
+  if (region->addrspace)
+    enzyme_ckpt_device_copy(region->ptr, src, region->bytes);
+  else
+    memcpy(region->ptr, src, region->bytes);
+}
+
 static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
                                          const EnzymeCkptRegion *regions,
                                          uint64_t nregions) {
@@ -225,13 +281,11 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
     while (n <= idx)
       n *= 2;
     st->slots = (void **)realloc(st->slots, n * sizeof(void *));
+    st->dslots = (void **)realloc(st->dslots, n * sizeof(void *));
     for (i = st->nslots; i < n; i++)
-      st->slots[i] = NULL;
+      st->slots[i] = st->dslots[i] = NULL;
     st->nslots = n;
   }
-  for (r = 0; r < nregions; r++)
-    if (regions[r].addrspace != 0)
-      enzyme_ckpt_fail("reference store only handles address space 0");
   fresh = st->slots[idx] == NULL;
   if (enzyme_ckpt_on_disk(st, idx)) {
     char path[4096];
@@ -240,17 +294,36 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
     f = fopen(path, "wb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
-    for (r = 0; r < nregions; r++)
-      if (fwrite(regions[r].ptr, 1, regions[r].bytes, f) != regions[r].bytes)
+    for (r = 0; r < nregions; r++) {
+      void *buf = regions[r].ptr;
+      if (regions[r].addrspace) {
+        buf = malloc(regions[r].bytes ? regions[r].bytes : 1);
+        enzyme_ckpt_copy_out(buf, &regions[r]);
+      }
+      if (fwrite(buf, 1, regions[r].bytes, f) != regions[r].bytes)
         enzyme_ckpt_fail("short write to spill file");
+      if (buf != regions[r].ptr)
+        free(buf);
+    }
     fclose(f);
     st->slots[idx] = (void *)1;
   } else {
+    uint64_t hbytes = 0, dbytes = 0, doff = 0;
+    for (r = 0; r < nregions; r++)
+      *(regions[r].addrspace ? &dbytes : &hbytes) += regions[r].bytes;
     if (!st->slots[idx])
-      st->slots[idx] = malloc(st->bytes ? st->bytes : 1);
+      st->slots[idx] = malloc(hbytes ? hbytes : 1);
+    if (dbytes && !st->dslots[idx])
+      st->dslots[idx] = enzyme_ckpt_device_alloc(dbytes);
     for (r = 0; r < nregions; r++) {
-      memcpy((char *)st->slots[idx] + off, regions[r].ptr, regions[r].bytes);
-      off += regions[r].bytes;
+      if (regions[r].addrspace) {
+        enzyme_ckpt_device_copy((char *)st->dslots[idx] + doff, regions[r].ptr,
+                                regions[r].bytes);
+        doff += regions[r].bytes;
+      } else {
+        memcpy((char *)st->slots[idx] + off, regions[r].ptr, regions[r].bytes);
+        off += regions[r].bytes;
+      }
     }
   }
   if (slot < 0)
@@ -280,14 +353,29 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
     f = fopen(path, "rb");
     if (!f)
       enzyme_ckpt_fail("cannot open spill file");
-    for (r = 0; r < nregions; r++)
-      if (fread(regions[r].ptr, 1, regions[r].bytes, f) != regions[r].bytes)
+    for (r = 0; r < nregions; r++) {
+      void *buf = regions[r].addrspace
+                      ? malloc(regions[r].bytes ? regions[r].bytes : 1)
+                      : regions[r].ptr;
+      if (fread(buf, 1, regions[r].bytes, f) != regions[r].bytes)
         enzyme_ckpt_fail("short read from spill file");
+      if (buf != regions[r].ptr) {
+        enzyme_ckpt_copy_in(&regions[r], buf);
+        free(buf);
+      }
+    }
     fclose(f);
   } else {
+    uint64_t doff = 0;
     for (r = 0; r < nregions; r++) {
-      memcpy(regions[r].ptr, (char *)st->slots[idx] + off, regions[r].bytes);
-      off += regions[r].bytes;
+      if (regions[r].addrspace) {
+        enzyme_ckpt_device_copy(regions[r].ptr, (char *)st->dslots[idx] + doff,
+                                regions[r].bytes);
+        doff += regions[r].bytes;
+      } else {
+        memcpy(regions[r].ptr, (char *)st->slots[idx] + off, regions[r].bytes);
+        off += regions[r].bytes;
+      }
     }
   }
   if (slot >= 0)
@@ -305,10 +393,13 @@ static inline void enzyme_ckpt_store_free(enzyme_ckpt_store *st) {
       remove(path);
     } else {
       free(st->slots[i]);
+      if (st->dslots[i])
+        enzyme_ckpt_device_free(st->dslots[i]);
     }
   }
   free(st->slots);
-  st->slots = NULL;
+  free(st->dslots);
+  st->slots = st->dslots = NULL;
   st->nslots = 0;
 }
 
@@ -745,6 +836,16 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
     NULL,
     NULL,
     NULL};
+
+/* The scheme of a loop annotated with
+ * [[enzyme_checkpointing_enable("binomial" or "regular", count)]]: Revolve
+ * for mode 2, Periodic for mode 1. Enzyme calls it where it cannot find the
+ * schemes in the module; a program whose annotated loops are in files that do
+ * not include this header gets it from one that does. */
+__attribute__((weak, used)) const EnzymeCheckpointScheme *
+__enzyme_checkpoint_builtin(int64_t mode) {
+  return mode == 2 ? &EnzymeCkptRevolve : &EnzymeCkptPeriodic;
+}
 
 /* --- Tapenade's binomial scheduler (ADFirstAidKit adBinomial.c). ---
  *
