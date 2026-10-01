@@ -153,6 +153,7 @@ StringRef enzymeRegistrationKind(StringRef Annotation, const Decl *D) {
         .Case("enzyme_inactivefn", "inactivefn")
         .Case("enzyme_inactivenoblockfn", "inactivenoblockfn")
         .Case("enzyme_nofree", "nofree")
+        .Case("enzyme_no_escaping_allocation", "no_escaping_allocation")
         .Case("enzyme_sparse_accumulate", "sparse_accumulate")
         .Default("");
   if (isa<VarDecl>(D))
@@ -807,6 +808,46 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeNoFreeAttrInfo> X5("enzyme_nofree",
                                                             "");
+
+struct EnzymeNoEscapingAllocationAttrInfo : public ParsedAttrInfo {
+  EnzymeNoEscapingAllocationAttrInfo() {
+    OptArgs = 1;
+    // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
+    // [[plugin::example]] supported.
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_no_escaping_allocation"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_no_escaping_allocation"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_no_escaping_allocation"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_no_escaping_allocation"},
+      {ParsedAttr::AS_CXX11, "enzyme::no_escaping_allocation"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (isa<FunctionDecl>(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "functions";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    return handleEnzymeMarkerAttr(
+        S, D, Attr, "enzyme_no_escaping_allocation",
+        /*FnAnnotation*/ "enzyme_no_escaping_allocation",
+        /*VarAnnotation*/ "enzyme_no_escaping_allocation");
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeNoEscapingAllocationAttrInfo>
+    XNoEscAlloc("enzyme_no_escaping_allocation", "");
 
 struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
   EnzymeSparseAccumulateAttrInfo() {
