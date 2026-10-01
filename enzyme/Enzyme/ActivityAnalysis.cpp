@@ -399,7 +399,7 @@ static const StringSet<> KnownInactiveFunctions = {
     // LLVM flang runtime: time
     "_FortranACpuTime",
     "_FortranADateAndTime",
-    "_FortranAEtime",
+    // _FortranAEtime overwrites active memory, see CallDerivatives.cpp
     "_FortranASystemClockCount",
     "_FortranASystemClockCountRate",
     "_FortranASystemClockCountMax",

@@ -3041,6 +3041,115 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
     }
 
+    // void _FortranAEtime(const Descriptor *values, const Descriptor *time,
+    //                     const char *sourceFile, int line)
+    // is LLVM flang's ETIME. Its results are inactive, but it overwrites the
+    // real(4) elements values(1:2) and time, whose shadow must then be zero:
+    // after the call in forward mode, and in the reverse pass.
+    if (funcName == "_FortranAEtime" && call.arg_size() == 4 &&
+        (!gutils->isConstantValue(call.getArgOperand(0)) ||
+         !gutils->isConstantValue(call.getArgOperand(1))) &&
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ReverseModePrimal ||
+         Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ReverseModeCombined)) {
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      Type *I8PtrTy = getInt8PtrTy(call.getContext());
+      Type *IdxTy = DL.getIntPtrType(call.getContext());
+      unsigned P = DL.getPointerSize();
+      // Offsets in a CFI descriptor: base_addr, and extent and sm of dim[0],
+      // which follows elem_len, version, rank, type, attribute and extra.
+      unsigned DimOff = 2 * P + 8;
+
+      // The shadow elements to zero, or null where the shadow is the primal
+      // or the element does not exist.
+      auto shadowElements = [&](IRBuilder<> &B) {
+        auto field = [&](Value *desc, Type *T, unsigned off) {
+          Value *p = B.CreatePointerCast(desc, I8PtrTy);
+          p = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), p, off);
+          return B.CreateLoad(T, B.CreatePointerCast(p, getUnqual(T)));
+        };
+        SmallVector<Value *, 6> elems;
+        for (unsigned i = 0; i < 2; ++i) {
+          Value *orig = call.getArgOperand(i);
+          if (gutils->isConstantValue(orig))
+            continue;
+          Value *desc = gutils->getNewFromOriginal(orig);
+          Value *sdescs = gutils->invertPointerM(orig, B);
+          Value *base = field(desc, I8PtrTy, 0);
+          for (unsigned w = 0; w < gutils->getWidth(); ++w) {
+            Value *sdesc = gutils->getWidth() == 1
+                               ? sdescs
+                               : gutils->extractMeta(B, sdescs, w);
+            Value *sbase = field(sdesc, I8PtrTy, 0);
+            Value *valid = B.CreateAnd(B.CreateICmpNE(sbase, base),
+                                       B.CreateIsNotNull(sbase));
+            auto add = [&](Value *cond, Value *addr) {
+              elems.push_back(B.CreateSelect(
+                  cond, addr, Constant::getNullValue(I8PtrTy)));
+            };
+            if (i == 1) {
+              add(valid, sbase);
+              continue;
+            }
+            Value *extent = field(desc, IdxTy, DimOff + P);
+            Value *sm = field(desc, IdxTy, DimOff + 2 * P);
+            add(B.CreateAnd(valid, B.CreateICmpSGE(
+                                       extent, ConstantInt::get(IdxTy, 1))),
+                sbase);
+            add(B.CreateAnd(valid, B.CreateICmpSGE(
+                                       extent, ConstantInt::get(IdxTy, 2))),
+                B.CreateInBoundsGEP(B.getInt8Ty(), sbase, sm));
+          }
+        }
+        return elems;
+      };
+      auto zero = [&](IRBuilder<> &B, Value *addr) {
+        auto VT = FixedVectorType::get(B.getFloatTy(), 1);
+        B.CreateMaskedStore(Constant::getNullValue(VT),
+                            B.CreatePointerCast(addr, getUnqual(VT)), Align(4),
+                            B.CreateVectorSplat(1, B.CreateIsNotNull(addr)));
+      };
+
+      if (Mode == DerivativeMode::ForwardMode) {
+        IRBuilder<> B(newCall->getNextNode());
+        for (auto addr : shadowElements(B))
+          zero(B, addr);
+        return true;
+      }
+
+      unsigned N = 0;
+      for (unsigned i = 0; i < 2; ++i)
+        if (!gutils->isConstantValue(call.getArgOperand(i)))
+          N += (i == 0 ? 2 : 1) * gutils->getWidth();
+      Type *TapeTy = ArrayType::get(I8PtrTy, N);
+      Value *tape;
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        tape = BuilderZ.CreatePHI(TapeTy, 0);
+      } else {
+        tape = UndefValue::get(TapeTy);
+        auto elems = shadowElements(BuilderZ);
+        for (unsigned i = 0; i < N; ++i)
+          tape = BuilderZ.CreateInsertValue(tape, elems[i], i);
+        if (auto I = dyn_cast<Instruction>(tape))
+          gutils->TapesToPreventRecomputation.insert(I);
+      }
+      tape = gutils->cacheForReverse(BuilderZ, tape,
+                                     getIndex(&call, CacheType::Tape, BuilderZ));
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        tape = lookup(tape, Builder2);
+        for (unsigned i = 0; i < N; ++i)
+          zero(Builder2, Builder2.CreateExtractValue(tape, i));
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return true;
+    }
+
     /*
      * int gsl_sf_legendre_array_e(const gsl_sf_legendre_t norm,
                                    const size_t lmax,
