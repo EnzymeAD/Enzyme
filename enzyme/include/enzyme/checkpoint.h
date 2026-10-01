@@ -746,6 +746,16 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
     NULL,
     NULL};
 
+/* The scheme of a loop annotated with
+ * [[enzyme_checkpointing_enable("binomial" or "regular", count)]]: Revolve
+ * for mode 2, Periodic for mode 1. Enzyme calls it where it cannot find the
+ * schemes in the module; a program whose annotated loops are in files that do
+ * not include this header gets it from one that does. */
+__attribute__((weak, used)) const EnzymeCheckpointScheme *
+__enzyme_checkpoint_builtin(int64_t mode) {
+  return mode == 2 ? &EnzymeCkptRevolve : &EnzymeCkptPeriodic;
+}
+
 /* --- Tapenade's binomial scheduler (ADFirstAidKit adBinomial.c). ---
  *
  * With ENZYME_CKPT_ADBINOMIAL defined, EnzymeCkptADBinomial drives the loop
