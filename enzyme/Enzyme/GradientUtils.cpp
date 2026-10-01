@@ -7567,7 +7567,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   SmallVector<Value *, 2> idxs;
                   for (auto &idx : GEP->indices()) {
                     idxs.push_back(lookupM(idx, BuilderM, available,
-                                           tryLegalRecomputeCheck));
+                                           tryLegalRecomputeCheck, scope));
                   }
 
                   auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
