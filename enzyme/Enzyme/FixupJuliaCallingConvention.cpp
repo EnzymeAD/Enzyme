@@ -198,13 +198,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
   }
 
   if (legal) {
-    while (!storedValues.empty()) {
-      auto sv = storedValues.pop_back_val();
-      if (auto I = dyn_cast<Instruction>(sv)) {
-        assert(I->getParent()->getParent() == arg->getParent());
-      }
-      bool foundUse = false;
-      for (auto &U : sv->uses()) {
+    // Whether `v` itself is stored into an enzymejl_returnRoots argument.
+    auto isStoredToReturnRoots = [&](Value *v) {
+      for (auto &U : v->uses()) {
         // If we had a constant originally, it could have been used in another
         // function. We can/should ignore those uses.
         if (auto I = dyn_cast<Instruction>(U.getUser())) {
@@ -214,7 +210,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         }
 
         if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
-          if (SI->getValueOperand() == sv) {
+          if (SI->getValueOperand() == v) {
             auto base = getBaseObject(SI->getPointerOperand());
             if (base == arg) {
               continue;
@@ -230,13 +226,65 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                       .isValid()) {
                 if (rootingArgs)
                   rootingArgs->insert(arg2->getArgNo());
-                foundUse = true;
-                break;
+                return true;
               }
             }
           }
         }
       }
+      return false;
+    };
+
+    // Fold a chain of extractvalues into the aggregate it starts from and the
+    // full index path, so that `extractvalue (extractvalue %a, i), j` and
+    // `extractvalue %a, i, j` are recognized as the same value.
+    auto flattenExtract = [](ExtractValueInst *EVI) {
+      SmallVector<unsigned, 4> path(EVI->getIndices().begin(),
+                                    EVI->getIndices().end());
+      Value *base = EVI->getAggregateOperand();
+      while (auto inner = dyn_cast<ExtractValueInst>(base)) {
+        SmallVector<unsigned, 4> outer(inner->getIndices().begin(),
+                                       inner->getIndices().end());
+        outer.append(path.begin(), path.end());
+        path = std::move(outer);
+        base = inner->getAggregateOperand();
+      }
+      return std::make_pair(base, path);
+    };
+
+    while (!storedValues.empty()) {
+      auto sv = storedValues.pop_back_val();
+      if (auto I = dyn_cast<Instruction>(sv)) {
+        assert(I->getParent()->getParent() == arg->getParent());
+      }
+      bool foundUse = isStoredToReturnRoots(sv);
+
+      // The value may be rooted through a different, but equivalent,
+      // extractvalue of the same aggregate: e.g. the sret store goes through
+      // `%e = extractvalue (extractvalue %a, 0), 3` while the returnRoots store
+      // uses `%r = extractvalue %a, 0, 3`. extractvalue is pure, so the same
+      // aggregate and index path yield the same value.
+      if (!foundUse) {
+        if (auto EVI = dyn_cast<ExtractValueInst>(sv)) {
+          auto key = flattenExtract(EVI);
+          for (auto &BB : *arg->getParent()) {
+            for (auto &I : BB) {
+              auto other = dyn_cast<ExtractValueInst>(&I);
+              if (!other || other == EVI)
+                continue;
+              if (flattenExtract(other) != key)
+                continue;
+              if (isStoredToReturnRoots(other)) {
+                foundUse = true;
+                break;
+              }
+            }
+            if (foundUse)
+              break;
+          }
+        }
+      }
+
       if (!foundUse) {
         if (auto IVI = dyn_cast<InsertValueInst>(sv)) {
           // An undef/poison/zeroinitializer base has no live pointer in any of
