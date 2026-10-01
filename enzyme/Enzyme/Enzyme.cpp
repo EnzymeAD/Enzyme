@@ -381,6 +381,131 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   return false;
 }
 
+/// The shadow of a global's initializer, for a shadow that the program
+/// queries before any derivative needs it: zero for floats, the initializer
+/// otherwise (e.g. the sizes in a descriptor). Null if the initializer
+/// refers to other globals or functions, whose shadows it would need.
+static Constant *queriedShadowInitializer(Constant *C) {
+  if (isa<ConstantFP>(C) || isa<ConstantAggregateZero>(C) ||
+      isa<ConstantPointerNull>(C) || isa<UndefValue>(C))
+    return Constant::getNullValue(C->getType());
+  if (isa<ConstantInt>(C))
+    return C;
+  if (auto CD = dyn_cast<ConstantDataSequential>(C)) {
+    if (CD->getElementType()->isFloatingPointTy())
+      return Constant::getNullValue(C->getType());
+    return C;
+  }
+  if (isa<ConstantAggregate>(C)) {
+    SmallVector<Constant *, 4> Vals;
+    for (auto &op : C->operands()) {
+      auto V = queriedShadowInitializer(cast<Constant>(op));
+      if (!V)
+        return nullptr;
+      Vals.push_back(V);
+    }
+    if (auto AT = dyn_cast<ArrayType>(C->getType()))
+      return ConstantArray::get(AT, Vals);
+    if (auto ST = dyn_cast<StructType>(C->getType()))
+      return ConstantStruct::get(ST, Vals);
+    return ConstantVector::get(Vals);
+  }
+  return nullptr;
+}
+
+/// Lower a query for the shadow of a global,
+///   void *__enzyme_shadow(void *global, int width, int lane[, int level])
+/// to the address of the lane's shadow, creating the shadow if no derivative
+/// needed it yet. The global may be given at a constant offset, e.g. a
+/// member of a struct or of a Fortran COMMON block.
+static bool lowerShadowQuery(CallInst *CI) {
+  auto &DL = CI->getModule()->getDataLayout();
+  auto fail = [&](const Twine &msg) {
+    EmitFailure("IllegalShadowQuery", CI->getDebugLoc(), CI, msg, *CI);
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+    CI->eraseFromParent();
+    return false;
+  };
+  if (CI->arg_size() != 3 && CI->arg_size() != 4)
+    return fail("__enzyme_shadow takes (global, width, lane[, level]): ");
+  auto width = dyn_cast<ConstantInt>(CI->getArgOperand(1));
+  if (!width || width->isZero())
+    return fail("the width of __enzyme_shadow must be a positive constant: ");
+  unsigned W = width->getZExtValue();
+  if (CI->arg_size() == 4) {
+    auto level = dyn_cast<ConstantInt>(CI->getArgOperand(3));
+    if (!level || !level->isOne())
+      return fail("__enzyme_shadow only supports the shadows of the first "
+                  "derivative (level 1) so far: ");
+  }
+  Value *lane = CI->getArgOperand(2);
+  if (auto C = dyn_cast<ConstantInt>(lane))
+    if (C->getZExtValue() >= W)
+      return fail("the lane of __enzyme_shadow must be less than its width: ");
+
+  APInt Offset(DL.getIndexTypeSizeInBits(CI->getArgOperand(0)->getType()), 0);
+  Value *base = CI->getArgOperand(0)->stripAndAccumulateConstantOffsets(
+      DL, Offset, /*AllowNonInbounds*/ true);
+  while (auto GA = dyn_cast<GlobalAlias>(base))
+    base = GA->getAliasee()->stripAndAccumulateConstantOffsets(
+        DL, Offset, /*AllowNonInbounds*/ true);
+  auto GV = dyn_cast<GlobalVariable>(base);
+  if (!GV)
+    return fail("__enzyme_shadow needs a global variable, at a constant "
+                "offset: ");
+
+  GlobalVariable *shadow = getGlobalShadow(GV, W);
+  if (!shadow) {
+    if (hasMetadata(GV, "enzyme_shadow"))
+      return fail("the enzyme_shadow metadata of the global is not a single "
+                  "shadow global: ");
+    if (!canCreateImplicitGlobalShadow(GV))
+      return fail("cannot create a shadow for a declaration of a global that "
+                  "holds pointers; query it where it is defined: ");
+    Constant *init = nullptr;
+    if (GV->hasInitializer() && !GV->hasCommonLinkage()) {
+      init = queriedShadowInitializer(GV->getInitializer());
+      if (!init)
+        return fail("cannot yet query the shadow of a global whose "
+                    "initializer refers to other globals or functions: ");
+    }
+    shadow = createImplicitGlobalShadow(GV, W);
+    if (hasLocalShadowInitializer(shadow) && init) {
+      if (W > 1) {
+        SmallVector<Constant *, 4> lanes(W, init);
+        init =
+            ConstantArray::get(cast<ArrayType>(shadow->getValueType()), lanes);
+      }
+      shadow->setInitializer(init);
+    }
+  } else if (W > 1) {
+    auto AT = dyn_cast<ArrayType>(shadow->getValueType());
+    if (!AT || AT->getNumElements() != W)
+      return fail("the declared shadow of the global does not hold one value "
+                  "per lane at this width: ");
+  }
+
+  IRBuilder<> B(CI);
+  Value *ptr = shadow;
+  if (W > 1)
+    ptr = B.CreateInBoundsGEP(
+        shadow->getValueType(), shadow,
+        {B.getInt64(0), B.CreateZExtOrTrunc(lane, B.getInt64Ty())});
+  if (Offset != 0)
+    ptr =
+        B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, Offset.getSExtValue());
+  if (ptr->getType() != CI->getType())
+    ptr = B.CreatePointerBitCastOrAddrSpaceCast(ptr, CI->getType());
+  CI->replaceAllUsesWith(ptr);
+  CI->eraseFromParent();
+  return true;
+}
+
+static bool isShadowQuery(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_shadow") &&
+         !F->getName().contains("__enzyme_shadow_global");
+}
+
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
@@ -2736,6 +2861,11 @@ public:
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
                 }
+            }
+            if (isShadowQuery(F)) {
+              lowerShadowQuery(CI);
+              changed = true;
+              continue;
             }
             if (F && F->getName() == "f90_mzero8") {
               IRBuilder<> B(CI);

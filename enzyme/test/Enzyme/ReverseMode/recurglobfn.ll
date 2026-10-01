@@ -19,19 +19,19 @@ define i8** @caller() {
 
 declare i8** @__enzyme_virtualreverse(...)
 
-; CHECK: @g_shadow = constant i8* bitcast ({ i8* (i8***, i8***)*, void (i8***, i8***, i8*)* }* @"_enzyme_reverse_impl'" to i8*), align 8
-; CHECK: @g = constant i8* bitcast (void (i8***)* @impl to i8*), align 8, !enzyme_shadow !0
+; CHECK: @g.ad.l1.w1 = constant i8* bitcast ({ i8* (i8***, i8***)*, void (i8***, i8***, i8*)* }* @"_enzyme_reverse_impl'" to i8*), align 8
+; CHECK: @g = constant i8* bitcast (void (i8***)* @impl to i8*), align 8, !enzyme_shadows ![[shadows:[0-9]+]]
 ; CHECK: @"_enzyme_reverse_impl'" = internal constant { i8* (i8***, i8***)*, void (i8***, i8***, i8*)* } { i8* (i8***, i8***)* @augmented_impl, void (i8***, i8***, i8*)* @diffeimpl }
 
 ; CHECK: define i8** @caller()
-; CHECK-NEXT:   ret i8** @g_shadow
+; CHECK-NEXT:   ret i8** @g.ad.l1.w1
 ; CHECK-NEXT: }
 
 ; CHECK: define internal i8* @augmented_impl(i8*** nocapture writeonly %i, i8*** nocapture %"i'")
 ; CHECK-NEXT:   %o = call i32 @offset() 
 ; CHECK-NEXT:   %"g'ipg" = getelementptr inbounds i8**, i8*** %"i'", i32 %o
 ; CHECK-NEXT:   %g = getelementptr inbounds i8**, i8*** %i, i32 %o
-; CHECK-NEXT:   store i8** @g_shadow, i8*** %"g'ipg", align 8
+; CHECK-NEXT:   store i8** @g.ad.l1.w1, i8*** %"g'ipg", align 8
 ; CHECK-NEXT:   store i8** @g, i8*** %g, align 8
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
@@ -42,4 +42,5 @@ declare i8** @__enzyme_virtualreverse(...)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: !0 = !{i8** @g_shadow}
+; CHECK: ![[shadows]] = !{![[entry:[0-9]+]]}
+; CHECK: ![[entry]] = !{i32 1, i32 1, i8** @g.ad.l1.w1}

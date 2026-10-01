@@ -1409,7 +1409,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     if (auto GI = dyn_cast<GlobalVariable>(Val)) {
       // If operating under the assumption globals are inactive unless
       // explicitly marked as active, this is inactive
-      if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive) {
+      if (!hasGlobalShadow(GI) && EnzymeNonmarkedGlobalsInactive) {
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -3088,8 +3088,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             if (auto GV = dyn_cast<GlobalVariable>(TmpOrig)) {
               // If operating under the assumption globals are inactive unless
               // explicitly marked as active, this is inactive
-              if (!hasMetadata(GV, "enzyme_shadow") &&
-                  EnzymeNonmarkedGlobalsInactive) {
+              if (!hasGlobalShadow(GV) && EnzymeNonmarkedGlobalsInactive) {
                 continue;
               }
               if (hasMetadata(GV, "enzyme_inactive")) {

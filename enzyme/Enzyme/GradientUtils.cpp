@@ -4690,21 +4690,13 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
         startsWith(arg->getName(), "??_R")) // any of the MS RTTI manglings
       return arg;
 
+    if (auto shadow = getGlobalShadow(arg, width))
+      return shadow;
     if (hasMetadata(arg, "enzyme_shadow")) {
-      auto md = arg->getMetadata("enzyme_shadow");
-      if (!isa<MDTuple>(md)) {
-        llvm::errs() << *arg << "\n";
-        llvm::errs() << *md << "\n";
-        assert(0 && "cannot compute with global variable that doesn't have "
-                    "marked shadow global");
-        report_fatal_error(
-            "cannot compute with global variable that doesn't "
-            "have marked shadow global (metadata incorrect type)");
-      }
-      auto md2 = cast<MDTuple>(md);
-      assert(md2->getNumOperands() == 1);
-      auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
-      return gvemd->getValue();
+      llvm::errs() << *arg << "\n";
+      llvm::errs() << *arg->getMetadata("enzyme_shadow") << "\n";
+      report_fatal_error("cannot compute with global variable that doesn't "
+                         "have marked shadow global (metadata incorrect type)");
     }
 
     auto TT = llvm::Triple(arg->getParent()->getTargetTriple());
@@ -4714,22 +4706,11 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       assert(0 && "shared memory not handled in meta global");
     }
 
-    // Create global variable locally if not externally visible
-    if (arg->isConstant() || arg->hasInternalLinkage() ||
-        arg->hasPrivateLinkage() ||
-        (arg->hasExternalLinkage() && arg->hasInitializer())) {
-      Type *type = arg->getValueType();
-      auto shadow = new GlobalVariable(
-          *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
-          Constant::getNullValue(type), arg->getName() + "_shadow", arg,
-          arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
-          arg->isExternallyInitialized());
-      arg->setMetadata("enzyme_shadow",
-                       MDTuple::get(shadow->getContext(),
-                                    {ConstantAsMetadata::get(shadow)}));
-      shadow->setAlignment(arg->getAlign());
-      shadow->setUnnamedAddr(arg->getUnnamedAddr());
-      if (arg->hasInitializer())
+    if (canCreateImplicitGlobalShadow(arg)) {
+      auto shadow = createImplicitGlobalShadow(arg, width);
+      // TODO: the lanes of the initializer at width > 1.
+      if (width == 1 && hasLocalShadowInitializer(shadow) &&
+          arg->hasInitializer())
         shadow->setInitializer(GetOrCreateShadowConstant(
             context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
             runtimeActivity, strongZero, width, AtomicAdd));
@@ -5704,195 +5685,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *aliasTarget = arg->getAliasee();
     return invertPointerM(aliasTarget, BuilderM, TT);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
-    if (!hasMetadata(arg, "enzyme_shadow")) {
-
-      if ((mode == DerivativeMode::ReverseModeCombined ||
-           mode == DerivativeMode::ForwardMode ||
-           mode == DerivativeMode::ForwardModeError) &&
-          arg->getType()->getPointerAddressSpace() == 0) {
-        auto CT = TR.query(arg)[{-1, -1}];
-        // Can only localy replace a global variable if it is
-        // known not to contain a pointer, which may be initialized
-        // outside of this function to contain other memory which
-        // will not have a shadow within the current function.
-        if (CT.isKnown() && CT != BaseType::Pointer) {
-          bool seen = false;
-          MemoryLocation
-#if LLVM_VERSION_MAJOR >= 12
-              Loc = MemoryLocation(oval, LocationSize::beforeOrAfterPointer());
-#else
-              Loc = MemoryLocation(oval, LocationSize::unknown());
-#endif
-          for (CallInst *CI : originalCalls) {
-            if (isa<IntrinsicInst>(CI))
-              continue;
-            if (!isConstantInstruction(CI)) {
-              auto F = getFunctionFromCall(CI);
-              if (F && isMemFreeLibMFunction(F->getName())) {
-                continue;
-              }
-              if (llvm::isModOrRefSet(OrigAA->getModRefInfo(CI, Loc))) {
-                seen = true;
-                llvm::errs() << " cannot shadow-inline global " << *oval
-                             << " due to " << *CI << "\n";
-                goto endCheck;
-              }
-            }
-          }
-        endCheck:;
-          if (!seen) {
-            IRBuilder<> bb(inversionAllocs);
-            Type *allocaTy = arg->getValueType();
-
-            auto rule1 = [&]() {
-              AllocaInst *antialloca = bb.CreateAlloca(
-                  allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
-                  arg->getName() + "'ipa");
-              if (arg->getAlign()) {
-                antialloca->setAlignment(*arg->getAlign());
-              }
-              return antialloca;
-            };
-
-            Value *antialloca = applyChainRule(arg->getType(), bb, rule1);
-
-            invertedPointers.insert(std::make_pair(
-                (const Value *)oval, InvertedPointerVH(this, antialloca)));
-
-            auto rule2 = [&](Value *antialloca) {
-              auto dst_arg =
-                  bb.CreateBitCast(antialloca, getInt8PtrTy(arg->getContext()));
-              auto val_arg =
-                  ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
-              auto len_arg =
-                  ConstantInt::get(Type::getInt64Ty(arg->getContext()),
-                                   M->getDataLayout().getTypeAllocSizeInBits(
-                                       arg->getValueType()) /
-                                       8);
-              auto volatile_arg = ConstantInt::getFalse(oval->getContext());
-
-              Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
-              Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-              auto memset = cast<CallInst>(bb.CreateCall(
-                  getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
-              if (arg->getAlign()) {
-                memset->addParamAttr(
-                    0, Attribute::getWithAlignment(arg->getContext(),
-                                                   *arg->getAlign()));
-              }
-              memset->addParamAttr(0, Attribute::NonNull);
-              assert((width > 1 && antialloca->getType() ==
-                                       ArrayType::get(arg->getType(), width)) ||
-                     antialloca->getType() == arg->getType());
-              return antialloca;
-            };
-
-            return applyChainRule(arg->getType(), bb, rule2, antialloca);
-          }
-        }
-      }
-
-      auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
-      int SharedAddrSpace = getGPUSharedAddrSpace(TT);
-      int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
-      if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
-        llvm::errs() << "warning found shared memory\n";
-        Type *type = arg->getValueType();
-        // TODO this needs initialization by entry
-        auto shadow = new GlobalVariable(
-            *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
-            UndefValue::get(type), arg->getName() + "_shadow", arg,
-            arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
-            arg->isExternallyInitialized());
-        arg->setMetadata("enzyme_shadow",
-                         MDTuple::get(shadow->getContext(),
-                                      {ConstantAsMetadata::get(shadow)}));
-        shadow->setMetadata("enzyme_internalshadowglobal",
-                            MDTuple::get(shadow->getContext(), {}));
-        shadow->setAlignment(arg->getAlign());
-        shadow->setUnnamedAddr(arg->getUnnamedAddr());
-        return shadow;
-      }
-
-      // Create global variable locally if not externally visible
-      //  If a variable is constant, for forward mode it will also
-      //  only be read, so invert initializing is fine.
-      //  For reverse mode, any floats will be +='d into, but never
-      //  read, and any pointers will be used as expected. The never
-      //  read means even if two globals for floats, that's fine.
-      //  As long as the pointers point to equivalent places (which
-      //  they should from the same initialization), it is also ok.
-      if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
-          (arg->hasExternalLinkage() && arg->hasInitializer()) ||
-          arg->isConstant()) {
-        Type *elemTy = arg->getValueType();
-        IRBuilder<> B(inversionAllocs);
-
-        auto rule = [&]() {
-          auto shadow = new GlobalVariable(
-              *arg->getParent(), elemTy, arg->isConstant(), arg->getLinkage(),
-              Constant::getNullValue(elemTy), arg->getName() + "_shadow", arg,
-              arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
-              arg->isExternallyInitialized());
-          shadow->setAlignment(arg->getAlign());
-          shadow->setUnnamedAddr(arg->getUnnamedAddr());
-
-          return shadow;
-        };
-
-        Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
-        arg->setMetadata(
-            "enzyme_shadow",
-            MDTuple::get(shadow->getContext(),
-                         {ConstantAsMetadata::get(cast<Constant>(shadow))}));
-        if (getWidth() != 1) {
-          BuilderM.Insert(InsertValueInst::Create(shadow, arg, {0}), "tmp");
-        }
-
-        if (arg->hasInitializer()) {
-          size_t tsize =
-              (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) / 8;
-          applyChainRule(
-              BuilderM,
-              [&](Value *shadow, Value *ip) {
-                cast<GlobalVariable>(shadow)->setInitializer(
-                    cast<Constant>(ip));
-              },
-              shadow,
-              invertPointerM(arg->getInitializer(), B,
-                             TR.query(oval).Lookup(tsize, DL)));
-        }
-
-        invertedPointers.insert(std::make_pair(
-            (const Value *)oval, InvertedPointerVH(this, shadow)));
-        return shadow;
-      }
-
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "cannot compute with global variable that doesn't have marked "
-            "shadow global\n";
-      ss << *arg << "\n";
-      if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
-      } else {
-        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
-                    ss.str());
-      }
-      return UndefValue::get(getShadowType(arg->getType()));
-    }
-    auto md = arg->getMetadata("enzyme_shadow");
-    if (!isa<MDTuple>(md)) {
-      llvm::errs() << *arg << "\n";
-      llvm::errs() << *md << "\n";
+    GlobalVariable *shadowGV = getGlobalShadow(arg, width);
+    if (!shadowGV && hasMetadata(arg, "enzyme_shadow")) {
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "cannot compute with global variable that doesn't have marked "
             "shadow global as mdtuple\n";
       ss << *arg << "\n";
-      ss << " md: " << *md << "\n";
+      ss << " md: " << *arg->getMetadata("enzyme_shadow") << "\n";
       if (CustomErrorHandler) {
         return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
                                          ErrorType::NoShadow, this, nullptr,
@@ -5903,12 +5703,166 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
       return UndefValue::get(getShadowType(arg->getType()));
     }
-    auto md2 = cast<MDTuple>(md);
-    assert(md2->getNumOperands() == 1);
-    auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
-    auto cs = cast<Constant>(gvemd->getValue());
+    if (!shadowGV) {
+      // A global whose shadow the program can see, at any width, must keep
+      // a global shadow so that seeds and results reach it.
+      if (!hasGlobalShadow(arg)) {
+        if ((mode == DerivativeMode::ReverseModeCombined ||
+             mode == DerivativeMode::ForwardMode ||
+             mode == DerivativeMode::ForwardModeError) &&
+            arg->getType()->getPointerAddressSpace() == 0) {
+          auto CT = TR.query(arg)[{-1, -1}];
+          // Can only localy replace a global variable if it is
+          // known not to contain a pointer, which may be initialized
+          // outside of this function to contain other memory which
+          // will not have a shadow within the current function.
+          if (CT.isKnown() && CT != BaseType::Pointer) {
+            bool seen = false;
+            MemoryLocation
+#if LLVM_VERSION_MAJOR >= 12
+                Loc =
+                    MemoryLocation(oval, LocationSize::beforeOrAfterPointer());
+#else
+                Loc = MemoryLocation(oval, LocationSize::unknown());
+#endif
+            for (CallInst *CI : originalCalls) {
+              if (isa<IntrinsicInst>(CI))
+                continue;
+              if (!isConstantInstruction(CI)) {
+                auto F = getFunctionFromCall(CI);
+                if (F && isMemFreeLibMFunction(F->getName())) {
+                  continue;
+                }
+                if (llvm::isModOrRefSet(OrigAA->getModRefInfo(CI, Loc))) {
+                  seen = true;
+                  llvm::errs() << " cannot shadow-inline global " << *oval
+                               << " due to " << *CI << "\n";
+                  goto endCheck;
+                }
+              }
+            }
+          endCheck:;
+            if (!seen) {
+              IRBuilder<> bb(inversionAllocs);
+              Type *allocaTy = arg->getValueType();
 
+              auto rule1 = [&]() {
+                AllocaInst *antialloca = bb.CreateAlloca(
+                    allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
+                    arg->getName() + "'ipa");
+                if (arg->getAlign()) {
+                  antialloca->setAlignment(*arg->getAlign());
+                }
+                return antialloca;
+              };
+
+              Value *antialloca = applyChainRule(arg->getType(), bb, rule1);
+
+              invertedPointers.insert(std::make_pair(
+                  (const Value *)oval, InvertedPointerVH(this, antialloca)));
+
+              auto rule2 = [&](Value *antialloca) {
+                auto dst_arg = bb.CreateBitCast(
+                    antialloca, getInt8PtrTy(arg->getContext()));
+                auto val_arg =
+                    ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
+                auto len_arg =
+                    ConstantInt::get(Type::getInt64Ty(arg->getContext()),
+                                     M->getDataLayout().getTypeAllocSizeInBits(
+                                         arg->getValueType()) /
+                                         8);
+                auto volatile_arg = ConstantInt::getFalse(oval->getContext());
+
+                Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
+                Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+                auto memset = cast<CallInst>(bb.CreateCall(
+                    getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
+                if (arg->getAlign()) {
+                  memset->addParamAttr(
+                      0, Attribute::getWithAlignment(arg->getContext(),
+                                                     *arg->getAlign()));
+                }
+                memset->addParamAttr(0, Attribute::NonNull);
+                assert(
+                    (width > 1 && antialloca->getType() ==
+                                      ArrayType::get(arg->getType(), width)) ||
+                    antialloca->getType() == arg->getType());
+                return antialloca;
+              };
+
+              return applyChainRule(arg->getType(), bb, rule2, antialloca);
+            }
+          }
+        }
+
+        auto TT = llvm::Triple(newFunc->getParent()->getTargetTriple());
+        int SharedAddrSpace = getGPUSharedAddrSpace(TT);
+        int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
+        if (isGPUArch(TT) && AddrSpace == SharedAddrSpace) {
+          llvm::errs() << "warning found shared memory\n";
+          Type *type = arg->getValueType();
+          // TODO this needs initialization by entry
+          auto shadow = new GlobalVariable(
+              *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
+              UndefValue::get(type), arg->getName() + "_shadow", arg,
+              arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
+              arg->isExternallyInitialized());
+          arg->setMetadata("enzyme_shadow",
+                           MDTuple::get(shadow->getContext(),
+                                        {ConstantAsMetadata::get(shadow)}));
+          shadow->setMetadata("enzyme_internalshadowglobal",
+                              MDTuple::get(shadow->getContext(), {}));
+          shadow->setAlignment(arg->getAlign());
+          shadow->setUnnamedAddr(arg->getUnnamedAddr());
+          return shadow;
+        }
+      }
+
+      if (canCreateImplicitGlobalShadow(arg)) {
+        shadowGV = createImplicitGlobalShadow(arg, width);
+        if (hasLocalShadowInitializer(shadowGV) && arg->hasInitializer()) {
+          IRBuilder<> B(inversionAllocs);
+          size_t tsize =
+              (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) / 8;
+          // At width > 1 this holds the initializer of every lane, as one
+          // [width x T] constant.
+          Value *init = invertPointerM(arg->getInitializer(), B,
+                                       TR.query(oval).Lookup(tsize, DL));
+          shadowGV->setInitializer(cast<Constant>(init));
+        }
+      } else {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "cannot compute with global variable that doesn't have marked "
+              "shadow global\n";
+        ss << *arg << "\n";
+        if (CustomErrorHandler) {
+          return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                           ErrorType::NoShadow, this, nullptr,
+                                           wrap(&BuilderM)));
+        } else {
+          EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(),
+                      oldFunc, ss.str());
+        }
+        return UndefValue::get(getShadowType(arg->getType()));
+      }
+    }
+
+    Constant *cs = shadowGV;
     if (width > 1) {
+      auto AT = dyn_cast<ArrayType>(shadowGV->getValueType());
+      if (!AT || AT->getNumElements() != width) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "the shadow of a global at vector width " << width
+           << " must hold one value per lane, as an array of " << width
+           << " elements\n";
+        ss << *arg << "\n";
+        ss << *shadowGV << "\n";
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+        return UndefValue::get(getShadowType(arg->getType()));
+      }
       SmallVector<Constant *, 2> Vals;
       for (unsigned i = 0; i < width; ++i) {
 
@@ -5916,7 +5870,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), i)};
         Constant *elem = ConstantExpr::getInBoundsGetElementPtr(
-            getShadowType(arg->getValueType()), cs, idxs);
+            shadowGV->getValueType(), cs, idxs);
+        if (elem->getType() != arg->getType())
+          elem = ConstantExpr::getPointerCast(elem, arg->getType());
         Vals.push_back(elem);
       }
 
@@ -5927,6 +5883,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           std::make_pair((const Value *)oval, InvertedPointerVH(this, agg)));
       return agg;
     } else {
+      if (cs->getType() != arg->getType())
+        cs = ConstantExpr::getPointerCast(cs, arg->getType());
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, cs)));
       return cs;
@@ -9030,7 +8988,7 @@ bool GradientUtils::isConstantValue(Value *val) const {
   }
 
   if (auto gv = dyn_cast<GlobalVariable>(val)) {
-    if (hasMetadata(gv, "enzyme_shadow"))
+    if (hasGlobalShadow(gv))
       return false;
     if (auto md = gv->getMetadata("enzyme_activity_value")) {
       auto res = cast<MDString>(md->getOperand(0))->getString();

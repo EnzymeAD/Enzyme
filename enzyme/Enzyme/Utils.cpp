@@ -5283,3 +5283,118 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
   }
   return done;
 }
+
+bool hasGlobalShadow(const GlobalVariable *GV) {
+  return hasMetadata(GV, "enzyme_shadow") || hasMetadata(GV, "enzyme_shadows");
+}
+
+GlobalVariable *getGlobalShadow(GlobalVariable *GV, unsigned width) {
+  if (auto md = GV->getMetadata("enzyme_shadow")) {
+    auto MD = dyn_cast<MDTuple>(md);
+    if (!MD || MD->getNumOperands() != 1)
+      return nullptr;
+    auto CM = dyn_cast<ConstantAsMetadata>(MD->getOperand(0));
+    if (!CM)
+      return nullptr;
+    return dyn_cast<GlobalVariable>(CM->getValue()->stripPointerCasts());
+  }
+  if (auto MD = GV->getMetadata("enzyme_shadows")) {
+    // !{!{i32 level, i32 width, ptr @shadow}, ...}
+    for (auto &op : MD->operands()) {
+      auto entry = cast<MDNode>(op);
+      auto level = cast<ConstantInt>(
+          cast<ConstantAsMetadata>(entry->getOperand(0))->getValue());
+      auto W = cast<ConstantInt>(
+          cast<ConstantAsMetadata>(entry->getOperand(1))->getValue());
+      if (level->getZExtValue() != 1 || W->getZExtValue() != width)
+        continue;
+      return cast<GlobalVariable>(
+          cast<ConstantAsMetadata>(entry->getOperand(2))->getValue());
+    }
+  }
+  return nullptr;
+}
+
+static bool containsPointer(Type *T) {
+  if (T->isPointerTy())
+    return true;
+  if (auto AT = dyn_cast<ArrayType>(T))
+    return containsPointer(AT->getElementType());
+  if (auto VT = dyn_cast<VectorType>(T))
+    return containsPointer(VT->getElementType());
+  if (auto ST = dyn_cast<StructType>(T)) {
+    for (auto E : ST->elements())
+      if (containsPointer(E))
+        return true;
+    return false;
+  }
+  return !T->isFloatingPointTy() && !T->isIntegerTy();
+}
+
+bool canCreateImplicitGlobalShadow(const GlobalVariable *GV) {
+  if (GV->isConstant() || !GV->isDeclaration())
+    return true;
+  // A declaration of a global without pointers gets the same common shadow
+  // that the translation unit defining it would create.
+  Type *T = GV->getValueType();
+  return GV->getAddressSpace() == 0 && T->isSized() &&
+         !GV->getParent()->getDataLayout().getTypeAllocSize(T).isZero() &&
+         !containsPointer(T);
+}
+
+GlobalVariable *createImplicitGlobalShadow(GlobalVariable *GV, unsigned width) {
+  assert(!getGlobalShadow(GV, width));
+  assert(canCreateImplicitGlobalShadow(GV));
+  Module &M = *GV->getParent();
+  Type *T = GV->getValueType();
+  Type *ST = width == 1 ? T : ArrayType::get(T, width);
+
+  auto linkage = GV->getLinkage();
+  bool isConstant = GV->isConstant();
+  if (!GV->hasLocalLinkage() && !isConstant && !containsPointer(T))
+    linkage = GlobalValue::CommonLinkage;
+  else if (GV->isDeclaration())
+    linkage = GlobalValue::ExternalLinkage;
+
+  std::string name = (GV->getName() + ".ad.l1.w" + std::to_string(width)).str();
+  GlobalVariable *shadow = nullptr;
+  // The shadow may already be declared, e.g. by a module LTO merged in.
+  if (auto existing = M.getNamedGlobal(name))
+    if (!GV->hasLocalLinkage() && !existing->hasLocalLinkage() &&
+        existing->getValueType() == ST) {
+      shadow = existing;
+      if (linkage == GlobalValue::CommonLinkage) {
+        shadow->setLinkage(linkage);
+        shadow->setInitializer(Constant::getNullValue(ST));
+      }
+    }
+
+  if (!shadow) {
+    shadow = new GlobalVariable(
+        M, ST, isConstant, linkage,
+        linkage == GlobalValue::ExternalLinkage && GV->isDeclaration()
+            ? nullptr
+            : Constant::getNullValue(ST),
+        name, GV, GV->getThreadLocalMode(), GV->getAddressSpace(),
+        GV->isExternallyInitialized());
+    shadow->setAlignment(GV->getAlign());
+    if (linkage != GlobalValue::CommonLinkage) {
+      shadow->setUnnamedAddr(GV->getUnnamedAddr());
+      if (GV->hasComdat() && !GV->hasLocalLinkage())
+        shadow->setComdat(M.getOrInsertComdat(shadow->getName()));
+    }
+  }
+
+  auto &Ctx = M.getContext();
+  SmallVector<Metadata *, 2> entries;
+  if (auto MD = GV->getMetadata("enzyme_shadows"))
+    for (auto &op : MD->operands())
+      entries.push_back(op.get());
+  auto I32 = Type::getInt32Ty(Ctx);
+  entries.push_back(
+      MDTuple::get(Ctx, {ConstantAsMetadata::get(ConstantInt::get(I32, 1)),
+                         ConstantAsMetadata::get(ConstantInt::get(I32, width)),
+                         ConstantAsMetadata::get(shadow)}));
+  GV->setMetadata("enzyme_shadows", MDTuple::get(Ctx, entries));
+  return shadow;
+}

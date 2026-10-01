@@ -2961,4 +2961,36 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// Whether \p GV has a shadow: one the program declared (`enzyme_shadow`
+/// metadata) or one Enzyme created for it at some vector width
+/// (`enzyme_shadows`). A global with a shadow is active, and its shadow is
+/// visible outside the derivatives Enzyme generates.
+bool hasGlobalShadow(const llvm::GlobalVariable *GV);
+
+/// The shadow of \p GV at vector width \p width: the one the program
+/// declared through `enzyme_shadow` metadata (of type T, or [width x T] at
+/// width > 1), else the implicit one Enzyme created earlier, else null.
+llvm::GlobalVariable *getGlobalShadow(llvm::GlobalVariable *GV, unsigned width);
+
+/// Whether Enzyme can give \p GV an implicit shadow, with
+/// createImplicitGlobalShadow.
+bool canCreateImplicitGlobalShadow(const llvm::GlobalVariable *GV);
+
+/// Create and record the implicit shadow of \p GV at vector width \p width:
+/// one zero-initialized global `<name>.ad.l1.w<width>` of type T at width 1,
+/// or [width x T] holding the lanes at width > 1. A global without pointers
+/// gets a `common` shadow, so that every translation unit that needs it
+/// creates the same symbol. Any other shadow has the linkage of its global;
+/// set its initializer to the shadow of the global's initializer if
+/// hasLocalShadowInitializer.
+llvm::GlobalVariable *createImplicitGlobalShadow(llvm::GlobalVariable *GV,
+                                                 unsigned width);
+
+/// Whether the caller must set the initializer of the implicit \p shadow to
+/// the shadow of its global's initializer.
+static inline bool
+hasLocalShadowInitializer(const llvm::GlobalVariable *shadow) {
+  return !shadow->hasCommonLinkage() && !shadow->isDeclaration();
+}
+
 #endif // ENZYME_UTILS_H

@@ -787,7 +787,7 @@ public:
       //  general programs as if the global aliases with an argument something
       //  that is written to, then we will have a logical error
       if (auto arg = dyn_cast<GlobalVariable>(I.getOperand(0))) {
-        if (!hasMetadata(arg, "enzyme_shadow")) {
+        if (!hasGlobalShadow(arg)) {
           return;
         }
       }

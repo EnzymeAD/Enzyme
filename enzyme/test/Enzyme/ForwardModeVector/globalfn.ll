@@ -96,7 +96,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:    store double [[TMP5]], double* %"alloc'ipa2"
 ; CHECK-NEXT:    store double [[X]], double* [[ALLOC]]
-; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 [[IDX]]
+; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* getelementptr inbounds ([3 x [1 x void (double*)*]], [3 x [1 x void (double*)*]]* @global.ad.l1.w3, i32 0, i32 0), i64 0, i64 [[IDX]]
 ; CHECK-NEXT:    %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:    %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg"
 ; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx
@@ -106,7 +106,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:   br i1 %8, label %error.i, label %__enzyme_runtimeinactiveerr.exit
 
 ; CHECK: error.i:                                          ; preds = %entry
-; CHECK-NEXT:   %{{.*}} = call i32 @puts(i8* getelementptr inbounds ([80 x i8], [80 x i8]* @.str.3, i32 0, i32 0))
+; CHECK-NEXT:   %{{.*}} = call i32 @puts(i8* getelementptr inbounds ([80 x i8], [80 x i8]* @.str.{{[0-9]+}}, i32 0, i32 0))
 ; CHECK-NEXT:   call void @exit(i32 1)
 ; CHECK-NEXT:   unreachable
 
