@@ -5614,6 +5614,65 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // CHARACTER arguments of the LLVM flang I/O runtime (see
+    // flang/Runtime/io-api.h): a pointer followed by its length, for internal
+    // units, formats, file names, specifier values and ASCII items. The
+    // memory they point to holds characters, i.e. integers.
+    if (startsWith(funcName, "_FortranAio")) {
+      SmallVector<unsigned, 2> charArgs;
+      StringRef io = funcName.substr(strlen("_FortranAio"));
+      if (io == "BeginInternalListOutput" || io == "BeginInternalListInput" ||
+          io == "BeginExternalFormattedOutput" ||
+          io == "BeginExternalFormattedInput" || io == "BeginInquireFile")
+        charArgs = {0};
+      else if (io == "BeginInternalFormattedOutput" ||
+               io == "BeginInternalFormattedInput")
+        charArgs = {0, 2};
+      else if (io == "OutputAscii" || io == "InputAscii" ||
+               io == "OutputCharacter" || io == "InputCharacter" ||
+               (startsWith(io, "Set") && call.arg_size() == 3))
+        charArgs = {1};
+      bool known = !charArgs.empty();
+      for (unsigned i : charArgs) {
+        if (i + 1 >= call.arg_size() ||
+            !call.getOperand(i)->getType()->isPointerTy() ||
+            !call.getOperand(i + 1)->getType()->isIntegerTy()) {
+          known = false;
+          break;
+        }
+      }
+      if (known) {
+        // The bytes per character: OutputCharacter and InputCharacter take
+        // the kind as their last argument, the others are default kind.
+        uint64_t kind = 1;
+        if (io == "OutputCharacter" || io == "InputCharacter") {
+          auto *ckind = call.arg_size() > 3
+                            ? dyn_cast<ConstantInt>(call.getOperand(3))
+                            : nullptr;
+          kind = ckind ? ckind->getLimitedValue() : 0;
+        }
+        for (unsigned i : charArgs) {
+          // Only the characters are typed: a CHARACTER item may be a
+          // component at the start of a derived type with other components
+          // (e.g. pointers) behind it. A length or kind that is not a
+          // constant types just the pointer.
+          TypeTree chars;
+          chars.insert({-1}, BaseType::Pointer);
+          if (auto *len = dyn_cast<ConstantInt>(call.getOperand(i + 1))) {
+            uint64_t n =
+                std::min(len->getLimitedValue(), (uint64_t)MaxTypeOffset) *
+                kind;
+            for (uint64_t b = 0; b < n && b < (uint64_t)MaxTypeOffset; b++)
+              chars.insert({-1, (int)b}, BaseType::Integer);
+          }
+          updateAnalysis(call.getOperand(i), chars, &call);
+          updateAnalysis(call.getOperand(i + 1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
