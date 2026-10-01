@@ -1176,46 +1176,47 @@ bool preserveNVVM(bool Begin, Module &M,
   if (!declaredShadows.empty())
     appendToCompilerUsed(M, declaredShadows);
 
-  for (auto G : toErase) {
+  // Drop the erased registrations from llvm.used / llvm.compiler.used, once
+  // for all of them (rebuilding the list per registration is quadratic).
+  if (!toErase.empty()) {
+    SmallPtrSet<const Value *, 32> erased(toErase.begin(), toErase.end());
     for (auto name : {"llvm.used", "llvm.compiler.used"}) {
-      if (auto V = M.getGlobalVariable(name)) {
-        auto C = cast<ConstantArray>(V->getInitializer());
-        SmallVector<Constant *, 1> toKeep;
-        bool found = false;
-        for (unsigned i = 0; i < C->getNumOperands(); i++) {
-          Value *Op = C->getOperand(i)->stripPointerCasts();
-          if (Op == G)
-            found = true;
-          else
-            toKeep.push_back(C->getOperand(i));
-        }
-        if (found) {
-          if (toKeep.size()) {
-            auto CA = ConstantArray::get(
-                ArrayType::get(C->getType()->getElementType(), toKeep.size()),
-                toKeep);
-            GlobalVariable *NGV = new GlobalVariable(
-                CA->getType(), V->isConstant(), V->getLinkage(), CA, "",
-                V->getThreadLocalMode());
+      auto V = M.getGlobalVariable(name);
+      if (!V)
+        continue;
+      auto C = cast<ConstantArray>(V->getInitializer());
+      SmallVector<Constant *, 1> toKeep;
+      for (unsigned i = 0; i < C->getNumOperands(); i++)
+        if (!erased.count(C->getOperand(i)->stripPointerCasts()))
+          toKeep.push_back(C->getOperand(i));
+      if (toKeep.size() == C->getNumOperands())
+        continue;
+      if (toKeep.size()) {
+        auto CA = ConstantArray::get(
+            ArrayType::get(C->getType()->getElementType(), toKeep.size()),
+            toKeep);
+        GlobalVariable *NGV =
+            new GlobalVariable(CA->getType(), V->isConstant(), V->getLinkage(),
+                               CA, "", V->getThreadLocalMode());
 #if LLVM_VERSION_MAJOR > 16
-            V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
+        V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
 #else
-            V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
+        V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
 #endif
-            NGV->takeName(V);
+        NGV->takeName(V);
 
-            // Nuke the old list, replacing any uses with the new one.
-            if (!V->use_empty()) {
-              Constant *VV = NGV;
-              if (VV->getType() != V->getType())
-                VV = ConstantExpr::getBitCast(VV, V->getType());
-              V->replaceAllUsesWith(VV);
-            }
-          }
-          V->eraseFromParent();
+        // Nuke the old list, replacing any uses with the new one.
+        if (!V->use_empty()) {
+          Constant *VV = NGV;
+          if (VV->getType() != V->getType())
+            VV = ConstantExpr::getBitCast(VV, V->getType());
+          V->replaceAllUsesWith(VV);
         }
       }
+      V->eraseFromParent();
     }
+  }
+  for (auto G : toErase) {
     changed = true;
     G->replaceAllUsesWith(ConstantPointerNull::get(G->getType()));
     G->eraseFromParent();
