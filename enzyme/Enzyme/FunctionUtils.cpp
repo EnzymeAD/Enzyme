@@ -24,10 +24,12 @@
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
 
+#include "ActivityAnalysis.h"
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "TypeAnalysis/TBAA.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -2308,6 +2310,306 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     addReadOnlyOrThrowAttributes(F, local);
   }
   return true;
+}
+
+static llvm::cl::opt<bool> EnzymePrintRecursiveNoActiveStore(
+    "enzyme-print-recursive-no-active-store", cl::init(false), cl::Hidden,
+    cl::desc("Print the result of the recursive no-active-store argument "
+             "analysis, and the first use that disproves it"));
+
+namespace {
+/// Why an argument may have an active value stored through it.
+enum class NoActiveStoreFailure {
+  None,
+  WriteThroughArg,
+  WriteThroughNested,
+  CaptureOfArg,
+  CaptureOfNested,
+  CallNotProven,
+  UnknownUse,
+};
+
+StringRef describe(NoActiveStoreFailure F) {
+  switch (F) {
+  case NoActiveStoreFailure::None:
+    return "no active store";
+  case NoActiveStoreFailure::WriteThroughArg:
+    return "may store an active value into the memory the argument points to";
+  case NoActiveStoreFailure::WriteThroughNested:
+    return "may store an active value through a pointer loaded from the "
+           "argument's memory";
+  case NoActiveStoreFailure::CaptureOfArg:
+    return "captures the argument";
+  case NoActiveStoreFailure::CaptureOfNested:
+    return "captures a pointer loaded from the argument's memory";
+  case NoActiveStoreFailure::CallNotProven:
+    return "passes it to a call that is neither inactive nor proven to make "
+           "no active store through the parameter";
+  case NoActiveStoreFailure::UnknownUse:
+    return "has a use the analysis does not understand";
+  }
+  llvm_unreachable("unknown failure");
+}
+
+struct NoActiveStoreResult {
+  NoActiveStoreFailure Failure = NoActiveStoreFailure::None;
+  const Instruction *At = nullptr;
+};
+
+/// The type Enzyme annotations state for the value V, if any: "enzyme_type"
+/// metadata on an instruction, an "enzyme_type" return attribute on a call, or
+/// an "enzyme_type" attribute on a function argument.
+ConcreteType annotatedValueType(Value *V) {
+  if (auto I = dyn_cast<Instruction>(V))
+    if (auto MD = I->getMetadata("enzyme_type"))
+      return TypeTree::fromMD(MD)[{-1}];
+  if (auto CB = dyn_cast<CallBase>(V)) {
+    // On the call site, or on the callee's declaration.
+    SmallVector<AttributeList, 2> Lists = {CB->getAttributes()};
+    if (auto F = getFunctionFromCall(CB))
+      Lists.push_back(F->getAttributes());
+    for (auto &Attrs : Lists)
+      if (Attrs.hasAttribute(AttributeList::ReturnIndex, "enzyme_type"))
+        return TypeTree::parse(
+            Attrs.getAttribute(AttributeList::ReturnIndex, "enzyme_type")
+                .getValueAsString(),
+            V->getContext())[{-1}];
+  }
+  if (auto A = dyn_cast<Argument>(V)) {
+    auto Attrs = A->getParent()->getAttributes();
+    if (Attrs.hasParamAttr(A->getArgNo(), "enzyme_type"))
+      return TypeTree::parse(
+          Attrs.getParamAttr(A->getArgNo(), "enzyme_type").getValueAsString(),
+          V->getContext())[{-1}];
+  }
+  return ConcreteType(BaseType::Unknown);
+}
+
+/// Whether an "enzyme_truetype" annotation on the memory operation I says
+/// that every byte it writes is an integer.
+bool trueTypeAllInteger(Instruction *I) {
+  auto MD = hasMetadata(I, "enzyme_truetype");
+  if (!MD || MD->getNumOperands() == 0)
+    return false;
+  for (size_t i = 0; i + 1 < MD->getNumOperands(); i += 2) {
+    ConcreteType CT(cast<MDString>(MD->getOperand(i))->getString(),
+                    I->getContext());
+    if (!CT.isIntegral())
+      return false;
+  }
+  return true;
+}
+
+/// Whether the store SI cannot store an active value: its value is a
+/// constant, the store is marked enzyme_inactive, or the stored data is an
+/// integer by TBAA (as read by type analysis), by an enzyme_type annotation
+/// on the value, or by an enzyme_truetype annotation on the store.
+bool isInactiveStore(StoreInst *SI) {
+  Value *V = SI->getValueOperand();
+  if (isa<Constant>(V))
+    return true;
+  if (hasMetadata(SI, "enzyme_inactive"))
+    return true;
+  const DataLayout &DL = SI->getModule()->getDataLayout();
+  if (parseTBAA(*SI, DL, nullptr)[{-1}].isIntegral())
+    return true;
+  if (annotatedValueType(V).isIntegral())
+    return true;
+  return trueTypeAllInteger(SI);
+}
+
+/// Whether the call CB is known not to be active without running activity
+/// analysis: marked inactive by attribute or metadata, or a known inactive
+/// function (see isInactiveCallInst).
+bool isKnownInactiveCall(CallBase *CB, TargetLibraryInfo &TLI) {
+  if (hasMetadata(CB, "enzyme_inactive") ||
+      hasMetadata(CB, "enzyme_inactive_inst"))
+    return true;
+  return isInactiveCallInst(*CB, TLI);
+}
+
+/// Whether nothing is captured through Arg, nor through any pointer loaded
+/// (transitively) from the memory Arg points to, and no active value is ever
+/// stored through these pointers: every store is inactive (see
+/// isInactiveStore), memsets fill bytes, and a call receiving such a pointer
+/// is either known inactive (and does not capture the pointer) or receives
+/// it as a parameter for which Proven holds.
+NoActiveStoreResult
+checkRecursiveNoActiveStore(Argument *Arg, TargetLibraryInfo &TLI,
+                            function_ref<bool(Function *, unsigned)> Proven) {
+  using F = NoActiveStoreFailure;
+  // (pointer, whether it was loaded from the argument's memory)
+  SmallVector<std::pair<Value *, bool>, 8> Todo;
+  SmallPtrSet<Value *, 16> Seen;
+  Todo.emplace_back(Arg, false);
+  while (!Todo.empty()) {
+    auto [P, Nested] = Todo.pop_back_val();
+    if (!Seen.insert(P).second)
+      continue;
+    const F Write = Nested ? F::WriteThroughNested : F::WriteThroughArg;
+    const F Capture = Nested ? F::CaptureOfNested : F::CaptureOfArg;
+    for (const Use &U : P->uses()) {
+      auto I = dyn_cast<Instruction>(U.getUser());
+      if (!I)
+        return {F::UnknownUse, nullptr};
+      // Casts, GEPs, phis, and (via includebin) the pointer's bits carried
+      // through integer arithmetic all still denote the same memory.
+      if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        Todo.emplace_back(I, Nested);
+        continue;
+      }
+      if (auto SI = dyn_cast<SelectInst>(I)) {
+        if (U.getOperandNo() == 0)
+          continue;
+        Todo.emplace_back(SI, Nested);
+        continue;
+      }
+      if (auto LI = dyn_cast<LoadInst>(I)) {
+        // The loaded value may be a pointer into the argument's memory, or the
+        // bits of one in an integer. Only type information (TBAA, or an
+        // enzyme_type annotation) can rule that out; otherwise follow it as a
+        // nested pointer.
+        const DataLayout &DL = LI->getModule()->getDataLayout();
+        auto CT = parseTBAA(*LI, DL, nullptr)[{-1}];
+        if (!CT.isKnown())
+          CT = annotatedValueType(LI);
+        if (CT.isIntegral() || CT.isFloat())
+          continue;
+        Todo.emplace_back(LI, true);
+        continue;
+      }
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        if (U.getOperandNo() != SI->getPointerOperandIndex())
+          return {Capture, I};
+        if (isInactiveStore(SI))
+          continue;
+        return {Write, I};
+      }
+      if (isa<ICmpInst>(I))
+        continue;
+      if (isa<ReturnInst>(I))
+        return {Capture, I};
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        if (CB->isCallee(&U))
+          return {F::UnknownUse, I};
+        if (auto II = dyn_cast<IntrinsicInst>(CB)) {
+          switch (II->getIntrinsicID()) {
+          case Intrinsic::lifetime_start:
+          case Intrinsic::lifetime_end:
+          case Intrinsic::prefetch:
+          case Intrinsic::dbg_declare:
+          case Intrinsic::dbg_value:
+#if LLVM_VERSION_MAJOR >= 16
+          case Intrinsic::dbg_assign:
+#endif
+            continue;
+          case Intrinsic::memset:
+            // Fills bytes, which cannot be an active value.
+            if (U.getOperandNo() == 0)
+              continue;
+            return {F::UnknownUse, I};
+          case Intrinsic::memcpy:
+          case Intrinsic::memmove:
+            // Copying integers (by annotation) neither stores an active value
+            // nor moves a pointer.
+            if (hasMetadata(II, "enzyme_inactive") || trueTypeAllInteger(II))
+              continue;
+            // Writing the destination, or copying (possibly nested
+            // pointers) out of the source.
+            return {U.getOperandNo() == 0 ? Write : Capture, I};
+          default:
+            return {F::UnknownUse, I};
+          }
+        }
+        unsigned ArgNo = CB->getArgOperandNo(&U);
+        // A known inactive call stores nothing active, as long as it does not
+        // keep the pointer around for someone else to store through.
+        if (isKnownInactiveCall(CB, TLI) &&
+            (isNoCapture(CB, ArgNo) || isDeallocationCall(CB, TLI)))
+          continue;
+        Function *Callee = CB->getCalledFunction();
+        if (!Callee || Callee->empty())
+          return {F::CallNotProven, I};
+        if (ArgNo >= Callee->arg_size() || !Proven(Callee, ArgNo))
+          return {F::CallNotProven, I};
+        continue;
+      }
+      return {F::UnknownUse, I};
+    }
+  }
+  return {};
+}
+} // namespace
+
+bool DetectRecursiveNoActiveStore(Module &M) {
+  TargetLibraryInfoImpl TLII(Triple(M.getTargetTriple()));
+  TargetLibraryInfo TLI(TLII);
+  // Greatest fixed point: assume every pointer argument of every defined
+  // function has the property, and drop those that a use disproves (given the
+  // current assumptions for the call parameters they are passed to) until
+  // nothing changes. This handles recursion, and is sound because an active
+  // store or capture reachable through a chain of calls is disproved in the
+  // function that performs it and then propagates back along the chain.
+  std::set<std::pair<Function *, unsigned>> Assumed;
+  for (Function &Fn : M) {
+    if (Fn.empty())
+      continue;
+    for (Argument &A : Fn.args())
+      if (A.getType()->isPointerTy())
+        Assumed.emplace(&Fn, A.getArgNo());
+  }
+  auto Proven = [&](Function *Fn, unsigned ArgNo) {
+    return Assumed.count({Fn, ArgNo}) > 0 ||
+           Fn->getAttributes().hasParamAttr(ArgNo,
+                                            "enzyme_RecursiveNoActiveStore");
+  };
+  std::map<std::pair<Function *, unsigned>, NoActiveStoreResult> Why;
+  bool Dropped = true;
+  while (Dropped) {
+    Dropped = false;
+    for (auto It = Assumed.begin(); It != Assumed.end();) {
+      auto R = checkRecursiveNoActiveStore(It->first->getArg(It->second), TLI,
+                                           Proven);
+      if (R.Failure != NoActiveStoreFailure::None) {
+        Why[*It] = R;
+        It = Assumed.erase(It);
+        Dropped = true;
+      } else
+        ++It;
+    }
+  }
+  bool Changed = false;
+  for (auto &[Fn, ArgNo] : Assumed) {
+    if (!Fn->getAttributes().hasParamAttr(ArgNo,
+                                          "enzyme_RecursiveNoActiveStore")) {
+      Fn->addParamAttr(ArgNo, Attribute::get(Fn->getContext(),
+                                             "enzyme_RecursiveNoActiveStore"));
+      Changed = true;
+    }
+  }
+  if (EnzymePrintRecursiveNoActiveStore) {
+    for (Function &Fn : M) {
+      if (Fn.empty())
+        continue;
+      for (Argument &A : Fn.args()) {
+        if (!A.getType()->isPointerTy())
+          continue;
+        llvm::errs() << "recursive no active store: " << Fn.getName() << " arg "
+                     << A.getArgNo() << " (" << A.getName() << "): ";
+        auto Found = Why.find({&Fn, A.getArgNo()});
+        if (Found == Why.end()) {
+          llvm::errs() << "yes\n";
+          continue;
+        }
+        llvm::errs() << "no, " << describe(Found->second.Failure);
+        if (Found->second.At)
+          llvm::errs() << ": " << *Found->second.At;
+        llvm::errs() << "\n";
+      }
+    }
+  }
+  return Changed;
 }
 
 bool DetectReadonlyOrThrow(Module &M) {
