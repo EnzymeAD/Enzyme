@@ -15,11 +15,11 @@
 ! RUN: %fc %flangDirectives -cpp -O2 %loadFlangEnzyme %loadFortran %s -o %t2 && %t2 | FileCheck %s
 ! With LTO, Enzyme runs only in the link, after the optimization of each unit.
 ! RUN: %fc %flangDirectives -cpp -O2 -flto=full %loadFortran -c %s -o %t.o
-! RUN: %fc -O2 %lldEnzyme '-Wl,--undefined-glob=*.__enzyme_*' %t.o -o %t3 && %t3 | FileCheck %s
+! RUN: %fc -O2 %lldEnzyme '-Wl,--undefined-glob=__enzyme_*' %t.o -o %t3 && %t3 | FileCheck %s
 
-! FIR-DAG: fir.global weak @_QPext_double.__enzyme_register_gradient
-! FIR-DAG: fir.global weak @_QPext_scale.__enzyme_inactivefn
-! FIR-DAG: fir.global weak @_QPext_scale.__enzyme_nofree
+! FIR-DAG: fir.global weak @"__enzyme_register_gradient._QPext_double"
+! FIR-DAG: fir.global weak @"__enzyme_inactivefn._QPext_scale"
+! FIR-DAG: fir.global weak @"__enzyme_nofree._QPext_scale"
 
 module registrations
   implicit none

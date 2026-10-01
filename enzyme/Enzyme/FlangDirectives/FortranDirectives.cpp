@@ -109,6 +109,14 @@ static LogicalResult createRegistration(ModuleOp module, Location loc,
   return success();
 }
 
+// The name of a registration: `__enzyme_<kind>.<subject>`. Unlike a name
+// starting with the subject's, flang's external name conversion leaves it
+// alone (it would make `_QMmEv.__enzyme_x` `_QMmEvX__enzyme_x`), so that a
+// link can keep all of them with --undefined-glob='__enzyme_*'.
+static std::string registrationName(StringRef kind, StringRef subject) {
+  return (kind + "." + subject).str();
+}
+
 static FlatSymbolRefAttr getSymbolArg(DictionaryAttr args, StringRef key) {
   return args ? dyn_cast_or_null<FlatSymbolRefAttr>(args.get(key)) : nullptr;
 }
@@ -126,30 +134,36 @@ static LogicalResult lowerDirective(ModuleOp module, Operation *subject,
       // Read by Enzyme-MLIR; LLVM Enzyme reads the registration, which also
       // keeps the procedure from being inlined before it differentiates.
       addPassthrough(subject, "enzyme_inactive");
+      // Inlined (with LTO, before Enzyme runs), its body would be
+      // differentiated like the caller's.
+      addPassthrough(subject, "noinline");
       // An inactive procedure frees nothing Enzyme has to track either.
-      if (failed(createRegistration(module, loc,
-                                    (subjectName + ".__enzyme_nofree").str(),
-                                    {subjectSym})))
+      if (failed(createRegistration(
+              module, loc, registrationName("__enzyme_nofree", subjectName),
+              {subjectSym})))
         return failure();
-      return createRegistration(module, loc,
-                                (subjectName + ".__enzyme_inactivefn").str(),
-                                {subjectSym});
+      return createRegistration(
+          module, loc, registrationName("__enzyme_inactivefn", subjectName),
+          {subjectSym});
     }
-    return createRegistration(module, loc,
-                              (subjectName + ".__enzyme_inactive_global").str(),
-                              {subjectSym});
+    return createRegistration(
+        module, loc, registrationName("__enzyme_inactive_global", subjectName),
+        {subjectSym});
   }
   if (keyword == "shadow") {
     FlatSymbolRefAttr shadow = getSymbolArg(args, "shadow");
     if (!shadow || !isa<fir::GlobalOp>(subject))
       return emitError(loc) << "enzyme shadow needs a global and its shadow";
-    return createRegistration(module, loc,
-                              (subjectName + ".__enzyme_shadow_global").str(),
-                              {subjectSym, shadow});
+    return createRegistration(
+        module, loc, registrationName("__enzyme_shadow_global", subjectName),
+        {subjectSym, shadow});
   }
   if (keyword == "custom_rule") {
     if (!isa<func::FuncOp>(subject))
       return emitError(loc) << "enzyme custom_rule applies to a procedure";
+    // Enzyme sees the calls only if they survive until it runs, which with
+    // LTO is after the optimization of each unit.
+    addPassthrough(subject, "noinline");
     FlatSymbolRefAttr forward = getSymbolArg(args, "forward");
     FlatSymbolRefAttr augmented = getSymbolArg(args, "augmented");
     FlatSymbolRefAttr reverse = getSymbolArg(args, "reverse");
@@ -161,12 +175,14 @@ static LogicalResult lowerDirective(ModuleOp module, Operation *subject,
                                "augmented= and reverse=";
     if (forward &&
         failed(createRegistration(
-            module, loc, (subjectName + ".__enzyme_register_derivative").str(),
+            module, loc,
+            registrationName("__enzyme_register_derivative", subjectName),
             {subjectSym, forward})))
       return failure();
     if (reverse &&
         failed(createRegistration(
-            module, loc, (subjectName + ".__enzyme_register_gradient").str(),
+            module, loc,
+            registrationName("__enzyme_register_gradient", subjectName),
             {subjectSym, augmented, reverse})))
       return failure();
     return success();

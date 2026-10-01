@@ -12,12 +12,12 @@
 ! RUN: %fc -fc1 %flangFc1Directives -cpp -DREG -emit-fir -I%t -module-dir %t %s -o - | FileCheck %s --check-prefix=FIR
 ! RUN: %fc %flangDirectives -cpp -DREG -O2 -flto=full -I%t -module-dir %t -c %s -o %t/reg.o
 ! RUN: %fc %flangDirectives -cpp -O2 -flto=full -I%t -c %s -o %t/main.o
-! RUN: %fc -O2 %lldEnzyme '-Wl,--undefined-glob=*.__enzyme_*' -Wl,-mllvm=-enzyme-global-activity %t/main.o %t/mods.o %t/reg.o -o %t/a && %t/a | FileCheck %s
+! RUN: %fc -O2 %lldEnzyme '-Wl,--undefined-glob=__enzyme_*' -Wl,-mllvm=-enzyme-global-activity %t/main.o %t/mods.o %t/reg.o -o %t/a && %t/a | FileCheck %s
 
 ! The unit of the registrations only declares the variables.
 ! FIR-DAG: fir.global @_QMstateEg {fir.directives = [{args = {shadow = @_QMshadowsEg_d}, keyword = "shadow", prefix = "enzyme"}]} : f32{{$}}
 ! FIR-DAG: fir.global @_QMshadowsEg_d : f32{{$}}
-! FIR-DAG: fir.global weak @_QMstateEg.__enzyme_shadow_global
+! FIR-DAG: fir.global weak @"__enzyme_shadow_global._QMstateEg"
 
 #ifdef MODS
 module state
