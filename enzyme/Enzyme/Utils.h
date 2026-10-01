@@ -2112,6 +2112,45 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   return false;
 }
 
+/// Whether any code in the module may write the global `GV`: a store or
+/// memory intrinsic into it, a call it is passed to that may write it, or its
+/// address escaping into memory.
+static inline bool mayBeWrittenInModule(const llvm::GlobalVariable *GV) {
+  llvm::SmallVector<const llvm::Value *, 8> todo = {GV};
+  llvm::SmallPtrSet<const llvm::Value *, 8> seen;
+  while (!todo.empty()) {
+    const llvm::Value *V = todo.pop_back_val();
+    if (!seen.insert(V).second)
+      continue;
+    for (const llvm::User *U : V->users()) {
+      if (llvm::isa<llvm::LoadInst>(U))
+        continue;
+      // Either a store into the global or its address escaping.
+      if (llvm::isa<llvm::StoreInst>(U))
+        return true;
+      if (auto CB = llvm::dyn_cast<llvm::CallBase>(U)) {
+        for (size_t i = 0; i < CB->arg_size(); i++)
+          if (CB->getArgOperand(i) == V && !isReadOnly(CB, i))
+            return true;
+        continue;
+      }
+      if (llvm::isa<llvm::GEPOperator>(U) ||
+          llvm::isa<llvm::BitCastOperator>(U) ||
+          llvm::isa<llvm::AddrSpaceCastOperator>(U) ||
+          llvm::isa<llvm::PHINode>(U) || llvm::isa<llvm::SelectInst>(U)) {
+        todo.push_back(U);
+        continue;
+      }
+      if (llvm::isa<llvm::ICmpInst>(U))
+        continue;
+      // Anything else (ptrtoint, constant initializers, ...) may lead to a
+      // write we cannot see.
+      return true;
+    }
+  }
+  return false;
+}
+
 static inline bool isNoAlias(const llvm::CallBase *call) {
   if (call->returnDoesNotAlias())
     return true;

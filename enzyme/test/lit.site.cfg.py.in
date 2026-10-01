@@ -135,6 +135,10 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+# The Fortran bindings library, for the checkpointing scheme getters.
+config.substitutions.append(('%linkFortran',
+                             '-L@ENZYME_BINARY_DIR@/Fortran -lEnzymeFortran '
+                             '-Wl,-rpath,@ENZYME_BINARY_DIR@/Fortran'))
 
 # Include and link flags for the MPI Fortran bindings, detected by CMake's
 # FindMPI. The MPI tests (enzyme/test/Fortran/MPI) are gated on

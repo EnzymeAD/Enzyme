@@ -5463,6 +5463,37 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
   return false;
 }
 
+/// Whether an instruction outside of `F` -- other than in the function `F` is
+/// a clone of, or another clone of it -- uses `GV`, or `GV`'s address is
+/// taken in constant data.
+static bool
+isUsedOutsideOf(const GlobalVariable *GV, const Function *F,
+                const std::map<Function *, Function *> &CloneOrigin) {
+  auto origin = [&](const Function *G) -> const Function * {
+    auto found = CloneOrigin.find(const_cast<Function *>(G));
+    return found == CloneOrigin.end() ? G : found->second;
+  };
+  const Function *FOrigin = origin(F);
+  SmallVector<const Value *, 4> todo = {GV};
+  SmallPtrSet<const Value *, 4> seen;
+  while (!todo.empty()) {
+    const Value *V = todo.pop_back_val();
+    if (!seen.insert(V).second)
+      continue;
+    for (const User *U : V->users()) {
+      if (auto I = dyn_cast<Instruction>(U)) {
+        if (origin(I->getFunction()) != FOrigin)
+          return true;
+      } else if (isa<ConstantExpr>(U)) {
+        todo.push_back(U);
+      } else {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
   return invertPointerM(oval, BuilderM, TR.query(oval));
 }
@@ -5720,7 +5751,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         // known not to contain a pointer, which may be initialized
         // outside of this function to contain other memory which
         // will not have a shadow within the current function.
-        if (CT.isKnown() && CT != BaseType::Pointer) {
+        //
+        // Nor if any other function uses it: that function's derivative
+        // reads or accumulates into the global's real shadow, which a local
+        // replacement would never see.
+        if (CT.isKnown() && CT != BaseType::Pointer &&
+            !isUsedOutsideOf(arg, oldFunc, Logic.PPC.CloneOrigin)) {
           bool seen = false;
           MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
