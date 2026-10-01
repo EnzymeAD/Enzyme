@@ -405,6 +405,10 @@ private:
 public:
   unsigned getWidth() { return width; }
 
+  /// The shadow context this derivative is for (null for the default one):
+  /// which shadows of globals it uses.
+  llvm::GlobalVariable *shadowContext = nullptr;
+
   bool shadowReturnUsed;
 
   llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
@@ -543,12 +547,14 @@ public:
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Constant *F, DerivativeMode mode,
-      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
+      bool runtimeActivity, bool strongZero, unsigned width,
+      llvm::GlobalVariable *shadowContext, bool AtomicAdd);
 
   static llvm::Constant *GetOrCreateShadowFunction(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Function *F, DerivativeMode mode,
-      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
+      bool runtimeActivity, bool strongZero, unsigned width,
+      llvm::GlobalVariable *shadowContext, bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,

@@ -2967,30 +2967,73 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
 /// visible outside the derivatives Enzyme generates.
 bool hasGlobalShadow(const llvm::GlobalVariable *GV);
 
-/// The shadow of \p GV at vector width \p width: the one the program
-/// declared through `enzyme_shadow` metadata (of type T, or [width x T] at
-/// width > 1), else the implicit one Enzyme created earlier, else null.
-llvm::GlobalVariable *getGlobalShadow(llvm::GlobalVariable *GV, unsigned width);
+/// The shadow of \p GV in the shadow context \p context (null for the
+/// default context) at vector width \p width: the one the program declared
+/// through `enzyme_shadow` metadata (of type T, or [width x T] at width > 1),
+/// else the implicit one Enzyme created earlier, else null.
+llvm::GlobalVariable *getGlobalShadow(llvm::GlobalVariable *GV, unsigned width,
+                                      llvm::GlobalVariable *context);
 
 /// Whether Enzyme can give \p GV an implicit shadow, with
 /// createImplicitGlobalShadow.
 bool canCreateImplicitGlobalShadow(const llvm::GlobalVariable *GV);
 
 /// Create and record the implicit shadow of \p GV at vector width \p width:
-/// one zero-initialized global `<name>.ad.l1.w<width>` of type T at width 1,
-/// or [width x T] holding the lanes at width > 1. A global without pointers
-/// gets a `common` shadow, so that every translation unit that needs it
-/// creates the same symbol. Any other shadow has the linkage of its global;
-/// set its initializer to the shadow of the global's initializer if
+/// one zero-initialized global of type T at width 1, or [width x T] holding
+/// the lanes at width > 1.
+///
+/// In the default context (\p context null) it is `<name>.ad.w<width>`. A
+/// global without pointers gets a `common` shadow there, so that every
+/// translation unit that needs it creates the same symbol. Any other shadow
+/// has the linkage of its global.
+///
+/// In a context made by __enzyme_context it is `<name>.ad.<context name>`,
+/// private to the module: only the derivatives requested with that context
+/// and the __enzyme_shadow queries of it use it.
+///
+/// Set its initializer to the shadow of the global's initializer if
 /// hasLocalShadowInitializer.
 llvm::GlobalVariable *createImplicitGlobalShadow(llvm::GlobalVariable *GV,
-                                                 unsigned width);
+                                                 unsigned width,
+                                                 llvm::GlobalVariable *context);
 
-/// Whether the caller must set the initializer of the implicit \p shadow to
-/// the shadow of its global's initializer.
+/// The shadow context \p V refers to: the marker global that
+/// __enzyme_context(width) was lowered to, seen through casts and through
+/// local variables that hold only it. Null if \p V is not a context.
+llvm::GlobalVariable *getShadowContext(llvm::Value *V);
+
+/// \p V, or, if it is loaded from a local variable that only ever holds one
+/// value, that value.
+llvm::Value *lookThroughLocalMemory(llvm::Value *V);
+
+/// The shadow, in lane \p lane of the shadows at width \p width in \p context
+/// (null for the default context), of a global's initializer \p C: zero for
+/// floats, the value itself for integers (e.g. the sizes in a descriptor),
+/// and the lane's shadow of any global it points to, created if need be.
+/// Null, with \p error set, if it refers to something without such a
+/// shadow, such as a function.
+llvm::Constant *getConstantShadowInitializer(llvm::Constant *C, unsigned width,
+                                             llvm::GlobalVariable *context,
+                                             unsigned lane, std::string &error);
+
+/// The shadow of \p GV at width \p width in \p context, created with the
+/// shadow of its initializer if it has none yet. Null, with \p error set, if
+/// it cannot have one this way.
+llvm::GlobalVariable *
+getOrCreateConstantGlobalShadow(llvm::GlobalVariable *GV, unsigned width,
+                                llvm::GlobalVariable *context,
+                                std::string &error);
+
+/// The vector width a shadow context was made for.
+unsigned getShadowContextWidth(const llvm::GlobalVariable *context);
+
+/// Whether the caller must set the initializer of the implicit \p shadow of
+/// \p GV to the shadow of the global's initializer.
 static inline bool
-hasLocalShadowInitializer(const llvm::GlobalVariable *shadow) {
-  return !shadow->hasCommonLinkage() && !shadow->isDeclaration();
+hasLocalShadowInitializer(const llvm::GlobalVariable *GV,
+                          const llvm::GlobalVariable *shadow) {
+  return !GV->isDeclaration() && !shadow->hasCommonLinkage() &&
+         !shadow->isDeclaration();
 }
 
 #endif // ENZYME_UTILS_H

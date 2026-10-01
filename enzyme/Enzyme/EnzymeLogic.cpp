@@ -2006,8 +2006,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
     const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
-    bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
-    bool omp) {
+    bool runtimeActivity, bool strongZero, unsigned width,
+    GlobalVariable *shadowContext, bool AtomicAdd, bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
@@ -2035,7 +2035,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            omp,
                            width,
                            runtimeActivity,
-                           strongZero};
+                           strongZero,
+                           shadowContext};
 
   if (_overwritten_args.size() != todiff->arg_size()) {
     std::string s;
@@ -2129,7 +2130,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
           shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
           _overwritten_args, nowrite_shadows, forceAnonymousTape,
-          runtimeActivity, strongZero, width, AtomicAdd, omp);
+          runtimeActivity, strongZero, width, shadowContext, AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2428,6 +2429,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
+  gutils->shadowContext = shadowContext;
   gutils->nowrite_shadows = nowrite_shadows;
 
   if (todiff->empty()) {
@@ -3175,7 +3177,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         context, *this, TLI, TA, todiff, pair.second, gutils->runtimeActivity,
-        gutils->strongZero, width, gutils->AtomicAdd);
+        gutils->strongZero, width, shadowContext, gutils->AtomicAdd);
     SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
     GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
@@ -3804,7 +3806,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.subsequent_calls_may_write, key.overwritten_args, nowrite_shadows,
           /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
-          key.width, key.AtomicAdd, omp);
+          key.width, key.shadowContext, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3859,7 +3861,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .shadowContext = key.shadowContext},
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -3958,7 +3961,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .shadowContext = key.shadowContext},
           TA, augmenteddata, omp);
 
       {
@@ -4250,6 +4254,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, /*returnTape*/ false, key.returnUsed,
       key.additionalType, omp);
+  gutils->shadowContext = key.shadowContext;
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -4686,8 +4691,9 @@ Function *EnzymeLogic::CreateForwardDiff(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     DerivativeMode mode, bool freeMemory, bool runtimeActivity, bool strongZero,
-    unsigned width, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
-    bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
+    unsigned width, GlobalVariable *shadowContext, llvm::Type *additionalArg,
+    const FnTypeInfo &oldTypeInfo_, bool subsequent_calls_may_write,
+    const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
 
   TimeTraceScope timeScope("CreateForwardDiff", todiff->getName());
@@ -4721,7 +4727,8 @@ Function *EnzymeLogic::CreateForwardDiff(
                          additionalArg,
                          oldTypeInfo,
                          runtimeActivity,
-                         strongZero};
+                         strongZero,
+                         shadowContext};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -4919,6 +4926,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       oldTypeInfo, retType,
       /*shadowReturn*/ retActive, diffeReturnArg, constant_args,
       /*returnTape*/ false, returnUsed, additionalArg, omp);
+  gutils->shadowContext = shadowContext;
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);

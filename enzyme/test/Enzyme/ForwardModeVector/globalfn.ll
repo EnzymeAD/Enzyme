@@ -96,7 +96,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:    store double [[TMP5]], double* %"alloc'ipa2"
 ; CHECK-NEXT:    store double [[X]], double* [[ALLOC]]
-; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* getelementptr inbounds ([3 x [1 x void (double*)*]], [3 x [1 x void (double*)*]]* @global.ad.l1.w3, i32 0, i32 0), i64 0, i64 [[IDX]]
+; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* getelementptr inbounds ([3 x [1 x void (double*)*]], [3 x [1 x void (double*)*]]* @global.ad.w3, i32 0, i32 0), i64 0, i64 [[IDX]]
 ; CHECK-NEXT:    %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:    %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg"
 ; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx

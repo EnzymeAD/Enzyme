@@ -685,7 +685,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
                      unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory,
-      runtimeActivity, strongZero, width, unwrap(additionalArg),
+      runtimeActivity, strongZero, width, nullptr, unwrap(additionalArg),
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       subsequent_calls_may_write, overwritten_args, eunwrap(augmented)));
 }
@@ -726,7 +726,8 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
           .runtimeActivity = (bool)runtimeActivity,
-          .strongZero = (bool)strongZero},
+          .strongZero = (bool)strongZero,
+          .shadowContext = nullptr},
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
@@ -760,7 +761,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       F, (DIFFE_TYPE)retType, nconstant_args, eunwrap(TA), returnUsed,
       shadowReturnUsed, eunwrap(typeInfo, F), subsequent_calls_may_write,
       overwritten_args, nowrite_shadows, forceAnonymousTape, runtimeActivity,
-      strongZero, width, AtomicAdd));
+      strongZero, width, nullptr, AtomicAdd));
 }
 
 LLVMValueRef EnzymeCreateBatch(EnzymeLogicRef Logic, LLVMValueRef request_req,

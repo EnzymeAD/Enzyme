@@ -52,6 +52,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/MDBuilder.h"
@@ -381,40 +382,43 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   return false;
 }
 
-/// The shadow of a global's initializer, for a shadow that the program
-/// queries before any derivative needs it: zero for floats, the initializer
-/// otherwise (e.g. the sizes in a descriptor). Null if the initializer
-/// refers to other globals or functions, whose shadows it would need.
-static Constant *queriedShadowInitializer(Constant *C) {
-  if (isa<ConstantFP>(C) || isa<ConstantAggregateZero>(C) ||
-      isa<ConstantPointerNull>(C) || isa<UndefValue>(C))
-    return Constant::getNullValue(C->getType());
-  if (isa<ConstantInt>(C))
-    return C;
-  if (auto CD = dyn_cast<ConstantDataSequential>(C)) {
-    if (CD->getElementType()->isFloatingPointTy())
-      return Constant::getNullValue(C->getType());
-    return C;
+/// Lower the creation of a shadow context,
+///   void *__enzyme_context(int width)
+/// to a marker global of its own, holding the width. Derivatives requested
+/// with `enzyme_context, ctx` use shadows of globals private to the context,
+/// which __enzyme_shadow(ctx, &global, lane) returns.
+static bool lowerShadowContext(CallInst *CI) {
+  auto width = CI->arg_size() == 1 ? dyn_cast<ConstantInt>(CI->getArgOperand(0))
+                                   : nullptr;
+  if (!width || width->isZero()) {
+    EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                "__enzyme_context takes one positive constant width: ", *CI);
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+    CI->eraseFromParent();
+    return false;
   }
-  if (isa<ConstantAggregate>(C)) {
-    SmallVector<Constant *, 4> Vals;
-    for (auto &op : C->operands()) {
-      auto V = queriedShadowInitializer(cast<Constant>(op));
-      if (!V)
-        return nullptr;
-      Vals.push_back(V);
-    }
-    if (auto AT = dyn_cast<ArrayType>(C->getType()))
-      return ConstantArray::get(AT, Vals);
-    if (auto ST = dyn_cast<StructType>(C->getType()))
-      return ConstantStruct::get(ST, Vals);
-    return ConstantVector::get(Vals);
+  Module &M = *CI->getModule();
+  auto I32 = Type::getInt32Ty(M.getContext());
+  auto context = new GlobalVariable(
+      M, I32, /*isConstant*/ true, GlobalValue::PrivateLinkage,
+      ConstantInt::get(I32, width->getZExtValue()), "enzyme.context");
+  context->setMetadata("enzyme_context", MDTuple::get(M.getContext(), {}));
+  Value *V = context;
+  if (V->getType() != CI->getType()) {
+    IRBuilder<> B(CI);
+    V = B.CreatePointerBitCastOrAddrSpaceCast(V, CI->getType());
   }
-  return nullptr;
+  CI->replaceAllUsesWith(V);
+  CI->eraseFromParent();
+  return true;
 }
 
-/// Lower a query for the shadow of a global,
-///   void *__enzyme_shadow(void *global, int width, int lane[, int level])
+static bool isShadowContext(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_context");
+}
+
+/// Lower a query for the shadow of a global in a shadow context,
+///   void *__enzyme_shadow(void *context, void *global, int lane)
 /// to the address of the lane's shadow, creating the shadow if no derivative
 /// needed it yet. The global may be given at a constant offset, e.g. a
 /// member of a struct or of a Fortran COMMON block.
@@ -426,64 +430,43 @@ static bool lowerShadowQuery(CallInst *CI) {
     CI->eraseFromParent();
     return false;
   };
-  if (CI->arg_size() != 3 && CI->arg_size() != 4)
-    return fail("__enzyme_shadow takes (global, width, lane[, level]): ");
-  auto width = dyn_cast<ConstantInt>(CI->getArgOperand(1));
-  if (!width || width->isZero())
-    return fail("the width of __enzyme_shadow must be a positive constant: ");
-  unsigned W = width->getZExtValue();
-  if (CI->arg_size() == 4) {
-    auto level = dyn_cast<ConstantInt>(CI->getArgOperand(3));
-    if (!level || !level->isOne())
-      return fail("__enzyme_shadow only supports the shadows of the first "
-                  "derivative (level 1) so far: ");
-  }
+  if (CI->arg_size() != 3)
+    return fail("__enzyme_shadow takes (context, global, lane): ");
+  auto context = getShadowContext(CI->getArgOperand(0));
+  if (!context)
+    return fail("the context of __enzyme_shadow must be made by "
+                "__enzyme_context in the same function: ");
+  unsigned W = getShadowContextWidth(context);
   Value *lane = CI->getArgOperand(2);
   if (auto C = dyn_cast<ConstantInt>(lane))
     if (C->getZExtValue() >= W)
-      return fail("the lane of __enzyme_shadow must be less than its width: ");
+      return fail("the lane of __enzyme_shadow must be less than the width "
+                  "of its context: ");
 
-  APInt Offset(DL.getIndexTypeSizeInBits(CI->getArgOperand(0)->getType()), 0);
-  Value *base = CI->getArgOperand(0)->stripAndAccumulateConstantOffsets(
-      DL, Offset, /*AllowNonInbounds*/ true);
-  while (auto GA = dyn_cast<GlobalAlias>(base))
-    base = GA->getAliasee()->stripAndAccumulateConstantOffsets(
-        DL, Offset, /*AllowNonInbounds*/ true);
+  APInt Offset(DL.getIndexTypeSizeInBits(CI->getArgOperand(1)->getType()), 0);
+  Value *base = CI->getArgOperand(1);
+  while (true) {
+    base = base->stripAndAccumulateConstantOffsets(DL, Offset,
+                                                   /*AllowNonInbounds*/ true);
+    if (auto GA = dyn_cast<GlobalAlias>(base)) {
+      base = GA->getAliasee();
+      continue;
+    }
+    auto next = lookThroughLocalMemory(base);
+    if (next == base)
+      break;
+    base = next;
+  }
   auto GV = dyn_cast<GlobalVariable>(base);
   if (!GV)
     return fail("__enzyme_shadow needs a global variable, at a constant "
                 "offset: ");
 
-  GlobalVariable *shadow = getGlobalShadow(GV, W);
-  if (!shadow) {
-    if (hasMetadata(GV, "enzyme_shadow"))
-      return fail("the enzyme_shadow metadata of the global is not a single "
-                  "shadow global: ");
-    if (!canCreateImplicitGlobalShadow(GV))
-      return fail("cannot create a shadow for a declaration of a global that "
-                  "holds pointers; query it where it is defined: ");
-    Constant *init = nullptr;
-    if (GV->hasInitializer() && !GV->hasCommonLinkage()) {
-      init = queriedShadowInitializer(GV->getInitializer());
-      if (!init)
-        return fail("cannot yet query the shadow of a global whose "
-                    "initializer refers to other globals or functions: ");
-    }
-    shadow = createImplicitGlobalShadow(GV, W);
-    if (hasLocalShadowInitializer(shadow) && init) {
-      if (W > 1) {
-        SmallVector<Constant *, 4> lanes(W, init);
-        init =
-            ConstantArray::get(cast<ArrayType>(shadow->getValueType()), lanes);
-      }
-      shadow->setInitializer(init);
-    }
-  } else if (W > 1) {
-    auto AT = dyn_cast<ArrayType>(shadow->getValueType());
-    if (!AT || AT->getNumElements() != W)
-      return fail("the declared shadow of the global does not hold one value "
-                  "per lane at this width: ");
-  }
+  std::string error;
+  GlobalVariable *shadow =
+      getOrCreateConstantGlobalShadow(GV, W, context, error);
+  if (!shadow)
+    return fail(error);
 
   IRBuilder<> B(CI);
   Value *ptr = shadow;
@@ -592,6 +575,49 @@ public:
     return width;
   }
 
+  /// The shadow context named by `enzyme_context, ctx` in \p CI, or null if
+  /// there is none. Fails if it is not a context, or if \p width, given by
+  /// `enzyme_width`, is not the width of the context.
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<GlobalVariable *>
+#else
+  static Optional<GlobalVariable *>
+#endif
+  parseContextParameter(CallInst *CI, unsigned width) {
+    GlobalVariable *context = nullptr;
+    for (unsigned i = 0; i < CI->arg_size(); ++i) {
+      auto MDName = getMetadataName(CI->getArgOperand(i));
+      if (!MDName || *MDName != "enzyme_context")
+        continue;
+      if (context) {
+        EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                    "shadow context declared more than once in ", *CI);
+        return {};
+      }
+      if (i + 1 >= CI->arg_size() ||
+          !(context = getShadowContext(CI->getArgOperand(i + 1)))) {
+        EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                    "enzyme_context must be followed by a context made by "
+                    "__enzyme_context in the same function, in ",
+                    *CI);
+        return {};
+      }
+      bool hasWidth = false;
+      for (auto &op : CI->args())
+        if (auto name = getMetadataName(op))
+          hasWidth |= *name == "enzyme_width";
+      unsigned contextWidth = getShadowContextWidth(context);
+      if (hasWidth && contextWidth != width) {
+        EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                    "enzyme_width ", width,
+                    " differs from the width of the shadow context, ",
+                    contextWidth, ", in ", *CI);
+        return {};
+      }
+    }
+    return context;
+  }
+
   struct Options {
     Value *differet;
     Value *tape;
@@ -601,6 +627,7 @@ public:
     Value *likelihood;
     Value *diffeLikelihood;
     unsigned width;
+    GlobalVariable *shadowContext;
     int allocatedTapeSize;
     bool freeMemory;
     bool returnUsed;
@@ -640,6 +667,7 @@ public:
     Value *likelihood = nullptr;
     Value *diffeLikelihood = nullptr;
     unsigned width = 1;
+    GlobalVariable *shadowContext = nullptr;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
     bool tapeIsPointer = false;
@@ -705,6 +733,15 @@ public:
     // find and handle enzyme_width
     if (auto parsedWidth = parseWidthParameter(CI)) {
       width = *parsedWidth;
+    } else {
+      return {};
+    }
+
+    // find and handle enzyme_context, which also states the width
+    if (auto parsedContext = parseContextParameter(CI, width)) {
+      shadowContext = *parsedContext;
+      if (shadowContext)
+        width = getShadowContextWidth(shadowContext);
     } else {
       return {};
     }
@@ -1188,27 +1225,17 @@ public:
       return {};
     }
 
-    return Options({differet,
-                    tape,
-                    dynamic_interface,
-                    trace,
-                    observations,
-                    likelihood,
-                    diffeLikelihood,
-                    width,
-                    allocatedTapeSize,
-                    freeMemory,
-                    returnUsed,
-                    tapeIsPointer,
-                    differentialReturn,
-                    diffeTrace,
-                    retType,
-                    primalReturn,
-                    ActiveRandomVariables,
-                    overwritten_args,
-                    runtimeActivity,
-                    strongZero,
-                    subsequent_calls_may_write});
+    return Options({differet,          tape,
+                    dynamic_interface, trace,
+                    observations,      likelihood,
+                    diffeLikelihood,   width,
+                    shadowContext,     allocatedTapeSize,
+                    freeMemory,        returnUsed,
+                    tapeIsPointer,     differentialReturn,
+                    diffeTrace,        retType,
+                    primalReturn,      ActiveRandomVariables,
+                    overwritten_args,  runtimeActivity,
+                    strongZero,        subsequent_calls_may_write});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -1563,6 +1590,7 @@ public:
             context, fn, retType, constants, TA,
             /*should return*/ primalReturn, mode, freeMemory,
             options.runtimeActivity, options.strongZero, width,
+            options.shadowContext,
             /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
             overwritten_args,
             /*augmented*/ nullptr);
@@ -1574,7 +1602,7 @@ public:
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
           subsequent_calls_may_write, overwritten_args, nowrite_shadows,
           forceAnonymousTape, options.runtimeActivity, options.strongZero,
-          width, /*atomicAdd*/ AtomicAdd);
+          width, options.shadowContext, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1611,6 +1639,7 @@ public:
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory,
           options.runtimeActivity, options.strongZero, width,
+          options.shadowContext,
           /*addedType*/ tapeType, type_args, subsequent_calls_may_write,
           overwritten_args, aug);
       break;
@@ -1635,7 +1664,8 @@ public:
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
                             .runtimeActivity = options.runtimeActivity,
-                            .strongZero = options.strongZero},
+                            .strongZero = options.strongZero,
+                            .shadowContext = options.shadowContext},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1652,7 +1682,8 @@ public:
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
           nowrite_shadows, forceAnonymousTape, options.runtimeActivity,
-          options.strongZero, width, /*atomicAdd*/ AtomicAdd);
+          options.strongZero, width, options.shadowContext,
+          /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1706,7 +1737,8 @@ public:
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
                               .runtimeActivity = options.runtimeActivity,
-                              .strongZero = options.strongZero},
+                              .strongZero = options.strongZero,
+                              .shadowContext = options.shadowContext},
             TA, aug);
     }
     }
@@ -2698,7 +2730,7 @@ public:
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
           pair.second, /*runtimeActivity*/ false, /*strongZero*/ false,
-          /*width*/ 1, AtomicAdd);
+          /*width*/ 1, /*shadowContext*/ nullptr, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2848,6 +2880,19 @@ public:
     }
 
     bool changed = false;
+    // Shadow contexts first: the shadow queries and derivative requests that
+    // name them are lowered below.
+    SmallVector<CallInst *, 2> contexts;
+    for (Function &F : M)
+      for (Instruction &I : instructions(F))
+        if (auto CI = dyn_cast<CallInst>(&I))
+          if (isShadowContext(getFunctionFromCall(CI)))
+            contexts.push_back(CI);
+    for (auto CI : contexts) {
+      lowerShadowContext(CI);
+      changed = true;
+    }
+
     for (Function &F : M) {
       if (F.empty())
         continue;

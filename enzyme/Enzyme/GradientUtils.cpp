@@ -4625,7 +4625,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
 Constant *GradientUtils::GetOrCreateShadowConstant(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Constant *oval, DerivativeMode mode, bool runtimeActivity,
-    bool strongZero, unsigned width, bool AtomicAdd) {
+    bool strongZero, unsigned width, GlobalVariable *shadowContext,
+    bool AtomicAdd) {
   if (isa<ConstantPointerNull>(oval)) {
     return oval;
   } else if (isa<UndefValue>(oval)) {
@@ -4637,7 +4638,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
       Vals.push_back(GetOrCreateShadowConstant(
           context, Logic, TLI, TA, CD->getElementAsConstant(i), mode,
-          runtimeActivity, strongZero, width, AtomicAdd));
+          runtimeActivity, strongZero, width, shadowContext, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
@@ -4645,7 +4646,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       Vals.push_back(GetOrCreateShadowConstant(
           context, Logic, TLI, TA, CD->getOperand(i), mode, runtimeActivity,
-          strongZero, width, AtomicAdd));
+          strongZero, width, shadowContext, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
@@ -4653,7 +4654,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       Vals.push_back(GetOrCreateShadowConstant(
           context, Logic, TLI, TA, CD->getOperand(i), mode, runtimeActivity,
-          strongZero, width, AtomicAdd));
+          strongZero, width, shadowContext, AtomicAdd));
     }
     return ConstantStruct::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
@@ -4661,17 +4662,17 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       Vals.push_back(GetOrCreateShadowConstant(
           context, Logic, TLI, TA, CD->getOperand(i), mode, runtimeActivity,
-          strongZero, width, AtomicAdd));
+          strongZero, width, shadowContext, AtomicAdd));
     }
     return ConstantVector::get(Vals);
   } else if (auto F = dyn_cast<Function>(oval)) {
     return GetOrCreateShadowFunction(context, Logic, TLI, TA, F, mode,
                                      runtimeActivity, strongZero, width,
-                                     AtomicAdd);
+                                     shadowContext, AtomicAdd);
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     auto C = GetOrCreateShadowConstant(
         context, Logic, TLI, TA, arg->getOperand(0), mode, runtimeActivity,
-        strongZero, width, AtomicAdd);
+        strongZero, width, shadowContext, AtomicAdd);
     if (arg->isCast() || arg->getOpcode() == Instruction::GetElementPtr ||
         arg->getOpcode() == Instruction::Add) {
       SmallVector<Constant *, 8> NewOps;
@@ -4682,7 +4683,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
     return GetOrCreateShadowConstant(context, Logic, TLI, TA, arg->getAliasee(),
                                      mode, runtimeActivity, strongZero, width,
-                                     AtomicAdd);
+                                     shadowContext, AtomicAdd);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (arg->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv117__class_type_infoE" ||
@@ -4690,7 +4691,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
         startsWith(arg->getName(), "??_R")) // any of the MS RTTI manglings
       return arg;
 
-    if (auto shadow = getGlobalShadow(arg, width))
+    if (auto shadow = getGlobalShadow(arg, width, shadowContext))
       return shadow;
     if (hasMetadata(arg, "enzyme_shadow")) {
       llvm::errs() << *arg << "\n";
@@ -4707,13 +4708,30 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     }
 
     if (canCreateImplicitGlobalShadow(arg)) {
-      auto shadow = createImplicitGlobalShadow(arg, width);
-      // TODO: the lanes of the initializer at width > 1.
-      if (width == 1 && hasLocalShadowInitializer(shadow) &&
-          arg->hasInitializer())
-        shadow->setInitializer(GetOrCreateShadowConstant(
-            context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
-            runtimeActivity, strongZero, width, AtomicAdd));
+      auto shadow = createImplicitGlobalShadow(arg, width, shadowContext);
+      if (hasLocalShadowInitializer(arg, shadow) && arg->hasInitializer()) {
+        // An initializer of numbers and of pointers to globals has a shadow
+        // of its own in each lane. Anything else, e.g. a pointer to a
+        // function, is differentiated here, so far only at width 1.
+        std::string error;
+        SmallVector<Constant *, 4> lanes;
+        for (unsigned i = 0; i < width; ++i) {
+          auto C = getConstantShadowInitializer(arg->getInitializer(), width,
+                                                shadowContext, i, error);
+          if (!C)
+            break;
+          lanes.push_back(C);
+        }
+        if (lanes.size() == width)
+          shadow->setInitializer(
+              width == 1 ? lanes[0]
+                         : ConstantArray::get(
+                               cast<ArrayType>(shadow->getValueType()), lanes));
+        else if (width == 1)
+          shadow->setInitializer(GetOrCreateShadowConstant(
+              context, Logic, TLI, TA, arg->getInitializer(), mode,
+              runtimeActivity, strongZero, width, shadowContext, AtomicAdd));
+      }
       return shadow;
     }
   }
@@ -4724,7 +4742,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
-    bool strongZero, unsigned width, bool AtomicAdd) {
+    bool strongZero, unsigned width, GlobalVariable *shadowContext,
+    bool AtomicAdd) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -4840,7 +4859,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        runtimeActivity, strongZero, width, nullptr, type_args,
+        runtimeActivity, strongZero, width, shadowContext, nullptr, type_args,
         subsequent_calls_may_write, overwritten_args,
         /*augmented*/ nullptr);
 
@@ -4853,6 +4872,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     if (width > 1) {
       prefix += std::to_string(width);
     }
+    if (shadowContext)
+      prefix += ("_" + shadowContext->getName()).str();
 
     std::string globalname = (prefix + "_" + fn->getName() + "'").str();
     auto GV = fn->getParent()->getNamedValue(globalname);
@@ -4873,10 +4894,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*shadowReturnUsed*/ false, type_args, subsequent_calls_may_write,
         overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
-        AtomicAdd);
+        shadowContext, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        runtimeActivity, strongZero, width, nullptr, type_args,
+        runtimeActivity, strongZero, width, shadowContext, nullptr, type_args,
         subsequent_calls_may_write, overwritten_args,
         /*augmented*/ &augdata);
 
@@ -4887,6 +4908,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     if (width > 1) {
       prefix += std::to_string(width);
     }
+    if (shadowContext)
+      prefix += ("_" + shadowContext->getName()).str();
 
     auto cdata = ConstantStruct::get(
         StructType::get(newf->getContext(),
@@ -4918,7 +4941,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         shadowReturnUsed, type_args, subsequent_calls_may_write,
         overwritten_args, nowrite_shadows,
         /*forceAnonymousTape*/ true, runtimeActivity, strongZero, width,
-        AtomicAdd);
+        shadowContext, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         context,
         (ReverseCacheKey){.todiff = fn,
@@ -4937,7 +4960,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .forceAnonymousTape = true,
                           .typeInfo = type_args,
                           .runtimeActivity = runtimeActivity,
-                          .strongZero = strongZero},
+                          .strongZero = strongZero,
+                          .shadowContext = shadowContext},
         TA,
         /*map*/ &augdata);
     assert(newf);
@@ -4945,7 +4969,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
-    std::string globalname = ("_enzyme_reverse_" + fn->getName() + "'").str();
+    std::string prefix = "_enzyme_reverse";
+    if (shadowContext)
+      prefix += ("_" + shadowContext->getName()).str();
+    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
@@ -5685,7 +5712,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *aliasTarget = arg->getAliasee();
     return invertPointerM(aliasTarget, BuilderM, TT);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
-    GlobalVariable *shadowGV = getGlobalShadow(arg, width);
+    GlobalVariable *shadowGV = getGlobalShadow(arg, width, shadowContext);
     if (!shadowGV && hasMetadata(arg, "enzyme_shadow")) {
       std::string s;
       llvm::raw_string_ostream ss(s);
@@ -5819,16 +5846,46 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       if (canCreateImplicitGlobalShadow(arg)) {
-        shadowGV = createImplicitGlobalShadow(arg, width);
-        if (hasLocalShadowInitializer(shadowGV) && arg->hasInitializer()) {
-          IRBuilder<> B(inversionAllocs);
-          size_t tsize =
-              (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) / 8;
-          // At width > 1 this holds the initializer of every lane, as one
-          // [width x T] constant.
-          Value *init = invertPointerM(arg->getInitializer(), B,
-                                       TR.query(oval).Lookup(tsize, DL));
-          shadowGV->setInitializer(cast<Constant>(init));
+        shadowGV = createImplicitGlobalShadow(arg, width, shadowContext);
+        if (hasLocalShadowInitializer(arg, shadowGV) && arg->hasInitializer()) {
+          // An initializer of numbers and of pointers to globals has a shadow
+          // of its own in each lane. Anything else, e.g. a pointer to a
+          // function, is differentiated by invertPointerM.
+          std::string error;
+          SmallVector<Constant *, 4> lanes;
+          for (unsigned i = 0; i < width; ++i) {
+            auto C = getConstantShadowInitializer(arg->getInitializer(), width,
+                                                  shadowContext, i, error);
+            if (!C)
+              break;
+            lanes.push_back(C);
+          }
+          Constant *init = nullptr;
+          if (lanes.size() == width) {
+            init = width == 1
+                       ? lanes[0]
+                       : ConstantArray::get(
+                             cast<ArrayType>(shadowGV->getValueType()), lanes);
+          } else {
+            IRBuilder<> B(inversionAllocs);
+            size_t tsize =
+                (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) /
+                8;
+            // At width > 1 this holds the initializer of every lane, as one
+            // [width x T] constant.
+            init = dyn_cast<Constant>(invertPointerM(
+                arg->getInitializer(), B, TR.query(oval).Lookup(tsize, DL)));
+          }
+          if (!init) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "cannot create the shadow of the initializer of " << *arg
+               << "\n";
+            EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(),
+                        oldFunc, ss.str());
+            init = Constant::getNullValue(shadowGV->getValueType());
+          }
+          shadowGV->setInitializer(init);
         }
       } else {
         std::string s;
@@ -5892,7 +5949,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto fn = dyn_cast<Function>(oval)) {
     Constant *shadow = GetOrCreateShadowFunction(
         RequestContext(nullptr, &BuilderM), Logic, TLI, TA, fn, mode,
-        runtimeActivity, strongZero, width, AtomicAdd);
+        runtimeActivity, strongZero, width, shadowContext, AtomicAdd);
     if (width > 1) {
       SmallVector<Constant *, 3> arr;
       for (unsigned i = 0; i < width; ++i) {

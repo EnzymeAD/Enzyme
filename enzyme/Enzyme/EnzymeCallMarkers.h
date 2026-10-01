@@ -114,6 +114,7 @@ inline std::optional<MarkerInfo> lookupEnzymeMarker(llvm::StringRef name) {
       .Case("enzyme_allocated", flag(1))
       .Case("enzyme_tape", flag(1))
       .Case("enzyme_width", flag(1))
+      .Case("enzyme_context", flag(1))
       .Case("enzyme_interface", flag(1))
       .Case("enzyme_active_rand_var", flag(1))
       .Case("enzyme_trace", flagWithActivity(DIFFE_TYPE::CONSTANT, 1))
