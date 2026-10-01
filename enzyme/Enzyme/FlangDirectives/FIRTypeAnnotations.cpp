@@ -24,7 +24,7 @@
 //
 // Annotated so far:
 //   - COMMON blocks: the scalar type at each member offset, from all the
-//     declares of the unit (offsets the declares disagree on stay unknown).
+//     declares of the unit, if they lay out all of the block and agree.
 //     This types, e.g., a memset that memcpyopt fused from the stores to
 //     adjacent members.
 //   - Character literals (_QQcl*): character data.
@@ -395,9 +395,17 @@ struct FIRTypeAnnotationsPass
 
     // COMMON (and other storage-associated) globals: the member layout from
     // every declare naming the global as its storage.
+    // The layout is all or nothing: Enzyme's type analysis takes a type that
+    // is known at many offsets of a block as the type of the whole block
+    // (e.g. Float@double for a block whose first member is a large REAL*8
+    // array and whose second, beyond the budget, a REAL*4 one). So a block
+    // is annotated only if the declares of the unit lay out all of its bytes,
+    // and agree.
     struct Layout {
       std::map<int64_t, std::string> types;
-      std::set<int64_t> conflicts;
+      // [begin, end) of the bytes the declares lay out
+      std::map<int64_t, int64_t> covered;
+      bool unknown = false;
     };
     std::map<Operation *, Layout> layouts;
     module.walk([&](fir::FortranVariableStorageOpInterface decl) {
@@ -408,24 +416,45 @@ struct FIRTypeAnnotationsPass
       if (!global)
         return;
       Layout &layout = layouts[global];
+      if (layout.unknown)
+        return;
       std::map<int64_t, std::string> member;
       int64_t budget = kLayoutBudget;
       Type ty = fir::unwrapRefType(decl->getResult(0).getType());
+      int64_t offset = decl.getStorageOffset();
+      std::optional<int64_t> size = sizeOf(ty, dl);
       // A member that cannot be laid out (dynamic size, derived type, too
-      // large) leaves its bytes unknown.
-      if (!addLayout(ty, decl.getStorageOffset(), dl, member, budget))
+      // large) leaves the block unknown.
+      if (!size || !addLayout(ty, offset, dl, member, budget)) {
+        layout.unknown = true;
         return;
+      }
       for (auto &[off, t] : member) {
         auto [it, inserted] = layout.types.insert({off, t});
-        if (!inserted && it->second != t)
-          layout.conflicts.insert(off);
+        if (!inserted && it->second != t) {
+          layout.unknown = true;
+          return;
+        }
       }
+      int64_t &end = layout.covered[offset];
+      end = std::max(end, offset + *size);
     });
     for (auto &[op, layout] : layouts) {
+      if (layout.unknown)
+        continue;
+      std::optional<int64_t> globalSize =
+          sizeOf(cast<fir::GlobalOp>(op).getType(), dl);
+      int64_t reached = 0;
+      for (auto [begin, end] : layout.covered) {
+        if (begin > reached)
+          break;
+        reached = std::max(reached, end);
+      }
+      if (!globalSize || reached < *globalSize)
+        continue;
       TypePaths tree{{{-1}, "Pointer"}};
       for (auto &[off, t] : layout.types)
-        if (!layout.conflicts.count(off))
-          tree[{-1, (int)off}] = t;
+        tree[{-1, (int)off}] = t;
       if (tree.size() > 1)
         op->setAttr(kTypeAttr, StringAttr::get(ctx, printTypeTree(tree)));
     }

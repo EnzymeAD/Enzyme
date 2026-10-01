@@ -6,17 +6,18 @@
 ! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s --check-prefixes=CHECK,O0
 ! RUN: %fc -fc1 %flangFc1Directives -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=CHECK
 
-! COMMON blocks: the type at each member offset. /mixed/ is real at offset 0
-! in one subroutine and integer in the other, so offset 0 stays unknown.
+! COMMON blocks: the type at each member offset, if the declares lay out all
+! of the block and agree. /mixed/ is real at offset 0 in one subroutine and
+! integer in the other, and /bufs/ has a REAL*4 member beyond the layout
+! budget: they stay unknown (Enzyme would take the type known at many
+! offsets, REAL*8 for /bufs/, as the type of all of the block).
 ! CHECK-DAG: @state_ = {{.*}}global [12 x i8] {{.*}}!enzyme_type ![[STATE:[0-9]+]]
 ! CHECK-DAG: ![[STATE]] = !{!"Unknown", i32 -1, ![[STATEP:[0-9]+]]}
 ! CHECK-DAG: ![[STATEP]] = !{!"Pointer", i32 0, ![[DBL:[0-9]+]], i32 8, ![[INT:[0-9]+]]}
 ! CHECK-DAG: ![[DBL]] = !{!"Float@double"}
 ! CHECK-DAG: ![[INT]] = !{!"Integer"}
-! CHECK-DAG: @mixed_ = {{.*}}!enzyme_type ![[MIXED:[0-9]+]]
-! CHECK-DAG: ![[MIXED]] = !{!"Unknown", i32 -1, ![[MIXEDP:[0-9]+]]}
-! CHECK-DAG: ![[MIXEDP]] = !{!"Pointer", i32 4, ![[FLT:[0-9]+]]}
-! CHECK-DAG: ![[FLT]] = !{!"Float@float"}
+! CHECK-DAG: @mixed_ = {{.*}}global [8 x i8] zeroinitializer, align 4{{$}}
+! CHECK-DAG: @bufs_ = {{.*}}global [196608 x i8] zeroinitializer, align 8{{$}}
 subroutine uses_common(x)
   real(8) :: x, a
   integer :: n
@@ -27,6 +28,14 @@ subroutine uses_common(x)
   n = 1
   r = 1.0
   s = 2.0
+end subroutine
+
+subroutine buffers()
+  real(8) :: b8(16384)
+  real(4) :: b4(16384)
+  common /bufs/ b8, b4
+  b8(1) = 1.0
+  b4(1) = 1.0
 end subroutine
 
 subroutine other_view()
