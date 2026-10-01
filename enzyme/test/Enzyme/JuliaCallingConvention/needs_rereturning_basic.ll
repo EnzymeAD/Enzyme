@@ -1,4 +1,6 @@
-; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s 2>&1 | FileCheck %s
+
+; CHECK-NOT: warning:
 
 ; CHECK-LABEL: define void @test_rereturn({{.*}} noalias sret({ { {{.*}} }, [1 x {{.*}}] }) %0, {{.*}} %arg)
 ; CHECK-NEXT: entry:

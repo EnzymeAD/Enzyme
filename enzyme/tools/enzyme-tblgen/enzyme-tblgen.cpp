@@ -2603,14 +2603,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "            ss << *gutils->newFunc << \"\\n\";\n";
       os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
       os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
-      os << "            if (CustomErrorHandler) {\n";
-      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
-         << ")), ErrorType::InternalError,\n";
-      os << "                                 nullptr, nullptr, nullptr);\n";
-      os << "            } else {\n";
-      os << "              EmitFailure(\"PHIError\", (" << origName
-         << ").getDebugLoc(), &(" << origName << "), ss.str());\n";
-      os << "            }\n";
+      os << "            EmitError(\"PHIError\", ErrorType::InternalError, "
+            "ss.str(), &("
+         << origName << "));\n";
       os << "          }\n";
       os << "          assert(PN);\n";
       os << "          gutils->invertedPointers.erase(found);\n";
@@ -2634,14 +2629,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "            ss << *gutils->newFunc << \"\\n\";\n";
       os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
       os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
-      os << "            if (CustomErrorHandler) {\n";
-      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
-         << ")), ErrorType::InternalError,\n";
-      os << "                                 nullptr, nullptr, nullptr);\n";
-      os << "            } else {\n";
-      os << "              EmitFailure(\"PHIError\", (" << origName
-         << ").getDebugLoc(), &(" << origName << "), ss.str());\n";
-      os << "            }\n";
+      os << "            EmitError(\"PHIError\", ErrorType::InternalError, "
+            "ss.str(), &("
+         << origName << "));\n";
       os << "          }\n";
       os << "          assert(PN);\n";
       os << "          gutils->invertedPointers.erase(found);\n";

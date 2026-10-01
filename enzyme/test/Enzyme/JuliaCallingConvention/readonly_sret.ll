@@ -1,4 +1,6 @@
-; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s 2>&1 | FileCheck %s
+
+; CHECK-NOT: warning:
 
 define void @caller(double %arg, { [2 x double], double, i64 }* %sret_box, { [2 x double], double, i64 }* %sret_box_prime) {
 ; CHECK-LABEL: define void @caller(double %arg, { [2 x double], double, i64 }* %sret_box, { [2 x double], double, i64 }* %sret_box_prime) {
