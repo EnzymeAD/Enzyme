@@ -2911,6 +2911,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           return true;
         }
       }
+      // An assignment between inactive descriptors (e.g. of derived types
+      // holding only integers) is just the primal call in reverse mode too.
+      if ((Mode == DerivativeMode::ReverseModePrimal ||
+           Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeGradient) &&
+          gutils->isConstantValue(call.getArgOperand(0)) &&
+          gutils->isConstantValue(call.getArgOperand(1))) {
+        if (Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
     }
 
     // void _FortranAEtime(const Descriptor *values, const Descriptor *time,
@@ -2957,8 +2968,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             Value *valid = B.CreateAnd(B.CreateICmpNE(sbase, base),
                                        B.CreateIsNotNull(sbase));
             auto add = [&](Value *cond, Value *addr) {
-              elems.push_back(B.CreateSelect(
-                  cond, addr, Constant::getNullValue(I8PtrTy)));
+              elems.push_back(
+                  B.CreateSelect(cond, addr, Constant::getNullValue(I8PtrTy)));
             };
             if (i == 1) {
               add(valid, sbase);
@@ -2966,11 +2977,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             }
             Value *extent = field(desc, IdxTy, DimOff + P);
             Value *sm = field(desc, IdxTy, DimOff + 2 * P);
-            add(B.CreateAnd(valid, B.CreateICmpSGE(
-                                       extent, ConstantInt::get(IdxTy, 1))),
+            add(B.CreateAnd(
+                    valid, B.CreateICmpSGE(extent, ConstantInt::get(IdxTy, 1))),
                 sbase);
-            add(B.CreateAnd(valid, B.CreateICmpSGE(
-                                       extent, ConstantInt::get(IdxTy, 2))),
+            add(B.CreateAnd(
+                    valid, B.CreateICmpSGE(extent, ConstantInt::get(IdxTy, 2))),
                 B.CreateInBoundsGEP(B.getInt8Ty(), sbase, sm));
           }
         }
@@ -3006,8 +3017,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (auto I = dyn_cast<Instruction>(tape))
           gutils->TapesToPreventRecomputation.insert(I);
       }
-      tape = gutils->cacheForReverse(BuilderZ, tape,
-                                     getIndex(&call, CacheType::Tape, BuilderZ));
+      tape = gutils->cacheForReverse(
+          BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
 
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -3027,10 +3038,24 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // same call on the shadow descriptors. Memory that the call allocates is
     // zeroed in the shadow, and re-initialized for derived types, whose
     // components hold descriptors.
+    //
+    // In reverse mode the augmented pass replays the allocation group the
+    // same way, and the reverse pass undoes what it did to the shadows:
+    //  - Allocate: the shadow memory is deallocated again in the reverse pass
+    //    (its base address is taped, since the shadow descriptor may have been
+    //    reused in between).
+    //  - Deallocate: the shadow memory is detached rather than freed (its base
+    //    address taped, the shadow descriptor nulled), because the reverse pass
+    //    still accumulates adjoints into it; the reverse pass attaches it
+    //    again.
+    //  - Structure changes (bounds, association, initialization): nothing.
     if (auto replay = getFlangShadowReplay(funcName)) {
-      if ((Mode == DerivativeMode::ForwardMode ||
-           Mode == DerivativeMode::ForwardModeError) &&
-          !gutils->isConstantInstruction(&call)) {
+      bool forward = Mode == DerivativeMode::ForwardMode ||
+                     Mode == DerivativeMode::ForwardModeError;
+      bool reverse = Mode == DerivativeMode::ReverseModePrimal ||
+                     Mode == DerivativeMode::ReverseModeCombined ||
+                     Mode == DerivativeMode::ReverseModeGradient;
+      if ((forward || reverse) && !gutils->isConstantInstruction(&call)) {
         SmallVector<int, 2> shadowed;
         for (int i : replay->shadowArgs)
           if (i >= 0 && (unsigned)i < call.arg_size() &&
@@ -3043,70 +3068,151 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         // All descriptors inactive: nothing to replay, the primal call is all
         // there is (e.g. allocating an inactive variable next to an active
         // one in the same statement).
-        if (shadowed.empty())
+        if (shadowed.empty()) {
+          if (Mode == DerivativeMode::ReverseModeGradient)
+            eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           return true;
+        }
         // A copy from an inactive into an active descriptor would need the
         // shadow to be zeroed rather than copied into: not handled.
-        if (shadowed.size() == expected) {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
+        if (shadowed.size() == expected &&
+            (forward || replay->kind != FlangReplayKind::ForwardOnly)) {
           auto &M = *called->getParent();
           auto &C = call.getContext();
+          auto I8Ptr = PointerType::getUnqual(C);
+          auto I32 = Type::getInt32Ty(C);
+          auto nullp = ConstantPointerNull::get(I8Ptr);
+          auto zero32 = ConstantInt::get(I32, 0);
+          bool allocates = replay->kind == FlangReplayKind::Allocate;
+          bool deallocates = replay->kind == FlangReplayKind::Deallocate;
 
-          SmallVector<Value *, 8> primalArgs;
-          for (auto &op : call.args())
-            primalArgs.push_back(gutils->getNewFromOriginal(op));
-          SmallVector<Value *, 2> shadows;
-          for (int i : shadowed)
-            shadows.push_back(
-                gutils->invertPointerM(call.getArgOperand(i), Builder2));
+          IRBuilder<> Builder2(&call);
+          if (forward)
+            getForwardBuilder(Builder2);
+          else
+            Builder2.SetInsertPoint(newCall->getNextNode());
 
-          FunctionCallee sizeFn, initFn;
-          if (replay->allocates) {
-            auto I8Ptr = PointerType::getUnqual(C);
-            auto I32 = Type::getInt32Ty(C);
-            sizeFn = M.getOrInsertFunction(
-                "_FortranASize",
-                FunctionType::get(Type::getInt64Ty(C), {I8Ptr, I8Ptr, I32},
-                                  false));
-            initFn = M.getOrInsertFunction(
-                "_FortranAInitialize",
-                FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
-                                  false));
-          }
+          // The shadow descriptor of argument 0 in lane w.
+          auto shadowDesc = [&](IRBuilder<> &B, Value *shadows, unsigned w) {
+            return gutils->getWidth() > 1 ? gutils->extractMeta(B, shadows, w)
+                                          : shadows;
+          };
 
-          for (unsigned w = 0; w < gutils->getWidth(); w++) {
-            SmallVector<Value *, 8> args(primalArgs);
-            for (unsigned k = 0; k < shadowed.size(); k++)
-              args[shadowed[k]] =
-                  gutils->getWidth() > 1
-                      ? gutils->extractMeta(Builder2, shadows[k], w)
-                      : shadows[k];
-            auto dcall = Builder2.CreateCall(called->getFunctionType(),
-                                             called, args);
-            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-            dcall->setCallingConv(call.getCallingConv());
+          // Base addresses of the shadow memory of argument 0, one per lane:
+          // after the call for Allocate, before it for Deallocate.
+          SmallVector<Value *, 1> bases;
+          if (Mode != DerivativeMode::ReverseModeGradient) {
+            SmallVector<Value *, 8> primalArgs;
+            for (auto &op : call.args())
+              primalArgs.push_back(gutils->getNewFromOriginal(op));
+            SmallVector<Value *, 2> shadows;
+            for (int i : shadowed)
+              shadows.push_back(
+                  gutils->invertPointerM(call.getArgOperand(i), Builder2));
 
-            if (replay->allocates) {
-              // base_addr and elem_len lead every descriptor.
+            FunctionCallee sizeFn, initFn;
+            if (allocates) {
+              sizeFn = M.getOrInsertFunction(
+                  "_FortranASize",
+                  FunctionType::get(Type::getInt64Ty(C), {I8Ptr, I8Ptr, I32},
+                                    false));
+              initFn = M.getOrInsertFunction(
+                  "_FortranAInitialize",
+                  FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
+                                    false));
+            }
+
+            for (unsigned w = 0; w < gutils->getWidth(); w++) {
+              SmallVector<Value *, 8> args(primalArgs);
+              for (unsigned k = 0; k < shadowed.size(); k++)
+                args[shadowed[k]] = shadowDesc(Builder2, shadows[k], w);
               Value *desc = args[0];
-              auto nullp = ConstantPointerNull::get(PointerType::getUnqual(C));
-              auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
-              Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
-              Value *elemLen = Builder2.CreateLoad(
-                  Type::getInt64Ty(C),
-                  Builder2.CreateConstInBoundsGEP1_64(Type::getInt8Ty(C), desc,
-                                                      8));
-              Value *base =
-                  Builder2.CreateLoad(PointerType::getUnqual(C), desc);
-              Builder2.CreateMemSet(base, Builder2.getInt8(0),
-                                    Builder2.CreateMul(count, elemLen),
-                                    MaybeAlign());
-              Builder2.CreateCall(initFn, {desc, nullp, zero32});
+
+              if (deallocates && reverse) {
+                // base_addr leads every descriptor.
+                bases.push_back(Builder2.CreateLoad(I8Ptr, desc));
+                Builder2.CreateStore(nullp, desc);
+                continue;
+              }
+
+              auto dcall =
+                  Builder2.CreateCall(called->getFunctionType(), called, args);
+              dcall->setDebugLoc(
+                  gutils->getNewFromOriginal(call.getDebugLoc()));
+              dcall->setCallingConv(call.getCallingConv());
+
+              if (allocates) {
+                // base_addr and elem_len lead every descriptor.
+                Value *count =
+                    Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
+                Value *elemLen = Builder2.CreateLoad(
+                    Type::getInt64Ty(C), Builder2.CreateConstInBoundsGEP1_64(
+                                             Type::getInt8Ty(C), desc, 8));
+                Value *base = Builder2.CreateLoad(I8Ptr, desc);
+                Builder2.CreateMemSet(base, Builder2.getInt8(0),
+                                      Builder2.CreateMul(count, elemLen),
+                                      MaybeAlign());
+                Builder2.CreateCall(initFn, {desc, nullp, zero32});
+                bases.push_back(base);
+              }
             }
           }
 
-          eraseIfUnused(call);
+          if (forward || !(allocates || deallocates)) {
+            if (Mode == DerivativeMode::ReverseModeGradient)
+              eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+            else
+              eraseIfUnused(call);
+            return true;
+          }
+
+          // Tape the shadow base addresses for the reverse pass.
+          unsigned W = gutils->getWidth();
+          Type *TapeTy = ArrayType::get(I8Ptr, W);
+          Value *tape;
+          if (Mode == DerivativeMode::ReverseModeGradient) {
+            tape = BuilderZ.CreatePHI(TapeTy, 0);
+          } else {
+            tape = UndefValue::get(TapeTy);
+            for (unsigned w = 0; w < W; ++w)
+              tape = Builder2.CreateInsertValue(tape, bases[w], w);
+            if (auto I = dyn_cast<Instruction>(tape))
+              gutils->TapesToPreventRecomputation.insert(I);
+          }
+          tape = gutils->cacheForReverse(
+              Mode == DerivativeMode::ReverseModeGradient ? BuilderZ : Builder2,
+              tape, getIndex(&call, CacheType::Tape, BuilderZ));
+
+          if (Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ReverseModeCombined) {
+            IRBuilder<> Builder3(&call);
+            getReverseBuilder(Builder3);
+            tape = lookup(tape, Builder3);
+            Value *shadows =
+                lookup(gutils->invertPointerM(call.getArgOperand(0), Builder3),
+                       Builder3);
+            FunctionCallee deallocFn;
+            if (allocates)
+              deallocFn = M.getOrInsertFunction(
+                  startsWith(funcName, "_FortranAPointer")
+                      ? "_FortranAPointerDeallocate"
+                      : "_FortranAAllocatableDeallocate",
+                  FunctionType::get(
+                      I32, {I8Ptr, Type::getInt1Ty(C), I8Ptr, I8Ptr, I32},
+                      false));
+            for (unsigned w = 0; w < W; ++w) {
+              Value *desc = shadowDesc(Builder3, shadows, w);
+              Builder3.CreateStore(Builder3.CreateExtractValue(tape, w), desc);
+              // Deallocate through the runtime, which also deallocates the
+              // allocatable components of derived types; with STAT, so that
+              // a reused shadow descriptor cannot abort the program.
+              if (allocates)
+                Builder3.CreateCall(deallocFn, {desc, Builder3.getTrue(), nullp,
+                                                nullp, zero32});
+            }
+          }
+          if (Mode == DerivativeMode::ReverseModeGradient)
+            eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           return true;
         }
       }

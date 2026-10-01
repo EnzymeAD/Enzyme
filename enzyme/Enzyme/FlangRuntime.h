@@ -21,6 +21,9 @@
 // Functions of the LLVM flang runtime (flang-rt) that act on Fortran
 // descriptors: allocation, pointer association, initialization and copies.
 // Their forward-mode derivative is the same call on the shadow descriptors.
+// In reverse mode the augmented pass replays them the same way; only the
+// allocation group (structure changes, allocation, deallocation) is
+// supported there, and the reverse pass undoes the shadow allocations.
 //
 //===----------------------------------------------------------------------===//
 
@@ -31,6 +34,23 @@
 
 #include <array>
 
+/// What a replayed flang runtime function does to its first descriptor.
+enum class FlangReplayKind {
+  /// Changes the descriptor only (bounds, type, association, component
+  /// initialization): replayed in the augmented pass, nothing in reverse.
+  Structure,
+  /// Allocates the data of argument 0: the new shadow memory is zeroed; the
+  /// reverse pass deallocates it again.
+  Allocate,
+  /// Deallocates argument 0: the shadow memory is detached rather than freed,
+  /// since the reverse pass still accumulates into it, and reattached in the
+  /// reverse pass.
+  Deallocate,
+  /// Copies values, moves allocations or destroys components: no reverse
+  /// rule yet, forward mode only.
+  ForwardOnly,
+};
+
 /// A flang runtime function whose derivative replays it on shadows.
 struct FlangShadowReplay {
   const char *name;
@@ -39,55 +59,75 @@ struct FlangShadowReplay {
   /// arguments (bounds, type info, stat, errmsg, source location, molds) are
   /// passed unchanged.
   std::array<int, 2> shadowArgs;
-  /// Whether the call allocates the data of argument 0: the new shadow memory
-  /// is then zeroed, as the tangent of freshly allocated memory is zero.
-  bool allocates;
+  FlangReplayKind kind;
 };
 
 static const FlangShadowReplay FlangShadowReplays[] = {
     // allocatable.h
-    {"_FortranAAllocatableInitIntrinsic", {0, -1}, false},
-    {"_FortranAAllocatableInitCharacter", {0, -1}, false},
-    {"_FortranAAllocatableInitDerived", {0, -1}, false},
-    {"_FortranAAllocatableInitIntrinsicForAllocate", {0, -1}, false},
-    {"_FortranAAllocatableInitCharacterForAllocate", {0, -1}, false},
-    {"_FortranAAllocatableInitDerivedForAllocate", {0, -1}, false},
-    {"_FortranAAllocatableApplyMold", {0, -1}, false},
-    {"_FortranAAllocatableSetBounds", {0, -1}, false},
-    {"_FortranAAllocatableSetDerivedLength", {0, -1}, false},
-    {"_FortranAAllocatableAllocate", {0, -1}, true},
-    {"_FortranAAllocatableAllocateSource", {0, 1}, false},
-    {"_FortranAMoveAlloc", {0, 1}, false},
-    {"_FortranAAllocatableDeallocate", {0, -1}, false},
-    {"_FortranAAllocatableDeallocatePolymorphic", {0, -1}, false},
-    {"_FortranAAllocatableDeallocateNoFinal", {0, -1}, false},
+    {"_FortranAAllocatableInitIntrinsic", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAAllocatableInitCharacter", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAAllocatableInitDerived", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAAllocatableInitIntrinsicForAllocate",
+     {0, -1},
+     FlangReplayKind::Structure},
+    {"_FortranAAllocatableInitCharacterForAllocate",
+     {0, -1},
+     FlangReplayKind::Structure},
+    {"_FortranAAllocatableInitDerivedForAllocate",
+     {0, -1},
+     FlangReplayKind::Structure},
+    {"_FortranAAllocatableApplyMold", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAAllocatableSetBounds", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAAllocatableSetDerivedLength",
+     {0, -1},
+     FlangReplayKind::Structure},
+    {"_FortranAAllocatableAllocate", {0, -1}, FlangReplayKind::Allocate},
+    {"_FortranAAllocatableAllocateSource",
+     {0, 1},
+     FlangReplayKind::ForwardOnly},
+    {"_FortranAMoveAlloc", {0, 1}, FlangReplayKind::ForwardOnly},
+    {"_FortranAAllocatableDeallocate", {0, -1}, FlangReplayKind::Deallocate},
+    {"_FortranAAllocatableDeallocatePolymorphic",
+     {0, -1},
+     FlangReplayKind::Deallocate},
+    {"_FortranAAllocatableDeallocateNoFinal",
+     {0, -1},
+     FlangReplayKind::Deallocate},
     // pointer.h
-    {"_FortranAPointerNullifyIntrinsic", {0, -1}, false},
-    {"_FortranAPointerNullifyCharacter", {0, -1}, false},
-    {"_FortranAPointerNullifyDerived", {0, -1}, false},
-    {"_FortranAPointerSetBounds", {0, -1}, false},
-    {"_FortranAPointerSetDerivedLength", {0, -1}, false},
-    {"_FortranAPointerApplyMold", {0, -1}, false},
-    {"_FortranAPointerAssociateScalar", {0, 1}, false},
-    {"_FortranAPointerAssociate", {0, 1}, false},
-    {"_FortranAPointerAssociateLowerBounds", {0, 1}, false},
-    {"_FortranAPointerAssociateRemapping", {0, 1}, false},
-    {"_FortranAPointerAssociateRemappingMonomorphic", {0, 1}, false},
-    {"_FortranAPointerAllocate", {0, -1}, true},
-    {"_FortranAPointerAllocateSource", {0, 1}, false},
-    {"_FortranAPointerDeallocate", {0, -1}, false},
-    {"_FortranAPointerDeallocatePolymorphic", {0, -1}, false},
+    {"_FortranAPointerNullifyIntrinsic", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerNullifyCharacter", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerNullifyDerived", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerSetBounds", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerSetDerivedLength", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerApplyMold", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAPointerAssociateScalar", {0, 1}, FlangReplayKind::Structure},
+    {"_FortranAPointerAssociate", {0, 1}, FlangReplayKind::Structure},
+    {"_FortranAPointerAssociateLowerBounds",
+     {0, 1},
+     FlangReplayKind::Structure},
+    {"_FortranAPointerAssociateRemapping", {0, 1}, FlangReplayKind::Structure},
+    {"_FortranAPointerAssociateRemappingMonomorphic",
+     {0, 1},
+     FlangReplayKind::Structure},
+    {"_FortranAPointerAllocate", {0, -1}, FlangReplayKind::Allocate},
+    {"_FortranAPointerAllocateSource", {0, 1}, FlangReplayKind::ForwardOnly},
+    {"_FortranAPointerDeallocate", {0, -1}, FlangReplayKind::Deallocate},
+    {"_FortranAPointerDeallocatePolymorphic",
+     {0, -1},
+     FlangReplayKind::Deallocate},
     // derived-api.h
-    {"_FortranAInitialize", {0, -1}, false},
-    {"_FortranAInitializeClone", {0, 1}, false},
-    {"_FortranADestroy", {0, -1}, false},
-    {"_FortranADestroyWithoutFinalization", {0, -1}, false},
+    {"_FortranAInitialize", {0, -1}, FlangReplayKind::Structure},
+    {"_FortranAInitializeClone", {0, 1}, FlangReplayKind::ForwardOnly},
+    {"_FortranADestroy", {0, -1}, FlangReplayKind::ForwardOnly},
+    {"_FortranADestroyWithoutFinalization",
+     {0, -1},
+     FlangReplayKind::ForwardOnly},
     // assign.h (_FortranAAssign itself is handled on its own)
-    {"_FortranAAssignTemporary", {0, 1}, false},
-    {"_FortranACopyInAssign", {0, 1}, false},
-    {"_FortranACopyOutAssignDirect", {0, 1}, false},
+    {"_FortranAAssignTemporary", {0, 1}, FlangReplayKind::ForwardOnly},
+    {"_FortranACopyInAssign", {0, 1}, FlangReplayKind::ForwardOnly},
+    {"_FortranACopyOutAssignDirect", {0, 1}, FlangReplayKind::ForwardOnly},
     // transformational.h
-    {"_FortranAShallowCopyDirect", {0, 1}, false},
+    {"_FortranAShallowCopyDirect", {0, 1}, FlangReplayKind::ForwardOnly},
 };
 
 /// The replay rule of a flang runtime function, or null.
