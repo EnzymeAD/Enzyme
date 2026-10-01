@@ -1764,6 +1764,36 @@ void SplitPHIs(llvm::Function &F) {
 }
 
 // returns if newly changed, subject to the pending calls
+// Whether a parameter carries the function's result: an sret (also one still
+// marked for Enzyme.jl's calling-convention fixup), a Julia sret union, or the
+// roots of a returned value.
+static bool isReturnLikeParam(const Function &F, unsigned argno) {
+  if (F.hasParamAttribute(argno, Attribute::StructRet))
+    return true;
+  for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
+                    "enzymejl_sret_union_bytes"})
+    if (F.getAttribute(argno + AttributeList::FirstArgIndex, name).isValid())
+      return true;
+  return false;
+}
+
+// Whether a derivative of F comes from a custom rule rather than from F's
+// body. Such a rule (augmented forward, reverse, or the forward-mode
+// replacement) may read a parameter the body never reads, so the body alone
+// cannot justify marking a parameter writeonly or readnone, except for one
+// that only carries the result. A marking the function already carries is
+// kept: it was stated deliberately. A function marked
+// enzyme_custom_full_attributes is exempt: the frontend states that its rule
+// accesses no more than the body does (Enzyme.jl sets it for @easy_rule, whose
+// rule only combines the inputs the way the body does).
+static bool mayReadThroughCustomRule(Function &F, unsigned argno) {
+  if (getFuncName(&F) != "enzyme_custom")
+    return false;
+  if (F.hasFnAttribute("enzyme_custom_full_attributes"))
+    return false;
+  return !isReturnLikeParam(F, argno);
+}
+
 bool DetectPointerArgOfFn(llvm::Function &F,
                           SmallPtrSetImpl<Function *> &calls_todo) {
   if (F.empty())
@@ -1896,8 +1926,18 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       changed = true;
     }
 
-    if ((!read && !written) ||
-        Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+    if (mayReadThroughCustomRule(F, arg.getArgNo())) {
+      // Whatever the function was already marked with stays; only readonly
+      // may be concluded from the body.
+      if (!written &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly) &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+        arg.addAttr(Attribute::ReadOnly);
+        changed = true;
+      }
+    } else if ((!read && !written) ||
+               Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
           arg.removeAttr(Attribute::ReadOnly);
@@ -2021,8 +2061,10 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
       continue;
     // Never written by us and never read per the existing attribute.
     if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
-      F.removeParamAttr(argno, Attribute::WriteOnly);
-      F.addParamAttr(argno, Attribute::ReadNone);
+      if (!mayReadThroughCustomRule(F, argno)) {
+        F.removeParamAttr(argno, Attribute::WriteOnly);
+        F.addParamAttr(argno, Attribute::ReadNone);
+      }
       continue;
     }
     F.addParamAttr(argno, Attribute::ReadOnly);
