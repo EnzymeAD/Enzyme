@@ -1308,8 +1308,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
 
     auto dt = vd[{-1}];
     for (size_t i = start; i < size; ++i) {
+      auto nex = vd[{(int)i}];
+      // Merging a float with Anything gives Anything, which is not
+      // differentiated. End the range where a float meets Anything (e.g.
+      // struct padding), as visitCommonStore does. Not at the first byte:
+      // dt starts from [-1], which may be a float while that byte is an
+      // Anything (e.g. {[-1]:Float, [4]:Anything}), and a range must not be
+      // empty.
+      if (i != start && ((nex == BaseType::Anything && dt.isFloat()) ||
+                         (dt == BaseType::Anything && nex.isFloat()))) {
+        nextStart = i;
+        break;
+      }
       bool Legal = true;
-      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+      dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
       if (!Legal) {
         nextStart = i;
         break;
