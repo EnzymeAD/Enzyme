@@ -972,6 +972,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   SmallVector<CallInst *, 1> callers;
   for (auto U : F->users()) {
@@ -1541,6 +1542,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   {
     IRBuilder<> EB(&*NewF->getEntryBlock().begin());

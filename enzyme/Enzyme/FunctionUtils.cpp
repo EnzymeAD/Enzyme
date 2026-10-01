@@ -2936,6 +2936,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         NewF, F, VMap,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
+    resetClonedGUID(NewF);
   }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
@@ -3712,6 +3713,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   if (!F->empty()) {
     CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                       Returns, "", nullptr);
+    resetClonedGUID(NewF);
   }
   if (NewF->empty()) {
     auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
