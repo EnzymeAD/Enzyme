@@ -476,6 +476,79 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
+// LLVM flang calls the runtime for MOD and MODULO of reals,
+// _FortranAModReal<k>(a, p, sourceFile, sourceLine) and
+// _FortranAModuloReal<k>(...), which Enzyme cannot differentiate. Replace
+// these calls with frem, as flang itself does for MODULO when infinities
+// need not be honored (ninf):
+//   MOD(a, p) = frem(a, p), which is exact and has the sign of a.
+//   MODULO(a, p) = a - FLOOR(a/p)*p has the sign of p: frem(a, p) + p if the
+//     remainder is nonzero and the signs of a and p differ, else frem(a, p).
+//     As in the runtime, MODULO(a, +-Inf) is NaN.
+// Differences to flang-rt's RealMod: P == 0 gives NaN instead of a runtime
+// error, and a zero result of MODULO keeps the sign of a instead of p.
+// Only kinds 4, 8 and 10 are lowered: their runtime functions use fmod on
+// float, double and x86_fp80. REAL(16) has its own runtime implementation,
+// and frem on fp128 can become a libcall that the target does not have
+// (flang does not emit frem for REAL(16) for this reason).
+static bool lowerFlangRealMod(Module &M) {
+  LLVMContext &C = M.getContext();
+  struct FlangModFn {
+    const char *name;
+    bool isModulo;
+    Type *T;
+  };
+  const FlangModFn modFns[] = {
+      {"_FortranAModReal4", false, Type::getFloatTy(C)},
+      {"_FortranAModReal8", false, Type::getDoubleTy(C)},
+      {"_FortranAModReal10", false, Type::getX86_FP80Ty(C)},
+      {"_FortranAModuloReal4", true, Type::getFloatTy(C)},
+      {"_FortranAModuloReal8", true, Type::getDoubleTy(C)},
+      {"_FortranAModuloReal10", true, Type::getX86_FP80Ty(C)},
+  };
+  bool changed = false;
+  for (const auto &fn : modFns) {
+    Function *F = M.getFunction(fn.name);
+    if (!F)
+      continue;
+    FunctionType *FT = F->getFunctionType();
+    if (FT->isVarArg() || FT->getNumParams() != 4 ||
+        FT->getReturnType() != fn.T || FT->getParamType(0) != fn.T ||
+        FT->getParamType(1) != fn.T || !FT->getParamType(2)->isPointerTy() ||
+        !FT->getParamType(3)->isIntegerTy(32))
+      continue;
+
+    SmallVector<CallInst *, 4> calls;
+    for (User *U : F->users())
+      if (auto *Call = dyn_cast<CallInst>(U))
+        if (Call->getCalledOperand() == F && Call->getFunctionType() == FT)
+          calls.push_back(Call);
+
+    for (CallInst *Call : calls) {
+      IRBuilder<> B(Call);
+      Value *a = Call->getArgOperand(0);
+      Value *p = Call->getArgOperand(1);
+      Value *res = B.CreateFRem(a, p);
+      if (fn.isModulo) {
+        Value *zero = ConstantFP::get(fn.T, 0.0);
+        Value *mustAddP = B.CreateAnd(
+            B.CreateFCmpUNE(res, zero),
+            B.CreateXor(B.CreateFCmpOLT(a, zero), B.CreateFCmpOLT(p, zero)));
+        res = B.CreateSelect(mustAddP, B.CreateFAdd(res, p), res);
+        Value *pIsInf =
+            B.CreateFCmpOEQ(B.CreateUnaryIntrinsic(Intrinsic::fabs, p),
+                            ConstantFP::getInfinity(fn.T));
+        res = B.CreateSelect(pIsInf, ConstantFP::getNaN(fn.T), res);
+      }
+      res->takeName(Call);
+      Call->replaceAllUsesWith(res);
+      Call->eraseFromParent();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 bool preserveNVVM(bool Begin, Module &M,
                   bool PreserveCustomRuleLinkage = true) {
   bool changed = false;
@@ -485,6 +558,9 @@ bool preserveNVVM(bool Begin, Module &M,
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
+
+  if (Begin)
+    changed |= lowerFlangRealMod(M);
 
   // Flang cannot construct the constant function/string aggregate used by
   // __enzyme_function_like. The Fortran binding instead passes a function and
