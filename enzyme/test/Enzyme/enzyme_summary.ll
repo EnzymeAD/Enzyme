@@ -37,3 +37,13 @@ define void @caller(ptr %x, ptr %dx) {
 ; CHECK-DAG: "linkage": "common"
 ; CHECK-DAG: "size": 16
 ; CHECK-DAG: "{[-1]:Pointer, [-1,0]:Float@double}"
+
+; Floating-point effects of @sq: reads and writes x, writes the COMMON
+; block, and passes x on to @ext (composed by the thin-link step).
+; CHECK-DAG: "globals_write": [
+; CHECK-DAG: "common_blk_"
+; CHECK-DAG: "read": true
+; CHECK-DAG: "write": false
+; CHECK-DAG: "edges": [
+; CHECK-DAG: "a0",
+; CHECK-DAG: "ext",
