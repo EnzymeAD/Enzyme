@@ -181,7 +181,10 @@ typedef struct EnzymeCkptConfig {
 typedef struct enzyme_ckpt_store {
   uint64_t bytes;
   int64_t nslots;
+  /* Per slot, in memory: the host regions, and the device regions in a
+   * buffer on the device. */
   void **slots;
+  void **dslots;
   const EnzymeCkptConfig *config;
   int64_t used;
   EnzymeCkptStats stats;
@@ -212,9 +215,11 @@ static inline void enzyme_ckpt_store_init(enzyme_ckpt_store *st,
   st->config = config;
 }
 
-/* A region in an address space other than 0 is device memory, which the
- * store copies to and from host memory with enzyme_ckpt_device_copy: with
- * ENZYME_CKPT_CUDA defined where the schemes are compiled, cudaMemcpy. */
+/* A region in an address space other than 0 is device memory. A slot in
+ * memory keeps it on the device, in a buffer allocated at the slot's first
+ * store and copied into and out of device to device; a slot spilled to disk
+ * goes through host memory. With ENZYME_CKPT_CUDA defined where the schemes
+ * are compiled, these are cudaMalloc, cudaFree and cudaMemcpy. */
 #ifdef ENZYME_CKPT_CUDA
 #include <cuda_runtime_api.h>
 static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
@@ -222,6 +227,13 @@ static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
   if (cudaMemcpy(dst, src, bytes, cudaMemcpyDefault) != cudaSuccess)
     enzyme_ckpt_fail("cudaMemcpy of a snapshot failed");
 }
+static inline void *enzyme_ckpt_device_alloc(uint64_t bytes) {
+  void *p = NULL;
+  if (cudaMalloc(&p, bytes ? bytes : 1) != cudaSuccess)
+    enzyme_ckpt_fail("cudaMalloc of a snapshot slot failed");
+  return p;
+}
+static inline void enzyme_ckpt_device_free(void *p) { cudaFree(p); }
 #else
 static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
                                            uint64_t bytes) {
@@ -231,6 +243,13 @@ static inline void enzyme_ckpt_device_copy(void *dst, const void *src,
   enzyme_ckpt_fail("snapshots of device memory need the schemes compiled "
                    "with ENZYME_CKPT_CUDA");
 }
+static inline void *enzyme_ckpt_device_alloc(uint64_t bytes) {
+  (void)bytes;
+  enzyme_ckpt_fail("snapshots of device memory need the schemes compiled "
+                   "with ENZYME_CKPT_CUDA");
+  return NULL;
+}
+static inline void enzyme_ckpt_device_free(void *p) { (void)p; }
 #endif
 
 static inline void enzyme_ckpt_copy_out(void *dst,
@@ -262,8 +281,9 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
     while (n <= idx)
       n *= 2;
     st->slots = (void **)realloc(st->slots, n * sizeof(void *));
+    st->dslots = (void **)realloc(st->dslots, n * sizeof(void *));
     for (i = st->nslots; i < n; i++)
-      st->slots[i] = NULL;
+      st->slots[i] = st->dslots[i] = NULL;
     st->nslots = n;
   }
   fresh = st->slots[idx] == NULL;
@@ -288,11 +308,22 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
     fclose(f);
     st->slots[idx] = (void *)1;
   } else {
+    uint64_t hbytes = 0, dbytes = 0, doff = 0;
+    for (r = 0; r < nregions; r++)
+      *(regions[r].addrspace ? &dbytes : &hbytes) += regions[r].bytes;
     if (!st->slots[idx])
-      st->slots[idx] = malloc(st->bytes ? st->bytes : 1);
+      st->slots[idx] = malloc(hbytes ? hbytes : 1);
+    if (dbytes && !st->dslots[idx])
+      st->dslots[idx] = enzyme_ckpt_device_alloc(dbytes);
     for (r = 0; r < nregions; r++) {
-      enzyme_ckpt_copy_out((char *)st->slots[idx] + off, &regions[r]);
-      off += regions[r].bytes;
+      if (regions[r].addrspace) {
+        enzyme_ckpt_device_copy((char *)st->dslots[idx] + doff, regions[r].ptr,
+                                regions[r].bytes);
+        doff += regions[r].bytes;
+      } else {
+        memcpy((char *)st->slots[idx] + off, regions[r].ptr, regions[r].bytes);
+        off += regions[r].bytes;
+      }
     }
   }
   if (slot < 0)
@@ -335,9 +366,16 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
     }
     fclose(f);
   } else {
+    uint64_t doff = 0;
     for (r = 0; r < nregions; r++) {
-      enzyme_ckpt_copy_in(&regions[r], (char *)st->slots[idx] + off);
-      off += regions[r].bytes;
+      if (regions[r].addrspace) {
+        enzyme_ckpt_device_copy(regions[r].ptr, (char *)st->dslots[idx] + doff,
+                                regions[r].bytes);
+        doff += regions[r].bytes;
+      } else {
+        memcpy(regions[r].ptr, (char *)st->slots[idx] + off, regions[r].bytes);
+        off += regions[r].bytes;
+      }
     }
   }
   if (slot >= 0)
@@ -355,10 +393,13 @@ static inline void enzyme_ckpt_store_free(enzyme_ckpt_store *st) {
       remove(path);
     } else {
       free(st->slots[i]);
+      if (st->dslots[i])
+        enzyme_ckpt_device_free(st->dslots[i]);
     }
   }
   free(st->slots);
-  st->slots = NULL;
+  free(st->dslots);
+  st->slots = st->dslots = NULL;
   st->nslots = 0;
 }
 
