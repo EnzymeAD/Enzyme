@@ -16,6 +16,9 @@
 ! The other annotations off, these on:
 ! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-common-types=false -mmlir -enzyme-fir-runtime-types=false -mmlir -enzyme-fir-literal-types=false -O0 -emit-llvm %s -o - | FileCheck %s
 ! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-local-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOLOCAL
+! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-descriptor-data-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NODATA
+! NODATA-LABEL: define void @_QMmPdescr(
+! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, 
 
 ! OFF-NOT: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}"
 

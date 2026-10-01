@@ -18,6 +18,12 @@
 ! CHECK-DAG: ![[INT]] = !{!"Integer"}
 ! CHECK-DAG: @mixed_ = {{.*}}global [8 x i8] zeroinitializer, align 4{{$}}
 ! CHECK-DAG: @bufs_ = {{.*}}global [196608 x i8] zeroinitializer, align 8{{$}}
+! Blocks of a single scalar type are that type at every offset, whatever
+! their size, e.g. CHARACTER data (Integer bytes) and REAL*8 arrays:
+! (/names/ below, as the literals)
+! CHECK-DAG: @fields_ = {{.*}}global [16000 x i8] {{.*}}!enzyme_type ![[FIELDS:[0-9]+]]
+! CHECK-DAG: ![[FIELDS]] = !{!"Unknown", i32 -1, ![[FIELDSP:[0-9]+]]}
+! CHECK-DAG: ![[FIELDSP]] = !{!"Pointer", i32 -1, ![[DBL]]}
 subroutine uses_common(x)
   real(8) :: x, a
   integer :: n
@@ -38,6 +44,15 @@ subroutine buffers()
   b4(1) = 1.0
 end subroutine
 
+subroutine uniform_blocks()
+  character(len=512) :: fname(3), title
+  common /names/ fname, title
+  real(8) :: u(1000), v(1000)
+  common /fields/ u, v
+  fname(1) = 'a'
+  u(1) = 1.0
+end subroutine
+
 subroutine other_view()
   integer :: i
   real :: s
@@ -49,6 +64,7 @@ end subroutine
 ! CHECK-DAG: @_QQcl{{.*}} = {{.*}}constant [{{[0-9]+}} x i8] {{.*}}!enzyme_type ![[CHARS:[0-9]+]]
 ! CHECK-DAG: ![[CHARS]] = !{!"Unknown", i32 -1, ![[CHARSP:[0-9]+]]}
 ! CHECK-DAG: ![[CHARSP]] = !{!"Pointer", i32 -1, ![[INT]]}
+! CHECK-DAG: @names_ = {{.*}}global [2048 x i8] {{.*}}!enzyme_type ![[CHARS]]{{$}}
 
 ! Runtime calls: what the conversions for the call erased. A descriptor is
 ! typed field by field, with its element type; character data is Integer;

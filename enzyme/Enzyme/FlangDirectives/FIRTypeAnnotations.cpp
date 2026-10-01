@@ -286,6 +286,20 @@ static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
   return s ? std::optional<int64_t>(s->second) : std::nullopt;
 }
 
+// The one scalar type of all of a value of type `ty`, if it has one: of a
+// scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
+// one too (both parts are the same).
+static std::optional<std::string> uniformType(Type ty, const DataLayout &dl) {
+  ty = fir::unwrapSequenceType(ty);
+  if (isa<fir::CharacterType>(ty))
+    return std::string("Integer");
+  if (auto ct = dyn_cast<mlir::ComplexType>(ty))
+    ty = ct.getElementType();
+  if (auto sc = scalarType(ty, dl))
+    return sc->first;
+  return std::nullopt;
+}
+
 // Add the scalar types of a value of type `ty` at `offset` to `layout`.
 // Arrays are expanded element by element up to `budget` entries.
 static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
@@ -367,12 +381,13 @@ static std::optional<std::string> dataType(Type ty, const DataLayout &dl) {
 // A descriptor ({ptr base, i64 elem_len, i32 version, i8 rank, i8 type,
 // i8 attribute, i8 extra, [rank x [3 x i64]] dims}) is typed field by field,
 // with the type of the data its base address points to.
-static std::string pointerArgType(Type ty, const DataLayout &dl) {
+static std::string pointerArgType(Type ty, const DataLayout &dl,
+                                  bool descriptorData = true) {
   Type pointee = fir::unwrapRefType(ty);
   TypePaths tree{{{-1}, "Pointer"}};
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
     tree[{-1, 0}] = "Pointer";
-    if (auto data = dataType(box, dl))
+    if (auto data = dataType(box, dl); data && descriptorData)
       tree[{-1, 0, -1}] = *data;
     for (int off : {8, 16, 20, 21, 22, 23})
       tree[{-1, off}] = "Integer";
@@ -402,6 +417,12 @@ static Type originalType(Value v) {
   return v.getType();
 }
 
+static llvm::cl::opt<bool> annotateDescriptorData(
+    "enzyme-fir-arg-descriptor-data-types", llvm::cl::init(true),
+    llvm::cl::desc("With -enzyme-fir-arg-types, also annotate the type of "
+                   "the data that descriptor arguments point to (a caller "
+                   "may reuse one descriptor temporary for several types)"));
+
 // The TypeTree of a value of FIR type `ty` passed to or returned from a
 // procedure, in the encoding Enzyme.jl uses for its arguments, or "" if
 // there is nothing certain to say. By reference, the pointee is laid out from
@@ -429,7 +450,7 @@ static std::string procArgType(Type ty, const DataLayout &dl) {
       return ""; // assumed rank
     if (!dataType(box, dl))
       return "";
-    return pointerArgType(ty, dl);
+    return pointerArgType(ty, dl, annotateDescriptorData);
   }
   if (!fir::isa_ref_type(ty))
     return "";
@@ -525,9 +546,16 @@ struct FIRTypeAnnotationsPass
     // The layout is all or nothing: Enzyme's type analysis takes the types
     // it knows at some offsets of a block for the whole block. So a block is
     // annotated only if the declares of the unit lay out all of its bytes,
-    // and agree, and it fits in Enzyme's type offsets.
+    // and agree, and it fits in Enzyme's type offsets -- or, whatever its
+    // size, if all of its members have the same scalar type (e.g. a block
+    // of CHARACTER data, Integer bytes), as that type at every offset.
     struct Layout {
       std::map<int64_t, std::string> types;
+      // The one scalar type of all members, if they have one (e.g. Integer
+      // for CHARACTER members): a block of it can be annotated whatever its
+      // size, as that type at every offset.
+      std::optional<std::string> uniform;
+      bool mixed = false;
       // [begin, end) of the bytes the declares lay out
       std::map<int64_t, int64_t> covered;
       bool unknown = false;
@@ -543,16 +571,25 @@ struct FIRTypeAnnotationsPass
       if (!global)
         return;
       Layout &layout = layouts[global];
-      if (layout.unknown)
-        return;
       std::map<int64_t, std::string> member;
       int64_t budget = kLayoutBudget;
       Type ty = fir::unwrapRefType(decl->getResult(0).getType());
       int64_t offset = decl.getStorageOffset();
       std::optional<int64_t> size = sizeOf(ty, dl);
+      if (!size) {
+        layout.unknown = layout.mixed = true;
+        return;
+      }
+      int64_t &end = layout.covered[offset];
+      end = std::max(end, offset + *size);
+      std::optional<std::string> uniform = uniformType(ty, dl);
+      if (!uniform || (layout.uniform && *layout.uniform != *uniform))
+        layout.mixed = true;
+      else
+        layout.uniform = uniform;
       // A member that cannot be laid out (dynamic size, derived type, too
-      // large) leaves the block unknown.
-      if (!size || !addLayout(ty, offset, dl, member, budget)) {
+      // large) leaves the block unknown, unless it is uniform.
+      if (layout.unknown || !addLayout(ty, offset, dl, member, budget)) {
         layout.unknown = true;
         return;
       }
@@ -563,12 +600,8 @@ struct FIRTypeAnnotationsPass
           return;
         }
       }
-      int64_t &end = layout.covered[offset];
-      end = std::max(end, offset + *size);
     });
     for (auto &[op, layout] : layouts) {
-      if (layout.unknown)
-        continue;
       std::optional<int64_t> globalSize =
           sizeOf(cast<fir::GlobalOp>(op).getType(), dl);
       int64_t reached = 0;
@@ -577,8 +610,16 @@ struct FIRTypeAnnotationsPass
           break;
         reached = std::max(reached, end);
       }
-      if (!globalSize || reached < *globalSize ||
-          *globalSize > kMaxTypeOffset)
+      if (!globalSize || reached < *globalSize)
+        continue;
+      if (!layout.mixed && layout.uniform) {
+        op->setAttr(kTypeAttr,
+                    StringAttr::get(ctx, printTypeTree({{{-1}, "Pointer"},
+                                                        {{-1, -1},
+                                                         *layout.uniform}})));
+        continue;
+      }
+      if (layout.unknown || *globalSize > kMaxTypeOffset)
         continue;
       TypePaths tree{{{-1}, "Pointer"}};
       for (auto &[off, t] : layout.types)
