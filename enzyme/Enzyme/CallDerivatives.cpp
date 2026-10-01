@@ -721,20 +721,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        Value *args[] = {
-            /*buf*/ shadowOrig,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*dest*/ src,
-            /*tag*/ tag,
-            /*comm*/ comm,
-        };
+        // The Fortran ABI appends an `ierr` argument: pass all arguments of
+        // the call, with the shadow in place of the buffer.
+        SmallVector<Value *, 8> args = {/*buf*/ shadowOrig};
+        for (size_t i = 1, e = call.arg_size(); i < e; i++)
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ false);
 
         auto callval = call.getCalledOperand();
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
@@ -838,15 +834,17 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        Value *status = gutils->getNewFromOriginal(call.getOperand(6));
-        Value *args[] = {shadow, count, datatype, source, tag, comm, status};
+        // The Fortran ABI appends an `ierr` argument: pass all arguments of
+        // the call, with the shadow in place of the buffer.
+        SmallVector<Value *, 8> args = {shadow};
+        for (size_t i = 1, e = call.arg_size(); i < e; i++)
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::None},
-            Builder2, /*lookup*/ !forwardMode);
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        BundleTypes[6] = ValueType::None;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ !forwardMode);
 
         auto callval = call.getCalledOperand();
 
@@ -955,19 +953,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         comm = lookup(comm, Builder2);
 
       if (forwardMode) {
-        Value *args[] = {
-            /*buffer*/ shadow,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
+        // The Fortran ABI appends an `ierr` argument: pass all arguments of
+        // the call, with the shadow in place of the buffer.
+        SmallVector<Value *, 8> args = {/*buffer*/ shadow};
+        for (size_t i = 1, e = call.arg_size(); i < e; i++)
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+        std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::Primal);
+        BundleTypes[0] = ValueType::Shadow;
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ false);
 
         auto callval = call.getCalledOperand();
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
