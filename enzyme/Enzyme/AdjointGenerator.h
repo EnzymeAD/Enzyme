@@ -5998,7 +5998,10 @@ public:
                                     augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
-            gutils->erase(cast<Instruction>(tape));
+            // If the tape is returned directly, it is the augmented call
+            // itself, which must be kept for its side effects.
+            if (tape != augmentcall)
+              gutils->erase(cast<Instruction>(tape));
             tape = UndefValue::get(tt);
           } else {
             gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
