@@ -1089,7 +1089,7 @@ void setUnifiedAccuracyCost(
           ++broken;
       }
 
-      if (flags::StrictMode && !std::isnan(goldVal) && std::isnan(realVal)) {
+      if (std::isfinite(goldVal) && !std::isfinite(realVal)) {
         discardCandidate = true;
         break;
       }

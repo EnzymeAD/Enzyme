@@ -110,10 +110,12 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; NORMAL: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 
 ; TINY: DOMERR matmul in=f16 acc=f32 p95_relErr=1.000000e+00
-; TINY: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.385254e+03  rel=6.786400e-02  domainError=1.000000e+00
+; TINY: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.385254e+03  rel=6.786400e-02  domainError=INF
+; TINY: #1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=4.159686e+03  rel=8.338900e-02  domainError=INF
 ; TINY: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=1.000000e+30
 ; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=1.000000e+30
 ; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=1.000000e+30
 ; TINY-NOT: error-budget: matmul -> wmma m16n16k16 f16/f32
-; TINY-NOT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32
+; TINY-NOT: Applying solution for matmul[0]
+; TINY: error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-03
 ; TINY: Finished optimizing preprocess_matmul_body
