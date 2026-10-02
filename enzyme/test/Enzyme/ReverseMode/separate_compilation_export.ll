@@ -35,5 +35,5 @@ define void @caller(ptr %x, ptr %dx, ptr %y, ptr %dy) {
 ; CHECK-NEXT:   %1 = load ptr, ptr @__enzyme_sep_rev_w1_ext, align 8
 ; CHECK-NEXT:   %_augmented = call { ptr } %1(ptr %x, ptr %"x'", ptr %y, ptr %"y'")
 ; CHECK-NEXT:   %subcache = extractvalue { ptr } %_augmented, 0
-; CHECK:   %2 = load ptr, ptr getelementptr {{(inbounds )?}}(ptr, ptr @__enzyme_sep_rev_w1_ext, i64 1), align 8
+; CHECK:   %2 = load ptr, ptr getelementptr {{(inbounds )?}}({{ptr|i8}}, ptr @__enzyme_sep_rev_w1_ext, i64 {{1|8}}), align 8
 ; CHECK-NEXT:   %3 = call {} %2(ptr %x, ptr %"x'", ptr %y, ptr %"y'", ptr %subcache)
