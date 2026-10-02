@@ -41,8 +41,10 @@ def variant_token(v):
 
 def is_runtime(name):
     # Callees Enzyme handles without a derivative from another module
-    # (GradientUtils::usesExternalDerivative): flang runtime, Enzyme, LLVM.
-    return name.startswith(("_Fortran", "__enzyme", "llvm."))
+    # (GradientUtils::usesExternalDerivative): flang runtime, Enzyme, LLVM,
+    # the OpenMP runtime.
+    return name.startswith(("_Fortran", "__enzyme", "llvm.", "__kmpc_",
+                            "omp_"))
 
 
 # Enzyme entry points that differentiate (or, for a checkpointed loop,

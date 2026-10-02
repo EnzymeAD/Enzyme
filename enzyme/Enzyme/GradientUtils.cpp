@@ -4998,6 +4998,10 @@ bool GradientUtils::usesExternalDerivative(Function *F,
   if (startsWith(name, "_Fortran") || startsWith(name, "__enzyme") ||
       startsWith(name, "llvm."))
     return false;
+  // The OpenMP runtime (__kmpc_*, and omp_* in the C and Fortran calling
+  // conventions) is handled by Enzyme itself or inactive.
+  if (startsWith(name, "__kmpc_") || startsWith(name, "omp_"))
+    return false;
   // MPI routines, in either the C or a Fortran calling convention, have
   // Enzyme's own derivatives or are inactive.
   if (!canonicalizeMPIName(name).empty())

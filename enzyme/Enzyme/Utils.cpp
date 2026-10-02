@@ -509,8 +509,19 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "__kmpc_end_critical",
       "__kmpc_threadprivate_cached",
       "omp_get_thread_num",
+      "omp_get_thread_num_",
       "omp_get_num_threads",
+      "omp_get_num_threads_",
       "omp_get_max_threads",
+      "omp_get_max_threads_",
+      "omp_get_num_procs",
+      "omp_get_num_procs_",
+      "omp_in_parallel",
+      "omp_in_parallel_",
+      "omp_get_level",
+      "omp_get_level_",
+      "omp_get_wtime",
+      "omp_get_wtime_",
   };
   if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
     changed = true;
