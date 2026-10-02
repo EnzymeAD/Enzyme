@@ -2255,12 +2255,13 @@ static Function *getOrCreateFixedPointIteration(Module &M, FixedPointTypes &T,
   if (EnzymePrintFixedPoint) {
     FunctionCallee Printf = M.getOrInsertFunction(
         "printf", FunctionType::get(T.I32, {T.I8P}, true));
-    B.CreateCall(Printf, {B.CreateGlobalStringPtr(
-                              tangent ? "fixed point: %lld tangent iterations "
-                                        "(reduced %e -> %e)\n"
-                                      : "fixed point: %lld adjoint iterations "
-                                        "(reduced %e -> %e)\n"),
-                          iter1, newRef, cumul});
+    Value *Fmt = B.CreatePointerCast(
+        B.CreateGlobalString(tangent ? "fixed point: %lld tangent iterations "
+                                       "(reduced %e -> %e)\n"
+                                     : "fixed point: %lld adjoint iterations "
+                                       "(reduced %e -> %e)\n"),
+        T.I8P);
+    B.CreateCall(Printf, {Fmt, iter1, newRef, cumul});
   }
   if (tangent) {
     B.CreateCall(copy, {regions, nregions, snap, ConstantInt::getFalse(T.Ctx)});

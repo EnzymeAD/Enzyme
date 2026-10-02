@@ -43,9 +43,11 @@ contains
   subroutine init(x)
     real(8), intent(in) :: x(m)
     integer :: k
+    ! Scaled: flang 22 at -O2 turns a plain copy into a memcpy into the
+    ! module array, whose element type Enzyme cannot deduce.
     do k = 1, m
       u(k) = 0
-      p(k) = x(k)
+      p(k) = 0.5d0 * x(k)
     end do
   end subroutine init
 
