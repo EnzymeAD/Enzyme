@@ -1,0 +1,57 @@
+// RUN: %eopt --split-input-file --enzyme %s | FileCheck %s
+
+func.func @sinh(%x: f64) -> f64 {
+  %res = math.sinh %x : f64
+  return %res : f64
+}
+
+func.func @dsinh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @sinh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffesinh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[cosh:.+]] = math.cosh %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[cosh]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.sinh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @cosh(%x: f64) -> f64 {
+  %res = math.cosh %x : f64
+  return %res : f64
+}
+
+func.func @dcosh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @cosh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffecosh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[sinh:.+]] = math.sinh %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[sinh]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.cosh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @tanh(%x: f64) -> f64 {
+  %res = math.tanh %x : f64
+  return %res : f64
+}
+
+func.func @dtanh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @tanh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffetanh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[cosh:.+]] = math.cosh %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[cosh2:.+]] = arith.mulf %[[cosh]], %[[cosh]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[cosh2]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.tanh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

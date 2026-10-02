@@ -100,5 +100,23 @@ def : MLIRDerivative<"math", "CopySignOp", (Op $x, $y),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "CoshOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SinhF $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "SinhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (CoshF $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "TanhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), (MulF(CoshF $x):$c, $c))
+                    ]
+                  >;
+
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
