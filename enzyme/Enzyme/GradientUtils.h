@@ -107,6 +107,8 @@ typedef std::pair<const llvm::Value *, QueryType> UsageKey;
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
+extern llvm::cl::opt<bool> EnzymeSeparateCompilation;
+extern llvm::cl::opt<std::string> EnzymeImportVariants;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
 extern llvm::cl::opt<bool> EnzymeRematerialize;
 }
@@ -545,10 +547,54 @@ public:
       TypeAnalysis &TA, llvm::Constant *F, DerivativeMode mode,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
 
+  //! Whether derivatives of \p F are expected to be provided by another
+  //! module under separate compilation (\p F has no body here).
+  static bool usesExternalDerivative(llvm::Function *F,
+                                     llvm::TargetLibraryInfo &TLI);
+
+  //! Activity with which argument \p i of \p call is passed. Under separate
+  //! compilation, a parameter the callee declares "enzyme_inactive" gets no
+  //! shadow even when the callee's derivative comes from another module.
+  DIFFE_TYPE getCallArgDiffeType(llvm::CallBase &call, unsigned i,
+                                 bool foreignFunction) const;
+
+  //! Linker-visible name of the shadow (derivative table) of \p F under
+  //! separate compilation. Every assumption the derivative is built under is
+  //! part of the name, so a mismatch between modules is a link error.
+  static std::string
+  externalShadowName(llvm::Function *F, DerivativeMode mode,
+                     bool runtimeActivity, bool strongZero, unsigned width,
+                     bool AtomicAdd,
+                     const std::vector<bool> &notOverwritten = {});
+
+  //! Under separate compilation with -enzyme-import-variants: of the
+  //! derivatives of \p F other modules export (for this mode and
+  //! conventions), the one assuming the most arguments not overwritten after
+  //! the call that \p overwritten (this call's own analysis) allows; empty
+  //! (every argument may be overwritten) if none.
+  //! The derivative table of \p fn, defined in another module, for a call
+  //! whose arguments \p overwritten may be overwritten afterwards (the
+  //! variant chosen by chooseExternalVariant).
+  llvm::Constant *
+  getExternalCalleeShadow(llvm::Function *fn,
+                          const std::vector<bool> &overwritten) {
+    auto kept = chooseExternalVariant(fn, mode, runtimeActivity, strongZero,
+                                      width, overwritten);
+    return GetOrCreateShadowFunction(RequestContext(), Logic, TLI, TA, fn, mode,
+                                     runtimeActivity, strongZero, width,
+                                     AtomicAdd, kept);
+  }
+
+  static std::vector<bool>
+  chooseExternalVariant(llvm::Function *F, DerivativeMode mode,
+                        bool runtimeActivity, bool strongZero, unsigned width,
+                        const std::vector<bool> &overwritten);
+
   static llvm::Constant *GetOrCreateShadowFunction(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Function *F, DerivativeMode mode,
-      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
+      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
+      const std::vector<bool> &notOverwritten = {});
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,

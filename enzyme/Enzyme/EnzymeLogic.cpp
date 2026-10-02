@@ -1308,18 +1308,25 @@ std::string to_string(Function &F, const std::vector<bool> &us) {
   return s + "}";
 }
 
-//! assuming not top level
+//! assuming not top level; \p tys, if given, are the activities of the
+//! arguments (a shadow for duplicated ones), otherwise every non-floating
+//! argument is duplicated.
 std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
 getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
-                                      DIFFE_TYPE retType) {
+                                      DIFFE_TYPE retType,
+                                      ArrayRef<DIFFE_TYPE> tys) {
   SmallVector<Type *, 4> args;
   SmallVector<Type *, 4> outs;
+  size_t i = 0;
   for (auto &argType : called->params()) {
     args.push_back(argType);
 
-    if (!argType->isFPOrFPVectorTy()) {
+    if (tys.empty() ? !argType->isFPOrFPVectorTy()
+                    : (tys[i] == DIFFE_TYPE::DUP_ARG ||
+                       tys[i] == DIFFE_TYPE::DUP_NONEED)) {
       args.push_back(argType);
     }
+    i++;
   }
 
   auto ret = called->getReturnType();

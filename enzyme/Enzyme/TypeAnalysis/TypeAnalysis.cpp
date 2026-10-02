@@ -3433,9 +3433,10 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           }
           // If we and a constant against an integer, the result remains an
           // integer
+          // (AnalysisLHS/RHS are Data0() of the operands, so a scalar's type
+          // is at index {}.)
           if (!isNegMask && Args[i] && isa<ConstantInt>(Args[i]) &&
-              (i == 0 ? AnalysisRHS : AnalysisLHS).Inner0() ==
-                  BaseType::Integer) {
+              (i == 0 ? AnalysisRHS : AnalysisLHS)[{}] == BaseType::Integer) {
             Result = TypeTree(BaseType::Integer);
           }
         }
@@ -4125,6 +4126,25 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     updateAnalysis(
         &I, TypeTree(ConcreteType(I.getType()->getScalarType())).Only(-1, &I),
         &I);
+    // No direction check as always valid
+    updateAnalysis(
+        I.getOperand(0),
+        TypeTree(ConcreteType(I.getOperand(0)->getType()->getScalarType()))
+            .Only(-1, &I),
+        &I);
+    return;
+
+  case Intrinsic::lround:
+  case Intrinsic::llround:
+  case Intrinsic::lrint:
+  case Intrinsic::llrint:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::fptosi_sat:
+  case Intrinsic::fptoui_sat:
+#endif
+    // A floating point value converted to an integer, as with fptosi.
+    // No direction check as always valid
+    updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     // No direction check as always valid
     updateAnalysis(
         I.getOperand(0),

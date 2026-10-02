@@ -4529,7 +4529,7 @@ public:
         args.push_back(lookup(argi, Builder2));
       }
 
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      auto argTy = gutils->getCallArgDiffeType(call, i, foreignFunction);
       argsInverted.push_back(argTy);
 
       if (argTy == DIFFE_TYPE::CONSTANT) {
@@ -4554,7 +4554,10 @@ public:
             nowrite_shadows.back() = true;
           }
         }
-        if (isAllocationCall(baseOp, gutils->TLI)) {
+        // A call through an external derivative passes a shadow for every
+        // non-floating argument, including constant allocations.
+        if (isAllocationCall(baseOp, gutils->TLI) &&
+            !(foreignFunction && gutils->isConstantValue(baseOp))) {
           assert(!gutils->isConstantValue(baseOp));
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModeGradient ||
@@ -5227,6 +5230,18 @@ public:
     }
   }
 
+  /// Under separate compilation with -enzyme-import-variants, the callee of
+  /// \p call whose derivative another module exports in variants keyed by
+  /// the arguments not overwritten after the call.
+  llvm::Function *externalCalleeWithVariants(llvm::CallInst &call) {
+    if (EnzymeImportVariants.empty() || gutils->getWidth() != 1)
+      return nullptr;
+    auto F = getFunctionFromCall(&call);
+    if (F && GradientUtils::usesExternalDerivative(F, gutils->TLI))
+      return F;
+    return nullptr;
+  }
+
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
@@ -5240,6 +5255,12 @@ public:
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     Module &M = *call.getParent()->getParent()->getParent();
+
+    // Under separate compilation, a callee without a body in this module is
+    // differentiated through the derivative table its defining module
+    // exports, exactly like an indirect call.
+    if (called && GradientUtils::usesExternalDerivative(called, gutils->TLI))
+      called = nullptr;
 
     bool foreignFunction = called == nullptr;
 
@@ -5313,8 +5334,7 @@ public:
         if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
-        auto argTy =
-            gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+        auto argTy = gutils->getCallArgDiffeType(call, i, foreignFunction);
 
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
@@ -5588,7 +5608,7 @@ public:
           structAttrs[pre_args.size()].push_back(attr);
         }
 
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      auto argTy = gutils->getCallArgDiffeType(call, i, foreignFunction);
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;
@@ -5731,7 +5751,10 @@ public:
             nowrite_shadows.back() = true;
           }
         }
-        if (isAllocationCall(baseOp, gutils->TLI)) {
+        // A call through an external derivative passes a shadow for every
+        // non-floating argument, including constant allocations.
+        if (isAllocationCall(baseOp, gutils->TLI) &&
+            !(foreignFunction && gutils->isConstantValue(baseOp))) {
           assert(!gutils->isConstantValue(baseOp));
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModeGradient ||
@@ -5836,7 +5859,10 @@ public:
              << " for use as function in " << call;
           EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
-        newcalled = gutils->invertPointerM(callval, BuilderZ);
+        if (auto ext = externalCalleeWithVariants(call))
+          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        else
+          newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (Mode != DerivativeMode::ReverseModeGradient)
           ErrorIfRuntimeInactive(
@@ -5851,7 +5877,7 @@ public:
         DIFFE_TYPE subretType = whatType(call.getType(), Mode,
                                          /*intAreConstant*/ false, seen);
         auto res = getDefaultFunctionTypeForAugmentation(
-            ft, /*returnUsed*/ true, /*subretType*/ subretType);
+            ft, /*returnUsed*/ true, /*subretType*/ subretType, argsInverted);
         FT = FunctionType::get(
             StructType::get(newcalled->getContext(), res.second), res.first,
             ft->isVarArg());
@@ -6358,13 +6384,17 @@ public:
           newcalled =
               UndefValue::get(gutils->getShadowType(callval->getType()));
       } else {
-        newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
+        if (auto ext = externalCalleeWithVariants(call))
+          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        else
+          newcalled =
+              lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
 
       auto ft = call.getFunctionType();
 
-      auto res =
-          getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType);
+      auto res = getDefaultFunctionTypeForGradient(
+          ft, /*subretType*/ subretType, argsInverted);
       // TODO Note there is empty tape added here, replace with generic
       res.first.push_back(getInt8PtrTy(newcalled->getContext()));
       FT = FunctionType::get(
