@@ -4104,6 +4104,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::sinh:
   case Intrinsic::cosh:
   case Intrinsic::tanh:
+  case Intrinsic::tan:
+  case Intrinsic::asin:
+  case Intrinsic::acos:
+  case Intrinsic::atan:
 #endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
@@ -4132,6 +4136,26 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
             .Only(-1, &I),
         &I);
     return;
+
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::sincos: {
+    // {sin(x), cos(x)}: two values of the type of x.
+    // No direction check as always valid
+    Type *T = I.getOperand(0)->getType()->getScalarType();
+    updateAnalysis(I.getOperand(0), TypeTree(ConcreteType(T)).Only(-1, &I), &I);
+    if (!I.getOperand(0)->getType()->isVectorTy()) {
+      auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
+      auto *ST = cast<StructType>(I.getType());
+      auto *SL = DL.getStructLayout(ST);
+      TypeTree res;
+      for (unsigned i = 0; i < 2; i++)
+        res |= TypeTree(ConcreteType(T))
+                   .Only((int)(size_t)SL->getElementOffset(i), &I);
+      updateAnalysis(&I, res, &I);
+    }
+    return;
+  }
+#endif
 
   case Intrinsic::lround:
   case Intrinsic::llround:
@@ -4219,6 +4243,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nvvm_fmin_d:
   case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::atan2:
+#endif
     // No direction check as always valid
     updateAnalysis(
         &I, TypeTree(ConcreteType(I.getType()->getScalarType())).Only(-1, &I),
