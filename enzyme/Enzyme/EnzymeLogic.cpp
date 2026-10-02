@@ -4763,6 +4763,16 @@ Function *EnzymeLogic::CreateForwardDiff(
     EmitNoDerivativeError(ss.str(), todiff, context);
   }
 
+  if (mode == DerivativeMode::ForwardMode && !returnUsed &&
+      isCheckpointLoop(todiff)) {
+    if (Function *F = createCheckpointForward(
+            *this, context, todiff, retType, constant_args, TA, oldTypeInfo,
+            runtimeActivity, strongZero, width))
+      return insert_or_assign2<ForwardCacheKey, Function *>(
+                 ForwardCachedFunctions, tup, F)
+          ->second;
+  }
+
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : constant_args) {

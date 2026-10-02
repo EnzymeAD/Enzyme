@@ -62,6 +62,16 @@ llvm::Function *createCheckpointAugmented(
 /// The reverse pass (`ReverseModeGradient`, taking the tape last) or the
 /// combined forward and reverse pass (`ReverseModeCombined`) of a
 /// checkpointed loop.
+/// The forward-mode derivative of a fixed-point loop: the tangent iterated at
+/// the converged state. Null for other loops, which forward mode
+/// differentiates through.
+llvm::Function *
+createCheckpointForward(EnzymeLogic &Logic, RequestContext context,
+                        llvm::Function *loop, DIFFE_TYPE retType,
+                        llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                        TypeAnalysis &TA, const FnTypeInfo &typeInfo,
+                        bool runtimeActivity, bool strongZero, unsigned width);
+
 llvm::Function *createCheckpointGradient(EnzymeLogic &Logic,
                                          RequestContext context,
                                          const ReverseCacheKey &key,

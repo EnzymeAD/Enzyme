@@ -1,0 +1,95 @@
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
+
+; Forward mode over __enzyme_fixed_point: the derivative of the loop function
+; runs the loop, keeps a snapshot at the converged state, and iterates the
+; forward derivative of the step from that snapshot, with the shadow of the
+; state @u from zero, until the shadow stops changing.
+
+@p = global double 2.000000e-01, align 8
+@u = global [4 x double] zeroinitializer, align 16
+@enzyme_fp_state = external global i32, align 4
+@enzyme_fp_reduction = external global i32, align 4
+@enzyme_const = external global i32, align 4
+
+; u[k] = 0.5 * u[k] * u[(k+1)%4] + p, while some entry changes by more than tol.
+define i32 @step(i64 %i, ptr %tol) {
+entry:
+  %t = load double, ptr %tol, align 8
+  br label %for.body
+
+for.body:
+  %k = phi i64 [ 0, %entry ], [ %k.next, %for.body ]
+  %err = phi double [ 0.000000e+00, %entry ], [ %err.next, %for.body ]
+  %k.next = add nuw nsw i64 %k, 1
+  %k1 = and i64 %k.next, 3
+  %a.p = getelementptr inbounds double, ptr @u, i64 %k
+  %b.p = getelementptr inbounds double, ptr @u, i64 %k1
+  %a = load double, ptr %a.p, align 8
+  %b = load double, ptr %b.p, align 8
+  %pp = load double, ptr @p, align 8
+  %ab = fmul double %a, %b
+  %h = fmul double %ab, 5.000000e-01
+  %new = fadd double %h, %pp
+  store double %new, ptr %a.p, align 8
+  %d = fsub double %new, %a
+  %ad = call double @llvm.fabs.f64(double %d)
+  %err.next = call double @llvm.maxnum.f64(double %err, double %ad)
+  %cmp = icmp ult i64 %k.next, 4
+  br i1 %cmp, label %for.body, label %for.end
+
+for.end:
+  %go = fcmp ogt double %err.next, %t
+  %r = zext i1 %go to i32
+  ret i32 %r
+}
+
+declare double @llvm.fabs.f64(double)
+declare double @llvm.maxnum.f64(double, double)
+
+define double @f(ptr %tol) {
+entry:
+  %0 = load i32, ptr @enzyme_fp_state, align 4
+  %1 = load i32, ptr @enzyme_fp_reduction, align 4
+  call void (ptr, ...) @__enzyme_fixed_point(ptr @step, i32 %0, ptr @u, i64 32, i32 %1, double 1.000000e-20, ptr %tol)
+  %2 = load double, ptr @u, align 8
+  ret double %2
+}
+
+declare void @__enzyme_fixed_point(ptr, ...)
+
+define double @df(ptr %tol) {
+entry:
+  %0 = load i32, ptr @enzyme_const, align 4
+  %r = call double (ptr, ...) @__enzyme_fwddiff(ptr @f, i32 %0, ptr %tol)
+  ret double %r
+}
+
+declare double @__enzyme_fwddiff(ptr, ...)
+
+; CHECK: define internal double @fwddiffef(ptr %tol)
+; CHECK:   call void @fwddiffeenzyme.ckpt.fixedpoint.step(i64 0, i64 1000, ptr null, double 0x3BC79CA10C924223, ptr @u, ptr @u_shadow, i64 32, ptr %tol)
+
+; CHECK: define internal void @fwddiffeenzyme.ckpt.fixedpoint.step(i64 %0, i64 %1, ptr %2, double %3, ptr %4, ptr %5, i64 %6, ptr %7)
+; CHECK:   %handle = call ptr @__enzyme_fp_fwd(ptr %env, ptr @enzyme.ckpt.primal_while.enzyme.ckpt.fixedpoint.step.c, ptr %regions, i64 2, i64 %{{.*}})
+; CHECK:   %states = alloca [1 x { ptr, i64, i32, i32 }]
+; CHECK:   store ptr %5, ptr
+; CHECK:   store i64 %6, ptr
+; CHECK:   call void @__enzyme_fp_tan(ptr %handle, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.tangent.enzyme.ckpt.fixedpoint.step.c, ptr %states, i64 1, double %3, i64 %1, ptr %2)
+; CHECK-NEXT:   ret void
+
+; CHECK: define internal void @enzyme.ckpt.tangent.enzyme.ckpt.fixedpoint.step.c(ptr %0, i64 %1)
+; CHECK:   call void @fwddiffestep(i64 %1, ptr %{{.*}})
+
+; The shadow of the state starts from zero; each pass starts from the
+; snapshot, and is measured by the change of the shadow; the primal state is
+; the snapshot again after the last pass.
+; CHECK: define internal void @__enzyme_fp_tan(
+; CHECK:   %previous = call ptr @malloc(i64 %3)
+; CHECK: loop:
+; CHECK:   call void @__enzyme_fp_copy(ptr %6, i64 %7, ptr %previous, i1 true)
+; CHECK:   call void @__enzyme_fp_copy(ptr %1, i64 %2, ptr %snapshot, i1 false)
+; CHECK:   call void %5(ptr %4, i64 %last)
+; CHECK:   %sqnorm = call double @__enzyme_fp_sqnorm(ptr %6, i64 %7, ptr %previous)
+; CHECK: done:
+; CHECK:   call void @__enzyme_fp_copy(ptr %1, i64 %2, ptr %snapshot, i1 false)
+; CHECK:   call void @free(ptr %previous)
