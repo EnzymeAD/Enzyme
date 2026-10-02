@@ -56,6 +56,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/LoopSimplify.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
@@ -1258,6 +1259,32 @@ static bool outlineAnnotatedLoops(Module &M) {
     outlineAnnotatedLoop(marker);
     changed = true;
   }
+}
+
+bool protectAnnotatedLoops(Module &M) {
+  bool changed = false;
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    SmallVector<CallInst *, 2> markers;
+    for (Instruction &I : instructions(F))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (isLoopAnnotation(getFunctionFromCall(CI)))
+          markers.push_back(CI);
+    if (markers.empty())
+      continue;
+    // A loop of a known, small trip count would be fully unrolled, leaving
+    // its annotation copied outside any loop.
+    DominatorTree DT(F);
+    LoopInfo LI(DT);
+    for (CallInst *CI : markers)
+      if (Loop *L = LI.getLoopFor(CI->getParent()))
+        if (!findStringMetadataForLoop(L, "llvm.loop.unroll.disable")) {
+          addStringMetadataToLoop(L, "llvm.loop.unroll.disable", 1);
+          changed = true;
+        }
+  }
+  return changed;
 }
 
 bool lowerCheckpointMarkers(Module &M) {

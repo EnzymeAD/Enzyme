@@ -3118,6 +3118,20 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 #define EnableModuleInliner false
 } // namespace llvm
 
+namespace {
+/// Keeps the loops marked for checkpointing or as fixed points whole until
+/// Enzyme outlines them.
+class ProtectAnnotatedLoopsNewPM final
+    : public PassInfoMixin<ProtectAnnotatedLoopsNewPM> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    return protectAnnotatedLoops(M) ? PreservedAnalyses::none()
+                                    : PreservedAnalyses::all();
+  }
+  static bool isRequired() { return true; }
+};
+} // namespace
+
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
   auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
@@ -3204,7 +3218,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // We should register at vectorizer start for consistency, however,
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
-  PB.registerPipelineStartEPCallback(loadNVVM);
+  auto pipelineStart = [](ModulePassManager &MPM, OptimizationLevel) {
+    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+    if (EnzymeEnable)
+      MPM.addPass(ProtectAnnotatedLoopsNewPM());
+  };
+  PB.registerPipelineStartEPCallback(pipelineStart);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {

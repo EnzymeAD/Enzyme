@@ -47,6 +47,11 @@ class Module;
 /// internal loop function carrying the `enzyme_checkpoint` attribute.
 bool lowerCheckpointMarkers(llvm::Module &M);
 
+/// Keep the loops marked by `__enzyme_set_checkpointing` or
+/// `__enzyme_set_fixed_point` from being unrolled before Enzyme outlines
+/// them; run at the start of the pipeline.
+bool protectAnnotatedLoops(llvm::Module &M);
+
 /// Whether `F` is a loop function made by `lowerCheckpointMarkers`.
 bool isCheckpointLoop(const llvm::Function *F);
 
