@@ -27,6 +27,14 @@
 //   !dir$ enzyme custom_rule [(proc)] (forward=f)
 //                                        __enzyme_register_derivative {p, f}
 //
+// and, in front of a DO or DO WHILE loop, which flang lowers to a marker call
+// at the start of the loop body (`fir.directive`):
+//
+//   !dir$ enzyme fixed_point(var...) [reduction(r)] [max_iters(n)]
+//                            [control(proc)]
+//                                        __enzyme_set_fixed_point(r, n, proc,
+//                                        [&var, bytes]...) in its place
+//
 //===----------------------------------------------------------------------===//
 
 #include "FlangDirectives.h"
@@ -34,10 +42,16 @@
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
+#include "flang/Optimizer/Dialect/Support/FIRContext.h"
+#include "flang/Optimizer/Dialect/Support/KindMapping.h"
+#include "flang/Optimizer/Support/DataLayout.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
 
@@ -203,6 +217,161 @@ static LogicalResult lowerDirective(ModuleOp module, Operation *subject,
   return emitError(loc) << "unknown enzyme directive " << keyword;
 }
 
+// The address and size in bytes of the data of a fixed_point variable, as
+// flang evaluated it in front of the loop: the address of a variable of a
+// static size, or the descriptor of one (an allocatable or pointer as its
+// target's, an assumed-shape or automatic array as itself).
+static LogicalResult getStateRange(OpBuilder &b, Location loc, Value var,
+                                   const DataLayout &dl,
+                                   const fir::KindMapping &kindMap, Value &addr,
+                                   Value &bytes) {
+  Type ptrTy = LLVM::LLVMPointerType::get(b.getContext());
+  Type i64 = b.getI64Type();
+  Type ty = var.getType();
+  if (isa<fir::ReferenceType, fir::HeapType, fir::PointerType>(ty)) {
+    Type eleTy = fir::dyn_cast_ptrEleTy(ty);
+    auto size = fir::getTypeSizeAndAlignment(loc, eleTy, dl, kindMap);
+    if (!size || fir::hasDynamicSize(eleTy))
+      return emitError(loc)
+             << "enzyme fixed_point: the size of " << ty << " is not known";
+    addr = fir::ConvertOp::create(b, loc, ptrTy, var);
+    bytes = arith::ConstantIntOp::create(b, loc, i64, size->first);
+    return success();
+  }
+  if (auto boxTy = dyn_cast<fir::BaseBoxType>(ty)) {
+    if (boxTy.isAssumedRank())
+      return emitError(loc) << "enzyme fixed_point: an assumed-rank variable "
+                               "is not supported";
+    unsigned rank = fir::getBoxRank(boxTy);
+    addr = fir::ConvertOp::create(
+        b, loc, ptrTy,
+        fir::BoxAddrOp::create(b, loc, boxTy.getBaseAddressType(), var));
+    bytes = fir::BoxEleSizeOp::create(b, loc, i64, var);
+    Type idx = b.getIndexType();
+    for (unsigned d = 0; d < rank; ++d) {
+      Value dim = arith::ConstantIndexOp::create(b, loc, d);
+      auto dims = fir::BoxDimsOp::create(b, loc, idx, idx, idx, var, dim);
+      Value extent = arith::IndexCastOp::create(b, loc, i64, dims.getResult(1));
+      bytes = arith::MulIOp::create(b, loc, bytes, extent);
+    }
+    return success();
+  }
+  return emitError(loc) << "enzyme fixed_point: a variable of type " << ty
+                        << " is not supported";
+}
+
+// `!dir$ enzyme fixed_point`: replace the marker flang put at the start of
+// the loop body with
+//   __enzyme_set_fixed_point(double reduction, i64 max_iters, ptr control,
+//                            [ptr state, i64 bytes]...)
+// whose operands Enzyme wants from in front of the loop: they are computed
+// right after the last of the variables, which flang evaluated in front of
+// the loop. A missing reduction or max_iters is -1 (Enzyme's default), a
+// missing control null (Enzyme's test).
+static LogicalResult lowerFixedPoint(ModuleOp module, fir::CallOp marker,
+                                     DictionaryAttr args, DominanceInfo &dom) {
+  Location loc = marker.getLoc();
+  MLIRContext *ctx = module.getContext();
+  if (marker.getArgs().empty())
+    return emitError(loc) << "enzyme fixed_point needs a variable";
+  std::optional<DataLayout> dl =
+      fir::support::getOrSetMLIRDataLayout(module, /*allowDefaultLayout=*/true);
+  fir::KindMapping kindMap = fir::getKindMapping(module);
+
+  Operation *last = nullptr;
+  for (Value v : marker.getArgs())
+    if (Operation *def = v.getDefiningOp())
+      if (!last || dom.properlyDominates(last, def))
+        last = def;
+  OpBuilder b(ctx);
+  if (last)
+    b.setInsertionPointAfter(last);
+  else
+    b.setInsertionPointToStart(
+        &marker->getParentOfType<func::FuncOp>().getBody().front());
+
+  Type ptrTy = LLVM::LLVMPointerType::get(ctx);
+  Type f64 = b.getF64Type(), i64 = b.getI64Type();
+  double reduction = -1.0;
+  if (Attribute r = args ? args.get("reduction") : Attribute()) {
+    if (auto f = dyn_cast<FloatAttr>(r))
+      reduction = f.getValueAsDouble();
+    else if (auto i = dyn_cast<IntegerAttr>(r))
+      reduction = static_cast<double>(i.getInt());
+    else
+      return emitError(loc) << "enzyme fixed_point: reduction must be a number";
+  }
+  int64_t maxIters = -1;
+  if (auto n = args ? args.getAs<IntegerAttr>("max_iters") : IntegerAttr())
+    maxIters = n.getInt();
+  SmallVector<Value> operands{
+      arith::ConstantFloatOp::create(b, loc, cast<FloatType>(f64),
+                                     APFloat(reduction)),
+      arith::ConstantIntOp::create(b, loc, i64, maxIters)};
+  if (FlatSymbolRefAttr control = getSymbolArg(args, "control")) {
+    auto fn = module.lookupSymbol<func::FuncOp>(control);
+    if (!fn)
+      return emitError(loc) << "enzyme fixed_point: control " << control
+                            << " is not a procedure";
+    Value addr = fir::AddrOfOp::create(b, loc, fn.getFunctionType(), control);
+    operands.push_back(fir::ConvertOp::create(b, loc, ptrTy, addr));
+  } else {
+    operands.push_back(LLVM::ZeroOp::create(b, loc, ptrTy));
+  }
+  for (Value v : marker.getArgs()) {
+    Value addr, bytes;
+    if (failed(getStateRange(b, loc, v, *dl, kindMap, addr, bytes)))
+      return failure();
+    operands.push_back(addr);
+    operands.push_back(bytes);
+  }
+
+  // declare void @__enzyme_set_fixed_point(double, i64, ptr, ...)
+  StringRef name = "__enzyme_set_fixed_point";
+  auto fnTy = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(ctx),
+                                          {f64, i64, ptrTy}, /*isVarArg=*/true);
+  auto callee = module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+  if (!callee) {
+    OpBuilder mb(module.getBodyRegion());
+    mb.setInsertionPointToEnd(module.getBody());
+    callee = LLVM::LLVMFuncOp::create(mb, loc, name, fnTy);
+  }
+  b.setInsertionPoint(marker);
+  LLVM::CallOp::create(b, loc, callee, operands);
+  return success();
+}
+
+// The markers flang put in loops for the loop directives, replaced and
+// removed, with the declarations of their callees.
+static LogicalResult lowerLoopDirectives(ModuleOp module) {
+  SmallVector<fir::CallOp> markers;
+  module.walk([&](fir::CallOp call) {
+    if (auto dict = call->getAttrOfType<DictionaryAttr>("fir.directive"))
+      if (dict.getAs<StringAttr>("prefix") == "enzyme")
+        markers.push_back(call);
+  });
+  DominanceInfo dom(module);
+  SetVector<Operation *> callees;
+  for (fir::CallOp marker : markers) {
+    auto dict = marker->getAttrOfType<DictionaryAttr>("fir.directive");
+    auto keyword = dict.getAs<StringAttr>("keyword");
+    if (keyword != "fixed_point")
+      return emitError(marker.getLoc())
+             << "unknown enzyme loop directive " << keyword;
+    if (failed(lowerFixedPoint(module, marker,
+                               dict.getAs<DictionaryAttr>("args"), dom)))
+      return failure();
+    if (SymbolRefAttr sym = marker.getCalleeAttr())
+      if (Operation *fn = module.lookupSymbol(sym))
+        callees.insert(fn);
+    marker->erase();
+  }
+  for (Operation *fn : callees)
+    if (SymbolTable::symbolKnownUseEmpty(fn, module))
+      fn->erase();
+  return success();
+}
+
 struct FortranDirectivesPass
     : public PassWrapper<FortranDirectivesPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FortranDirectivesPass)
@@ -214,7 +383,8 @@ struct FortranDirectivesPass
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<fir::FIROpsDialect>();
+    registry
+        .insert<fir::FIROpsDialect, arith::ArithDialect, LLVM::LLVMDialect>();
   }
 
   void runOnOperation() override {
@@ -229,6 +399,8 @@ struct FortranDirectivesPass
     for (auto [op, dict] : work)
       if (failed(lowerDirective(module, op, dict)))
         return signalPassFailure();
+    if (failed(lowerLoopDirectives(module)))
+      return signalPassFailure();
   }
 };
 
