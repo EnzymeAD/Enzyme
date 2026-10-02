@@ -119,6 +119,27 @@ subroutine user(y)
   buf = 'x'
   call ext(y, 1.0, buf)
 end subroutine
+! A name that a local of another type has too is left out (here the second
+! BLOCK's v):
+! CHECK-LABEL: define void @collide_(
+! CHECK: alloca [8 x i8], i64 1, align 1{{$}}
+! CHECK: alloca [8 x i8], i64 1, align 1, !enzyme_type ![[CHR]]
+subroutine collide()
+  character(len=8) :: w
+  w = 'b'
+  print *, w
+  block
+    character(len=8) :: v
+    v = 'a'
+    print *, v
+  end block
+  block
+    real(8) :: v(4)
+    v = 1
+    print *, v
+  end block
+end subroutine
+
 ! CHECK: declare void @ext_(ptr, ptr, ptr, i64)
 ! CHECK: ![[CHR]] = !{!"Unknown", i32 -1, ![[CHRP:[0-9]+]]}
 ! CHECK: ![[CHRP]] = !{!"Pointer", i32 -1, ![[INT:[0-9]+]]}

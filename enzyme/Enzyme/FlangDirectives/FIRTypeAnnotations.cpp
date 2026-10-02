@@ -47,6 +47,7 @@
 #include "mlir/Target/LLVMIR/LLVMTranslationInterface.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
@@ -194,8 +195,13 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
             t ? parseTypeTree(t.getValue()) : std::nullopt;
         if (!tree)
           return;
-        if (auto *inst = dyn_cast_or_null<llvm::Instruction>(
-                moduleTranslation.lookupValue(alloca.getResult())))
+        // Only on what is character storage in LLVM IR too (bytes).
+        auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
+            moduleTranslation.lookupValue(alloca.getResult()));
+        llvm::Type *ty = inst ? inst->getAllocatedType() : nullptr;
+        if (auto *at = dyn_cast_or_null<llvm::ArrayType>(ty))
+          ty = at->getElementType();
+        if (ty && ty->isIntegerTy(8))
           inst->setMetadata("enzyme_type",
                             typeTreeToMD(*tree, inst->getContext()));
       });
@@ -780,14 +786,28 @@ struct FIRTypeAnnotationsPass
     // name, so the function lists its variables by name.
     if (annotateLocals)
       for (auto fn : module.getOps<func::FuncOp>()) {
-        SmallVector<NamedAttribute> locals;
+        // Names are not unique in a function (e.g. after inlining, ICON's
+        // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of
+        // the same name): a name that any other local has is left out.
+        llvm::StringSet<> chars, others;
         fn.walk([&](fir::AllocaOp alloca) {
           auto name = alloca.getBindcName();
-          if (name && isa<fir::CharacterType>(
-                          fir::unwrapSequenceType(alloca.getInType())))
+          if (!name)
+            return;
+          if (isa<fir::CharacterType>(
+                  fir::unwrapSequenceType(alloca.getInType())))
+            chars.insert(*name);
+          else
+            others.insert(*name);
+        });
+        SmallVector<NamedAttribute> locals;
+        for (auto &name : chars)
+          if (!others.contains(name.getKey()))
             locals.push_back(NamedAttribute(
-                StringAttr::get(ctx, *name),
+                StringAttr::get(ctx, name.getKey()),
                 StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}")));
+        llvm::sort(locals, [](const NamedAttribute &a, const NamedAttribute &b) {
+          return a.getName().strref() < b.getName().strref();
         });
         if (!locals.empty())
           fn->setAttr(kLocalTypesAttr, DictionaryAttr::get(ctx, locals));
