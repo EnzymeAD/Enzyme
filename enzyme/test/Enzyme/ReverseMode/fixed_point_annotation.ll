@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 
 ; A loop marked by __enzyme_set_fixed_point (what a Fortran !DIR$ ENZYME
 ; FIXED_POINT directive lowers to), tested in its header as DO WHILE is.

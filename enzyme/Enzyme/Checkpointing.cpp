@@ -723,7 +723,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   LLVMContext &Ctx = M.getContext();
   Type *I64 = Type::getInt64Ty(Ctx);
   Type *I32 = Type::getInt32Ty(Ctx);
-  auto *Ptr = PointerType::getUnqual(Ctx);
+  auto *Ptr = getInt8PtrTy(Ctx);
   DebugLoc loc = marker->getDebugLoc();
   Instruction *anchor = marker;
   auto fail = [&](const Twine &msg) {
@@ -804,7 +804,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
           markers.push_back(CI);
   for (CallInst *CI : markers)
     CI->eraseFromParent();
-  anchor = &*L->getHeader()->getFirstNonPHIIt();
+  anchor = getFirstNonPHI(L->getHeader());
   if (!fixedPoint && mode < 1)
     return true;
 
