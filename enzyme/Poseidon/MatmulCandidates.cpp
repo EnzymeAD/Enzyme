@@ -1,12 +1,12 @@
 // Matmul candidate proposal: the direct-dispatch proposer and
 // generateMatmulCandidates.
-#include "../CostModel.h"
-#include "../Evaluators.h"
-#include "../Flags.h"
-#include "../HostDispatch.h"
-#include "../Optimize.h"
-#include "../OzakiII.h"
-#include "../Utils.h"
+#include "CostModel.h"
+#include "Evaluators.h"
+#include "Flags.h"
+#include "HostDispatch.h"
+#include "Optimize.h"
+#include "OzakiII.h"
+#include "Utils.h"
 #include "MatmulInternal.h"
 
 #include "llvm/ADT/StringExtras.h"

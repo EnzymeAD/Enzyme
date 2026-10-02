@@ -1,8 +1,8 @@
 // Matmul candidate materialization: CandidateMatmul::apply.
-#include "../Flags.h"
-#include "../HostDispatch.h"
-#include "../InKernelRaise.h"
-#include "../RaiseWMMA.h"
+#include "Flags.h"
+#include "HostDispatch.h"
+#include "InKernelRaise.h"
+#include "RaiseWMMA.h"
 #include "MatmulInternal.h"
 
 #include "llvm/ADT/Twine.h"

@@ -9,7 +9,7 @@
 #include "Optimize.h"
 #include "ProfileRead.h"
 #include "RaiseWMMA.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
 #include "FPProfileName.h"
