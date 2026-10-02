@@ -118,5 +118,12 @@ def : MLIRDerivative<"math", "TanhOp", (Op $x),
                     ]
                   >;
 
+
+def : MLIRDerivative<"math", "TanOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), (MulF(CosF $x):$c, $c))
+                    ]
+                  >;
+
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;

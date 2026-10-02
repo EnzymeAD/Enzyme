@@ -181,3 +181,22 @@ func.func @dtanh(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[cosh2]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @tan(%x: f64) -> f64 {
+  %res = math.tan %x : f64
+  return %res : f64
+}
+
+func.func @dtan(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @tan(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffetan(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[cos:.+]] = math.cos %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[cos2:.+]] = arith.mulf %[[cos]], %[[cos]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[cos2]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

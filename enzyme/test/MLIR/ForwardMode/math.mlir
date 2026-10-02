@@ -55,3 +55,23 @@ func.func @dtanh(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.tanh %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @tan(%x: f64) -> f64 {
+  %res = math.tan %x : f64
+  return %res : f64
+}
+
+func.func @dtan(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @tan(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffetan(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[cos:.+]] = math.cos %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[cos2:.+]] = arith.mulf %[[cos]], %[[cos]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[cos2]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.tan %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
