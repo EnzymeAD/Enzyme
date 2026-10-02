@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -218,6 +219,7 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
   }
 
   std::mt19937_64 rng(flags::RandomSeed);
+  unsigned overflowed = 0;
   std::vector<double> Ad(mk), Bd(kn);
   std::vector<double> Ar(mk), Br(kn);
   std::vector<double> gold(mn), cand(mn);
@@ -272,6 +274,8 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
     if (std::isfinite(sampleErr)) {
       sumSampleErr += sampleErr;
       ++sampleCount;
+    } else {
+      ++overflowed;
     }
     // Domain-error estimate (call-site budget): sensitivity-weighted relative
     // output error; the ratio cancels the size/exec scaling of the bare sum.
@@ -283,8 +287,6 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
         "getMatmulAccuracyCost: unexpected all-non-finite samples");
   double acc = sumSampleErr / sampleCount;
   double dom = percentile(relSamples, confidence);
-  if (domainErrOut)
-    *domainErrOut = dom;
   if (flags::Print) {
     llvm::errs() << "DOMERR matmul in=" << fpKindName(inputPrec);
     if (inputMantBits)
@@ -311,8 +313,16 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
       if (c.minMag > 0.0 && (opMinMag == 0.0 || c.minMag < opMinMag))
         opMinMag = c.minMag;
     if (opMinMag > 0.0 && opMinMag < minSub)
-      acc += flags::ExponentPenalty.getValue();
+      overflowed = 1;
   }
+  // A format that overflowed or flushed a profiled operand is refused on the
+  // tolerance path as well, not only priced out of the budget path.
+  if (overflowed) {
+    acc += flags::ExponentPenalty.getValue();
+    dom = std::numeric_limits<double>::infinity();
+  }
+  if (domainErrOut)
+    *domainErrOut = dom;
   accCacheStore(cacheKey, acc, dom);
   return acc;
 }
@@ -349,6 +359,7 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
   }
 
   std::mt19937_64 rng(flags::RandomSeed);
+  unsigned overflowed = 0;
   std::vector<double> Ad(mk), Bd(kn), Ar(mk), Br(kn), gold(mn), cand(mn);
   double sumSampleErr = 0.0;
   unsigned sampleCount = 0;
@@ -403,6 +414,8 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
     if (std::isfinite(sampleErr)) {
       sumSampleErr += sampleErr;
       ++sampleCount;
+    } else {
+      ++overflowed;
     }
     if (sampleDen > 0.0 && std::isfinite(sampleErr / sampleDen))
       relSamples.push_back(sampleErr / sampleDen);
@@ -412,6 +425,10 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
         "getOzakiIIAccuracyCost: unexpected all-non-finite samples");
   double acc = sumSampleErr / sampleCount;
   double dom = percentile(relSamples, confidence);
+  if (overflowed) {
+    acc += flags::ExponentPenalty.getValue();
+    dom = std::numeric_limits<double>::infinity();
+  }
   if (domainErrOut)
     *domainErrOut = dom;
   if (flags::Print)

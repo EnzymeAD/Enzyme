@@ -591,8 +591,7 @@ void setUnifiedAccuracyCost(
       getFPValues(outputs, pair.value(), results, &candidate);
       for (const auto &[node, result] : zip(outputs, results)) {
         double goldVal = goldVals[node][pair.index()];
-        if (flags::StrictMode && !std::isnan(goldVal) &&
-            !std::isfinite(result)) {
+        if (std::isfinite(goldVal) && !std::isfinite(result)) {
           discardCandidate = true;
           break;
         }

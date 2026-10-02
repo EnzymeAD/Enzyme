@@ -93,8 +93,8 @@ attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 
 ; OUT16: Initial AccuracyCost: 6.746930e+01
 ; OUT16: 5.078758e+10		-46561023		All FP64(0%) + FP32(100%)
-; OUT16: INF		-46621819		All FP64(0%) + FP16(100%)
-; OUT16: NOT caching the DP table for preprocess__Z10fms_kernelPKdS0_Pd_poseidon_body: 1 of 3 frontier points have a non-finite accuracy cost
+; OUT16-NOT: FP16(100%)
+; OUT16-NOT: NOT caching the DP table
 ; OUT16: No solution found within the computation cost budget!
 ; OUT16-NOT: Applying solution
 ; OUT16-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(

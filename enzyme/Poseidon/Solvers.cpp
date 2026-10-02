@@ -1475,7 +1475,8 @@ SmallVector<SolutionStep> accuracyDPSolver(
       double accCost = pair.second;
       double rel = (baseline + accCost) / accScale;
 
-      if (rel <= errorTol) {
+      if (std::isfinite(accCost) && accCost < flags::ExponentPenalty &&
+          rel <= errorTol) {
         const bool better =
             flags::TauCheapest
                 ? (compCost < bestCompCost ||
@@ -1510,7 +1511,8 @@ SmallVector<SolutionStep> accuracyDPSolver(
       InstructionCost compCost = pair.first;
       double accCost = pair.second;
 
-      if (compCost <= flags::CompCostBudget && accCost < minAccCost) {
+      if (compCost <= flags::CompCostBudget && std::isfinite(accCost) &&
+          accCost < flags::ExponentPenalty && accCost < minAccCost) {
         minAccCost = accCost;
         bestCompCost = compCost;
       }
@@ -1636,7 +1638,8 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol) {
     double bestRel = 0.0;
     for (const auto &pair : costToAccuracyMap) {
       double rel = (baseline + pair.second) / accScale;
-      if (rel > errorTol)
+      if (!std::isfinite(pair.second) ||
+          pair.second >= flags::ExponentPenalty || rel > errorTol)
         continue;
       const bool better =
           flags::TauCheapest
