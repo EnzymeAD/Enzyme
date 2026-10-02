@@ -5334,8 +5334,7 @@ public:
         if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
-        auto argTy =
-            gutils->getCallArgDiffeType(call, i, foreignFunction);
+        auto argTy = gutils->getCallArgDiffeType(call, i, foreignFunction);
 
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
@@ -6394,9 +6393,8 @@ public:
 
       auto ft = call.getFunctionType();
 
-      auto res =
-          getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType,
-                                            argsInverted);
+      auto res = getDefaultFunctionTypeForGradient(
+          ft, /*subretType*/ subretType, argsInverted);
       // TODO Note there is empty tape added here, replace with generic
       res.first.push_back(getInt8PtrTy(newcalled->getContext()));
       FT = FunctionType::get(

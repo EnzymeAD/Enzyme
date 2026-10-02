@@ -29,6 +29,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "EnzymeSummary.h"
+#include "Utils.h"
 
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -44,10 +45,10 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
-#include <tuple>
-#include <vector>
 #include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 
 using namespace llvm;
 
@@ -110,8 +111,8 @@ StringRef adMode(StringRef Callee) {
 bool isAllocationName(StringRef N) {
   return N == "malloc" || N == "calloc" || N == "realloc" ||
          N == "aligned_alloc" || N == "posix_memalign" || N == "_Znwm" ||
-         N == "_Znam" || N.starts_with("_FortranAAllocatableAllocate") ||
-         N.starts_with("_FortranAPointerAllocate");
+         N == "_Znam" || startsWith(N, "_FortranAAllocatableAllocate") ||
+         startsWith(N, "_FortranAPointerAllocate");
 }
 
 bool touchesFloat(Instruction &I) {
@@ -168,7 +169,6 @@ json::Value signatureType(const AttributeList &AL, unsigned ArgNo) {
     return AL.getParamAttr(ArgNo, "enzyme_type").getValueAsString().str();
   return nullptr;
 }
-
 
 /// Where a pointer may point: into the memory reachable from an argument or
 /// a global (dereferences collapsed, as in ActivityAnalysis.jl's pseudo
@@ -268,7 +268,7 @@ private:
           dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
       StringRef N = Callee ? Callee->getName() : "";
       // fresh memory, and the flang runtime's own handles (I/O cookies)
-      if (!(isAllocationName(N) || N.starts_with("_Fortran")))
+      if (!(isAllocationName(N) || startsWith(N, "_Fortran")))
         R.Unknown = true;
     } else
       R.Unknown = true;
@@ -385,17 +385,17 @@ private:
       return;
     }
     StringRef N = Callee->getName();
-    if (N == "free" || N.starts_with("_FortranAAllocatableDeallocate") ||
-        N.starts_with("_FortranAPointerDeallocate"))
+    if (N == "free" || startsWith(N, "_FortranAAllocatableDeallocate") ||
+        startsWith(N, "_FortranAPointerDeallocate"))
       Frees = true;
-    if (N.starts_with("__enzyme") || isAllocationName(N) || N == "free")
+    if (startsWith(N, "__enzyme") || isAllocationName(N) || N == "free")
       return;
-    if (N.starts_with("_Fortran")) {
+    if (startsWith(N, "_Fortran")) {
       // The flang runtime: I/O of characters, integers and logicals moves no
       // floating-point data; other transfers may.
       bool NoFP = N.contains("Ascii") || N.contains("Integer") ||
                   N.contains("Logical") || N.contains("Character");
-      bool IO = N.starts_with("_FortranAio");
+      bool IO = startsWith(N, "_FortranAio");
       bool In = IO && N.contains("Input");
       bool Out = IO && N.contains("Output");
       if (IO && !In && !Out)
@@ -425,7 +425,6 @@ private:
     }
   }
 };
-
 
 /// Writes of any type (not only floating-point data), for what may be
 /// overwritten after a call: per argument and global written anywhere in the
@@ -470,9 +469,9 @@ public:
           continue;
         auto *Callee =
             dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
-        if (!Callee || Callee->getName().starts_with("_Fortran") ||
-            Callee->getName().starts_with("__enzyme") ||
-            Callee->getName().starts_with("llvm."))
+        if (!Callee || startsWith(Callee->getName(), "_Fortran") ||
+            startsWith(Callee->getName(), "__enzyme") ||
+            startsWith(Callee->getName(), "llvm."))
           continue;
         json::Array Args;
         for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
@@ -485,8 +484,8 @@ public:
           std::string Root = Ks.size() == 1 ? *Ks.begin() : "u";
           if (Root[0] == 'l')
             Root = "l";
-          Args.push_back(json::Object{{"root", Root},
-                                      {"after", writtenAfter(*CB, Ks)}});
+          Args.push_back(
+              json::Object{{"root", Root}, {"after", writtenAfter(*CB, Ks)}});
         }
         Calls.push_back(json::Object{{"callee", Callee->getName().str()},
                                      {"args", std::move(Args)}});
@@ -544,7 +543,7 @@ private:
           dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
       // fresh memory, and the flang runtime's own handles (I/O cookies)
       if (Callee && (isAllocationName(Callee->getName()) ||
-                     Callee->getName().starts_with("_Fortran")))
+                     startsWith(Callee->getName(), "_Fortran")))
         K.insert("l" + std::to_string((uintptr_t)V));
       else
         K.insert("u");
@@ -576,11 +575,10 @@ private:
       StringRef N = Callee ? Callee->getName() : "";
       if (!Callee)
         W.insert("*");
-      bool outputIO = N.starts_with("_FortranAio") && N.contains("Output");
+      bool outputIO = startsWith(N, "_FortranAio") && N.contains("Output");
       for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
         Value *A = CB->getArgOperand(k);
-        if (!A->getType()->isPointerTy() || outputIO ||
-            CB->onlyReadsMemory(k))
+        if (!A->getType()->isPointerTy() || outputIO || CB->onlyReadsMemory(k))
           continue;
         add(A);
       }
@@ -703,7 +701,8 @@ json::Value summarizeADCall(CallBase &CB, StringRef Mode) {
   bool StrongZero = false, RuntimeActivity = false;
   int64_t Width = 1;
   for (unsigned i = 1, e = CB.arg_size(); i < e; ++i) {
-    auto *G = dyn_cast<GlobalVariable>(CB.getArgOperand(i)->stripPointerCasts());
+    auto *G =
+        dyn_cast<GlobalVariable>(CB.getArgOperand(i)->stripPointerCasts());
     if (!G)
       continue;
     StringRef N = G->getName();
@@ -729,8 +728,7 @@ json::Value summarizeADCall(CallBase &CB, StringRef Mode) {
 
 llvm::AnalysisKey EnzymeSummaryNewPM::Key;
 
-PreservedAnalyses EnzymeSummaryNewPM::run(Module &M,
-                                          ModuleAnalysisManager &) {
+PreservedAnalyses EnzymeSummaryNewPM::run(Module &M, ModuleAnalysisManager &) {
   json::Object Functions, Globals;
   json::Array ADCalls;
   std::map<std::string, std::set<std::string>> Registrations;
@@ -756,14 +754,13 @@ PreservedAnalyses EnzymeSummaryNewPM::run(Module &M,
         Registrations[Kind.str()].insert(P->getName().str());
       continue;
     }
-    if (G.getName().starts_with("llvm."))
+    if (startsWith(G.getName(), "llvm."))
       continue;
     Globals[G.getName()] = json::Object{
         {"linkage", linkageName(G.getLinkage())},
         {"defined", !G.isDeclaration()},
         {"constant", G.isConstant()},
-        {"size", (int64_t)M.getDataLayout().getTypeAllocSize(
-                     G.getValueType())},
+        {"size", (int64_t)M.getDataLayout().getTypeAllocSize(G.getValueType())},
     };
   }
 
@@ -772,10 +769,8 @@ PreservedAnalyses EnzymeSummaryNewPM::run(Module &M,
     Regs[K] = toArray(S);
 
   json::Value Out = json::Object{
-      {"module", M.getModuleIdentifier()},
-      {"functions", std::move(Functions)},
-      {"ad_calls", std::move(ADCalls)},
-      {"registrations", std::move(Regs)},
+      {"module", M.getModuleIdentifier()}, {"functions", std::move(Functions)},
+      {"ad_calls", std::move(ADCalls)},    {"registrations", std::move(Regs)},
       {"globals", std::move(Globals)},
   };
 
