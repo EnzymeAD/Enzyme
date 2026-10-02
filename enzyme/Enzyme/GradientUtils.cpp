@@ -4854,17 +4854,21 @@ std::vector<bool> GradientUtils::chooseExternalVariant(
   return best;
 }
 
-/// Whether the local object \p V points into (an alloca) only ever holds
-/// constant values: what is stored or copied into it, other than by \p call,
-/// is constant. Such an object, e.g. the descriptor flang builds to pass on
-/// a section of an inactive array, carries no derivative; its shadow would
-/// hold the primal pointers.
+/// Whether the local object \p V points into (an alloca, or one reverse
+/// mode moved to the heap) only ever holds constant values: what is stored
+/// or copied into it, other than by \p call, is constant. Such an object,
+/// e.g. the descriptor flang builds to pass on a section of an inactive
+/// array, carries no derivative; its shadow would hold the primal pointers.
 static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
                                           CallBase &call) {
-  auto AI = dyn_cast<AllocaInst>(getBaseObject(V));
-  if (!AI)
+  Instruction *obj = dyn_cast<AllocaInst>(getBaseObject(V));
+  if (!obj)
+    if (auto CI = dyn_cast<CallInst>(getBaseObject(V)))
+      if (hasMetadata(CI, "enzyme_fromstack"))
+        obj = CI;
+  if (!obj)
     return false;
-  SmallVector<Value *, 4> todo = {AI};
+  SmallVector<Value *, 4> todo = {obj};
   SmallPtrSet<Value *, 8> seen;
   while (!todo.empty()) {
     auto cur = todo.pop_back_val();
@@ -4901,6 +4905,8 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
         return false;
       }
       if (I == &call)
+        continue;
+      if (isDeallocationCall(I, gutils->TLI))
         continue;
       return false;
     }
