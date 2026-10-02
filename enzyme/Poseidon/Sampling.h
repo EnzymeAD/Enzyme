@@ -54,7 +54,8 @@ void getSampledPoints(
         &valueToNodeMap,
     const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     llvm::SmallVector<llvm::MapVector<llvm::Value *, double>, 4> &sampledPoints,
-    const CancellationPlan *plan = nullptr);
+    const CancellationPlan *plan = nullptr, size_t count = 0,
+    unsigned seedOffset = 0);
 
 void getSampledPoints(
     const std::string &expr,

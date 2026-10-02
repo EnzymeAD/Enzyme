@@ -82,6 +82,9 @@ extern llvm::cl::opt<unsigned> NumSamples;
 extern llvm::cl::opt<unsigned> RandomSeed;
 extern llvm::cl::opt<unsigned> SampleLogBits;
 extern llvm::cl::opt<bool> StrictMode;
+extern llvm::cl::opt<unsigned> MinArmSamples;
+extern llvm::cl::opt<unsigned> ArmSearchFactor;
+extern llvm::cl::opt<double> MaxBrokenShare;
 extern llvm::cl::opt<double> ExponentPenalty;
 
 // Herbie and the result cache.

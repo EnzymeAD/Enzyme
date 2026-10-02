@@ -145,6 +145,22 @@ cl::opt<bool> StrictMode(
     cl::desc(
         "Discard all candidates that produce NaN or inf outputs for any input "
         "point that originally produced finite outputs"));
+cl::opt<unsigned> MinArmSamples(
+    "poseidon-min-arm-samples", cl::init(32), cl::Hidden,
+    cl::desc("Every arm of a regime-split (if) rewrite must be priced on at "
+             "least this many samples that take it, drawn from the profiled "
+             "box by rejection when the base samples miss it; a rewrite with "
+             "an arm that stays unsampled is dropped (0 = off)"));
+cl::opt<unsigned> ArmSearchFactor(
+    "poseidon-arm-search-factor", cl::init(64), cl::Hidden,
+    cl::desc("Rejection-sampling budget for an under-sampled regime-split arm, "
+             "in multiples of -poseidon-num-samples"));
+cl::opt<double> MaxBrokenShare(
+    "poseidon-max-broken-share", cl::init(0.01), cl::Hidden,
+    cl::desc("Drop a Herbie candidate whose relative error reaches 1 (wrong "
+             "sign or magnitude) on more than this share of the samples the "
+             "original gets within 1; the gradient-weighted accuracy model is "
+             "first order and cannot price such a change (negative = off)"));
 cl::opt<double> ExponentPenalty(
     "poseidon-exponent-penalty", cl::init(1e30), cl::Hidden,
     cl::desc("Penalty added to a matmul candidate's accuracy cost when the "

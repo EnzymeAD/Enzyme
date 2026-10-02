@@ -21,6 +21,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/JSON.h"
@@ -929,6 +931,57 @@ std::string getPrecondition(
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
 }
 
+namespace {
+
+using RegimeArm = std::pair<const FPNode *, bool>;
+
+void collectIfNodes(const FPNode *node, SmallPtrSetImpl<const FPNode *> &seen,
+                    SmallVectorImpl<const FPNode *> &ifs) {
+  if (!seen.insert(node).second)
+    return;
+  if (node->op == "if")
+    ifs.push_back(node);
+  for (const auto &operand : node->operands)
+    collectIfNodes(operand.get(), seen, ifs);
+}
+
+// The arms the candidate actually evaluates at `point`, following each `if` the
+// way the materialised select resolves it.
+void collectTakenArms(const FPNode *node,
+                      const MapVector<Value *, double> &point,
+                      SmallPtrSetImpl<const FPNode *> &seen,
+                      SmallVectorImpl<RegimeArm> &arms) {
+  if (!seen.insert(node).second)
+    return;
+  if (node->op != "if") {
+    for (const auto &operand : node->operands)
+      collectTakenArms(operand.get(), point, seen, arms);
+    return;
+  }
+  SmallVector<double, 1> cond;
+  getFPValues({node->operands[0].get()}, point, cond);
+  bool taken = cond[0] == 1.0;
+  arms.push_back({node, taken});
+  collectTakenArms(node->operands[0].get(), point, seen, arms);
+  collectTakenArms(node->operands[taken ? 1 : 2].get(), point, seen, arms);
+}
+
+SmallVector<RegimeArm, 4> takenArms(const FPNode *root,
+                                    const MapVector<Value *, double> &point) {
+  SmallPtrSet<const FPNode *, 32> seen;
+  SmallVector<RegimeArm, 4> arms;
+  collectTakenArms(root, point, seen, arms);
+  return arms;
+}
+
+struct ArmStats {
+  double candSum = 0.0;
+  double origSum = 0.0;
+  unsigned count = 0;
+};
+
+} // namespace
+
 void setUnifiedAccuracyCost(
     CandidateOutput &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -959,6 +1012,10 @@ void setUnifiedAccuracyCost(
 
   SmallVector<double, 4> goldVals;
   goldVals.resize(flags::NumSamples);
+  SmallVector<double, 4> origErrors;
+  origErrors.resize(flags::NumSamples);
+  SmallVector<double, 4> origVals;
+  origVals.resize(flags::NumSamples);
 
   double origCost = 0.0;
   double sum = 0.0;
@@ -973,6 +1030,8 @@ void setUnifiedAccuracyCost(
     getFPValues({node.get()}, pair.value(), results);
     double realVal = results[0];
     double error = sampleError(goldVal, realVal);
+    origErrors[pair.index()] = error;
+    origVals[pair.index()] = realVal;
     if (!std::isnan(error)) {
       sum += error;
       ++count;
@@ -1003,13 +1062,32 @@ void setUnifiedAccuracyCost(
     std::shared_ptr<FPNode> parsedNode =
         parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
+    SmallVector<const FPNode *, 2> ifNodes;
+    if (flags::MinArmSamples > 0) {
+      SmallPtrSet<const FPNode *, 32> seen;
+      collectIfNodes(parsedNode.get(), seen, ifNodes);
+    }
+    std::map<RegimeArm, ArmStats> armStats;
+    for (const FPNode *ifNode : ifNodes) {
+      armStats[{ifNode, true}];
+      armStats[{ifNode, false}];
+    }
+
     double sum = 0.0;
     unsigned count = 0;
+    unsigned broken = 0;
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 1> results;
       getFPValues({parsedNode.get()}, pair.value(), results);
       double realVal = results[0];
       double goldVal = goldVals[pair.index()];
+      if (std::isfinite(goldVal) && goldVal != 0.0) {
+        double origRel =
+            std::fabs(origVals[pair.index()] - goldVal) / std::fabs(goldVal);
+        double candRel = std::fabs(realVal - goldVal) / std::fabs(goldVal);
+        if (origRel < 1.0 && !(candRel < 1.0))
+          ++broken;
+      }
 
       if (flags::StrictMode && !std::isnan(goldVal) && std::isnan(realVal)) {
         discardCandidate = true;
@@ -1020,6 +1098,14 @@ void setUnifiedAccuracyCost(
       if (!std::isnan(error)) {
         sum += error;
         ++count;
+        double origError = origErrors[pair.index()];
+        if (!ifNodes.empty() && !std::isnan(origError))
+          for (const RegimeArm &arm : takenArms(parsedNode.get(), pair.value())) {
+            ArmStats &st = armStats[arm];
+            st.candSum += error;
+            st.origSum += origError;
+            ++st.count;
+          }
       }
     }
     if (!discardCandidate) {
@@ -1028,6 +1114,95 @@ void setUnifiedAccuracyCost(
       } else {
         candCost = sum / count;
       }
+    }
+    if (!discardCandidate && flags::MaxBrokenShare >= 0.0 &&
+        broken > flags::MaxBrokenShare * sampledPoints.size()) {
+      if (flags::Print)
+        llvm::errs() << "[poseidon] dropping candidate: relative error >= 1 on "
+                     << broken << " of " << sampledPoints.size()
+                     << " samples: " << candidate.expr.substr(0, 120) << "\n";
+      discardCandidate = true;
+    }
+
+    // Uniform marginal sampling weights each regime by its share of the
+    // profiled box, which need not be its share of the workload: correlated
+    // inputs can put most of the run in an arm the box almost never reaches.
+    // Price every arm on its own samples and charge the worst arm's excess
+    // over the original.
+    if (!discardCandidate && !ifNodes.empty()) {
+      auto starved = [&] {
+        for (const auto &kv : armStats)
+          if (kv.second.count < flags::MinArmSamples)
+            return true;
+        return false;
+      };
+      size_t budget = static_cast<size_t>(flags::ArmSearchFactor) *
+                      flags::NumSamples.getValue();
+      size_t drawn = 0;
+      unsigned round = 0;
+      std::shared_ptr<FPNode> origNode = valueToNodeMap[CO.oldOutput];
+      while (starved() && drawn < budget) {
+        SmallVector<MapVector<Value *, double>, 4> extra;
+        getSampledPoints(CO.subgraph->inputs.getArrayRef(), valueToNodeMap,
+                         symbolToValueMap, extra, nullptr,
+                         flags::NumSamples.getValue(), ++round);
+        if (extra.empty())
+          break;
+        drawn += extra.size();
+        for (const auto &point : extra) {
+          SmallVector<RegimeArm, 4> arms = takenArms(parsedNode.get(), point);
+          bool wanted = false;
+          for (const RegimeArm &arm : arms)
+            if (armStats[arm].count < flags::MinArmSamples)
+              wanted = true;
+          if (!wanted)
+            continue;
+          SmallVector<double, 1> r;
+          getMPFRValues({origNode.get()}, point, r, true, 53);
+          double goldVal = r[0];
+          getFPValues({origNode.get()}, point, r);
+          double origError = sampleError(goldVal, r[0]);
+          getFPValues({parsedNode.get()}, point, r);
+          double error = sampleError(goldVal, r[0]);
+          if (std::isnan(error) || std::isnan(origError))
+            continue;
+          for (const RegimeArm &arm : arms) {
+            ArmStats &st = armStats[arm];
+            if (st.count >= flags::MinArmSamples)
+              continue;
+            st.candSum += error;
+            st.origSum += origError;
+            ++st.count;
+          }
+        }
+      }
+
+      double worst = candCost;
+      std::string armReport;
+      raw_string_ostream os(armReport);
+      for (const FPNode *ifNode : ifNodes)
+        for (bool taken : {false, true}) {
+        const ArmStats &st = armStats[{ifNode, taken}];
+        os << " " << (taken ? "then" : "else") << ":" << st.count;
+        if (st.count)
+          os << ":" << format("%.3e", st.candSum / st.count) << "/"
+             << format("%.3e", st.origSum / st.count);
+        if (st.count < flags::MinArmSamples) {
+          discardCandidate = true;
+          continue;
+        }
+        worst = std::max(worst, origCost + (st.candSum - st.origSum) / st.count);
+        }
+      if (flags::Print)
+        llvm::errs() << "[poseidon] regime-split candidate: arms (samples:cand/"
+                        "orig mean error)"
+                     << os.str() << "; " << drawn << " extra draws; box cost "
+                     << format("%.3e", candCost) << " -> "
+                     << (discardCandidate ? std::string("dropped (unpriced arm)")
+                                          : formatv("{0:e}", worst).str())
+                     << "; " << candidate.expr.substr(0, 120) << "\n";
+      if (!discardCandidate)
+        candCost = worst;
     }
 
     if (!discardCandidate) {

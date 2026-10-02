@@ -103,9 +103,10 @@ void getSampledPoints(
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<MapVector<Value *, double>, 4> &sampledPoints,
-    const CancellationPlan *plan) {
+    const CancellationPlan *plan, size_t count, unsigned seedOffset) {
+  const size_t numSamples = count ? count : flags::NumSamples.getValue();
   std::default_random_engine gen;
-  gen.seed(flags::RandomSeed);
+  gen.seed(flags::RandomSeed + seedOffset);
   std::uniform_real_distribution<> dis;
 
   MapVector<Value *, SmallVector<double, 2>> hypercube;
@@ -134,7 +135,7 @@ void getSampledPoints(
   }
 
   sampledPoints.clear();
-  sampledPoints.resize(flags::NumSamples);
+  sampledPoints.resize(numSamples);
 
   // Close-encounter stratum: each sample first draws every input independently,
   // then overrides each cancelling pair to a common near-coincident value with
@@ -143,7 +144,7 @@ void getSampledPoints(
   size_t numCoincidence = 0;
   if (plan && plan->active && !plan->pairs.empty()) {
     numCoincidence = static_cast<size_t>(
-        kCancellationFraction * static_cast<double>(flags::NumSamples));
+        kCancellationFraction * static_cast<double>(numSamples));
   }
 
   double maxRange = 1.0;
@@ -161,7 +162,7 @@ void getSampledPoints(
       maxRange = 1.0;
   }
 
-  for (size_t i = 0; i < flags::NumSamples; ++i) {
+  for (size_t i = 0; i < numSamples; ++i) {
     MapVector<Value *, double> point;
     for (const auto &entry : hypercube) {
       Value *val = entry.first;
