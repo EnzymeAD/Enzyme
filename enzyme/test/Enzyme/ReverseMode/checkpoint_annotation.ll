@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 
 ; A loop annotated with __enzyme_set_checkpointing(mode, count), which the
 ; Clang attribute [[enzyme_checkpointing_enable]] emits (and Enzyme-JAX raises

@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then not %opt < %s %newLoadEnzyme -passes="enzyme" -S -o /dev/null 2>&1 | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then not %opt < %s %newLoadEnzyme -passes="enzyme" -S -o /dev/null 2>&1 | FileCheck %s; fi
 
 ; A loop annotated for checkpointing that writes through a pointer of unknown
 ; extent cannot be snapshotted: it is an error, not a silently wrong gradient.

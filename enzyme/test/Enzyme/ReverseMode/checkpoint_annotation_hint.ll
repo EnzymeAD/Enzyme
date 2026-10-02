@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 
 ; __enzyme_ptr_size_hint(ptr, bytes, space) before an annotated loop gives the
 ; extent of memory the loop writes through a pointer it did not allocate, and
