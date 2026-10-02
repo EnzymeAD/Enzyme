@@ -129,6 +129,22 @@ module {
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
 
+  // Scalar parameters: z and coef are computed once, the kernel per element.
+  func.func private @stv_s(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<3xf64>) {
+    %v = "enzyme.broadcast"(%lc) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+    return %r, %v : tensor<2xui64>, tensor<3xf64>
+  }
+  func.func @stv_model(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<3xf64>) {
+    %o:2 = impulse.sample @stv_s(%r, %df, %lc, %sc) {symbol = #impulse.symbol<11>, dist = #impulse.dist<STUDENT_T>}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<3xf64>)
+    return %o#0, %o#1 : tensor<2xui64>, tensor<3xf64>
+  }
+  func.func @stv_top(%r: tensor<2xui64>, %df: tensor<f64>, %lc: tensor<f64>, %sc: tensor<f64>, %c: tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>) {
+    %t, %w, %rng, %v = impulse.generate @stv_model(%r, %df, %lc, %sc) given %c {selection = [[#impulse.symbol<11>]], constrained_addresses = [[#impulse.symbol<11>]]}
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>)
+    return %t, %w, %rng, %v : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<3xf64>
+  }
+
   // NumPyro LeftTruncatedDistribution(StudentT).log_prob operation order.
   func.func private @hst_s(%r: tensor<2xui64>, %df: tensor<f64>, %sc: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     return %r, %sc : tensor<2xui64>, tensor<f64>
@@ -153,8 +169,6 @@ module {
 // CHECK-DAG:   %[[HHALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
 // CHECK-NOT:   impulse.random
 // CHECK:       %[[HX:.+]] = impulse.reshape %{{.+}} : (tensor<1x1xf64>) -> tensor<f64>
-// y = x / scale; z = log(scale) + 0.5*log(df) + 0.5*log(pi) + lgamma(df/2) - lgamma((df+1)/2):
-// CHECK-NEXT:  %[[HY:.+]] = arith.divf %[[HX]], %arg3 : tensor<f64>
 // CHECK-NEXT:  %[[HLS:.+]] = math.log %arg3 : tensor<f64>
 // CHECK-NEXT:  %[[HLDF:.+]] = math.log %arg2 : tensor<f64>
 // CHECK-NEXT:  %[[HHLDF:.+]] = arith.mulf %[[HLDF]], %[[HHALF]] : tensor<f64>
@@ -167,8 +181,8 @@ module {
 // CHECK-NEXT:  %[[HHDFP1:.+]] = arith.mulf %[[HDFP1]], %[[HHALF]] : tensor<f64>
 // CHECK-NEXT:  %[[HLG2:.+]] = impulse.lgamma %[[HHDFP1]] : (tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:  %[[HZ:.+]] = arith.subf %[[HZ3]], %[[HLG2]] : tensor<f64>
-// lp = (-0.5*(df+1) * log1p(y*y/df) - z) - log(0.5), returned whole (no split):
 // CHECK-NEXT:  %[[HCOEF:.+]] = arith.mulf %[[HDFP1]], %[[HNEGHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[HY:.+]] = arith.divf %[[HX]], %arg3 : tensor<f64>
 // CHECK-NEXT:  %[[HY2:.+]] = arith.mulf %[[HY]], %[[HY]] : tensor<f64>
 // CHECK-NEXT:  %[[HY2DF:.+]] = arith.divf %[[HY2]], %arg2 : tensor<f64>
 // CHECK-NEXT:  %[[HL1P:.+]] = math.log1p %[[HY2DF]] : tensor<f64>
@@ -178,6 +192,36 @@ module {
 // CHECK-NEXT:  %[[HLPR:.+]] = impulse.reshape %[[HLP]] : (tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:  %{{.+}} = arith.addf %[[HLPR]], %{{.+}} : tensor<f64>
 
+// CHECK-LABEL: func.func @stv_model.generate
+// CHECK:       %[[VX:.+]] = impulse.reshape %{{.+}} : (tensor<1x3xf64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VLS:.+]] = math.log %arg4 : tensor<f64>
+// CHECK-NEXT:  %[[VLDF:.+]] = math.log %arg2 : tensor<f64>
+// CHECK-NEXT:  %[[VHLDF:.+]] = arith.mulf %[[VLDF]], %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VZ1:.+]] = arith.addf %[[VLS]], %[[VHLDF]] : tensor<f64>
+// CHECK-NEXT:  %[[VZ2:.+]] = arith.addf %[[VZ1]], %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VHDF:.+]] = arith.mulf %arg2, %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VLG1:.+]] = impulse.lgamma %[[VHDF]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[VZ3:.+]] = arith.addf %[[VZ2]], %[[VLG1]] : tensor<f64>
+// CHECK-NEXT:  %[[VDFP1:.+]] = arith.addf %arg2, %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VHDFP1:.+]] = arith.mulf %[[VDFP1]], %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VLG2:.+]] = impulse.lgamma %[[VHDFP1]] : (tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:  %[[VZ:.+]] = arith.subf %[[VZ3]], %[[VLG2]] : tensor<f64>
+// CHECK-NEXT:  %[[VCOEF:.+]] = arith.mulf %[[VDFP1]], %{{.+}} : tensor<f64>
+// CHECK-NEXT:  %[[VZB:.+]] = "enzyme.broadcast"(%[[VZ]]) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VCOEFB:.+]] = "enzyme.broadcast"(%[[VCOEF]]) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VDFB:.+]] = "enzyme.broadcast"(%arg2) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VLOCB:.+]] = "enzyme.broadcast"(%arg3) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VSCB:.+]] = "enzyme.broadcast"(%arg4) <{shape = array<i64: 3>}> : (tensor<f64>) -> tensor<3xf64>
+// CHECK-NEXT:  %[[VDIFF:.+]] = arith.subf %[[VX]], %[[VLOCB]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VY:.+]] = arith.divf %[[VDIFF]], %[[VSCB]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VY2:.+]] = arith.mulf %[[VY]], %[[VY]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VY2DF:.+]] = arith.divf %[[VY2]], %[[VDFB]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VL1P:.+]] = math.log1p %[[VY2DF]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VKER:.+]] = arith.mulf %[[VCOEFB]], %[[VL1P]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VZMK:.+]] = arith.subf %[[VZB]], %[[VKER]] : tensor<3xf64>
+// CHECK-NEXT:  %[[VLP:.+]] = arith.negf %[[VZMK]] : tensor<3xf64>
+// CHECK-NEXT:  %{{.+}} = impulse.dot %[[VLP]], %{{.+}} {{.*}} : (tensor<3xf64>, tensor<3xf64>) -> tensor<f64>
+
 // CHECK-LABEL: func.func @st_model.generate
 // CHECK-DAG:   %[[SNEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
 // CHECK-DAG:   %[[SONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
@@ -185,9 +229,6 @@ module {
 // CHECK-DAG:   %[[SHALF:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
 // CHECK-NOT:   impulse.random
 // CHECK:       %[[SX:.+]] = impulse.reshape %{{.+}} : (tensor<1x1xf64>) -> tensor<f64>
-// y = (x - loc) / scale; z = log(scale) + 0.5*log(df) + 0.5*log(pi) + lgamma(df/2) - lgamma((df+1)/2):
-// CHECK-NEXT:  %[[SDIFF:.+]] = arith.subf %[[SX]], %arg3 : tensor<f64>
-// CHECK-NEXT:  %[[SY:.+]] = arith.divf %[[SDIFF]], %arg4 : tensor<f64>
 // CHECK-NEXT:  %[[SLS:.+]] = math.log %arg4 : tensor<f64>
 // CHECK-NEXT:  %[[SLDF:.+]] = math.log %arg2 : tensor<f64>
 // CHECK-NEXT:  %[[SHLDF:.+]] = arith.mulf %[[SLDF]], %[[SHALF]] : tensor<f64>
@@ -200,8 +241,9 @@ module {
 // CHECK-NEXT:  %[[SHDFP1:.+]] = arith.mulf %[[SDFP1]], %[[SHALF]] : tensor<f64>
 // CHECK-NEXT:  %[[SLG2:.+]] = impulse.lgamma %[[SHDFP1]] : (tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:  %[[SZ:.+]] = arith.subf %[[SZ3]], %[[SLG2]] : tensor<f64>
-// kernel = -0.5*(df+1) * log1p(y*y/df); lp = -(z - kernel), returned whole:
 // CHECK-NEXT:  %[[SCOEF:.+]] = arith.mulf %[[SDFP1]], %[[SNEGHALF]] : tensor<f64>
+// CHECK-NEXT:  %[[SDIFF:.+]] = arith.subf %[[SX]], %arg3 : tensor<f64>
+// CHECK-NEXT:  %[[SY:.+]] = arith.divf %[[SDIFF]], %arg4 : tensor<f64>
 // CHECK-NEXT:  %[[SY2:.+]] = arith.mulf %[[SY]], %[[SY]] : tensor<f64>
 // CHECK-NEXT:  %[[SY2DF:.+]] = arith.divf %[[SY2]], %arg2 : tensor<f64>
 // CHECK-NEXT:  %[[SL1P:.+]] = math.log1p %[[SY2DF]] : tensor<f64>

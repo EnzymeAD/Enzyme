@@ -474,6 +474,53 @@ Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
   }
 }
 
+// NumPyro StudentT.log_prob's parameter-only terms {z, coef}, in its order.
+// Single-element df and scale are computed once and broadcast: same bits.
+std::pair<Value, Value> emitStudentTParamTerms(OpBuilder &b, Location loc,
+                                               Value dfArg, Value scaleArg,
+                                               RankedTensorType sampleType) {
+  auto numel = [](Value v) {
+    int64_t n = 1;
+    for (int64_t d : cast<RankedTensorType>(v.getType()).getShape())
+      n *= d;
+    return n;
+  };
+  Type elemType = sampleType.getElementType();
+  bool scalar = numel(dfArg) == 1 && numel(scaleArg) == 1;
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto toScalar = [&](Value v) -> Value {
+    if (cast<RankedTensorType>(v.getType()).getRank() == 0)
+      return v;
+    return impulse::ReshapeOp::create(b, loc, scalarType, v);
+  };
+  RankedTensorType ty = scalar ? scalarType : sampleType;
+  Value df =
+      scalar ? toScalar(dfArg) : broadcastToSample(b, loc, dfArg, sampleType);
+  Value scale = scalar ? toScalar(scaleArg)
+                       : broadcastToSample(b, loc, scaleArg, sampleType);
+  auto c = [&](double v) { return splatSample(b, loc, ty, v); };
+  Value half = c(0.5);
+  Value logScale = math::LogOp::create(b, loc, scale);
+  Value halfLogDf =
+      arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, df));
+  Value z = arith::AddFOp::create(b, loc, logScale, halfLogDf);
+  z = arith::AddFOp::create(b, loc, z, c(0.5 * std::log(M_PI)));
+  Value halfDf = arith::MulFOp::create(b, loc, half, df);
+  z = arith::AddFOp::create(
+      b, loc, z, impulse::LgammaOp::create(b, loc, halfDf.getType(), halfDf));
+  Value dfp1 = arith::AddFOp::create(b, loc, df, c(1.0));
+  Value halfDfp1 = arith::MulFOp::create(b, loc, half, dfp1);
+  z = arith::SubFOp::create(
+      b, loc, z,
+      impulse::LgammaOp::create(b, loc, halfDfp1.getType(), halfDfp1));
+  Value coef = arith::MulFOp::create(b, loc, c(-0.5), dfp1);
+  if (scalar) {
+    z = broadcastToSample(b, loc, z, sampleType);
+    coef = broadcastToSample(b, loc, coef, sampleType);
+  }
+  return {z, coef};
+}
+
 LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
                                   Value observed, ValueRange distArgs) {
   auto sampleType = cast<RankedTensorType>(observed.getType());
@@ -531,26 +578,15 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     return {reduce(kernel), reduce(normTerm)};
   }
   case DistBaseKind::STUDENT_T: {
+    // NumPyro's StudentT.log_prob in its operation order, returned whole.
+    // -(z - kernel), not kernel - z, so XLA CPU fuses the FMA as JAX does.
+    auto [z, coef] =
+        emitStudentTParamTerms(b, loc, distArgs[0], distArgs[2], sampleType);
     Value df = bcast(distArgs[0]);
     Value locp = bcast(distArgs[1]);
     Value scale = bcast(distArgs[2]);
-    Value half = splat(0.5);
     Value y = arith::DivFOp::create(
         b, loc, arith::SubFOp::create(b, loc, observed, locp), scale);
-    Value logScale = math::LogOp::create(b, loc, scale);
-    Value halfLogDf =
-        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, df));
-    Value z = arith::AddFOp::create(b, loc, logScale, halfLogDf);
-    z = arith::AddFOp::create(b, loc, z, splat(0.5 * std::log(M_PI)));
-    Value halfDf = arith::MulFOp::create(b, loc, half, df);
-    z = arith::AddFOp::create(
-        b, loc, z, impulse::LgammaOp::create(b, loc, halfDf.getType(), halfDf));
-    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
-    Value halfDfp1 = arith::MulFOp::create(b, loc, half, dfp1);
-    z = arith::SubFOp::create(
-        b, loc, z,
-        impulse::LgammaOp::create(b, loc, halfDfp1.getType(), halfDfp1));
-    Value coef = arith::MulFOp::create(b, loc, splat(-0.5), dfp1);
     Value y2df =
         arith::DivFOp::create(b, loc, arith::MulFOp::create(b, loc, y, y), df);
     Value kernel = arith::MulFOp::create(b, loc, coef,
@@ -594,24 +630,13 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     return {reduce(kernel), reduce(norm)};
   }
   case DistBaseKind::HALF_STUDENT_T: {
+    // NumPyro's StudentT(df, 0, scale) truncated at 0, in its operation order.
+    // With loc == low == 0, cdf(0) is exactly 0.5: the normalizer is log(0.5).
+    auto [z, coef] =
+        emitStudentTParamTerms(b, loc, distArgs[0], distArgs[1], sampleType);
     Value df = bcast(distArgs[0]);
     Value scale = bcast(distArgs[1]);
-    Value half = splat(0.5);
     Value y = arith::DivFOp::create(b, loc, observed, scale);
-    Value logScale = math::LogOp::create(b, loc, scale);
-    Value halfLogDf =
-        arith::MulFOp::create(b, loc, half, math::LogOp::create(b, loc, df));
-    Value z = arith::AddFOp::create(b, loc, logScale, halfLogDf);
-    z = arith::AddFOp::create(b, loc, z, splat(0.5 * std::log(M_PI)));
-    Value halfDf = arith::MulFOp::create(b, loc, half, df);
-    z = arith::AddFOp::create(
-        b, loc, z, impulse::LgammaOp::create(b, loc, halfDf.getType(), halfDf));
-    Value dfp1 = arith::AddFOp::create(b, loc, df, splat(1.0));
-    Value halfDfp1 = arith::MulFOp::create(b, loc, half, dfp1);
-    z = arith::SubFOp::create(
-        b, loc, z,
-        impulse::LgammaOp::create(b, loc, halfDfp1.getType(), halfDfp1));
-    Value coef = arith::MulFOp::create(b, loc, splat(-0.5), dfp1);
     Value y2df =
         arith::DivFOp::create(b, loc, arith::MulFOp::create(b, loc, y, y), df);
     Value kernel = arith::MulFOp::create(b, loc, coef,
