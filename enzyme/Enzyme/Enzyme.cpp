@@ -164,14 +164,6 @@ llvm::cl::opt<std::string> EnzymeParamTypes(
              "modules (a whole-program plan for separate compilation), set as "
              "\"enzyme_type\" on calls that pass them local memory"));
 
-llvm::cl::opt<std::string> EnzymeCapturedParams(
-    "enzyme-captured-params", cl::init(""), cl::Hidden,
-    cl::desc("File of \"<function> <i>,<j>,...\" lines: parameters of "
-             "functions defined in other modules that a nonblocking MPI call "
-             "keeps beyond the call (a whole-program plan for separate "
-             "compilation); their \"captures(none)\" is dropped where the "
-             "function is only declared"));
-
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
     cl::desc("Only export functions listed in this file, one per line, each "
@@ -3030,49 +3022,6 @@ public:
     }
   }
 
-  /// -enzyme-captured-params: drop "captures(none)" from parameters that
-  /// the function, defined in another module, hands to a nonblocking MPI call
-  /// (flang marks Fortran dummy arguments captures(none)); otherwise the
-  /// shadow of a local buffer passed there could be rematerialized in the
-  /// reverse pass instead of being the memory the MPI call keeps.
-  void applyCapturedParams(Module &M) {
-    if (EnzymeCapturedParams.empty())
-      return;
-    auto buf = MemoryBuffer::getFile(EnzymeCapturedParams);
-    if (!buf)
-      report_fatal_error(Twine("could not read -enzyme-captured-params ") +
-                         EnzymeCapturedParams);
-    SmallVector<StringRef, 32> lines;
-    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
-    for (auto line : lines) {
-      auto [name, rest] = line.trim().split(' ');
-      auto F = M.getFunction(name);
-      if (!F || !F->isDeclaration())
-        continue;
-      SmallVector<StringRef, 8> idxs;
-      rest.split(idxs, ',', -1, /*KeepEmpty*/ false);
-      for (auto s : idxs) {
-        unsigned i;
-        if (s.trim().getAsInteger(10, i) || i >= F->arg_size())
-          continue;
-#if LLVM_VERSION_MAJOR > 20
-        F->removeParamAttr(i, Attribute::Captures);
-#else
-        F->removeParamAttr(i, Attribute::NoCapture);
-#endif
-        for (auto U : F->users())
-          if (auto CB = dyn_cast<CallBase>(U))
-            if (CB->getCalledOperand() == F && i < CB->arg_size()) {
-#if LLVM_VERSION_MAJOR > 20
-              CB->removeParamAttr(i, Attribute::Captures);
-#else
-              CB->removeParamAttr(i, Attribute::NoCapture);
-#endif
-            }
-      }
-    }
-  }
-
   /// -enzyme-invariant-globals: mark loads from globals nothing overwrites
   /// during differentiation "enzyme_nocache".
   void applyInvariantGlobals(Module &M) {
@@ -3103,7 +3052,6 @@ public:
     Logic.clear();
     applyInactiveParams(M);
     applyParamTypes(M);
-    applyCapturedParams(M);
     applyInvariantGlobals(M);
 
     for (Function &F : make_early_inc_range(M)) {
