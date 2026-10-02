@@ -817,7 +817,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
                 " loop must have a single latch and leave from its header or "
                 "its latch, to a single block");
   Instruction *IP = P->getTerminator();
-#if LLVM_VERSION_MAJOR >= 19
+#if LLVM_VERSION_MAJOR >= 22
   SCEVExpander Exp(SE, "ckpt");
 #else
   SCEVExpander Exp(SE, M.getDataLayout(), "ckpt");
