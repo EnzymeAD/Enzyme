@@ -1,0 +1,8 @@
+; Module of the time step @step for thinlink_checkpoint.ll (not a test itself).
+
+define void @step(ptr %x) {
+  %v = load double, ptr %x
+  %m = fmul double %v, %v
+  store double %m, ptr %x
+  ret void
+}

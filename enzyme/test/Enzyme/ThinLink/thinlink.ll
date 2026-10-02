@@ -28,7 +28,8 @@ define void @caller(ptr %x, ptr %dx, ptr %n) {
 ; REPORT: exports: 1 functions, 1 variants, from 1 modules
 ; REPORT: variants used: ['reverse+sz']
 ; REPORT: inactive parameters of exported functions: 1 of 2
-; REPORT: inferred 2
+; @h is inferred inactive; @caller, which calls __enzyme_autodiff, is not.
+; REPORT: inferred 1
 
 ; EXPORTS: g reverse+sz
 

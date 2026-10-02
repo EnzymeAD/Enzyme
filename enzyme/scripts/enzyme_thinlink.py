@@ -45,6 +45,23 @@ def is_runtime(name):
     return name.startswith(("_Fortran", "__enzyme", "llvm."))
 
 
+# Enzyme entry points that differentiate (or, for a checkpointed loop,
+# take the step to differentiate in) the functions passed to them.
+AD_ENTRIES = ("__enzyme_autodiff", "__enzyme_fwddiff", "__enzyme_fwdsplit",
+              "__enzyme_augmentfwd", "__enzyme_reverse",
+              "__enzyme_checkpoint_for", "__enzyme_checkpoint_while")
+
+
+def hands_to_enzyme(f, known):
+    """Whether a function calls an Enzyme AD entry, or passes the address of
+    a function (one with IR) to another __enzyme_* call: its own summary
+    shows no floating-point effects (the __enzyme_* call is not followed),
+    but it is where a derivative happens."""
+    enz = [c for c in f["calls"] if c.startswith("__enzyme_")]
+    return any(c.startswith(AD_ENTRIES) for c in enz) or (
+        bool(enz) and any(r in known for r in f["refs"]))
+
+
 def infer_activity(fsum, local):
     """Compose the per-function floating-point effects over the call graph
     (to a fixpoint; recursion is fine). Returns per function: per argument
@@ -52,12 +69,15 @@ def infer_activity(fsum, local):
     function that is active (writes floating-point data, returns a float or
     has unknown effects) the first reason found."""
     act = {}
+    known = set(fsum) | {k[1] for k in local}
     for n, f in list(fsum.items()) + [(k[1], v) for k, v in local.items()]:
         fa = f["activity"]
         act[n] = {"args": [{"r": x["read"], "w": x["write"], "e": x["escape"]}
                            for x in fa["args"]],
                   "gr": set(fa["globals_read"]), "gw": set(fa["globals_write"]),
-                  "unknown": fa["unknown"], "returns_fp": fa["returns_fp"],
+                  "unknown": fa["unknown"] or hands_to_enzyme(f, known),
+                  "enzyme": hands_to_enzyme(f, known),
+                  "returns_fp": fa["returns_fp"],
                   "frees": fa["frees"], "edges": fa["edges"], "ar": False,
                   "calls": f["calls"]}
     no_ir = set()
@@ -113,7 +133,9 @@ def infer_activity(fsum, local):
                 a["unknown"] or bool(a["gr"]) or any(x["r"] for x in a["args"])))
     why = {}
     for n, a in act.items():
-        if a["unknown"]:
+        if a["enzyme"]:
+            why[n] = "hands a function to Enzyme"
+        elif a["unknown"]:
             why[n] = "unknown effects"
         elif a["ar"]:
             why[n] = "returns a float computed from outside data"
