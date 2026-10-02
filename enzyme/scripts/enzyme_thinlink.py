@@ -193,6 +193,29 @@ def main():
             regs[k] |= set(names)
 
     act, why = infer_activity(fsum, local)
+
+    # Arguments each function writes (any data), through its callees too:
+    # a summary counts only its own writes, and what a callee does with a
+    # pointer it is given is composed here over the edges (to a fixpoint).
+    def fx_(m, f):
+        return local.get((m, f)) or fsum.get(f)
+    funcs = [(fdef[n], n) for n in fsum] + list(local)
+    wall = {k: list(fx_(*k)["activity"].get("args_write_any", []))
+            for k in funcs}
+    changed = True
+    while changed:
+        changed = False
+        for (m, f) in funcs:
+            for root, callee, k in fx_(m, f)["activity"]["edges"]:
+                if root[0] != "a":
+                    continue
+                cm = m if (m, callee) in local else fdef.get(callee)
+                cw = wall.get((cm, callee))
+                w = True if cw is None else (k < len(cw) and cw[k])
+                i = int(root[1:])
+                if w and i < len(wall[(m, f)]) and not wall[(m, f)][i]:
+                    wall[(m, f)][i] = True
+                    changed = True
     inferred = {n for n, x in act.items() if n not in why}
     registered = regs["inactive"] | {n for n, f in fsum.items() if f["inactive"]}
     inactive = {"registered": registered, "inferred": inferred,
@@ -339,25 +362,7 @@ def main():
                     stack.append((m, g))
                 elif g in fdef:
                     stack.append((fdef[g], g))
-        # arguments a function writes (any data), through its callees too
-        def fx(m, f):
-            return local.get((m, f)) or fsum.get(f)
-        wany = {}
-        for (m, f) in reach:
-            wany[(m, f)] = list(fx(m, f)["activity"].get("args_write_any", []))
-        changed = True
-        while changed:
-            changed = False
-            for (m, f) in reach:
-                for root, callee, k in fx(m, f)["activity"]["edges"]:
-                    cm = m if (m, callee) in local else fdef.get(callee)
-                    cw = wany.get((cm, callee))
-                    w = True if cw is None else (k < len(cw) and cw[k])
-                    if w and root[0] == "a":
-                        i = int(root[1:])
-                        if i < len(wany[(m, f)]) and not wany[(m, f)][i]:
-                            wany[(m, f)][i] = True
-                            changed = True
+        wany = wall
         written, unknown_any = set(), False
         for (m, f) in reach:
             x = local.get((m, f)) or fsum.get(f)
@@ -420,8 +425,7 @@ def main():
             if root[0] != "g":
                 continue
             cm = m if (m, callee) in local else fdef.get(callee)
-            cx = fsx(cm, callee) if cm is not None else None
-            cw = cx["activity"].get("args_write_any", []) if cx else None
+            cw = wall.get((cm, callee))
             if cw is None or (k < len(cw) and cw[k]):
                 w.add(root[1:])
         return w

@@ -268,9 +268,9 @@ private:
   }
 
   /// LocalContents to a fixpoint: pointers stored or copied into a local
-  /// object, and for calls that take a local object, the other pointer
-  /// arguments (which the callee may store into it, e.g.
-  /// _FortranAPointerAssociate on a local descriptor).
+  /// object, and for flang runtime or indirect calls that take a local
+  /// object, the other pointer arguments (which the callee may store into
+  /// it, e.g. _FortranAPointerAssociate on a local descriptor).
   void computeLocalContents() {
     bool Changed = true;
     auto add = [&](const AllocaInst *AI, const Roots &R) {
@@ -294,6 +294,14 @@ private:
             add(AI, roots(MT->getSource()));
         } else if (auto *CB = dyn_cast<CallBase>(&I)) {
           if (isa<IntrinsicInst>(CB))
+            continue;
+          // A callee with IR reports the pointers it stores away itself (an
+          // escaping argument); only the flang runtime (e.g.
+          // _FortranAPointerAssociate on a local descriptor) and unknown
+          // callees may fill a local object with the other arguments.
+          auto *Callee =
+              dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+          if (Callee && !startsWith(Callee->getName(), "_Fortran"))
             continue;
           Roots Others;
           SmallVector<const AllocaInst *, 2> Locals;
@@ -521,7 +529,19 @@ public:
     for (auto &BB : F)
       for (auto &I : BB)
         Writes[&I] = writes(I);
-    for (auto &[I, Ks] : Writes)
+    for (auto &[I, Ks] : Writes) {
+      // What a call to another function does with the pointers it is given
+      // is composed by the thin-link step from the callee's own summary
+      // (the edges); counting them as written here would make every global
+      // or argument handed to any callee written. The flang runtime, Enzyme
+      // and indirect calls are not composed.
+      if (auto *CB = dyn_cast<CallBase>(I))
+        if (!isa<IntrinsicInst>(CB))
+          if (auto *Callee = dyn_cast<Function>(
+                  CB->getCalledOperand()->stripPointerCasts()))
+            if (!startsWith(Callee->getName(), "_Fortran") &&
+                !startsWith(Callee->getName(), "__enzyme"))
+              continue;
       for (auto &K : Ks) {
         if (K[0] == 'a')
           ArgWriteAny[std::stoul(K.substr(1))] = true;
@@ -530,6 +550,7 @@ public:
         else if (K == "*")
           UnknownWrite = true;
       }
+    }
     // blocks reachable from each block's successors
     for (auto &BB : F) {
       SmallVector<BasicBlock *, 8> todo(succ_begin(&BB), succ_end(&BB));
