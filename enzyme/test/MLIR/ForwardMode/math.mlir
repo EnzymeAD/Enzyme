@@ -224,3 +224,48 @@ func.func @dlog10(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.log10 %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @rsqrt(%x: f64) -> f64 {
+  %res = math.rsqrt %x : f64
+  return %res : f64
+}
+
+func.func @drsqrt(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @rsqrt(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffersqrt(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[rsqrt:.+]] = math.rsqrt %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[neg:.+]] = arith.negf %[[rsqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[two:.+]] = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %[[twox:.+]] = arith.mulf %[[two]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[deriv:.+]] = arith.divf %[[neg]], %[[twox]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[deriv]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.rsqrt %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @cbrt(%x: f64) -> f64 {
+  %res = math.cbrt %x : f64
+  return %res : f64
+}
+
+func.func @dcbrt(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @cbrt(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffecbrt(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[cbrt:.+]] = math.cbrt %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[num:.+]] = arith.mulf %[[dx]], %[[cbrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[three:.+]] = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %[[threex:.+]] = arith.mulf %[[three]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[num]], %[[threex]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.cbrt %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

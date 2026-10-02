@@ -207,5 +207,7 @@ def LogF : MathInst<"LogOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def RsqrtF : MathInst<"RsqrtOp">;
+def CbrtF : MathInst<"CbrtOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

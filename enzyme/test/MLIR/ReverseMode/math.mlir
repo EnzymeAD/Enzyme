@@ -342,3 +342,46 @@ func.func @dlog10(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[den]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @rsqrt(%x: f64) -> f64 {
+  %res = math.rsqrt %x : f64
+  return %res : f64
+}
+
+func.func @drsqrt(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @rsqrt(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @differsqrt(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[two:.+]] = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %[[rsqrt:.+]] = math.rsqrt %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[neg:.+]] = arith.negf %[[rsqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[twox:.+]] = arith.mulf %[[x]], %[[two]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[deriv:.+]] = arith.divf %[[neg]], %[[twox]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[deriv]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @cbrt(%x: f64) -> f64 {
+  %res = math.cbrt %x : f64
+  return %res : f64
+}
+
+func.func @dcbrt(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @cbrt(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffecbrt(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[three:.+]] = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %[[cbrt:.+]] = math.cbrt %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[num:.+]] = arith.mulf %[[dr]], %[[cbrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[threex:.+]] = arith.mulf %[[x]], %[[three]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[num]], %[[threex]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

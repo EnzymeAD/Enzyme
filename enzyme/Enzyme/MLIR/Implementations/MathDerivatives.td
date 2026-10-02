@@ -172,5 +172,21 @@ def : MLIRDerivative<"math", "Log10Op", (Op $x),
                         (MulF $x, (ConstantFP<"2.302585092994046","arith","ConstantOp"> $x)))
                     ]
                   >;
+
+// d/dx rsqrt(x) = -1/2 · x^(-3/2) = -rsqrt(x) / (2x)
+def : MLIRDerivative<"math", "RsqrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF (RsqrtF $x)),
+                              (MulF (ConstantFP<"2","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "CbrtOp", (Op $x),
+                    [
+                      (CheckedDivF (CheckedMulF (DiffeRet), (CbrtF $x)),
+                                   (MulF (ConstantFP<"3.0","arith","ConstantOp"> $x), $x))
+                    ]
+                  >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
