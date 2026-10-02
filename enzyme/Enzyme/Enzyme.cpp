@@ -138,6 +138,12 @@ llvm::cl::opt<bool> EnzymeExportStrongZero(
     cl::desc("With -enzyme-export-derivatives, also export the strong-zero "
              "(_sz) variant of every exported derivative"));
 
+llvm::cl::opt<std::string> EnzymeInvariantGlobals(
+    "enzyme-invariant-globals", cl::init(""), cl::Hidden,
+    cl::desc("File of global variables (one per line) that nothing writes "
+             "while the differentiated code runs (a whole-program plan): loads "
+             "from them are not cached, the reverse pass reads them again"));
+
 llvm::cl::opt<std::string> EnzymeInactiveParams(
     "enzyme-inactive-params", cl::init(""), cl::Hidden,
     cl::desc("File of \"<function> <i>,<j>,...\" lines: mark these "
@@ -2779,8 +2785,11 @@ public:
       bool strongZero = false;
       bool runtimeActivity = false;
       unsigned width = 1;
+      // hex mask of the arguments assumed not overwritten after the call
+      std::string notOverwritten;
     };
-    // A token is <mode>[+sz][+ra][+w<N>], e.g. "reverse+sz" or "forward+w2".
+    // A token is <mode>[+sz][+ra][+w<N>][+o<hex>], e.g. "reverse+sz" or
+    // "reverse+sz+o5" (arguments 0 and 2 not overwritten after the call).
     auto parseVariants = [&](StringRef str, SmallVectorImpl<Variant> &out) {
       SmallVector<StringRef, 3> parts;
       str.split(parts, ',', -1, /*KeepEmpty*/ false);
@@ -2797,6 +2806,8 @@ public:
             v.strongZero = true;
           else if (flag == "ra")
             v.runtimeActivity = true;
+          else if (flag.starts_with("o"))
+            v.notOverwritten = flag.drop_front().str();
           else if (!flag.starts_with("w") ||
                    flag.drop_front().getAsInteger(10, v.width))
             report_fatal_error(Twine("unknown derivative variant flag: ") +
@@ -2878,11 +2889,21 @@ public:
     TypeAnalysis TA(Logic);
     bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
     for (auto &[F, variants] : todo)
-      for (auto &v : variants)
+      for (auto &v : variants) {
+        std::vector<bool> kept(F->arg_size(), false);
+        for (unsigned i = 0; i < v.notOverwritten.size(); ++i) {
+          unsigned nibble;
+          if (StringRef(v.notOverwritten.data() + i, 1).getAsInteger(16, nibble))
+            report_fatal_error(Twine("bad argument mask: ") + v.notOverwritten);
+          for (unsigned j = 0; j < 4; ++j)
+            if ((nibble >> j) & 1 && 4 * i + j < kept.size())
+              kept[4 * i + j] = true;
+        }
         GradientUtils::GetOrCreateShadowFunction(
             RequestContext(), Logic,
             Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, v.mode,
-            v.runtimeActivity, v.strongZero, v.width, AtomicAdd);
+            v.runtimeActivity, v.strongZero, v.width, AtomicAdd, kept);
+      }
     return true;
   }
 
@@ -2915,9 +2936,36 @@ public:
     }
   }
 
+  /// -enzyme-invariant-globals: mark loads from globals nothing overwrites
+  /// during differentiation "enzyme_nocache".
+  void applyInvariantGlobals(Module &M) {
+    if (EnzymeInvariantGlobals.empty())
+      return;
+    auto buf = MemoryBuffer::getFile(EnzymeInvariantGlobals);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-invariant-globals ") +
+                         EnzymeInvariantGlobals);
+    StringSet<> names;
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines)
+      if (!line.trim().empty())
+        names.insert(line.trim());
+    for (auto &F : M)
+      for (auto &BB : F)
+        for (auto &I : BB)
+          if (auto LI = dyn_cast<LoadInst>(&I))
+            if (auto G =
+                    dyn_cast<GlobalVariable>(getBaseObject(LI->getOperand(0))))
+              if (names.contains(G->getName()))
+                LI->setMetadata("enzyme_nocache",
+                                MDNode::get(LI->getContext(), {}));
+  }
+
   bool run(Module &M) {
     Logic.clear();
     applyInactiveParams(M);
+    applyInvariantGlobals(M);
 
     for (Function &F : make_early_inc_range(M)) {
       attributeKnownFunctions(F);

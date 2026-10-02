@@ -5230,6 +5230,18 @@ public:
     }
   }
 
+  /// Under separate compilation with -enzyme-import-variants, the callee of
+  /// \p call whose derivative another module exports in variants keyed by
+  /// the arguments not overwritten after the call.
+  llvm::Function *externalCalleeWithVariants(llvm::CallInst &call) {
+    if (EnzymeImportVariants.empty() || gutils->getWidth() != 1)
+      return nullptr;
+    auto F = getFunctionFromCall(&call);
+    if (F && GradientUtils::usesExternalDerivative(F, gutils->TLI))
+      return F;
+    return nullptr;
+  }
+
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
@@ -5848,7 +5860,10 @@ public:
              << " for use as function in " << call;
           EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
-        newcalled = gutils->invertPointerM(callval, BuilderZ);
+        if (auto ext = externalCalleeWithVariants(call))
+          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        else
+          newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (Mode != DerivativeMode::ReverseModeGradient)
           ErrorIfRuntimeInactive(
@@ -6370,7 +6385,11 @@ public:
           newcalled =
               UndefValue::get(gutils->getShadowType(callval->getType()));
       } else {
-        newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
+        if (auto ext = externalCalleeWithVariants(call))
+          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        else
+          newcalled =
+              lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
 
       auto ft = call.getFunctionType();
