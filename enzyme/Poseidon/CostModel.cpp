@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
@@ -275,6 +276,21 @@ double queryCostModelOr(const std::string &OpcodeName,
 }
 
 double getInstructionCompCost(const Instruction *I) {
+#if LLVM_VERSION_MAJOR >= 20
+  // O3 fuses sin(x) and cos(x) into llvm.sincos, whose struct result would
+  // otherwise be priced as free.
+  if (auto *II = dyn_cast<IntrinsicInst>(I))
+    if (II->getIntrinsicID() == Intrinsic::sincos) {
+      Type *ETy = cast<StructType>(I->getType())->getElementType(0);
+      std::string P = ETy->isFloatTy()    ? "float"
+                      : ETy->isDoubleTy() ? "double"
+                      : ETy->isHalfTy()   ? "half"
+                                          : "";
+      if (P.empty())
+        llvm_unreachable("Custom cost model: unsupported llvm.sincos type");
+      return queryCostModel("sin", P) + queryCostModel("cos", P);
+    }
+#endif
   if (!I->getType()->isFPOrFPVectorTy())
     return 0.0;
 
@@ -307,6 +323,7 @@ double getInstructionCompCost(const Instruction *I) {
   case Instruction::PHI:
   case Instruction::Select:
   case Instruction::Load:
+  case Instruction::ExtractValue:
     return 0;
   case Instruction::Call: {
     auto *Call = cast<CallInst>(I);

@@ -95,6 +95,8 @@ extern llvm::cl::opt<int> HerbieNumPts;
 extern llvm::cl::opt<int> HerbieNumIters;
 extern llvm::cl::opt<int> HerbieNumEnodes;
 extern llvm::cl::opt<unsigned> HerbieSubgraphTimeout;
+extern llvm::cl::opt<unsigned> HerbieProcesses;
+extern llvm::cl::opt<unsigned> HerbiePreFloorBits;
 extern llvm::cl::opt<std::string> HerbieBinary;
 extern llvm::cl::opt<std::string> HerbiePlatform;
 

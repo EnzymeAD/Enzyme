@@ -330,13 +330,21 @@ bool improveViaHerbie(
   // invocation can legitimately spend; the hard kill sits one margin above
   // that.
   const unsigned subgraphBudget = flags::HerbieSubgraphTimeout;
+  const unsigned numThreads = std::max(1, (int)flags::HerbieNumThreads);
+  const unsigned shards = (unsigned)std::max<size_t>(
+      1, std::min<size_t>(flags::HerbieProcesses ? flags::HerbieProcesses
+                                                 : numThreads,
+                          inputExprs.size()));
+  const unsigned threadsPerShard = std::max<unsigned>(
+      1, std::min<size_t>((numThreads + shards - 1) / shards,
+                          (inputExprs.size() + shards - 1) / shards));
   unsigned coreTimeout = (unsigned)flags::HerbieTimeout;
-  unsigned wallBudget = 0; // 0 = ExecuteAndWait waits forever
+  unsigned wallBudget = 0; // 0 = wait forever
   if (subgraphBudget > 0) {
     coreTimeout =
         std::min<unsigned>((unsigned)flags::HerbieTimeout, subgraphBudget);
-    unsigned threads = std::max(1u, (unsigned)flags::HerbieNumThreads);
-    unsigned rounds = (unsigned)((inputExprs.size() + threads - 1) / threads);
+    unsigned perShard = (unsigned)((inputExprs.size() + shards - 1) / shards);
+    unsigned rounds = (perShard + threadsPerShard - 1) / threadsPerShard;
     if (rounds == 0)
       rounds = 1;
     wallBudget = coreTimeout * rounds + 30;
@@ -350,7 +358,7 @@ bool improveViaHerbie(
       Program,        "report",
       "--seed",       std::to_string(flags::RandomSeed),
       "--timeout",    std::to_string(coreTimeout),
-      "--threads",    std::to_string(flags::HerbieNumThreads),
+      "--threads",    std::to_string(threadsPerShard),
       "--num-points", std::to_string(flags::HerbieNumPts),
       "--num-iters",  std::to_string(flags::HerbieNumIters),
       "--num-enodes", std::to_string(flags::HerbieNumEnodes)};
@@ -658,87 +666,106 @@ bool improveViaHerbie(
       continue;
     }
 
-    SmallString<32> tmpin, tmpout;
-
-    if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
-                                        llvm::sys::fs::perms::owner_all)) {
-      llvm::errs() << "Failed to create a unique input file.\n";
+    SmallVector<SmallString<64>> shardIn(shards), shardOut(shards);
+    auto removeShardFiles = [&]() {
+      for (unsigned s = 0; s < shards; ++s) {
+        if (!shardIn[s].empty())
+          llvm::sys::fs::remove(shardIn[s]);
+        if (!shardOut[s].empty())
+          if (auto EC = llvm::sys::fs::remove_directories(shardOut[s]))
+            llvm::errs()
+                << "Warning: Failed to remove temporary output directory: "
+                << EC.message() << "\n";
+      }
+    };
+    bool setupFailed = false;
+    for (unsigned s = 0; s < shards && !setupFailed; ++s) {
+      if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%",
+                                          shardIn[s],
+                                          llvm::sys::fs::perms::owner_all) ||
+          llvm::sys::fs::createUniqueDirectory(
+              "herbie_output_%%%%%%%%%%%%%%%%", shardOut[s])) {
+        setupFailed = true;
+        break;
+      }
+      std::ofstream input(shardIn[s].c_str());
+      for (size_t k = s; k < inputExprs.size(); k += shards)
+        input << inputExprs[k] << "\n";
+      input.close();
+      if (!input)
+        setupFailed = true;
+    }
+    if (setupFailed) {
+      llvm::errs() << "Failed to create the Herbie input files or output "
+                      "directories.\n";
+      removeShardFiles();
       continue;
     }
-
-    if (llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
-                                             tmpout)) {
-      llvm::errs() << "Failed to create a unique output directory.\n";
-      if (auto EC = llvm::sys::fs::remove(tmpin))
-        llvm::errs() << "Warning: Failed to remove temporary input file: "
-                     << EC.message() << "\n";
-      continue;
-    }
-
-    std::ofstream input(tmpin.c_str());
-    if (!input) {
-      llvm::errs() << "Failed to open input file.\n";
-      if (auto EC = llvm::sys::fs::remove(tmpin))
-        llvm::errs() << "Warning: Failed to remove temporary input file: "
-                     << EC.message() << "\n";
-      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
-        llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                     << EC.message() << "\n";
-      continue;
-    }
-    for (const auto &expr : inputExprs) {
-      input << expr << "\n";
-    }
-    input.close();
-
-    SmallVector<StringRef> Args;
-    Args.reserve(BaseArgs.size());
-    for (const auto &arg : BaseArgs) {
-      Args.emplace_back(arg);
-    }
-
-    Args.push_back(tmpin);
-    Args.push_back(tmpout);
-
-    std::string ErrMsg;
-    bool ExecutionFailed = false;
 
     if (flags::Print) {
-      llvm::errs() << "Executing Herbie with arguments: ";
-      for (const auto &arg : Args) {
+      llvm::errs() << "Executing Herbie (" << shards
+                   << " process(es), one input file and output directory "
+                      "each) with arguments: ";
+      for (const auto &arg : BaseArgs)
         llvm::errs() << arg << " ";
-      }
       llvm::errs() << "\n";
     }
     llvm::errs() << "[poseidon] Herbie subgraph " << subgraphIdx << " of "
-                 << funcTag << ": " << inputExprs.size()
-                 << " FPCore(s), per-core timeout " << coreTimeout
+                 << funcTag << ": " << inputExprs.size() << " FPCore(s) in "
+                 << shards << " process(es) of " << threadsPerShard
+                 << " worker(s), per-core timeout " << coreTimeout
                  << " s, wall budget "
                  << (wallBudget ? std::to_string(wallBudget) + " s"
                                 : std::string("unbounded"))
                  << ", input " << inputDigest << "\n";
 
     auto herbieStart = std::chrono::steady_clock::now();
-    int RC =
-        llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/{},
-                                  /*Redirects=*/{},
-                                  /*SecondsToWait=*/wallBudget,
-                                  /*MemoryLimit=*/0, &ErrMsg, &ExecutionFailed);
+    std::string ErrMsg;
+    bool ExecutionFailed = false;
+    SmallVector<llvm::sys::ProcessInfo> procs;
+    for (unsigned s = 0; s < shards && !ExecutionFailed; ++s) {
+      SmallVector<StringRef> Args;
+      for (const auto &arg : BaseArgs)
+        Args.emplace_back(arg);
+      Args.push_back(shardIn[s]);
+      Args.push_back(shardOut[s]);
+      llvm::sys::ProcessInfo PI =
+          llvm::sys::ExecuteNoWait(Program, Args, /*Env=*/std::nullopt,
+                                   /*Redirects=*/{}, /*MemoryLimit=*/0,
+                                   &ErrMsg, &ExecutionFailed);
+      if (!ExecutionFailed)
+        procs.push_back(PI);
+    }
+    bool killed = false;
+    int RC = 0;
+    for (auto &PI : procs) {
+      std::optional<unsigned> waitFor;
+      if (ExecutionFailed || killed) {
+        waitFor = 1;
+      } else if (wallBudget) {
+        double spent = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - herbieStart)
+                           .count();
+        waitFor = spent + 1 >= wallBudget ? 1u
+                                          : (unsigned)(wallBudget - spent);
+      }
+      std::string WaitErr;
+      llvm::sys::ProcessInfo R = llvm::sys::Wait(PI, waitFor, &WaitErr);
+      if (R.ReturnCode == -2)
+        killed = true;
+      else if (R.ReturnCode != 0 && RC == 0)
+        RC = R.ReturnCode;
+    }
     double herbieSecs = std::chrono::duration<double>(
                             std::chrono::steady_clock::now() - herbieStart)
                             .count();
 
-    std::remove(tmpin.c_str());
     if (ExecutionFailed) {
       llvm::errs() << "Execution failed: " << ErrMsg << "\n";
-      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
-        llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                     << EC.message() << "\n";
+      removeShardFiles();
       continue;
     }
-    // RC == -2 means SecondsToWait elapsed and the child was killed: a
-    // reportable negative result for this subgraph, not a compiler error.
-    if (RC == -2) {
+    if (killed) {
       llvm::errs()
           << "[poseidon] Herbie subgraph " << subgraphIdx << " of " << funcTag
           << ": KILLED after " << herbieSecs << " s (wall budget " << wallBudget
@@ -746,9 +773,7 @@ bool improveViaHerbie(
              "other candidate families are unaffected. Raise "
              "-poseidon-herbie-subgraph-timeout to spend more, or set it "
              "to 0 for the historical unbounded behaviour.\n";
-      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
-        llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                     << EC.message() << "\n";
+      removeShardFiles();
       if (!timeoutMarkerPath.empty()) {
         if (auto EC = llvm::sys::fs::create_directories(flags::Cache, true))
           llvm::errs() << "Warning: Could not create cache directory: "
@@ -765,30 +790,49 @@ bool improveViaHerbie(
       continue;
     }
 
-    std::ifstream output((tmpout + "/results.json").str());
-    if (!output) {
-      // Herbie ran and wrote nothing. The common cause is a platform it could
-      // not load (it exits 1 and reports on stderr, just above this message).
-      // Continuing here would drop every algebraic candidate for this subgraph
-      // and report the solve as a success, so it aborts instead.
-      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
-        llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                     << EC.message() << "\n";
-      std::string where = Platform.Name;
-      if (!Platform.Path.empty())
-        where += ", " + Platform.Path;
-      report_fatal_error(Twine("Poseidon: Herbie exited with status ") +
-                         Twine(RC) +
-                         " and produced no results.json for subgraph " +
-                         Twine(subgraphIdx) + " of " + funcTag + " (platform " +
-                         where + "). Its own diagnostics are on stderr above.");
+    // One process: its results.json verbatim. Several: their tests merged
+    // into the first one's report.
+    std::optional<json::Object> merged;
+    for (unsigned s = 0; s < shards; ++s) {
+      auto Buf = MemoryBuffer::getFile(shardOut[s] + "/results.json");
+      Expected<json::Value> parsed =
+          Buf ? json::parse((*Buf)->getBuffer())
+              : Expected<json::Value>(
+                    createStringError(Buf.getError(), "no results.json"));
+      if (!parsed || !parsed->getAsObject() ||
+          !parsed->getAsObject()->getArray("tests")) {
+        if (!parsed)
+          consumeError(parsed.takeError());
+        removeShardFiles();
+        std::string where = Platform.Name;
+        if (!Platform.Path.empty())
+          where += ", " + Platform.Path;
+        report_fatal_error(Twine("Poseidon: Herbie exited with status ") +
+                           Twine(RC) +
+                           " and produced no usable results.json for "
+                           "subgraph " +
+                           Twine(subgraphIdx) + " of " + funcTag +
+                           " (platform " + where +
+                           "). Its own diagnostics are on stderr above.");
+      }
+      if (shards == 1) {
+        content = (*Buf)->getBuffer().str();
+        break;
+      }
+      if (!merged) {
+        merged = std::move(*parsed->getAsObject());
+        continue;
+      }
+      json::Array *dst = merged->getArray("tests");
+      for (auto &t : *parsed->getAsObject()->getArray("tests"))
+        dst->push_back(std::move(t));
     }
-    content.assign((std::istreambuf_iterator<char>(output)),
-                   std::istreambuf_iterator<char>());
-    output.close();
-    if (auto EC = llvm::sys::fs::remove_directories(tmpout))
-      llvm::errs() << "Warning: Failed to remove temporary output directory: "
-                   << EC.message() << "\n";
+    if (merged) {
+      content.clear();
+      raw_string_ostream os(content);
+      os << json::Value(std::move(*merged));
+    }
+    removeShardFiles();
 
     llvm::errs() << "Herbie output: " << content << "\n";
 
@@ -917,6 +961,19 @@ std::string getPrecondition(
              << std::scientific << lower;
     upperStr << std::setprecision(std::numeric_limits<double>::max_digits10)
              << std::scientific << upper;
+
+    if (flags::HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
+        std::isfinite(lower) && std::isfinite(upper)) {
+      double floorMag = std::ldexp(std::max(-lower, upper),
+                                   -(int)flags::HerbiePreFloorBits);
+      std::ostringstream floorStr;
+      floorStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+               << std::scientific << floorMag;
+      preconditions += " (or (<= " + lowerStr.str() + " " + arg + " -" +
+                       floorStr.str() + ") (<= " + floorStr.str() + " " + arg +
+                       " " + upperStr.str() + "))";
+      continue;
+    }
 
     preconditions +=
         " (<=" +

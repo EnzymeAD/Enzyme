@@ -200,6 +200,17 @@ cl::opt<unsigned> HerbieSubgraphTimeout(
     cl::desc("Wall-clock seconds allowed for one FP subgraph's Herbie "
              "invocation (0 = unbounded, the historical behaviour). Also "
              "clamps Herbie's own per-core --timeout."));
+// Herbie's worker places share one Racket heap, so a single process with many
+// workers spends most of its time in collection; separate processes do not.
+cl::opt<unsigned> HerbieProcesses(
+    "poseidon-herbie-processes", cl::init(0),
+    cl::desc("Herbie processes one subgraph's FPCores are split across "
+             "(0 = one per -poseidon-herbie-num-threads worker, each with one "
+             "worker; 1 = a single process with all workers)."));
+cl::opt<unsigned> HerbiePreFloorBits(
+    "poseidon-herbie-pre-floor-bits", cl::init(0),
+    cl::desc("For a profiled range [lo, hi] with lo < 0 < hi, exclude "
+             "|x| < max(-lo, hi) * 2^-K from the Herbie :pre (0 = off)."));
 // Overrides the HERBIE_BINARY baked in at configure time. Herbie result caches
 // are generation-specific, so pair a new binary with a fresh -poseidon-cache.
 cl::opt<std::string> HerbieBinary(
