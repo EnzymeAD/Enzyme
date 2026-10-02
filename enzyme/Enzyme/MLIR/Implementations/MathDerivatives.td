@@ -159,5 +159,12 @@ def : MLIRDerivative<"math", "AtanhOp", (Op $x),
                         (SubF(ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x)))
                     ]
                   >;
+
+def : MLIRDerivative<"math", "ExpM1Op", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (ExpF $x))
+                    ]
+                  >;
+
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;

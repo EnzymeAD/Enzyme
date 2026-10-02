@@ -185,3 +185,22 @@ func.func @datanh(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.atanh %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @expm1(%x: f64) -> f64 {
+  %res = math.expm1 %x : f64
+  return %res : f64
+}
+
+func.func @dexpm1(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @expm1(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeexpm1(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[exp:.+]] = math.exp %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[exp]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.expm1 %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
