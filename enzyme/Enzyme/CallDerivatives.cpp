@@ -29,6 +29,11 @@
 
 using namespace llvm;
 
+static cl::opt<bool> EnzymeFortranMPIRuntimeAccumulate(
+    "enzyme-fortran-mpi-runtime-accumulate", cl::init(false), cl::Hidden,
+    cl::desc("Add received adjoints of Fortran MPI sends by the size of the "
+             "MPI datatype even when the buffer type is known (for testing)"));
+
 extern "C" {
 void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
                                  LLVMValueRef, uint8_t) = nullptr;
@@ -444,6 +449,59 @@ static Function *getFortranMPIWaitallEach(Module &M, Function *Each) {
   return F;
 }
 
+/// void accumulate(ptr dbuf, ptr tmp, i64 len, i32 tysize): dbuf += tmp as
+/// doubles (MPI datatype of 8 or 16 bytes) or floats (4 bytes).
+static Function *getFortranMPIAccumulate(Module &M) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i32 = Type::getInt32Ty(C);
+  auto i64 = Type::getInt64Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(
+      M, "__enzyme_fortran_mpi_accumulate",
+      FunctionType::get(Type::getVoidTy(C), {P, P, i64, i32}, false), created);
+  if (!created)
+    return F;
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *end = BasicBlock::Create(C, "end", F);
+  BasicBlock *notdouble = BasicBlock::Create(C, "notdouble", F);
+  IRBuilder<> B(entry);
+  Value *dbuf = F->getArg(0), *tmp = F->getArg(1), *len = F->getArg(2),
+        *tysize = F->getArg(3);
+  auto addLoop = [&](Type *T, BasicBlock *pred) {
+    BasicBlock *loop = BasicBlock::Create(C, "loop", F, end);
+    BasicBlock *body = BasicBlock::Create(C, "body", F, end);
+    auto n = B.CreateUDiv(len, ConstantInt::get(i64, T->getPrimitiveSizeInBits() / 8));
+    B.CreateBr(loop);
+    B.SetInsertPoint(loop);
+    PHINode *i = B.CreatePHI(i64, 2, "i");
+    i->addIncoming(ConstantInt::get(i64, 0), pred);
+    B.CreateCondBr(B.CreateICmpULT(i, n), body, end);
+    B.SetInsertPoint(body);
+    Value *dp = B.CreateInBoundsGEP(T, dbuf, {i});
+    Value *tp = B.CreateInBoundsGEP(T, tmp, {i});
+    B.CreateStore(B.CreateFAdd(B.CreateLoad(T, dp), B.CreateLoad(T, tp)), dp);
+    i->addIncoming(B.CreateAdd(i, ConstantInt::get(i64, 1)), body);
+    B.CreateBr(loop);
+  };
+  BasicBlock *isdouble = BasicBlock::Create(C, "double", F, notdouble);
+  B.CreateCondBr(
+      B.CreateOr(B.CreateICmpEQ(tysize, ConstantInt::get(i32, 8)),
+                 B.CreateICmpEQ(tysize, ConstantInt::get(i32, 16))),
+      isdouble, notdouble);
+  B.SetInsertPoint(isdouble);
+  addLoop(Type::getDoubleTy(C), isdouble);
+  B.SetInsertPoint(notdouble);
+  BasicBlock *isfloat = BasicBlock::Create(C, "float", F, end);
+  B.CreateCondBr(B.CreateICmpEQ(tysize, ConstantInt::get(i32, 4)), isfloat,
+                 end);
+  B.SetInsertPoint(isfloat);
+  addLoop(Type::getFloatTy(C), isfloat);
+  B.SetInsertPoint(end);
+  B.CreateRetVoid();
+  return F;
+}
+
 bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
                                                     Function *called,
                                                     StringRef funcName) {
@@ -650,8 +708,19 @@ bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
       }
       if (tmp) {
         // adjoint(buf) += received adjoint
-        DifferentiableMemCopyFloats(call, call.getOperand(0), tmp, dbuf, len,
-                                    Builder2, {});
+        auto &DL = M.getDataLayout();
+        if (!EnzymeFortranMPIRuntimeAccumulate &&
+            TR.query(call.getOperand(0))
+                .Data0()
+                .ShiftIndices(DL, 0, 1, 0)[{0}]
+                .isFloat())
+          DifferentiableMemCopyFloats(call, call.getOperand(0), tmp, dbuf, len,
+                                      Builder2, {});
+        else
+          // The buffer type is unknown to type analysis (e.g. a buffer only
+          // filled by MPI): add by the size of the MPI datatype.
+          Builder2.CreateCall(getFortranMPIAccumulate(M),
+                              {dbuf, tmp, len, tysize});
         CreateDealloc(Builder2, tmp);
       } else {
         // The received values were overwritten: their adjoint is zero
