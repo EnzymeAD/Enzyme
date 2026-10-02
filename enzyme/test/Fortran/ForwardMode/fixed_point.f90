@@ -10,15 +10,18 @@
 ! module variables, which need -enzyme-global-activity.
 
 module model
+  use, intrinsic :: iso_fortran_env, only: real64, int64
   implicit none
+  private
+  public :: m, u, p, ncontrol, step, loss, init, control
   integer, parameter :: m = 5
-  real(8) :: u(m) = 0, p(m) = 0
+  real(real64) :: u(m) = 0, p(m) = 0
   integer :: ncontrol = 0
 contains
   logical function step(i, tol)
-    integer(8), value :: i
-    real(8), intent(in) :: tol
-    real(8) :: tmp(m), err
+    integer(int64), value :: i
+    real(real64), intent(in) :: tol
+    real(real64) :: tmp(m), err
     integer :: k
     do k = 1, m
       tmp(k) = 0.3d0 * sin(u(k) + 0.5d0 * u(mod(k, m) + 1)) + p(k)**2
@@ -31,7 +34,7 @@ contains
     step = err > tol
   end function step
 
-  real(8) function loss()
+  real(real64) function loss()
     integer :: k
     loss = 0
     do k = 1, m
@@ -40,7 +43,7 @@ contains
   end function loss
 
   subroutine init(x)
-    real(8), intent(in) :: x(m)
+    real(real64), intent(in) :: x(m)
     integer :: k
     do k = 1, m
       u(k) = 0
@@ -51,9 +54,9 @@ contains
   ! Tapenade's adFixedPoint_notReduced protocol: cumul is -1 on the first
   ! call, then the squared norm of the adjoint update.
   integer function control(cumul, reduction)
-    real(8), intent(inout) :: cumul
-    real(8), intent(inout) :: reduction
-    real(8), save :: ref = -1
+    real(real64), intent(inout) :: cumul
+    real(real64), intent(inout) :: reduction
+    real(real64), save :: ref = -1
     ncontrol = ncontrol + 1
     control = 1
     if (cumul < 0) then
@@ -66,39 +69,12 @@ contains
   end function control
 end module model
 
-subroutine plain(x, y, tol)
-  use model
-  implicit none
-  real(8), intent(in) :: x(m), tol
-  real(8), intent(out) :: y
-  integer(8) :: i
-  call init(x)
-  i = 0
-  do while (step(i, tol))
-    i = i + 1
-  end do
-  y = loss()
-end subroutine plain
-
-subroutine fixed(x, y, tol)
-  use enzyme
-  use model
-  implicit none
-  real(8), intent(in) :: x(m), tol
-  real(8), intent(out) :: y
-  call init(x)
-  call enzyme_fixed_point(step, enzyme_fp_state, u, int(8 * m, 8), &
-                          enzyme_fp_reduction, 1d-24, &
-                          enzyme_fp_control, control, tol)
-  y = loss()
-end subroutine fixed
-
 program main
-  use enzyme
-  use model
+  use, intrinsic :: iso_fortran_env, only: real64, int64
+  use enzyme, only: enzyme_fwddiff, enzyme_dup, enzyme_const, enzyme_fixed_point, enzyme_fp_state, enzyme_fp_reduction, enzyme_fp_control
+  use model, only: m, u, ncontrol, step, loss, init, control
   implicit none
-  real(8) :: x(m), dx(m), y, dy, yp, ym, fd, h, tol
-  external :: fixed
+  real(real64) :: x(m), dx(m), y, dy, yp, ym, fd, h, tol
   integer :: k
   logical :: ok
 
@@ -127,4 +103,28 @@ program main
   end if
   ! CHECK: ok
   if (ok) print "(a)", "ok"
+
+contains
+
+  subroutine plain(x, y, tol)
+    real(real64), intent(in) :: x(m), tol
+    real(real64), intent(out) :: y
+    integer(int64) :: i
+    call init(x)
+    i = 0
+    do while (step(i, tol))
+      i = i + 1
+    end do
+    y = loss()
+  end subroutine plain
+
+  subroutine fixed(x, y, tol)
+    real(real64), intent(in) :: x(m), tol
+    real(real64), intent(out) :: y
+    call init(x)
+    call enzyme_fixed_point(step, enzyme_fp_state, u, int(8 * m, int64), &
+                            enzyme_fp_reduction, 1d-24, &
+                            enzyme_fp_control, control, tol)
+    y = loss()
+  end subroutine fixed
 end program main
