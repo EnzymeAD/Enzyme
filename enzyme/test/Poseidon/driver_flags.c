@@ -1,13 +1,17 @@
 // The driver's translation: two pass plugins in pipeline order, Poseidon's
 // include directory, statement-only FP contraction, every -poseidon-<flag>
-// forwarded to the pass, and the runtime the selected action needs.
+// forwarded to the pass, and the runtime the selected action needs. Naming
+// the CUDA path and dropping its headers and libdevice keeps clang's exit
+// status, and -lcudart, independent of the host's CUDA.
 //
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-confidence=0.9 -poseidon-cache=%t.cache \
-// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch -### %s -o %t.o 2>&1 \
+// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=USE %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
-// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch -### %s -o %t.o 2>&1 \
+// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: %poseidon_clangxx -poseidon-help | FileCheck --check-prefix=HELP %s
 //
@@ -16,7 +20,8 @@
 // rewritten into an -mllvm flag of its own.
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use=%t.profile \
 // RUN:     -Xcuda-ptxas --maxrregcount=160 -Xclang -poseidon-not-a-flag \
-// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch -### %s -o %t.o 2>&1 \
+// RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
+// RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XPAIR %s
 //
 // REQUIRES: poseidon, enzyme
