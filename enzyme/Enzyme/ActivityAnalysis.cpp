@@ -1378,47 +1378,6 @@ static bool isFortranMPIRequest(const Value *V,
   return false;
 }
 
-/// Whether the pointer \p V is (or points into, through GEPs, casts and
-/// calls to defined functions) the buffer of a nonblocking point-to-point
-/// call of the Fortran MPI ABI, which keeps it beyond the call.
-static bool isFortranMPIAsyncBuffer(const Value *V,
-                                    SmallPtrSetImpl<const Value *> &seen,
-                                    unsigned depth) {
-  if (depth > 12 || !seen.insert(V).second)
-    return false;
-  for (const User *U : V->users()) {
-    if (isa<GetElementPtrInst>(U) || isa<BitCastInst>(U) ||
-        isa<AddrSpaceCastInst>(U)) {
-      if (isFortranMPIAsyncBuffer(U, seen, depth + 1))
-        return true;
-      continue;
-    }
-    auto CI = dyn_cast<CallBase>(U);
-    if (!CI)
-      continue;
-    StringRef name = getFuncNameFromCall(CI);
-    if (isFortranMPICall(name)) {
-      StringRef canon = canonicalizeMPIName(name);
-      if ((canon == "MPI_Isend" || canon == "MPI_Irecv") &&
-          CI->arg_size() > 0 && CI->getArgOperand(0) == V)
-        return true;
-      continue;
-    }
-    if (auto F = getFunctionFromCall(CI))
-      if (!F->empty())
-        for (unsigned i = 0; i < CI->arg_size() && i < F->arg_size(); i++)
-          if (CI->getArgOperand(i) == V &&
-              isFortranMPIAsyncBuffer(F->getArg(i), seen, depth + 1))
-            return true;
-  }
-  return false;
-}
-
-bool isFortranMPIAsyncBuffer(const Value *V) {
-  SmallPtrSet<const Value *, 8> seen;
-  return isFortranMPIAsyncBuffer(V, seen, 0);
-}
-
 bool isFortranMPIRequest(const Value *V) {
   SmallPtrSet<const Value *, 8> seen;
   if (isFortranMPIRequest(V, seen))

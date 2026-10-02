@@ -9895,6 +9895,41 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
   }
 }
 
+/// Whether the augmented forward pass of the call \p CI may keep the shadow
+/// of its argument \p idx beyond the call. The primal's "captures(none)" says
+/// nothing about that when Enzyme does not generate the callee's derivative
+/// itself: a function only declared here (under separate compilation, one
+/// defined in another module) or one with a custom rule. Functions Enzyme
+/// differentiates by name (the C library, libm, BLAS, the flang runtime) do
+/// not keep shadows. "enzyme_shadow_nocapture" on the parameter (e.g. from
+/// a whole-program summary) states that the derivative does not keep it.
+static bool mayKeepShadow(const CallInst *CI, size_t idx,
+                          TargetLibraryInfo &TLI) {
+  if (CI->getAttributes().hasParamAttr(idx, "enzyme_shadow_nocapture"))
+    return false;
+  auto F = getFunctionFromCall(CI);
+  if (!F)
+    return false;
+  if (F->getAttributes().hasParamAttr(idx, "enzyme_shadow_nocapture"))
+    return false;
+  if (hasCustomRuleMetadata(F) || hasCustomRuleMetadata(CI))
+    return true;
+  if (!F->empty() || F->isIntrinsic())
+    return false;
+  StringRef name = F->getName();
+#if LLVM_VERSION_MAJOR >= 24
+  bool libFunc = TLI.getLibFunc(*F) != NotLibFunc;
+#else
+  LibFunc LF;
+  bool libFunc = TLI.getLibFunc(*F, LF);
+#endif
+  if (libFunc || isDebugFunction(F) || extractBLAS(name) ||
+      startsWith(name, "_FortranA") || isAllocationFunction(name, TLI) ||
+      isDeallocationFunction(name, TLI))
+    return false;
+  return true;
+}
+
 void GradientUtils::computeForwardingProperties(Instruction *V) {
   if (!EnzymeRematerialize)
     return;
@@ -10065,6 +10100,18 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 
         // From here on out we can assume the pointer is not captured, and only
         // written to or read from.
+
+        // That holds for the primal only: the derivative of the call may
+        // still keep the shadow (see mayKeepShadow), which then must exist
+        // in the forward pass and cannot be recreated in the reverse pass.
+        if (shadowpromotable && !isConstantInstruction(CI) &&
+            mayKeepShadow(CI, idx, TLI)) {
+          shadowpromotable = false;
+          EmitWarning("NotPromotable", *cur,
+                      " Could not promote shadow allocation ", *V,
+                      " due to call whose derivative may keep the shadow ",
+                      *cur, " at idx=", idx);
+        }
 
         // If we may read from the memory, consider this a load-like call
         // that must have all writes done in preparation for any reverse-pass
