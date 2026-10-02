@@ -23,9 +23,10 @@
 // Precedence for a site's accuracy target:
 //   POSEIDON_OPTIMIZE_TAU value  >  -poseidon-tau  >  none (site left as
 //   written)
-// -poseidon-tau is read by the matrix-product selector, so a site annotated
-// with bare POSEIDON_OPTIMIZE and compiled with -poseidon-tau has its matrix
-// products priced against that budget and its elementwise work left alone.
+// -poseidon-tau is the target of every site that carries none. A site with
+// no matrix product is then solved under it exactly as under its own value; a
+// site with matrix products has them selected against it and its elementwise
+// work left alone, whereas a site value also solves the elementwise work.
 //
 // poseidon_metric declares the quantity of interest the accuracy target refers
 // to, once, at the end of the profiling workload. The profiler runtime writes
