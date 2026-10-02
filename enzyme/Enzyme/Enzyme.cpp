@@ -2800,9 +2800,12 @@ public:
       unsigned width = 1;
       // hex mask of the arguments assumed not overwritten after the call
       std::string notOverwritten;
+      // hex mask of the arguments constant at the calls (no shadow)
+      std::string constantArgs;
     };
-    // A token is <mode>[+sz][+ra][+w<N>][+o<hex>], e.g. "reverse+sz" or
-    // "reverse+sz+o5" (arguments 0 and 2 not overwritten after the call).
+    // A token is <mode>[+sz][+ra][+w<N>][+c<hex>][+o<hex>], e.g.
+    // "reverse+sz", "reverse+sz+o5" (arguments 0 and 2 not overwritten after
+    // the call) or "forward+c2" (argument 1 constant, passed no shadow).
     auto parseVariants = [&](StringRef str, SmallVectorImpl<Variant> &out) {
       SmallVector<StringRef, 3> parts;
       str.split(parts, ',', -1, /*KeepEmpty*/ false);
@@ -2821,6 +2824,8 @@ public:
             v.runtimeActivity = true;
           else if (startsWith(flag, "o"))
             v.notOverwritten = flag.drop_front().str();
+          else if (startsWith(flag, "c"))
+            v.constantArgs = flag.drop_front().str();
           else if (!startsWith(flag, "w") ||
                    flag.drop_front().getAsInteger(10, v.width))
             report_fatal_error(Twine("unknown derivative variant flag: ") +
@@ -2903,20 +2908,23 @@ public:
     bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
     for (auto &[F, variants] : todo)
       for (auto &v : variants) {
-        std::vector<bool> kept(F->arg_size(), false);
-        for (unsigned i = 0; i < v.notOverwritten.size(); ++i) {
-          unsigned nibble;
-          if (StringRef(v.notOverwritten.data() + i, 1)
-                  .getAsInteger(16, nibble))
-            report_fatal_error(Twine("bad argument mask: ") + v.notOverwritten);
-          for (unsigned j = 0; j < 4; ++j)
-            if ((nibble >> j) & 1 && 4 * i + j < kept.size())
-              kept[4 * i + j] = true;
-        }
+        auto parseMask = [&](const std::string &hex) {
+          std::vector<bool> mask(F->arg_size(), false);
+          for (unsigned i = 0; i < hex.size(); ++i) {
+            unsigned nibble;
+            if (StringRef(hex.data() + i, 1).getAsInteger(16, nibble))
+              report_fatal_error(Twine("bad argument mask: ") + hex);
+            for (unsigned j = 0; j < 4; ++j)
+              if ((nibble >> j) & 1 && 4 * i + j < mask.size())
+                mask[4 * i + j] = true;
+          }
+          return mask;
+        };
         GradientUtils::GetOrCreateShadowFunction(
             RequestContext(), Logic,
             Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, v.mode,
-            v.runtimeActivity, v.strongZero, v.width, AtomicAdd, kept);
+            v.runtimeActivity, v.strongZero, v.width, AtomicAdd,
+            parseMask(v.notOverwritten), parseMask(v.constantArgs));
       }
     return true;
   }

@@ -565,7 +565,8 @@ public:
   externalShadowName(llvm::Function *F, DerivativeMode mode,
                      bool runtimeActivity, bool strongZero, unsigned width,
                      bool AtomicAdd,
-                     const std::vector<bool> &notOverwritten = {});
+                     const std::vector<bool> &notOverwritten = {},
+                     const std::vector<bool> &constantArgs = {});
 
   //! Under separate compilation with -enzyme-import-variants: of the
   //! derivatives of \p F other modules export (for this mode and
@@ -575,14 +576,17 @@ public:
   //! The derivative table of \p fn, defined in another module, for a call
   //! whose arguments \p overwritten may be overwritten afterwards (the
   //! variant chosen by chooseExternalVariant).
+  //! \p constantArgs are the arguments constant at this call (beyond those
+  //! the callee declares inactive), which get no shadow in that variant.
   llvm::Constant *
   getExternalCalleeShadow(llvm::Function *fn,
-                          const std::vector<bool> &overwritten) {
+                          const std::vector<bool> &overwritten,
+                          const std::vector<bool> &constantArgs = {}) {
     auto kept = chooseExternalVariant(fn, mode, runtimeActivity, strongZero,
                                       width, overwritten);
     return GetOrCreateShadowFunction(RequestContext(), Logic, TLI, TA, fn, mode,
                                      runtimeActivity, strongZero, width,
-                                     AtomicAdd, kept);
+                                     AtomicAdd, kept, constantArgs);
   }
 
   static std::vector<bool>
@@ -594,7 +598,8 @@ public:
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Function *F, DerivativeMode mode,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
-      const std::vector<bool> &notOverwritten = {});
+      const std::vector<bool> &notOverwritten = {},
+      const std::vector<bool> &constantArgs = {});
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,

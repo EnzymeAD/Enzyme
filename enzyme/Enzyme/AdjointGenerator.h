@@ -5294,6 +5294,28 @@ public:
     return nullptr;
   }
 
+  /// Under separate compilation, the shadow (derivative table) of the
+  /// callee of \p call when another module defines it: the variant for the
+  /// arguments constant at this call (\p argsInverted) and, with
+  /// -enzyme-import-variants, those not overwritten after it; null for other
+  /// calls.
+  llvm::Constant *
+  externalCalleeShadow(llvm::CallInst &call,
+                       const std::vector<bool> &overwritten_args,
+                       llvm::ArrayRef<DIFFE_TYPE> argsInverted) {
+    auto F = getFunctionFromCall(&call);
+    if (!F || !GradientUtils::usesExternalDerivative(F, gutils->TLI))
+      return nullptr;
+    std::vector<bool> constantArgs;
+    for (auto ty : argsInverted)
+      constantArgs.push_back(ty == DIFFE_TYPE::CONSTANT);
+    return gutils->getExternalCalleeShadow(F,
+                                           externalCalleeWithVariants(call)
+                                               ? overwritten_args
+                                               : std::vector<bool>(),
+                                           constantArgs);
+  }
+
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
@@ -5508,10 +5530,15 @@ public:
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
         auto callval = call.getCalledOperand();
-        newcalled = gutils->invertPointerM(callval, BuilderZ);
+        if (auto ext =
+                externalCalleeShadow(call, overwritten_args, argsInverted)) {
+          newcalled = ext;
+        } else {
+          newcalled = gutils->invertPointerM(callval, BuilderZ);
 
-        if (gutils->getWidth() > 1) {
-          newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
+          if (gutils->getWidth() > 1) {
+            newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
+          }
         }
 
         ErrorIfRuntimeInactive(
@@ -5911,8 +5938,9 @@ public:
              << " for use as function in " << call;
           EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
-        if (auto ext = externalCalleeWithVariants(call))
-          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        if (auto ext =
+                externalCalleeShadow(call, overwritten_args, argsInverted))
+          newcalled = ext;
         else
           newcalled = gutils->invertPointerM(callval, BuilderZ);
 
@@ -6445,8 +6473,9 @@ public:
           newcalled =
               UndefValue::get(gutils->getShadowType(callval->getType()));
       } else {
-        if (auto ext = externalCalleeWithVariants(call))
-          newcalled = gutils->getExternalCalleeShadow(ext, overwritten_args);
+        if (auto ext =
+                externalCalleeShadow(call, overwritten_args, argsInverted))
+          newcalled = ext;
         else
           newcalled =
               lookup(gutils->invertPointerM(callval, Builder2), Builder2);

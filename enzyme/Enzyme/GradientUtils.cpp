@@ -4851,12 +4851,74 @@ std::vector<bool> GradientUtils::chooseExternalVariant(
   return best;
 }
 
+/// Whether the local object \p V points into (an alloca) only ever holds
+/// constant values: what is stored or copied into it, other than by \p call,
+/// is constant. Such an object, e.g. the descriptor flang builds to pass on
+/// a section of an inactive array, carries no derivative; its shadow would
+/// hold the primal pointers.
+static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
+                                          CallBase &call) {
+  auto AI = dyn_cast<AllocaInst>(getBaseObject(V));
+  if (!AI)
+    return false;
+  SmallVector<Value *, 4> todo = {AI};
+  SmallPtrSet<Value *, 8> seen;
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    for (auto U : cur->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        return false;
+      if (isa<GetElementPtrInst>(I) || isa<CastInst>(I)) {
+        todo.push_back(I);
+        continue;
+      }
+      if (isa<LoadInst>(I))
+        continue;
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        if (SI->getValueOperand() == cur ||
+            !gutils->isConstantValue(SI->getValueOperand()))
+          return false;
+        continue;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        if (MTI->getSource() == cur ||
+            !gutils->isConstantValue(MTI->getSource()))
+          return false;
+        continue;
+      }
+      if (isa<MemSetInst>(I))
+        continue;
+      if (auto II = dyn_cast<IntrinsicInst>(I)) {
+        if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+            II->getIntrinsicID() == Intrinsic::lifetime_end)
+          continue;
+        return false;
+      }
+      if (I == &call)
+        continue;
+      return false;
+    }
+  }
+  return true;
+}
+
 DIFFE_TYPE GradientUtils::getCallArgDiffeType(CallBase &call, unsigned i,
                                               bool foreignFunction) const {
+  // A call through another module's derivative passes no shadow for the
+  // parameters the callee declares inactive, nor (as a call to a function of
+  // this module would) for the arguments constant here, including local
+  // objects holding only constants: the variant called is named after both
+  // (externalShadowName).
   if (foreignFunction && EnzymeSeparateCompilation)
     if (auto F = getFunctionFromCall(&call))
       if (usesExternalDerivative(F, TLI) &&
-          F->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+          (F->getAttributes().hasParamAttr(i, "enzyme_inactive") ||
+           isConstantValue(call.getArgOperand(i)) ||
+           (call.getArgOperand(i)->getType()->isPointerTy() &&
+            localObjectHoldsOnlyConstants(this, call.getArgOperand(i), call))))
         return DIFFE_TYPE::CONSTANT;
   return getDiffeType(call.getArgOperand(i), foreignFunction);
 }
@@ -4912,7 +4974,8 @@ static std::string hexMask(unsigned n, llvm::function_ref<bool(unsigned)> bit) {
 
 std::string GradientUtils::externalShadowName(
     Function *F, DerivativeMode mode, bool runtimeActivity, bool strongZero,
-    unsigned width, bool AtomicAdd, const std::vector<bool> &notOverwritten) {
+    unsigned width, bool AtomicAdd, const std::vector<bool> &notOverwritten,
+    const std::vector<bool> &constantArgs) {
   std::string name = "__enzyme_sep_";
   switch (mode) {
   case DerivativeMode::ForwardMode:
@@ -4942,10 +5005,12 @@ std::string GradientUtils::externalShadowName(
                  mode == DerivativeMode::ReverseModePrimal;
   if (AtomicAdd && reverse)
     name += "_aa";
-  // Parameters declared inactive get no shadow; which ones is part of the
-  // calling convention: _c<hex mask of their indices, lowest first>.
+  // Parameters declared inactive, and those constant at the calls the
+  // variant is for, get no shadow; which ones is part of the calling
+  // convention: _c<hex mask of their indices, lowest first>.
   auto mask = hexMask(F->arg_size(), [&](unsigned i) {
-    return F->getAttributes().hasParamAttr(i, "enzyme_inactive");
+    return F->getAttributes().hasParamAttr(i, "enzyme_inactive") ||
+           (i < constantArgs.size() && constantArgs[i]);
   });
   if (!mask.empty())
     name += "_c" + mask;
@@ -4965,7 +5030,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
     bool strongZero, unsigned width, bool AtomicAdd,
-    const std::vector<bool> &notOverwritten) {
+    const std::vector<bool> &notOverwritten,
+    const std::vector<bool> &constantArgs) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -4985,7 +5051,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                   ? (Type *)PT
                   : (Type *)StructType::get(Ctx, {PT, PT});
     auto name = externalShadowName(fn, mode, runtimeActivity, strongZero, width,
-                                   AtomicAdd, notOverwritten);
+                                   AtomicAdd, notOverwritten, constantArgs);
     auto GV = fn->getParent()->getNamedValue(name);
     if (GV == nullptr)
       GV = new GlobalVariable(*fn->getParent(), T, /*isConstant*/ true,
@@ -5011,7 +5077,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   auto shadowName = [&](StringRef prefix) {
     if (exportShadow)
       return externalShadowName(exportedFn, mode, runtimeActivity, strongZero,
-                                width, AtomicAdd, notOverwritten);
+                                width, AtomicAdd, notOverwritten, constantArgs);
     return (prefix + "_" + fn->getName() + "'").str();
   };
 
@@ -5086,7 +5152,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
     DIFFE_TYPE typ;
     if (exportShadow &&
-        fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_inactive")) {
+        (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_inactive") ||
+         (a.getArgNo() < constantArgs.size() && constantArgs[a.getArgNo()]))) {
       typ = DIFFE_TYPE::CONSTANT;
     } else if (a.getType()->isFPOrFPVectorTy()) {
       typ = (mode == DerivativeMode::ForwardMode ||
