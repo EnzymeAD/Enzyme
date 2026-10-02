@@ -495,16 +495,26 @@ static bool lowerShadowQuery(CallInst *CI) {
   return true;
 }
 
-/// The size of the fresh allocation \p V is, if it is one: Fortran's
-/// ALLOCATE of an intrinsic type is a call to malloc.
+/// The size of the memory that the call \p CI allocates, if it is a call
+/// to malloc or aligned_alloc. Flang's ALLOCATE of an intrinsic type calls
+/// malloc, or aligned_alloc for over-aligned types and in newer versions.
+static Value *getAllocationCallSize(CallInst *CI) {
+  auto F = getFunctionFromCall(CI);
+  if (!F)
+    return nullptr;
+  if (F->getName() == "malloc" && CI->arg_size() == 1)
+    return CI->getArgOperand(0);
+  if (F->getName() == "aligned_alloc" && CI->arg_size() == 2)
+    return CI->getArgOperand(1);
+  return nullptr;
+}
+
+/// The size of the fresh allocation \p V is, if it is one.
 static Value *getFreshAllocationSize(Value *V) {
   auto CI = dyn_cast<CallInst>(lookThroughLocalMemory(V));
   if (!CI)
     return nullptr;
-  auto F = getFunctionFromCall(CI);
-  if (!F || F->getName() != "malloc" || CI->arg_size() != 1)
-    return nullptr;
-  return CI->getArgOperand(0);
+  return getAllocationCallSize(CI);
 }
 
 /// The pointer the shadow of a global holds where the global holds \p V:
@@ -518,8 +528,8 @@ static Value *getShadowAllocation(IRBuilder<> &B, Value *V, CallInst *&alloc) {
   if (!size)
     return nullptr;
   auto orig = cast<CallInst>(lookThroughLocalMemory(V));
-  alloc =
-      B.CreateCall(orig->getFunctionType(), orig->getCalledOperand(), {size});
+  SmallVector<Value *, 2> args(orig->args());
+  alloc = B.CreateCall(orig->getFunctionType(), orig->getCalledOperand(), args);
   B.CreateMemSet(alloc, B.getInt8(0), size, MaybeAlign());
   return B.CreatePointerBitCastOrAddrSpaceCast(alloc, V->getType());
 }
@@ -591,9 +601,9 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
   auto recordSize = [](IRBuilder<> &B, GlobalVariable *shadow, unsigned lane,
                        int64_t offset, CallInst *alloc) {
     auto slot = getShadowAllocationSize(shadow, lane, offset);
-    Value *size =
-        alloc ? B.CreateZExtOrTrunc(alloc->getArgOperand(0), B.getInt64Ty())
-              : B.getInt64(0);
+    Value *size = alloc ? B.CreateZExtOrTrunc(getAllocationCallSize(alloc),
+                                              B.getInt64Ty())
+                        : B.getInt64(0);
     B.CreateStore(size, slot);
   };
   for (auto &VH : originals) {
