@@ -787,7 +787,7 @@ public:
       //  general programs as if the global aliases with an argument something
       //  that is written to, then we will have a logical error
       if (auto arg = dyn_cast<GlobalVariable>(I.getOperand(0))) {
-        if (!hasMetadata(arg, "enzyme_shadow")) {
+        if (!hasGlobalShadow(arg)) {
           return;
         }
       }
@@ -4626,7 +4626,7 @@ public:
             /*shadowReturnUsed*/ false, nextTypeInfo,
             subsequent_calls_may_write, overwritten_args, nowrite_shadows,
             false, gutils->runtimeActivity, gutils->strongZero,
-            gutils->getWidth(), /*AtomicAdd*/ true,
+            gutils->getWidth(), gutils->shadowContext, /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
@@ -4852,7 +4852,8 @@ public:
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
-                .strongZero = gutils->strongZero},
+                .strongZero = gutils->strongZero,
+                .shadowContext = gutils->shadowContext},
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -5402,7 +5403,7 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
-            gutils->strongZero, gutils->getWidth(),
+            gutils->strongZero, gutils->getWidth(), gutils->shadowContext,
             tape ? tape->getType() : nullptr, nextTypeInfo,
             subsequent_calls_may_write, overwritten_args,
             /*augmented*/ subdata);
@@ -5849,7 +5850,7 @@ public:
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
               subsequent_calls_may_write, overwritten_args, nowrite_shadows,
               false, gutils->runtimeActivity, gutils->strongZero,
-              gutils->getWidth(), gutils->AtomicAdd);
+              gutils->getWidth(), gutils->shadowContext, gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -6306,7 +6307,8 @@ public:
               .forceAnonymousTape = false,
               .typeInfo = nextTypeInfo,
               .runtimeActivity = gutils->runtimeActivity,
-              .strongZero = gutils->strongZero},
+              .strongZero = gutils->strongZero,
+              .shadowContext = gutils->shadowContext},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;

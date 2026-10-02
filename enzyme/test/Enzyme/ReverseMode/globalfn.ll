@@ -93,7 +93,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !6 = !{!7, !7, i64 0}
 !7 = !{!"any pointer", !4, i64 0}
 
-; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast ({ i8* (double*, double*)*, void (double*, double*, i8*)* }* @"_enzyme_reverse_ipmul'" to void (double*)*)]
+; CHECK: @global.ad.w1 = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast ({ i8* (double*, double*)*, void (double*, double*, i8*)* }* @"_enzyme_reverse_ipmul'" to void (double*)*)]
 ; CHECK: @"_enzyme_reverse_ipmul'" = internal constant { i8* (double*, double*)*, void (double*, double*, i8*)* } { i8* (double*, double*)* @augmented_ipmul, void (double*, double*, i8*)* @diffeipmul }
 
 ; CHECK: define internal { double } @diffemulglobal(double %x, i64 %idx, double %differeturn)
@@ -102,7 +102,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"alloc'ipa"
 ; CHECK-NEXT:   %alloc = alloca double
 ; CHECK-NEXT:   store double %x, double* %alloc
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 %idx
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global.ad.w1, i64 0, i64 %idx
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:   %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx, align 8

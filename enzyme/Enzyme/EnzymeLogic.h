@@ -174,6 +174,8 @@ struct ReverseCacheKey {
   const FnTypeInfo typeInfo;
   bool runtimeActivity;
   bool strongZero;
+  /// The shadow context the derivative is for (null for the default one).
+  llvm::GlobalVariable *shadowContext;
 
   ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
     return {todiff,
@@ -191,7 +193,8 @@ struct ReverseCacheKey {
             forceAnonymousTape,
             newTypeInfo,
             runtimeActivity,
-            strongZero};
+            strongZero,
+            shadowContext};
   }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
@@ -296,6 +299,11 @@ struct ReverseCacheKey {
     if (strongZero < rhs.strongZero)
       return true;
     if (rhs.strongZero < strongZero)
+      return false;
+
+    if (shadowContext < rhs.shadowContext)
+      return true;
+    if (rhs.shadowContext < shadowContext)
       return false;
 
     // equal
@@ -475,6 +483,7 @@ public:
     unsigned width;
     bool runtimeActivity;
     bool strongZero;
+    llvm::GlobalVariable *shadowContext;
 
     inline bool operator<(const AugmentedCacheKey &rhs) const {
       if (fn < rhs.fn)
@@ -564,6 +573,11 @@ public:
       if (rhs.strongZero < strongZero)
         return false;
 
+      if (shadowContext < rhs.shadowContext)
+        return true;
+      if (rhs.shadowContext < shadowContext)
+        return false;
+
       // equal
       return false;
     }
@@ -598,8 +612,8 @@ public:
       bool subsequent_calls_may_write,
       const std::vector<bool> _overwritten_args,
       const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
-      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
-      bool omp = false);
+      bool runtimeActivity, bool strongZero, unsigned width,
+      llvm::GlobalVariable *shadowContext, bool AtomicAdd, bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -616,6 +630,7 @@ public:
     const FnTypeInfo typeInfo;
     bool runtimeActivity;
     bool strongZero;
+    llvm::GlobalVariable *shadowContext;
 
     inline bool operator<(const ForwardCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -686,6 +701,11 @@ public:
       if (rhs.strongZero < strongZero)
         return false;
 
+      if (shadowContext < rhs.shadowContext)
+        return true;
+      if (rhs.shadowContext < shadowContext)
+        return false;
+
       // equal
       return false;
     }
@@ -733,16 +753,15 @@ public:
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
   ///  \p omp is whether this function is an OpenMP closure body.
-  llvm::Function *
-  CreateForwardDiff(RequestContext context, llvm::Function *todiff,
-                    DIFFE_TYPE retType,
-                    llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-                    bool returnValue, DerivativeMode mode, bool freeMemory,
-                    bool runtimeActivity, bool strongZero, unsigned width,
-                    llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
-                    bool subsequent_calls_may_write,
-                    const std::vector<bool> _overwritten_args,
-                    const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *CreateForwardDiff(
+      RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
+      llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
+      bool returnValue, DerivativeMode mode, bool freeMemory,
+      bool runtimeActivity, bool strongZero, unsigned width,
+      llvm::GlobalVariable *shadowContext, llvm::Type *additionalArg,
+      const FnTypeInfo &typeInfo, bool subsequent_calls_may_write,
+      const std::vector<bool> _overwritten_args,
+      const AugmentedReturn *augmented, bool omp = false);
 
   /// Create a function batched in its inputs.
   ///  \p context the instruction which requested this batch (or null).

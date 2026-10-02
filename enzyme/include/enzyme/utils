@@ -14,6 +14,12 @@ extern int enzyme_dup_return;
 extern int enzyme_primal_return;
 extern int enzyme_noret;
 
+extern int enzyme_context;
+
+extern "C" void *__enzyme_context(unsigned width);
+extern "C" void *__enzyme_shadow(void *context, void *global, unsigned lane);
+extern "C" void __enzyme_zero_shadows(void *context);
+
 template<typename Return, typename... T>
 Return __enzyme_autodiff(T...);
 
@@ -28,6 +34,46 @@ namespace enzyme {
 #pragma clang diagnostic ignored "-Wmissing-braces"
 
     struct nodiff{};
+
+    /**
+     * @brief A shadow context: a set of shadows of the program's globals.
+     *
+     * A derivative requested in a context reads and writes the shadows of
+     * globals in that context, which `enzyme::shadow` returns, so that the
+     * program can seed them before and read them after. Each context has
+     * shadows of its own, so derivatives in different contexts, e.g. of
+     * different orders, never confuse their shadows. A context is made for
+     * a vector width, and holds one shadow per lane of each global.
+     */
+    template < unsigned Width = 1 >
+    struct Context {
+      static_assert(Width > 0, "a context needs at least one lane");
+      void *value;
+    };
+
+    /// Make a shadow context for vector width \p Width.
+    template < unsigned Width = 1 >
+    __attribute__((always_inline))
+    Context<Width> context() {
+      return Context<Width>{__enzyme_context(Width)};
+    }
+
+    /// The shadow of \p global in lane \p lane of \p ctx.
+    template < unsigned Width, typename T >
+    __attribute__((always_inline))
+    T *shadow(Context<Width> ctx, T &global, unsigned lane = 0) {
+      return static_cast<T *>(__enzyme_shadow(
+          ctx.value, const_cast<void *>(static_cast<const void *>(&global)),
+          lane));
+    }
+
+    /// Zero the shadow of every global in \p ctx, e.g. before each gradient
+    /// in a loop.
+    template < unsigned Width >
+    __attribute__((always_inline))
+    void zero_shadows(Context<Width> ctx) {
+      __enzyme_zero_shadows(ctx.value);
+    }
 
     template<bool ReturnPrimal = false>
     struct ReverseMode {
@@ -471,6 +517,12 @@ namespace enzyme {
         };
 
         template<class T>
+        struct is_context : std::false_type {};
+
+        template<unsigned Width>
+        struct is_context<Context<Width>> : std::true_type {};
+
+        template<class T>
         struct is_function_or_function_ptr : std::is_function<T> {};
          
         template<class T>
@@ -489,23 +541,23 @@ namespace enzyme {
         return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, typename ... ExtraArgs, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
-    auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
+    auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup, ExtraArgs ... extra) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
       return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)&detail::templated_call<function, functy>::wrap, detail::ret_global<RetActivity>::value,
             impl::forward<Tuple>(arg_tup),
-            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, &enzyme_const, &f);
+            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, extra..., &enzyme_const, &f);
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, typename ... ExtraArgs, std::enable_if_t<detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
-    auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
+    auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup, ExtraArgs ... extra) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)static_cast<functy*>(f), detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
+      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)static_cast<functy*>(f), detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, extra...);
     }
 
-    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types>
+    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types, std::enable_if_t<!detail::is_context<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         static_assert(
@@ -519,7 +571,7 @@ namespace enzyme {
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
     }
 
-    template < typename DiffMode, typename function, typename ... arg_types>
+    template < typename DiffMode, typename function, typename ... arg_types, std::enable_if_t<!detail::is_context<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         static_assert(
@@ -532,6 +584,30 @@ namespace enzyme {
         using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
+    }
+    /// Differentiate \p f in the shadow context \p ctx: the derivative reads
+    /// and writes the shadows of globals that `enzyme::shadow(ctx, ...)`
+    /// returns.
+    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types>
+    __attribute__((always_inline))
+    auto autodiff(Context<1> ctx, function && f, arg_types && ... args) {
+        static_assert(
+            detail::verify_dup_args<DiffMode, arg_types...>::value,
+            "Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make "
+            "sense for Reverse mode AD"
+        );
+        using primal_return_type = decltype(f(arg_type(args)...));
+        using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
+        using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
+        return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...), &enzyme_context, ctx.value);
+    }
+
+    template < typename DiffMode, typename function, typename ... arg_types>
+    __attribute__((always_inline))
+    auto autodiff(Context<1> ctx, function && f, arg_types && ... args) {
+        using primal_return_type = decltype(f(arg_type(args)...));
+        using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
+        return autodiff<DiffMode, RetActivity>(ctx, impl::forward<function>(f), impl::forward<arg_types>(args)...);
     }
 #pragma clang diagnostic pop
 

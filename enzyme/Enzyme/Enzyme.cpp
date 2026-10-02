@@ -52,6 +52,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/MDBuilder.h"
@@ -381,6 +382,480 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   return false;
 }
 
+/// \p ptr as the result of \p CI, which may be a pointer-sized integer:
+/// Fortran returns a type(c_ptr) as one.
+static Value *castToCallResult(IRBuilder<> &B, Value *ptr, CallInst *CI) {
+  if (CI->getType()->isIntegerTy())
+    return B.CreatePtrToInt(ptr, CI->getType());
+  return B.CreatePointerBitCastOrAddrSpaceCast(ptr, CI->getType());
+}
+
+/// Lower the creation of a shadow context,
+///   void *__enzyme_context(int width)
+/// to a marker global of its own, holding the width. Derivatives requested
+/// with `enzyme_context, ctx` use shadows of globals private to the context,
+/// which __enzyme_shadow(ctx, &global, lane) returns.
+static bool lowerShadowContext(CallInst *CI) {
+  auto width = CI->arg_size() == 1 ? dyn_cast<ConstantInt>(CI->getArgOperand(0))
+                                   : nullptr;
+  if (!width || width->isZero()) {
+    EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                "__enzyme_context takes one positive constant width: ", *CI);
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+    CI->eraseFromParent();
+    return false;
+  }
+  Module &M = *CI->getModule();
+  auto I32 = Type::getInt32Ty(M.getContext());
+  auto context = new GlobalVariable(
+      M, I32, /*isConstant*/ true, GlobalValue::PrivateLinkage,
+      ConstantInt::get(I32, width->getZExtValue()), "enzyme.context");
+  context->setMetadata("enzyme_context", MDTuple::get(M.getContext(), {}));
+  IRBuilder<> B(CI);
+  CI->replaceAllUsesWith(castToCallResult(B, context, CI));
+  CI->eraseFromParent();
+  return true;
+}
+
+static bool isShadowContext(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_context");
+}
+
+/// Lower a query for the shadow of a global in a shadow context,
+///   void *__enzyme_shadow(void *context, void *global, int lane)
+/// to the address of the lane's shadow, creating the shadow if no derivative
+/// needed it yet. The global may be given at a constant offset, e.g. a
+/// member of a struct or of a Fortran COMMON block.
+static bool lowerShadowQuery(CallInst *CI) {
+  auto &DL = CI->getModule()->getDataLayout();
+  auto fail = [&](const Twine &msg) {
+    EmitFailure("IllegalShadowQuery", CI->getDebugLoc(), CI, msg, *CI);
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+    CI->eraseFromParent();
+    return false;
+  };
+  if (CI->arg_size() != 3)
+    return fail("__enzyme_shadow takes (context, global, lane): ");
+  auto context = getShadowContext(CI->getArgOperand(0));
+  if (!context)
+    return fail("the context of __enzyme_shadow must be made by "
+                "__enzyme_context in the same function: ");
+  unsigned W = getShadowContextWidth(context);
+  Value *lane = CI->getArgOperand(2);
+  if (auto C = dyn_cast<ConstantInt>(lane))
+    if (C->getZExtValue() >= W)
+      return fail("the lane of __enzyme_shadow must be less than the width "
+                  "of its context: ");
+
+  APInt Offset(DL.getIndexTypeSizeInBits(CI->getArgOperand(1)->getType()), 0);
+  Value *base = CI->getArgOperand(1);
+  while (true) {
+    base = base->stripAndAccumulateConstantOffsets(DL, Offset,
+                                                   /*AllowNonInbounds*/ true);
+    if (auto GA = dyn_cast<GlobalAlias>(base)) {
+      base = GA->getAliasee();
+      continue;
+    }
+    auto next = lookThroughLocalMemory(base);
+    if (next == base)
+      break;
+    base = next;
+  }
+  // Memory a global points to, such as the data of a Fortran allocatable,
+  // has as shadow the memory that the global's shadow points to, as it does
+  // when the query runs.
+  auto GV = dyn_cast<GlobalVariable>(base);
+  int64_t slot = 0;
+  bool pointee = !GV && getGlobalSlot(base, GV, slot);
+  if (!GV)
+    return fail("__enzyme_shadow needs a global variable, or memory a global "
+                "points to, at a constant offset: ");
+
+  std::string error;
+  GlobalVariable *shadow =
+      getOrCreateConstantGlobalShadow(GV, W, context, error);
+  if (!shadow)
+    return fail(error);
+
+  IRBuilder<> B(CI);
+  Value *ptr = shadow;
+  if (W > 1)
+    ptr = B.CreateInBoundsGEP(
+        shadow->getValueType(), shadow,
+        {B.getInt64(0), B.CreateZExtOrTrunc(lane, B.getInt64Ty())});
+  if (pointee) {
+    ptr = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, slot);
+    ptr = B.CreateLoad(base->getType(), ptr);
+  }
+  if (Offset != 0)
+    ptr =
+        B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, Offset.getSExtValue());
+  CI->replaceAllUsesWith(castToCallResult(B, ptr, CI));
+  CI->eraseFromParent();
+  return true;
+}
+
+/// The size of the memory that the call \p CI allocates, if it is a call
+/// to malloc or aligned_alloc. Flang's ALLOCATE of an intrinsic type calls
+/// malloc, or aligned_alloc for over-aligned types and in newer versions.
+static Value *getAllocationCallSize(CallInst *CI) {
+  auto F = getFunctionFromCall(CI);
+  if (!F)
+    return nullptr;
+  if (F->getName() == "malloc" && CI->arg_size() == 1)
+    return CI->getArgOperand(0);
+  if (F->getName() == "aligned_alloc" && CI->arg_size() == 2)
+    return CI->getArgOperand(1);
+  return nullptr;
+}
+
+/// The size of the fresh allocation \p V is, if it is one.
+static Value *getFreshAllocationSize(Value *V) {
+  auto CI = dyn_cast<CallInst>(lookThroughLocalMemory(V));
+  if (!CI)
+    return nullptr;
+  return getAllocationCallSize(CI);
+}
+
+/// The pointer the shadow of a global holds where the global holds \p V:
+/// a zeroed allocation of the same size for a fresh allocation, null for
+/// null, or null if neither, when the shadow keeps what it held.
+static Value *getShadowAllocation(IRBuilder<> &B, Value *V, CallInst *&alloc) {
+  alloc = nullptr;
+  if (isa<ConstantPointerNull>(V))
+    return V;
+  auto size = getFreshAllocationSize(V);
+  if (!size)
+    return nullptr;
+  auto orig = cast<CallInst>(lookThroughLocalMemory(V));
+  SmallVector<Value *, 2> args(orig->args());
+  alloc = B.CreateCall(orig->getFunctionType(), orig->getCalledOperand(), args);
+  B.CreateMemSet(alloc, B.getInt8(0), size, MaybeAlign());
+  return B.CreatePointerBitCastOrAddrSpaceCast(alloc, V->getType());
+}
+
+/// The size of the allocation that lane \p lane of \p shadow points to at
+/// byte \p offset, kept by mirrorGlobalAllocations for
+/// __enzyme_zero_shadows.
+static GlobalVariable *getShadowAllocationSize(GlobalVariable *shadow,
+                                               unsigned lane, int64_t offset) {
+  auto &M = *shadow->getParent();
+  std::string name =
+      (shadow->getName() + ".size." + Twine(lane) + "." + Twine(offset)).str();
+  if (auto GV = M.getGlobalVariable(name, /*AllowInternal*/ true))
+    return GV;
+  auto I64 = Type::getInt64Ty(M.getContext());
+  return new GlobalVariable(M, I64, /*isConstant*/ false,
+                            GlobalValue::PrivateLinkage,
+                            ConstantInt::get(I64, 0), name);
+}
+
+/// The byte offsets, and index paths, of the pointers within type \p T.
+static void getPointerFields(
+    const DataLayout &DL, Type *T, int64_t offset,
+    SmallVectorImpl<unsigned> &path,
+    SmallVectorImpl<std::pair<int64_t, SmallVector<unsigned, 3>>> &fields) {
+  if (T->isPointerTy()) {
+    fields.emplace_back(offset,
+                        SmallVector<unsigned, 3>(path.begin(), path.end()));
+    return;
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto SL = DL.getStructLayout(ST);
+    for (unsigned i = 0; i < ST->getNumElements(); ++i) {
+      path.push_back(i);
+      getPointerFields(DL, ST->getElementType(i),
+                       offset + SL->getElementOffset(i), path, fields);
+      path.pop_back();
+    }
+  } else if (auto AT = dyn_cast<ArrayType>(T)) {
+    auto size = DL.getTypeAllocSize(AT->getElementType());
+    for (unsigned i = 0; i < AT->getNumElements(); ++i) {
+      path.push_back(i);
+      getPointerFields(DL, AT->getElementType(), offset + i * size, path,
+                       fields);
+      path.pop_back();
+    }
+  }
+}
+
+/// Mirror, in the implicit shadows of a global holding pointers, what code
+/// that is not differentiated stores in it: a fresh, zeroed allocation where
+/// the global gets a fresh allocation, as Fortran's ALLOCATE of a module
+/// variable does, null where it gets null, and the integers beside them,
+/// such as the bounds in a descriptor. Freeing the global's memory frees the
+/// shadow's. Any other pointer stored in the global leaves the shadow's.
+static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
+  auto &DL = M.getDataLayout();
+  bool changed = false;
+  auto laneAddress = [](IRBuilder<> &B, GlobalVariable *shadow, unsigned W,
+                        unsigned lane, int64_t offset) {
+    Value *ptr = shadow;
+    if (W > 1)
+      ptr =
+          B.CreateConstInBoundsGEP2_32(shadow->getValueType(), shadow, 0, lane);
+    if (offset)
+      ptr = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, offset);
+    return ptr;
+  };
+  auto recordSize = [](IRBuilder<> &B, GlobalVariable *shadow, unsigned lane,
+                       int64_t offset, CallInst *alloc) {
+    auto slot = getShadowAllocationSize(shadow, lane, offset);
+    Value *size = alloc ? B.CreateZExtOrTrunc(getAllocationCallSize(alloc),
+                                              B.getInt64Ty())
+                        : B.getInt64(0);
+    B.CreateStore(size, slot);
+  };
+  for (auto &VH : originals) {
+    auto F = dyn_cast_or_null<Function>(VH);
+    if (!F || F->empty())
+      continue;
+    SmallVector<Instruction *, 8> todo;
+    for (auto &I : instructions(*F))
+      if (isa<StoreInst>(&I) || isa<CallInst>(&I))
+        todo.push_back(&I);
+    for (auto I : todo) {
+      // Where the global is written, and with what.
+      Value *dest = nullptr, *val = nullptr;
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        dest = SI->getPointerOperand();
+        val = SI->getValueOperand();
+      } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        // A copy from a local variable, as newer Flang writes a descriptor:
+        // the shadow gets the same copy, with the pointers in it replaced.
+        auto len = dyn_cast<ConstantInt>(MTI->getLength());
+        APInt off(DL.getIndexTypeSizeInBits(MTI->getRawDest()->getType()), 0);
+        auto GV = dyn_cast<GlobalVariable>(
+            MTI->getRawDest()->stripAndAccumulateConstantOffsets(
+                DL, off, /*AllowNonInbounds*/ true));
+        if (!len || !GV ||
+            !isa<AllocaInst>(getUnderlyingObject(MTI->getRawSource())))
+          continue;
+        auto shadows = getImplicitGlobalShadows(GV);
+        SmallVector<unsigned, 3> path;
+        SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+        getPointerFields(DL, GV->getValueType(), 0, path, ptrs);
+        if (shadows.empty() || ptrs.empty())
+          continue;
+        int64_t begin = off.getSExtValue(),
+                end = begin + (int64_t)len->getZExtValue();
+        IRBuilder<> before(MTI);
+        IRBuilder<> B(MTI->getNextNode());
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane) {
+            SmallVector<std::pair<int64_t, Value *>, 2> kept;
+            for (auto &field : ptrs) {
+              int64_t poff = field.first;
+              if (poff < begin || poff >= end)
+                continue;
+              Value *pv = getValueStoredIn(MTI->getRawSource(), poff - begin);
+              CallInst *alloc;
+              Value *sp = nullptr;
+              if (pv && pv->getType()->isPointerTy())
+                sp = getShadowAllocation(B, pv, alloc);
+              if (sp) {
+                kept.emplace_back(poff, sp);
+                recordSize(B, shadow, lane, poff, alloc);
+              } else {
+                // Whatever the shadow held.
+                kept.emplace_back(
+                    poff, before.CreateLoad(
+                              before.getPtrTy(),
+                              laneAddress(before, shadow, W, lane, poff)));
+              }
+            }
+            B.CreateMemCpy(laneAddress(B, shadow, W, lane, begin), MaybeAlign(),
+                           MTI->getRawSource(), MaybeAlign(), MTI->getLength());
+            for (auto &[poff, sp] : kept)
+              B.CreateStore(sp, laneAddress(B, shadow, W, lane, poff));
+            changed = true;
+          }
+        continue;
+      } else if (auto CI = dyn_cast<CallInst>(I)) {
+        auto callee = getFunctionFromCall(CI);
+        if (!callee || callee->getName() != "free" || CI->arg_size() != 1)
+          continue;
+        GlobalVariable *GV;
+        int64_t offset;
+        if (!getGlobalSlot(CI->getArgOperand(0), GV, offset))
+          continue;
+        IRBuilder<> B(CI);
+        for (auto [shadow, W] : getImplicitGlobalShadows(GV))
+          for (unsigned lane = 0; lane < W; ++lane) {
+            auto ptr = B.CreateLoad(CI->getArgOperand(0)->getType(),
+                                    laneAddress(B, shadow, W, lane, offset));
+            B.CreateCall(CI->getFunctionType(), CI->getCalledOperand(), {ptr});
+            changed = true;
+          }
+        continue;
+      }
+      if (!dest)
+        continue;
+      APInt off(DL.getIndexTypeSizeInBits(dest->getType()), 0);
+      auto GV =
+          dyn_cast<GlobalVariable>(dest->stripAndAccumulateConstantOffsets(
+              DL, off, /*AllowNonInbounds*/ true));
+      if (!GV)
+        continue;
+      SmallVector<unsigned, 3> path;
+      SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> globalPtrs;
+      getPointerFields(DL, GV->getValueType(), 0, path, globalPtrs);
+      if (globalPtrs.empty())
+        continue;
+      auto shadows = getImplicitGlobalShadows(GV);
+      if (shadows.empty())
+        continue;
+      Type *T = val->getType();
+      int64_t offset = off.getSExtValue();
+      IRBuilder<> B(I->getNextNode());
+      if (T->isIntegerTy()) {
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane)
+            B.CreateStore(val, laneAddress(B, shadow, W, lane, offset));
+        changed = true;
+        continue;
+      }
+      if (T->isPointerTy()) {
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane) {
+            CallInst *alloc;
+            if (auto sval = getShadowAllocation(B, val, alloc)) {
+              B.CreateStore(sval, laneAddress(B, shadow, W, lane, offset));
+              recordSize(B, shadow, lane, offset, alloc);
+              changed = true;
+            }
+          }
+        continue;
+      }
+      if (!T->isAggregateType())
+        continue;
+      SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+      getPointerFields(DL, T, 0, path, ptrs);
+      // A whole value, such as a descriptor, with only integers beside its
+      // pointers.
+      bool numbers = true;
+      std::function<void(Type *)> check = [&](Type *T) {
+        if (T->isFloatingPointTy() || T->isVectorTy())
+          numbers = false;
+        else if (auto ST = dyn_cast<StructType>(T))
+          for (auto E : ST->elements())
+            check(E);
+        else if (auto AT = dyn_cast<ArrayType>(T))
+          check(AT->getElementType());
+      };
+      check(T);
+      if (!numbers)
+        continue;
+      Value *src = lookThroughLocalMemory(val);
+      for (auto [shadow, W] : shadows)
+        for (unsigned lane = 0; lane < W; ++lane) {
+          Value *sval = val;
+          for (auto &[poff, ppath] : ptrs) {
+            Value *pv = FindInsertedValue(src, ppath);
+            if (!pv)
+              pv = B.CreateExtractValue(val, ppath);
+            CallInst *alloc;
+            Value *sp = getShadowAllocation(B, pv, alloc);
+            if (sp)
+              recordSize(B, shadow, lane, offset + poff, alloc);
+            else
+              sp = B.CreateLoad(pv->getType(),
+                                laneAddress(B, shadow, W, lane, offset + poff));
+            sval = B.CreateInsertValue(sval, sp, ppath);
+          }
+          B.CreateStore(sval, laneAddress(B, shadow, W, lane, offset));
+          changed = true;
+        }
+    }
+  }
+  return changed;
+}
+
+/// Lower
+///   void __enzyme_zero_shadows(void *ctx)
+/// to zeroing the shadows in \p ctx of every global, once derivatives have
+/// created them all: the numbers in them, and the memory their pointers hold
+/// where it was allocated with the global's own (see
+/// mirrorGlobalAllocations). Integers and pointers in shadows of globals that
+/// hold pointers, such as descriptors, are kept.
+static bool lowerZeroShadows(CallInst *CI) {
+  auto &M = *CI->getModule();
+  auto &DL = M.getDataLayout();
+  auto context =
+      CI->arg_size() == 1 ? getShadowContext(CI->getArgOperand(0)) : nullptr;
+  if (!context) {
+    EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                "__enzyme_zero_shadows takes a context made by "
+                "__enzyme_context in the same function: ",
+                *CI);
+    CI->eraseFromParent();
+    return false;
+  }
+  unsigned W = getShadowContextWidth(context);
+  IRBuilder<> B(CI);
+  for (auto &GV : M.globals()) {
+    auto shadow = getGlobalShadow(&GV, W, context);
+    if (!shadow || hasMetadata(&GV, "enzyme_shadow"))
+      continue;
+    SmallVector<unsigned, 3> path;
+    SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+    getPointerFields(DL, GV.getValueType(), 0, path, ptrs);
+    if (ptrs.empty()) {
+      B.CreateMemSet(shadow, B.getInt8(0),
+                     DL.getTypeAllocSize(shadow->getValueType()),
+                     shadow->getAlign());
+      continue;
+    }
+    for (unsigned lane = 0; lane < W; ++lane) {
+      Value *base = shadow;
+      if (W > 1)
+        base = B.CreateConstInBoundsGEP2_32(shadow->getValueType(), shadow, 0,
+                                            lane);
+      // The floats beside the pointers.
+      std::function<void(Type *, int64_t)> zero = [&](Type *T, int64_t offset) {
+        if (T->isFloatingPointTy())
+          B.CreateStore(
+              Constant::getNullValue(T),
+              B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), base, offset));
+        else if (auto ST = dyn_cast<StructType>(T)) {
+          auto SL = DL.getStructLayout(ST);
+          for (unsigned i = 0; i < ST->getNumElements(); ++i)
+            zero(ST->getElementType(i), offset + SL->getElementOffset(i));
+        } else if (auto AT = dyn_cast<ArrayType>(T))
+          for (unsigned i = 0; i < AT->getNumElements(); ++i)
+            zero(AT->getElementType(),
+                 offset + i * DL.getTypeAllocSize(AT->getElementType()));
+      };
+      zero(GV.getValueType(), 0);
+      // The memory the pointers hold.
+      for (auto &[offset, ppath] : ptrs) {
+        auto slot = M.getGlobalVariable(
+            (shadow->getName() + ".size." + Twine(lane) + "." + Twine(offset))
+                .str(),
+            /*AllowInternal*/ true);
+        if (!slot)
+          continue;
+        auto ptr = B.CreateLoad(B.getPtrTy(), B.CreateConstInBoundsGEP1_64(
+                                                  B.getInt8Ty(), base, offset));
+        // Null with a size of zero once freed.
+        B.CreateMemSet(ptr, B.getInt8(0), B.CreateLoad(B.getInt64Ty(), slot),
+                       MaybeAlign());
+      }
+    }
+  }
+  CI->eraseFromParent();
+  return true;
+}
+
+static bool isZeroShadows(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_zero_shadows");
+}
+
+static bool isShadowQuery(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_shadow") &&
+         !F->getName().contains("__enzyme_shadow_global");
+}
+
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
@@ -467,6 +942,49 @@ public:
     return width;
   }
 
+  /// The shadow context named by `enzyme_context, ctx` in \p CI, or null if
+  /// there is none. Fails if it is not a context, or if \p width, given by
+  /// `enzyme_width`, is not the width of the context.
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<GlobalVariable *>
+#else
+  static Optional<GlobalVariable *>
+#endif
+  parseContextParameter(CallInst *CI, unsigned width) {
+    GlobalVariable *context = nullptr;
+    for (unsigned i = 0; i < CI->arg_size(); ++i) {
+      auto MDName = getMetadataName(CI->getArgOperand(i));
+      if (!MDName || *MDName != "enzyme_context")
+        continue;
+      if (context) {
+        EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                    "shadow context declared more than once in ", *CI);
+        return {};
+      }
+      if (i + 1 >= CI->arg_size() ||
+          !(context = getShadowContext(CI->getArgOperand(i + 1)))) {
+        EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                    "enzyme_context must be followed by a context made by "
+                    "__enzyme_context in the same function, in ",
+                    *CI);
+        return {};
+      }
+      bool hasWidth = false;
+      for (auto &op : CI->args())
+        if (auto name = getMetadataName(op))
+          hasWidth |= *name == "enzyme_width";
+      unsigned contextWidth = getShadowContextWidth(context);
+      if (hasWidth && contextWidth != width) {
+        EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                    "enzyme_width ", width,
+                    " differs from the width of the shadow context, ",
+                    contextWidth, ", in ", *CI);
+        return {};
+      }
+    }
+    return context;
+  }
+
   struct Options {
     Value *differet;
     Value *tape;
@@ -476,6 +994,7 @@ public:
     Value *likelihood;
     Value *diffeLikelihood;
     unsigned width;
+    GlobalVariable *shadowContext;
     int allocatedTapeSize;
     bool freeMemory;
     bool returnUsed;
@@ -515,6 +1034,7 @@ public:
     Value *likelihood = nullptr;
     Value *diffeLikelihood = nullptr;
     unsigned width = 1;
+    GlobalVariable *shadowContext = nullptr;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
     bool tapeIsPointer = false;
@@ -580,6 +1100,15 @@ public:
     // find and handle enzyme_width
     if (auto parsedWidth = parseWidthParameter(CI)) {
       width = *parsedWidth;
+    } else {
+      return {};
+    }
+
+    // find and handle enzyme_context, which also states the width
+    if (auto parsedContext = parseContextParameter(CI, width)) {
+      shadowContext = *parsedContext;
+      if (shadowContext)
+        width = getShadowContextWidth(shadowContext);
     } else {
       return {};
     }
@@ -1063,27 +1592,17 @@ public:
       return {};
     }
 
-    return Options({differet,
-                    tape,
-                    dynamic_interface,
-                    trace,
-                    observations,
-                    likelihood,
-                    diffeLikelihood,
-                    width,
-                    allocatedTapeSize,
-                    freeMemory,
-                    returnUsed,
-                    tapeIsPointer,
-                    differentialReturn,
-                    diffeTrace,
-                    retType,
-                    primalReturn,
-                    ActiveRandomVariables,
-                    overwritten_args,
-                    runtimeActivity,
-                    strongZero,
-                    subsequent_calls_may_write});
+    return Options({differet,          tape,
+                    dynamic_interface, trace,
+                    observations,      likelihood,
+                    diffeLikelihood,   width,
+                    shadowContext,     allocatedTapeSize,
+                    freeMemory,        returnUsed,
+                    tapeIsPointer,     differentialReturn,
+                    diffeTrace,        retType,
+                    primalReturn,      ActiveRandomVariables,
+                    overwritten_args,  runtimeActivity,
+                    strongZero,        subsequent_calls_may_write});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -1438,6 +1957,7 @@ public:
             context, fn, retType, constants, TA,
             /*should return*/ primalReturn, mode, freeMemory,
             options.runtimeActivity, options.strongZero, width,
+            options.shadowContext,
             /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
             overwritten_args,
             /*augmented*/ nullptr);
@@ -1449,7 +1969,7 @@ public:
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
           subsequent_calls_may_write, overwritten_args, nowrite_shadows,
           forceAnonymousTape, options.runtimeActivity, options.strongZero,
-          width, /*atomicAdd*/ AtomicAdd);
+          width, options.shadowContext, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1486,6 +2006,7 @@ public:
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory,
           options.runtimeActivity, options.strongZero, width,
+          options.shadowContext,
           /*addedType*/ tapeType, type_args, subsequent_calls_may_write,
           overwritten_args, aug);
       break;
@@ -1510,7 +2031,8 @@ public:
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
                             .runtimeActivity = options.runtimeActivity,
-                            .strongZero = options.strongZero},
+                            .strongZero = options.strongZero,
+                            .shadowContext = options.shadowContext},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1527,7 +2049,8 @@ public:
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
           nowrite_shadows, forceAnonymousTape, options.runtimeActivity,
-          options.strongZero, width, /*atomicAdd*/ AtomicAdd);
+          options.strongZero, width, options.shadowContext,
+          /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1581,7 +2104,8 @@ public:
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
                               .runtimeActivity = options.runtimeActivity,
-                              .strongZero = options.strongZero},
+                              .strongZero = options.strongZero,
+                              .shadowContext = options.shadowContext},
             TA, aug);
     }
     }
@@ -2573,7 +3097,7 @@ public:
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
           pair.second, /*runtimeActivity*/ false, /*strongZero*/ false,
-          /*width*/ 1, AtomicAdd);
+          /*width*/ 1, /*shadowContext*/ nullptr, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2723,6 +3247,26 @@ public:
     }
 
     bool changed = false;
+    // The functions of the program itself, as opposed to the derivatives
+    // created below.
+    SmallVector<WeakVH, 16> originals;
+    for (Function &F : M)
+      if (!F.empty())
+        originals.emplace_back(&F);
+
+    // Shadow contexts first: the shadow queries and derivative requests that
+    // name them are lowered below.
+    SmallVector<CallInst *, 2> contexts;
+    for (Function &F : M)
+      for (Instruction &I : instructions(F))
+        if (auto CI = dyn_cast<CallInst>(&I))
+          if (isShadowContext(getFunctionFromCall(CI)))
+            contexts.push_back(CI);
+    for (auto CI : contexts) {
+      lowerShadowContext(CI);
+      changed = true;
+    }
+
     for (Function &F : M) {
       if (F.empty())
         continue;
@@ -2736,6 +3280,11 @@ public:
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
                 }
+            }
+            if (isShadowQuery(F)) {
+              lowerShadowQuery(CI);
+              changed = true;
+              continue;
             }
             if (F && F->getName() == "f90_mzero8") {
               IRBuilder<> B(CI);
@@ -2951,6 +3500,19 @@ public:
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();
     Logic.clear();
+
+    changed |= mirrorGlobalAllocations(M, originals);
+
+    // Zeroing every shadow in a context, now that derivatives have made
+    // them all.
+    SmallVector<CallInst *, 2> zeroes;
+    for (Function &F : M)
+      for (Instruction &I : instructions(F))
+        if (auto CI = dyn_cast<CallInst>(&I))
+          if (isZeroShadows(getFunctionFromCall(CI)))
+            zeroes.push_back(CI);
+    for (auto CI : zeroes)
+      changed |= lowerZeroShadows(CI);
 
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());

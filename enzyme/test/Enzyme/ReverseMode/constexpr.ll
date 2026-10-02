@@ -21,7 +21,7 @@ define void @_Z18wrapper_1body_intsv()  {
 ; CHECK-NEXT:   %3 = getelementptr inbounds { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, i32 0, i32 1
 ; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId to i8*), i8** %3
 ; CHECK-NEXT:   %4 = getelementptr inbounds { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, i32 0, i32 2
-; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId_shadow to i8*), i8** %4
+; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId.ad.w1 to i8*), i8** %4
 ; CHECK-NEXT:   %5 = load { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1
 ; CHECK-NEXT:   ret { i8*, i8*, i8* } %5
 ; CHECK-NEXT: }

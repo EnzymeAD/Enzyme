@@ -1409,7 +1409,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     if (auto GI = dyn_cast<GlobalVariable>(Val)) {
       // If operating under the assumption globals are inactive unless
       // explicitly marked as active, this is inactive
-      if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive) {
+      if (!hasGlobalShadow(GI) && EnzymeNonmarkedGlobalsInactive) {
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -1449,9 +1449,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
 
       // If this is a global local to this translation unit with inactive
-      // initializer and no active uses, it is definitionally inactive
+      // initializer and no active uses, it is definitionally inactive. Not
+      // so for a global with a shadow: other derivatives, and the program,
+      // read and write that shadow, so it carries derivatives this function
+      // need not show, e.g. a shadow of a global differentiated again.
       bool usedJustInThisModule =
-          GI->hasInternalLinkage() || GI->hasPrivateLinkage();
+          (GI->hasInternalLinkage() || GI->hasPrivateLinkage()) &&
+          !hasGlobalShadow(GI);
 
       if (EnzymePrintActivity)
         llvm::errs() << "pre attempting(" << (int)directions
@@ -3088,8 +3092,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             if (auto GV = dyn_cast<GlobalVariable>(TmpOrig)) {
               // If operating under the assumption globals are inactive unless
               // explicitly marked as active, this is inactive
-              if (!hasMetadata(GV, "enzyme_shadow") &&
-                  EnzymeNonmarkedGlobalsInactive) {
+              if (!hasGlobalShadow(GV) && EnzymeNonmarkedGlobalsInactive) {
                 continue;
               }
               if (hasMetadata(GV, "enzyme_inactive")) {
