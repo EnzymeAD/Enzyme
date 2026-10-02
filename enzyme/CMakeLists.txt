@@ -40,6 +40,7 @@ option(ENZYME_FORTRAN "Build Enzyme Fortran bindings" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang plugin" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
+option(ENZYME_FLANG_DIRECTIVES "Build the flang plugin for !DIR$ ENZYME directives (FlangEnzymeDirectives)" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 option(
