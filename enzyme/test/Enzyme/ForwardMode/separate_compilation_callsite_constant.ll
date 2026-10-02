@@ -6,7 +6,8 @@
 ; would write tangents into). So is a local object holding only constants,
 ; such as the descriptor flang builds to pass on a section of an inactive
 ; array, whose shadow would hold the primal pointers; but not a local work
-; array the callee fills with floating-point data. The variant called is
+; array the callee fills with floating-point data, nor one only the callee
+; reads and writes (an accumulator across calls). The variant called is
 ; named after the arguments constant at the call (_c<hex mask>); the
 ; defining module exports it on request ("+c<hex mask>" in the export list).
 
@@ -39,6 +40,18 @@ define void @user(ptr %x, ptr %c, ptr %e) {
   %wi = load i64, ptr %work2
   %wd = bitcast i64 %wi to double
   store double %wd, ptr %x
+  %acc = alloca [2 x i64]
+  store i64 0, ptr %acc
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %0 ], [ %i1, %loop ]
+  call void @ext(ptr %x, ptr %acc)
+  %i1 = add i32 %i, 1
+  %done = icmp eq i32 %i1, 4
+  br i1 %done, label %exit, label %loop
+
+exit:
   call void @mpi_abort_(ptr %c, ptr %e, ptr %e)
   ret void
 }
@@ -59,6 +72,7 @@ define void @caller(ptr %x, ptr %dx, ptr %c, ptr %e) {
 ; CHECK: call void %{{[0-9]+}}(ptr %x, ptr %"x'", ptr %box)
 ; CHECK: call void %{{[0-9]+}}(ptr %x, ptr %"x'", ptr %work, ptr %"work'ipa")
 ; CHECK: call void %{{[0-9]+}}(ptr %x, ptr %"x'", ptr %work2, ptr %"work2'ipa")
+; CHECK: call void %{{[0-9]+}}(ptr %x, ptr %"x'", ptr %acc, ptr %"acc'ipa")
 ; CHECK: call void @mpi_abort_(ptr %c, ptr %e, ptr %e)
 
 ; CHECK: define internal void @fwddiffesq(ptr {{.*}}%x, ptr {{.*}}%"x'", ptr {{.*}}%t)

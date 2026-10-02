@@ -4893,6 +4893,10 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
   for (auto &[idx, CT] : gutils->TR.query(obj).getMapping())
     if (idx.size() == 2 && CT.isFloat())
       return false;
+  // A descriptor-like object: it is given a (constant) pointer. An object
+  // the caller only zeroes or does not touch at all may still carry data
+  // the callee writes there and reads back (an accumulator across calls).
+  bool holdsPointer = false;
   SmallVector<Value *, 4> todo = {obj};
   SmallPtrSet<Value *, 8> seen;
   while (!todo.empty()) {
@@ -4920,6 +4924,8 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
         if (SI->getValueOperand() == cur ||
             !gutils->isConstantValue(SI->getValueOperand()))
           return false;
+        if (SI->getValueOperand()->getType()->isPointerTy())
+          holdsPointer = true;
         continue;
       }
       if (auto MTI = dyn_cast<MemTransferInst>(I)) {
@@ -4943,7 +4949,7 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
       return false;
     }
   }
-  return true;
+  return holdsPointer;
 }
 
 DIFFE_TYPE GradientUtils::getCallArgDiffeType(CallBase &call, unsigned i,
