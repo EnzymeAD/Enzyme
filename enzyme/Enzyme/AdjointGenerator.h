@@ -4515,21 +4515,6 @@ public:
 
     Function *kmpc = call.getCalledFunction();
 
-    if (overwritten_args_map.find(&call) == overwritten_args_map.end()) {
-      llvm::errs() << " call: " << call << "\n";
-      for (auto &pair : overwritten_args_map) {
-        llvm::errs() << " + " << *pair.first << "\n";
-      }
-    }
-
-    auto found_ow = overwritten_args_map.find(&call);
-    assert(found_ow != overwritten_args_map.end());
-    const bool subsequent_calls_may_write = found_ow->second.first;
-    const std::vector<bool> &overwritten_args = found_ow->second.second;
-
-    IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-    BuilderZ.setFastMathFlags(getFast());
-
     Function *task = dyn_cast<Function>(call.getArgOperand(2));
     if (task == nullptr && isa<ConstantExpr>(call.getArgOperand(2))) {
       task = dyn_cast<Function>(
@@ -4547,6 +4532,104 @@ public:
       llvm_unreachable(
           "could not derive underlying task contents from omp call");
     }
+
+    // The outlined task takes the global and bound thread ids, followed by
+    // the arguments forwarded by the fork call from its fourth operand on.
+    auto getTaskTypeInfo = [&]() {
+      FnTypeInfo nextTypeInfo(task);
+      TypeTree IntPtr;
+      IntPtr.insert({-1, -1}, BaseType::Integer);
+      IntPtr.insert({-1}, BaseType::Pointer);
+
+      int argnum = 0;
+      for (auto &arg : task->args()) {
+        if (argnum <= 1) {
+          nextTypeInfo.Arguments.insert(
+              std::pair<Argument *, TypeTree>(&arg, IntPtr));
+          nextTypeInfo.KnownValues.insert(
+              std::pair<Argument *, std::set<int64_t>>(&arg, {0}));
+        } else {
+          nextTypeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(
+              &arg, TR.query(call.getArgOperand(argnum - 2 + 3))));
+          nextTypeInfo.KnownValues.insert(
+              std::pair<Argument *, std::set<int64_t>>(
+                  &arg,
+                  TR.knownIntegralValues(call.getArgOperand(argnum - 2 + 3))));
+        }
+
+        ++argnum;
+      }
+      nextTypeInfo.Return = TR.query(&call);
+      return nextTypeInfo;
+    };
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      // Fork the forward derivative of the task, passing each active
+      // argument followed by its shadow.
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+
+      if (gutils->getWidth() != 1) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Vector forward mode is not supported for OpenMP parallel "
+              "regions: "
+           << call;
+        EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+        return;
+      }
+
+      SmallVector<Value *, 8> args = {nullptr, nullptr, nullptr};
+      std::vector<DIFFE_TYPE> argsInverted = {DIFFE_TYPE::CONSTANT,
+                                              DIFFE_TYPE::CONSTANT};
+      for (unsigned i = 3; i < call.arg_size(); ++i) {
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+        auto argTy = gutils->getDiffeType(call.getArgOperand(i),
+                                          /*foreignFunction*/ false);
+        argsInverted.push_back(argTy);
+        if (argTy == DIFFE_TYPE::CONSTANT)
+          continue;
+        args.push_back(gutils->invertPointerM(call.getArgOperand(i), Builder2));
+      }
+
+      // Nothing is cached in plain forward mode.
+      std::vector<bool> overwritten_args(task->arg_size(), false);
+      auto newcalled = gutils->Logic.CreateForwardDiff(
+          RequestContext(&call, &Builder2), task, DIFFE_TYPE::CONSTANT,
+          argsInverted, TR.analyzer->interprocedural, /*returnValue*/ false,
+          Mode, ((DiffeGradientUtils *)gutils)->FreeMemory,
+          gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
+          /*additionalArg*/ nullptr, getTaskTypeInfo(),
+          /*subsequent_calls_may_write*/ true, overwritten_args,
+          /*augmented*/ nullptr, /*omp*/ true);
+
+      args[0] = gutils->getNewFromOriginal(call.getArgOperand(0));
+      args[1] = ConstantInt::get(Type::getInt32Ty(call.getContext()),
+                                 args.size() - 3);
+      args[2] = Builder2.CreatePointerCast(
+          newcalled, kmpc->getFunctionType()->getParamType(2));
+      auto fwdcall = Builder2.CreateCall(kmpc->getFunctionType(), kmpc, args);
+      fwdcall->setCallingConv(call.getCallingConv());
+      fwdcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return;
+    }
+
+    if (overwritten_args_map.find(&call) == overwritten_args_map.end()) {
+      llvm::errs() << " call: " << call << "\n";
+      for (auto &pair : overwritten_args_map) {
+        llvm::errs() << " + " << *pair.first << "\n";
+      }
+    }
+
+    auto found_ow = overwritten_args_map.find(&call);
+    assert(found_ow != overwritten_args_map.end());
+    const bool subsequent_calls_may_write = found_ow->second.first;
+    const std::vector<bool> &overwritten_args = found_ow->second.second;
+
+    IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
+    BuilderZ.setFastMathFlags(getFast());
 
     auto called = task;
     // bool modifyPrimal = true;
@@ -4648,35 +4731,7 @@ public:
     // Value *cachereplace = nullptr;
 
     // TODO consider reduction of int 0 args
-    FnTypeInfo nextTypeInfo(called);
-
-    if (called) {
-      std::map<Value *, std::set<int64_t>> intseen;
-
-      TypeTree IntPtr;
-      IntPtr.insert({-1, -1}, BaseType::Integer);
-      IntPtr.insert({-1}, BaseType::Pointer);
-
-      int argnum = 0;
-      for (auto &arg : called->args()) {
-        if (argnum <= 1) {
-          nextTypeInfo.Arguments.insert(
-              std::pair<Argument *, TypeTree>(&arg, IntPtr));
-          nextTypeInfo.KnownValues.insert(
-              std::pair<Argument *, std::set<int64_t>>(&arg, {0}));
-        } else {
-          nextTypeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(
-              &arg, TR.query(call.getArgOperand(argnum - 2 + 3))));
-          nextTypeInfo.KnownValues.insert(
-              std::pair<Argument *, std::set<int64_t>>(
-                  &arg,
-                  TR.knownIntegralValues(call.getArgOperand(argnum - 2 + 3))));
-        }
-
-        ++argnum;
-      }
-      nextTypeInfo.Return = TR.query(&call);
-    }
+    FnTypeInfo nextTypeInfo = getTaskTypeInfo();
 
     // std::optional<std::map<std::pair<Instruction*, std::string>, unsigned>>
     // sub_index_map;

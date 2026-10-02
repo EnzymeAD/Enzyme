@@ -3352,7 +3352,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     return true;
   }
 
-  if (Mode != DerivativeMode::ReverseModePrimal && called) {
+  // The OpenMP worksharing and synchronization calls are mirrored in the
+  // reverse pass; forward derivatives keep only the primal call.
+  const bool isReverseMode = Mode == DerivativeMode::ReverseModeGradient ||
+                             Mode == DerivativeMode::ReverseModeCombined;
+  if (isReverseMode && called) {
     if (funcName == "__kmpc_for_static_init_4" ||
         funcName == "__kmpc_for_static_init_4u" ||
         funcName == "__kmpc_for_static_init_8" ||
@@ -3414,7 +3418,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         funcName == "__kmpc_for_static_init_4u" ||
         funcName == "__kmpc_for_static_init_8" ||
         funcName == "__kmpc_for_static_init_8u") {
-      if (Mode != DerivativeMode::ReverseModePrimal) {
+      if (isReverseMode) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto fini = called->getParent()->getFunction("__kmpc_for_static_fini");
@@ -3429,7 +3433,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
     if (funcName == "__kmpc_for_static_fini") {
-      if (Mode != DerivativeMode::ReverseModePrimal) {
+      if (isReverseMode) {
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       }
       return true;
@@ -3451,7 +3455,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
     if (funcName == "__kmpc_critical") {
-      if (Mode != DerivativeMode::ReverseModePrimal) {
+      if (isReverseMode) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto crit2 = called->getParent()->getFunction("__kmpc_end_critical");
@@ -3467,7 +3471,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
     if (funcName == "__kmpc_end_critical") {
-      if (Mode != DerivativeMode::ReverseModePrimal) {
+      if (isReverseMode) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto crit2 = called->getParent()->getFunction("__kmpc_critical");
