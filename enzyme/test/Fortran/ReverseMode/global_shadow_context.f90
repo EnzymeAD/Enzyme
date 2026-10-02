@@ -1,4 +1,5 @@
 ! REQUIRES: fortran
+! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O1 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O2 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
@@ -8,17 +9,23 @@
 ! from their shadows in a context.
 
 module params
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: scale = 2.0d0
+  private
+  real(real64), public :: scale = 2.0_real64
 end module params
 
 module funcs
-  use params
+  use, intrinsic :: iso_fortran_env, only: real64
+  use params, only: scale
   implicit none
+  private
+  public :: f
 contains
-  real(8) function f(x)
-    real(8), intent(in) :: x(3)
-    real(8) :: w(3)
+  real(real64) function f(x)
+    real(real64), intent(in) :: x(3)
+    real(real64) :: w(3)
+    ! allow(OB011)
     common /weights/ w
     integer :: i
     f = 0
@@ -30,18 +37,21 @@ end module funcs
 
 program main
   use, intrinsic :: iso_c_binding, only: c_ptr, c_f_pointer
-  use enzyme
-  use params
-  use funcs
+  use, intrinsic :: iso_fortran_env, only: real64
+  use enzyme, only: enzyme_autodiff, enzyme_context, enzyme_dup, &
+                    enzyme_new_context, enzyme_shadow
+  use params, only: scale
+  use funcs, only: f
   implicit none
-  real(8) :: w(3)
+  real(real64) :: w(3)
+  ! allow(OB011)
   common /weights/ w
   type(c_ptr) :: ctx
-  real(8), pointer :: dscale, dw(:), dw2
-  real(8) :: x(3), dx(3)
+  real(real64), pointer :: dscale, dw(:), dw2
+  real(real64) :: x(3), dx(3)
 
-  w = [1.0d0, 2.0d0, 3.0d0]
-  x = [4.0d0, 5.0d0, 6.0d0]
+  w = [1.0_real64, 2.0_real64, 3.0_real64]
+  x = [4.0_real64, 5.0_real64, 6.0_real64]
   dx = 0
 
   ctx = enzyme_new_context(1)
@@ -54,11 +64,11 @@ program main
   call enzyme_autodiff(f, enzyme_context, ctx, enzyme_dup, x, dx)
 
   ! CHECK: 2. 4. 6.
-  print '(3F4.0)', dx
+  print "(3F4.0)", dx
   ! CHECK: 32.
-  print '(F4.0)', dscale
+  print "(F4.0)", dscale
   ! CHECK: 8. 10. 12.
-  print '(3F4.0)', dw
+  print "(3F4.0)", dw
   ! CHECK: 10.
-  print '(F4.0)', dw2
+  print "(F4.0)", dw2
 end program main

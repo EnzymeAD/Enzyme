@@ -60,20 +60,25 @@ module enzyme
     function enzyme_new_context(width) result(ctx) &
         bind(C, name="__enzyme_context")
       import :: c_int, c_ptr
+      implicit none
       integer(c_int), value :: width
       type(c_ptr) :: ctx
     end function enzyme_new_context
     function enzyme_shadow(ctx, var, lane) result(shadow) &
         bind(C, name="__enzyme_shadow")
       import :: c_int, c_int8_t, c_ptr
+      implicit none
       type(c_ptr), value :: ctx
       !dir$ ignore_tkr(tkr) var
-      integer(c_int8_t) :: var(*)
+      ! Any variable, passed by its address.
+      ! allow(C071)
+      integer(c_int8_t), intent(in) :: var(*)
       integer(c_int), value :: lane
       type(c_ptr) :: shadow
     end function enzyme_shadow
     subroutine enzyme_zero_shadows(ctx) bind(C, name="__enzyme_zero_shadows")
       import :: c_ptr
+      implicit none
       type(c_ptr), value :: ctx
     end subroutine enzyme_zero_shadows
   end interface

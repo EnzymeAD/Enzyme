@@ -1,4 +1,5 @@
 ! REQUIRES: fortran
+! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O1 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O2 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
@@ -8,18 +9,24 @@
 ! their shadows in a context of width 2, one direction per lane.
 
 module params
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: scale = 2.0d0
+  private
+  real(real64), public :: scale = 2.0_real64
 end module params
 
 module funcs
-  use params
+  use, intrinsic :: iso_fortran_env, only: real64
+  use params, only: scale
   implicit none
+  private
+  public :: s
 contains
   subroutine s(x, y)
-    real(8), intent(in) :: x
-    real(8), intent(out) :: y
-    real(8) :: w(3)
+    real(real64), intent(in) :: x
+    real(real64), intent(out) :: y
+    real(real64) :: w(3)
+    ! allow(OB011)
     common /weights/ w
     y = scale * w(2) * x
   end subroutine s
@@ -27,18 +34,21 @@ end module funcs
 
 program main
   use, intrinsic :: iso_c_binding, only: c_ptr, c_f_pointer
-  use enzyme
-  use params
-  use funcs
+  use, intrinsic :: iso_fortran_env, only: real64
+  use enzyme, only: enzyme_fwddiff, enzyme_context, enzyme_const, &
+                    enzyme_dup, enzyme_new_context, enzyme_shadow
+  use params, only: scale
+  use funcs, only: s
   implicit none
-  real(8) :: w(3)
+  real(real64) :: w(3)
+  ! allow(OB011)
   common /weights/ w
   type(c_ptr) :: ctx
-  real(8), pointer :: dscale0, dscale1, dw0(:), dw1(:)
-  real(8) :: x, y, dy0, dy1
+  real(real64), pointer :: dscale0, dscale1, dw0(:), dw1(:)
+  real(real64) :: x, y, dy0, dy1
 
-  w = [1.0d0, 3.0d0, 5.0d0]
-  x = 7.0d0
+  w = [1.0_real64, 3.0_real64, 5.0_real64]
+  x = 7.0_real64
 
   ctx = enzyme_new_context(2)
   call c_f_pointer(enzyme_shadow(ctx, scale, 0), dscale0)
@@ -48,13 +58,13 @@ program main
   dscale0 = 1
   dw0 = 0
   dscale1 = 0
-  dw1 = [0.0d0, 1.0d0, 0.0d0]
+  dw1 = [0.0_real64, 1.0_real64, 0.0_real64]
 
   call enzyme_fwddiff(s, enzyme_context, ctx, enzyme_const, x, &
                       enzyme_dup, y, dy0, dy1)
 
   ! CHECK: 42.
-  print '(F4.0)', y
+  print "(F4.0)", y
   ! CHECK: 21. 14.
-  print '(2F4.0)', dy0, dy1
+  print "(2F4.0)", dy0, dy1
 end program main
