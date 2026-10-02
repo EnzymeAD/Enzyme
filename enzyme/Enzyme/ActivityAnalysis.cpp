@@ -1365,7 +1365,12 @@ static bool isFortranMPIRequest(const Value *V,
 
 bool isFortranMPIRequest(const Value *V) {
   SmallPtrSet<const Value *, 8> seen;
-  return isFortranMPIRequest(V, seen);
+  if (isFortranMPIRequest(V, seen))
+    return true;
+  // An address into memory holding requests (e.g. an element of a request
+  // array handed to a procedure of another module)
+  const Value *Base = getUnderlyingObject(V, 16);
+  return Base != V && isFortranMPIRequest(Base, seen);
 }
 
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
@@ -1507,8 +1512,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // communication in forward mode.
     if (Val->getType()->isPointerTy() &&
         (!isa<Constant>(Val) || isa<GlobalVariable>(Val))) {
-      SmallPtrSet<const Value *, 8> seen;
-      if (isFortranMPIRequest(Val, seen)) {
+      if (isFortranMPIRequest(Val)) {
         if (EnzymePrintActivity)
           llvm::errs() << " Value active as Fortran MPI request " << *Val
                        << "\n";
