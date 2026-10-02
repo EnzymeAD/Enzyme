@@ -380,7 +380,7 @@ ParsedAttrInfo::AttrHandling handleEnzymeMarkerAttr(Sema &S, Decl *D,
   return ParsedAttrInfo::AttributeApplied;
 }
 
-#if LLVM_VERSION_MAJOR >= 17
+#if LLVM_VERSION_MAJOR >= 19
 // Loop annotations, as in Reactant: the attribute on a for statement becomes
 // a call at the top of the loop body, which Enzyme reads the directive from
 // (and Enzyme-JAX raises into loop attributes of Enzyme-MLIR).
@@ -556,7 +556,7 @@ struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeLoopCheckpointingEnableAttrInfo>
     XCheckpointing("enzyme_checkpointing_enable", "");
-#endif // LLVM_VERSION_MAJOR >= 17
+#endif // LLVM_VERSION_MAJOR >= 19
 
 struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   EnzymeFunctionLikeAttrInfo() {
