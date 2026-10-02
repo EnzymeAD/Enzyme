@@ -4585,16 +4585,6 @@ public:
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
 
-      if (gutils->getWidth() != 1) {
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << "Vector forward mode is not supported for OpenMP parallel "
-              "regions: "
-           << call;
-        EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
-        return;
-      }
-
       SmallVector<Value *, 8> args = {nullptr, nullptr, nullptr};
       std::vector<DIFFE_TYPE> argsInverted = {DIFFE_TYPE::CONSTANT,
                                               DIFFE_TYPE::CONSTANT};
@@ -4619,11 +4609,76 @@ public:
           /*subsequent_calls_may_write*/ true, overwritten_args,
           /*augmented*/ nullptr, /*omp*/ true);
 
+      // In vector mode a shadow is an array of the shadows of each lane,
+      // which cannot pass through the fork call's variadic (pointer-sized)
+      // arguments. Fork a trampoline that takes the lanes separately and
+      // calls the derivative with the arrays.
+      Function *forked = newcalled;
+      unsigned width = gutils->getWidth();
+      if (width > 1) {
+        auto FT = newcalled->getFunctionType();
+        SmallVector<Type *, 8> params;
+        SmallVector<Value *, 8> flat = {nullptr, nullptr, nullptr};
+        for (unsigned i = 0; i < FT->getNumParams(); i++) {
+          Type *PT = FT->getParamType(i);
+          auto AT = dyn_cast<ArrayType>(PT);
+          if (i < 2 || !AT || AT->getNumElements() != width) {
+            params.push_back(PT);
+            if (i >= 2)
+              flat.push_back(args[i + 1]);
+            continue;
+          }
+          Type *ET = AT->getElementType();
+          if (!ET->isPointerTy() &&
+              !(ET->isIntegerTy() && ET->getIntegerBitWidth() <= 64)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Vector forward mode through an OpenMP parallel region "
+                  "with a captured value of type "
+               << *ET << " is not supported: " << call;
+            EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+            return;
+          }
+          for (unsigned j = 0; j < width; j++) {
+            params.push_back(ET);
+            flat.push_back(Builder2.CreateExtractValue(args[i + 1], {j}));
+          }
+        }
+        auto &M = *newcalled->getParent();
+        auto TFT = FunctionType::get(FT->getReturnType(), params, false);
+        std::string name = (newcalled->getName() + ".lanes").str();
+        forked = M.getFunction(name);
+        if (!forked || forked->getFunctionType() != TFT) {
+          forked = Function::Create(TFT, GlobalValue::InternalLinkage, name, M);
+          for (unsigned i = 0; i < 2; i++)
+            for (auto attr : newcalled->getAttributes().getParamAttrs(i))
+              forked->addParamAttr(i, attr);
+          IRBuilder<> TB(BasicBlock::Create(M.getContext(), "entry", forked));
+          SmallVector<Value *, 8> inner;
+          unsigned k = 0;
+          for (unsigned i = 0; i < FT->getNumParams(); i++) {
+            Type *PT = FT->getParamType(i);
+            auto AT = dyn_cast<ArrayType>(PT);
+            if (i < 2 || !AT || AT->getNumElements() != width) {
+              inner.push_back(forked->getArg(k++));
+              continue;
+            }
+            Value *agg = UndefValue::get(PT);
+            for (unsigned j = 0; j < width; j++)
+              agg = TB.CreateInsertValue(agg, forked->getArg(k++), {j});
+            inner.push_back(agg);
+          }
+          TB.CreateCall(newcalled, inner);
+          TB.CreateRetVoid();
+        }
+        args = flat;
+      }
+
       args[0] = gutils->getNewFromOriginal(call.getArgOperand(0));
       args[1] = ConstantInt::get(Type::getInt32Ty(call.getContext()),
                                  args.size() - 3);
       args[2] = Builder2.CreatePointerCast(
-          newcalled, kmpc->getFunctionType()->getParamType(2));
+          forked, kmpc->getFunctionType()->getParamType(2));
       auto fwdcall = Builder2.CreateCall(kmpc->getFunctionType(), kmpc, args);
       fwdcall->setCallingConv(call.getCallingConv());
       fwdcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
