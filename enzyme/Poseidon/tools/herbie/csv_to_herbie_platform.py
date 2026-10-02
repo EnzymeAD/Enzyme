@@ -335,6 +335,18 @@ DEFAULT_PLATFORM_LANGUAGE = "'|#%embedded:syntax/platform-language:|"
 DEFAULT_FLONUM_MODULE = "'|#%embedded:math/flonum:|"
 
 
+def embedded_module_names(herbie_binary: Path) -> Tuple[Optional[str], Optional[str]]:
+    """The names raco exe gave platform-language.rkt and math/flonum inside this
+    binary: `syntax/platform-language` when built from the source tree,
+    `herbie/syntax/platform-language` when Herbie was installed as a package."""
+    data = herbie_binary.read_bytes()
+    import re
+    lang = re.search(rb"#%embedded:([A-Za-z0-9_./-]*/)?syntax/platform-language:", data)
+    flonum = re.search(rb"#%embedded:math/flonum:", data)
+    return (f"'|{lang.group(0).decode()}|" if lang else None,
+            f"'|{flonum.group(0).decode()}|" if flonum else None)
+
+
 def emit_platform(costs: Dict[Tuple[str, str], float],
                   meta: Dict[str, str],
                   arch: str,
@@ -437,7 +449,18 @@ def main() -> int:
     ap.add_argument("--flonum-module", default=DEFAULT_FLONUM_MODULE,
                     help="Module path `flsingle` is required from, used verbatim "
                          f"(default: {pct(DEFAULT_FLONUM_MODULE)})")
+    ap.add_argument("--herbie-binary", type=Path,
+                    help="raco exe Herbie binary to read the two embedded module "
+                         "names from; overrides the defaults when found")
     args = ap.parse_args()
+    if args.herbie_binary and args.herbie_binary.exists():
+        lang, flonum = embedded_module_names(args.herbie_binary)
+        if lang:
+            args.platform_language = lang
+        if flonum:
+            args.flonum_module = flonum
+        print(f"platform language from {args.herbie_binary}: {args.platform_language}",
+              file=sys.stderr)
 
     if not args.csv.exists():
         sys.exit(f"csv not found: {args.csv}")

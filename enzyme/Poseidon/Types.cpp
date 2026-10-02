@@ -128,7 +128,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
     Value *condValue = operands[0]->getLLValue(builder, VMap);
     Value *trueValue = operands[1]->getLLValue(builder, VMap);
     Value *falseValue = operands[2]->getLLValue(builder, VMap);
-
+    // A regime split at one precision may fall back to a bare input of
+    // another; both arms take the split's precision.
+    Type *armTy = fpTypeFromDtype(dtype, builder);
+    if (!armTy)
+      armTy = trueValue->getType();
+    if (trueValue->getType() != armTy)
+      trueValue = builder.CreateFPCast(trueValue, armTy);
+    if (falseValue->getType() != armTy)
+      falseValue = builder.CreateFPCast(falseValue, armTy);
     return builder.CreateSelect(condValue, trueValue, falseValue,
                                 "herbie.select");
   }

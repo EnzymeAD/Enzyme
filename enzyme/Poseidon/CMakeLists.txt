@@ -136,6 +136,7 @@ endif()
 add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp)
 target_compile_definitions(poseidon-calibrate PRIVATE
     POSEIDON_CALIBRATE_CUMPSGEMM="${POSEIDON_CUMPSGEMM_ROOT}"
+    POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
     POSEIDON_CALIBRATE_CUDA_BIN="${CUDAToolkit_BIN_DIR}"
     POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
     POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}"

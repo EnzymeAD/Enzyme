@@ -67,6 +67,11 @@ cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
     cl::desc("Profile the in-kernel arm enumerates its candidates from "
              "(default: the ozp surrogate in the artifact)"));
+cl::opt<std::string>
+    Herbie("herbie", cl::init(POSEIDON_CALIBRATE_HERBIE),
+           cl::value_desc("path"),
+           cl::desc("Herbie binary the generated platform must load into "
+                    "(default: the one this build was configured with)"));
 cl::opt<std::string> CuMpSGEMM(
     "cumpsgemm", cl::init(POSEIDON_CALIBRATE_CUMPSGEMM), cl::value_desc("dir"),
     cl::desc("cuMpSGEMM checkout whose build/ the TCEC arm is measured "
@@ -317,8 +322,12 @@ void armHerbiePlatform(const std::string &Csv) {
   if (Name.consume_front("cm_" + Arch + "_"))
     Device = Name.str();
   std::string Out = platformPathFor(Csv);
-  SmallVector<StringRef, 12> Argv = {Python,   Script, "--csv",    Csv,
+  SmallVector<StringRef, 14> Argv = {Python,   Script, "--csv",    Csv,
                                      "--arch", Arch,   "--output", Out};
+  if (!Herbie.empty()) {
+    Argv.push_back("--herbie-binary");
+    Argv.push_back(Herbie);
+  }
   if (!Device.empty()) {
     Argv.push_back("--device");
     Argv.push_back(Device);

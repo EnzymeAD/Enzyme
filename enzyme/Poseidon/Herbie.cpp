@@ -44,6 +44,7 @@
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <regex>
 #include <string>
 #include <unordered_map>
@@ -74,6 +75,17 @@ std::string readFileDigest(StringRef Path) {
   if (!Buf)
     return std::string();
   return llvm::utohexstr(llvm::xxh3_64bits((*Buf)->getBuffer()));
+}
+
+// A Herbie cache entry is stamped with the digest of the binary that produced
+// it: version strings do not change between upstream commits, and one
+// binary's rewrites must not be replayed as another's.
+static std::string herbieBinaryDigest(StringRef Program) {
+  static std::map<std::string, std::string> Digests;
+  auto It = Digests.find(Program.str());
+  if (It == Digests.end())
+    It = Digests.emplace(Program.str(), readFileDigest(Program)).first;
+  return It->second;
 }
 
 const HerbiePlatform &getHerbiePlatform() {
@@ -212,6 +224,46 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   auto endOp = trimmedExpr.find(' ');
   std::string fullOp = trimmedExpr.substr(0, endOp);
 
+  // An array projection, `(ref.N.array<...> (array e0 e1 ...))` or
+  // `(ref.N.array<...> (sincos.fXX x))`: the N-th element is what is wanted.
+  if (fullOp.rfind("ref.", 0) == 0) {
+    size_t idxEnd = fullOp.find('.', 4);
+    unsigned idx = std::stoul(fullOp.substr(4, idxEnd - 4));
+    std::string inner = trimmedExpr.substr(endOp + 1);
+    inner.erase(0, inner.find_first_not_of(" "));
+    inner.erase(inner.find_last_not_of(" ") + 1);
+    if (inner.front() == '(' && inner.back() == ')') {
+      std::string body = inner.substr(1, inner.size() - 2);
+      std::string head = body.substr(0, body.find(' '));
+      SmallVector<std::string, 4> elems;
+      int depth = 0;
+      size_t start = body.find_first_not_of(" ", head.size());
+      for (size_t i = start; i < body.size(); ++i) {
+        if (body[i] == '(')
+          depth++;
+        else if (body[i] == ')')
+          depth--;
+        else if (body[i] == ' ' && depth == 0) {
+          elems.push_back(body.substr(start, i - start));
+          start = i + 1;
+        }
+      }
+      if (start < body.size())
+        elems.push_back(body.substr(start));
+      if (head == "array" && idx < elems.size())
+        return parseHerbieExpr(elems[idx], valueToNodeMap, symbolToValueMap);
+      if (head.rfind("sincos.", 0) == 0 && elems.size() == 1 && idx < 2) {
+        auto node =
+            std::make_shared<FPNode>(idx == 0 ? "sin" : "cos", head.substr(7));
+        node->addOperand(
+            parseHerbieExpr(elems[0], valueToNodeMap, symbolToValueMap));
+        return node;
+      }
+    }
+    llvm::errs() << "Unexpected array projection: " << trimmedExpr << "\n";
+    assert(0 && "Failed to parse Herbie expression");
+  }
+
   size_t pos = fullOp.find('.');
   std::string dtype;
   std::string op;
@@ -268,6 +320,7 @@ bool improveViaHerbie(
                                                     : flags::HerbieBinary;
   if (!flags::HerbieBinary.empty() && flags::Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << Program << "'\n";
+  const std::string BinaryDigest = herbieBinaryDigest(Program);
   llvm::errs() << "random seed: " << std::to_string(flags::RandomSeed) << "\n";
 
   // Herbie runs this subgraph's cores across flags::HerbieNumThreads workers,
@@ -551,20 +604,34 @@ bool improveViaHerbie(
                          << " predates platform stamping; the platform name in "
                             "its key is all that is checked.\n";
         }
-        llvm::errs() << "Using cached Herbie output from " << cacheFilePath
-                     << "\n";
-        cached = true;
-      } else {
+        std::string stampedBinary;
+        std::ifstream bStamp(cacheFilePath + ".herbie");
+        if (bStamp)
+          std::getline(bStamp, stampedBinary);
+        if (!stampedBinary.empty() && stampedBinary != BinaryDigest) {
+          llvm::errs() << "[poseidon] cached Herbie output " << cacheFilePath
+                       << " was searched by another Herbie binary ("
+                       << stampedBinary << "; this one is " << BinaryDigest
+                       << "); searching again.\n";
+          content.clear();
+        } else {
+          llvm::errs() << "Using cached Herbie output from " << cacheFilePath
+                       << "\n";
+          cached = true;
+        }
+      }
+      if (!cached) {
         // A recorded timeout is a result too: without it every re-solve pays
         // the full wall-clock budget again to learn the same thing.
         std::ifstream markerFile(timeoutMarkerPath);
         if (markerFile) {
-          std::string stamped;
+          std::string stamped, markerBinary;
           unsigned spentBudget = 0;
-          markerFile >> stamped >> spentBudget;
+          markerFile >> stamped >> spentBudget >> markerBinary;
           markerFile.close();
           if (stamped == inputDigest && wallBudget > 0 &&
-              spentBudget >= wallBudget) {
+              spentBudget >= wallBudget &&
+              (markerBinary.empty() || markerBinary == BinaryDigest)) {
             llvm::errs()
                 << "[poseidon] Herbie subgraph " << subgraphIdx << " of "
                 << funcTag << ": cached TIMEOUT (" << spentBudget
@@ -686,7 +753,8 @@ bool improveViaHerbie(
                        << EC.message() << "\n";
         std::ofstream markerFile(timeoutMarkerPath);
         if (markerFile) {
-          markerFile << inputDigest << " " << wallBudget << "\n";
+          markerFile << inputDigest << " " << wallBudget << " " << BinaryDigest
+                     << "\n";
           markerFile.close();
           llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath
                        << "\n";
@@ -749,6 +817,13 @@ bool improveViaHerbie(
         if (pStamp) {
           pStamp << Platform.Name << " " << Platform.Digest << "\n";
           pStamp.close();
+        }
+      }
+      if (!BinaryDigest.empty()) {
+        std::ofstream bStamp(cacheFilePath + ".herbie");
+        if (bStamp) {
+          bStamp << BinaryDigest << "\n";
+          bStamp.close();
         }
       }
       // A stale timeout marker under this key is left in place: the read path

@@ -45,9 +45,12 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
   arbitrary-precision reference.
 - **CUDA** 12.x or 13.x for the GPU path (cuBLAS, and cuSOLVER for the
   eigensolver benchmark). Poseidon builds and runs its CPU tests without CUDA.
-- **Herbie**, for the algebraic rewrites. The build compiles one (Racket 8.15
-  and Rust are then needed); `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an
-  existing one instead.
+- **Herbie**, for the algebraic rewrites. The build compiles upstream
+  [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
+  `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
+  `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an existing one instead. Herbie
+  result caches are stamped with the digest of the binary that produced them
+  and are searched again under any other.
 
 ## Build
 
