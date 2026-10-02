@@ -347,7 +347,7 @@ bool improveViaHerbie(
     unsigned rounds = (perShard + threadsPerShard - 1) / threadsPerShard;
     if (rounds == 0)
       rounds = 1;
-    wallBudget = coreTimeout * rounds + 30;
+    wallBudget = coreTimeout * rounds + coreTimeout / 10 + 60;
     if (coreTimeout < (unsigned)flags::HerbieTimeout)
       llvm::errs() << "[poseidon] Herbie per-core --timeout clamped from "
                    << flags::HerbieTimeout << " s to " << coreTimeout
