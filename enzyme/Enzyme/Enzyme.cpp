@@ -151,6 +151,13 @@ llvm::cl::opt<std::string> EnzymeInactiveParams(
              "defined or declared (a whole-program plan for separate "
              "compilation, so that every module agrees)"));
 
+llvm::cl::opt<std::string> EnzymeParamTypes(
+    "enzyme-param-types", cl::init(""), cl::Hidden,
+    cl::desc("File of \"<function>\\t<i>\\t<TypeTree>\" lines: the types "
+             "declared on the parameters of functions defined in other "
+             "modules (a whole-program plan for separate compilation), set as "
+             "\"enzyme_type\" on calls that pass them local memory"));
+
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
     cl::desc("Only export functions listed in this file, one per line, each "
@@ -2937,6 +2944,55 @@ public:
     }
   }
 
+  /// -enzyme-param-types: give calls to functions only declared here the
+  /// parameter types declared where the function is defined, which type
+  /// analysis would have seen there with the whole program (e.g. for a local
+  /// array only passed to and summed by an external routine).
+  void applyParamTypes(Module &M) {
+    if (EnzymeParamTypes.empty())
+      return;
+    auto buf = MemoryBuffer::getFile(EnzymeParamTypes);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-param-types file ") +
+                         EnzymeParamTypes);
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines) {
+      SmallVector<StringRef, 3> parts;
+      line.trim().split(parts, '\t', 2, /*KeepEmpty*/ false);
+      if (parts.size() != 3)
+        report_fatal_error(Twine("bad line in -enzyme-param-types: ") + line);
+      auto F = M.getFunction(parts[0]);
+      if (!F || !F->isDeclaration())
+        continue;
+      unsigned i;
+      if (parts[1].getAsInteger(10, i))
+        report_fatal_error(Twine("bad parameter index in "
+                                 "-enzyme-param-types for ") +
+                           parts[0] + ": " + parts[1]);
+      // A declaration's signature may be a guess (a C extern, an implicit
+      // interface): only a pointer parameter takes a pointer type.
+      if (i >= F->arg_size() ||
+          F->getAttributes().hasParamAttr(i, "enzyme_type"))
+        continue;
+      if (!F->getArg(i)->getType()->isPointerTy() ||
+          !startsWith(parts[2], "{[-1]:Pointer"))
+        continue;
+      // Only where the argument is local memory of the caller: the module
+      // may know other memory (a global, an argument) better, e.g. as an
+      // untyped part of a COMMON block that the callee's dummy names.
+      auto attr = Attribute::get(F->getContext(), "enzyme_type", parts[2]);
+      for (auto U : F->users()) {
+        auto CB = dyn_cast<CallBase>(U);
+        if (!CB || CB->getCalledOperand() != F || i >= CB->arg_size() ||
+            CB->getAttributes().hasParamAttr(i, "enzyme_type"))
+          continue;
+        if (isa<AllocaInst>(getUnderlyingObject(CB->getArgOperand(i), 100)))
+          CB->addParamAttr(i, attr);
+      }
+    }
+  }
+
   /// -enzyme-invariant-globals: mark loads from globals nothing overwrites
   /// during differentiation "enzyme_nocache".
   void applyInvariantGlobals(Module &M) {
@@ -2966,6 +3022,7 @@ public:
   bool run(Module &M) {
     Logic.clear();
     applyInactiveParams(M);
+    applyParamTypes(M);
     applyInvariantGlobals(M);
 
     for (Function &F : make_early_inc_range(M)) {
