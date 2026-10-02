@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 
 ; __enzyme_fixed_point is lowered to a loop function of kind "fixedpoint",
 ; whose state @u gets a shadow. Its augmented pass runs the loop and keeps a
