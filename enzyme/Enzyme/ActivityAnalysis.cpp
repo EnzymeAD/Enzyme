@@ -261,6 +261,7 @@ static const StringSet<> KnownInactiveFunctions = {
     "_FortranAVerify1",
     "_FortranAAdjustl",
     "_FortranAAdjustr",
+    "_FortranARepeat",
     "_FortranACharacterCompareScalar1",
     "_FortranAStopStatement",
     "_FortranAStopStatementText",

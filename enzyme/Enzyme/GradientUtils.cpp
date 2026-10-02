@@ -4889,6 +4889,10 @@ bool GradientUtils::usesExternalDerivative(Function *F,
   if (startsWith(name, "_Fortran") || startsWith(name, "__enzyme") ||
       startsWith(name, "llvm."))
     return false;
+  // MPI routines, in either the C or a Fortran calling convention, have
+  // Enzyme's own derivatives or are inactive.
+  if (!canonicalizeMPIName(name).empty())
+    return false;
   return true;
 }
 

@@ -132,6 +132,17 @@ bool isFlangRuntimeNoFree(llvm::StringRef name) {
       "_FortranACharacterCompareScalar1",
       "_FortranACharacterCompareScalar2",
       "_FortranACharacterCompareScalar4",
+      // allocate their CHARACTER result, free nothing
+      "_FortranATrim",
+      "_FortranAAdjustl",
+      "_FortranAAdjustr",
+      "_FortranARepeat",
+      // inquiries
+      "_FortranASize",
+      "_FortranASizeDim",
+      "_FortranAIsContiguous",
+      "_FortranAPointerIsAssociated",
+      "_FortranAPointerIsAssociatedWith",
   };
   return llvm::is_contained(Names, name);
 }
@@ -458,6 +469,16 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "_FortranAGetPID",
       "_FortranAGetUID",
       "_FortranAGetGID",
+      // LLVM flang runtime: inquiries of descriptors and types
+      "_FortranASize",
+      "_FortranASizeDim",
+      "_FortranAIsContiguous",
+      "_FortranAPointerIsAssociated",
+      "_FortranAPointerIsAssociatedWith",
+      "_FortranAAllocatableCheckAllocated",
+      "_FortranAClassIs",
+      "_FortranASameTypeAs",
+      "_FortranAExtendsTypeOf",
   };
   if (llvm::is_contained(FlangRuntimeQueries, name)) {
     changed = true;
@@ -473,6 +494,29 @@ bool attributeKnownFunctions(llvm::Function &F) {
       name == "_FortranAStopStatementText" ||
       name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
       name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // MPI_Abort (in any calling convention) does not return.
+  if (canonicalizeMPIName(name) == "MPI_Abort") {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions allocate only the CHARACTER result
+  // they store in their result descriptor, which the caller frees; that
+  // allocation holds no derivative data and the reverse pass never needs it.
+  const char *FlangRuntimeCharacterResults[] = {
+      "_FortranATrim",
+      "_FortranAAdjustl",
+      "_FortranAAdjustr",
+      "_FortranARepeat",
+  };
+  if (llvm::is_contained(FlangRuntimeCharacterResults, name)) {
     changed = true;
     F.addAttribute(
         AttributeList::FunctionIndex,
