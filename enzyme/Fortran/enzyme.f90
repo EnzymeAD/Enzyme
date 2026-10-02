@@ -69,7 +69,9 @@ module enzyme
       import :: c_int, c_int8_t, c_ptr
       implicit none
       type(c_ptr), value :: ctx
-      !dir$ ignore_tkr(tkr) var
+      ! The directive starts in column 1, which flang 20's preprocessor
+      ! needs to keep it.
+!dir$ ignore_tkr(tkr) var
       ! Any variable, passed by its address.
       ! allow(C071)
       integer(c_int8_t), intent(in) :: var(*)
