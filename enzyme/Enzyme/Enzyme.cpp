@@ -605,7 +605,21 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
       if (isa<StoreInst>(&I) || isa<CallInst>(&I))
         todo.push_back(&I);
     for (auto I : todo) {
-      if (auto CI = dyn_cast<CallInst>(I)) {
+      // Where the global is written, and with what.
+      Value *dest = nullptr, *val = nullptr;
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        dest = SI->getPointerOperand();
+        val = SI->getValueOperand();
+      } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        // A copy of a whole value from a local variable, as newer Flang
+        // writes a descriptor.
+        dest = MTI->getRawDest();
+        val = getValueStoredIn(MTI->getRawSource());
+        auto len = dyn_cast<ConstantInt>(MTI->getLength());
+        if (!val || !len ||
+            DL.getTypeStoreSize(val->getType()) != len->getZExtValue())
+          continue;
+      } else if (auto CI = dyn_cast<CallInst>(I)) {
         auto callee = getFunctionFromCall(CI);
         if (!callee || callee->getName() != "free" || CI->arg_size() != 1)
           continue;
@@ -623,11 +637,11 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
           }
         continue;
       }
-      auto SI = cast<StoreInst>(I);
-      APInt off(DL.getIndexTypeSizeInBits(SI->getPointerOperandType()), 0);
-      auto GV = dyn_cast<GlobalVariable>(
-          SI->getPointerOperand()->stripAndAccumulateConstantOffsets(
-              DL, off, /*AllowNonInbounds*/ true));
+      if (!dest)
+        continue;
+      APInt off(DL.getIndexTypeSizeInBits(dest->getType()), 0);
+      auto GV = dyn_cast<GlobalVariable>(dest->stripAndAccumulateConstantOffsets(
+          DL, off, /*AllowNonInbounds*/ true));
       if (!GV)
         continue;
       SmallVector<unsigned, 3> path;
@@ -638,10 +652,9 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
       auto shadows = getImplicitGlobalShadows(GV);
       if (shadows.empty())
         continue;
-      Value *val = SI->getValueOperand();
       Type *T = val->getType();
       int64_t offset = off.getSExtValue();
-      IRBuilder<> B(SI->getNextNode());
+      IRBuilder<> B(I->getNextNode());
       if (T->isIntegerTy()) {
         for (auto [shadow, W] : shadows)
           for (unsigned lane = 0; lane < W; ++lane)

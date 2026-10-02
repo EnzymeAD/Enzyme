@@ -5464,6 +5464,49 @@ GlobalVariable *getShadowContext(Value *V) {
   return GV;
 }
 
+/// The memcpy that is the only write to \p AI, copying into it from its
+/// start, if there is one.
+static MemTransferInst *getOnlyCopyInto(AllocaInst *AI) {
+  MemTransferInst *copy = nullptr;
+  SmallVector<Value *, 4> todo = {AI};
+  while (!todo.empty()) {
+    auto ptr = todo.pop_back_val();
+    for (auto U : ptr->users()) {
+      auto I = cast<Instruction>(U);
+      if (isa<LoadInst>(I) || isa<DbgInfoIntrinsic>(I) ||
+          I->isLifetimeStartOrEnd())
+        continue;
+      if (isa<BitCastInst>(I) || isa<AddrSpaceCastInst>(I) ||
+          isa<GetElementPtrInst>(I)) {
+        todo.push_back(I);
+        continue;
+      }
+      auto MTI = dyn_cast<MemTransferInst>(I);
+      if (!MTI)
+        return nullptr;
+      if (MTI->getRawSource() == ptr && MTI->getRawDest() != ptr)
+        continue;
+      if (copy || MTI->getRawDest() != AI)
+        return nullptr;
+      copy = MTI;
+    }
+  }
+  return copy;
+}
+
+Value *getValueStoredIn(Value *ptr) {
+  auto I = dyn_cast<Instruction>(ptr);
+  if (!I)
+    return nullptr;
+  auto &DL = I->getModule()->getDataLayout();
+  APInt off(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
+  auto AI = dyn_cast<AllocaInst>(
+      ptr->stripAndAccumulateConstantOffsets(DL, off, /*AllowNonInbounds*/ true));
+  if (!AI)
+    return nullptr;
+  return getStoredValue(AI, off.getSExtValue(), 0);
+}
+
 bool getGlobalSlot(Value *V, GlobalVariable *&GV, int64_t &offset) {
   auto LI = dyn_cast<LoadInst>(lookThroughLocalMemory(V));
   if (!LI || !LI->getType()->isPointerTy())
@@ -5472,16 +5515,25 @@ bool getGlobalSlot(Value *V, GlobalVariable *&GV, int64_t &offset) {
   APInt off(DL.getIndexTypeSizeInBits(LI->getPointerOperand()->getType()), 0);
   auto base = LI->getPointerOperand()->stripAndAccumulateConstantOffsets(
       DL, off, /*AllowNonInbounds*/ true);
-  // A local copy of a value read from the global, such as a descriptor.
+  // A local copy of a value read from the global, such as a descriptor,
+  // stored or copied with memcpy.
   if (auto AI = dyn_cast<AllocaInst>(base)) {
-    auto copy =
-        dyn_cast_or_null<LoadInst>(getStoredValue(AI, off.getSExtValue(), 0));
-    if (!copy)
-      return false;
-    off = APInt(DL.getIndexTypeSizeInBits(copy->getPointerOperand()->getType()),
-                0);
-    base = copy->getPointerOperand()->stripAndAccumulateConstantOffsets(
-        DL, off, /*AllowNonInbounds*/ true);
+    if (auto copy = dyn_cast_or_null<LoadInst>(
+            getStoredValue(AI, off.getSExtValue(), 0))) {
+      off = APInt(
+          DL.getIndexTypeSizeInBits(copy->getPointerOperand()->getType()), 0);
+      base = copy->getPointerOperand()->stripAndAccumulateConstantOffsets(
+          DL, off, /*AllowNonInbounds*/ true);
+    } else {
+      auto MTI = getOnlyCopyInto(AI);
+      if (!MTI)
+        return false;
+      APInt srcOff(DL.getIndexTypeSizeInBits(MTI->getRawSource()->getType()),
+                   0);
+      base = MTI->getRawSource()->stripAndAccumulateConstantOffsets(
+          DL, srcOff, /*AllowNonInbounds*/ true);
+      off += srcOff;
+    }
   }
   GV = dyn_cast<GlobalVariable>(base);
   offset = off.getSExtValue();

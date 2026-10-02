@@ -3007,6 +3007,9 @@ llvm::GlobalVariable *getShadowContext(llvm::Value *V);
 /// through a local copy of it.
 bool getGlobalSlot(llvm::Value *V, llvm::GlobalVariable *&GV, int64_t &offset);
 
+/// The one value ever stored at \p ptr, a local variable, if there is one.
+llvm::Value *getValueStoredIn(llvm::Value *ptr);
+
 /// The implicit shadows of \p GV, of every width and context, with their
 /// widths.
 llvm::SmallVector<std::pair<llvm::GlobalVariable *, unsigned>, 2>
