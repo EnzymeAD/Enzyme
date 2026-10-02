@@ -1300,6 +1300,79 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
   return false;
 }
 
+/// Whether the pointer \p V is (or points into the memory of, through GEPs,
+/// casts, loads of pointers and calls to defined functions) the request
+/// argument of a point-to-point call of the Fortran MPI ABI, or memory that
+/// requests are copied to or from (an integer loaded from \p V stored to a
+/// request, or loaded from a request and stored to \p V).
+static bool isFortranMPIRequest(const Value *V,
+                                SmallPtrSetImpl<const Value *> &seen,
+                                unsigned depth = 0) {
+  if (depth > 12 || !seen.insert(V).second)
+    return false;
+  for (const User *U : V->users()) {
+    if (auto LI = dyn_cast<LoadInst>(U)) {
+      if (LI->getType()->isIntegerTy(32)) {
+        for (const User *U2 : LI->users())
+          if (auto SI = dyn_cast<StoreInst>(U2))
+            if (SI->getValueOperand() == LI &&
+                isFortranMPIRequest(SI->getPointerOperand(), seen, depth + 1))
+              return true;
+        continue;
+      }
+    }
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getPointerOperand() == V)
+        if (auto LI = dyn_cast<LoadInst>(SI->getValueOperand()))
+          if (LI->getType()->isIntegerTy(32) &&
+              isFortranMPIRequest(LI->getPointerOperand(), seen, depth + 1))
+            return true;
+      continue;
+    }
+    if (isa<GetElementPtrInst>(U) || isa<BitCastInst>(U) ||
+        isa<AddrSpaceCastInst>(U) ||
+        (isa<LoadInst>(U) && U->getType()->isPointerTy()) ||
+        (isa<ConstantExpr>(U) &&
+         (cast<ConstantExpr>(U)->getOpcode() == Instruction::GetElementPtr ||
+          cast<ConstantExpr>(U)->isCast()))) {
+      if (isFortranMPIRequest(U, seen, depth + 1))
+        return true;
+      continue;
+    }
+    auto CI = dyn_cast<CallBase>(U);
+    if (!CI)
+      continue;
+    StringRef name = getFuncNameFromCall(CI);
+    if (isFortranMPICall(name)) {
+      StringRef canon = canonicalizeMPIName(name);
+      unsigned idx = (canon == "MPI_Isend" || canon == "MPI_Irecv") ? 6
+                     : canon == "MPI_Wait"                          ? 0
+                     : canon == "MPI_Waitall"                       ? 1
+                                                                    : ~0u;
+      if (idx < CI->arg_size() && CI->getArgOperand(idx) == V)
+        return true;
+      continue;
+    }
+    if (auto F = getFunctionFromCall(CI))
+      if (!F->empty())
+        for (unsigned i = 0; i < CI->arg_size() && i < F->arg_size(); i++)
+          if (CI->getArgOperand(i) == V &&
+              isFortranMPIRequest(F->getArg(i), seen, depth + 1))
+            return true;
+  }
+  return false;
+}
+
+bool isFortranMPIRequest(const Value *V) {
+  SmallPtrSet<const Value *, 8> seen;
+  if (isFortranMPIRequest(V, seen))
+    return true;
+  // An address into memory holding requests (e.g. an element of a request
+  // array handed to a procedure of another module)
+  const Value *Base = getUnderlyingObject(V, 16);
+  return Base != V && isFortranMPIRequest(Base, seen);
+}
+
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
@@ -1430,6 +1503,21 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                        << "\n";
         InsertConstantValue(TR, Val);
         return true;
+      }
+    }
+
+    // The INTEGER requests of point-to-point calls of the Fortran MPI ABI are
+    // active, so that their shadows carry the bookkeeping of the reverse pass
+    // (handleFortranMPIPointToPoint), and the requests of the tangent
+    // communication in forward mode.
+    if (Val->getType()->isPointerTy() &&
+        (!isa<Constant>(Val) || isa<GlobalVariable>(Val))) {
+      if (isFortranMPIRequest(Val)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " Value active as Fortran MPI request " << *Val
+                       << "\n";
+        ActiveValues.insert(Val);
+        return false;
       }
     }
 

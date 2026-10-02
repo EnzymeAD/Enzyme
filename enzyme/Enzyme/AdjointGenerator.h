@@ -1126,6 +1126,23 @@ public:
     IRBuilder<> BuilderZ(NewI);
     BuilderZ.setFastMathFlags(getFast());
 
+    // A copy of a request of the Fortran MPI ABI (an integer loaded from a
+    // request) copies its shadow: the slot of the record of the nonblocking
+    // call (reverse mode) or the request of the tangent communication
+    // (forward mode). Integer stores have no adjoint.
+    if (auto LI = dyn_cast<LoadInst>(orig_val)) {
+      if (valType->isIntegerTy(32) && gutils->getWidth() == 1 &&
+          !gutils->isConstantValue(LI->getPointerOperand()) &&
+          isFortranMPIRequest(orig_ptr)) {
+        if (Mode != DerivativeMode::ReverseModeGradient) {
+          Value *src = gutils->invertPointerM(LI->getPointerOperand(), BuilderZ);
+          Value *dst = gutils->invertPointerM(orig_ptr, BuilderZ);
+          BuilderZ.CreateStore(BuilderZ.CreateLoad(valType, src), dst);
+        }
+        return;
+      }
+    }
+
     // TODO allow recognition of other types that could contain pointers [e.g.
     // {void*, void*} or <2 x i64> ]
     auto storeSize = (DL.getTypeSizeInBits(valType) + 7) / 8;
@@ -6701,6 +6718,10 @@ public:
 
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
+
+  bool handleFortranMPIPointToPoint(llvm::CallInst &call,
+                                    llvm::Function *called,
+                                    llvm::StringRef funcName);
 
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,

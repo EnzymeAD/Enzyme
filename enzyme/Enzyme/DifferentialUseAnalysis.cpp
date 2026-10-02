@@ -523,6 +523,45 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
+    // Point-to-point calls of the Fortran MPI ABI keep their arguments and
+    // the shadow of their buffer in a record made in the primal pass (see
+    // handleFortranMPIPointToPoint), so the reverse pass needs none of their
+    // operands.
+    if (isFortranMPICall(funcName)) {
+      StringRef canon = canonicalizeMPIName(funcName);
+      if (canon == "MPI_Isend" || canon == "MPI_Irecv" ||
+          canon == "MPI_Send" || canon == "MPI_Ssend" || canon == "MPI_Recv" ||
+          canon == "MPI_Wait" || canon == "MPI_Waitall" ||
+          canon == "MPI_Barrier") {
+        // The shadow of the request carries the slot of the record of a
+        // nonblocking call
+        unsigned req = (canon == "MPI_Isend" || canon == "MPI_Irecv") ? 6
+                       : canon == "MPI_Wait"                          ? 0
+                       : canon == "MPI_Waitall"                       ? 1
+                                                                      : ~0u;
+        if (shadow && mode != DerivativeMode::ReverseModeGradient &&
+            req < CI->arg_size() && val == CI->getArgOperand(req)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
+                         << *val << " in forward as shadow MPI request "
+                         << *CI << "\n";
+          return true;
+        }
+        if (shadow && val == CI->getArgOperand(0) &&
+            mode != DerivativeMode::ReverseModeGradient &&
+            canon != "MPI_Wait" && canon != "MPI_Waitall" &&
+            canon != "MPI_Barrier" &&
+            !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
+                         << *val << " in forward as shadow MPI " << *CI
+                         << "\n";
+          return true;
+        }
+        return false;
+      }
+    }
+
     // Only need primal (and shadow) request for reverse, or shadow buffer
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {

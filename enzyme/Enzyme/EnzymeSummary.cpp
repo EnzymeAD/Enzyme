@@ -28,6 +28,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ActivityAnalysis.h"
 #include "EnzymeSummary.h"
 #include "Utils.h"
 
@@ -218,6 +219,13 @@ public:
     computeLocalContents();
     for (auto &I : instructions(F))
       visit(I);
+    // Requests of the Fortran MPI ABI are active (their shadows carry the
+    // bookkeeping of the nonblocking calls), though they are integers.
+    for (auto &A : F.args())
+      if (A.getType()->isPointerTy() && isFortranMPIRequest(&A)) {
+        ArgRead[A.getArgNo()] = true;
+        ArgWrite[A.getArgNo()] = true;
+      }
   }
 
   json::Object toJSON() const {

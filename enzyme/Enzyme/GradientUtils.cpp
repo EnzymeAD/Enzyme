@@ -5867,6 +5867,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     else if (!TT.anyFloat(oval, DL))
       return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   }
+  // The shadow of an element of a constant aggregate. An integer whose type
+  // is not known to be an integer (e.g. a field of the initializer of a
+  // Fortran array descriptor) mirrors the primal, as in stores.
+  auto shadowElement = [](Constant *el, Value *val) -> Constant * {
+    if (auto C = dyn_cast<Constant>(val))
+      return C;
+    assert(isa<ConstantInt>(el) && "non-constant shadow of a constant");
+    return el;
+  };
   if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     auto ElTy = CD->getType()->getElementType();
@@ -5877,7 +5886,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
       subTT.CanonicalizeInPlace(ObjSize, DL);
       Value *val = invertPointerM(el, BuilderM, subTT);
-      Vals.push_back(cast<Constant>(val));
+      Vals.push_back(shadowElement(el, val));
     }
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
       return ConstantArray::get(CD->getType(), Vals);
@@ -5893,7 +5902,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
       subTT.CanonicalizeInPlace(ObjSize, DL);
       Value *val = invertPointerM(el, BuilderM, subTT);
-      Vals.push_back(cast<Constant>(val));
+      Vals.push_back(shadowElement(el, val));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5911,7 +5920,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto ObjSize = (DL.getTypeSizeInBits(el->getType()) + 7) / 8;
       TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
       subTT.CanonicalizeInPlace(ObjSize, DL);
-      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
+      Vals.push_back(shadowElement(el, invertPointerM(el, BuilderM, subTT)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5927,7 +5936,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto Off = i * ObjSize;
       TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
       subTT.CanonicalizeInPlace(ObjSize, DL);
-      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
+      Vals.push_back(shadowElement(el, invertPointerM(el, BuilderM, subTT)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
