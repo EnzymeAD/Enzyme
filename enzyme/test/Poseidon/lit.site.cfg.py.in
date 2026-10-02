@@ -1,0 +1,66 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+import os
+
+config.llvm_ver = "@LLVM_VERSION_MAJOR@"
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.llvm_libs_dir = "@LLVM_LIBRARY_DIR@"
+config.poseidon_obj_root = "@CMAKE_CURRENT_BINARY_DIR@"
+config.target_triple = "@LLVM_HOST_TRIPLE@"
+config.llvm_shlib_ext = "@CMAKE_SHARED_MODULE_SUFFIX@"
+
+poseidon_plugin = "@POSEIDON_BINARY_DIR@/lib/Poseidon-@LLVM_VERSION_MAJOR@" + config.llvm_shlib_ext
+enzyme_clang_plugin = "@POSEIDON_ENZYME_CLANG_PLUGIN@"
+enzyme_opt_plugin = "@POSEIDON_ENZYME_OPT_PLUGIN@"
+
+# Longest name first: lit applies substitutions in list order, so a shorter
+# name that is a prefix of a longer one has to come after it.
+# Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the
+# plugin's options exist only if it is also loaded with -load.
+def clang_load(plugin):
+    if int(config.llvm_ver) < 22:
+        return '-fpass-plugin=' + plugin + ' -Xclang -load -Xclang ' + plugin
+    return '-fpass-plugin=' + plugin
+config.substitutions.append(('%clangLoadPoseidonEnzyme',
+                             clang_load(poseidon_plugin) + ' ' +
+                             clang_load(enzyme_clang_plugin)))
+config.substitutions.append(('%clangLoadPoseidon', clang_load(poseidon_plugin)))
+config.substitutions.append(('%loadPoseidonEnzyme',
+                             '-load-pass-plugin=' + poseidon_plugin +
+                             ' -load-pass-plugin=' + enzyme_opt_plugin))
+config.substitutions.append(('%loadPoseidon', '-load-pass-plugin=' + poseidon_plugin))
+config.substitutions.append(('%poseidon_plugin', poseidon_plugin))
+config.substitutions.append(('%enzyme_plugin', enzyme_opt_plugin))
+
+config.substitutions.append(('%poseidon_clangxx',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))
+
+# The GEMM dispatch runtimes, for tests that call an entry point directly
+# instead of having the pass emit the call.
+config.substitutions.append(('%poseidon_rt_lib',
+                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a'))
+
+config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
+config.substitutions.append(('%llvmver', config.llvm_ver))
+config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
+config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
+config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
+config.substitutions.append(('%simplifycfg', 'simplifycfg'))
+
+config.substitutions.append(('%FPProfileCUDASrc', '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler/FPProfilerCUDA.cu'))
+config.substitutions.append(('%FPProfileLib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))
+config.substitutions.append(('%FPProfileInc',
+                             '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler -I@ENZYME_SOURCE_DIR@/include'))
+config.substitutions.append(('%gpu_cost_model', '@POSEIDON_TEST_COST_MODEL@'))
+config.substitutions.append(('%gpu_arch', '@POSEIDON_TEST_GPU_ARCH_RESOLVED@'))
+
+herbie_binary = '@POSEIDON_HERBIE_BINARY_PATH@'
+config.substitutions.append(('%herbie_binary', herbie_binary))
+if os.path.isfile(herbie_binary) and os.access(herbie_binary, os.X_OK):
+    config.available_features.add('herbie')
+if os.path.isfile(enzyme_clang_plugin):
+    config.available_features.add('enzyme')
+if @POSEIDON_TEST_HAS_CUDA@:
+    config.available_features.add('cuda-runtime')
+
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")
