@@ -35,7 +35,7 @@ jobs:
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
     - name: Checkout Enzyme repository
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
     - name: mkdir
@@ -75,7 +75,7 @@ jobs:
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
     - name: Checkout Enzyme repository
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
     - name: mkdir
@@ -114,7 +114,7 @@ jobs:
           brew install llvm@${{ matrix.llvm }} make cmake gcc
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
     - name: Checkout Enzyme repository
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
     - name: mkdir
