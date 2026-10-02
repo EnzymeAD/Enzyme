@@ -1,5 +1,6 @@
 # FlangEnzymeDirectives: a `flang -fc1 -load` plugin that defines the
-# !DIR$ ENZYME directives and turns them into what LLVM Enzyme reads. It needs a flang with plugin
+# !DIR$ ENZYME directives and turns them, and the Fortran types LLVM IR
+# erases, into what LLVM Enzyme reads. It needs a flang with plugin
 # directives and pass pipeline callbacks, and MLIR and flang's CMake packages
 # (-DMLIR_DIR=<llvm>/lib/cmake/mlir -DFlang_DIR=<llvm>/lib/cmake/flang, with
 # -DClang_DIR too, which FlangConfig refers to). It does not need Enzyme-MLIR.
@@ -24,6 +25,7 @@ add_llvm_library(FlangEnzymeDirectives-${LLVM_VERSION_MAJOR}
   MODULE
   FlangDirectivesPlugin.cpp
   FortranDirectives.cpp
+  FIRTypeAnnotations.cpp
   DISABLE_LLVM_LINK_LLVM_DYLIB
 )
 target_include_directories(FlangEnzymeDirectives-${LLVM_VERSION_MAJOR} PRIVATE
