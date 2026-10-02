@@ -1,6 +1,10 @@
 message("Building Fortran tests")
 
 add_subdirectory(BatchMode)
+if(ENZYME_FLANG_DIRECTIVES)
+  list(APPEND ENZYME_TEST_DEPS FlangEnzymeDirectives-${LLVM_VERSION_MAJOR})
+  add_subdirectory(Directives)
+endif()
 add_subdirectory(ForwardMode)
 add_subdirectory(mpi)
 add_subdirectory(OpenMP)
