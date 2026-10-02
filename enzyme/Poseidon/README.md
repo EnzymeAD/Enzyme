@@ -24,7 +24,6 @@ enzyme/Poseidon/            the pass (Plugin.cpp and the sources beside it, matm
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, Herbie platform
   cost_models/              the paper's RTX 5090 model and its Herbie platform
-  artifacts/                reproduction packages (see Artifacts)
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integration
 ```
@@ -123,15 +122,10 @@ describes the row families and what each calibration arm measures.
 
 ## Artifacts
 
-- `artifacts/cgo2027/` reproduces the GPU paper end to end: `./run_artifact.sh`
-  (`--quick` for a smoke test, `--check` for the preflight alone) calibrates
-  this GPU, runs the benchmarks, redraws every figure and collects the results.
-  Its `README.md` is the guide, and each benchmark carries an
-  `expected_results.md`.
-- `artifacts/cgo2026/` runs two case studies of the CPU paper (the quaternion
-  differentiator and the 3x3 eigensolver) through this compiler.
-- `artifacts/mfem-workshop-2026/` runs the MFEM elasticity operator of the
-  workshop talk; it needs an MFEM build (its `README.md` gives the recipe).
+The reproduction packages of the papers (`artifacts/cgo2027`, `artifacts/cgo2026`,
+`artifacts/mfem-workshop-2026`, each with its own `README.md` and
+`expected_results.md`) are kept in the PRONTOLab/Poseidon-dev tree, not on the
+Enzyme branch.
 
 ## Citation
 

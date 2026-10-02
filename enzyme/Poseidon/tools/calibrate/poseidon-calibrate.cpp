@@ -65,8 +65,8 @@ cl::opt<std::string>
                   "microbm,ozaki,tcec,direct,inkernel,herbie-platform"));
 cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
-    cl::desc("Profile the in-kernel arm enumerates its candidates from "
-             "(default: the ozp surrogate in the artifact)"));
+    cl::desc("Profile of a GEMM site the in-kernel arm enumerates its "
+             "candidates from (required by that arm)"));
 cl::opt<std::string>
     Herbie("herbie", cl::init(POSEIDON_CALIBRATE_HERBIE),
            cl::value_desc("path"),
@@ -429,17 +429,17 @@ void armInKernel(const std::string &Csv, const Device &D) {
   if (!sys::fs::exists(Src))
     fail("the in-kernel harness source is missing: " + Src);
 
-  std::string Prof = ProfileDir;
-  if (Prof.empty())
-    Prof = POSEIDON_CALIBRATE_INKERNEL_PROFILE;
-  SmallString<256> KernelProf(Prof);
+  if (ProfileDir.empty())
+    fail("the in-kernel arm needs --profile <dir>: the profile of a GEMM "
+         "site written by -poseidon-profile-generate");
+  SmallString<256> KernelProf(ProfileDir);
   sys::path::append(
       KernelProf, "preprocess__Z10matmul_optPdPKdS1__poseidon_body.fpprofile");
   if (!sys::fs::exists(KernelProf))
     fail("the in-kernel arm needs the surrogate profile carrying " +
          Twine(sys::path::filename(KernelProf)) +
-         "; produce it (artifacts/cgo2027/benchmarks/ozp: "
-         "scripts/profile_only.sh) and pass --profile <dir>");
+         "; profile a GEMM site with -poseidon-profile-generate and pass "
+         "--profile <dir>");
 
   SmallString<256> WorkBuf;
   sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf);
@@ -449,7 +449,7 @@ void armInKernel(const std::string &Csv, const Device &D) {
   std::string Clang = sibling("poseidon-clang++");
   std::string Arch = "--cuda-gpu-arch=" + D.Arch;
   std::string CalN = "-DCAL_N=" + utostr(RefN);
-  std::string ProfUse = "-poseidon-profile-use=" + Prof;
+  std::string ProfUse = "-poseidon-profile-use=" + ProfileDir;
   std::string CostModel = "-poseidon-cost-model=" + Csv;
   std::string Cache = "-poseidon-cache=" + Work + "/cache";
   std::string BaseExe = Work + "/base.exe";
