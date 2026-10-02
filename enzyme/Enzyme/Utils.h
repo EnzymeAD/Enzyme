@@ -2134,6 +2134,13 @@ static inline bool isNoAlias(const llvm::Value *val) {
   return false;
 }
 
+/// LLVM flang runtime functions that neither free memory of the program nor
+/// return or store an allocation into it: I/O (which frees only the I/O
+/// statement state that _FortranAioBegin* allocated and
+/// _FortranAioEndIoStatement releases), FLUSH, the scalar character
+/// inquiries and comparison, and MOD/MODULO.
+bool isFlangRuntimeNoFree(llvm::StringRef name);
+
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
     return true;
