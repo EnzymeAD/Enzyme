@@ -129,6 +129,14 @@ def infer_activity(fsum, local):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
+    ap.add_argument("--overwrite-masks", type=int, default=0, metavar="CAP",
+                    help="also export variants that assume some arguments are "
+                         "not overwritten after the call (_o<mask>), at most "
+                         "CAP per function besides the all-overwritten one; "
+                         "0 (default) exports only the all-overwritten variant")
+    ap.add_argument("--invariant-globals", action="store_true",
+                    help="list the globals nothing reachable from the "
+                         "differentiated functions writes (invariant_globals.txt)")
     ap.add_argument("--inactive", choices=["registered", "inferred", "both"],
                     default="registered",
                     help="which inactive functions stop the walk and get "
@@ -224,6 +232,143 @@ def main():
                 for (cm, cf) in need)
         if callers_elsewhere:
             exports[m][g] = sorted(variant_token(v) for v in vs)
+    # Arguments kept (not overwritten after the call) per call edge, top
+    # down from each __enzyme_* call: a local object passed and not written
+    # again later in the caller, or an argument of the caller that is kept
+    # in the caller's own variant. Globals stay overwritten (exported
+    # derivatives assume any later call may write them).
+    kept_masks = defaultdict(set)      # function -> set of masks (tuples)
+    if a.overwrite_masks:
+        def fact(m, f):
+            x = local.get((m, f)) or fsum.get(f)
+            return x["activity"] if x else None
+        work = []
+        for (mod, caller, fn, tok) in roots:
+            m = mod if (mod, fn) in local else fdef.get(fn)
+            if m is None:
+                continue
+            n = len((fact(m, fn) or {}).get("args", []))
+            work.append((m, fn, tuple([True] * n)))   # top level: kept
+        seen = set()
+        while work:
+            m, f, mask = work.pop()
+            if (m, f, mask) in seen:
+                continue
+            seen.add((m, f, mask))
+            fa = fact(m, f)
+            if fa is None:
+                continue
+            for c in fa.get("calls_at", []):
+                g = c["callee"]
+                if g in inactive or g in custom or is_runtime(g):
+                    continue
+                gm = m if (m, g) in local else fdef.get(g)
+                if gm is None:
+                    continue
+                gmask = []
+                for arg in c["args"]:
+                    if arg is None:
+                        gmask.append(False)
+                        continue
+                    r = arg["root"]
+                    keep = not arg["after"] and (
+                        r == "l" or (r[0] == "a" and int(r[1:]) < len(mask)
+                                     and mask[int(r[1:])]))
+                    gmask.append(keep)
+                gmask = tuple(gmask)
+                if any(gmask) and g in cross and gm != m:
+                    if gmask in kept_masks[g] or len(kept_masks[g]) < a.overwrite_masks:
+                        kept_masks[g].add(gmask)
+                    else:
+                        gmask = tuple(False for _ in gmask)
+                work.append((gm, g, gmask))
+
+        def hexmask(bits):
+            out = ""
+            for i in range(0, len(bits), 4):
+                out += "0123456789abcdef"[sum(1 << j for j in range(4)
+                                               if i + j < len(bits) and bits[i + j])]
+            return out.rstrip("0")
+        for m, e in exports.items():
+            for g in e:
+                base = e[g]
+                e[g] = sorted(set(base) | {f"{t}+o{hexmask(k)}" for t in base
+                                            for k in kept_masks.get(g, ())
+                                            if hexmask(k)})
+    with open(os.path.join(a.out, "import_variants.txt"), "w") as f:
+        for m, e in sorted(exports.items()):
+            for g in sorted(e):
+                f.write(f"{g} {','.join(e[g])}\n")
+
+    # Globals nothing reachable from the differentiated functions writes
+    # (any data, not only floating-point): the reverse pass may read them
+    # again instead of caching them.
+    invariant = []
+    if a.invariant_globals:
+        reach, stack = set(), [(mod if (mod, fn) in local else fdef.get(fn), fn)
+                                for (mod, _, fn, _) in roots]
+        while stack:
+            m, f = stack.pop()
+            if m is None or (m, f) in reach:
+                continue
+            reach.add((m, f))
+            for g in callees(m, f):
+                if (m, g) in local:
+                    stack.append((m, g))
+                elif g in fdef:
+                    stack.append((fdef[g], g))
+        # arguments a function writes (any data), through its callees too
+        def fx(m, f):
+            return local.get((m, f)) or fsum.get(f)
+        wany = {}
+        for (m, f) in reach:
+            wany[(m, f)] = list(fx(m, f)["activity"].get("args_write_any", []))
+        changed = True
+        while changed:
+            changed = False
+            for (m, f) in reach:
+                for root, callee, k in fx(m, f)["activity"]["edges"]:
+                    cm = m if (m, callee) in local else fdef.get(callee)
+                    cw = wany.get((cm, callee))
+                    w = True if cw is None else (k < len(cw) and cw[k])
+                    if w and root[0] == "a":
+                        i = int(root[1:])
+                        if i < len(wany[(m, f)]) and not wany[(m, f)][i]:
+                            wany[(m, f)][i] = True
+                            changed = True
+        written, unknown_any = set(), False
+        for (m, f) in reach:
+            x = local.get((m, f)) or fsum.get(f)
+            fa = x["activity"]
+            written |= set(fa.get("globals_write_any", []))
+            # a global handed to a callee that writes that argument
+            for root, callee, k in fa["edges"]:
+                if root[0] == "g":
+                    cm = m if (m, callee) in local else fdef.get(callee)
+                    cw = wany.get((cm, callee))
+                    if cw is None or (k < len(cw) and cw[k]):
+                        written.add(root[1:])
+            unknown_any |= fa.get("unknown_write", True) or fa["unknown"] \
+                or x["indirect_calls"] > 0
+            for c in x["calls"]:
+                # a Fortran procedure without IR may write any COMMON block;
+                # a C library function only what it is given (recorded as
+                # the caller's own writes)
+                if c not in fsum and not (m, c) in local and c.endswith("_") \
+                        and not is_runtime(c):
+                    unknown_any = True
+        if not unknown_any:
+            read = set()
+            for (m, f) in reach:
+                x = local.get((m, f)) or fsum.get(f)
+                read |= set(x["globals"])
+            allg = {g for s_ in mods.values() for g, i in s_["globals"].items()
+                    if not i["constant"]}
+            invariant = sorted((read & allg) - written)
+    with open(os.path.join(a.out, "invariant_globals.txt"), "w") as f:
+        for g in invariant:
+            f.write(g + "\n")
+
     for m in mods:
         with open(os.path.join(a.out, f"{m}.exports"), "w") as f:
             for g in sorted(exports.get(m, {})):
@@ -316,6 +461,11 @@ def main():
     print(f"custom rules: {sorted(custom)}")
     print(f"callees without IR, not inactive/runtime: {sorted(missing)[:20]} ({len(missing)})")
     print(f"COMMON blocks: {len(common)}")
+    if a.overwrite_masks:
+        print(f"overwrite masks: {sum(len(v) for v in kept_masks.values())} kept-argument "
+              f"variants for {len(kept_masks)} functions (cap {a.overwrite_masks})")
+    if a.invariant_globals:
+        print(f"invariant globals: {len(invariant)}")
     tot = sum(len(act[g]["args"]) for e in exports.values() for g in e if g in act)
     print(f"inactive parameters of exported functions: {nparams} of {tot}")
     reach = {f for (_, f) in need}
