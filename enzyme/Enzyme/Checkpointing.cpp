@@ -869,8 +869,50 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   Instruction *allocaIP = &*F.getEntryBlock().getFirstInsertionPt();
 #endif
   FoldSingleEntryPHINodes(E);
-  for (PHINode *phi : carried)
-    DemotePHIToStack(phi, allocaIP);
+  // A floating-point value a fixed-point loop carries is part of its state,
+  // as the state it names: optimization may have moved that state from
+  // memory into such values (load PRE carries a global through a phi, its
+  // memory written but read only at the next iteration's start). A value
+  // reloaded each iteration from memory the loop does not write is not: it
+  // is a parameter, whose adjoint flows back out of the loop; nor is one
+  // only compared, as the loop's own error is, which carries no derivative.
+  SmallPtrSet<Value *, 4> stateSlots;
+  SmallVector<Value *, 4> loopWrites;
+  bool unknownWrites = false;
+  if (fixedPoint)
+    for (BasicBlock *BB : L->blocks())
+      for (Instruction &I : *BB) {
+        if (!I.mayWriteToMemory())
+          continue;
+        if (auto *SI = dyn_cast<StoreInst>(&I))
+          loopWrites.push_back(getBaseObject(SI->getPointerOperand()));
+        else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
+          loopWrites.push_back(getBaseObject(MI->getDest()));
+        else
+          unknownWrites = true;
+      }
+  auto isParameter = [&](PHINode *phi) {
+    Value *V = phi->getIncomingValueForBlock(latch);
+    if (V == phi)
+      return true;
+    auto *LdI = dyn_cast<LoadInst>(V);
+    if (!LdI || unknownWrites || !L->isLoopInvariant(LdI->getPointerOperand()))
+      return false;
+    Value *base = getBaseObject(LdI->getPointerOperand());
+    if (!isa<GlobalVariable>(base) && !isa<AllocaInst>(base))
+      return false;
+    return all_of(loopWrites, [&](Value *W) {
+      return W != base && (isa<GlobalVariable>(W) || isa<AllocaInst>(W));
+    });
+  };
+  for (PHINode *phi : carried) {
+    bool state =
+        fixedPoint && phi->getType()->isFPOrFPVectorTy() && !isParameter(phi) &&
+        !all_of(phi->users(), [](User *U) { return isa<FCmpInst>(U); });
+    AllocaInst *slot = DemotePHIToStack(phi, allocaIP);
+    if (state)
+      stateSlots.insert(slot);
+  }
   for (BasicBlock *BB : L->blocks())
     for (Instruction &I : make_early_inc_range(*BB)) {
       if (isa<PHINode>(I))
@@ -1009,7 +1051,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
                 "memory, whose extent is not known (" + ss.str() +
                 "); give the regions with __enzyme_checkpoint_for");
   }
-  SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions;
+  SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions, slotStates;
   SmallPtrSet<Value *, 4> seen;
   // The state of a fixed-point loop is snapshotted as such.
   if (fixedPoint)
@@ -1043,7 +1085,8 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     // Stack slots always: they are the loop's own state.
     if ((w || isa<AllocaInst>(alloc->first)) &&
         seen.insert(alloc->first).second)
-      regions.push_back({alloc->first, alloc->second, 0});
+      (stateSlots.count(alloc->first) ? slotStates : regions)
+          .push_back({alloc->first, alloc->second, 0});
   }
 
   // The loop is now the call.
@@ -1100,6 +1143,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       regionTypes.push_back(fpArgs[a]->getType());
       args.push_back(fpArgs[a]);
       args.push_back(B.CreateSExtOrTrunc(fpArgs[a + 1], I64));
+    }
+    for (auto &[ptr, bytes, space] : slotStates) {
+      regionTypes.push_back(ptr->getType());
+      args.push_back(ptr);
+      args.push_back(bytes);
     }
     unsigned nstates = regionTypes.size();
     for (auto &[ptr, bytes, space] : regions) {
