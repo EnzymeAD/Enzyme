@@ -1,0 +1,8 @@
+; Module of @ext for separate_compilation_omp_atomicadd.ll (not a test itself).
+
+define void @ext(ptr %x, ptr %y) {
+  %v = load double, ptr %x
+  %m = fmul double %v, %v
+  store double %m, ptr %y
+  ret void
+}

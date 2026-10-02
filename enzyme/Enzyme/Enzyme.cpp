@@ -2802,8 +2802,11 @@ public:
       std::string notOverwritten;
       // hex mask of the arguments constant at the calls (no shadow)
       std::string constantArgs;
+      // adjoints accumulated atomically (calls from parallel regions)
+      bool atomicAdd = false;
     };
-    // A token is <mode>[+sz][+ra][+w<N>][+c<hex>][+o<hex>], e.g.
+    // A token is <mode>[+sz][+ra][+aa][+w<N>][+c<hex>][+o<hex>] (+aa: adjoints
+    // accumulated atomically, as for calls from OpenMP regions), e.g.
     // "reverse+sz", "reverse+sz+o5" (arguments 0 and 2 not overwritten after
     // the call) or "forward+c2" (argument 1 constant, passed no shadow).
     auto parseVariants = [&](StringRef str, SmallVectorImpl<Variant> &out) {
@@ -2822,6 +2825,8 @@ public:
             v.strongZero = true;
           else if (flag == "ra")
             v.runtimeActivity = true;
+          else if (flag == "aa")
+            v.atomicAdd = true;
           else if (startsWith(flag, "o"))
             v.notOverwritten = flag.drop_front().str();
           else if (startsWith(flag, "c"))
@@ -2923,7 +2928,7 @@ public:
         GradientUtils::GetOrCreateShadowFunction(
             RequestContext(), Logic,
             Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, v.mode,
-            v.runtimeActivity, v.strongZero, v.width, AtomicAdd,
+            v.runtimeActivity, v.strongZero, v.width, AtomicAdd || v.atomicAdd,
             parseMask(v.notOverwritten), parseMask(v.constantArgs));
       }
     return true;
