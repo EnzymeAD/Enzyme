@@ -47,6 +47,7 @@
 #include "mlir/Target/LLVMIR/LLVMTranslationInterface.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
@@ -194,8 +195,13 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
             t ? parseTypeTree(t.getValue()) : std::nullopt;
         if (!tree)
           return;
-        if (auto *inst = dyn_cast_or_null<llvm::Instruction>(
-                moduleTranslation.lookupValue(alloca.getResult())))
+        // Only on what is character storage in LLVM IR too (bytes).
+        auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
+            moduleTranslation.lookupValue(alloca.getResult()));
+        llvm::Type *ty = inst ? inst->getAllocatedType() : nullptr;
+        if (auto *at = dyn_cast_or_null<llvm::ArrayType>(ty))
+          ty = at->getElementType();
+        if (ty && ty->isIntegerTy(8))
           inst->setMetadata("enzyme_type",
                             typeTreeToMD(*tree, inst->getContext()));
       });
@@ -286,6 +292,20 @@ static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
   return s ? std::optional<int64_t>(s->second) : std::nullopt;
 }
 
+// The one scalar type of all of a value of type `ty`, if it has one: of a
+// scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
+// one too (both parts are the same).
+static std::optional<std::string> uniformType(Type ty, const DataLayout &dl) {
+  ty = fir::unwrapSequenceType(ty);
+  if (isa<fir::CharacterType>(ty))
+    return std::string("Integer");
+  if (auto ct = dyn_cast<mlir::ComplexType>(ty))
+    ty = ct.getElementType();
+  if (auto sc = scalarType(ty, dl))
+    return sc->first;
+  return std::nullopt;
+}
+
 // Add the scalar types of a value of type `ty` at `offset` to `layout`.
 // Arrays are expanded element by element up to `budget` entries.
 static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
@@ -367,12 +387,13 @@ static std::optional<std::string> dataType(Type ty, const DataLayout &dl) {
 // A descriptor ({ptr base, i64 elem_len, i32 version, i8 rank, i8 type,
 // i8 attribute, i8 extra, [rank x [3 x i64]] dims}) is typed field by field,
 // with the type of the data its base address points to.
-static std::string pointerArgType(Type ty, const DataLayout &dl) {
+static std::string pointerArgType(Type ty, const DataLayout &dl,
+                                  bool descriptorData = true) {
   Type pointee = fir::unwrapRefType(ty);
   TypePaths tree{{{-1}, "Pointer"}};
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
     tree[{-1, 0}] = "Pointer";
-    if (auto data = dataType(box, dl))
+    if (auto data = dataType(box, dl); data && descriptorData)
       tree[{-1, 0, -1}] = *data;
     for (int off : {8, 16, 20, 21, 22, 23})
       tree[{-1, off}] = "Integer";
@@ -394,13 +415,108 @@ static std::string pointerArgType(Type ty, const DataLayout &dl) {
 
 // The FIR type a call operand had before flang converted it for the call
 // (e.g. !fir.box<!fir.array<?xf32>> before !fir.box<none>).
+// Enzyme's type analysis drops offsets beyond -enzyme-max-type-offset
+// (default 500), and then takes the types it keeps for the whole block (e.g.
+// a REAL*8 array followed by a REAL*4 one all for REAL*8). Larger blocks
+// stay unannotated.
+static constexpr int64_t kMaxTypeOffset = 500;
+
 static constexpr int64_t kMaxTypeOffsetForArgs = 16;
+
+// Enzyme's TypeTree has no extent: a type at offset -1 of what a pointer
+// points to holds at every offset from it, also beyond the object it is
+// meant for. Data that may be part of a larger object of other types (a
+// component of a derived type, a member of a COMMON block or EQUIVALENCE
+// group, a dummy argument, whose actual may be any of these) is therefore
+// typed at its offsets one by one, if its size is known and within Enzyme's
+// type offsets, and not at all otherwise.
+static llvm::cl::opt<bool> annotateUnbounded(
+    "enzyme-fir-arg-unbounded-types", llvm::cl::init(false),
+    llvm::cl::desc("Type the data of array, CHARACTER and descriptor dummy "
+                   "arguments at every offset, also when their size is not "
+                   "known (unsound if the actual argument is a component or "
+                   "storage associated)"));
+
+// Type the data of `bytes` bytes (if known) of scalars `t` of `eleSize`
+// bytes, under `path`, of something that may be part of a larger object.
+static void addBoundedData(TypePaths &tree, std::vector<int> path,
+                           const std::string &t, int64_t eleSize,
+                           std::optional<int64_t> bytes, bool unbounded) {
+  if (unbounded) {
+    path.push_back(-1);
+    tree[path] = t;
+    return;
+  }
+  if (!bytes || *bytes > kMaxTypeOffset || eleSize <= 0)
+    return;
+  for (int64_t off = 0; off < *bytes; off += eleSize) {
+    auto p = path;
+    p.push_back((int)off);
+    tree[p] = t;
+  }
+}
 
 static Type originalType(Value v) {
   while (auto cvt = v.getDefiningOp<fir::ConvertOp>())
     v = cvt.getValue();
   return v.getType();
 }
+
+// Whether the data that `v` (an address or a descriptor) refers to is a whole
+// object: a local or global variable, or an ALLOCATABLE's allocation, of
+// which no other data follows. Otherwise (a component, a member of a COMMON
+// block or EQUIVALENCE group, a dummy argument, a POINTER's target, ...) the
+// data may be part of a larger object of other types: MITgcm's
+// /EE_BUFFERS_GLOBAL/ holds a REAL*8 and a REAL*4 buffer, ICON's
+// phyProcGroup%grpName is a CHARACTER component followed by a descriptor.
+static bool wholeObject(Value v) {
+  for (int depth = 0; v && depth < 64; ++depth) {
+    Operation *def = v.getDefiningOp();
+    if (!def)
+      return false; // a dummy argument
+    if (auto decl = dyn_cast<fir::FortranVariableStorageOpInterface>(def)) {
+      if (decl.getStorage())
+        return false;
+      auto var = dyn_cast<fir::FortranVariableOpInterface>(def);
+      if (var && var.isPointer())
+        return false;
+      if (var && var.isAllocatable())
+        return true;
+      Operation *mem = def->getOperand(0).getDefiningOp();
+      return isa_and_nonnull<fir::AllocaOp, fir::AddrOfOp, fir::AllocMemOp>(
+          mem);
+    }
+    if (auto op = dyn_cast<fir::ConvertOp>(def))
+      v = op.getValue();
+    else if (auto op = dyn_cast<fir::EmboxOp>(def))
+      v = op.getMemref();
+    else if (auto op = dyn_cast<fir::ReboxOp>(def))
+      v = op.getBox();
+    else if (auto op = dyn_cast<fir::BoxAddrOp>(def))
+      v = op.getVal();
+    else if (auto op = dyn_cast<fir::ArrayCoorOp>(def))
+      v = op.getMemref();
+    else if (auto op = dyn_cast<fir::CoordinateOp>(def)) {
+      // Into an array: still the same object; into a record: a component.
+      if (isa<fir::RecordType>(fir::unwrapSequenceType(
+              fir::unwrapPassByRefType(op.getRef().getType()))))
+        return false;
+      v = op.getRef();
+    } else if (auto op = dyn_cast<fir::LoadOp>(def))
+      v = op.getMemref(); // the descriptor of an ALLOCATABLE or POINTER
+    else if (isa<fir::AllocaOp, fir::AddrOfOp, fir::AllocMemOp>(def))
+      return true;
+    else
+      return false;
+  }
+  return false;
+}
+
+static llvm::cl::opt<bool> annotateDescriptorData(
+    "enzyme-fir-arg-descriptor-data-types", llvm::cl::init(true),
+    llvm::cl::desc("With -enzyme-fir-arg-types, also annotate the type of "
+                   "the data that descriptor arguments point to (a caller "
+                   "may reuse one descriptor temporary for several types)"));
 
 // The TypeTree of a value of FIR type `ty` passed to or returned from a
 // procedure, in the encoding Enzyme.jl uses for its arguments, or "" if
@@ -429,27 +545,26 @@ static std::string procArgType(Type ty, const DataLayout &dl) {
       return ""; // assumed rank
     if (!dataType(box, dl))
       return "";
-    return pointerArgType(ty, dl);
+    // The data of a descriptor dummy may be a component (or section of one).
+    return pointerArgType(ty, dl, annotateDescriptorData && annotateUnbounded);
   }
   if (!fir::isa_ref_type(ty))
     return "";
   TypePaths tree{{{-1}, "Pointer"}};
-  if (auto seq = dyn_cast<fir::SequenceType>(pointee)) {
-    Type ele = seq.getEleTy();
-    if (auto ct = dyn_cast<mlir::ComplexType>(ele))
-      ele = ct.getElementType();
-    if (isa<fir::CharacterType>(ele)) {
-      tree[{-1, -1}] = "Integer";
-      return printTypeTree(tree);
-    }
-    auto sc = scalarType(ele, dl);
-    if (!sc)
+  // An array or CHARACTER dummy: its actual may be part of a larger object.
+  if (isa<fir::SequenceType, fir::CharacterType>(pointee)) {
+    Type ele = fir::unwrapSequenceType(pointee);
+    std::optional<std::string> t = uniformType(ele, dl);
+    if (!t)
       return "";
-    tree[{-1, -1}] = sc->first;
-    return printTypeTree(tree);
-  }
-  if (isa<fir::CharacterType>(pointee)) {
-    tree[{-1, -1}] = "Integer";
+    int64_t eleSize = 1;
+    if (!isa<fir::CharacterType>(ele)) {
+      if (auto ct = dyn_cast<mlir::ComplexType>(ele))
+        ele = ct.getElementType();
+      eleSize = scalarType(ele, dl)->second;
+    }
+    addBoundedData(tree, {-1}, *t, eleSize, sizeOf(pointee, dl),
+                   annotateUnbounded);
     return printTypeTree(tree);
   }
   std::map<int64_t, std::string> layout;
@@ -465,11 +580,6 @@ static std::string procArgType(Type ty, const DataLayout &dl) {
 // stays unannotated rather than blowing up the metadata.
 static constexpr int64_t kLayoutBudget = 1 << 14;
 
-// Enzyme's type analysis drops offsets beyond -enzyme-max-type-offset
-// (default 500), and then takes the types it keeps for the whole block (e.g.
-// a REAL*8 array followed by a REAL*4 one all for REAL*8). Larger blocks
-// stay unannotated.
-static constexpr int64_t kMaxTypeOffset = 500;
 
 // What to annotate, each on its own (all of it with
 // -enzyme-fir-type-annotations, see FlangDirectivesPlugin.cpp).
@@ -525,9 +635,16 @@ struct FIRTypeAnnotationsPass
     // The layout is all or nothing: Enzyme's type analysis takes the types
     // it knows at some offsets of a block for the whole block. So a block is
     // annotated only if the declares of the unit lay out all of its bytes,
-    // and agree, and it fits in Enzyme's type offsets.
+    // and agree, and it fits in Enzyme's type offsets -- or, whatever its
+    // size, if all of its members have the same scalar type (e.g. a block
+    // of CHARACTER data, Integer bytes), as that type at every offset.
     struct Layout {
       std::map<int64_t, std::string> types;
+      // The one scalar type of all members, if they have one (e.g. Integer
+      // for CHARACTER members): a block of it can be annotated whatever its
+      // size, as that type at every offset.
+      std::optional<std::string> uniform;
+      bool mixed = false;
       // [begin, end) of the bytes the declares lay out
       std::map<int64_t, int64_t> covered;
       bool unknown = false;
@@ -543,16 +660,25 @@ struct FIRTypeAnnotationsPass
       if (!global)
         return;
       Layout &layout = layouts[global];
-      if (layout.unknown)
-        return;
       std::map<int64_t, std::string> member;
       int64_t budget = kLayoutBudget;
       Type ty = fir::unwrapRefType(decl->getResult(0).getType());
       int64_t offset = decl.getStorageOffset();
       std::optional<int64_t> size = sizeOf(ty, dl);
+      if (!size) {
+        layout.unknown = layout.mixed = true;
+        return;
+      }
+      int64_t &end = layout.covered[offset];
+      end = std::max(end, offset + *size);
+      std::optional<std::string> uniform = uniformType(ty, dl);
+      if (!uniform || (layout.uniform && *layout.uniform != *uniform))
+        layout.mixed = true;
+      else
+        layout.uniform = uniform;
       // A member that cannot be laid out (dynamic size, derived type, too
-      // large) leaves the block unknown.
-      if (!size || !addLayout(ty, offset, dl, member, budget)) {
+      // large) leaves the block unknown, unless it is uniform.
+      if (layout.unknown || !addLayout(ty, offset, dl, member, budget)) {
         layout.unknown = true;
         return;
       }
@@ -563,12 +689,8 @@ struct FIRTypeAnnotationsPass
           return;
         }
       }
-      int64_t &end = layout.covered[offset];
-      end = std::max(end, offset + *size);
     });
     for (auto &[op, layout] : layouts) {
-      if (layout.unknown)
-        continue;
       std::optional<int64_t> globalSize =
           sizeOf(cast<fir::GlobalOp>(op).getType(), dl);
       int64_t reached = 0;
@@ -577,8 +699,16 @@ struct FIRTypeAnnotationsPass
           break;
         reached = std::max(reached, end);
       }
-      if (!globalSize || reached < *globalSize ||
-          *globalSize > kMaxTypeOffset)
+      if (!globalSize || reached < *globalSize)
+        continue;
+      if (!layout.mixed && layout.uniform) {
+        op->setAttr(kTypeAttr,
+                    StringAttr::get(ctx, printTypeTree({{{-1}, "Pointer"},
+                                                        {{-1, -1},
+                                                         *layout.uniform}})));
+        continue;
+      }
+      if (layout.unknown || *globalSize > kMaxTypeOffset)
         continue;
       TypePaths tree{{{-1}, "Pointer"}};
       for (auto &[off, t] : layout.types)
@@ -600,11 +730,16 @@ struct FIRTypeAnnotationsPass
         // Only what the conversions for the call erased: an operand of its
         // own type (e.g. an I/O cookie, !fir.ref<i8>) is opaque.
         Type original = originalType(arg);
-        std::string t =
-            original != arg.getType() ||
-                    isa<fir::BaseBoxType>(fir::unwrapRefType(original))
-                ? pointerArgType(original, dl)
-                : "";
+        bool erased = original != arg.getType() ||
+                      isa<fir::BaseBoxType>(fir::unwrapRefType(original));
+        std::string t;
+        if (erased && wholeObject(arg))
+          t = pointerArgType(original, dl);
+        else if (erased &&
+                 isa<fir::BaseBoxType>(fir::unwrapRefType(original)))
+          // Possibly part of a larger object: the layout of the descriptor,
+          // but not the type of its data.
+          t = pointerArgType(original, dl, /*descriptorData=*/false);
         any |= !t.empty();
         types.push_back(StringAttr::get(ctx, t));
       }
@@ -630,9 +765,12 @@ struct FIRTypeAnnotationsPass
           // other arguments. The length is left alone: typed Integer, it
           // made Enzyme take `and len, 0x7fffffff` for possibly floating
           // point and fail (MITgcm ILNBLNK).
-          std::string t = isa<fir::BoxCharType>(ty)
-                              ? std::string("{[-1]:Pointer, [-1,-1]:Integer}")
-                              : procArgType(ty, dl);
+          std::string t =
+              isa<fir::BoxCharType>(ty)
+                  ? (annotateUnbounded
+                         ? std::string("{[-1]:Pointer, [-1,-1]:Integer}")
+                         : std::string("{[-1]:Pointer}"))
+                  : procArgType(ty, dl);
           if (!t.empty() && !fn.getArgAttr(i, kTypeAttr))
             fn.setArgAttr(i, kTypeAttr, StringAttr::get(ctx, t));
         }
@@ -648,14 +786,28 @@ struct FIRTypeAnnotationsPass
     // name, so the function lists its variables by name.
     if (annotateLocals)
       for (auto fn : module.getOps<func::FuncOp>()) {
-        SmallVector<NamedAttribute> locals;
+        // Names are not unique in a function (e.g. after inlining, ICON's
+        // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of
+        // the same name): a name that any other local has is left out.
+        llvm::StringSet<> chars, others;
         fn.walk([&](fir::AllocaOp alloca) {
           auto name = alloca.getBindcName();
-          if (name && isa<fir::CharacterType>(
-                          fir::unwrapSequenceType(alloca.getInType())))
+          if (!name)
+            return;
+          if (isa<fir::CharacterType>(
+                  fir::unwrapSequenceType(alloca.getInType())))
+            chars.insert(*name);
+          else
+            others.insert(*name);
+        });
+        SmallVector<NamedAttribute> locals;
+        for (auto &name : chars)
+          if (!others.contains(name.getKey()))
             locals.push_back(NamedAttribute(
-                StringAttr::get(ctx, *name),
+                StringAttr::get(ctx, name.getKey()),
                 StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}")));
+        llvm::sort(locals, [](const NamedAttribute &a, const NamedAttribute &b) {
+          return a.getName().strref() < b.getName().strref();
         });
         if (!locals.empty())
           fn->setAttr(kLocalTypesAttr, DictionaryAttr::get(ctx, locals));
