@@ -5421,9 +5421,9 @@ GlobalVariable *getShadowContext(Value *V) {
   return GV;
 }
 
-Constant *getConstantShadowInitializer(Constant *C, unsigned width,
-                                       GlobalVariable *context, unsigned lane,
-                                       std::string &error) {
+Constant *getConstantShadowInitializer(
+    Constant *C, unsigned width, GlobalVariable *context, unsigned lane,
+    std::string &error, function_ref<Constant *(Function *)> shadowFunction) {
   if (isa<ConstantFP>(C) || isa<ConstantAggregateZero>(C) ||
       isa<ConstantPointerNull>(C) || isa<UndefValue>(C))
     return Constant::getNullValue(C->getType());
@@ -5438,7 +5438,7 @@ Constant *getConstantShadowInitializer(Constant *C, unsigned width,
     SmallVector<Constant *, 4> Vals;
     for (auto &op : C->operands()) {
       auto V = getConstantShadowInitializer(cast<Constant>(op), width, context,
-                                            lane, error);
+                                            lane, error, shadowFunction);
       if (!V)
         return nullptr;
       Vals.push_back(V);
@@ -5451,9 +5451,15 @@ Constant *getConstantShadowInitializer(Constant *C, unsigned width,
   }
   if (auto GA = dyn_cast<GlobalAlias>(C))
     return getConstantShadowInitializer(GA->getAliasee(), width, context, lane,
-                                        error);
+                                        error, shadowFunction);
+  if (auto F = dyn_cast<Function>(C)) {
+    if (shadowFunction)
+      if (auto shadow = shadowFunction(F))
+        return ConstantExpr::getPointerCast(shadow, C->getType());
+  }
   if (auto GV = dyn_cast<GlobalVariable>(C)) {
-    auto shadow = getOrCreateConstantGlobalShadow(GV, width, context, error);
+    auto shadow = getOrCreateConstantGlobalShadow(GV, width, context, error,
+                                                  shadowFunction);
     if (!shadow)
       return nullptr;
     Constant *ptr = shadow;
@@ -5468,8 +5474,8 @@ Constant *getConstantShadowInitializer(Constant *C, unsigned width,
   }
   if (auto CE = dyn_cast<ConstantExpr>(C)) {
     if (CE->isCast() || CE->getOpcode() == Instruction::GetElementPtr) {
-      auto base = getConstantShadowInitializer(CE->getOperand(0), width,
-                                               context, lane, error);
+      auto base = getConstantShadowInitializer(
+          CE->getOperand(0), width, context, lane, error, shadowFunction);
       if (!base)
         return nullptr;
       SmallVector<Constant *, 4> ops;
@@ -5484,9 +5490,9 @@ Constant *getConstantShadowInitializer(Constant *C, unsigned width,
   return nullptr;
 }
 
-GlobalVariable *getOrCreateConstantGlobalShadow(GlobalVariable *GV, unsigned W,
-                                                GlobalVariable *context,
-                                                std::string &error) {
+GlobalVariable *getOrCreateConstantGlobalShadow(
+    GlobalVariable *GV, unsigned W, GlobalVariable *context, std::string &error,
+    function_ref<Constant *(Function *)> shadowFunction) {
   if (auto shadow = getGlobalShadow(GV, W, context)) {
     if (W > 1) {
       auto AT = dyn_cast<ArrayType>(shadow->getValueType());
@@ -5514,7 +5520,7 @@ GlobalVariable *getOrCreateConstantGlobalShadow(GlobalVariable *GV, unsigned W,
     SmallVector<Constant *, 4> lanes;
     for (unsigned i = 0; i < W; ++i) {
       auto init = getConstantShadowInitializer(GV->getInitializer(), W, context,
-                                               i, error);
+                                               i, error, shadowFunction);
       if (!init)
         return nullptr;
       lanes.push_back(init);

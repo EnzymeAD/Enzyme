@@ -4710,14 +4710,20 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (canCreateImplicitGlobalShadow(arg)) {
       auto shadow = createImplicitGlobalShadow(arg, width, shadowContext);
       if (hasLocalShadowInitializer(arg, shadow) && arg->hasInitializer()) {
-        // An initializer of numbers and of pointers to globals has a shadow
-        // of its own in each lane. Anything else, e.g. a pointer to a
-        // function, is differentiated here, so far only at width 1.
+        // An initializer of numbers, of pointers to globals and of pointers
+        // to functions has a shadow of its own in each lane. Anything else is
+        // differentiated here, which only gives one value for every lane.
+        auto shadowFunction = [&](Function *F) {
+          return GetOrCreateShadowFunction(context, Logic, TLI, TA, F, mode,
+                                           runtimeActivity, strongZero, width,
+                                           shadowContext, AtomicAdd);
+        };
         std::string error;
         SmallVector<Constant *, 4> lanes;
         for (unsigned i = 0; i < width; ++i) {
           auto C = getConstantShadowInitializer(arg->getInitializer(), width,
-                                                shadowContext, i, error);
+                                                shadowContext, i, error,
+                                                shadowFunction);
           if (!C)
             break;
           lanes.push_back(C);
@@ -4731,6 +4737,12 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
           shadow->setInitializer(GetOrCreateShadowConstant(
               context, Logic, TLI, TA, arg->getInitializer(), mode,
               runtimeActivity, strongZero, width, shadowContext, AtomicAdd));
+        else {
+          llvm::errs() << *arg << "\n";
+          report_fatal_error(Twine("cannot create the shadow of the "
+                                   "initializer of a global at width > 1: ") +
+                             error);
+        }
       }
       return shadow;
     }
@@ -5848,14 +5860,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (canCreateImplicitGlobalShadow(arg)) {
         shadowGV = createImplicitGlobalShadow(arg, width, shadowContext);
         if (hasLocalShadowInitializer(arg, shadowGV) && arg->hasInitializer()) {
-          // An initializer of numbers and of pointers to globals has a shadow
-          // of its own in each lane. Anything else, e.g. a pointer to a
-          // function, is differentiated by invertPointerM.
+          // An initializer of numbers, of pointers to globals and of pointers
+          // to functions has a shadow of its own in each lane. Anything else
+          // is differentiated by invertPointerM.
+          auto shadowFunction = [&](Function *F) {
+            return GetOrCreateShadowFunction(
+                RequestContext(nullptr, &BuilderM), Logic, TLI, TA, F, mode,
+                runtimeActivity, strongZero, width, shadowContext, AtomicAdd);
+          };
           std::string error;
           SmallVector<Constant *, 4> lanes;
           for (unsigned i = 0; i < width; ++i) {
             auto C = getConstantShadowInitializer(arg->getInitializer(), width,
-                                                  shadowContext, i, error);
+                                                  shadowContext, i, error,
+                                                  shadowFunction);
             if (!C)
               break;
             lanes.push_back(C);

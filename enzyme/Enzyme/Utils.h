@@ -3010,19 +3010,23 @@ llvm::Value *lookThroughLocalMemory(llvm::Value *V);
 /// (null for the default context), of a global's initializer \p C: zero for
 /// floats, the value itself for integers (e.g. the sizes in a descriptor),
 /// and the lane's shadow of any global it points to, created if need be.
-/// Null, with \p error set, if it refers to something without such a
-/// shadow, such as a function.
-llvm::Constant *getConstantShadowInitializer(llvm::Constant *C, unsigned width,
-                                             llvm::GlobalVariable *context,
-                                             unsigned lane, std::string &error);
+/// A function gets \p shadowFunction of it, the same in every lane, as a
+/// load of it from the shadow would. Null, with \p error set, if it refers
+/// to something without such a shadow, such as a function when
+/// \p shadowFunction is not given.
+llvm::Constant *getConstantShadowInitializer(
+    llvm::Constant *C, unsigned width, llvm::GlobalVariable *context,
+    unsigned lane, std::string &error,
+    llvm::function_ref<llvm::Constant *(llvm::Function *)> shadowFunction = {});
 
 /// The shadow of \p GV at width \p width in \p context, created with the
 /// shadow of its initializer if it has none yet. Null, with \p error set, if
-/// it cannot have one this way.
-llvm::GlobalVariable *
-getOrCreateConstantGlobalShadow(llvm::GlobalVariable *GV, unsigned width,
-                                llvm::GlobalVariable *context,
-                                std::string &error);
+/// it cannot have one this way. \p shadowFunction is as for
+/// getConstantShadowInitializer.
+llvm::GlobalVariable *getOrCreateConstantGlobalShadow(
+    llvm::GlobalVariable *GV, unsigned width, llvm::GlobalVariable *context,
+    std::string &error,
+    llvm::function_ref<llvm::Constant *(llvm::Function *)> shadowFunction = {});
 
 /// The vector width a shadow context was made for.
 unsigned getShadowContextWidth(const llvm::GlobalVariable *context);
