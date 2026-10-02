@@ -204,3 +204,23 @@ func.func @dexpm1(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.expm1 %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @log10(%x: f64) -> f64 {
+  %res = math.log10 %x : f64
+  return %res : f64
+}
+
+func.func @dlog10(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @log10(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffelog10(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[ln10:.+]] = arith.constant 2.302585092994{{[0-9]*}} : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.mulf %[[x]], %[[ln10]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.log10 %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

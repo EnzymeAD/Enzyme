@@ -166,5 +166,11 @@ def : MLIRDerivative<"math", "ExpM1Op", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "Log10Op", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), 
+                        (MulF $x, (ConstantFP<"2.302585092994046","arith","ConstantOp"> $x)))
+                    ]
+                  >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
