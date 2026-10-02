@@ -1388,6 +1388,238 @@ Function *CreateMPIWrapper(Function *F) {
   return W;
 }
 
+/// Whether the memory reachable through the pointer argument A of a function
+/// is only read (ReadOnly) and the pointer not stored or passed where it may
+/// be kept (NoCapture), looking through address computations.
+static void inferPointerArgAccess(Argument *A, bool &ReadOnly,
+                                  bool &NoCapture) {
+  ReadOnly = NoCapture = true;
+  SmallVector<std::pair<Value *, User *>, 8> Todo;
+  SmallPtrSet<Value *, 8> Seen;
+  for (auto U : A->users())
+    Todo.emplace_back(A, U);
+  while (!Todo.empty() && (ReadOnly || NoCapture)) {
+    auto [V, U] = Todo.pop_back_val();
+    if (isa<GetElementPtrInst>(U) || isa<CastInst>(U) || isa<PHINode>(U) ||
+        isa<SelectInst>(U)) {
+      if (Seen.insert(U).second)
+        for (auto U2 : U->users())
+          Todo.emplace_back(U, U2);
+      continue;
+    }
+    if (auto LI = dyn_cast<LoadInst>(U)) {
+      if (LI->isVolatile())
+        ReadOnly = false;
+      continue;
+    }
+    if (isa<ICmpInst>(U))
+      continue;
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getValueOperand() == V)
+        NoCapture = false;
+      if (SI->getPointerOperand() == V)
+        ReadOnly = false;
+      continue;
+    }
+    if (auto CB = dyn_cast<CallBase>(U)) {
+      if (CB->isCallee(&*llvm::find_if(
+              CB->operands(), [&](const Use &Op) { return Op.get() == V; }))) {
+        ReadOnly = NoCapture = false;
+        continue;
+      }
+      for (unsigned i = 0; i < CB->arg_size(); i++) {
+        if (CB->getArgOperand(i) != V)
+          continue;
+        if (!isReadOnly(CB, i))
+          ReadOnly = false;
+        if (!isNoCapture(CB, i))
+          NoCapture = false;
+      }
+      continue;
+    }
+    ReadOnly = NoCapture = false;
+  }
+}
+
+/// Pass the variables a parallel region captures as separate arguments of
+/// __kmpc_fork_call. flang's OpenMPIRBuilder stores pointers to them into
+/// one stack struct, passed as the only argument, which the outlined function
+/// loads them from. Activity and type analysis then see one argument holding
+/// active and inactive pointers together: every pointer loaded from it is
+/// possibly active, and the types of what it points to sit one pointer level
+/// deeper. clang passes each captured variable as its own argument; rewrite
+/// flang's form to that one, calling a copy of the outlined function that
+/// takes the struct's fields as arguments.
+static void UnpackOMPCapturedStructs(Function &NewF) {
+  SmallVector<CallInst *, 2> Forks;
+  for (auto &BB : NewF)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction())
+          if (Fn->getName() == "__kmpc_fork_call" && CI->arg_size() == 4)
+            Forks.push_back(CI);
+  if (Forks.empty())
+    return;
+  auto &M = *NewF.getParent();
+  auto &DL = M.getDataLayout();
+
+  for (auto CI : Forks) {
+    auto AI = dyn_cast<AllocaInst>(CI->getArgOperand(3));
+    auto Task = dyn_cast<Function>(CI->getArgOperand(2)->stripPointerCasts());
+    if (!AI || !Task || Task->empty() || Task->isVarArg() ||
+        Task->arg_size() != 3)
+      continue;
+
+    // The fields stored into the struct before the fork call.
+    std::map<int64_t, StoreInst *> Stores;
+    SmallVector<Instruction *, 4> ToErase;
+    bool ok = true;
+    auto addStore = [&](User *U, Value *Ptr, int64_t Off) {
+      auto SI = dyn_cast<StoreInst>(U);
+      if (!SI || SI->getPointerOperand() != Ptr ||
+          !SI->getValueOperand()->getType()->isPointerTy() ||
+          SI->getParent() != CI->getParent() || !SI->comesBefore(CI) ||
+          Stores.count(Off)) {
+        ok = false;
+        return;
+      }
+      Stores[Off] = SI;
+      ToErase.push_back(SI);
+    };
+    for (auto U : AI->users()) {
+      if (U == CI)
+        continue;
+      if (auto GEP = dyn_cast<GetElementPtrInst>(U)) {
+        APInt Off(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, Off)) {
+          ok = false;
+          break;
+        }
+        for (auto U2 : GEP->users())
+          addStore(U2, GEP, Off.getSExtValue());
+        ToErase.push_back(GEP);
+      } else if (auto II = dyn_cast<IntrinsicInst>(U)) {
+        if (!II->isLifetimeStartOrEnd()) {
+          ok = false;
+          break;
+        }
+        ToErase.push_back(II);
+      } else
+        addStore(U, AI, 0);
+      if (!ok)
+        break;
+    }
+    if (!ok)
+      continue;
+
+    // The loads of the fields in the outlined function.
+    Argument *SA = Task->getArg(2);
+    std::map<int64_t, SmallVector<LoadInst *, 1>> Loads;
+    auto addLoad = [&](User *U, Value *Ptr, int64_t Off) {
+      auto LI = dyn_cast<LoadInst>(U);
+      auto found = Stores.find(Off);
+      if (!LI || LI->getPointerOperand() != Ptr || found == Stores.end() ||
+          LI->getType() != found->second->getValueOperand()->getType()) {
+        ok = false;
+        return;
+      }
+      Loads[Off].push_back(LI);
+    };
+    for (auto U : SA->users()) {
+      if (auto GEP = dyn_cast<GetElementPtrInst>(U)) {
+        APInt Off(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, Off)) {
+          ok = false;
+          break;
+        }
+        for (auto U2 : GEP->users())
+          addLoad(U2, GEP, Off.getSExtValue());
+      } else
+        addLoad(U, SA, 0);
+      if (!ok)
+        break;
+    }
+    if (!ok)
+      continue;
+
+    SmallVector<Type *, 8> Params = {Task->getArg(0)->getType(),
+                                     Task->getArg(1)->getType()};
+    SmallVector<Value *, 8> Args = {CI->getArgOperand(0), nullptr,
+                                    CI->getArgOperand(2)};
+    for (auto &pair : Loads) {
+      auto V = Stores[pair.first]->getValueOperand();
+      Params.push_back(V->getType());
+      Args.push_back(V);
+    }
+    auto FTy = FunctionType::get(Task->getReturnType(), Params, false);
+    std::string Name = (Task->getName() + ".enzyme_unpacked").str();
+    for (auto &pair : Loads)
+      Name += "." + std::to_string(pair.first);
+    Function *NF = M.getFunction(Name);
+    if (!NF || NF->getFunctionType() != FTy) {
+      NF = Function::Create(FTy, Task->getLinkage(), Name, &M);
+      ValueToValueMapTy VMap;
+      VMap[Task->getArg(0)] = NF->getArg(0);
+      VMap[Task->getArg(1)] = NF->getArg(1);
+      VMap[SA] = PoisonValue::get(SA->getType());
+      SmallVector<ReturnInst *, 4> Returns;
+      CloneFunctionInto(NF, Task, VMap,
+                        CloneFunctionChangeType::LocalChangesOnly, Returns);
+      resetClonedGUID(NF);
+      for (unsigned i = 0; i < 2; i++) {
+        NF->getArg(i)->setName(Task->getArg(i)->getName());
+        for (auto attr : Task->getAttributes().getParamAttrs(i))
+          NF->addParamAttr(i, attr);
+      }
+      unsigned i = 2;
+      for (auto &pair : Loads) {
+        auto Arg = NF->getArg(i++);
+        Arg->setName(SA->getName() + "." + std::to_string(pair.first));
+        for (auto LI : pair.second) {
+          auto NL = cast<LoadInst>(VMap[LI]);
+          NL->replaceAllUsesWith(Arg);
+          NL->eraseFromParent();
+        }
+      }
+      for (auto &BB : *NF)
+        for (auto &I : make_early_inc_range(BB))
+          if (auto GEP = dyn_cast<GetElementPtrInst>(&I))
+            if (isa<PoisonValue>(GEP->getPointerOperand()) && GEP->use_empty())
+              GEP->eraseFromParent();
+      // Activity analysis sees the fields passed to __kmpc_fork_call, not
+      // their uses in the outlined function: record those as attributes.
+      for (unsigned i = 2; i < NF->arg_size(); i++) {
+        bool ReadOnly, NoCapture;
+        inferPointerArgAccess(NF->getArg(i), ReadOnly, NoCapture);
+        if (ReadOnly)
+          NF->addParamAttr(i, Attribute::ReadOnly);
+        if (NoCapture)
+          addFunctionNoCapture(NF, i);
+      }
+    }
+
+    IRBuilder<> B(CI);
+    Args[1] =
+        ConstantInt::get(CI->getArgOperand(1)->getType(), Args.size() - 3);
+    Args[2] = B.CreatePointerCast(NF, CI->getArgOperand(2)->getType());
+    auto NC = B.CreateCall(CI->getFunctionType(), CI->getCalledOperand(), Args);
+    NC->setCallingConv(CI->getCallingConv());
+    NC->setAttributes(CI->getAttributes());
+    NC->setDebugLoc(CI->getDebugLoc());
+    for (unsigned i = 2; i < NF->arg_size(); i++) {
+      if (NF->hasParamAttribute(i, Attribute::ReadOnly))
+        NC->addParamAttr(i + 1, Attribute::ReadOnly);
+      if (NF->getArg(i)->hasNoCaptureAttr())
+        addCallSiteNoCapture(NC, i + 1);
+    }
+    CI->eraseFromParent();
+    for (auto I : ToErase)
+      I->eraseFromParent();
+    if (AI->use_empty())
+      AI->eraseFromParent();
+  }
+}
+
 /// Lower OpenMP reductions to critical sections. The runtime may combine
 /// the private copies of other threads itself, by calling the reduction
 /// function a tree reduction passes to __kmpc_reduce, which leaves that
@@ -3404,6 +3636,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
+  UnpackOMPCapturedStructs(*NewF);
   ReplaceOMPReductions(*NewF);
   ReplaceOMPMaster(*NewF);
   // Before SimplifyMPIQueries, which handles the __kmpc_for_static_init calls
