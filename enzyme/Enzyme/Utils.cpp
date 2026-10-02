@@ -5500,8 +5500,8 @@ Value *getValueStoredIn(Value *ptr) {
     return nullptr;
   auto &DL = I->getModule()->getDataLayout();
   APInt off(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
-  auto AI = dyn_cast<AllocaInst>(
-      ptr->stripAndAccumulateConstantOffsets(DL, off, /*AllowNonInbounds*/ true));
+  auto AI = dyn_cast<AllocaInst>(ptr->stripAndAccumulateConstantOffsets(
+      DL, off, /*AllowNonInbounds*/ true));
   if (!AI)
     return nullptr;
   return getStoredValue(AI, off.getSExtValue(), 0);

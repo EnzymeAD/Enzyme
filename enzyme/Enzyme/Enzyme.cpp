@@ -640,8 +640,9 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
       if (!dest)
         continue;
       APInt off(DL.getIndexTypeSizeInBits(dest->getType()), 0);
-      auto GV = dyn_cast<GlobalVariable>(dest->stripAndAccumulateConstantOffsets(
-          DL, off, /*AllowNonInbounds*/ true));
+      auto GV =
+          dyn_cast<GlobalVariable>(dest->stripAndAccumulateConstantOffsets(
+              DL, off, /*AllowNonInbounds*/ true));
       if (!GV)
         continue;
       SmallVector<unsigned, 3> path;
