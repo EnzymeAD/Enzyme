@@ -75,18 +75,8 @@ double computeMaxCost(llvm::BasicBlock *BB,
 
 double getCompCost(llvm::Function *F);
 
-// `opExec` / `normalizer`: the caller's MEASURED per-instruction execution
-// counts and the count the result is multiplied by (Subgraph::opExec,
-// Subgraph::execNormalizer). Supplied, each priced instruction is weighted by
-// exec(I)/normalizer, so a subgraph that mixes a reduction-loop body with
-// once-per-thread code is not billed entirely at the body's frequency. Omitted,
-// or for an instruction with no measured count, the weight is 1 and the result
-// is bit-identical to the unweighted walk.
-double getCompCost(
-    const llvm::SmallVector<llvm::Value *> &outputs,
-    const llvm::SetVector<llvm::Value *> &inputs,
-    const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
-    uint64_t normalizer = 0);
+double getCompCost(const llvm::SmallVector<llvm::Value *> &outputs,
+                   const llvm::SetVector<llvm::Value *> &inputs);
 
 } // namespace poseidon
 #endif // POSEIDON_COST_MODEL_H

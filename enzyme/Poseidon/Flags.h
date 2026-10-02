@@ -44,7 +44,7 @@ void applyFlagDefaults();
 
 // One flag per line, in --help order. A flag's name is its variable name in
 // kebab case: `Tau` is -poseidon-tau, `HerbieNumPts` is
-// -poseidon-herbie-num-pts. PT, DP, MPFR, WMMA and InKernel keep their case.
+// -poseidon-herbie-num-pts. PT, DP, WMMA and InKernel keep their case.
 namespace flags {
 
 // Profiling.
@@ -53,9 +53,6 @@ extern llvm::cl::opt<std::string> ProfileUse;
 extern llvm::cl::opt<std::string> Kernels;
 extern llvm::cl::opt<double> MinCostShare;
 extern llvm::cl::opt<bool> LooseCoverage;
-extern llvm::cl::opt<double> GradFloorRatio;
-extern llvm::cl::opt<double> GradNullRatio;
-extern llvm::cl::opt<bool> GradFloorAbort;
 
 // Candidate classes.
 extern llvm::cl::opt<bool> EnableHerbie;
@@ -64,21 +61,15 @@ extern llvm::cl::opt<bool> EnableMultifloat;
 extern llvm::cl::opt<unsigned> ExpansionComponents;
 extern llvm::cl::opt<bool> EnableThreeTier;
 extern llvm::cl::opt<int> TwoTierStep;
-extern llvm::cl::opt<int> ThreeTierStep;
 extern llvm::cl::opt<bool> RaiseWMMA;
-extern llvm::cl::opt<bool> RaiseHostGemm;
-extern llvm::cl::opt<unsigned> MaxExprDepth;
 extern llvm::cl::opt<unsigned> MaxExprLength;
 extern llvm::cl::opt<unsigned> MinUsesSplit;
 extern llvm::cl::opt<unsigned> MinOpsSplit;
-extern llvm::cl::opt<bool> ReductionSubgraphs;
-extern llvm::cl::opt<bool> MergeSharedStaging;
 
 // Solver and budgets.
 extern llvm::cl::opt<int64_t> CompCostBudget;
 extern llvm::cl::opt<double> Tau;
 extern llvm::cl::opt<double> Confidence;
-extern llvm::cl::opt<double> CostTieBandRel;
 extern llvm::cl::opt<bool> TauCheapest;
 extern llvm::cl::opt<bool> EarlyPrune;
 extern llvm::cl::opt<bool> JointDP;
@@ -87,20 +78,11 @@ extern llvm::cl::opt<std::string> ApplyRewrites;
 
 // Cost and accuracy model.
 extern llvm::cl::opt<std::string> CostModel;
-extern llvm::cl::opt<std::string> ScalarTypes;
 extern llvm::cl::opt<unsigned> NumSamples;
 extern llvm::cl::opt<unsigned> RandomSeed;
 extern llvm::cl::opt<unsigned> SampleLogBits;
-extern llvm::cl::opt<bool> CancellationSampling;
-extern llvm::cl::opt<double> CancellationFraction;
-extern llvm::cl::opt<double> CancellationThreshold;
-extern llvm::cl::opt<unsigned> AccuracyReferenceBits;
-extern llvm::cl::opt<bool> RelativeError;
-extern llvm::cl::opt<unsigned> MaxMPFRPrec;
 extern llvm::cl::opt<bool> StrictMode;
 extern llvm::cl::opt<double> ExponentPenalty;
-extern llvm::cl::opt<double> NonfinitePenalty;
-extern llvm::cl::opt<bool> FreqWeightedPricing;
 
 // Herbie and the result cache.
 extern llvm::cl::opt<std::string> Cache;
@@ -115,15 +97,7 @@ extern llvm::cl::opt<std::string> HerbiePlatform;
 
 // Matmul raising and host dispatch.
 extern llvm::cl::opt<bool> OzakiHostDispatch;
-extern llvm::cl::opt<unsigned> OzakiForceNm;
-extern llvm::cl::opt<bool> OzakiNativeDgemm;
 extern llvm::cl::opt<bool> InKernelCalibration;
-extern llvm::cl::opt<unsigned> InKernelSharedCap;
-
-// Materialization.
-extern llvm::cl::opt<bool> StageParamArrays;
-extern llvm::cl::opt<bool> NarrowParamStaging;
-extern llvm::cl::opt<bool> NarrowStagingSpeculative;
 
 // Diagnostics.
 extern llvm::cl::opt<bool> Print;

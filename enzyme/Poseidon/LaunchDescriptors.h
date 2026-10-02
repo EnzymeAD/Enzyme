@@ -10,9 +10,9 @@
 // Device and host code are separate compilations, so a device-side solve that
 // changes how a kernel must be launched reaches the host through a file: one
 // single-line descriptor per wrapper kernel, named "<wrapper><scheme>" in the
-// cache directory. Every feature that rewrites a launch stub (host GEMM
-// dispatch, df64 parameter staging) shares the note map, the file format and
-// the stub locator here and keeps only its own payload and rewrite body.
+// cache directory. Every feature that rewrites a launch stub shares the note
+// map, the file format and the stub locator here and keeps only its own payload
+// and rewrite body.
 //
 //===----------------------------------------------------------------------===//
 

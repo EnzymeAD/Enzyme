@@ -30,12 +30,6 @@ class FPEvaluator {
 private:
   std::unordered_map<const FPNode *, double> cache;
   std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
-  // Exact limbs of nodes evaluated as an FP32 expansion of three or more
-  // components; without them an expansion op feeding another would receive an
-  // operand already rounded to 53 bits.
-  std::unordered_map<const FPNode *, llvm::SmallVector<float, 4>> expCache;
-  // Set only under -poseidon-accuracy-reference-bits.
-  bool exactExpansion = false;
 
 public:
   FPEvaluator(PTCandidate *pt = nullptr);
@@ -44,9 +38,6 @@ public:
   void evaluateNode(const FPNode *node,
                     const llvm::MapVector<llvm::Value *, double> &inputValues);
   double getResult(const FPNode *node) const;
-  // Limbs recorded for `node`, or nullptr when it was not evaluated as a
-  // >= 3-component expansion. The value is the unevaluated sum of the limbs.
-  const llvm::SmallVector<float, 4> *getResultLimbs(const FPNode *node) const;
 };
 
 class MPFREvaluator {
@@ -88,18 +79,6 @@ void getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
                    llvm::SmallVectorImpl<double> &results, bool groundTruth,
                    const unsigned groundTruthPrec = 53,
                    PTCandidate *pt = nullptr);
-
-// Per-output error of `pt` (or the original subgraph) against an MPFR reference
-// at `refBits`, with the subtraction itself in MPFR so the difference of two
-// nearly equal values keeps its width. `candNonFinite` marks outputs where the
-// candidate is non-finite while the reference is finite (the strict-mode
-// signal).
-void getSampleErrorsWide(
-    llvm::ArrayRef<FPNode *> outputs,
-    const llvm::MapVector<llvm::Value *, double> &inputValues,
-    llvm::SmallVectorImpl<double> &errors, unsigned refBits,
-    PTCandidate *pt = nullptr,
-    llvm::SmallVectorImpl<char> *candNonFinite = nullptr);
 
 } // namespace poseidon
 #endif // POSEIDON_EVALUATORS_H

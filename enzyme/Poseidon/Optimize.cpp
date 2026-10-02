@@ -60,7 +60,6 @@
 #include "ProfileRead.h"
 #include "RaiseWMMA.h"
 #include "Solvers.h"
-#include "StageParam.h"
 #include "Staging.h"
 #include "Types.h"
 #include "Utils.h"
@@ -77,6 +76,8 @@ using namespace llvm;
 #define DEBUG_TYPE "poseidon"
 
 namespace poseidon {
+
+static constexpr int kThreeTierStep = 20;
 
 static std::map<const Function *, Function *> &siteOriginMap() {
   static std::map<const Function *, Function *> m;
@@ -99,28 +100,6 @@ std::string siteProfileStem(const Function &clone) {
   return profileNameStem(clone.getName().str());
 }
 
-// The preprocess clone has no callers while fpOptimize runs (the marker call's
-// argument list is interleaved with enzyme_dup/enzyme_const markers and shadow
-// slots), so the caller-supplied primal arguments are recorded here for
-// narrowSharedStagingParam to resolve a pointer parameter to its addrspace(3)
-// global.
-static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> &
-siteArgsMap() {
-  static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> m;
-  return m;
-}
-void noteSiteArgs(Function *clone, ArrayRef<Value *> primalArgs) {
-  auto &v = siteArgsMap()[clone];
-  v.clear();
-  for (Value *A : primalArgs)
-    v.emplace_back(A);
-}
-Value *siteArg(const Function *clone, unsigned i) {
-  auto it = siteArgsMap().find(clone);
-  if (it == siteArgsMap().end() || i >= it->second.size())
-    return nullptr;
-  return it->second[i].pointsToAliveValue() ? (Value *)it->second[i] : nullptr;
-}
 bool redirectNoopSite(Function *clone) {
   auto it = siteOriginMap().find(clone);
   if (it == siteOriginMap().end() || !it->second)
@@ -681,10 +660,11 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
 }
 
 bool collectFPCandidates(Function &F, double errorTol, double confidence,
-                         FunctionFPState &st) {
+                         unsigned sampleLogBits, FunctionFPState &st) {
   st.F = &F;
   st.errTol = errorTol;
   st.confidence = confidence;
+  st.sampleLogBits = sampleLogBits;
   requireCostModel(F);
 
   if (isGPUMode(F))
@@ -780,16 +760,6 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
     findHostGemmLoopNests(F, *raiseSE, *raiseLI, profileHeader, profileMap,
                           abstractMatmuls);
   }
-
-  // Accumulating FMAs of recognized reduction loops. Empty unless
-  // -poseidon-reduction-subgraphs is on, so the triviality filter below behaves
-  // exactly as before by default.
-  SmallPtrSet<Instruction *, 32> reductionFMAs;
-  if (flags::ReductionSubgraphs)
-    for (const auto &am : abstractMatmuls)
-      if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
-          am.scalarLoop.fma)
-        reductionFMAs.insert(am.scalarLoop.fma);
 
   if (flags::Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
@@ -1032,15 +1002,11 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
           }
         }
 
-        if (operation_seen.size() == 1 &&
-            !reductionFMAs.contains(*operation_seen.begin())) {
+        if (operation_seen.size() == 1) {
           if (flags::Print)
             llvm::errs() << "Skipping trivial subgraph\n";
           continue;
         }
-        if (operation_seen.size() == 1 && flags::Print)
-          llvm::errs() << "Keeping 1-op reduction subgraph: "
-                       << **operation_seen.begin() << "\n";
 
         subgraphs.emplace_back(input_seen, output_seen, operation_seen);
       }
@@ -1129,19 +1095,6 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
   if (flags::Print) {
     llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
                  << " subgraphs in " << F.getName() << "\n";
-  }
-
-  // One optimization unit per staging buffer, so the solver's per-unit tier
-  // choice IS the buffer's storage tier. After splitting so a merged unit is
-  // never re-split, and before the profile-derived frequency map is built, so
-  // the merged unit (which spans reduction loop bodies and once-per-thread
-  // code) is priced per instruction rather than at one loop's trip count.
-  if (flags::MergeSharedStaging) {
-    mergeSharedStagingSubgraphs(subgraphs, F);
-    if (flags::Print)
-      llvm::errs() << "[poseidon] After staging-tier merge, have "
-                   << subgraphs.size() << " subgraphs in " << F.getName()
-                   << "\n";
   }
 
   if (flags::Print) {
@@ -1287,59 +1240,6 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
       auto *o0 = subgraph.outputs[0];
       const unsigned o0Exec = valueToNodeMap[o0]->executions;
 
-      // Record the MEASURED per-instruction execution counts and their loop
-      // depths BEFORE the CandidateSubgraph is built, so both the baseline walk
-      // (its constructor) and every candidate's walk weight each priced
-      // instruction by its own frequency instead of billing the whole cone at
-      // outputs[0]'s. See Subgraph::opExec.
-      subgraph.opExec.clear();
-      subgraph.depthExec.clear();
-      subgraph.execNormalizer = o0Exec;
-      if (flags::FreqWeightedPricing) {
-        DominatorTree freqDT(F);
-        LoopInfo freqLI(freqDT);
-        auto note = [&](Instruction *I) {
-          auto it = valueToNodeMap.find(I);
-          if (it == valueToNodeMap.end() || !it->second ||
-              it->second->executions == 0)
-            return;
-          uint64_t e = it->second->executions;
-          subgraph.opExec[I] = e;
-          unsigned d = freqLI.getLoopDepth(I->getParent());
-          auto dit = subgraph.depthExec.find(d);
-          if (dit == subgraph.depthExec.end())
-            subgraph.depthExec[d] = e;
-          else
-            dit->second = std::max(dit->second, e);
-        };
-        for (auto *op : subgraph.operations)
-          note(op);
-        for (auto *o : subgraph.outputs)
-          note(o);
-        // The candidate walk runs on a clone the materializer has rewritten,
-        // where a new instruction has no identity and only its LOOP DEPTH
-        // survives; the baseline walk has the original instructions and could
-        // be exact. Snap the baseline onto the same depth classes so the two
-        // sides of every delta use one rule. Within a depth class the measured
-        // maximum is taken, which never under-charges a rewrite.
-        for (auto &kv : subgraph.opExec)
-          if (auto *I = dyn_cast<Instruction>(kv.first)) {
-            auto dit =
-                subgraph.depthExec.find(freqLI.getLoopDepth(I->getParent()));
-            if (dit != subgraph.depthExec.end())
-              kv.second = dit->second;
-          }
-        if (flags::Print && subgraph.depthExec.size() > 1) {
-          llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
-                          "(normalizer "
-                       << o0Exec << ", measured depth:exec";
-          for (auto &kv : subgraph.depthExec)
-            llvm::errs() << " " << kv.first << ":" << kv.second;
-          llvm::errs() << "); pricing each instruction at its own measured "
-                          "frequency\n";
-        }
-      }
-
       CandidateSubgraph CS(subgraph);
       CS.executions = o0Exec;
 
@@ -1444,7 +1344,7 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
       auto sweepThreeTier = [&](TierTriple tr, ArrayRef<FPLLValue *> sortedAsc,
                                 StringRef label) {
         const size_t N = sortedAsc.size();
-        const int step = std::max(5, flags::ThreeTierStep.getValue());
+        const int step = kThreeTierStep;
         for (int pctHi = step; pctHi <= 100 - 2 * step; pctHi += step) {
           for (int pctHiMid = pctHi + step; pctHiMid <= 100 - step;
                pctHiMid += step) {
@@ -1531,7 +1431,8 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
   }
 
   auto &CMs = st.CMs;
-  generateMatmulCandidates(abstractMatmuls, profileMap, st.confidence, CMs);
+  generateMatmulCandidates(abstractMatmuls, profileMap, st.confidence,
+                           st.sampleLogBits, CMs);
 
   // Put this site's error on the application's scale. kappa is the measured
   // response of the declared quantity of interest to computing this site with a
@@ -1699,47 +1600,8 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
     llvm::errs() << "[poseidon] Finished cleaning up " << F.getName() << "\n";
   }
 
-  bool narrowedParamStaging = false;
   if (changed)
-    applyStagingNarrowing(
-        F, /*announce=*/true,
-        [&](Function &FN) {
-          if (!flags::StageParamArrays)
-            return;
-          StagedParamNote note;
-          if (stageParamArrayDS(FN, &FN, &note.bodyParams)) {
-            note.valid = true;
-            if (flags::Print)
-              llvm::errs()
-                  << "[poseidon] applied df64 parameter-array staging in "
-                  << FN.getName() << "\n";
-          }
-          // Recorded even when EMPTY: optimizeSiteBody writes the descriptor
-          // unconditionally, and an empty note is what removes a stale one.
-          noteStagedBody(&FN, note);
-        },
-        flags::NarrowParamStaging ? ParamArm::Both : ParamArm::None, &F,
-        /*paramSpeculative=*/false, &narrowedParamStaging);
-  // -poseidon-narrow-staging-speculative prices a candidate as if the staging
-  // buffers it reads were narrowed. That is realized only when EVERY reader of
-  // those buffers ends up at a compatible precision; when the solve mixed tiers
-  // the strict gate refuses and the emitted code keeps exactly the conversions
-  // the price removed. Never let that ship silently.
-  if (changed && flags::NarrowStagingSpeculative && !narrowedParamStaging) {
-    llvm::errs()
-        << "[poseidon] WARNING: candidates were priced with speculative "
-           "staging narrowing (-poseidon-narrow-staging-speculative) but the "
-           "value-preserving narrowing did NOT fire in "
-        << F.getName()
-        << ". The applied solution mixes precisions on a shared staging "
-           "buffer, so the emitted code retains the fpext/fptrunc traffic the "
-           "price assumed away; the realized cost is WORSE than the DP's. "
-           "Re-solve without the speculative flag, or constrain the solution "
-           "to one tier per buffer.\n";
-    if (flags::StrictMode)
-      report_fatal_error("Poseidon: speculative staging narrowing was priced "
-                         "but not realized (see warning above)");
-  }
+    applyStagingNarrowing(F, /*announce=*/true);
   if (changed && demoteFPCastPHIs(F)) {
     if (flags::Print)
       llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "
@@ -1779,8 +1641,9 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
   // defaults the sampling knob to a wide log-uniform range; an explicit
   // -poseidon-sample-log-bits still overrides. Read only by the matmul accuracy
   // model, so a site with no matrix product is unaffected.
-  if ((flags::Tau > 0.0 || errorTol > 0.0) && flags::SampleLogBits == 0)
-    flags::SampleLogBits = 40;
+  unsigned sampleLogBits = flags::SampleLogBits;
+  if ((flags::Tau > 0.0 || errorTol > 0.0) && sampleLogBits == 0)
+    sampleLogBits = 40;
 
   // The confidence level the matrix-product accuracy model reads its domain
   // error off, under the same precedence as the tolerance: what the site wrote
@@ -1800,7 +1663,7 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
                  << "\n";
 
   FunctionFPState st;
-  if (!collectFPCandidates(F, errorTol, confidence, st))
+  if (!collectFPCandidates(F, errorTol, confidence, sampleLogBits, st))
     return false;
 
   // A tolerance written AT THE SITE is the user interface; the global flag is a
@@ -1883,7 +1746,8 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
     }
 
     auto st = std::make_unique<FunctionFPState>();
-    if (collectFPCandidates(*F, errTol, confidence, *st)) {
+    if (collectFPCandidates(*F, errTol, confidence, flags::SampleLogBits,
+                            *st)) {
       states.push_back(std::move(st));
     } else {
       llvm::errs() << "Poseidon JOINT: nothing to optimize in " << F->getName()

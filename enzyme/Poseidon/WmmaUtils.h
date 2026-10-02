@@ -65,12 +65,6 @@ std::pair<llvm::Value *, llvm::Value *>
 emitThreadLinAndBlockSize(llvm::IRBuilder<> &B, llvm::Module *M,
                           bool is2DBlock = false);
 
-// Block-cooperative zero-init of gv; splits the current block and leaves the
-// builder in the "after" block.
-void emitParallelZeroInit(llvm::IRBuilder<> &B, llvm::GlobalVariable *gv,
-                          llvm::Type *eltTy, uint64_t numElts,
-                          llvm::Value *threadLin, llvm::Value *blockSize);
-
 // Block-cooperative fill of a (numRows x numCols) tile in `scratchBase` from
 // `srcBlockBase` (per-block base, no threadIdx contribution).
 // `assumeBlockCoversAll` emits a single conditional instead of the loop and is

@@ -76,7 +76,6 @@ enum class FPKind {
   S32 = 7, // 32-bit signed integer (INT8 tensor-core accumulator)
 };
 const char *fpKindName(FPKind k);
-FPKind fpKindFromStr(llvm::StringRef tok);
 FPKind fpKindFromType(llvm::Type *T);
 
 double roundToPrec(double x, FPKind k);

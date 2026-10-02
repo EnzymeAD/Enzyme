@@ -25,10 +25,10 @@ namespace poseidon {
 
 // Direct reduced-precision GEMM host dispatch (direct_dispatch_rel): each FP64
 // operand is rounded once to the library's input format and one library GEMM
-// accumulates in FP32 (Runtimes/DirectRT). Same numerics as the in-kernel
-// Direct raise up to accumulation order, but a distinct realized rate. Priced
-// only from this device's measured direct_dispatch_rel,<class> row; absent the
-// row it is not proposed.
+// accumulates in FP32 (runtime/direct/direct_rt.cu). Same numerics as the
+// in-kernel Direct raise up to accumulation order, but a distinct realized
+// rate. Priced only from this device's measured direct_dispatch_rel,<class>
+// row; absent the row it is not proposed.
 //
 // f32/f32 is the one variant that does not run on tensor cores: it is cuBLAS's
 // SGEMM, the answer to "what does writing this product in single precision
@@ -57,8 +57,8 @@ static std::string directDispatchClass(const DirectDispatchVariant &v) {
 // `padWaste`, the ratio that extrapolates a square-measured row to this shape.
 static void proposeDirectDispatch(const AbstractMatmul &m,
                                   const MatmulProfile &prof, double confidence,
-                                  double baselinePerMac, double padWaste,
-                                  CandidateMatmul &cm) {
+                                  unsigned sampleLogBits, double baselinePerMac,
+                                  double padWaste, CandidateMatmul &cm) {
   for (const DirectDispatchVariant &v : kDirectDispatchVariants) {
     const std::string cls = directDispatchClass(v);
     double rel = queryCostModelOr("direct_dispatch_rel", cls, -1.0);
@@ -96,8 +96,9 @@ static void proposeDirectDispatch(const AbstractMatmul &m,
     // the runtime, so it borrows that accuracy model verbatim: for f32/f32 that
     // is a 24-bit-significand operand product with an FP32 accumulator, not the
     // 22-bit two-limb capture the TCEC candidate is modelled with.
-    opt.accuracyCost = getMatmulAccuracyCost(m, prof, confidence, v.inputPrec,
-                                             v.accPrec, &opt.domainError);
+    opt.accuracyCost =
+        getMatmulAccuracyCost(m, prof, confidence, sampleLogBits, v.inputPrec,
+                              v.accPrec, &opt.domainError);
     cm.candidates.push_back(opt);
   }
 }
@@ -117,6 +118,7 @@ constexpr FPKind kOzIIAccPrec = FPKind::S32;
 // mesh.
 static void proposeOzakiIIDispatch(const AbstractMatmul &m,
                                    const MatmulProfile &prof, double confidence,
+                                   unsigned sampleLogBits,
                                    double baselinePerMac, double padWaste,
                                    unsigned mChain, unsigned nChain,
                                    unsigned kChain, unsigned padM,
@@ -177,8 +179,9 @@ static void proposeOzakiIIDispatch(const AbstractMatmul &m,
     opt.padN = padN;
     opt.padK = padK;
     opt.compCost = baselinePerMac * rel * shapeRatio;
-    opt.accuracyCost = getOzakiIIAccuracyCost(
-        m, prof, confidence, (unsigned)capturedBits, &opt.domainError);
+    opt.accuracyCost =
+        getOzakiIIAccuracyCost(m, prof, confidence, sampleLogBits,
+                               (unsigned)capturedBits, &opt.domainError);
     cm.candidates.push_back(opt);
   }
 }
@@ -188,8 +191,8 @@ static void proposeOzakiIIDispatch(const AbstractMatmul &m,
 // the measured tcec_dispatch_rel row; absent the row it is not proposed.
 static void proposeTcecDispatch(const AbstractMatmul &m,
                                 const MatmulProfile &prof, double confidence,
-                                double baselinePerMac, double padWaste,
-                                CandidateMatmul &cm) {
+                                unsigned sampleLogBits, double baselinePerMac,
+                                double padWaste, CandidateMatmul &cm) {
   double relTcec = queryCostModelOr("tcec_dispatch_rel", "fp16tcec", -1.0);
   if (relTcec <= 0.0)
     return;
@@ -207,7 +210,8 @@ static void proposeTcecDispatch(const AbstractMatmul &m,
   // Same two-limb FP16 split with FP32 correction as the in-kernel TCEC n=2
   // candidate, so it borrows that accuracy model (22 captured bits).
   opt.accuracyCost = getMatmulAccuracyCost(
-      m, prof, confidence, FPKind::F32, FPKind::F32, &opt.domainError,
+      m, prof, confidence, sampleLogBits, FPKind::F32, FPKind::F32,
+      &opt.domainError,
       /*exponentPrec=*/FPKind::F16, /*orderTileK=*/0, /*inputMantBits=*/22);
   cm.candidates.push_back(opt);
 }
@@ -222,15 +226,15 @@ static void proposeTcecDispatch(const AbstractMatmul &m,
 // caller's square ratio here priced a rectangular launch at up to two orders of
 // magnitude above what it runs at, which kept a bit-exact candidate out of
 // every solution.
-static void proposeNativeDgemmDispatch(const AbstractMatmul &m,
-                                       const MatmulProfile &prof,
-                                       double confidence, double baselinePerMac,
-                                       CandidateMatmul &cm) {
+static void
+proposeNativeDgemmDispatch(const AbstractMatmul &m, const MatmulProfile &prof,
+                           double confidence, unsigned sampleLogBits,
+                           double baselinePerMac, CandidateMatmul &cm) {
   double relDgemm = queryCostModelOr("ozaki_dispatch_rel", "dgemm", -1.0);
   if (relDgemm <= 0.0)
-    report_fatal_error("-poseidon-ozaki-native-dgemm is set but the cost model "
-                       "has no 'ozaki_dispatch_rel,dgemm' row; run "
-                       "poseidon-calibrate.");
+    report_fatal_error("Poseidon: the cost model has no "
+                       "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
+                       "candidate; run poseidon-calibrate.");
   CandidateMatmul::Option opt;
   opt.tileM = 16;
   opt.tileN = 16;
@@ -245,7 +249,8 @@ static void proposeNativeDgemmDispatch(const AbstractMatmul &m,
   // cuBLAS DGEMM is full FP64 but not the scalar chain's accumulation order, so
   // the reorder is priced through orderTileK instead of claiming exact zero.
   opt.accuracyCost = getMatmulAccuracyCost(
-      m, prof, confidence, FPKind::F64, FPKind::F64, &opt.domainError,
+      m, prof, confidence, sampleLogBits, FPKind::F64, FPKind::F64,
+      &opt.domainError,
       /*exponentPrec=*/FPKind::Invalid, /*orderTileK=*/opt.tileK);
   cm.candidates.push_back(opt);
 }
@@ -253,7 +258,8 @@ static void proposeNativeDgemmDispatch(const AbstractMatmul &m,
 void generateMatmulCandidates(
     ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
-    double confidence, SmallVectorImpl<CandidateMatmul> &out) {
+    double confidence, unsigned sampleLogBits,
+    SmallVectorImpl<CandidateMatmul> &out) {
   for (const AbstractMatmul &m : matmuls) {
     if (m.origin == AbstractMatmul::Origin::Invalid)
       report_fatal_error("unexpected Origin::Invalid");
@@ -387,10 +393,11 @@ void generateMatmulCandidates(
         // (orderTileK) instead; otherwise the candidate prices as exactly zero
         // error and can enter the budget-0 no-op solution.
         bool identityPrec = (t.inputPrec == m.aType && t.accPrec == m.accType);
-        opt.accuracyCost = getMatmulAccuracyCost(
-            m, prof, confidence, t.inputPrec, t.accPrec, &opt.domainError,
-            /*exponentPrec=*/FPKind::Invalid,
-            /*orderTileK=*/identityPrec ? t.K : 0);
+        opt.accuracyCost =
+            getMatmulAccuracyCost(m, prof, confidence, sampleLogBits,
+                                  t.inputPrec, t.accPrec, &opt.domainError,
+                                  /*exponentPrec=*/FPKind::Invalid,
+                                  /*orderTileK=*/identityPrec ? t.K : 0);
         cm.candidates.push_back(opt);
       }
 
@@ -493,7 +500,8 @@ void generateMatmulCandidates(
         unsigned sliceSigBits = (v.inputPrec == FPKind::BF16) ? 8u : 11u;
         unsigned capturedBits = std::min(sliceSigBits * v.N, 24u);
         opt.accuracyCost = getMatmulAccuracyCost(
-            m, prof, confidence, FPKind::F32, FPKind::F32, &opt.domainError,
+            m, prof, confidence, sampleLogBits, FPKind::F32, FPKind::F32,
+            &opt.domainError,
             /*exponentPrec=*/v.inputPrec, /*orderTileK=*/0,
             /*inputMantBits=*/capturedBits);
         cm.candidates.push_back(opt);
@@ -537,25 +545,27 @@ void generateMatmulCandidates(
           unsigned nChain = (m.N + kOzIITileN - 1) / kOzIITileN;
           unsigned kChain = (m.K + kOzIITileK - 1) / kOzIITileK;
           proposeOzakiIIDispatch(
-              m, prof, confidence, cm.initialCompCost, padWaste, mChain, nChain,
-              kChain, mChain * kOzIITileM - m.M, nChain * kOzIITileN - m.N,
-              kChain * kOzIITileK - m.K, m.globalM ? m.globalM : m.M,
-              (unsigned)redK, cm);
+              m, prof, confidence, sampleLogBits, cm.initialCompCost, padWaste,
+              mChain, nChain, kChain, mChain * kOzIITileM - m.M,
+              nChain * kOzIITileN - m.N, kChain * kOzIITileK - m.K,
+              m.globalM ? m.globalM : m.M, (unsigned)redK, cm);
         }
 
         // The TCEC and Direct runtimes repack operands rather than padding to
         // a square, so no shape ratio is charged for them.
         if (ozDispatchable)
-          proposeTcecDispatch(m, prof, confidence, cm.initialCompCost,
+          proposeTcecDispatch(m, prof, confidence, sampleLogBits,
+                              cm.initialCompCost,
                               /*padWaste=*/1.0, cm);
 
         if (ozDispatchable)
-          proposeDirectDispatch(m, prof, confidence, cm.initialCompCost,
+          proposeDirectDispatch(m, prof, confidence, sampleLogBits,
+                                cm.initialCompCost,
                                 /*padWaste=*/1.0, cm);
 
-        if (flags::OzakiNativeDgemm && ozDispatchable)
-          proposeNativeDgemmDispatch(m, prof, confidence, cm.initialCompCost,
-                                     cm);
+        if (ozDispatchable)
+          proposeNativeDgemmDispatch(m, prof, confidence, sampleLogBits,
+                                     cm.initialCompCost, cm);
       }
       break;
     }
@@ -596,18 +606,19 @@ void generateMatmulCandidates(
       }
 
       if (flags::OzakiHostDispatch) {
-        proposeOzakiIIDispatch(m, prof, confidence, perMac, padWaste,
-                               /*mChain=*/1,
-                               /*nChain=*/1, /*kChain=*/1, /*padM=*/0,
-                               /*padN=*/0, /*padK=*/0, m.globalM, m.globalK,
-                               cm);
+        proposeOzakiIIDispatch(
+            m, prof, confidence, sampleLogBits, perMac, padWaste,
+            /*mChain=*/1,
+            /*nChain=*/1, /*kChain=*/1, /*padM=*/0,
+            /*padN=*/0, /*padK=*/0, m.globalM, m.globalK, cm);
         // The TCEC and Direct runtimes repack operands rather than padding to a
         // square, so no shape ratio is charged for them.
-        proposeTcecDispatch(m, prof, confidence, perMac, /*padWaste=*/1.0, cm);
-        proposeDirectDispatch(m, prof, confidence, perMac, /*padWaste=*/1.0,
-                              cm);
-        if (flags::OzakiNativeDgemm)
-          proposeNativeDgemmDispatch(m, prof, confidence, perMac, cm);
+        proposeTcecDispatch(m, prof, confidence, sampleLogBits, perMac,
+                            /*padWaste=*/1.0, cm);
+        proposeDirectDispatch(m, prof, confidence, sampleLogBits, perMac,
+                              /*padWaste=*/1.0, cm);
+        proposeNativeDgemmDispatch(m, prof, confidence, sampleLogBits, perMac,
+                                   cm);
       }
       if (flags::Print)
         llvm::errs() << "[hostgemm] matmul[" << m.id

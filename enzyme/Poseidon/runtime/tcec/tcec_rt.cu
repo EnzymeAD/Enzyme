@@ -1,8 +1,7 @@
 // tcec_rt.cu: Poseidon host-dispatch runtime for tensor-core error
 // correction (TCEC), the F32-accuracy-class sibling of ozaki_rt.cu.
-// Compiled independently by the bench Makefiles (Runtimes/ is not part of the
-// Enzyme ninja build); -DPOSEIDON_TCEC_USE_CUMPSGEMM delegates to cuMpSGEMM
-// instead of the built-in three-GEMM cuBLAS backend.
+// -DPOSEIDON_TCEC_USE_CUMPSGEMM delegates to cuMpSGEMM instead of the built-in
+// three-GEMM cuBLAS backend.
 //
 // The split, on operands already narrowed to FP32:
 //   A = A_hi + A_lo/S,  A_hi = fp16(A),  A_lo = fp16((A - A_hi)*S),  S = 2^11

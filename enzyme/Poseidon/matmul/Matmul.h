@@ -329,10 +329,13 @@ uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
 
 // `confidence`: the fraction of the sampled inputs each candidate's
 // `domainError` bounds (the site's own value or -poseidon-confidence).
+// `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
+// B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
 void generateMatmulCandidates(
     llvm::ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
-    double confidence, llvm::SmallVectorImpl<CandidateMatmul> &out);
+    double confidence, unsigned sampleLogBits,
+    llvm::SmallVectorImpl<CandidateMatmul> &out);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_H

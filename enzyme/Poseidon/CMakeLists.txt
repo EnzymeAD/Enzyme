@@ -49,7 +49,6 @@ set(POSEIDON_SRC
     RaiseWMMA.cpp
     Sampling.cpp
     Solvers.cpp
-    StageParam.cpp
     Staging.cpp
     Types.cpp
     Utils.cpp
@@ -101,8 +100,7 @@ if(CMAKE_CUDA_COMPILER)
   add_library(poseidon_rt STATIC
       runtime/ozaki/ozaki_rt.cu
       runtime/tcec/tcec_rt.cu
-      runtime/direct/direct_rt.cu
-      runtime/stage/stage_rt.cu)
+      runtime/direct/direct_rt.cu)
   # Whole-program per translation unit: every kernel is launched from the host
   # entry point in its own file, so the archive carries complete fatbins and an
   # application built by any compiler can link it.

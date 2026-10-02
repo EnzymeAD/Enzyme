@@ -127,37 +127,14 @@ static void resolveForTarget(StringRef TargetCpu, const Function &F) {
 
 static const std::unordered_set<std::string> DefaultScalarTypes = {
     "half", "bf16", "float", "double"};
-static const std::unordered_set<std::string> DefaultMatrixTypes = {
-    "half", "bf16", "float", "double", "f8e4m3", "f8e5m2"};
-
-static const std::unordered_set<std::string> &
-parseFlagOrFallback(const std::string &flag,
-                    std::unordered_set<std::string> &fromCSV,
-                    const std::unordered_set<std::string> &defaults) {
-  static std::unordered_map<const std::string *,
-                            std::unordered_set<std::string>>
-      cache;
-  if (!flag.empty()) {
-    auto &r = cache[&flag];
-    if (r.empty()) {
-      SmallVector<StringRef, 8> tokens;
-      StringRef(flag).split(tokens, ',', -1, false);
-      for (auto t : tokens)
-        r.insert(t.str());
-    }
-    return r;
-  }
-  if (!costModelPath().empty()) {
-    getCostModel();
-    if (!fromCSV.empty())
-      return fromCSV;
-  }
-  return defaults;
-}
 
 const std::unordered_set<std::string> &getScalarTypes() {
-  return parseFlagOrFallback(flags::ScalarTypes, SupportedTypes.scalar,
-                             DefaultScalarTypes);
+  if (!costModelPath().empty()) {
+    getCostModel();
+    if (!SupportedTypes.scalar.empty())
+      return SupportedTypes.scalar;
+  }
+  return DefaultScalarTypes;
 }
 
 const std::map<std::pair<std::string, std::string>, double> &getCostModel() {
@@ -583,9 +560,7 @@ double getCompCost(Function *F) {
 }
 
 double getCompCost(const SmallVector<Value *> &outputs,
-                   const SetVector<Value *> &inputs,
-                   const DenseMap<const Instruction *, uint64_t> *opExec,
-                   uint64_t normalizer) {
+                   const SetVector<Value *> &inputs) {
   assert(!outputs.empty());
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
@@ -602,17 +577,7 @@ double getCompCost(const SmallVector<Value *> &outputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      auto instCost = getInstructionCompCost(I);
-
-      // Weighted by the instruction's own measured execution count when the
-      // caller has one (weight 1 otherwise, and exactly 1 for every
-      // instruction of a frequency-homogeneous subgraph).
-      if (opExec && normalizer) {
-        auto it = opExec->find(I);
-        if (it != opExec->end())
-          instCost *= (double)it->second / (double)normalizer;
-      }
-      cost += instCost;
+      cost += getInstructionCompCost(I);
 
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();

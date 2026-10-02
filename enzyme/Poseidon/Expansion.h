@@ -47,8 +47,8 @@ void applyExpansion(
 // Wider FP32 expansions (n = 3, 4), parallel to the two-component DSValue path
 // and sharing only the EFT primitives. The component sequences reproduce the
 // QxW triple/quad-word routines used by mX_real's Sloppy tier, followed by
-// mX_real's Normalize<Regular>, so a materialized rung matches the hand-written
-// 3xFP32 reference in benchmarks/fig2_drift.
+// mX_real's Normalize<Regular>, so a materialized expansion matches mX_real's
+// hand-written code operation for operation.
 
 // An n-component FP32 expansion. x[0] is the most significant limb; the value
 // is the unevaluated sum of the limbs. Every emitter below returns a value
@@ -98,10 +98,6 @@ void takeLastExpansionLimbs(llvm::SmallVectorImpl<llvm::Value *> &out);
 void takeLastExpLimbs(llvm::SmallVectorImpl<llvm::Value *> &out);
 // Start a fresh limb record; one candidate may apply several expansion changes.
 void resetExpLimbs();
-
-// Toggle the FP64-accumulator-PHI elimination inside applyExpansion (default
-// on).
-void setExpansionEliminateCarriedPhis(bool enable);
 
 } // namespace poseidon
 #endif // POSEIDON_EXPANSION_H

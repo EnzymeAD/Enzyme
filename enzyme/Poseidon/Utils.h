@@ -65,7 +65,6 @@ bool isGPUMode(const llvm::Function &F);
 struct Subgraph;
 class FPNode;
 
-double getOneULP(double value);
 std::string getLibmFunctionForPrecision(llvm::StringRef funcName,
                                         llvm::Type *newType);
 // The libm calls Poseidon prices and can retype.
@@ -90,18 +89,6 @@ void collectExprInsts(llvm::Value *V,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
 void splitSubgraphs(llvm::SmallVectorImpl<Subgraph> &subgraphs);
-
-// Storage precision is a property of a MEMORY OBJECT, not of a compute unit. A
-// staging buffer only narrows when every reader agrees on a tier, so two FP
-// subgraphs that both touch the same buffer cannot pick different tiers and
-// still get the narrowed layout each was priced with. This merges every group
-// of subgraphs that share such a buffer into ONE optimization unit, so the
-// DP's per-unit choice IS the buffer's tier and the tier-mixed interior of the
-// frontier stops being reachable. A "buffer" here is a pointer FUNCTION
-// ARGUMENT or an addrspace(3) global reached by a load that feeds the subgraph
-// or a store that consumes it.
-void mergeSharedStagingSubgraphs(llvm::SmallVectorImpl<Subgraph> &subgraphs,
-                                 llvm::Function &F);
 
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 

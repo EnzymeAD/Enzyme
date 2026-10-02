@@ -31,8 +31,7 @@
 // are cached across calls. Forward dispatch only.
 //
 // num_moduli == 0 selects the native cuBLAS DGEMM path (no emulation), which
-// the solver routes to when the cost model prices it below every Ozaki rung
-// (-poseidon-ozaki-native-dgemm).
+// the solver routes to when the cost model prices it below every Ozaki rung.
 //
 // Operand scaling rule: two arms, selected by the POSEIDON_OZAKI_SCALE
 // environment variable or __poseidon_ozaki_set_scale_rule().

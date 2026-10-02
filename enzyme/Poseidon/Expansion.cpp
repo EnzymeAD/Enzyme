@@ -11,7 +11,6 @@
 #include "CostModel.h"
 #include "Flags.h"
 #include "Optimize.h"
-#include "Staging.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
@@ -249,37 +248,6 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs) {
   return changed;
 }
 
-// Narrow an FP64 comparison of df64 restores to the lexicographic form the
-// min/max rule uses: a comparison is never part of a unit, so the materializer
-// serves it with an F64 restore-and-compare. Only poseidon.ds.join-tagged
-// values (normalized pairs) or constants that split exactly qualify; a NaN in a
-// normalized pair always lives in the hi limb.
-static bool matchDSJoin(Value *V, Value *&hi, Value *&lo) {
-  auto *I = dyn_cast<Instruction>(V);
-  if (!I || !I->getMetadata("poseidon.ds.join"))
-    return false;
-  auto *ehi = dyn_cast<FPExtInst>(I->getOperand(0));
-  auto *elo = dyn_cast<FPExtInst>(I->getOperand(1));
-  if (!ehi || !elo)
-    return false;
-  hi = ehi->getOperand(0);
-  lo = elo->getOperand(0);
-  return hi->getType()->isFloatTy() && lo->getType()->isFloatTy();
-}
-
-// A constant that IS a normalized df64 pair, bit for bit.
-static bool splitExactConstant(ConstantFP *CFP, IRBuilder<> &B, Value *&hi,
-                               Value *&lo) {
-  double v = CFP->getValueAPF().convertToDouble();
-  float h = (float)v;
-  float l = (float)(v - (double)h);
-  if ((double)h + (double)l != v)
-    return false;
-  hi = ConstantFP::get(f32Ty(B), h);
-  lo = ConstantFP::get(f32Ty(B), l);
-  return true;
-}
-
 // F32 source: exact in the hi slot, lo = 0.
 static DSValue emitF32ToDS(IRBuilder<> &B, Value *f32val) {
   assert(f32val->getType()->isFloatTy() && "emitF32ToDS: input must be f32");
@@ -460,13 +428,6 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
   return {nullptr, nullptr};
 }
 
-// Whether applyExpansion eliminates the original FP64 accumulator PHIs (the
-// cleanup realizing the carried df64 accumulator).
-static bool g_expansionEliminateCarriedPhis = true;
-void setExpansionEliminateCarriedPhis(bool b) {
-  g_expansionEliminateCarriedPhis = b;
-}
-
 // df64 limbs produced for the rewritten instructions; getCompCost re-roots its
 // cost walk on them because the original F64 roots are RAUW'd and DCE'd.
 static SmallVector<Value *, 32> g_lastExpansionLimbs;
@@ -481,9 +442,6 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   DenseMap<Value *, DSValue> dsMap;
   deferredDSPhiIns().clear();
   g_lastExpansionLimbs.clear();
-  // Captured before the erase loop below invalidates instsToChange.
-  Function *parentF =
-      instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
 
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
@@ -566,33 +524,17 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   // non-optimizable and survive the erase above, and the external-use restore
   // would collapse the pair every iteration. Replace each with one restore of
   // its carried pair; O3 sinks it to the loop exit.
-  if (g_expansionEliminateCarriedPhis) {
-    SmallVector<PHINode *, 8> carriedPhis;
-    for (auto &[val, ds] : dsMap)
-      if (auto *phi = dyn_cast<PHINode>(val))
-        if (ds.hi && phi->getType()->isDoubleTy())
-          carriedPhis.push_back(phi);
-    for (PHINode *phi : carriedPhis) {
-      IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
-      phi->replaceAllUsesWith(emitDSToFP(RB, dsMap[phi], phi->getType()));
-    }
-    for (PHINode *phi : carriedPhis)
-      phi->eraseFromParent();
+  SmallVector<PHINode *, 8> carriedPhis;
+  for (auto &[val, ds] : dsMap)
+    if (auto *phi = dyn_cast<PHINode>(val))
+      if (ds.hi && phi->getType()->isDoubleTy())
+        carriedPhis.push_back(phi);
+  for (PHINode *phi : carriedPhis) {
+    IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
+    phi->replaceAllUsesWith(emitDSToFP(RB, dsMap[phi], phi->getType()));
   }
-
-  // df64 staging, materialization side. narrowSharedStagingParamDS is
-  // value-preserving only once EVERY load of a staged buffer is a Dekker split,
-  // i.e. only at the LAST applyExpansion over that buffer, so it is attempted
-  // after each unit and self-gates until then. Running it here rather than in
-  // materializeFPSolution's post-pass is what lets foldDSPairRoundtrip see the
-  // join/split pair and cancel it; the post-pass call then finds the buffer
-  // already converted. Inert during candidate pricing: the clone is not a
-  // registered site, so the parameter-map lookup fails and the conversion
-  // bails; the pricing clone's conversion is driven by getCompCost with the
-  // original function as the proxy.
-  if (flags::NarrowParamStaging && parentF &&
-      narrowSharedStagingParamDS(*parentF, parentF, /*speculative=*/false))
-    foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr);
+  for (PHINode *phi : carriedPhis)
+    phi->eraseFromParent();
 }
 
 // Wider FP32 expansions (n = 3, 4), a parallel arm sharing only the exact
@@ -600,8 +542,7 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
 // reproduces, operation for operation, a routine of the Ozaki-Wakita QxW
 // generator as instantiated by mX_real at Algorithm::Sloppy (the add/mul/div/
 // sqrt _QTW_ and _QQW_ variants, each followed by Normalize<Regular>; mX_real
-// and Ozaki-QW are BSD-3-Clause, vendored under
-// benchmarks/fig2_drift/mX_real/). Subtraction is addition of the negated
+// and Ozaki-QW are BSD-3-Clause). Subtraction is addition of the negated
 // operand and a fused multiply-add is materialized as multiply-then-add, as in
 // the reference.
 
@@ -827,31 +768,6 @@ void expansionAddRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
   t1 = y.lo;
   Value *t2 = b.add(a3, b3);
   c3 = b.add(b.add(b.add(c3, t0), t1), t2);
-}
-
-// QxW::add_QTW_QQW_QQW  (3 + 4 -> 4, unnormalized)
-void expansionAddRaw34(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                       Value *b0, Value *b1, Value *b2, Value *b3, Value *&c0,
-                       Value *&c1, Value *&c2, Value *&c3) {
-  DSValue s = b.twoSum(a0, b0);
-  c0 = s.hi;
-  c1 = s.lo;
-  DSValue u = b.twoSum(a1, b1);
-  Value *t0 = u.hi;
-  c2 = u.lo;
-  DSValue v = b.twoSum(a2, b2);
-  Value *t1 = v.hi;
-  c3 = v.lo;
-  DSValue w = b.twoSum(c1, t0);
-  c1 = w.hi;
-  t0 = w.lo;
-  DSValue x = b.twoSum(c2, t0);
-  c2 = x.hi;
-  t0 = x.lo;
-  DSValue y = b.twoSum(c2, t1);
-  c2 = y.hi;
-  t1 = y.lo;
-  c3 = b.add(b.add(b.add(c3, t0), t1), b3);
 }
 
 // QxW::mul_QQW_QQW_QQW  (4 * 4 -> 4, unnormalized)
@@ -1424,20 +1340,18 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
   // Same reason as the df64 path: the FP64 accumulator PHIs carried as n
   // parallel F32 PHIs would otherwise force a collapse-to-double every
   // iteration just to feed them.
-  if (g_expansionEliminateCarriedPhis) {
-    SmallVector<PHINode *, 8> carriedPhis;
-    for (auto &[val, mf] : expansionMap)
-      if (auto *phi = dyn_cast<PHINode>(val))
-        if (!mf.x.empty() && phi->getType()->isDoubleTy())
-          carriedPhis.push_back(phi);
-    for (PHINode *phi : carriedPhis) {
-      IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
-      phi->replaceAllUsesWith(
-          emitExpansionToFP(RB, expansionMap[phi], phi->getType()));
-    }
-    for (PHINode *phi : carriedPhis)
-      phi->eraseFromParent();
+  SmallVector<PHINode *, 8> carriedPhis;
+  for (auto &[val, mf] : expansionMap)
+    if (auto *phi = dyn_cast<PHINode>(val))
+      if (!mf.x.empty() && phi->getType()->isDoubleTy())
+        carriedPhis.push_back(phi);
+  for (PHINode *phi : carriedPhis) {
+    IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
+    phi->replaceAllUsesWith(
+        emitExpansionToFP(RB, expansionMap[phi], phi->getType()));
   }
+  for (PHINode *phi : carriedPhis)
+    phi->eraseFromParent();
 }
 
 } // namespace poseidon
