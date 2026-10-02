@@ -1149,6 +1149,21 @@ public:
 
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
+    // A scalar integer store whose destination or value is known to be an
+    // integer only at its first byte (as a parameter type or TBAA tag may
+    // record it) is an integer throughout.
+    if (valType->isIntegerTy() && !vd[{-1}].isKnown() &&
+        (vd[{0}] == BaseType::Integer ||
+         TR.query(orig_val)[{-1}] == BaseType::Integer ||
+         TR.query(orig_val)[{0}] == BaseType::Integer)) {
+      bool otherBytes = false;
+      for (size_t i = 1; i < storeSize; i++)
+        if (vd[{(int)i}].isKnown() && vd[{(int)i}] != BaseType::Integer)
+          otherBytes = true;
+      if (!otherBytes)
+        vd = TypeTree(BaseType::Integer).Only(-1, &I);
+    }
+
     if (!vd.isKnown()) {
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
