@@ -17,13 +17,17 @@ if(POSEIDON_HERBIE_BINARY)
 else()
   include(ExternalProject)
   ExternalProject_Add(herbie
-      GIT_REPOSITORY https://github.com/sbrantq/herbie
-      GIT_TAG main
+      GIT_REPOSITORY https://github.com/herbie-fp/herbie
+      GIT_TAG 73ba1fe76f97d4cdb852a602addd82e3a983b209
       PREFIX ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix
       CONFIGURE_COMMAND ""
       BUILD_IN_SOURCE 1
+      # Built from the source tree, not installed as a Racket package: the
+      # module names raco exe embeds are then `syntax/platform-language`, which
+      # is what the shipped cost_models/*.herbie.rkt platform files name.
       BUILD_COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml
-          COMMAND raco pkg install ./egg-herbie
+          COMMAND raco pkg install --auto --no-docs --batch ./egg-herbie
+          COMMAND sh -c "raco pkg update --auto --no-docs --batch fpbench rival rival3 || raco pkg install --auto --no-docs --batch fpbench rival rival3"
           COMMAND mkdir -p herbie-compiled/
           COMMAND raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
           COMMAND raco distribute herbie-compiled herbie
