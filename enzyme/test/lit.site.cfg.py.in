@@ -147,6 +147,13 @@ if "@ENZYME_MPI_FORTRAN_ENABLED@" == "1":
 config.substitutions.append(('%loadFlangEnzyme',
                              ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
                              + config.llvm_ver + config.llvm_shlib_ext))
+# The same, also loaded as a frontend plugin so that `-mllvm -enzyme-...`
+# options parse.
+config.substitutions.append(('%flangEnzymePlugin',
+                             ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext
+                             + ' -Xflang -load -Xflang @ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext))
 if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
     config.available_features.add('flangenzyme')
 

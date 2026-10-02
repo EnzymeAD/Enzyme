@@ -27,7 +27,9 @@ module enzyme
                                    enzyme_function_like => &
                                      f__enzyme_function_like, &
                                    enzyme_checkpoint_for => &
-                                     f__enzyme_checkpoint_for
+                                     f__enzyme_checkpoint_for, &
+                                   enzyme_fixed_point => &
+                                     f__enzyme_fixed_point
   implicit none
   private
 
@@ -57,6 +59,33 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_scheme") :: enzyme_scheme
   integer(c_int), public, bind(C, name="enzyme_checkpoint_region") :: &
     enzyme_checkpoint_region
+
+  ! Bindings for fixed-point loops (see enzyme/fixed_point.h). A loop
+  !
+  !   i = 0
+  !   do while (step(i, args...))
+  !     i = i + 1
+  !   end do
+  !
+  ! whose step is a logical (or integer) function taking `integer(8), value ::
+  ! i` and iterating the state z, is written
+  !
+  !   call enzyme_fixed_point(step, enzyme_fp_state, z, bytes, &
+  !                           [enzyme_fp_reduction, r,] [enzyme_fp_max_iters, n,]
+  !                           [enzyme_fp_control, control,] &
+  !                           [enzyme_checkpoint_region, array, bytes,] args...)
+  !
+  ! with integer(8) bytes and n, real(8) r, and control an integer function
+  ! control(cumul, reduction) with real(8) arguments (Tapenade's
+  ! adFixedPoint_notReduced). The iterations are not differentiated one by
+  ! one: the adjoint (in reverse mode) or the tangent (in forward mode) of the
+  ! last one is iterated to convergence.
+  integer(c_int), public, bind(C, name="enzyme_fp_state") :: enzyme_fp_state
+  integer(c_int), public, bind(C, name="enzyme_fp_reduction") :: &
+    enzyme_fp_reduction
+  integer(c_int), public, bind(C, name="enzyme_fp_max_iters") :: &
+    enzyme_fp_max_iters
+  integer(c_int), public, bind(C, name="enzyme_fp_control") :: enzyme_fp_control
 
   type, public, bind(C) :: enzyme_ckpt_stats
     integer(c_int64_t) :: forward_steps = 0
@@ -104,5 +133,6 @@ module enzyme
   public :: enzyme_fwddiff
   public :: enzyme_function_like
   public :: enzyme_checkpoint_for
+  public :: enzyme_fixed_point
   public :: enzyme_ckpt_revolve, enzyme_ckpt_periodic, enzyme_ckpt_store_all
 end module enzyme
