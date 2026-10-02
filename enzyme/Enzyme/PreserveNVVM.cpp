@@ -559,6 +559,55 @@ static bool lowerFlangRealMod(Module &M) {
   return changed;
 }
 
+/// Registrations of functions (__enzyme_inactivefn_*, __enzyme_nofree_*,
+/// ...) written in C often declare the registered routine as a variable
+/// ("extern char f;"). Linked with the routine's definition the declaration
+/// becomes the function; in a module without it (separate compilation) it
+/// stays a variable declaration. Make such declarations function
+/// declarations.
+static bool functionRegistrationTargets(Module &M) {
+  bool changed = false;
+  SmallVector<GlobalVariable *, 4> todo;
+  for (GlobalVariable &g : M.globals()) {
+    auto N = g.getName();
+    if (!(N.contains("__enzyme_inactivefn") ||
+          N.contains("__enzyme_inactivenoblockfn") ||
+          N.contains("__enzyme_nofree") ||
+          N.contains("__enzyme_no_escaping_allocation") ||
+          N.contains("__enzyme_function_like")) ||
+        !g.hasInitializer())
+      continue;
+    Value *V = g.getInitializer();
+    while (1) {
+      if (auto CE = dyn_cast<ConstantExpr>(V)) {
+        V = CE->getOperand(0);
+        continue;
+      }
+      if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+        V = CA->getOperand(0);
+        continue;
+      }
+      break;
+    }
+    if (auto GV = dyn_cast<GlobalVariable>(V))
+      if (GV->isDeclaration() && GV->getName() != "")
+        todo.push_back(GV);
+  }
+  for (auto GV : todo) {
+    if (GV->getParent() == nullptr || !GV->isDeclaration())
+      continue;
+    auto name = GV->getName().str();
+    GV->setName("");
+    auto F = Function::Create(
+        FunctionType::get(Type::getVoidTy(M.getContext()), false),
+        GlobalValue::ExternalLinkage, name, M);
+    GV->replaceAllUsesWith(ConstantExpr::getPointerCast(F, GV->getType()));
+    GV->eraseFromParent();
+    changed = true;
+  }
+  return changed;
+}
+
 bool preserveNVVM(bool Begin, Module &M,
                   bool PreserveCustomRuleLinkage = true) {
   bool changed = false;
@@ -569,6 +618,7 @@ bool preserveNVVM(bool Begin, Module &M,
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
 
+  changed |= functionRegistrationTargets(M);
   if (Begin)
     changed |= lowerFlangRealMod(M);
 
@@ -858,9 +908,9 @@ bool preserveNVVM(bool Begin, Module &M,
                          << g << "\n";
             llvm_unreachable("__enzyme_shadow_global");
           }
-          GV->setMetadata("enzyme_shadow",
-                          MDTuple::get(g.getContext(),
-                                       {ConstantAsMetadata::get(shadow)}));
+          GV->setMetadata(
+              "enzyme_shadow",
+              MDTuple::get(g.getContext(), {ConstantAsMetadata::get(shadow)}));
           declaredShadows.push_back(shadow);
           // Keep the global itself too: once the table is gone, global SRA
           // could split it (e.g. a Fortran COMMON block into @blk.0, ...)

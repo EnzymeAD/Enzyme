@@ -2934,10 +2934,20 @@ public:
       idxs.split(parts, ',', -1, /*KeepEmpty*/ false);
       for (auto part : parts) {
         unsigned i;
-        if (part.trim().getAsInteger(10, i) || i >= F->arg_size())
+        if (part.trim().getAsInteger(10, i))
           report_fatal_error(Twine("bad parameter index in "
                                    "-enzyme-inactive-params for ") +
                              name + ": " + part);
+        // A declaration's signature may be a guess (a C extern, an implicit
+        // interface); a mismatch with the definition shows as a link error
+        // through the _c mask of any derivative called through it.
+        if (i >= F->arg_size()) {
+          if (F->isDeclaration())
+            continue;
+          report_fatal_error(Twine("parameter index out of range in "
+                                   "-enzyme-inactive-params for ") +
+                             name + ": " + part);
+        }
         F->addParamAttr(i, Attribute::get(F->getContext(), "enzyme_inactive"));
       }
     }
