@@ -3040,9 +3040,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         for (int i : replay->shadowArgs)
           if (i >= 0 && (unsigned)i < call.arg_size())
             expected++;
+        // All descriptors inactive: nothing to replay, the primal call is all
+        // there is (e.g. allocating an inactive variable next to an active
+        // one in the same statement).
+        if (shadowed.empty())
+          return true;
         // A copy from an inactive into an active descriptor would need the
         // shadow to be zeroed rather than copied into: not handled.
-        if (!shadowed.empty() && shadowed.size() == expected) {
+        if (shadowed.size() == expected) {
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
           auto &M = *called->getParent();
