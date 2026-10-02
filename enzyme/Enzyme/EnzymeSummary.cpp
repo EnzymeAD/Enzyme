@@ -59,16 +59,24 @@ static cl::opt<std::string>
 
 namespace {
 
-/// Function a constant (e.g. a registration's initializer) points to.
-Function *pointee(Constant *C) {
+/// Function a constant (e.g. a registration's initializer) points to: a
+/// function, or a global variable declaration naming one (C code registering a
+/// Fortran procedure it declares as "extern char sym").
+GlobalValue *pointee(Constant *C) {
   if (!C)
     return nullptr;
-  return dyn_cast<Function>(C->stripPointerCasts());
+  auto *V = C->stripPointerCasts();
+  if (auto *F = dyn_cast<Function>(V))
+    return F;
+  if (auto *G = dyn_cast<GlobalVariable>(V))
+    if (G->isDeclaration())
+      return G;
+  return nullptr;
 }
 
 /// The primal function of a registration global: the pointer itself, or the
 /// first field of a {primal, ...} aggregate.
-Function *registeredPrimal(GlobalVariable &G) {
+GlobalValue *registeredPrimal(GlobalVariable &G) {
   if (!G.hasInitializer())
     return nullptr;
   auto *Init = G.getInitializer();
