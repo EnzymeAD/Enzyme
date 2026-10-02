@@ -1222,12 +1222,12 @@ struct FixedPointTypes {
         Region(T.Region), StepFT(T.StepFT), WhileFT(T.WhileFT) {
     // regions, nregions, buffer, save
     CopyFT = FunctionType::get(Void, {I8P, I64, I8P, I1}, false);
-    // states, nstates
-    NormFT = FunctionType::get(F64, {I8P, I64}, false);
+    // states, nstates, previous (or null)
+    NormFT = FunctionType::get(F64, {I8P, I64, I8P}, false);
     // env, primal_while, regions, nregions, bytes
     FwdFT = FunctionType::get(I8P, {I8P, I8P, I8P, I64, I64}, false);
     // handle, regions, nregions, bytes, env, turn, states, nstates,
-    // reduction, max_iters, control
+    // reduction, max_iters, control; the tangent iteration's too
     RevFT = FunctionType::get(
         Void, {I8P, I8P, I64, I64, I8P, I8P, I8P, I64, F64, I64, I8P}, false);
     ControlFT = FunctionType::get(I32, {I8P, I8P}, false);
@@ -1284,29 +1284,34 @@ static Function *getOrCreateFixedPointCopy(Module &M, FixedPointTypes &T) {
   return F;
 }
 
-/// `double (states, nstates)`: the squared 2-norm of the shadows of the
-/// state. A state's flags are 1 for float elements, 0 for double.
+/// `double (states, nstates, previous)`: the squared 2-norm of the shadows of
+/// the state, or of their change since `previous` (the shadows copied one after
+/// the other) if it is not null. A state's flags are 1 for float elements, 0
+/// for double.
 static Function *getOrCreateFixedPointNorm(Module &M, FixedPointTypes &T) {
   if (auto *F = M.getFunction("__enzyme_fp_sqnorm"))
     return F;
   auto *F = Function::Create(T.NormFT, GlobalValue::InternalLinkage,
                              "__enzyme_fp_sqnorm", &M);
   auto *A = F->arg_begin();
-  Value *states = A++, *nstates = A++;
+  Value *states = A++, *nstates = A++, *prev = A++;
   auto *entry = BasicBlock::Create(T.Ctx, "entry", F);
   auto *outer = BasicBlock::Create(T.Ctx, "state", F);
   auto *exit = BasicBlock::Create(T.Ctx, "exit", F);
   IRBuilder<> B(entry);
   Value *arr = B.CreatePointerCast(states, getUnqual(T.Region));
   Value *zero = ConstantFP::get(T.F64, 0.0);
+  Value *hasPrev = B.CreateICmpNE(prev, ConstantPointerNull::get(T.I8P));
   B.CreateCondBr(B.CreateICmpSGT(nstates, ConstantInt::get(T.I64, 0)), outer,
                  exit);
 
   B.SetInsertPoint(outer);
   auto *s = B.CreatePHI(T.I64, 2, "s");
   auto *acc = B.CreatePHI(T.F64, 2, "acc");
+  auto *off = B.CreatePHI(T.I64, 2, "off");
   s->addIncoming(ConstantInt::get(T.I64, 0), entry);
   acc->addIncoming(zero, entry);
+  off->addIncoming(ConstantInt::get(T.I64, 0), entry);
   Value *R = B.CreateGEP(T.Region, arr, s);
   Value *ptr = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0), "ptr");
   Value *size = B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1), "size");
@@ -1326,6 +1331,12 @@ static Function *getOrCreateFixedPointNorm(Module &M, FixedPointTypes &T) {
     Value *n = B.CreateUDiv(
         size, ConstantInt::get(T.I64, M.getDataLayout().getTypeAllocSize(ET)));
     Value *base = B.CreatePointerCast(ptr, getUnqual(ET));
+    // Without a previous copy, the state itself stands in for it and is not
+    // subtracted.
+    Value *prevBase = B.CreatePointerCast(
+        B.CreateSelect(hasPrev, B.CreateGEP(Type::getInt8Ty(T.Ctx), prev, off),
+                       ptr),
+        getUnqual(ET));
     auto *loop =
         BasicBlock::Create(T.Ctx, bb->getName() + ".loop", F, outerLatch);
     auto *done =
@@ -1337,6 +1348,9 @@ static Function *getOrCreateFixedPointNorm(Module &M, FixedPointTypes &T) {
     k->addIncoming(ConstantInt::get(T.I64, 0), bb);
     a->addIncoming(acc, bb);
     Value *v = B.CreateFPExt(B.CreateLoad(ET, B.CreateGEP(ET, base, k)), T.F64);
+    Value *p =
+        B.CreateFPExt(B.CreateLoad(ET, B.CreateGEP(ET, prevBase, k)), T.F64);
+    v = B.CreateFSub(v, B.CreateSelect(hasPrev, p, zero));
     Value *a1 = B.CreateFAdd(a, B.CreateFMul(v, v));
     Value *k1 = B.CreateAdd(k, ConstantInt::get(T.I64, 1));
     k->addIncoming(k1, loop);
@@ -1356,6 +1370,7 @@ static Function *getOrCreateFixedPointNorm(Module &M, FixedPointTypes &T) {
   Value *s1 = B.CreateAdd(s, ConstantInt::get(T.I64, 1));
   s->addIncoming(s1, outerLatch);
   acc->addIncoming(acc1, outerLatch);
+  off->addIncoming(B.CreateAdd(off, size), outerLatch);
   B.CreateCondBr(B.CreateICmpSLT(s1, nstates), outer, exit);
 
   B.SetInsertPoint(exit);
@@ -1405,14 +1420,45 @@ static Function *getOrCreateFixedPointFwd(Module &M, FixedPointTypes &T) {
   return F;
 }
 
+/// Zero the shadows of the states.
+static void zeroStates(IRBuilder<> &B, FixedPointTypes &T, Value *states,
+                       Value *nstates) {
+  Function *F = B.GetInsertBlock()->getParent();
+  Value *arr = B.CreatePointerCast(states, getUnqual(T.Region));
+  auto *pre = B.GetInsertBlock();
+  auto *zbody = BasicBlock::Create(T.Ctx, "zero", F);
+  auto *zexit = BasicBlock::Create(T.Ctx, "zeroed", F);
+  B.CreateCondBr(B.CreateICmpSGT(nstates, ConstantInt::get(T.I64, 0)), zbody,
+                 zexit);
+  B.SetInsertPoint(zbody);
+  auto *s = B.CreatePHI(T.I64, 2, "s");
+  s->addIncoming(ConstantInt::get(T.I64, 0), pre);
+  Value *R = B.CreateGEP(T.Region, arr, s);
+  B.CreateMemSet(B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0)),
+                 ConstantInt::get(Type::getInt8Ty(T.Ctx), 0),
+                 B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1)),
+                 MaybeAlign(1));
+  Value *s1 = B.CreateAdd(s, ConstantInt::get(T.I64, 1));
+  s->addIncoming(s1, zbody);
+  B.CreateCondBr(B.CreateICmpSLT(s1, nstates), zbody, zexit);
+  B.SetInsertPoint(zexit);
+}
+
 /// The reverse pass: iterate the derivative of the last iteration, each time
 /// from the snapshot, until the adjoint has converged; then zero the state's
 /// shadow and put back the primal state the reverse pass started from.
-static Function *getOrCreateFixedPointRev(Module &M, FixedPointTypes &T) {
-  if (auto *F = M.getFunction("__enzyme_fp_rev"))
+///
+/// With `tangent`, the forward-mode derivative of the loop after the loop has
+/// run (the handle): iterate the forward derivative of the last iteration,
+/// each time from the snapshot, with the state's shadow from zero until it
+/// has converged, measured by its change from one pass to the next; then put
+/// back the primal state the loop ended in.
+static Function *getOrCreateFixedPointIteration(Module &M, FixedPointTypes &T,
+                                                bool tangent) {
+  StringRef name = tangent ? "__enzyme_fp_tan" : "__enzyme_fp_rev";
+  if (auto *F = M.getFunction(name))
     return F;
-  auto *F = Function::Create(T.RevFT, GlobalValue::InternalLinkage,
-                             "__enzyme_fp_rev", &M);
+  auto *F = Function::Create(T.RevFT, GlobalValue::InternalLinkage, name, &M);
   F->addFnAttr(Attribute::NoInline);
   auto *A = F->arg_begin();
   Value *h = A++, *regions = A++, *nregions = A++, *bytes = A++, *env = A++,
@@ -1442,9 +1488,15 @@ static Function *getOrCreateFixedPointRev(Module &M, FixedPointTypes &T) {
   Value *last =
       B.CreateLoad(T.I64, B.CreatePointerCast(h, getUnqual(T.I64)), "last");
   Value *snap = B.CreateConstGEP1_64(I8, h, 16, "snapshot");
-  Value *entryState = B.CreateCall(Malloc, {bytes}, "entry_state");
-  B.CreateCall(copy,
-               {regions, nregions, entryState, ConstantInt::getTrue(T.Ctx)});
+  // The tangent pass keeps the state's shadow from the previous pass, the
+  // reverse pass the primal state it started from. Either fits in the bytes
+  // of the regions, which include the state.
+  Value *buf =
+      B.CreateCall(Malloc, {bytes}, tangent ? "previous" : "entry_state");
+  if (tangent)
+    zeroStates(B, T, states, nstates);
+  else
+    B.CreateCall(copy, {regions, nregions, buf, ConstantInt::getTrue(T.Ctx)});
   Value *hasControl = B.CreateICmpNE(control, ConstantPointerNull::get(T.I8P));
   Value *controlFn = B.CreatePointerCast(control, getUnqual(T.ControlFT));
   {
@@ -1468,11 +1520,15 @@ static Function *getOrCreateFixedPointRev(Module &M, FixedPointTypes &T) {
   iter->addIncoming(ConstantInt::get(T.I64, 0), preheader);
   ref->addIncoming(ConstantFP::get(T.F64, -1.0), preheader);
   prev->addIncoming(ConstantFP::get(T.F64, -1.0), preheader);
+  if (tangent)
+    B.CreateCall(copy, {states, nstates, buf, ConstantInt::getTrue(T.Ctx)});
   B.CreateCall(copy, {regions, nregions, snap, ConstantInt::getFalse(T.Ctx)});
   B.CreateCall(T.StepFT, B.CreatePointerCast(turn, getUnqual(T.StepFT)),
                {env, last});
   Value *iter1 = B.CreateAdd(iter, ConstantInt::get(T.I64, 1), "iter.next");
-  Value *cumul = B.CreateCall(norm, {states, nstates}, "sqnorm");
+  Value *cumul = B.CreateCall(
+      norm, {states, nstates, tangent ? buf : ConstantPointerNull::get(T.I8P)},
+      "sqnorm");
   B.CreateCondBr(hasControl, userBB, builtinBB);
 
   B.SetInsertPoint(userBB);
@@ -1522,36 +1578,20 @@ static Function *getOrCreateFixedPointRev(Module &M, FixedPointTypes &T) {
   if (EnzymePrintFixedPoint) {
     FunctionCallee Printf = M.getOrInsertFunction(
         "printf", FunctionType::get(T.I32, {T.I8P}, true));
-    B.CreateCall(Printf,
-                 {B.CreateGlobalStringPtr(
-                      "fixed point: %lld adjoint iterations (reduced %e -> "
-                      "%e)\n"),
-                  iter1, newRef, cumul});
+    B.CreateCall(Printf, {B.CreateGlobalStringPtr(
+                              tangent ? "fixed point: %lld tangent iterations "
+                                        "(reduced %e -> %e)\n"
+                                      : "fixed point: %lld adjoint iterations "
+                                        "(reduced %e -> %e)\n"),
+                          iter1, newRef, cumul});
   }
-  {
-    // Zero the shadow of the state.
-    Value *arr = B.CreatePointerCast(states, getUnqual(T.Region));
-    auto *pre = B.GetInsertBlock();
-    auto *zbody = block("zero");
-    auto *zexit = block("zeroed");
-    B.CreateCondBr(B.CreateICmpSGT(nstates, ConstantInt::get(T.I64, 0)), zbody,
-                   zexit);
-    B.SetInsertPoint(zbody);
-    auto *s = B.CreatePHI(T.I64, 2, "s");
-    s->addIncoming(ConstantInt::get(T.I64, 0), pre);
-    Value *R = B.CreateGEP(T.Region, arr, s);
-    B.CreateMemSet(B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0)),
-                   ConstantInt::get(I8, 0),
-                   B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1)),
-                   MaybeAlign(1));
-    Value *s1 = B.CreateAdd(s, ConstantInt::get(T.I64, 1));
-    s->addIncoming(s1, zbody);
-    B.CreateCondBr(B.CreateICmpSLT(s1, nstates), zbody, zexit);
-    B.SetInsertPoint(zexit);
+  if (tangent) {
+    B.CreateCall(copy, {regions, nregions, snap, ConstantInt::getFalse(T.Ctx)});
+  } else {
+    zeroStates(B, T, states, nstates);
+    B.CreateCall(copy, {regions, nregions, buf, ConstantInt::getFalse(T.Ctx)});
   }
-  B.CreateCall(copy,
-               {regions, nregions, entryState, ConstantInt::getFalse(T.Ctx)});
-  B.CreateCall(Free, {entryState});
+  B.CreateCall(Free, {buf});
   B.CreateCall(Free, {h});
   B.CreateRetVoid();
   return F;
@@ -1957,6 +1997,44 @@ static void printRegions(StepInfo &S) {
                  << DL.getTypeAllocSize(GV->getValueType()) << " bytes)\n";
 }
 
+/// The shadows of the states of a fixed-point loop, whose norm measures
+/// convergence, as an array of regions. A state without a derivative has
+/// none, and counts as empty.
+static Value *buildStates(IRBuilder<> &B, Function *loop,
+                          const PassFrame &frame, const FnTypeInfo &typeInfo,
+                          DriverTypes &T) {
+  unsigned nstates = getNumStates(loop);
+  auto *statesTy = ArrayType::get(T.Region, nstates);
+  auto *states = B.CreateAlloca(statesTy, nullptr, "states");
+  for (unsigned k = 0; k < nstates; k++) {
+    unsigned arg = LoopFixedParams + 2 * k;
+    Value *shadow = frame.shadows[arg];
+    Value *size = frame.primals[arg + 1];
+    bool isFloat = false;
+    auto found = typeInfo.Arguments.find(loop->getArg(arg));
+    if (found != typeInfo.Arguments.end()) {
+      TypeTree pointee = found->second.Data0();
+      Type *FPT = pointee[{-1}].isFloat();
+      if (!FPT)
+        FPT = pointee[{0}].isFloat();
+      isFloat = FPT && FPT->isFloatTy();
+    }
+    if (!shadow) {
+      shadow = ConstantPointerNull::get(T.I8P);
+      size = ConstantInt::get(T.I64, 0);
+    }
+    Value *slot = B.CreateConstInBoundsGEP2_32(statesTy, states, 0, k);
+    B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(shadow, T.I8P),
+                  B.CreateStructGEP(T.Region, slot, 0));
+    B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
+    B.CreateStore(ConstantInt::get(T.I32, isFloat ? 1 : 0),
+                  B.CreateStructGEP(T.Region, slot, 2));
+    B.CreateStore(ConstantInt::get(T.I32, 0),
+                  B.CreateStructGEP(T.Region, slot, 3));
+  }
+  return B.CreatePointerCast(states, T.I8P);
+}
+
 Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
                                     Function *loop,
                                     ArrayRef<DIFFE_TYPE> constant_args,
@@ -2095,44 +2173,14 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
           : getTrampoline(T, S, "turn", grad, /*shadows*/ true),
       T.I8P);
   if (isFixedPointLoop(loop)) {
-    // The shadows of the state, whose norm measures convergence. A state
-    // without a derivative has none, and counts as empty.
     FixedPointTypes FT(T);
+    Value *states = buildStates(B, loop, frame, key.typeInfo, T);
     unsigned nstates = getNumStates(loop);
-    auto *statesTy = ArrayType::get(T.Region, nstates);
-    auto *states = B.CreateAlloca(statesTy, nullptr, "states");
-    for (unsigned k = 0; k < nstates; k++) {
-      unsigned arg = LoopFixedParams + 2 * k;
-      Value *shadow = frame.shadows[arg];
-      Value *size = frame.primals[arg + 1];
-      bool isFloat = false;
-      auto found = key.typeInfo.Arguments.find(loop->getArg(arg));
-      if (found != key.typeInfo.Arguments.end()) {
-        TypeTree pointee = found->second.Data0();
-        Type *FPT = pointee[{-1}].isFloat();
-        if (!FPT)
-          FPT = pointee[{0}].isFloat();
-        isFloat = FPT && FPT->isFloatTy();
-      }
-      if (!shadow) {
-        shadow = ConstantPointerNull::get(T.I8P);
-        size = ConstantInt::get(T.I64, 0);
-      }
-      Value *slot = B.CreateConstInBoundsGEP2_32(statesTy, states, 0, k);
-      B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(shadow, T.I8P),
-                    B.CreateStructGEP(T.Region, slot, 0));
-      B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
-      B.CreateStore(ConstantInt::get(T.I32, isFloat ? 1 : 0),
-                    B.CreateStructGEP(T.Region, slot, 2));
-      B.CreateStore(ConstantInt::get(T.I32, 0),
-                    B.CreateStructGEP(T.Region, slot, 3));
-    }
     auto &primals = frame.primals;
-    B.CreateCall(getOrCreateFixedPointRev(M, FT),
+    B.CreateCall(getOrCreateFixedPointIteration(M, FT, /*tangent*/ false),
                  {h, frame.regions, frame.nregions, frame.bytes, frame.env,
-                  turn, B.CreatePointerCast(states, T.I8P),
-                  ConstantInt::get(T.I64, nstates), primals[3], primals[1],
-                  primals[2]});
+                  turn, states, ConstantInt::get(T.I64, nstates), primals[3],
+                  primals[1], primals[2]});
     B.CreateRetVoid();
     return F;
   }
@@ -2142,6 +2190,65 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
        B.CreatePointerCast(
            getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
        turn});
+  B.CreateRetVoid();
+  return F;
+}
+
+Function *createCheckpointForward(EnzymeLogic &Logic, RequestContext context,
+                                  Function *loop, DIFFE_TYPE retType,
+                                  ArrayRef<DIFFE_TYPE> constant_args,
+                                  TypeAnalysis &TA, const FnTypeInfo &typeInfo,
+                                  bool runtimeActivity, bool strongZero,
+                                  unsigned width) {
+  // Other checkpointed loops are differentiated through, as any loop.
+  if (!isFixedPointLoop(loop))
+    return nullptr;
+  Module &M = *loop->getParent();
+  LLVMContext &Ctx = M.getContext();
+  DriverTypes T(Ctx);
+  FixedPointTypes FT(T);
+
+  StepInfo S(loop);
+  if (!getStepInfo(S, constant_args, typeInfo, width, context))
+    return nullptr;
+  if (width != 1) {
+    EmitNoDerivativeError("fixed-point loops are not supported in vector "
+                          "mode yet",
+                          loop, context);
+    return nullptr;
+  }
+  // The tangent of one step, at the converged state.
+  Function *tan = Logic.CreateForwardDiff(
+      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      /*returnUsed*/ false, DerivativeMode::ForwardMode, /*freeMemory*/ true,
+      runtimeActivity, strongZero, width, /*additionalArg*/ nullptr,
+      S.stepTypeInfo, /*subsequent_calls_may_write*/ false,
+      /*overwritten_args*/ {}, /*augmenteddata*/ nullptr);
+  if (!tan)
+    return nullptr;
+
+  auto *FTy = FunctionType::get(
+      T.Void, getInterleavedParams(loop, constant_args, width), false);
+  auto *F = Function::Create(FTy, GlobalValue::InternalLinkage,
+                             "fwddiffe" + loop->getName(), &M);
+  F->addFnAttr("enzyme_checkpoint_pass");
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", F));
+  PassFrame frame = buildFrame(B, F, S, constant_args, T);
+  printRegions(S);
+  Value *h = B.CreateCall(getOrCreateFixedPointFwd(M, FT),
+                          {frame.env,
+                           B.CreatePointerCast(getWhileTrampoline(T, S), T.I8P),
+                           frame.regions, frame.nregions, frame.bytes},
+                          "handle");
+  Value *states = buildStates(B, loop, frame, typeInfo, T);
+  auto &primals = frame.primals;
+  B.CreateCall(
+      getOrCreateFixedPointIteration(M, FT, /*tangent*/ true),
+      {h, frame.regions, frame.nregions, frame.bytes, frame.env,
+       B.CreatePointerCast(
+           getTrampoline(T, S, "tangent", tan, /*shadows*/ true), T.I8P),
+       states, ConstantInt::get(T.I64, getNumStates(loop)), primals[3],
+       primals[1], primals[2]});
   B.CreateRetVoid();
   return F;
 }

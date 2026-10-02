@@ -112,7 +112,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK: loop:
 ; CHECK:   call void @__enzyme_fp_copy(ptr %1, i64 %2, ptr %snapshot, i1 false)
 ; CHECK:   call void %5(ptr %4, i64 %last)
-; CHECK:   %sqnorm = call double @__enzyme_fp_sqnorm(ptr %6, i64 %7)
+; CHECK:   %sqnorm = call double @__enzyme_fp_sqnorm(ptr %6, i64 %7, ptr null)
 ; CHECK: done:
 ; CHECK:   call void @__enzyme_fp_copy(ptr %1, i64 %2, ptr %entry_state, i1 false)
 

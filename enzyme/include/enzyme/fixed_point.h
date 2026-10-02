@@ -43,6 +43,16 @@
  *   being listed, and so is the state.
  *
  * The primal state after the reverse pass is the one it started from.
+ *
+ * In forward mode the iterations are not differentiated one by one either.
+ * The loop runs, and the tangent of one step is then iterated at the state it
+ * ended in, s <- phi_z s + phi_x xdot, from s = 0 (the tangent of the initial
+ * guess has no effect), until the squared 2-norm of the change of the state's
+ * tangent falls below the reduction times its value after the first pass, with
+ * the same limits and control function. A Newton iteration, whose step has
+ * phi_z = 0 at its fixed point, takes two passes. The primal state after it is
+ * the one the loop ended in.
+ *
  * Fortran passes every argument by reference, which the markers accept.
  */
 #ifndef ENZYME_FIXED_POINT_H
