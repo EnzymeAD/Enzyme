@@ -215,6 +215,7 @@ public:
           IntTyped.insert(A.getArgNo());
       }
     }
+    computeLocalContents();
     for (auto &I : instructions(F))
       visit(I);
   }
@@ -246,6 +247,62 @@ private:
   std::set<std::tuple<std::string, std::string, unsigned>> Edges_;
   bool Unknown = false, Frees = false;
   std::map<const Value *, Roots> Memo;
+  // What the pointers stored into a local object (alloca) may point to, e.g.
+  // the base address flang copies from an argument's descriptor into the
+  // descriptor of a reboxed array: loads from the local object yield them.
+  std::map<const AllocaInst *, Roots> LocalContents;
+
+  static const AllocaInst *localBase(const Value *V) {
+    V = V->stripPointerCasts();
+    while (auto *GEP = dyn_cast<GEPOperator>(V))
+      V = GEP->getPointerOperand()->stripPointerCasts();
+    return dyn_cast<AllocaInst>(V);
+  }
+
+  /// LocalContents to a fixpoint: pointers stored or copied into a local
+  /// object, and for calls that take a local object, the other pointer
+  /// arguments (which the callee may store into it, e.g.
+  /// _FortranAPointerAssociate on a local descriptor).
+  void computeLocalContents() {
+    bool Changed = true;
+    auto add = [&](const AllocaInst *AI, const Roots &R) {
+      auto &C = LocalContents[AI];
+      auto Before = std::make_tuple(C.Args.size(), C.Globals.size(), C.Unknown);
+      C.merge(R);
+      if (Before != std::make_tuple(C.Args.size(), C.Globals.size(), C.Unknown))
+        Changed = true;
+    };
+    while (Changed) {
+      Changed = false;
+      Memo.clear();
+      for (auto &I : instructions(F)) {
+        if (auto *S = dyn_cast<StoreInst>(&I)) {
+          if (!S->getValueOperand()->getType()->isPointerTy())
+            continue;
+          if (auto *AI = localBase(S->getPointerOperand()))
+            add(AI, roots(S->getValueOperand()));
+        } else if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
+          if (auto *AI = localBase(MT->getDest()))
+            add(AI, roots(MT->getSource()));
+        } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+          if (isa<IntrinsicInst>(CB))
+            continue;
+          Roots Others;
+          SmallVector<const AllocaInst *, 2> Locals;
+          for (auto &A : CB->args()) {
+            if (!A->getType()->isPointerTy())
+              continue;
+            if (auto *AI = localBase(A))
+              Locals.push_back(AI);
+            Others.merge(roots(A));
+          }
+          for (auto *AI : Locals)
+            add(AI, Others);
+        }
+      }
+    }
+    Memo.clear();
+  }
 
   Roots roots(const Value *V) {
     auto found = Memo.find(V);
@@ -261,7 +318,11 @@ private:
     else if (auto *G = dyn_cast<GlobalVariable>(V)) {
       if (!G->isConstant())
         R.Globals.insert(G->getName().str());
-    } else if (isa<AllocaInst>(V) || isa<Constant>(V))
+    } else if (auto *AI = dyn_cast<AllocaInst>(V)) {
+      auto found = LocalContents.find(AI);
+      if (found != LocalContents.end())
+        R = found->second;
+    } else if (isa<Constant>(V))
       ;
     else if (auto *L = dyn_cast<LoadInst>(V))
       R = roots(L->getPointerOperand()); // dereferences collapsed
@@ -347,8 +408,10 @@ private:
   }
 
   void visit(Instruction &I) {
+    // Accesses to a local object itself (not through a pointer loaded from
+    // it) touch local memory only.
     if (auto *L = dyn_cast<LoadInst>(&I)) {
-      if (carriesFloat(L->getType()))
+      if (carriesFloat(L->getType()) && !localBase(L->getPointerOperand()))
         read(roots(L->getPointerOperand()));
       return;
     }
@@ -357,6 +420,8 @@ private:
       bool FP = carriesFloat(V->getType());
       if (auto *BC = dyn_cast<BitCastInst>(V))
         FP |= carriesFloat(BC->getSrcTy());
+      if (localBase(S->getPointerOperand()))
+        return;
       if (FP)
         write(roots(S->getPointerOperand()));
       else if (V->getType()->isPointerTy() &&
@@ -365,12 +430,15 @@ private:
       return;
     }
     if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
-      write(roots(MT->getDest()), /*Untyped*/ true);
-      read(roots(MT->getSource()), /*Untyped*/ true);
+      if (!localBase(MT->getDest()))
+        write(roots(MT->getDest()), /*Untyped*/ true);
+      if (!localBase(MT->getSource()))
+        read(roots(MT->getSource()), /*Untyped*/ true);
       return;
     }
     if (auto *MS = dyn_cast<MemSetInst>(&I)) {
-      write(roots(MS->getDest()), /*Untyped*/ true);
+      if (!localBase(MS->getDest()))
+        write(roots(MS->getDest()), /*Untyped*/ true);
       return;
     }
     if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I)) {
