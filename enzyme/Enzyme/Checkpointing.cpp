@@ -59,10 +59,17 @@ static cl::opt<bool> EnzymePrintCheckpointRegions(
     "enzyme-print-checkpoint-regions", cl::init(false), cl::Hidden,
     cl::desc("Print the memory each checkpointed loop snapshots"));
 
+static cl::opt<bool> EnzymePrintFixedPoint(
+    "enzyme-print-fixed-point", cl::init(false), cl::Hidden,
+    cl::desc("Print the number of adjoint iterations of each fixed-point loop "
+             "and how much they reduced the adjoint update"));
+
 static constexpr const char *CheckpointAttr = "enzyme_checkpoint";
 static constexpr const char *CheckpointRegionsAttr =
     "enzyme_checkpoint_nregions";
 static constexpr const char *CheckpointStepMD = "enzyme_checkpoint_step";
+static constexpr const char *FixedPointStatesAttr =
+    "enzyme_fixed_point_nstates";
 
 // Slots the driver itself uses: the state the reverse sweep starts from, and
 // the state before the last step.
@@ -120,6 +127,23 @@ bool isCheckpointLoop(const Function *F) {
 /// times.
 static bool isWhileLoop(const Function *F) {
   return F->getFnAttribute(CheckpointAttr).getValueAsString() == "while";
+}
+
+/// A fixed-point loop, run until its step returns false, whose reverse pass
+/// iterates the adjoint of its last step to convergence instead of reversing
+/// every step.
+static bool isFixedPointLoop(const Function *F) {
+  return F->getFnAttribute(CheckpointAttr).getValueAsString() == "fixedpoint";
+}
+
+/// The number of region pairs (of a fixed-point loop: the first ones) that are
+/// the loop's state.
+static unsigned getNumStates(const Function *F) {
+  unsigned n = 0;
+  F->getFnAttribute(FixedPointStatesAttr)
+      .getValueAsString()
+      .getAsInteger(10, n);
+  return n;
 }
 
 static unsigned getNumRegions(const Function *F) {
@@ -193,12 +217,18 @@ static Value *castArg(IRBuilder<> &B, Value *V, Type *T) {
   return nullptr;
 }
 
+/// The loop function of `step`. Its first `LoopFixedParams` parameters have
+/// the types `fixedTypes`, the first of them the index of the first step; then
+/// come the region pairs, the first `nstates` of them the state of a
+/// fixed-point loop, then the step's arguments after the index.
 static Function *createLoopFunction(Module &M, Function *step,
-                                    ArrayRef<Type *> regionTypes, Type *vtTy,
-                                    Type *dataTy, bool isWhile) {
+                                    ArrayRef<Type *> fixedTypes,
+                                    ArrayRef<Type *> regionTypes,
+                                    StringRef kind, unsigned nstates = 0) {
   LLVMContext &Ctx = M.getContext();
   Type *I64 = Type::getInt64Ty(Ctx);
-  SmallVector<Type *, 8> params = {I64, I64, vtTy, dataTy};
+  bool isWhile = kind != "for";
+  SmallVector<Type *, 8> params(fixedTypes.begin(), fixedTypes.end());
   for (Type *T : regionTypes) {
     params.push_back(T);
     params.push_back(I64);
@@ -208,25 +238,29 @@ static Function *createLoopFunction(Module &M, Function *step,
     params.push_back(stepFT->getParamType(i));
 
   auto *FT = FunctionType::get(Type::getVoidTy(Ctx), params, false);
-  auto *F = Function::Create(
-      FT, GlobalValue::InternalLinkage,
-      (isWhile ? "enzyme.ckpt.while." : "enzyme.ckpt.for.") + step->getName(),
-      &M);
-  F->addFnAttr(CheckpointAttr, isWhile ? "while" : "for");
+  auto *F = Function::Create(FT, GlobalValue::InternalLinkage,
+                             "enzyme.ckpt." + kind + "." + step->getName(), &M);
+  F->addFnAttr(CheckpointAttr, kind);
   F->addFnAttr(CheckpointRegionsAttr, std::to_string(regionTypes.size()));
+  if (nstates)
+    F->addFnAttr(FixedPointStatesAttr, std::to_string(nstates));
   F->addFnAttr(Attribute::NoInline);
   F->setMetadata(CheckpointStepMD,
                  MDTuple::get(Ctx, {ConstantAsMetadata::get(step)}));
-  // The schedule's own arguments carry no derivative.
+  // The schedule's own arguments carry no derivative. The state of a
+  // fixed-point loop does: the reverse pass measures the convergence of the
+  // adjoint iteration on its shadow.
   for (unsigned i = 0; i < LoopFixedParams + 2 * regionTypes.size(); i++)
-    F->addParamAttr(i, Attribute::get(Ctx, "enzyme_inactive"));
+    if (i < LoopFixedParams || i >= LoopFixedParams + 2 * nstates ||
+        (i - LoopFixedParams) % 2 == 1)
+      F->addParamAttr(i, Attribute::get(Ctx, "enzyme_inactive"));
 
   auto *entry = BasicBlock::Create(Ctx, "entry", F);
   auto *body = BasicBlock::Create(Ctx, "body", F);
   auto *exit = BasicBlock::Create(Ctx, "exit", F);
   IRBuilder<> B(entry);
   Value *start = F->getArg(0);
-  Value *end = B.CreateAdd(start, F->getArg(1), "end");
+  Value *end = isWhile ? nullptr : B.CreateAdd(start, F->getArg(1), "end");
   // A while loop runs its step at least once, and as long as it returns true.
   if (isWhile)
     B.CreateBr(body);
@@ -364,8 +398,144 @@ static bool lowerMarker(CallInst *CI, bool isWhile) {
     args.push_back(a);
   }
 
-  Function *loop = createLoopFunction(M, step, regionTypes, vt->getType(),
-                                      data->getType(), isWhile);
+  Function *loop =
+      createLoopFunction(M, step, {I64, I64, vt->getType(), data->getType()},
+                         regionTypes, isWhile ? "while" : "for");
+  auto *call = B.CreateCall(loop, args);
+  call->setDebugLoc(CI->getDebugLoc());
+  if (!CI->getType()->isVoidTy())
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+  CI->eraseFromParent();
+  return true;
+}
+
+/// Lower `__enzyme_fixed_point(step, [enzyme_fp_state, ptr, bytes]...,
+/// [enzyme_fp_reduction, r], [enzyme_fp_max_iters, n], [enzyme_fp_control,
+/// fn], [enzyme_checkpoint_region, ptr, bytes]..., args...)`.
+static bool lowerFixedPointMarker(CallInst *CI) {
+  Module &M = *CI->getModule();
+  LLVMContext &Ctx = M.getContext();
+  auto fail = [&](const Twine &msg) {
+    std::string str = msg.str();
+    EmitFailure("FixedPointMarker", CI->getDebugLoc(), CI, str);
+    return false;
+  };
+
+  if (CI->arg_size() < 1)
+    return fail("__enzyme_fixed_point needs a step function");
+  Value *stepV = CI->getArgOperand(0)->stripPointerCasts();
+  if (auto *GA = dyn_cast<GlobalAlias>(stepV))
+    stepV = GA->getAliaseeObject();
+  auto *step = dyn_cast<Function>(stepV);
+  if (!step)
+    return fail("__enzyme_fixed_point needs a known step function");
+  auto *stepFT = step->getFunctionType();
+  if (stepFT->isVarArg() || stepFT->getNumParams() == 0 ||
+      !stepFT->getParamType(0)->isIntegerTy())
+    return fail("the step of __enzyme_fixed_point must take the iteration "
+                "index as an integer first argument, by value");
+  if (!stepFT->getReturnType()->isIntegerTy())
+    return fail("the step of __enzyme_fixed_point must return whether to go "
+                "on, as an integer or bool");
+
+  IRBuilder<> B(CI);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *F64 = Type::getDoubleTy(Ctx);
+  // The reduction of the squared norm of the adjoint update at which the
+  // reverse pass stops, as Tapenade's adj_reduction.
+  Value *reduction = ConstantFP::get(F64, 1e-12);
+  Value *maxIters = ConstantInt::get(I64, 1000);
+  Value *control = ConstantPointerNull::get(getInt8PtrTy(Ctx));
+  SmallVector<std::pair<Value *, Value *>, 2> states, regions;
+  unsigned idx = 1;
+  while (idx < CI->arg_size()) {
+    bool byRef;
+    auto name = markerName(CI->getArgOperand(idx), byRef);
+    if (!name)
+      break;
+    if (*name == "enzyme_fp_state" || *name == "enzyme_checkpoint_region") {
+      bool isState = *name == "enzyme_fp_state";
+      if (idx + 2 >= CI->arg_size())
+        return fail(*name + " needs a pointer and a size");
+      Value *bytes = CI->getArgOperand(idx + 2);
+      if (byRef && bytes->getType()->isPointerTy())
+        bytes = loadInteger(B, bytes);
+      (isState ? states : regions)
+          .emplace_back(CI->getArgOperand(idx + 1), bytes);
+      idx += 3;
+      continue;
+    }
+    if (*name == "enzyme_fp_reduction") {
+      if (idx + 1 >= CI->arg_size())
+        return fail("enzyme_fp_reduction needs a value");
+      Value *V = CI->getArgOperand(idx + 1);
+      if (V->getType()->isPointerTy())
+        V = B.CreateLoad(F64, V);
+      if (!V->getType()->isFloatingPointTy())
+        return fail("enzyme_fp_reduction must be a floating-point number");
+      reduction = B.CreateFPCast(V, F64);
+      idx += 2;
+      continue;
+    }
+    if (*name == "enzyme_fp_max_iters") {
+      if (idx + 1 >= CI->arg_size())
+        return fail("enzyme_fp_max_iters needs a value");
+      Value *V = CI->getArgOperand(idx + 1);
+      V = V->getType()->isPointerTy() ? loadInteger(B, V) : castArg(B, V, I64);
+      if (!V)
+        return fail("enzyme_fp_max_iters must be an integer");
+      maxIters = V;
+      idx += 2;
+      continue;
+    }
+    if (*name == "enzyme_fp_control") {
+      if (idx + 1 >= CI->arg_size())
+        return fail("enzyme_fp_control needs a function");
+      Value *V = CI->getArgOperand(idx + 1);
+      if (!V->getType()->isPointerTy())
+        return fail("enzyme_fp_control needs a function");
+      control = B.CreatePointerBitCastOrAddrSpaceCast(V, getInt8PtrTy(Ctx));
+      idx += 2;
+      continue;
+    }
+    break;
+  }
+  if (states.empty())
+    return fail("__enzyme_fixed_point needs the loop's state, as "
+                "enzyme_fp_state followed by a pointer and a size in bytes");
+  unsigned nargs = CI->arg_size() - idx;
+  if (nargs + 1 != stepFT->getNumParams())
+    return fail("__enzyme_fixed_point passes " + Twine(nargs) +
+                " arguments to a step that takes " +
+                Twine(stepFT->getNumParams() - 1) + " after the index");
+
+  SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), maxIters, control,
+                                  reduction};
+  SmallVector<Type *, 4> regionTypes;
+  for (auto *list : {&states, &regions})
+    for (auto &R : *list) {
+      if (!R.first->getType()->isPointerTy())
+        return fail("enzyme_fp_state and enzyme_checkpoint_region need a "
+                    "pointer");
+      Value *bytes = castArg(B, R.second, I64);
+      if (!bytes)
+        return fail("the size of a region must be an integer");
+      regionTypes.push_back(R.first->getType());
+      args.push_back(R.first);
+      args.push_back(bytes);
+    }
+  for (unsigned i = 0; i < nargs; i++) {
+    Value *a =
+        castArg(B, CI->getArgOperand(idx + i), stepFT->getParamType(i + 1));
+    if (!a)
+      return fail("argument " + Twine(i) +
+                  " of __enzyme_fixed_point does not match the step");
+    args.push_back(a);
+  }
+
+  Function *loop =
+      createLoopFunction(M, step, {I64, I64, getInt8PtrTy(Ctx), F64},
+                         regionTypes, "fixedpoint", states.size());
   auto *call = B.CreateCall(loop, args);
   call->setDebugLoc(CI->getDebugLoc());
   if (!CI->getType()->isVoidTy())
@@ -375,7 +545,7 @@ static bool lowerMarker(CallInst *CI, bool isWhile) {
 }
 
 bool lowerCheckpointMarkers(Module &M) {
-  SmallVector<std::pair<CallInst *, bool>, 4> calls;
+  SmallVector<std::pair<CallInst *, int>, 4> calls;
   for (Function &F : M)
     for (Instruction &I : instructions(F))
       if (auto *CI = dyn_cast<CallInst>(&I)) {
@@ -385,13 +555,15 @@ bool lowerCheckpointMarkers(Module &M) {
           continue;
         // Fortran callers use an implicit interface to f__enzyme_...
         if (callee->getName().contains("__enzyme_checkpoint_for"))
-          calls.push_back({CI, false});
+          calls.push_back({CI, 0});
         else if (callee->getName().contains("__enzyme_checkpoint_while"))
-          calls.push_back({CI, true});
+          calls.push_back({CI, 1});
+        else if (callee->getName().contains("__enzyme_fixed_point"))
+          calls.push_back({CI, 2});
       }
   bool changed = false;
-  for (auto [CI, isWhile] : calls)
-    changed |= lowerMarker(CI, isWhile);
+  for (auto [CI, kind] : calls)
+    changed |= kind == 2 ? lowerFixedPointMarker(CI) : lowerMarker(CI, kind);
   return changed;
 }
 
@@ -1005,6 +1177,387 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
 }
 
 //===----------------------------------------------------------------------===//
+// The drivers of a fixed-point loop
+//===----------------------------------------------------------------------===//
+//
+// A fixed-point loop iterates `z = phi(z, x)` until its step says it has
+// converged. Its reverse pass does not reverse each iteration: it linearizes
+// the last one, at the state the loop ends in, and iterates its adjoint.
+//
+// With zbar the adjoint of the converged state z, the adjoint of x is
+// phi_x^T w, where w solves w = zbar + phi_z^T w. Each pass runs the step's
+// derivative once, from the snapshot of the state at the end of the loop. It
+// maps the shadow of the state d to phi_z^T d and adds phi_x^T d into the
+// shadows of x. Starting from d = zbar, the shadow of x therefore accumulates
+// phi_x^T (zbar + phi_z^T zbar + (phi_z^T)^2 zbar + ...) = phi_x^T w: the
+// Neumann series of the two-phase adjoint (Christianson 1994), which Tapenade
+// runs for $AD FP-LOOP. No shadow of x has to be saved and restored between
+// passes, so x may be anything the step reads. Outputs of the step other than
+// the state (those it writes before reading) get their adjoint in the first
+// pass, which also zeroes their shadow, as reversing the last iteration does.
+//
+// The state's shadow after a pass is the update of w, and the iteration stops
+// when its squared 2-norm has fallen below `reduction` times its value after
+// the first pass (or stops shrinking after five passes, or `maxIters` passes
+// have run). A control function, Tapenade's adFixedPoint_notReduced protocol,
+// may decide instead: `int control(double *cumul, double *reduction)` is
+// called once with *cumul = -1 before the first pass and then with the
+// squared norm after each, and returns whether to run another pass. It may
+// change *cumul, e.g. to its sum over MPI ranks.
+//
+// The initial guess of the state has no effect on the converged state, so its
+// shadow is zero after the reverse pass.
+
+namespace {
+struct FixedPointTypes {
+  LLVMContext &Ctx;
+  Type *Void, *F64;
+  IntegerType *I1, *I32, *I64;
+  PointerType *I8P;
+  StructType *Region;
+  FunctionType *CopyFT, *NormFT, *FwdFT, *RevFT, *ControlFT, *StepFT, *WhileFT;
+  FixedPointTypes(DriverTypes &T)
+      : Ctx(T.Ctx), Void(T.Void), F64(Type::getDoubleTy(T.Ctx)),
+        I1(Type::getInt1Ty(T.Ctx)), I32(T.I32), I64(T.I64), I8P(T.I8P),
+        Region(T.Region), StepFT(T.StepFT), WhileFT(T.WhileFT) {
+    // regions, nregions, buffer, save
+    CopyFT = FunctionType::get(Void, {I8P, I64, I8P, I1}, false);
+    // states, nstates
+    NormFT = FunctionType::get(F64, {I8P, I64}, false);
+    // env, primal_while, regions, nregions, bytes
+    FwdFT = FunctionType::get(I8P, {I8P, I8P, I8P, I64, I64}, false);
+    // handle, regions, nregions, bytes, env, turn, states, nstates,
+    // reduction, max_iters, control
+    RevFT = FunctionType::get(
+        Void, {I8P, I8P, I64, I64, I8P, I8P, I8P, I64, F64, I64, I8P}, false);
+    ControlFT = FunctionType::get(I32, {I8P, I8P}, false);
+  }
+};
+} // namespace
+
+/// `void (regions, nregions, buffer, save)`: copy the regions one after the
+/// other into the buffer (`save`), or back from it.
+static Function *getOrCreateFixedPointCopy(Module &M, FixedPointTypes &T) {
+  if (auto *F = M.getFunction("__enzyme_fp_copy"))
+    return F;
+  auto *F = Function::Create(T.CopyFT, GlobalValue::InternalLinkage,
+                             "__enzyme_fp_copy", &M);
+  auto *A = F->arg_begin();
+  Value *regions = A++, *nregions = A++, *buf = A++, *save = A++;
+  auto *entry = BasicBlock::Create(T.Ctx, "entry", F);
+  auto *body = BasicBlock::Create(T.Ctx, "body", F);
+  auto *saveBB = BasicBlock::Create(T.Ctx, "save", F);
+  auto *loadBB = BasicBlock::Create(T.Ctx, "load", F);
+  auto *latch = BasicBlock::Create(T.Ctx, "latch", F);
+  auto *exit = BasicBlock::Create(T.Ctx, "exit", F);
+  IRBuilder<> B(entry);
+  Value *arr = B.CreatePointerCast(regions, getUnqual(T.Region));
+  B.CreateCondBr(B.CreateICmpSGT(nregions, ConstantInt::get(T.I64, 0)), body,
+                 exit);
+
+  B.SetInsertPoint(body);
+  auto *r = B.CreatePHI(T.I64, 2, "r");
+  auto *off = B.CreatePHI(T.I64, 2, "off");
+  r->addIncoming(ConstantInt::get(T.I64, 0), entry);
+  off->addIncoming(ConstantInt::get(T.I64, 0), entry);
+  Value *R = B.CreateGEP(T.Region, arr, r);
+  Value *ptr = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0), "ptr");
+  Value *size = B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1), "size");
+  Value *at = B.CreateGEP(Type::getInt8Ty(T.Ctx), buf, off, "at");
+  B.CreateCondBr(save, saveBB, loadBB);
+  B.SetInsertPoint(saveBB);
+  B.CreateMemCpy(at, MaybeAlign(1), ptr, MaybeAlign(1), size);
+  B.CreateBr(latch);
+  B.SetInsertPoint(loadBB);
+  B.CreateMemCpy(ptr, MaybeAlign(1), at, MaybeAlign(1), size);
+  B.CreateBr(latch);
+
+  B.SetInsertPoint(latch);
+  Value *r1 = B.CreateAdd(r, ConstantInt::get(T.I64, 1));
+  Value *off1 = B.CreateAdd(off, size);
+  r->addIncoming(r1, latch);
+  off->addIncoming(off1, latch);
+  B.CreateCondBr(B.CreateICmpSLT(r1, nregions), body, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+/// `double (states, nstates)`: the squared 2-norm of the shadows of the
+/// state. A state's flags are 1 for float elements, 0 for double.
+static Function *getOrCreateFixedPointNorm(Module &M, FixedPointTypes &T) {
+  if (auto *F = M.getFunction("__enzyme_fp_sqnorm"))
+    return F;
+  auto *F = Function::Create(T.NormFT, GlobalValue::InternalLinkage,
+                             "__enzyme_fp_sqnorm", &M);
+  auto *A = F->arg_begin();
+  Value *states = A++, *nstates = A++;
+  auto *entry = BasicBlock::Create(T.Ctx, "entry", F);
+  auto *outer = BasicBlock::Create(T.Ctx, "state", F);
+  auto *exit = BasicBlock::Create(T.Ctx, "exit", F);
+  IRBuilder<> B(entry);
+  Value *arr = B.CreatePointerCast(states, getUnqual(T.Region));
+  Value *zero = ConstantFP::get(T.F64, 0.0);
+  B.CreateCondBr(B.CreateICmpSGT(nstates, ConstantInt::get(T.I64, 0)), outer,
+                 exit);
+
+  B.SetInsertPoint(outer);
+  auto *s = B.CreatePHI(T.I64, 2, "s");
+  auto *acc = B.CreatePHI(T.F64, 2, "acc");
+  s->addIncoming(ConstantInt::get(T.I64, 0), entry);
+  acc->addIncoming(zero, entry);
+  Value *R = B.CreateGEP(T.Region, arr, s);
+  Value *ptr = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0), "ptr");
+  Value *size = B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1), "size");
+  Value *flags =
+      B.CreateLoad(T.I32, B.CreateStructGEP(T.Region, R, 2), "flags");
+  Value *isFloat =
+      B.CreateICmpNE(B.CreateAnd(flags, ConstantInt::get(T.I32, 1)),
+                     ConstantInt::get(T.I32, 0));
+  auto *outerLatch = BasicBlock::Create(T.Ctx, "state.latch", F);
+  SmallVector<std::pair<Value *, BasicBlock *>, 2> sums;
+  auto *dblBB = BasicBlock::Create(T.Ctx, "double", F, outerLatch);
+  auto *fltBB = BasicBlock::Create(T.Ctx, "float", F, outerLatch);
+  B.CreateCondBr(isFloat, fltBB, dblBB);
+  for (auto [bb, ET] : {std::make_pair(dblBB, (Type *)T.F64),
+                        std::make_pair(fltBB, Type::getFloatTy(T.Ctx))}) {
+    B.SetInsertPoint(bb);
+    Value *n = B.CreateUDiv(
+        size, ConstantInt::get(T.I64, M.getDataLayout().getTypeAllocSize(ET)));
+    Value *base = B.CreatePointerCast(ptr, getUnqual(ET));
+    auto *loop =
+        BasicBlock::Create(T.Ctx, bb->getName() + ".loop", F, outerLatch);
+    auto *done =
+        BasicBlock::Create(T.Ctx, bb->getName() + ".done", F, outerLatch);
+    B.CreateCondBr(B.CreateICmpSGT(n, ConstantInt::get(T.I64, 0)), loop, done);
+    B.SetInsertPoint(loop);
+    auto *k = B.CreatePHI(T.I64, 2, "k");
+    auto *a = B.CreatePHI(T.F64, 2, "a");
+    k->addIncoming(ConstantInt::get(T.I64, 0), bb);
+    a->addIncoming(acc, bb);
+    Value *v = B.CreateFPExt(B.CreateLoad(ET, B.CreateGEP(ET, base, k)), T.F64);
+    Value *a1 = B.CreateFAdd(a, B.CreateFMul(v, v));
+    Value *k1 = B.CreateAdd(k, ConstantInt::get(T.I64, 1));
+    k->addIncoming(k1, loop);
+    a->addIncoming(a1, loop);
+    B.CreateCondBr(B.CreateICmpSLT(k1, n), loop, done);
+    B.SetInsertPoint(done);
+    auto *res = B.CreatePHI(T.F64, 2);
+    res->addIncoming(acc, bb);
+    res->addIncoming(a1, loop);
+    B.CreateBr(outerLatch);
+    sums.push_back({res, done});
+  }
+  B.SetInsertPoint(outerLatch);
+  auto *acc1 = B.CreatePHI(T.F64, 2);
+  for (auto [v, bb] : sums)
+    acc1->addIncoming(v, bb);
+  Value *s1 = B.CreateAdd(s, ConstantInt::get(T.I64, 1));
+  s->addIncoming(s1, outerLatch);
+  acc->addIncoming(acc1, outerLatch);
+  B.CreateCondBr(B.CreateICmpSLT(s1, nstates), outer, exit);
+
+  B.SetInsertPoint(exit);
+  auto *result = B.CreatePHI(T.F64, 2);
+  result->addIncoming(zero, entry);
+  result->addIncoming(acc1, outerLatch);
+  B.CreateRet(result);
+  return F;
+}
+
+/// The forward pass: run the loop, then keep the index of its last iteration
+/// and a snapshot of the regions, at the converged state, in the handle.
+static Function *getOrCreateFixedPointFwd(Module &M, FixedPointTypes &T) {
+  if (auto *F = M.getFunction("__enzyme_fp_fwd"))
+    return F;
+  auto *F = Function::Create(T.FwdFT, GlobalValue::InternalLinkage,
+                             "__enzyme_fp_fwd", &M);
+  F->addFnAttr(Attribute::NoInline);
+  auto *A = F->arg_begin();
+  Value *env = A++, *primal = A++, *regions = A++, *nregions = A++,
+        *bytes = A++;
+  auto *entry = BasicBlock::Create(T.Ctx, "entry", F);
+  auto *body = BasicBlock::Create(T.Ctx, "body", F);
+  auto *exit = BasicBlock::Create(T.Ctx, "exit", F);
+  IRBuilder<> B(entry);
+  B.CreateBr(body);
+  B.SetInsertPoint(body);
+  auto *i = B.CreatePHI(T.I64, 2, "i");
+  i->addIncoming(ConstantInt::get(T.I64, 0), entry);
+  Value *go =
+      B.CreateCall(T.WhileFT, B.CreatePointerCast(primal, getUnqual(T.WhileFT)),
+                   {env, i}, "go");
+  Value *i1 = B.CreateAdd(i, ConstantInt::get(T.I64, 1));
+  i->addIncoming(i1, body);
+  B.CreateCondBr(B.CreateICmpNE(go, ConstantInt::get(T.I32, 0)), body, exit);
+
+  B.SetInsertPoint(exit);
+  FunctionCallee Malloc = M.getOrInsertFunction("malloc", T.I8P, T.I64);
+  Value *h = B.CreateCall(
+      Malloc, {B.CreateAdd(bytes, ConstantInt::get(T.I64, 16))}, "h");
+  B.CreateStore(i, B.CreatePointerCast(h, getUnqual(T.I64)));
+  B.CreateCall(getOrCreateFixedPointCopy(M, T),
+               {regions, nregions,
+                B.CreateConstGEP1_64(Type::getInt8Ty(T.Ctx), h, 16),
+                ConstantInt::getTrue(T.Ctx)});
+  B.CreateRet(h);
+  return F;
+}
+
+/// The reverse pass: iterate the derivative of the last iteration, each time
+/// from the snapshot, until the adjoint has converged; then zero the state's
+/// shadow and put back the primal state the reverse pass started from.
+static Function *getOrCreateFixedPointRev(Module &M, FixedPointTypes &T) {
+  if (auto *F = M.getFunction("__enzyme_fp_rev"))
+    return F;
+  auto *F = Function::Create(T.RevFT, GlobalValue::InternalLinkage,
+                             "__enzyme_fp_rev", &M);
+  F->addFnAttr(Attribute::NoInline);
+  auto *A = F->arg_begin();
+  Value *h = A++, *regions = A++, *nregions = A++, *bytes = A++, *env = A++,
+        *turn = A++, *states = A++, *nstates = A++, *reduction = A++,
+        *maxIters = A++, *control = A++;
+  Type *I8 = Type::getInt8Ty(T.Ctx);
+  auto block = [&](const Twine &name) {
+    return BasicBlock::Create(T.Ctx, name, F);
+  };
+  auto *entry = block("entry");
+  auto *loop = block("loop");
+  auto *userBB = block("control");
+  auto *builtinBB = block("builtin");
+  auto *firstBB = block("first");
+  auto *laterBB = block("later");
+  auto *decide = block("decide");
+  auto *done = block("done");
+  IRBuilder<> B(entry);
+  FunctionCallee Malloc = M.getOrInsertFunction("malloc", T.I8P, T.I64);
+  FunctionCallee Free = M.getOrInsertFunction("free", T.Void, T.I8P);
+  Function *copy = getOrCreateFixedPointCopy(M, T);
+  Function *norm = getOrCreateFixedPointNorm(M, T);
+
+  auto *cumulP = B.CreateAlloca(T.F64, nullptr, "cumul");
+  auto *reductionP = B.CreateAlloca(T.F64, nullptr, "reduction");
+  B.CreateStore(reduction, reductionP);
+  Value *last =
+      B.CreateLoad(T.I64, B.CreatePointerCast(h, getUnqual(T.I64)), "last");
+  Value *snap = B.CreateConstGEP1_64(I8, h, 16, "snapshot");
+  Value *entryState = B.CreateCall(Malloc, {bytes}, "entry_state");
+  B.CreateCall(copy,
+               {regions, nregions, entryState, ConstantInt::getTrue(T.Ctx)});
+  Value *hasControl = B.CreateICmpNE(control, ConstantPointerNull::get(T.I8P));
+  Value *controlFn = B.CreatePointerCast(control, getUnqual(T.ControlFT));
+  {
+    // Tapenade's protocol starts a loop with cumul = -1.
+    auto *call = block("control.start");
+    auto *after = block("control.started");
+    B.CreateCondBr(hasControl, call, after);
+    B.SetInsertPoint(call);
+    B.CreateStore(ConstantFP::get(T.F64, -1.0), cumulP);
+    B.CreateCall(T.ControlFT, controlFn, {cumulP, reductionP});
+    B.CreateBr(after);
+    B.SetInsertPoint(after);
+  }
+  B.CreateBr(loop);
+  BasicBlock *preheader = B.GetInsertBlock();
+
+  B.SetInsertPoint(loop);
+  auto *iter = B.CreatePHI(T.I64, 2, "iter");
+  auto *ref = B.CreatePHI(T.F64, 2, "ref");
+  auto *prev = B.CreatePHI(T.F64, 2, "prev");
+  iter->addIncoming(ConstantInt::get(T.I64, 0), preheader);
+  ref->addIncoming(ConstantFP::get(T.F64, -1.0), preheader);
+  prev->addIncoming(ConstantFP::get(T.F64, -1.0), preheader);
+  B.CreateCall(copy, {regions, nregions, snap, ConstantInt::getFalse(T.Ctx)});
+  B.CreateCall(T.StepFT, B.CreatePointerCast(turn, getUnqual(T.StepFT)),
+               {env, last});
+  Value *iter1 = B.CreateAdd(iter, ConstantInt::get(T.I64, 1), "iter.next");
+  Value *cumul = B.CreateCall(norm, {states, nstates}, "sqnorm");
+  B.CreateCondBr(hasControl, userBB, builtinBB);
+
+  B.SetInsertPoint(userBB);
+  Value *userRef = B.CreateSelect(
+      B.CreateICmpEQ(iter, ConstantInt::get(T.I64, 0)), cumul, ref);
+  B.CreateStore(cumul, cumulP);
+  Value *userGo =
+      B.CreateICmpNE(B.CreateCall(T.ControlFT, controlFn, {cumulP, reductionP}),
+                     ConstantInt::get(T.I32, 0));
+  B.CreateBr(decide);
+
+  // The reference is the norm after the first pass.
+  B.SetInsertPoint(builtinBB);
+  B.CreateCondBr(B.CreateICmpEQ(iter, ConstantInt::get(T.I64, 0)), firstBB,
+                 laterBB);
+  B.SetInsertPoint(firstBB);
+  Value *firstGo = B.CreateFCmpOGT(cumul, ConstantFP::get(T.F64, 0.0));
+  B.CreateBr(decide);
+  B.SetInsertPoint(laterBB);
+  Value *notReduced = B.CreateFCmpOGT(
+      cumul, B.CreateFMul(B.CreateLoad(T.F64, reductionP), ref));
+  Value *growth =
+      B.CreateAnd(B.CreateICmpSGT(iter1, ConstantInt::get(T.I64, 5)),
+                  B.CreateFCmpOGT(cumul, prev));
+  Value *laterGo = B.CreateAnd(notReduced, B.CreateNot(growth));
+  B.CreateBr(decide);
+
+  B.SetInsertPoint(decide);
+  auto *go = B.CreatePHI(T.I1, 3, "go");
+  go->addIncoming(userGo, userBB);
+  go->addIncoming(firstGo, firstBB);
+  go->addIncoming(laterGo, laterBB);
+  auto *newRef = B.CreatePHI(T.F64, 3, "ref.next");
+  newRef->addIncoming(userRef, userBB);
+  newRef->addIncoming(cumul, firstBB);
+  newRef->addIncoming(ref, laterBB);
+  Value *capped =
+      B.CreateAnd(B.CreateICmpSGT(maxIters, ConstantInt::get(T.I64, 0)),
+                  B.CreateICmpSGE(iter1, maxIters));
+  Value *again = B.CreateAnd(go, B.CreateNot(capped));
+  iter->addIncoming(iter1, decide);
+  ref->addIncoming(newRef, decide);
+  prev->addIncoming(cumul, decide);
+  B.CreateCondBr(again, loop, done);
+
+  B.SetInsertPoint(done);
+  if (EnzymePrintFixedPoint) {
+    FunctionCallee Printf = M.getOrInsertFunction(
+        "printf", FunctionType::get(T.I32, {T.I8P}, true));
+    B.CreateCall(Printf,
+                 {B.CreateGlobalStringPtr(
+                      "fixed point: %lld adjoint iterations (reduced %e -> "
+                      "%e)\n"),
+                  iter1, newRef, cumul});
+  }
+  {
+    // Zero the shadow of the state.
+    Value *arr = B.CreatePointerCast(states, getUnqual(T.Region));
+    auto *pre = B.GetInsertBlock();
+    auto *zbody = block("zero");
+    auto *zexit = block("zeroed");
+    B.CreateCondBr(B.CreateICmpSGT(nstates, ConstantInt::get(T.I64, 0)), zbody,
+                   zexit);
+    B.SetInsertPoint(zbody);
+    auto *s = B.CreatePHI(T.I64, 2, "s");
+    s->addIncoming(ConstantInt::get(T.I64, 0), pre);
+    Value *R = B.CreateGEP(T.Region, arr, s);
+    B.CreateMemSet(B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, R, 0)),
+                   ConstantInt::get(I8, 0),
+                   B.CreateLoad(T.I64, B.CreateStructGEP(T.Region, R, 1)),
+                   MaybeAlign(1));
+    Value *s1 = B.CreateAdd(s, ConstantInt::get(T.I64, 1));
+    s->addIncoming(s1, zbody);
+    B.CreateCondBr(B.CreateICmpSLT(s1, nstates), zbody, zexit);
+    B.SetInsertPoint(zexit);
+  }
+  B.CreateCall(copy,
+               {regions, nregions, entryState, ConstantInt::getFalse(T.Ctx)});
+  B.CreateCall(Free, {entryState});
+  B.CreateCall(Free, {h});
+  B.CreateRetVoid();
+  return F;
+}
+
+//===----------------------------------------------------------------------===//
 // The step's derivatives and the trampolines
 //===----------------------------------------------------------------------===//
 
@@ -1296,6 +1849,8 @@ struct PassFrame {
   Value *nregions;
   Value *bytes;
   SmallVector<Value *, 8> primals;
+  /// The shadow of each of the loop's arguments, or null.
+  SmallVector<Value *, 8> shadows;
 };
 } // namespace
 
@@ -1309,7 +1864,7 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
   const DataLayout &DL = M.getDataLayout();
   PassFrame frame;
 
-  SmallVector<Value *, 8> shadows;
+  auto &shadows = frame.shadows;
   {
     auto *A = F->arg_begin();
     for (unsigned k = 0; k < loop->arg_size(); k++) {
@@ -1426,6 +1981,17 @@ Function *createCheckpointAugmented(EnzymeLogic &Logic, RequestContext context,
   PassFrame frame = buildFrame(B, F, S, constant_args, T);
   printRegions(S);
 
+  if (isFixedPointLoop(loop)) {
+    FixedPointTypes FT(T);
+    Value *h = B.CreateCall(
+        getOrCreateFixedPointFwd(M, FT),
+        {frame.env, B.CreatePointerCast(getWhileTrampoline(T, S), T.I8P),
+         frame.regions, frame.nregions, frame.bytes},
+        "handle");
+    B.CreateRet(h);
+    return F;
+  }
+
   // The accesses through the first argument after the index, for schemes
   // that copy the state themselves.
   Value *paths = ConstantPointerNull::get(T.I8P);
@@ -1474,6 +2040,12 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
   StepInfo S(loop);
   if (!getStepInfo(S, key.constant_args, key.typeInfo, key.width, context))
     return nullptr;
+  if (isFixedPointLoop(loop) && key.width != 1) {
+    EmitNoDerivativeError("fixed-point loops are not supported in vector "
+                          "mode yet",
+                          loop, context);
+    return nullptr;
+  }
   // What a turn runs: the step's combined derivative, or with
   // -enzyme-checkpoint-split-steps its augmented and reverse passes.
   const AugmentedReturn *aug = nullptr;
@@ -1518,15 +2090,58 @@ Function *createCheckpointGradient(EnzymeLogic &Logic, RequestContext context,
     h = B.CreatePointerCast(F->getArg(F->arg_size() - 1), T.I8P);
   }
   PassFrame frame = buildFrame(B, F, S, key.constant_args, T);
+  Value *turn = B.CreatePointerCast(
+      aug ? getSplitTurnTrampoline(T, S, *aug, grad)
+          : getTrampoline(T, S, "turn", grad, /*shadows*/ true),
+      T.I8P);
+  if (isFixedPointLoop(loop)) {
+    // The shadows of the state, whose norm measures convergence. A state
+    // without a derivative has none, and counts as empty.
+    FixedPointTypes FT(T);
+    unsigned nstates = getNumStates(loop);
+    auto *statesTy = ArrayType::get(T.Region, nstates);
+    auto *states = B.CreateAlloca(statesTy, nullptr, "states");
+    for (unsigned k = 0; k < nstates; k++) {
+      unsigned arg = LoopFixedParams + 2 * k;
+      Value *shadow = frame.shadows[arg];
+      Value *size = frame.primals[arg + 1];
+      bool isFloat = false;
+      auto found = key.typeInfo.Arguments.find(loop->getArg(arg));
+      if (found != key.typeInfo.Arguments.end()) {
+        TypeTree pointee = found->second.Data0();
+        Type *FPT = pointee[{-1}].isFloat();
+        if (!FPT)
+          FPT = pointee[{0}].isFloat();
+        isFloat = FPT && FPT->isFloatTy();
+      }
+      if (!shadow) {
+        shadow = ConstantPointerNull::get(T.I8P);
+        size = ConstantInt::get(T.I64, 0);
+      }
+      Value *slot = B.CreateConstInBoundsGEP2_32(statesTy, states, 0, k);
+      B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(shadow, T.I8P),
+                    B.CreateStructGEP(T.Region, slot, 0));
+      B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
+      B.CreateStore(ConstantInt::get(T.I32, isFloat ? 1 : 0),
+                    B.CreateStructGEP(T.Region, slot, 2));
+      B.CreateStore(ConstantInt::get(T.I32, 0),
+                    B.CreateStructGEP(T.Region, slot, 3));
+    }
+    auto &primals = frame.primals;
+    B.CreateCall(getOrCreateFixedPointRev(M, FT),
+                 {h, frame.regions, frame.nregions, frame.bytes, frame.env,
+                  turn, B.CreatePointerCast(states, T.I8P),
+                  ConstantInt::get(T.I64, nstates), primals[3], primals[1],
+                  primals[2]});
+    B.CreateRetVoid();
+    return F;
+  }
   B.CreateCall(
       getOrCreateRevDriver(M, T),
       {h, frame.regions, frame.nregions, frame.env,
        B.CreatePointerCast(
            getTrampoline(T, S, "primal", S.step, /*shadows*/ false), T.I8P),
-       B.CreatePointerCast(
-           aug ? getSplitTurnTrampoline(T, S, *aug, grad)
-               : getTrampoline(T, S, "turn", grad, /*shadows*/ true),
-           T.I8P)});
+       turn});
   B.CreateRetVoid();
   return F;
 }
