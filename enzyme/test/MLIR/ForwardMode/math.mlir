@@ -120,3 +120,68 @@ func.func @dacos(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.acos %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @asinh(%x: f64) -> f64 {
+  %res = math.asinh %x : f64
+  return %res : f64
+}
+
+func.func @dasinh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @asinh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeasinh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.addf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.asinh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @acosh(%x: f64) -> f64 {
+  %res = math.acosh %x : f64
+  return %res : f64
+}
+
+func.func @dacosh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @acosh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeacosh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.subf %[[xsqr]], %[[one]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.acosh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @atanh(%x: f64) -> f64 {
+  %res = math.atanh %x : f64
+  return %res : f64
+}
+
+func.func @datanh(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @atanh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeatanh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.subf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.atanh %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

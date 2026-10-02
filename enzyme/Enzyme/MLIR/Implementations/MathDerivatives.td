@@ -139,6 +139,25 @@ def : MLIRDerivative<"math", "AcosOp", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "AsinhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), 
+                        (SqrtF( AddF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
 
+def : MLIRDerivative<"math", "AcoshOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), 
+                        (SqrtF( SubF (MulF $x, $x), (ConstantFP<"1","arith","ConstantOp"> $x))))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "AtanhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), 
+                        (SubF(ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x)))
+                    ]
+                  >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
