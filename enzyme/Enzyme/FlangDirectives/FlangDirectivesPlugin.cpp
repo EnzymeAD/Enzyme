@@ -13,9 +13,10 @@
 // its static initializer
 //   - defines the !DIR$ ENZYME directives (flang/Support/PluginDirectives.h),
 //     which flang then parses, resolves and lowers to `fir.directives`, and
-//   - adds a pass to flang's pipeline (fir::registerPassPipelineConfigCallback):
+//   - adds two passes to flang's pipeline (fir::registerPassPipelineConfigCallback):
 //     enzyme-fortran-directives, which turns the directives into the
-//     registrations LLVM Enzyme reads.
+//     registrations LLVM Enzyme reads, and enzyme-fir-type-annotations, which
+//     carries the Fortran types LLVM IR erases to LLVM Enzyme's type analysis.
 //
 // LLVM Enzyme itself runs later: with -fpass-plugin=FlangEnzyme-<v>.so in
 // flang, or in the (LTO) link with LLDEnzyme-<v>.so. Only the code here is in
@@ -31,7 +32,15 @@
 
 #include "mlir/Pass/PassManager.h"
 
+#include "llvm/Support/CommandLine.h"
+
 namespace {
+
+static llvm::cl::opt<bool> typeAnnotations(
+    "enzyme-fir-type-annotations", llvm::cl::init(true),
+    llvm::cl::desc("Carry the Fortran types that LLVM IR erases to LLVM "
+                   "Enzyme's type analysis (all kinds; each kind has its own "
+                   "-enzyme-fir-{arg,common,runtime,literal}-types)"));
 
 // The !DIR$ ENZYME directives (see FortranDirectives.cpp).
 static void registerEnzymeDirectives() {
@@ -66,6 +75,13 @@ struct EnzymeFlangDirectivesRegistration {
           config.registerHLFIROptEarlyEPCallbacks(
               [](mlir::PassManager &pm, llvm::OptimizationLevel) {
                 pm.addPass(mlir::enzyme::createFortranDirectivesPass());
+              });
+          // FIR still has the Fortran types (and the COMMON storage of each
+          // declare) at the end of the FIR pipeline.
+          config.registerFIROptLastEPCallbacks(
+              [](mlir::PassManager &pm, llvm::OptimizationLevel) {
+                if (typeAnnotations)
+                  pm.addPass(mlir::enzyme::createFIRTypeAnnotationsPass());
               });
         });
   }
