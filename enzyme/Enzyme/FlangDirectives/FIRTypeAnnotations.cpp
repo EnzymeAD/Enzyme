@@ -190,20 +190,28 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
         return success();
       op->walk([&](LLVM::AllocaOp alloca) {
         auto name = alloca->getAttrOfType<StringAttr>("bindc_name");
-        auto t = name ? types.getAs<StringAttr>(name) : StringAttr();
+        auto entry = name ? types.getAs<ArrayAttr>(name) : ArrayAttr();
+        if (!entry || entry.size() != 2)
+          return;
+        auto t = dyn_cast<StringAttr>(entry[0]);
+        auto bytes = dyn_cast<IntegerAttr>(entry[1]);
         std::optional<TypePaths> tree =
             t ? parseTypeTree(t.getValue()) : std::nullopt;
-        if (!tree)
-          return;
-        // Only on what is character storage in LLVM IR too (bytes).
         auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
             moduleTranslation.lookupValue(alloca.getResult()));
-        llvm::Type *ty = inst ? inst->getAllocatedType() : nullptr;
-        if (auto *at = dyn_cast_or_null<llvm::ArrayType>(ty))
-          ty = at->getElementType();
-        if (ty && ty->isIntegerTy(8))
-          inst->setMetadata("enzyme_type",
-                            typeTreeToMD(*tree, inst->getContext()));
+        if (!tree || !bytes || !inst)
+          return;
+        // Only on an alloca of the size of the variable (or of a size known
+        // only at run time, if the variable's is).
+        std::optional<llvm::TypeSize> size =
+            inst->getAllocationSize(inst->getDataLayout());
+        int64_t expected = bytes.getInt();
+        if (expected >= 0 ? (!size || size->isScalable() ||
+                             (int64_t)size->getFixedValue() != expected)
+                          : size.has_value())
+          return;
+        inst->setMetadata("enzyme_type",
+                          typeTreeToMD(*tree, inst->getContext()));
       });
       return success();
     }
@@ -583,6 +591,38 @@ static constexpr int64_t kLayoutBudget = 1 << 14;
 
 // What to annotate, each on its own (all of it with
 // -enzyme-fir-type-annotations, see FlangDirectivesPlugin.cpp).
+static llvm::cl::opt<bool> annotateLocalNumbers(
+    "enzyme-fir-local-number-types", llvm::cl::init(true),
+    llvm::cl::desc("With -enzyme-fir-local-types, also annotate local REAL, "
+                   "INTEGER, LOGICAL and COMPLEX variables (not only "
+                   "CHARACTER ones)"));
+
+// The TypeTree of a local variable of FIR type `ty` (its alloca: Pointer to
+// the data) and its size in bytes (-1 if not constant), if it has one type.
+static std::optional<std::pair<std::string, int64_t>>
+localType(Type ty, const DataLayout &dl) {
+  Type ele = fir::unwrapSequenceType(ty);
+  std::optional<std::string> t = uniformType(ele, dl);
+  if (!t)
+    return std::nullopt;
+  std::optional<int64_t> size = sizeOf(ty, dl);
+  TypePaths tree{{{-1}, "Pointer"}};
+  if (isa<fir::CharacterType>(ele) || !annotateLocalNumbers) {
+    if (!isa<fir::CharacterType>(ele))
+      return std::nullopt;
+    tree[{-1, -1}] = "Integer";
+    return std::make_pair(printTypeTree(tree), size ? *size : -1);
+  }
+  if (auto ct = dyn_cast<mlir::ComplexType>(ele))
+    ele = ct.getElementType();
+  int64_t eleSize = scalarType(ele, dl)->second;
+  if (size && *size <= kMaxTypeOffset)
+    addBoundedData(tree, {-1}, *t, eleSize, size, /*unbounded=*/false);
+  else
+    tree[{-1, -1}] = *t; // a whole object: nothing follows
+  return std::make_pair(printTypeTree(tree), size ? *size : -1);
+}
+
 static llvm::cl::opt<bool> annotateProcArgs(
     "enzyme-fir-arg-types", llvm::cl::init(true),
     llvm::cl::desc("Annotate the arguments and results of procedures with "
@@ -781,31 +821,42 @@ struct FIRTypeAnnotationsPass
         }
       }
 
-    // Local CHARACTER variables: character data throughout (copied with
-    // untyped memcpys). The conversion of fir.alloca to LLVM keeps only its
-    // name, so the function lists its variables by name.
+    // Local variables: CHARACTER data (copied with untyped memcpys), and
+    // REAL, INTEGER, LOGICAL and COMPLEX scalars and arrays, whose loads and
+    // stores flang's TBAA does not type (e.g. an INTEGER count that a callee
+    // fills by reference and shift operations then use, MITgcm's
+    // ctrl_getobcs*). An alloca is a whole object, so nothing follows the
+    // data: a constant size up to Enzyme's type offsets is typed offset by
+    // offset, any other at every offset. The conversion of fir.alloca to LLVM
+    // keeps only its name, so the function lists its variables by name, with
+    // their size for the translation to check.
     if (annotateLocals)
       for (auto fn : module.getOps<func::FuncOp>()) {
         // Names are not unique in a function (e.g. after inlining, ICON's
         // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of
-        // the same name): a name that any other local has is left out.
-        llvm::StringSet<> chars, others;
+        // the same name): a name with locals of different types is left out.
+        llvm::StringMap<std::pair<std::string, int64_t>> types;
+        llvm::StringSet<> ambiguous;
         fn.walk([&](fir::AllocaOp alloca) {
           auto name = alloca.getBindcName();
           if (!name)
             return;
-          if (isa<fir::CharacterType>(
-                  fir::unwrapSequenceType(alloca.getInType())))
-            chars.insert(*name);
-          else
-            others.insert(*name);
+          std::optional<std::pair<std::string, int64_t>> t =
+              localType(alloca.getInType(), dl);
+          auto [it, inserted] = types.try_emplace(
+              *name, t ? *t : std::pair<std::string, int64_t>{"", 0});
+          if (!t || (!inserted && it->second != *t))
+            ambiguous.insert(*name);
         });
         SmallVector<NamedAttribute> locals;
-        for (auto &name : chars)
-          if (!others.contains(name.getKey()))
+        for (auto &entry : types)
+          if (!ambiguous.contains(entry.getKey()))
             locals.push_back(NamedAttribute(
-                StringAttr::get(ctx, name.getKey()),
-                StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}")));
+                StringAttr::get(ctx, entry.getKey()),
+                ArrayAttr::get(
+                    ctx, {StringAttr::get(ctx, entry.getValue().first),
+                          IntegerAttr::get(IntegerType::get(ctx, 64),
+                                           entry.getValue().second)})));
         llvm::sort(locals, [](const NamedAttribute &a, const NamedAttribute &b) {
           return a.getName().strref() < b.getName().strref();
         });
