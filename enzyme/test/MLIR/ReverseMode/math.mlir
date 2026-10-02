@@ -385,3 +385,47 @@ func.func @dcbrt(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.divf %[[num]], %[[threex]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @erf(%x: f64) -> f64 {
+  %res = math.erf %x : f64
+  return %res : f64
+}
+
+func.func @derf(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @erf(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffeerf(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[c:.+]] = arith.constant 1.128379167095{{[0-9]*}} : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negxsqr:.+]] = arith.negf %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[exp:.+]] = math.exp %[[negxsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fac:.+]] = arith.mulf %[[exp]], %[[c]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[fac]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @erfc(%x: f64) -> f64 {
+  %res = math.erfc %x : f64
+  return %res : f64
+}
+
+func.func @derfc(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @erfc(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffeerfc(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[c:.+]] = arith.constant -1.128379167095{{[0-9]*}} : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negxsqr:.+]] = arith.negf %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[exp:.+]] = math.exp %[[negxsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fac:.+]] = arith.mulf %[[exp]], %[[c]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[fac]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

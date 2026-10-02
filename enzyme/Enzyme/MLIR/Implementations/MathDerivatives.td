@@ -188,5 +188,21 @@ def : MLIRDerivative<"math", "CbrtOp", (Op $x),
                                    (MulF (ConstantFP<"3.0","arith","ConstantOp"> $x), $x))
                     ]
                   >;
+
+def : MLIRDerivative<"math", "ErfOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "ErfcOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"-1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;

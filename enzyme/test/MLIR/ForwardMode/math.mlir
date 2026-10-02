@@ -269,3 +269,49 @@ func.func @dcbrt(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.cbrt %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @erf(%x: f64) -> f64 {
+  %res = math.erf %x : f64
+  return %res : f64
+}
+
+func.func @derf(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @erf(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeerf(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[c:.+]] = arith.constant 1.128379167095{{[0-9]*}} : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negxsqr:.+]] = arith.negf %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[exp:.+]] = math.exp %[[negxsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fac:.+]] = arith.mulf %[[c]], %[[exp]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[fac]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.erf %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @erfc(%x: f64) -> f64 {
+  %res = math.erfc %x : f64
+  return %res : f64
+}
+
+func.func @derfc(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @erfc(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeerfc(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[c:.+]] = arith.constant -1.128379167095{{[0-9]*}} : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negxsqr:.+]] = arith.negf %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[exp:.+]] = math.exp %[[negxsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fac:.+]] = arith.mulf %[[c]], %[[exp]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[fac]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.erfc %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
