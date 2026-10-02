@@ -22,7 +22,6 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/NoFolder.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
@@ -41,7 +40,6 @@
 #include "Optimize.h"
 #include "Precision.h"
 #include "Sampling.h"
-#include "StageParam.h"
 #include "Staging.h"
 #include "Types.h"
 #include "Utils.h"
@@ -70,20 +68,6 @@ const char *fpKindName(FPKind k) {
     return "invalid";
   }
   llvm_unreachable("unknown FPKind value");
-}
-
-FPKind fpKindFromStr(StringRef tok) {
-  if (tok == "f16")
-    return FPKind::F16;
-  if (tok == "bf16")
-    return FPKind::BF16;
-  if (tok == "tf32")
-    return FPKind::TF32;
-  if (tok == "f32")
-    return FPKind::F32;
-  if (tok == "f64")
-    return FPKind::F64;
-  return FPKind::Invalid;
 }
 
 FPKind fpKindFromType(Type *T) {
@@ -535,86 +519,6 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
   }
 }
 
-// Wide-reference arm (-poseidon-accuracy-reference-bits > 0): the comparison
-// stays in MPFR against a `refBits` reference, so formats wider than FP64 are
-// scored on their merits; the original subgraph is measured the same way so
-// the deltas stay consistent.
-static void setUnifiedAccuracyCostWide(
-    CandidateSubgraph &CS, ArrayRef<FPNode *> outputs,
-    const SmallVectorImpl<MapVector<Value *, double>> &sampledPoints,
-    unsigned refBits) {
-  const size_t nOut = outputs.size();
-
-  auto reduceInit = [&](SmallVectorImpl<double> &perOut) {
-    perOut.assign(nOut, 0.0);
-    SmallVector<double, 8> sums(nOut, 0.0);
-    SmallVector<unsigned, 8> counts(nOut, 0);
-    for (const auto &point : sampledPoints) {
-      SmallVector<double, 8> errs;
-      getSampleErrorsWide(outputs, point, errs, refBits, nullptr);
-      for (size_t k = 0; k < nOut; ++k) {
-        double e = errs[k];
-        if (std::isnan(e))
-          continue;
-        sums[k] += e;
-        ++counts[k];
-      }
-    }
-    for (size_t k = 0; k < nOut; ++k) {
-      assert(counts[k] != 0 && "No valid sample found for original subgraph");
-      perOut[k] = sums[k] / counts[k];
-    }
-  };
-
-  SmallVector<double, 8> initPerOut;
-  reduceInit(initPerOut);
-  CS.initialAccCost = 0.0;
-  for (size_t k = 0; k < nOut; ++k) {
-    CS.perOutputInitialAccCost[outputs[k]] =
-        initPerOut[k] * std::fabs(outputs[k]->grad);
-    CS.initialAccCost += CS.perOutputInitialAccCost[outputs[k]];
-  }
-
-  SmallVector<PTCandidate, 8> kept;
-  for (auto &candidate : CS.candidates) {
-    SmallVector<double, 8> sums(nOut, 0.0);
-    SmallVector<unsigned, 8> counts(nOut, 0);
-    bool discard = false;
-    for (const auto &point : sampledPoints) {
-      SmallVector<double, 8> errs;
-      SmallVector<char, 8> nonFinite;
-      getSampleErrorsWide(outputs, point, errs, refBits, &candidate,
-                          &nonFinite);
-      for (size_t k = 0; k < nOut; ++k) {
-        if (flags::StrictMode && k < nonFinite.size() && nonFinite[k]) {
-          discard = true;
-          break;
-        }
-        double e = errs[k];
-        if (std::isnan(e))
-          continue;
-        sums[k] += e;
-        ++counts[k];
-      }
-      if (discard)
-        break;
-    }
-    if (discard)
-      continue;
-    candidate.accuracyCost = 0.0;
-    for (size_t k = 0; k < nOut; ++k) {
-      assert(counts[k] != 0 && "No valid sample found for candidate subgraph");
-      double red = sums[k] / counts[k];
-      candidate.perOutputAccCost[outputs[k]] =
-          red * std::fabs(outputs[k]->grad);
-      candidate.accuracyCost += candidate.perOutputAccCost[outputs[k]];
-    }
-    assert(!std::isnan(candidate.accuracyCost));
-    kept.push_back(std::move(candidate));
-  }
-  CS.candidates = std::move(kept);
-}
-
 void setUnifiedAccuracyCost(
     CandidateSubgraph &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -636,12 +540,6 @@ void setUnifiedAccuracyCost(
   SmallVector<FPNode *, 4> outputs;
   for (auto *output : CS.subgraph->outputs)
     outputs.push_back(valueToNodeMap[output].get());
-
-  if (flags::AccuracyReferenceBits > 0) {
-    setUnifiedAccuracyCostWide(CS, outputs, sampledPoints,
-                               flags::AccuracyReferenceBits);
-    return;
-  }
 
   struct RunningAccArith {
     double sum = 0.0;
@@ -758,55 +656,7 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
   // Mirror the real materialization's cleanups so the price charges only the
   // casts the materializer emits. demoteFPCastPHIs RAUWs each demoted PHI with
   // fpext(new PHI) before erasing it, and the WeakTrackingVH handles follow.
-  double stageSplitCost = 0.0;
-  // Staging buffers that reach the annotated body as pointer parameters.
-  // FClone has no call sites of its own, so the original F supplies the
-  // addrspace(3)-argument mapping (positionally identical arguments). The
-  // storage tier must match the compute tier: a df64 candidate wants the
-  // {hi,lo} pair layout (8-byte slot kept), everything else wants the halved
-  // layout, so exactly one arm runs.
-  const bool wantsDS = [&] {
-    for (auto &ch : pt.changes)
-      if (ch.newType == PrecisionChangeType::Expansion2)
-        return true;
-    return false;
-  }();
-  const ParamArm paramArm = !flags::NarrowParamStaging ? ParamArm::None
-                            : wantsDS                  ? ParamArm::DS
-                                                       : ParamArm::FP32;
-  applyStagingNarrowing(
-      *FClone, /*announce=*/false,
-      [&](Function &FC) {
-        // Parameter-array staging on the priced clone removes the per-read
-        // Dekker split from this candidate's cone; a pre-launch split kernel
-        // executes it.
-        if (!flags::StageParamArrays || !ptHasExpansion)
-          return;
-        unsigned nStaged = stageParamArrayDS(FC, F, nullptr);
-        if (nStaged) {
-          // Charge the hoisted split once per array element per launch (the
-          // once-per-thread frequency class, outBoundaryFreqScale), priced from
-          // the cost model by the instruction sequence the split kernel
-          // executes.
-          IRBuilder<NoFolder> SB(&*FC.getEntryBlock().getFirstInsertionPt());
-          Type *dbl = Type::getDoubleTy(FC.getContext());
-          Type *flt = Type::getFloatTy(FC.getContext());
-          Value *src = ConstantFP::get(dbl, 1.5);
-          SmallVector<Instruction *, 4> probe;
-          auto *hi = cast<Instruction>(SB.CreateFPTrunc(src, flt));
-          auto *hib = cast<Instruction>(SB.CreateFPExt(hi, dbl));
-          auto *res = cast<Instruction>(SB.CreateFSub(src, hib));
-          auto *lo = cast<Instruction>(SB.CreateFPTrunc(res, flt));
-          probe = {hi, hib, res, lo};
-          double perElem = 0.0;
-          for (Instruction *I : probe)
-            perElem += getInstructionCompCost(I);
-          for (Instruction *I : llvm::reverse(probe))
-            I->eraseFromParent();
-          stageSplitCost = nStaged * perElem * subgraph.outBoundaryFreqScale;
-        }
-      },
-      paramArm, F, flags::NarrowStagingSpeculative);
+  applyStagingNarrowing(*FClone, /*announce=*/false);
   // Cancel the join/split roundtrip the df64 conversion leaves on an expansion
   // restore, as applyExpansion does in the emitted code; no-op without the
   // poseidon.ds.join tag.
@@ -920,21 +770,11 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
     if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
       bodyDepth = std::max(bodyDepth, cloneLI.getLoopDepth(I->getParent()));
 
-  const bool freqWeighted =
-      flags::FreqWeightedPricing && subgraph.depthExec.size() > 1;
   for (Instruction *I : coneInsts) {
     double c = getInstructionCompCost(I);
     unsigned d = cloneLI.getLoopDepth(I->getParent());
-    if (freqWeighted) {
-      // Measured frequency for this instruction's loop depth. Subsumes the
-      // boundary-cast scale for the casts it covered (both answer "how often
-      // does this run", and this one was measured rather than derived from the
-      // profile header) and extends the same treatment to the ARITHMETIC the
-      // materializer emits outside the body loop, which is where a df64
-      // boundary conversion lives.
-      c *= subgraph.freqWeightAtDepth(d);
-    } else if ((isa<FPExtInst>(I) || isa<FPTruncInst>(I)) && bodyDepth > 0 &&
-               d < bodyDepth) {
+    if ((isa<FPExtInst>(I) || isa<FPTruncInst>(I)) && bodyDepth > 0 &&
+        d < bodyDepth) {
       c *= subgraph.outBoundaryFreqScale;
     }
     cost += c;
@@ -942,7 +782,7 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
 
   FClone->eraseFromParent();
 
-  return cost + stageSplitCost;
+  return cost;
 }
 
 } // namespace poseidon

@@ -23,14 +23,6 @@
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %s -o %t.opt.exe 2>&1 | FileCheck %s
 //
-// The candidate class can be ablated out, and then the nest is not recognized.
-// RUN: rm -rf %t.cache2 && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache2 \
-// RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
-// RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
-// RUN:     -poseidon-raise-host-gemm=0 \
-// RUN:     %s -o %t.off.exe 2>&1 | FileCheck --check-prefix=OFF %s
-//
 // REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
@@ -152,6 +144,3 @@ int main(void) {
 // CHECK-NEXT: [hostgemm]   lda=3*arg0  ldb=3*arg0  ldc=arg2
 // CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param5 A=param4 B=param3
 // CHECK: origin=HostGemmLoopNest
-
-// OFF-NOT: recognized GEMM from
-// OFF-NOT: origin=HostGemmLoopNest

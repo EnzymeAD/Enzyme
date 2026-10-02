@@ -9,7 +9,6 @@
 #include "Optimize.h"
 #include "ProfileRead.h"
 #include "RaiseWMMA.h"
-#include "StageParam.h"
 #include "matmul/Matmul.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
@@ -497,10 +496,6 @@ bool optimizeSiteBody(CallInst *CI, Function *F,
     siteClones().push_back(F);
     setSlotMetadata(*F);
     noteSiteOrigin(F, sourceBody);
-    // Hand Poseidon the parameter -> caller-value mapping it cannot rebuild
-    // itself (the site clone has no call sites yet, and the marker call's
-    // argument list is interleaved with activity markers and shadow slots).
-    noteSiteArgs(F, primalArgs);
 
     SmallString<128> profilePath(flags::ProfileUse);
     llvm::sys::path::append(profilePath, siteProfileStem(*F) + ".fpprofile");
@@ -550,17 +545,6 @@ bool optimizeSiteBody(CallInst *CI, Function *F,
         if (flags::OzakiHostDispatch && getGemmBody(F, ozNote))
           writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote,
                               flags::Cache);
-      }
-
-      // df64 parameter-array staging: the kernel now reads {hi,lo} limbs, so
-      // its launches need the pre-launch split prepended host-side. Written
-      // UNCONDITIONALLY (an empty note removes a stale descriptor, which is
-      // what keeps a limb buffer from reaching a kernel that reads doubles).
-      if (flags::StageParamArrays) {
-        StagedParamNote stNote;
-        (void)getStagedBody(F, stNote);
-        writeStageDescriptor(*CI->getFunction(), primalArgs, CI, stNote,
-                             flags::Cache);
       }
 
       // No rewrite was applied: call the ORIGINAL body so the wrapped site is

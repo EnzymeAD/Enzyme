@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Shared by the compiler's Ozaki-II pricing and by Runtimes/OzakiRT, which
-// includes it by relative path and is compiled by the application's clang:
-// keep it free of LLVM and of anything beyond C++14.
+// Shared by the compiler's Ozaki-II pricing and by runtime/ozaki/ozaki_rt.cu,
+// which includes it by relative path: keep it free of LLVM and of anything
+// beyond C++14.
 //
 //===----------------------------------------------------------------------===//
 

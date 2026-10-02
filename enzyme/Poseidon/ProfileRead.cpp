@@ -17,7 +17,6 @@
 #include <fstream>
 #include <regex>
 
-#include "Flags.h"
 #include "ProfileRead.h"
 #include "Utils.h"
 
@@ -59,6 +58,9 @@ size_t readProfIdxMetadata(const Instruction *I) {
   return out;
 }
 
+static constexpr double kGradFloorRatio = 1e-6;
+static constexpr double kGradNullRatio = 1e-9;
+
 unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
                             llvm::StringRef functionName) {
   if (profileMap.empty())
@@ -79,15 +81,14 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
   if (!(ref > 0.0) || !std::isfinite(ref))
     return 0;
 
-  unsigned floored = 0, degenerate = 0;
+  unsigned floored = 0;
   for (auto &kv : profileMap) {
     ProfileInfo &p = kv.second;
     if (p.exec == 0)
       continue;
     const double perExec = weightOf(p) / (double)p.exec;
     const double ratio = perExec / ref;
-    if (ratio < flags::GradNullRatio) {
-      ++degenerate;
+    if (ratio < kGradNullRatio) {
       llvm::errs() << "Poseidon: profiled instruction " << kv.first << " of "
                    << functionName << " has per-execution gradient " << perExec
                    << ", " << ratio
@@ -97,9 +98,7 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
                       "does for any partition-of-unity basis with a derivative "
                       "contraction). Re-profile with a non-degenerate seed.\n";
     }
-    if (flags::GradFloorRatio <= 0.0)
-      continue;
-    const double floorW = flags::GradFloorRatio * ref * (double)p.exec;
+    const double floorW = kGradFloorRatio * ref * (double)p.exec;
     if (weightOf(p) < floorW) {
       // Write the floor back through sumGrad, which is what every consumer
       // reads (FPNode::grad, CandidateOutput::grad, MatmulProfile::gradD).
@@ -109,14 +108,11 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
       ++floored;
     }
   }
-  if (degenerate && flags::GradFloorAbort)
-    report_fatal_error("Poseidon: degenerate adjoint gradients in profile; "
-                       "refusing to solve (-poseidon-grad-floor-abort)");
   if (floored)
     llvm::errs() << "Poseidon: gradient floor raised the accuracy weight of "
                  << floored << " of " << profileMap.size()
                  << " profiled instruction(s) in " << functionName << " to "
-                 << flags::GradFloorRatio << " x the site maximum\n";
+                 << kGradFloorRatio << " x the site maximum\n";
   return floored;
 }
 

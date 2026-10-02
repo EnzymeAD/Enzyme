@@ -76,6 +76,7 @@ struct FunctionFPState {
   // Fraction of the sampled inputs a matrix-product candidate's domainError
   // bounds; elementwise candidates are scored by their mean and ignore it.
   double confidence = kDefaultConfidence;
+  unsigned sampleLogBits = 0;
   // Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
   // costs carry; the denominator that turns an accuracy cost into a
   // per-operation relative rounding level. See accuracyDPSolver.
@@ -104,7 +105,7 @@ struct FunctionFPState {
 };
 
 bool collectFPCandidates(llvm::Function &F, double errorTol, double confidence,
-                         FunctionFPState &st);
+                         unsigned sampleLogBits, FunctionFPState &st);
 
 bool materializeFPSolution(llvm::Function &F, FunctionFPState &st,
                            llvm::ArrayRef<SolutionStep> steps);

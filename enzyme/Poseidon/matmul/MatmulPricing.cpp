@@ -41,7 +41,7 @@ std::string matmulOptionLabel(const CandidateMatmul::Option &opt) {
     return ozakiIOptionLabel(opt);
   case CandidateMatmul::Option::Strategy::OzakiII:
     // strategyParam encodes num_moduli for OzakiII (same role as N for OzakiI).
-    // nm=0 is the native cuBLAS DGEMM dispatch (-poseidon-ozaki-native-dgemm).
+    // nm=0 is the native cuBLAS DGEMM dispatch.
     if (opt.strategyParam == 0)
       return "native-dgemm cublas f64/f64";
     return (Twine("ozaki-ii nm=") + Twine(opt.strategyParam) + " wmma m" +
@@ -322,21 +322,21 @@ uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
 bool inKernelRaiseFits(Function *F, const AbstractMatmul &m,
                        const CandidateMatmul::Option &opt,
                        uint64_t existingBytes, StringRef className) {
-  if (!F || flags::InKernelSharedCap == 0)
-    return true; // no body to place scratch in / capacity refusal disabled
+  if (!F)
+    return true;
   std::string breakdown;
   uint64_t raiseBytes =
       inKernelRaiseSharedBytes(*F->getParent(), opt, &breakdown);
   if (raiseBytes == 0)
     return true;
   uint64_t total = existingBytes + raiseBytes;
-  if (total <= (uint64_t)flags::InKernelSharedCap)
+  if (total <= kStaticShmemCap)
     return true;
   if (flags::Print)
     llvm::errs()
         << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x" << m.K
         << ": " << className << " NOT PROPOSED -- it needs " << total
-        << " B of static shared memory against a " << flags::InKernelSharedCap
+        << " B of static shared memory against a " << kStaticShmemCap
         << " B cap (" << existingBytes
         << " B already live in the enclosing kernel + " << raiseBytes
         << " B for the raise: " << breakdown

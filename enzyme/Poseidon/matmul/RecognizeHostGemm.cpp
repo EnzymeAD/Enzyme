@@ -1379,8 +1379,6 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
-  if (!flags::RaiseHostGemm)
-    return;
   Module *M = F.getParent();
   if (!Triple(M->getTargetTriple()).isNVPTX())
     return;

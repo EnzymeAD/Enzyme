@@ -5,7 +5,7 @@
 // rel(nm) = (dispatch time) / (scalar-FP64 GEMM time) at a square reference
 // shape per modulus count. Emits one row per modulus count the candidate
 // generator can propose (nm 8..14) plus the native cuBLAS DGEMM row
-// `ozaki_dispatch_rel,dgemm,<rel>` that -poseidon-ozaki-native-dgemm prices from.
+// `ozaki_dispatch_rel,dgemm,<rel>` the native DGEMM candidate is priced from.
 // Build: nvcc -O3 -arch=sm_120 ozaki_calibrate.cu <path>/ozaki_rt.cu \
 //        -lcublas -o ozaki_calibrate
 // Run:   ./ozaki_calibrate [N=2048] [reps=30]  >>  cm_sm_120_RTX5090.csv
@@ -80,8 +80,8 @@ int main(int argc, char **argv) {
   }
 
   // Native cuBLAS DGEMM through the same dispatch entry (nm=0), exactly what
-  // the -poseidon-ozaki-native-dgemm candidate runs; handle creation amortized by
-  // the warmup call.
+  // the native DGEMM candidate runs; handle creation amortized by the warmup
+  // call.
   NM = 0;
   float t_dg = timeit(run_oz, REPS);
   double rel_dg = (double)t_dg / (double)t_ref;

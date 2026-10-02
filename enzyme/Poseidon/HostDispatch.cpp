@@ -8,7 +8,6 @@
 #include "Flags.h"
 #include "LaunchDescriptors.h"
 #include "Optimize.h"
-#include "StageParam.h"
 #include "matmul/Matmul.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -510,10 +509,7 @@ static void emitDescriptorFile(StringRef cacheDir, StringRef wrapperName,
                << (n.scheme == DispatchScheme::Tcec     ? 1
                    : n.scheme == DispatchScheme::Direct ? 2
                                                         : 0);
-            // Optional trailing runtime-geometry block (tokens
-            // 17..37). Descriptors written before it existed stop
-            // here and read back with runtimeDims = false and
-            // beta = 0.
+            // Optional trailing runtime-geometry block (tokens 17..36).
             if (n.runtimeDims) {
               const GemmBodyNote::RtDim *d[6] = {&n.rM,   &n.rNcols, &n.rK,
                                                  &n.rlda, &n.rldb,   &n.rldc};
@@ -629,8 +625,6 @@ struct LaunchDesc {
   bool standalone;
   unsigned numModuli;
   DispatchScheme scheme = DispatchScheme::OzakiII;
-  // General geometry (defaults: square row-major, filled from N for old
-  // descriptors).
   unsigned gM = 0, gNcols = 0, gK = 0;
   unsigned lda = 0, ldb = 0, ldc = 0;
   bool aColMajor = false, bColMajor = false, cColMajor = false;
@@ -683,7 +677,7 @@ static bool
 readOzDispatchDescriptors(StringRef cacheDir,
                           std::map<std::string, LaunchDesc> &descs) {
   readDescriptors(cacheDir, kOzDispatchScheme, [&](ArrayRef<StringRef> toks) {
-    if (toks.size() < 6)
+    if (toks.size() < 17)
       return;
     LaunchDesc d;
     d.kernel = toks[0].str();
@@ -695,55 +689,28 @@ readOzDispatchDescriptors(StringRef cacheDir,
     (void)toks[5].getAsInteger(10, sa);
     d.standalone = sa != 0;
     d.numModuli = kOzakiIIMaxModuli;
-    if (toks.size() >= 7) {
-      int nm = (int)kOzakiIIMaxModuli;
-      (void)toks[6].getAsInteger(10, nm);
-      if (nm >= 1 && nm <= (int)kOzakiIIMaxModuli)
-        d.numModuli = (unsigned)nm;
-      else if (nm == 0 && flags::OzakiNativeDgemm)
-        d.numModuli = 0; // solver-chosen native cuBLAS DGEMM dispatch
-    }
-    // Trailing scheme token (absent in descriptors written before the TCEC
-    // dispatch existed, which are Ozaki-II by construction).
-    if (toks.size() >= 17) {
-      int sc = 0;
-      (void)toks[16].getAsInteger(10, sc);
-      d.scheme = sc == 1   ? DispatchScheme::Tcec
-                 : sc == 2 ? DispatchScheme::Direct
-                           : DispatchScheme::OzakiII;
-    }
-    // --poseidon-ozaki-force-nm overrides the descriptor num_moduli (an
-    // explicit 0 with -poseidon-ozaki-native-dgemm forces the native DGEMM
-    // path; getNumOccurrences distinguishes it from the default). A Direct
-    // dispatch's parameter is an operand format, not a modulus count, so the
-    // override must not reach it.
-    if (d.scheme != DispatchScheme::Direct) {
-      if (flags::OzakiForceNm >= 1 && flags::OzakiForceNm <= kOzakiIIMaxModuli)
-        d.numModuli = flags::OzakiForceNm;
-      else if (flags::OzakiForceNm == 0 &&
-               flags::OzakiForceNm.getNumOccurrences() > 0 &&
-               flags::OzakiNativeDgemm)
-        d.numModuli = 0;
-    }
-    // General geometry (toks[7..15]); default to square row-major derived from
-    // N for legacy descriptors written before the _ex path.
-    d.gM = d.gNcols = d.gK = d.N;
-    d.lda = d.ldb = d.ldc = d.N;
-    if (toks.size() >= 16) {
-      (void)toks[7].getAsInteger(10, d.gM);
-      (void)toks[8].getAsInteger(10, d.gNcols);
-      (void)toks[9].getAsInteger(10, d.gK);
-      (void)toks[10].getAsInteger(10, d.lda);
-      (void)toks[11].getAsInteger(10, d.ldb);
-      (void)toks[12].getAsInteger(10, d.ldc);
-      int ac = 0, bc = 0, cc = 0;
-      (void)toks[13].getAsInteger(10, ac);
-      (void)toks[14].getAsInteger(10, bc);
-      (void)toks[15].getAsInteger(10, cc);
-      d.aColMajor = ac != 0;
-      d.bColMajor = bc != 0;
-      d.cColMajor = cc != 0;
-    }
+    int nm = (int)kOzakiIIMaxModuli;
+    (void)toks[6].getAsInteger(10, nm);
+    if (nm >= 0 && nm <= (int)kOzakiIIMaxModuli)
+      d.numModuli = (unsigned)nm;
+    int sc = 0;
+    (void)toks[16].getAsInteger(10, sc);
+    d.scheme = sc == 1   ? DispatchScheme::Tcec
+               : sc == 2 ? DispatchScheme::Direct
+                         : DispatchScheme::OzakiII;
+    (void)toks[7].getAsInteger(10, d.gM);
+    (void)toks[8].getAsInteger(10, d.gNcols);
+    (void)toks[9].getAsInteger(10, d.gK);
+    (void)toks[10].getAsInteger(10, d.lda);
+    (void)toks[11].getAsInteger(10, d.ldb);
+    (void)toks[12].getAsInteger(10, d.ldc);
+    int ac = 0, bc = 0, cc = 0;
+    (void)toks[13].getAsInteger(10, ac);
+    (void)toks[14].getAsInteger(10, bc);
+    (void)toks[15].getAsInteger(10, cc);
+    d.aColMajor = ac != 0;
+    d.bColMajor = bc != 0;
+    d.cColMajor = cc != 0;
     // Trailing runtime-geometry block: flag + 6 x (param mul add) + beta.
     if (toks.size() >= 36) {
       int rt = 0;
@@ -1148,14 +1115,6 @@ bool rewriteProfileStubBodies(Module &M, StringRef cacheDir) {
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &) {
   applyFlagDefaults();
-  // df64 parameter-array staging rides the same host-side stub slot: the device
-  // cc1 rewrote the kernel to read {hi,lo} limbs, so every launch must be
-  // preceded by the split. Equally suppressed during profile-gen / with no
-  // profile (a cache/*.dsstage there is a stale leftover).
-  bool stageChanged = false;
-  if (flags::StageParamArrays && !Triple(M.getTargetTriple()).isNVPTX() &&
-      !flags::ProfileGenerate && !flags::ProfileUse.empty())
-    stageChanged = rewriteStageStubBodies(M, flags::Cache);
   // Profile generation: every launch of an annotated kernel goes through the
   // runtime helper that supplies its shadow buffers.
   if (flags::ProfileGenerate && !Triple(M.getTargetTriple()).isNVPTX())
@@ -1167,9 +1126,8 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
   // profile any cache/*.ozdispatch is a stale leftover.
   if (!flags::OzakiHostDispatch || Triple(M.getTargetTriple()).isNVPTX() ||
       flags::ProfileGenerate || flags::ProfileUse.empty())
-    return stageChanged ? llvm::PreservedAnalyses::none()
-                        : llvm::PreservedAnalyses::all();
-  return (rewriteGemmStubBodies(M, flags::Cache) || stageChanged)
+    return llvm::PreservedAnalyses::all();
+  return rewriteGemmStubBodies(M, flags::Cache)
              ? llvm::PreservedAnalyses::none()
              : llvm::PreservedAnalyses::all();
 }

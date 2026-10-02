@@ -40,6 +40,8 @@ using namespace llvm;
 
 namespace poseidon {
 
+static constexpr unsigned kMaxExprDepth = 100;
+
 static Type *fpTypeFromDtype(StringRef dtype, IRBuilder<> &builder) {
   if (dtype == "f16")
     return builder.getHalfTy();
@@ -693,9 +695,9 @@ std::string FPLLValue::toFullExpression(
   } else {
     assert(!operands.empty() && "FPNode has no operands!");
 
-    if (depth > flags::MaxExprDepth) {
+    if (depth > kMaxExprDepth) {
       std::string msg = "Expression depth exceeded maximum allowed depth of " +
-                        std::to_string(flags::MaxExprDepth) + " for " + op +
+                        std::to_string(kMaxExprDepth) + " for " + op +
                         "; consider disabling loop unrolling";
 
       llvm_unreachable(msg.c_str());
@@ -990,9 +992,9 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
     return 0;
   }
 
-  double initialCompCost = getCompCost(
-      {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
-      newSubgraph.inputs, &newSubgraph.opExec, newSubgraph.execNormalizer);
+  double initialCompCost =
+      getCompCost({newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
+                  newSubgraph.inputs);
 
   double candidateCompCost =
       getCompCost(newSubgraph, candidates[candidateIndex]);

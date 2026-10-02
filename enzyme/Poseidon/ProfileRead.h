@@ -94,11 +94,10 @@ void parseProfileFile(const std::string &profilePath,
 // partition-of-unity operator with a derivative). Within one site every value
 // reaches the output through a bounded chain, so per function:
 //   ref  = max over profiled instructions of |sumGrad| / exec
-//   w(v) = max(|sumGrad_v|, flags::GradFloorRatio * ref * exec_v)
+//   w(v) = max(|sumGrad_v|, 1e-6 * ref * exec_v)
 // The floor is written back into sumGrad so every consumer sees it; a ratio
-// below flags::GradNullRatio is reported (or refused under
-// -poseidon-grad-floor-abort). Returns the number of instructions whose weight
-// was raised.
+// below 1e-9 is reported. Returns the number of instructions whose weight was
+// raised.
 unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
                             llvm::StringRef functionName);
 

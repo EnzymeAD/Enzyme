@@ -29,12 +29,6 @@ void noteSiteOrigin(llvm::Function *clone, llvm::Function *orig);
 // The ".fpprofile" stem of a site clone. The profiling run writes one record
 // per marked BODY, so every clone of one body reads the same file.
 std::string siteProfileStem(const llvm::Function &clone);
-// Caller-supplied primal value of parameter i of a site clone, as recorded by
-// noteSiteArgs; null when unknown.
-llvm::Value *siteArg(const llvm::Function *clone, unsigned i);
-
-void noteSiteArgs(llvm::Function *clone,
-                  llvm::ArrayRef<llvm::Value *> primalArgs);
 bool redirectNoopSite(llvm::Function *clone);
 
 } // namespace poseidon

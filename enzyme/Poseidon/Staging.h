@@ -19,7 +19,6 @@
 #ifndef POSEIDON_STAGING_H
 #define POSEIDON_STAGING_H
 
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/Function.h"
 
 namespace poseidon {
@@ -35,40 +34,10 @@ bool narrowSharedStaging(llvm::Function &F);
 // same 8-byte slot) and turn each split into a pair load.
 bool narrowSharedStagingDS(llvm::Function &F);
 
-// Same two transforms for a buffer that reaches the rewritten function as a
-// POINTER PARAMETER. The arms above root at the global's addrspacecast and so
-// only see GEPs hanging off that cast inside F; a kernel that declares its
-// __shared__ scratch in the kernel and hands it to an annotated `noinline` body
-// as a `double *` has every element GEP hanging off an Argument instead.
-// `Proxy` is the function the site-argument mapping was recorded against (F
-// itself at materialization, the original site function during pricing).
-// `speculative` relaxes the value-preserving gate for PRICING ONLY: see
-// -poseidon-narrow-staging-speculative.
-bool narrowSharedStagingParam(llvm::Function &F,
-                              llvm::Function *Proxy = nullptr,
-                              bool speculative = false);
-bool narrowSharedStagingParamDS(llvm::Function &F,
-                                llvm::Function *Proxy = nullptr,
-                                bool speculative = false);
-
-// Which parameter arm applyStagingNarrowing runs. Both arms self-gate on the
-// reader set, so the materializer runs Both; a pricing clone must pick one,
-// because narrowing an expansion candidate's operand buffer to a single float
-// would make its `lo` limb identically zero and price the expansion as free.
-enum class ParamArm { None, Both, FP32, DS };
-
-// The arms in the order every site must apply them: the global-rooted FP32
-// narrowing, the parameter arms `param` selects, the caller's own step (df64
-// parameter-array staging, recorded at materialization and priced on the
-// clone), then the global-rooted df64 narrowing. `announce` prints the per-arm
-// line the solve log carries. True if any arm changed F; `*narrowedParam`
-// reports whether a parameter arm fired, which is what the speculative-pricing
-// soundness check reads.
-bool applyStagingNarrowing(
-    llvm::Function &F, bool announce,
-    llvm::function_ref<void(llvm::Function &)> between = {},
-    ParamArm param = ParamArm::None, llvm::Function *paramProxy = nullptr,
-    bool paramSpeculative = false, bool *narrowedParam = nullptr);
+// The arms in the order every site must apply them: the FP32 narrowing, then
+// the df64 one. `announce` prints the per-arm line the solve log carries. True
+// if any arm changed F.
+bool applyStagingNarrowing(llvm::Function &F, bool announce);
 
 } // namespace poseidon
 #endif // POSEIDON_STAGING_H

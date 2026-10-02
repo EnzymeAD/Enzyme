@@ -40,14 +40,15 @@ bool inKernelRaiseFits(llvm::Function *F, const AbstractMatmul &m,
 // bounds (the percentile it is read off), the site's own or
 // -poseidon-confidence.
 double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
-                             double confidence, FPKind inputPrec,
-                             FPKind accPrec, double *domainErrOut = nullptr,
+                             double confidence, unsigned sampleLogBits,
+                             FPKind inputPrec, FPKind accPrec,
+                             double *domainErrOut = nullptr,
                              FPKind exponentPrec = FPKind::Invalid,
                              unsigned orderTileK = 0,
                              unsigned inputMantBits = 0);
 double getOzakiIIAccuracyCost(const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
-                              unsigned capturedBits,
+                              unsigned sampleLogBits, unsigned capturedBits,
                               double *domainErrOut = nullptr);
 
 } // namespace poseidon

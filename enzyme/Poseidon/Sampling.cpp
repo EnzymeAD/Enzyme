@@ -28,35 +28,20 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Per-sample error for every accuracy reduction; a non-finite candidate value
-// yields a large finite error so the reduction ranks it worst instead of
-// dropping it.
-double sampleError(double goldVal, double result) {
-  if (!flags::RelativeError)
-    return std::fabs(goldVal - result);
+static constexpr double kCancellationThreshold = 1e-12;
+static constexpr double kCancellationFraction = 0.5;
 
-  // A non-finite candidate is catastrophic only when the oracle is finite
-  // there; if the oracle is itself non-finite the candidate is correct, so
-  // return NaN and let the reduction drop the sample.
-  if (!std::isfinite(result))
-    return std::isfinite(goldVal) ? flags::NonfinitePenalty.getValue()
-                                  : std::numeric_limits<double>::quiet_NaN();
-  double denom = std::fabs(goldVal);
-  if (!(denom > 0.0))
-    denom = std::numeric_limits<double>::min();
-  return std::fabs(goldVal - result) / denom;
+double sampleError(double goldVal, double result) {
+  return std::fabs(goldVal - result);
 }
 
 // The gate is workload-driven: only a profiled sqrt argument or denominator
-// within flags::CancellationThreshold of zero activates the plan.
+// within kCancellationThreshold of zero activates the plan.
 CancellationPlan
 buildCancellationPlan(const Subgraph &subgraph,
                       const std::unordered_map<Value *, std::shared_ptr<FPNode>>
                           &valueToNodeMap) {
   CancellationPlan plan;
-  if (!flags::CancellationSampling)
-    return plan;
-
   const auto &inputs = subgraph.inputs;
 
   // Smallest magnitude the profiler observed for a node. A range straddling
@@ -97,10 +82,10 @@ buildCancellationPlan(const Subgraph &subgraph,
           plan.pairs.push_back({a->value, b->value});
       }
     } else if (node->op == "sqrt" && node->operands.size() >= 1) {
-      if (minMagnitude(node->operands[0].get()) < flags::CancellationThreshold)
+      if (minMagnitude(node->operands[0].get()) < kCancellationThreshold)
         nearSingular = true;
     } else if (node->op == "/" && node->operands.size() == 2) {
-      if (minMagnitude(node->operands[1].get()) < flags::CancellationThreshold)
+      if (minMagnitude(node->operands[1].get()) < kCancellationThreshold)
         nearSingular = true;
     }
   }
@@ -157,13 +142,8 @@ void getSampledPoints(
   // subtracted difference is small together.
   size_t numCoincidence = 0;
   if (plan && plan->active && !plan->pairs.empty()) {
-    double frac = flags::CancellationFraction;
-    if (frac < 0.0)
-      frac = 0.0;
-    if (frac > 1.0)
-      frac = 1.0;
-    numCoincidence =
-        static_cast<size_t>(frac * static_cast<double>(flags::NumSamples));
+    numCoincidence = static_cast<size_t>(
+        kCancellationFraction * static_cast<double>(flags::NumSamples));
   }
 
   double maxRange = 1.0;

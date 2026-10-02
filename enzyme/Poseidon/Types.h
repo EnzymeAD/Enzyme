@@ -146,31 +146,6 @@ struct Subgraph {
   // min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
   double outBoundaryFreqScale = 1.0;
 
-  // MEASURED execution frequency of this subgraph's own instructions, filled
-  // from the profile before any candidate is priced. `opExec` is per
-  // instruction; `depthExec` groups the same counts by loop depth, which is
-  // the frequency class that survives materialization and O3 (a df64 FMA is 16
-  // new instructions with no original, and an instruction hoisted out of the
-  // body loop genuinely does run at the outer frequency). Empty / zero means
-  // "no profile" and prices exactly as an unweighted walk.
-  llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
-  std::map<unsigned, uint64_t> depthExec;
-  uint64_t execNormalizer = 0;
-
-  // Weight for an instruction priced at loop depth `d`: the measured count of
-  // the deepest recorded class at or below `d`, or the shallowest recorded
-  // class when `d` is outside every recorded loop, over the normalizer. 1.0
-  // without a profile, and 1.0 for every instruction of a
-  // frequency-homogeneous subgraph.
-  double freqWeightAtDepth(unsigned d) const {
-    if (depthExec.empty() || execNormalizer == 0)
-      return 1.0;
-    auto it = depthExec.upper_bound(d);
-    uint64_t e = (it == depthExec.begin()) ? depthExec.begin()->second
-                                           : std::prev(it)->second;
-    return (double)e / (double)execNormalizer;
-  }
-
   Subgraph() = default;
   explicit Subgraph(llvm::SetVector<llvm::Value *> inputs,
                     llvm::SetVector<llvm::Instruction *> outputs,
@@ -253,9 +228,8 @@ public:
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit CandidateSubgraph(Subgraph &subgraph) : subgraph(&subgraph) {
-    initialCompCost =
-        getCompCost({subgraph.outputs.begin(), subgraph.outputs.end()},
-                    subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
+    initialCompCost = getCompCost(
+        {subgraph.outputs.begin(), subgraph.outputs.end()}, subgraph.inputs);
   }
 
   void apply(size_t candidateIndex);

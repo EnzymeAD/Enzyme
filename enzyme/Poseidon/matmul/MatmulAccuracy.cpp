@@ -26,13 +26,14 @@ using namespace llvm;
 
 namespace poseidon {
 
-static double sampleCell(const CellStat &c, std::mt19937_64 &rng) {
+static double sampleCell(const CellStat &c, std::mt19937_64 &rng,
+                         unsigned sampleLogBits) {
   if (c.count == 0)
     report_fatal_error("sampleCell: unexpected unprofiled cell");
   assert(c.min <= c.max && "sampleCell: corrupted profile (min > max)");
   if (c.min == c.max)
     return c.min;
-  if (flags::SampleLogBits == 0) {
+  if (sampleLogBits == 0) {
     std::uniform_real_distribution<double> dist(c.min, c.max);
     return dist(rng);
   }
@@ -42,7 +43,7 @@ static double sampleCell(const CellStat &c, std::mt19937_64 &rng) {
   double maxMag = std::max(std::fabs(c.min), std::fabs(c.max));
   if (maxMag == 0.0)
     return 0.0;
-  double loMag = maxMag * std::ldexp(1.0, -(int)flags::SampleLogBits);
+  double loMag = maxMag * std::ldexp(1.0, -(int)sampleLogBits);
   double lu = std::uniform_real_distribution<double>(std::log(loMag),
                                                      std::log(maxMag))(rng);
   double mag = std::exp(lu);
@@ -83,8 +84,9 @@ static constexpr uint64_t kAccModelGeneration = 1;
 // the profile, dims, precision params, sample count, seed and sampling
 // distribution, so it is memoized to flags::Cache keyed by a hash of exactly
 // those (one file per key, race-free across parallel variant builds). The
-// distribution term matters: fpOptimize sets flags::SampleLogBits = 40 under an
-// error budget, and a shared memo would otherwise serve the other mode's model.
+// distribution term matters: fpOptimize samples log-uniformly over 40 bits
+// under an error budget, and a shared memo would otherwise serve the other
+// mode's model.
 static uint64_t accHashMix(uint64_t h, uint64_t v) {
   h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
   return h;
@@ -95,7 +97,8 @@ static uint64_t accHashD(uint64_t h, double d) {
   return accHashMix(h, b);
 }
 static uint64_t accProfileHash(const AbstractMatmul &m,
-                               const MatmulProfile &prof) {
+                               const MatmulProfile &prof,
+                               unsigned sampleLogBits) {
   uint64_t h = 1469598103934665603ULL;
   h = accHashMix(h, m.M);
   h = accHashMix(h, m.N);
@@ -119,7 +122,7 @@ static uint64_t accProfileHash(const AbstractMatmul &m,
   }
   h = accHashMix(h, flags::NumSamples);
   h = accHashMix(h, (uint64_t)flags::RandomSeed);
-  h = accHashMix(h, (uint64_t)flags::SampleLogBits);
+  h = accHashMix(h, (uint64_t)sampleLogBits);
   h = accHashMix(h, kAccModelGeneration);
   return h;
 }
@@ -175,10 +178,10 @@ static double roundToMantBits(double x, unsigned bits) {
 // of the budget-0 solution. inputMantBits (0 = off): round the operands to that
 // many significand bits instead of `inputPrec` (see roundToMantBits).
 double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
-                             double confidence, FPKind inputPrec,
-                             FPKind accPrec, double *domainErrOut,
-                             FPKind exponentPrec, unsigned orderTileK,
-                             unsigned inputMantBits) {
+                             double confidence, unsigned sampleLogBits,
+                             FPKind inputPrec, FPKind accPrec,
+                             double *domainErrOut, FPKind exponentPrec,
+                             unsigned orderTileK, unsigned inputMantBits) {
   const unsigned numSamples =
       std::max<unsigned>(8u, std::min<unsigned>(flags::NumSamples, 256u));
   const size_t mk = (size_t)m.M * m.K;
@@ -188,7 +191,7 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
     report_fatal_error(
         "getMatmulAccuracyCost: unexpected profile cell-vector shape");
 
-  uint64_t cacheKey = accProfileHash(m, prof);
+  uint64_t cacheKey = accProfileHash(m, prof, sampleLogBits);
   cacheKey = accHashMix(cacheKey, 0x6d6dULL); // "mm" discriminator
   cacheKey = accHashMix(cacheKey, (uint64_t)inputPrec);
   cacheKey = accHashMix(cacheKey, (uint64_t)accPrec);
@@ -225,12 +228,12 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
   relSamples.reserve(numSamples);
   for (unsigned s = 0; s < numSamples; ++s) {
     for (size_t i = 0; i < mk; ++i) {
-      Ad[i] = sampleCell(prof.a[i], rng);
+      Ad[i] = sampleCell(prof.a[i], rng, sampleLogBits);
       Ar[i] = inputMantBits ? roundToMantBits(Ad[i], inputMantBits)
                             : roundToPrec(Ad[i], inputPrec);
     }
     for (size_t i = 0; i < kn; ++i) {
-      Bd[i] = sampleCell(prof.b[i], rng);
+      Bd[i] = sampleCell(prof.b[i], rng, sampleLogBits);
       Br[i] = inputMantBits ? roundToMantBits(Bd[i], inputMantBits)
                             : roundToPrec(Bd[i], inputPrec);
     }
@@ -320,7 +323,8 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
 // the captured bits.
 double getOzakiIIAccuracyCost(const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
-                              unsigned capturedBits, double *domainErrOut) {
+                              unsigned sampleLogBits, unsigned capturedBits,
+                              double *domainErrOut) {
   const unsigned numSamples =
       std::max<unsigned>(8u, std::min<unsigned>(flags::NumSamples, 256u));
   const size_t mk = (size_t)m.M * m.K;
@@ -330,7 +334,7 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
     report_fatal_error(
         "getOzakiIIAccuracyCost: unexpected profile cell-vector shape");
 
-  uint64_t cacheKey = accProfileHash(m, prof);
+  uint64_t cacheKey = accProfileHash(m, prof, sampleLogBits);
   cacheKey = accHashMix(cacheKey, 0x6f7aULL); // "oz" discriminator
   cacheKey = accHashMix(cacheKey, capturedBits);
   if (confidence != kDefaultConfidence)
@@ -352,9 +356,9 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
   relSamples.reserve(numSamples);
   for (unsigned s = 0; s < numSamples; ++s) {
     for (size_t i = 0; i < mk; ++i)
-      Ad[i] = sampleCell(prof.a[i], rng);
+      Ad[i] = sampleCell(prof.a[i], rng, sampleLogBits);
     for (size_t i = 0; i < kn; ++i)
-      Bd[i] = sampleCell(prof.b[i], rng);
+      Bd[i] = sampleCell(prof.b[i], rng, sampleLogBits);
     // Quantize A per row and B per column as the real kernel does: each row or
     // column is scaled by 2^(beta-1-ilogb(max)) and rounded to the integer
     // grid, so a small element keeps fewer than beta bits.

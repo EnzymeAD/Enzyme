@@ -45,6 +45,10 @@ using namespace llvm;
 
 namespace poseidon {
 
+// Dispatch and raise prices are measured wall-clock ratios that repeat to about
+// 0.6% run to run, so a smaller modelled cost gap is a tie.
+static constexpr double kCostTieBandRel = 0.006;
+
 static json::Value jsonFloat(double v) {
   if (std::isfinite(v))
     return json::Value(v);
@@ -149,27 +153,6 @@ static bool conflictsWithChosen(const SmallVectorImpl<SolutionStep> &priorSteps,
   }
   return false;
 }
-static bool conflictsWithChosen(const SmallVectorImpl<SolutionStep> &priorSteps,
-                                CandidateOutput *cand) {
-  if (!cand || !cand->subgraph)
-    return false;
-  for (const auto &step : priorSteps)
-    if (const auto *fp = stepMatmulFootprint(step))
-      if (intersects(*fp, cand->subgraph->operations))
-        return true;
-  return false;
-}
-static bool conflictsWithChosen(const SmallVectorImpl<SolutionStep> &priorSteps,
-                                CandidateSubgraph *cand) {
-  if (!cand || !cand->subgraph)
-    return false;
-  for (const auto &step : priorSteps)
-    if (const auto *fp = stepMatmulFootprint(step))
-      if (intersects(*fp, cand->subgraph->operations))
-        return true;
-  return false;
-}
-
 static CandidateMatmul *stepMatmul(const SolutionStep &step) {
   if (auto *const *cm = std::get_if<CandidateMatmul *>(&step.item))
     return *cm;
@@ -385,16 +368,6 @@ bool dpCacheHasFunction(StringRef fnName) {
 static void checkToleranceInputs(StringRef siteName, double accScale,
                                  double baseline, bool loadedFromCache,
                                  StringRef cacheFilePath) {
-  // The ratio is only dimensionless because the sampled errors are absolute.
-  if (flags::RelativeError)
-    report_fatal_error(
-        Twine("Poseidon: -poseidon-relative-error cannot be combined with a "
-              "site accuracy tolerance (") +
-        siteName +
-        " was given one): the tolerance is the ratio of an ABSOLUTE modelled "
-        "error to the site's total sensitivity, and relative sampling makes "
-        "that ratio meaningless. Drop one of the two.");
-
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
     std::string scaleStr;
     llvm::raw_string_ostream(scaleStr) << accScale;
@@ -1262,14 +1235,12 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
         best = (long)i;
       }
     }
-    // Inside the calibration noise band (-poseidon-cost-tie-band-rel) two costs
-    // are a tie: among qualifying candidates within band of the cheapest, the
-    // winner is the smallest modelled domainError, then the smallest compCost,
-    // then the lowest index. The guard never widens the qualifying set; 0 keeps
-    // strictly-cheapest-wins.
-    if (best >= 0 && flags::CostTieBandRel > 0.0) {
-      const double band =
-          bestComp + flags::CostTieBandRel * std::fabs(bestComp);
+    // Inside the calibration noise band two costs are a tie: among qualifying
+    // candidates within band of the cheapest, the winner is the smallest
+    // modelled domainError, then the smallest compCost, then the lowest index.
+    // The guard never widens the qualifying set.
+    if (best >= 0) {
+      const double band = bestComp + kCostTieBandRel * std::fabs(bestComp);
       long tieBest = best;
       for (size_t i = 0; i < cm.candidates.size(); ++i) {
         const CandidateMatmul::Option &c = cm.candidates[i];
@@ -1284,8 +1255,7 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
       }
       if (tieBest != best && flags::Print)
         llvm::errs() << "Poseidon error-budget: cost tie inside "
-                     << (flags::CostTieBandRel * 100.0)
-                     << "% calibration band ("
+                     << (kCostTieBandRel * 100.0) << "% calibration band ("
                      << matmulOptionLabel(cm.candidates[best]) << " cost "
                      << cm.candidates[best].compCost << " vs "
                      << matmulOptionLabel(cm.candidates[tieBest]) << " cost "

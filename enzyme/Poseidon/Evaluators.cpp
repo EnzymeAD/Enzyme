@@ -31,6 +31,8 @@ using namespace llvm;
 
 namespace poseidon {
 
+static constexpr unsigned kMaxMPFRPrec = 1024;
+
 namespace {
 struct DS {
   float hi, lo;
@@ -547,7 +549,6 @@ ExpansionN expansionNSqrt(ExpansionN a) {
 } // namespace
 
 FPEvaluator::FPEvaluator(PTCandidate *pt) {
-  exactExpansion = flags::AccuracyReferenceBits > 0;
   if (pt) {
     for (const auto &change : pt->changes) {
       for (auto node : change.nodes) {
@@ -697,29 +698,10 @@ void FPEvaluator::evaluateNode(const FPNode *node,
   using ExpansionNUnaryFn = ExpansionN (*)(ExpansionN);
   using ExpansionNBinaryFn = ExpansionN (*)(ExpansionN, ExpansionN);
 
-  // Prefer the operand's recorded limbs over re-splitting its double collapse,
-  // which would pin the simulated chain to 53 bits; a wider operand is
-  // truncated (correct for a normalized expansion), a narrower one zero-padded.
   auto operandExpansion = [&](unsigned i) -> ExpansionN {
-    const FPNode *o = node->operands[i].get();
-    auto it = exactExpansion ? expCache.find(o) : expCache.end();
-    if (it != expCache.end() && !it->second.empty()) {
-      ExpansionN m;
-      m.n = (int)nExp;
-      for (int k = 0; k < 4; ++k)
-        m.x[k] = (k < (int)nExp && k < (int)it->second.size()) ? it->second[k]
-                                                               : 0.0f;
-      return m;
-    }
-    return ExpansionN::fromF64(getResult(o), (int)nExp);
+    return ExpansionN::fromF64(getResult(node->operands[i].get()), (int)nExp);
   };
   auto recordExpansion = [&](const ExpansionN &m) -> double {
-    if (exactExpansion) {
-      SmallVector<float, 4> limbs;
-      for (int k = 0; k < m.n; ++k)
-        limbs.push_back(m.x[k]);
-      expCache[node] = std::move(limbs);
-    }
     return m.toF64();
   };
 
@@ -1412,12 +1394,6 @@ mpfr_t &MPFREvaluator::getResult(FPNode *node) {
   return cache.at(node).value;
 }
 
-const SmallVector<float, 4> *
-FPEvaluator::getResultLimbs(const FPNode *node) const {
-  auto it = expCache.find(node);
-  return it == expCache.end() ? nullptr : &it->second;
-}
-
 void getFPValues(ArrayRef<FPNode *> outputs,
                  const MapVector<Value *, double> &inputValues,
                  SmallVectorImpl<double> &results, PTCandidate *pt) {
@@ -1433,137 +1409,6 @@ void getFPValues(ArrayRef<FPNode *> outputs,
   for (size_t i = 0; i < outputs.size(); ++i) {
     results[i] = evaluator.getResult(outputs[i]);
   }
-}
-
-// The default path rounds both sides to a double before subtracting, so its
-// finest resolvable error is one double ULP; here the reference stays in MPFR
-// and an expansion candidate is lifted exactly as the sum of its limbs.
-void getSampleErrorsWide(ArrayRef<FPNode *> outputs,
-                         const MapVector<Value *, double> &inputValues,
-                         SmallVectorImpl<double> &errors, unsigned refBits,
-                         PTCandidate *pt,
-                         SmallVectorImpl<char> *candNonFinite) {
-  assert(!outputs.empty());
-  assert(refBits > 0 && "getSampleErrorsWide: refBits must be positive");
-  const size_t n = outputs.size();
-  errors.assign(n, std::numeric_limits<double>::quiet_NaN());
-  if (candNonFinite)
-    candNonFinite->assign(n, 0);
-
-  // Working precision for the reference and the subtraction. Generous: the
-  // whole point is that the difference of two nearly equal values survives.
-  const mpfr_prec_t work = (mpfr_prec_t)std::max(4u * refBits, 512u);
-
-  std::vector<mpfr_t> gold(n);
-  std::vector<bool> haveGold(n, false);
-  for (size_t i = 0; i < n; ++i)
-    mpfr_init2(gold[i], work);
-
-  {
-    std::vector<mpfr_exp_t> prevExp(n, 0);
-    std::vector<char *> prevStr(n, nullptr);
-    std::vector<int> prevSign(n, 0);
-    std::vector<bool> converged(n, false);
-    size_t numConverged = 0;
-    unsigned curPrec = std::max(64u, refBits);
-
-    while (true) {
-      MPFREvaluator evaluator(curPrec, nullptr);
-      for (const auto *output : outputs)
-        evaluator.evaluateNode(output, inputValues, true);
-
-      for (size_t i = 0; i < n; ++i) {
-        if (converged[i])
-          continue;
-        mpfr_t &res = evaluator.getResult(outputs[i]);
-        int sign = mpfr_sgn(res);
-        mpfr_exp_t exp;
-        char *str = mpfr_get_str(nullptr, &exp, 2, refBits, res, MPFR_RNDN);
-        if (prevStr[i] && sign == prevSign[i] && exp == prevExp[i] &&
-            strcmp(str, prevStr[i]) == 0) {
-          converged[i] = true;
-          ++numConverged;
-          mpfr_set(gold[i], res, MPFR_RNDN);
-          haveGold[i] = true;
-          mpfr_free_str(str);
-          mpfr_free_str(prevStr[i]);
-          prevStr[i] = nullptr;
-          continue;
-        }
-        if (prevStr[i])
-          mpfr_free_str(prevStr[i]);
-        prevStr[i] = str;
-        prevExp[i] = exp;
-        prevSign[i] = sign;
-      }
-
-      if (numConverged == n)
-        break;
-
-      curPrec *= 2;
-      if (curPrec > flags::MaxMPFRPrec) {
-        // Unconverged outputs keep haveGold == false and are reported as NaN,
-        // which the reductions drop -- the same contract the double path has.
-        for (size_t i = 0; i < n; ++i)
-          if (prevStr[i])
-            mpfr_free_str(prevStr[i]);
-        break;
-      }
-    }
-  }
-
-  FPEvaluator evaluator(pt);
-  for (const auto *output : outputs)
-    evaluator.evaluateNode(output, inputValues);
-
-  mpfr_t cand, diff, denom;
-  mpfr_init2(cand, work);
-  mpfr_init2(diff, work);
-  mpfr_init2(denom, work);
-
-  for (size_t i = 0; i < n; ++i) {
-    if (!haveGold[i])
-      continue;
-
-    double collapsed = evaluator.getResult(outputs[i]);
-    const SmallVector<float, 4> *limbs = evaluator.getResultLimbs(outputs[i]);
-    if (limbs && !limbs->empty()) {
-      // Exact: the limbs are non-overlapping and `work` >= 512 bits holds
-      // their unevaluated sum with room to spare.
-      mpfr_set_d(cand, (double)(*limbs)[0], MPFR_RNDN);
-      for (size_t k = 1; k < limbs->size(); ++k)
-        mpfr_add_d(cand, cand, (double)(*limbs)[k], MPFR_RNDN);
-    } else {
-      mpfr_set_d(cand, collapsed, MPFR_RNDN);
-    }
-
-    if (!mpfr_number_p(cand)) {
-      // Same policy as sampleError: a spurious non-finite where the
-      // reference is finite is catastrophic but must stay finite so the
-      // reductions rank it worst instead of dropping it.
-      if (candNonFinite)
-        (*candNonFinite)[i] = 1;
-      errors[i] = flags::NonfinitePenalty.getValue();
-      continue;
-    }
-
-    mpfr_sub(diff, gold[i], cand, MPFR_RNDN);
-    mpfr_abs(diff, diff, MPFR_RNDN);
-
-    if (flags::RelativeError) {
-      mpfr_abs(denom, gold[i], MPFR_RNDN);
-      if (mpfr_zero_p(denom))
-        mpfr_set_d(denom, std::numeric_limits<double>::min(), MPFR_RNDN);
-      mpfr_div(diff, diff, denom, MPFR_RNDN);
-    }
-    errors[i] = mpfr_get_d(diff, MPFR_RNDN);
-  }
-
-  mpfr_clear(cand);
-  mpfr_clear(diff);
-  mpfr_clear(denom);
-  for (size_t i = 0; i < n; ++i)
-    mpfr_clear(gold[i]);
 }
 
 // Ground truth: evaluate at increasing MPFR precision until the first
@@ -1638,7 +1483,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
 
     curPrec *= 2;
 
-    if (curPrec > flags::MaxMPFRPrec) {
+    if (curPrec > kMaxMPFRPrec) {
       llvm::errs() << "getMPFRValues: MPFR precision limit reached for some "
                       "outputs, returning NaN\n";
       for (size_t i = 0; i < outputs.size(); ++i) {

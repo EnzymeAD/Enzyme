@@ -360,41 +360,4 @@ void emitCooperativeScratchFillPadded(
   B.SetInsertPoint(&*afterBB->getFirstInsertionPt());
 }
 
-void emitParallelZeroInit(IRBuilder<> &B, GlobalVariable *gv, Type *eltTy,
-                          uint64_t numElts, Value *threadLin,
-                          Value *blockSize) {
-  Function *F = B.GetInsertBlock()->getParent();
-  LLVMContext &ctx = F->getContext();
-  Type *i32Ty = Type::getInt32Ty(ctx);
-  PointerType *genPtrTy = PointerType::get(ctx, /*AS=*/0);
-
-  Instruction *splitInst = &*B.GetInsertPoint();
-  BasicBlock *origBB = B.GetInsertBlock();
-  BasicBlock *afterBB =
-      origBB->splitBasicBlock(splitInst->getIterator(), "wmma_zinit.after");
-  origBB->getTerminator()->eraseFromParent();
-
-  BasicBlock *loopHdr = BasicBlock::Create(ctx, "wmma_zinit.hdr", F, afterBB);
-  BasicBlock *loopBody = BasicBlock::Create(ctx, "wmma_zinit.body", F, afterBB);
-
-  IRBuilder<>(origBB).CreateBr(loopHdr);
-
-  IRBuilder<> hdrB(loopHdr);
-  PHINode *counter = hdrB.CreatePHI(i32Ty, 2, "wmma_zinit.i");
-  counter->addIncoming(threadLin, origBB);
-  Value *cmp =
-      hdrB.CreateICmpULT(counter, ConstantInt::get(i32Ty, (int32_t)numElts));
-  hdrB.CreateCondBr(cmp, loopBody, afterBB);
-
-  IRBuilder<> bodyB(loopBody);
-  Value *scratchGen = bodyB.CreateAddrSpaceCast(gv, genPtrTy);
-  Value *ptr = bodyB.CreateGEP(eltTy, scratchGen, counter);
-  bodyB.CreateStore(Constant::getNullValue(eltTy), ptr);
-  Value *next = bodyB.CreateAdd(counter, blockSize, "wmma_zinit.next");
-  counter->addIncoming(next, loopBody);
-  bodyB.CreateBr(loopHdr);
-
-  B.SetInsertPoint(&*afterBB->getFirstInsertionPt());
-}
-
 } // namespace poseidon

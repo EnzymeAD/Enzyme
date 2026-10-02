@@ -1,7 +1,6 @@
 // direct_rt.cu: Poseidon host-dispatch runtime for the direct
 // reduced-precision GEMM, the library realization of the in-kernel direct
-// tensor-core raise. Compiled independently by the bench Makefiles (Runtimes/
-// is not part of the Enzyme ninja build).
+// tensor-core raise.
 //
 // This runtime performs no operand scaling: each FP64 operand is rounded once
 // to the target input format, the product runs as one cublasGemmEx with an

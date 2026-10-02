@@ -31,8 +31,7 @@ namespace poseidon {
 struct Subgraph;
 class FPNode;
 
-// Per-sample accuracy error (absolute, or relative under
-// -poseidon-relative-error).
+// Per-sample absolute accuracy error.
 double sampleError(double goldVal, double result);
 
 // Cancellation-aware sampling plan: `active` iff the subgraph divides by or
