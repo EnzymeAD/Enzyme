@@ -431,3 +431,30 @@ func.func @derfc(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[fac]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @atan2(%y: f64, %x: f64) -> f64 {
+  %res = math.atan2 %y, %x : f64
+  return %res : f64
+}
+
+func.func @datan2(%y: f64, %x: f64, %dr: f64) -> (f64, f64) {
+  %0:2 = enzyme.autodiff @atan2(%y, %x, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64, f64) -> (f64, f64)
+  return %0#0, %0#1 : f64, f64
+}
+
+// CHECK: func.func private @diffeatan2(%[[y:.+]]: f64, %[[x:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64) {
+// CHECK-NEXT:    %[[drx:.+]] = arith.mulf %[[dr]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[ysqr:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.addf %[[xsqr]], %[[ysqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[dy:.+]] = arith.divf %[[drx]], %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[dry:.+]] = arith.mulf %[[dr]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negdry:.+]] = arith.negf %[[dry]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[xsqr2:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[ysqr2:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den2:.+]] = arith.addf %[[xsqr2]], %[[ysqr2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[dx:.+]] = arith.divf %[[negdry]], %[[den2]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[dy]], %[[dx]] : f64, f64
+// CHECK-NEXT:  }
