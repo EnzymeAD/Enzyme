@@ -5494,7 +5494,7 @@ static MemTransferInst *getOnlyCopyInto(AllocaInst *AI) {
   return copy;
 }
 
-Value *getValueStoredIn(Value *ptr) {
+Value *getValueStoredIn(Value *ptr, int64_t offset) {
   auto I = dyn_cast<Instruction>(ptr);
   if (!I)
     return nullptr;
@@ -5504,7 +5504,40 @@ Value *getValueStoredIn(Value *ptr) {
       DL, off, /*AllowNonInbounds*/ true));
   if (!AI)
     return nullptr;
-  return getStoredValue(AI, off.getSExtValue(), 0);
+  int64_t at = off.getSExtValue() + offset;
+  auto V = getStoredValue(AI, at, 0);
+  if (V && !V->getType()->isAggregateType())
+    return V;
+  // A field of a whole value stored at the start of the variable.
+  auto whole = at == 0 ? V : getStoredValue(AI, 0, 0);
+  if (!whole || !whole->getType()->isAggregateType())
+    return nullptr;
+  SmallVector<unsigned, 3> path;
+  Type *T = whole->getType();
+  int64_t rest = at;
+  while (T->isAggregateType()) {
+    unsigned idx;
+    if (auto ST = dyn_cast<StructType>(T)) {
+      auto SL = DL.getStructLayout(ST);
+      if (rest >= (int64_t)SL->getSizeInBytes())
+        return nullptr;
+      idx = SL->getElementContainingOffset(rest);
+      rest -= SL->getElementOffset(idx);
+      T = ST->getElementType(idx);
+    } else if (auto AT = dyn_cast<ArrayType>(T)) {
+      int64_t size = DL.getTypeAllocSize(AT->getElementType());
+      idx = rest / size;
+      if (idx >= AT->getNumElements())
+        return nullptr;
+      rest -= idx * size;
+      T = AT->getElementType();
+    } else
+      return nullptr;
+    path.push_back(idx);
+  }
+  if (rest != 0)
+    return nullptr;
+  return FindInsertedValue(whole, path);
 }
 
 bool getGlobalSlot(Value *V, GlobalVariable *&GV, int64_t &offset) {

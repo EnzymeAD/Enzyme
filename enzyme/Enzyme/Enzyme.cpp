@@ -611,14 +611,56 @@ static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
         dest = SI->getPointerOperand();
         val = SI->getValueOperand();
       } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
-        // A copy of a whole value from a local variable, as newer Flang
-        // writes a descriptor.
-        dest = MTI->getRawDest();
-        val = getValueStoredIn(MTI->getRawSource());
+        // A copy from a local variable, as newer Flang writes a descriptor:
+        // the shadow gets the same copy, with the pointers in it replaced.
         auto len = dyn_cast<ConstantInt>(MTI->getLength());
-        if (!val || !len ||
-            DL.getTypeStoreSize(val->getType()) != len->getZExtValue())
+        APInt off(DL.getIndexTypeSizeInBits(MTI->getRawDest()->getType()), 0);
+        auto GV = dyn_cast<GlobalVariable>(
+            MTI->getRawDest()->stripAndAccumulateConstantOffsets(
+                DL, off, /*AllowNonInbounds*/ true));
+        if (!len || !GV ||
+            !isa<AllocaInst>(getUnderlyingObject(MTI->getRawSource())))
           continue;
+        auto shadows = getImplicitGlobalShadows(GV);
+        SmallVector<unsigned, 3> path;
+        SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+        getPointerFields(DL, GV->getValueType(), 0, path, ptrs);
+        if (shadows.empty() || ptrs.empty())
+          continue;
+        int64_t begin = off.getSExtValue(),
+                end = begin + (int64_t)len->getZExtValue();
+        IRBuilder<> before(MTI);
+        IRBuilder<> B(MTI->getNextNode());
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane) {
+            SmallVector<std::pair<int64_t, Value *>, 2> kept;
+            for (auto &field : ptrs) {
+              int64_t poff = field.first;
+              if (poff < begin || poff >= end)
+                continue;
+              Value *pv = getValueStoredIn(MTI->getRawSource(), poff - begin);
+              CallInst *alloc;
+              Value *sp = nullptr;
+              if (pv && pv->getType()->isPointerTy())
+                sp = getShadowAllocation(B, pv, alloc);
+              if (sp) {
+                kept.emplace_back(poff, sp);
+                recordSize(B, shadow, lane, poff, alloc);
+              } else {
+                // Whatever the shadow held.
+                kept.emplace_back(
+                    poff, before.CreateLoad(
+                              before.getPtrTy(),
+                              laneAddress(before, shadow, W, lane, poff)));
+              }
+            }
+            B.CreateMemCpy(laneAddress(B, shadow, W, lane, begin), MaybeAlign(),
+                           MTI->getRawSource(), MaybeAlign(), MTI->getLength());
+            for (auto &[poff, sp] : kept)
+              B.CreateStore(sp, laneAddress(B, shadow, W, lane, poff));
+            changed = true;
+          }
+        continue;
       } else if (auto CI = dyn_cast<CallInst>(I)) {
         auto callee = getFunctionFromCall(CI);
         if (!callee || callee->getName() != "free" || CI->arg_size() != 1)
