@@ -4821,9 +4821,117 @@ public:
             available[&*subarg] = pre_args[i];
             subarg++;
           }
+          // A tape value is computed here, before the fork, from the
+          // arguments of the outlined function. A phi in it that merges the
+          // two sides of a branch (e.g. bounds chosen by an IF in the
+          // parallel region) becomes a select on the branch condition.
+          DominatorTree DTN(*newcalled);
+          SmallPtrSet<Value *, 16> visited;
+          // The value of the phi PN that arrives through the incoming
+          // edges Ins, as selects on the conditions of the branches that
+          // lead to them, or nullptr.
+          std::function<Value *(PHINode *, ArrayRef<unsigned>)> phiValue =
+              [&](PHINode *PN, ArrayRef<unsigned> Ins) -> Value * {
+            Value *V0 = PN->getIncomingValue(Ins[0]);
+            if (llvm::all_of(Ins, [&](unsigned i) {
+                  return PN->getIncomingValue(i) == V0;
+                }))
+              return gutils->unwrapM(V0, BuilderZ, available,
+                                     UnwrapMode::LegalFullUnwrap);
+            BasicBlock *D = PN->getIncomingBlock(Ins[0]);
+            for (auto i : Ins)
+              D = DTN.findNearestCommonDominator(D, PN->getIncomingBlock(i));
+            Instruction *T = D->getTerminator();
+            auto SI = dyn_cast<SwitchInst>(T);
+            if (!isConditionalBranch(T) && !SI)
+              return nullptr;
+            // The distinct successors of D, and the incoming edges reached
+            // through each.
+            SmallVector<BasicBlock *, 4> Succs;
+            for (unsigned j = 0; j < T->getNumSuccessors(); j++)
+              if (!llvm::is_contained(Succs, T->getSuccessor(j)))
+                Succs.push_back(T->getSuccessor(j));
+            SmallVector<SmallVector<unsigned, 2>, 4> Sides(Succs.size());
+            for (auto i : Ins) {
+              BasicBlock *In = PN->getIncomingBlock(i);
+              bool found = false;
+              for (unsigned j = 0; j < Succs.size() && !found; j++) {
+                BasicBlock *S = Succs[j];
+                if ((In == D && S == PN->getParent()) ||
+                    (In != D && S->getUniquePredecessor() == D &&
+                     DTN.dominates(S, In))) {
+                  Sides[j].push_back(i);
+                  found = true;
+                }
+              }
+              if (!found)
+                return nullptr;
+            }
+            Value *Cond = gutils->unwrapM(
+                SI ? SI->getCondition() : getBranchCondition(T), BuilderZ,
+                available, UnwrapMode::LegalFullUnwrap);
+            if (!Cond)
+              return nullptr;
+            // A successor through which the phi is not reached takes any
+            // value.
+            SmallVector<Value *, 4> Vals(Succs.size(), nullptr);
+            Value *Any = nullptr;
+            for (unsigned j = 0; j < Succs.size(); j++) {
+              if (Sides[j].empty())
+                continue;
+              Vals[j] = phiValue(PN, Sides[j]);
+              if (!Vals[j])
+                return nullptr;
+              Any = Vals[j];
+            }
+            for (auto &V : Vals)
+              if (!V)
+                V = Any;
+            if (Succs.size() == 1)
+              return Vals[0];
+            if (!SI)
+              return BuilderZ.CreateSelect(Cond, Vals[0], Vals[1]);
+            unsigned Default =
+                llvm::find(Succs, SI->getDefaultDest()) - Succs.begin();
+            Value *Result = Vals[Default];
+            for (unsigned j = 0; j < Succs.size(); j++) {
+              if (j == Default)
+                continue;
+              Value *Is = nullptr;
+              for (auto Case : SI->cases())
+                if (Case.getCaseSuccessor() == Succs[j]) {
+                  Value *Eq = BuilderZ.CreateICmpEQ(Cond, Case.getCaseValue());
+                  Is = Is ? BuilderZ.CreateOr(Is, Eq) : Eq;
+                }
+              if (Is)
+                Result = BuilderZ.CreateSelect(Is, Vals[j], Result);
+            }
+            return Result;
+          };
+          std::function<void(Value *)> selectPhis = [&](Value *V) {
+            auto I = dyn_cast<Instruction>(V);
+            if (!I || I->getFunction() != newcalled || available.count(I) ||
+                !visited.insert(I).second)
+              return;
+            for (auto &Op : I->operands())
+              selectPhis(Op);
+            auto PN = dyn_cast<PHINode>(I);
+            if (!PN || !PN->getNumIncomingValues())
+              return;
+            // Not a loop header phi.
+            for (auto In : PN->blocks())
+              if (DTN.dominates(PN->getParent(), In))
+                return;
+            SmallVector<unsigned, 4> Ins;
+            for (unsigned i = 0; i < PN->getNumIncomingValues(); i++)
+              Ins.push_back(i);
+            if (auto Sel = phiValue(PN, Ins))
+              available[PN] = Sel;
+          };
           for (auto pair : geps) {
             Value *op = pair.second;
             Value *alloc = op;
+            selectPhis(op);
             Value *replacement = gutils->unwrapM(op, BuilderZ, available,
                                                  UnwrapMode::LegalFullUnwrap);
             tape =
