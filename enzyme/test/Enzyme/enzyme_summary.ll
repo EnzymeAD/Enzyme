@@ -47,3 +47,13 @@ define void @caller(ptr %x, ptr %dx) {
 ; CHECK-DAG: "edges": [
 ; CHECK-DAG: "a0",
 ; CHECK-DAG: "ext",
+
+; Writes of any data, and per call site whether what each pointer argument
+; points into may be written again afterwards (the store to @common_blk_
+; after the call to @ext): for the thin-link step's overwritten-argument
+; variants and invariant globals.
+; CHECK-DAG: "args_write_any": [
+; CHECK-DAG: "globals_write_any": [
+; CHECK-DAG: "calls_at": [
+; CHECK-DAG: "after": false
+; CHECK-DAG: "root": "a0"

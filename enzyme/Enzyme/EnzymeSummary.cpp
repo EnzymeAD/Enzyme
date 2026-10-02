@@ -30,6 +30,7 @@
 
 #include "EnzymeSummary.h"
 
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -425,6 +426,205 @@ private:
   }
 };
 
+
+/// Writes of any type (not only floating-point data), for what may be
+/// overwritten after a call: per argument and global written anywhere in the
+/// function, and per call site whether the memory each pointer argument
+/// points into may be written again afterwards (loops included).
+class WriteFacts {
+public:
+  WriteFacts(Function &F) : F(F) {
+    ArgWriteAny.assign(F.arg_size(), false);
+    for (auto &BB : F)
+      for (auto &I : BB)
+        Writes[&I] = writes(I);
+    for (auto &[I, Ks] : Writes)
+      for (auto &K : Ks) {
+        if (K[0] == 'a')
+          ArgWriteAny[std::stoul(K.substr(1))] = true;
+        else if (K[0] == 'g')
+          GlobalWriteAny.insert(K.substr(1));
+        else if (K == "*")
+          UnknownWrite = true;
+      }
+    // blocks reachable from each block's successors
+    for (auto &BB : F) {
+      SmallVector<BasicBlock *, 8> todo(succ_begin(&BB), succ_end(&BB));
+      auto &R = After[&BB];
+      while (!todo.empty()) {
+        auto *B = todo.pop_back_val();
+        if (!R.insert(B).second)
+          continue;
+        for (auto *S : successors(B))
+          todo.push_back(S);
+      }
+    }
+  }
+
+  void addTo(json::Object &Act) {
+    json::Array Calls;
+    for (auto &BB : F)
+      for (auto &I : BB) {
+        auto *CB = dyn_cast<CallBase>(&I);
+        if (!CB || isa<IntrinsicInst>(&I))
+          continue;
+        auto *Callee =
+            dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+        if (!Callee || Callee->getName().starts_with("_Fortran") ||
+            Callee->getName().starts_with("__enzyme") ||
+            Callee->getName().starts_with("llvm."))
+          continue;
+        json::Array Args;
+        for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
+          Value *A = CB->getArgOperand(k);
+          if (!A->getType()->isPointerTy()) {
+            Args.push_back(nullptr);
+            continue;
+          }
+          auto Ks = keys(A);
+          std::string Root = Ks.size() == 1 ? *Ks.begin() : "u";
+          if (Root[0] == 'l')
+            Root = "l";
+          Args.push_back(json::Object{{"root", Root},
+                                      {"after", writtenAfter(*CB, Ks)}});
+        }
+        Calls.push_back(json::Object{{"callee", Callee->getName().str()},
+                                     {"args", std::move(Args)}});
+      }
+    json::Array WA;
+    for (bool b : ArgWriteAny)
+      WA.push_back(b);
+    Act["args_write_any"] = std::move(WA);
+    Act["globals_write_any"] = toArray(GlobalWriteAny);
+    Act["unknown_write"] = UnknownWrite;
+    Act["calls_at"] = std::move(Calls);
+  }
+
+private:
+  Function &F;
+  std::vector<bool> ArgWriteAny;
+  std::set<std::string> GlobalWriteAny;
+  bool UnknownWrite = false;
+  std::map<const Instruction *, std::set<std::string>> Writes;
+  std::map<const BasicBlock *, SmallPtrSet<BasicBlock *, 8>> After;
+  std::map<const Value *, std::set<std::string>> Memo;
+
+  /// Memory a pointer may point into: "a<i>" (reachable from argument i),
+  /// "g<name>", "l<n>" (a local object), "u" (unknown).
+  std::set<std::string> keys(const Value *V) {
+    auto found = Memo.find(V);
+    if (found != Memo.end())
+      return found->second;
+    Memo[V] = {};
+    std::set<std::string> K;
+    V = V->stripPointerCasts();
+    if (auto *GEP = dyn_cast<GEPOperator>(V))
+      K = keys(GEP->getPointerOperand());
+    else if (auto *A = dyn_cast<Argument>(V))
+      K.insert("a" + std::to_string(A->getArgNo()));
+    else if (auto *G = dyn_cast<GlobalVariable>(V))
+      K.insert("g" + G->getName().str());
+    else if (isa<AllocaInst>(V))
+      K.insert("l" + std::to_string((uintptr_t)V));
+    else if (isa<Constant>(V))
+      ;
+    else if (auto *L = dyn_cast<LoadInst>(V))
+      K = keys(L->getPointerOperand()); // dereferences collapsed
+    else if (auto *P = dyn_cast<PHINode>(V)) {
+      for (auto &In : P->incoming_values()) {
+        auto Ki = keys(In);
+        K.insert(Ki.begin(), Ki.end());
+      }
+    } else if (auto *S = dyn_cast<SelectInst>(V)) {
+      K = keys(S->getTrueValue());
+      auto Kf = keys(S->getFalseValue());
+      K.insert(Kf.begin(), Kf.end());
+    } else if (auto *CB = dyn_cast<CallBase>(V)) {
+      auto *Callee =
+          dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+      // fresh memory, and the flang runtime's own handles (I/O cookies)
+      if (Callee && (isAllocationName(Callee->getName()) ||
+                     Callee->getName().starts_with("_Fortran")))
+        K.insert("l" + std::to_string((uintptr_t)V));
+      else
+        K.insert("u");
+    } else
+      K.insert("u");
+    Memo[V] = K;
+    return K;
+  }
+
+  std::set<std::string> writes(Instruction &I) {
+    std::set<std::string> W;
+    auto add = [&](const Value *P) {
+      auto K = keys(P);
+      if (K.count("u"))
+        W.insert("*");
+      W.insert(K.begin(), K.end());
+    };
+    if (auto *S = dyn_cast<StoreInst>(&I))
+      add(S->getPointerOperand());
+    else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
+      add(MI->getDest());
+    else if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I))
+      add(I.getOperand(0));
+    else if (auto *CB = dyn_cast<CallBase>(&I)) {
+      if (isa<IntrinsicInst>(&I) || !I.mayWriteToMemory())
+        return W;
+      auto *Callee =
+          dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+      StringRef N = Callee ? Callee->getName() : "";
+      if (!Callee)
+        W.insert("*");
+      bool outputIO = N.starts_with("_FortranAio") && N.contains("Output");
+      for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
+        Value *A = CB->getArgOperand(k);
+        if (!A->getType()->isPointerTy() || outputIO ||
+            CB->onlyReadsMemory(k))
+          continue;
+        add(A);
+      }
+      // what the callee writes beyond its pointer arguments (globals) is
+      // composed by the thin-link step, which knows whether it has IR
+    }
+    return W;
+  }
+
+  bool writtenAfter(CallBase &CB, const std::set<std::string> &Ks) {
+    auto hits = [&](const Instruction &I) {
+      auto found = Writes.find(&I);
+      if (found == Writes.end())
+        return false;
+      auto &W = found->second;
+      if (W.count("*"))
+        return true;
+      for (auto &K : Ks)
+        if (K == "u" || W.count(K))
+          return true;
+      // a later call may write globals through its own callees; arguments
+      // (noalias Fortran dummies) only if it is given the pointer (above)
+      if (auto *C = dyn_cast<CallBase>(&I))
+        if (!isa<IntrinsicInst>(C) && C->mayWriteToMemory())
+          for (auto &K : Ks)
+            if (K[0] == 'g')
+              return true;
+      return false;
+    };
+    bool seen = false;
+    for (auto &I : *CB.getParent()) {
+      if (seen && hits(I))
+        return true;
+      if (&I == &CB)
+        seen = true;
+    }
+    for (auto *B : After[CB.getParent()])
+      for (auto &I : *B)
+        if (hits(I))
+          return true;
+    return false;
+  }
+};
+
 json::Object summarizeFunction(Function &F) {
   std::set<std::string> Calls, Refs, Globals;
   bool FP = false, MemTransfer = false, Allocates = false;
@@ -485,7 +685,12 @@ json::Object summarizeFunction(Function &F) {
       {"inactive", F.hasFnAttribute("enzyme_inactive")},
       {"nofree", F.hasFnAttribute(Attribute::NoFree)},
       {"no_escape", F.hasFnAttribute("enzyme_no_escaping_allocation")},
-      {"activity", ActivityFacts(F).toJSON()},
+      {"activity",
+       [&] {
+         auto A = ActivityFacts(F).toJSON();
+         WriteFacts(F).addTo(A);
+         return A;
+       }()},
   };
 }
 
