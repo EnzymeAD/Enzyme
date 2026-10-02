@@ -12,6 +12,9 @@
 module halo
   implicit none
   integer, parameter :: n = 3
+  ! Requests kept in module storage between wrapper calls, as ICON does
+  integer :: nreq = 0
+  integer :: reqs(4)
 
 
 contains
@@ -85,6 +88,50 @@ contains
     y = sum(x * rbuf)
   end subroutine f_send_recv
 
+  subroutine p_irecv(buf, other)
+    use mpi
+    double precision :: buf(n)
+    integer, intent(in) :: other
+    integer :: ierr
+    nreq = nreq + 1
+    call mpi_irecv(buf, n, mpi_double_precision, other, 10, &
+                   mpi_comm_world, reqs(nreq), ierr)
+  end subroutine p_irecv
+
+  subroutine p_isend(buf, other)
+    use mpi
+    double precision :: buf(n)
+    integer, intent(in) :: other
+    integer :: ierr
+    nreq = nreq + 1
+    call mpi_isend(buf, n, mpi_double_precision, other, 10, &
+                   mpi_comm_world, reqs(nreq), ierr)
+  end subroutine p_isend
+
+  subroutine p_wait()
+    use mpi
+    integer :: ierr
+    call mpi_waitall(nreq, reqs, mpi_statuses_ignore, ierr)
+    nreq = 0
+  end subroutine p_wait
+
+  ! The same with the requests in module storage
+  subroutine f_module_requests(x, y)
+    use mpi
+    double precision, intent(in) :: x(n)
+    double precision, intent(out) :: y
+    double precision :: sbuf(n), rbuf(n)
+    integer :: rank, other, ierr
+
+    call mpi_comm_rank(mpi_comm_world, rank, ierr)
+    other = 1 - rank
+    sbuf = x * x
+    call p_irecv(rbuf, other)
+    call p_isend(sbuf, other)
+    call p_wait()
+    y = sum(x * rbuf)
+  end subroutine f_module_requests
+
 end module halo
 
 program main
@@ -120,6 +167,11 @@ program main
   call enzyme_autodiff(f_send_recv, enzyme_dup, x, dx, enzyme_dup, y, dy)
   call report(dx)
 
+  dx = 0
+  dy = 1
+  call enzyme_autodiff(f_module_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call report(dx)
+
   ! Forward mode with dx = 1: dy_r = sum(x_o**2 + 2 x_r x_o), i.e. 141 on
   ! rank 0 and 78 on rank 1
   dx = 1
@@ -130,6 +182,11 @@ program main
   dx = 1
   dy = 0
   call enzyme_fwddiff(f_irecv_isend, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call report_scalar(dy)
+
+  dx = 1
+  dy = 0
+  call enzyme_fwddiff(f_module_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
   call report_scalar(dy)
 
   call mpi_finalize(ierr)
@@ -158,5 +215,7 @@ end program main
 ! CHECK: 24.0 45.0 72.0 9.0 24.0 45.0
 ! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
 ! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
+! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
+! CHECK-NEXT: 141.0 78.0
 ! CHECK-NEXT: 141.0 78.0
 ! CHECK-NEXT: 141.0 78.0
