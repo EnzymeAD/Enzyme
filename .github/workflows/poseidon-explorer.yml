@@ -10,7 +10,6 @@ name: Poseidon Explorer
 on:
   push:
     branches:
-      - main
       - poseidon
   workflow_dispatch:
 

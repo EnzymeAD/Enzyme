@@ -136,11 +136,12 @@ cl::opt<int64_t> CompCostBudget(
     cl::desc("The maximum computation cost budget for the solver"));
 cl::opt<double>
     Tau("poseidon-tau", cl::init(0.0), cl::Hidden,
-        cl::desc("Call-site domain error budget; if >0, each matmul takes the "
-                 "cheapest candidate whose estimated relative domain error (at "
-                 "-poseidon-confidence over the profiled set) is <= this "
-                 "tolerance, the dual of --poseidon-comp-cost-budget (0 = "
-                 "disabled)"));
+        cl::desc("Relative accuracy target of every site that carries none "
+                 "(the dual of -poseidon-comp-cost-budget; 0 = disabled). A "
+                 "site without a matrix product is solved under it like under "
+                 "a site value; a site with matrix products has each take the "
+                 "cheapest candidate whose domain error at -poseidon-confidence "
+                 "is <= it, with the elementwise work left alone"));
 // Matrix products only. Their accuracy model scores a PERCENTILE of the
 // sampled relative errors and this is the percentile; an elementwise FP
 // subgraph is scored by the MEAN error over its samples, so no elementwise
