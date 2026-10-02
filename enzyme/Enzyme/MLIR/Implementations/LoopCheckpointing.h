@@ -34,6 +34,8 @@
 namespace mlir {
 namespace enzyme {
 
+int64_t binomialProgress(int64_t numSteps, int64_t budget);
+
 template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // How the trip count is decomposed for periodic checkpointing: `nOuter`
   // segments of `nInner` iterations, plus a shorter trailing segment of
