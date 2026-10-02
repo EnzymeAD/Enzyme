@@ -8,7 +8,7 @@
 #include "Flags.h"
 #include "LaunchDescriptors.h"
 #include "Optimize.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/Argument.h"

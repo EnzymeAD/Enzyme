@@ -1,5 +1,5 @@
-// Declarations shared by the pieces of the Poseidon matmul pipeline under
-// matmul/.
+// Declarations shared by the pieces of the matrix-product pipeline (the
+// Matmul*.cpp and RecognizeHostGemm.cpp sources).
 #ifndef POSEIDON_MATMUL_INTERNAL_H
 #define POSEIDON_MATMUL_INTERNAL_H
 

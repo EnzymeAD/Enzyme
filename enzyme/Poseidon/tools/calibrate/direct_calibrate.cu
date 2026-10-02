@@ -4,7 +4,7 @@
 // at a square reference shape, the same protocol as ozaki_calibrate.cu and
 // tcec_calibrate.cu so the three families are priced in one unit. The narrow
 // and widen passes are inside the timed region. Emits one row per operand
-// format (matmul/MatmulCandidates.cpp kDirectDispatchVariants):
+// format (MatmulCandidates.cpp kDirectDispatchVariants):
 //     direct_dispatch_rel,f16_f32,<rel>
 //     direct_dispatch_rel,bf16_f32,<rel>
 //     direct_dispatch_rel,tf32_f32,<rel>

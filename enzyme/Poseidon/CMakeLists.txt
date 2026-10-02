@@ -53,12 +53,12 @@ set(POSEIDON_SRC
     Types.cpp
     Utils.cpp
     WmmaUtils.cpp
-    matmul/MatmulAccuracy.cpp
-    matmul/MatmulApply.cpp
-    matmul/MatmulCandidates.cpp
-    matmul/MatmulPricing.cpp
-    matmul/MatmulProfile.cpp
-    matmul/RecognizeHostGemm.cpp
+    MatmulAccuracy.cpp
+    MatmulApply.cpp
+    MatmulCandidates.cpp
+    MatmulPricing.cpp
+    MatmulProfile.cpp
+    RecognizeHostGemm.cpp
 )
 
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})

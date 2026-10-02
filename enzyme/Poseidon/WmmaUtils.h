@@ -16,7 +16,7 @@
 #define POSEIDON_WMMA_UTILS_H
 
 #include "Precision.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/IRBuilder.h"

@@ -20,7 +20,7 @@ Poseidon is a subproject of the Enzyme repository, built from the same CMake
 tree with `-DENZYME_POSEIDON=ON`:
 
 ```
-enzyme/Poseidon/            the pass (Plugin.cpp and the sources beside it, matmul/)
+enzyme/Poseidon/            the pass (Plugin.cpp and the sources beside it)
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, Herbie platform
   cost_models/              the paper's RTX 5090 model and its Herbie platform

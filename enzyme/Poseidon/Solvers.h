@@ -32,7 +32,7 @@
 
 #include "Flags.h"
 #include "Types.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 namespace poseidon {
 

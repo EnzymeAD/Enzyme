@@ -15,7 +15,7 @@
 #ifndef POSEIDON_IN_KERNEL_RAISE_H
 #define POSEIDON_IN_KERNEL_RAISE_H
 
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 namespace poseidon {
 

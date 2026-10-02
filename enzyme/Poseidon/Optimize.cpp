@@ -63,7 +63,7 @@
 #include "Staging.h"
 #include "Types.h"
 #include "Utils.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 // The one filename rule, shared verbatim with both FP profiler runtimes that
 // write what this file reads.

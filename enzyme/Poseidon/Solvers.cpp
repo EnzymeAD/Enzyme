@@ -27,7 +27,7 @@
 #include "Herbie.h"
 #include "Precision.h"
 #include "Utils.h"
-#include "matmul/Matmul.h"
+#include "Matmul.h"
 
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IRBuilder.h"
