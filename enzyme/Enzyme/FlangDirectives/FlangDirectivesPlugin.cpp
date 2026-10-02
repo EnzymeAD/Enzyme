@@ -12,7 +12,8 @@
 //
 // its static initializer
 //   - defines the !DIR$ ENZYME directives (flang/Support/PluginDirectives.h),
-//     which flang then parses, resolves and lowers to `fir.directives`, and
+//     also spelled !$enzyme, which flang then parses, resolves and lowers to
+//     `fir.directives`, and
 //   - adds two passes to flang's pipeline (fir::registerPassPipelineConfigCallback):
 //     enzyme-fortran-directives, which turns the directives into the
 //     registrations LLVM Enzyme reads, and enzyme-fir-type-annotations, which
@@ -62,6 +63,9 @@ static void registerEnzymeDirectives() {
        PluginDirectiveSubject::Variable,
        {PluginDirectiveArg{"shadow", PluginDirectiveArgKind::Variable,
                            /*required=*/true}}});
+  // `!$enzyme ...` is the same as `!DIR$ ENZYME ...`, and a comment to
+  // compilers without this plugin, as Tapenade's `!$AD` is.
+  registerPluginDirectiveSentinel("enzyme");
 }
 
 struct EnzymeFlangDirectivesRegistration {
