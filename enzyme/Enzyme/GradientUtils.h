@@ -564,7 +564,8 @@ public:
   static std::string
   externalShadowName(llvm::Function *F, DerivativeMode mode,
                      bool runtimeActivity, bool strongZero, unsigned width,
-                     bool AtomicAdd, const std::vector<bool> &notOverwritten = {});
+                     bool AtomicAdd,
+                     const std::vector<bool> &notOverwritten = {});
 
   //! Under separate compilation with -enzyme-import-variants: of the
   //! derivatives of \p F other modules export (for this mode and

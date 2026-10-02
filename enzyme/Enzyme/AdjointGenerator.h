@@ -6454,9 +6454,8 @@ public:
 
       auto ft = call.getFunctionType();
 
-      auto res =
-          getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType,
-                                            argsInverted);
+      auto res = getDefaultFunctionTypeForGradient(
+          ft, /*subretType*/ subretType, argsInverted);
       // TODO Note there is empty tape added here, replace with generic
       res.first.push_back(getInt8PtrTy(newcalled->getContext()));
       FT = FunctionType::get(

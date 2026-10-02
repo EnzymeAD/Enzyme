@@ -36,9 +36,9 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "EnzymeSummary.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
-#include "EnzymeSummary.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <optional>
@@ -2812,9 +2812,9 @@ public:
             v.strongZero = true;
           else if (flag == "ra")
             v.runtimeActivity = true;
-          else if (flag.starts_with("o"))
+          else if (startsWith(flag, "o"))
             v.notOverwritten = flag.drop_front().str();
-          else if (!flag.starts_with("w") ||
+          else if (!startsWith(flag, "w") ||
                    flag.drop_front().getAsInteger(10, v.width))
             report_fatal_error(Twine("unknown derivative variant flag: ") +
                                flag);
@@ -2857,7 +2857,7 @@ public:
     for (Function &F : M) {
       if (F.empty() || F.hasLocalLinkage() || F.hasAvailableExternallyLinkage())
         continue;
-      if (F.getName().starts_with("__enzyme") || F.getName() == "main")
+      if (startsWith(F.getName(), "__enzyme") || F.getName() == "main")
         continue;
       // Functions with a custom derivative: callers use the rule itself
       // (see GradientUtils::usesExternalDerivative), nothing to export.
@@ -2899,7 +2899,8 @@ public:
         std::vector<bool> kept(F->arg_size(), false);
         for (unsigned i = 0; i < v.notOverwritten.size(); ++i) {
           unsigned nibble;
-          if (StringRef(v.notOverwritten.data() + i, 1).getAsInteger(16, nibble))
+          if (StringRef(v.notOverwritten.data() + i, 1)
+                  .getAsInteger(16, nibble))
             report_fatal_error(Twine("bad argument mask: ") + v.notOverwritten);
           for (unsigned j = 0; j < 4; ++j)
             if ((nibble >> j) & 1 && 4 * i + j < kept.size())
