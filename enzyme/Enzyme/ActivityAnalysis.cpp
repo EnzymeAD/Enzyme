@@ -1850,6 +1850,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
+        // The calling thread's copy of an OpenMP threadprivate variable is
+        // as active as the variable.
+        if (funcName == "__kmpc_threadprivate_cached" &&
+            UpHypothesis->isConstantValue(TR, op->getArgOperand(2))) {
+          InsertConstantValue(TR, Val);
+          insertConstantsFrom(TR, *UpHypothesis);
+          return true;
+        }
 
         // If requesting empty unknown functions to be considered inactive,
         // abide by those rules

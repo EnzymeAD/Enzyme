@@ -2770,6 +2770,45 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    // The calling thread's copy of a threadprivate variable. Only inactive
+    // ones (e.g. ICON's timers) are supported: keep the primal call, and
+    // tape its result if the reverse pass needs it.
+    if (funcName == "__kmpc_threadprivate_cached") {
+      if (!gutils->isConstantValue(&call)) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << " active threadprivate variables are not supported: " << call
+           << "\n";
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return true;
+      }
+      bool primalNeededInReverse = false;
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused) {
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
+        auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                              ? DerivativeMode::ReverseModeGradient
+                              : Mode;
+        primalNeededInReverse =
+            DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                   oldUnreachable);
+      }
+      if (primalNeededInReverse) {
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self, BuilderZ));
+        eraseIfUnused(call);
+      } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                 Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
     if (startsWith(funcName, "__kmpc") &&
         funcName != "__kmpc_global_thread_num") {
       std::string s;
