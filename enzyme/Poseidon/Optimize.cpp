@@ -1841,11 +1841,11 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
         steps.push_back(e);
       }
     }
-  } else if (flags::Tau > 0.0) {
+  } else if (flags::Tau > 0.0 && !st.CMs.empty()) {
     steps = errorBudgetSelector(st.CMs, budget, confidence);
   } else {
     steps = accuracyDPSolver(F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
-                             st.symbolToValueMap, errorTol, st.accScale);
+                             st.symbolToValueMap, budget, st.accScale);
   }
   return materializeFPSolution(F, st, steps);
 }
