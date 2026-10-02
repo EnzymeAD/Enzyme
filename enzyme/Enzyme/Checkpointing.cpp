@@ -44,6 +44,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "Utils.h"
@@ -54,6 +55,13 @@ static cl::opt<bool> EnzymeCheckpointSplitSteps(
     "enzyme-checkpoint-split-steps", cl::init(false), cl::Hidden,
     cl::desc("Differentiate each checkpointed step as its augmented forward "
              "pass followed by its reverse pass, instead of in combined mode"));
+
+static cl::opt<std::string> EnzymeCheckpointGlobals(
+    "enzyme-checkpoint-globals", cl::init(""), cl::Hidden,
+    cl::desc("File of \"step global size\" lines: globals a snapshot before "
+             "a step of that step function must hold, in addition to those "
+             "found in this module (separate compilation, where the step's "
+             "callees are in other modules)"));
 
 static cl::opt<bool> EnzymePrintCheckpointRegions(
     "enzyme-print-checkpoint-regions", cl::init(false), cl::Hidden,
@@ -493,6 +501,36 @@ static SmallVector<GlobalVariable *, 8> getGlobalRegions(Function *step) {
     if (inStep.written.count(&GV) ||
         (inStep.read.count(&GV) && elsewhere.written.count(&GV)))
       result.push_back(&GV);
+  }
+
+  // Globals of the whole program the step needs, from the separate
+  // compilation planner: declare those this module does not have.
+  if (!EnzymeCheckpointGlobals.empty()) {
+    auto buf = MemoryBuffer::getFile(EnzymeCheckpointGlobals);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-checkpoint-globals "
+                               "file ") +
+                         EnzymeCheckpointGlobals);
+    SmallPtrSet<GlobalVariable *, 8> have(result.begin(), result.end());
+    SmallVector<StringRef, 0> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (StringRef line : lines) {
+      SmallVector<StringRef, 3> f;
+      line.split(f, ' ', -1, /*KeepEmpty*/ false);
+      uint64_t size;
+      if (f.size() != 3 || f[0] != step->getName() ||
+          f[2].getAsInteger(10, size) || size == 0)
+        continue;
+      auto *GV = M.getNamedGlobal(f[1]);
+      if (!GV)
+        GV = new GlobalVariable(
+            M, ArrayType::get(Type::getInt8Ty(M.getContext()), size),
+            /*isConstant*/ false, GlobalValue::ExternalLinkage, nullptr, f[1]);
+      if (GV->isConstant() || !GV->getValueType()->isSized() ||
+          !have.insert(GV).second)
+        continue;
+      result.push_back(GV);
+    }
   }
   return result;
 }

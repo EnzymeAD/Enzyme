@@ -391,6 +391,87 @@ def main():
         for g in invariant:
             f.write(g + "\n")
 
+    # Checkpointed loops: a snapshot before a step must hold the globals the
+    # step writes (any data) and those it reads that other code writes, as
+    # Enzyme's checkpointing pass computes them (getGlobalRegions). Under
+    # separate compilation that pass sees only the step's own module, so
+    # give it the program's view: checkpoint_globals.txt, "step global size".
+    # Only globals another module can name: COMMON blocks and external
+    # variables, not the internal ones (Fortran SAVE locals), which the
+    # snapshot then misses.
+    gsize, glink = {}, defaultdict(set)
+    for s_ in mods.values():
+        for g, i in s_["globals"].items():
+            glink[g].add(i["linkage"])
+            if not i["constant"] and i.get("size"):
+                gsize[g] = max(gsize.get(g, 0), i["size"])
+    linkable = {"common", "external", "weak", "linkonce"}
+
+    def fsx(m, f):
+        return local.get((m, f)) or fsum.get(f)
+
+    def writes(m, f):
+        """Globals f writes (any data), incl. those handed to a callee that
+        may write that argument (or has no IR)."""
+        x = fsx(m, f)
+        fa = x["activity"]
+        w = set(fa.get("globals_write_any", []))
+        for root, callee, k in fa["edges"]:
+            if root[0] != "g":
+                continue
+            cm = m if (m, callee) in local else fdef.get(callee)
+            cx = fsx(cm, callee) if cm is not None else None
+            cw = cx["activity"].get("args_write_any", []) if cx else None
+            if cw is None or (k < len(cw) and cw[k]):
+                w.add(root[1:])
+        return w
+
+    ckpt, ckpt_skipped = [], set()
+    for mod, s_ in mods.items():
+        for n, f in s_["functions"].items():
+            if "__enzyme_checkpoint_for" not in f["calls"]:
+                continue
+            for step in f["refs"]:
+                sm = mod if (mod, step) in local else fdef.get(step)
+                closure, stack = set(), [(sm, step)]
+                while stack:
+                    m, g = stack.pop()
+                    if m is None or (m, g) in closure:
+                        continue
+                    closure.add((m, g))
+                    for c in callees(m, g):
+                        if (m, c) in local:
+                            stack.append((m, c))
+                        elif c in fdef:
+                            stack.append((fdef[c], c))
+                w, r = set(), set()
+                for (m, g) in closure:
+                    w |= writes(m, g)
+                    r |= set(fsx(m, g)["globals"])
+                elsewhere = set()
+                for m2, s2 in mods.items():
+                    for n2 in s2["functions"]:
+                        if (m2, n2) in closure or (m2, n2) == (mod, n):
+                            continue
+                        if fsx(m2, n2) is None:
+                            continue
+                        elsewhere |= writes(m2, n2)
+                for g in sorted(w | (r & elsewhere)):
+                    if g not in gsize or g.startswith(("enzyme_", "__enzyme")):
+                        continue
+                    if glink[g] & linkable:
+                        ckpt.append((step, g, gsize[g]))
+                    else:
+                        ckpt_skipped.add(g)
+    with open(os.path.join(a.out, "checkpoint_globals.txt"), "w") as f:
+        for step, g, n in ckpt:
+            f.write(f"{step} {g} {n}\n")
+    if ckpt or ckpt_skipped:
+        print(f"checkpoint globals: {len(ckpt)} "
+              f"({sum(n for _, _, n in ckpt)} bytes); not linkable, "
+              f"missing from the snapshots ({len(ckpt_skipped)}): "
+              f"{sorted(ckpt_skipped)[:8]}")
+
     for m in mods:
         with open(os.path.join(a.out, f"{m}.exports"), "w") as f:
             for g in sorted(exports.get(m, {})):

@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 ; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-print-checkpoint-regions -disable-output 2>&1 | FileCheck %s --check-prefix=REGIONS; fi
+; RUN: if [ %llvmver -ge 16 ]; then printf "step common_ 24\nother_step state 32\n" > %t.globals; %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-checkpoint-globals=%t.globals -enzyme-print-checkpoint-regions -disable-output 2>&1 | FileCheck %s --check-prefix=GLOBALS; fi
 
 ; __enzyme_checkpoint_for is lowered to a loop function; its reverse mode is
 ; the checkpointing driver running the augmented forward and reverse passes of
@@ -119,3 +120,12 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK:   call void @diffestep(i64 %1, ptr %{{.*}}, ptr %{{.*}})
 
 ; CHECK: attributes #[[LOOPATTR]] = { noinline "enzyme_checkpoint"="for" "enzyme_checkpoint_nregions"="1" }
+
+; Under separate compilation the planner names the globals of the whole
+; program the step needs (-enzyme-checkpoint-globals): those of this step
+; are added, declared if the module lacks them.
+; GLOBALS: checkpoint regions of step:
+; GLOBALS-NEXT:   marked region 0
+; GLOBALS-NEXT:   global state (32 bytes)
+; GLOBALS-NEXT:   global common_ (24 bytes)
+; GLOBALS-NOT: global
