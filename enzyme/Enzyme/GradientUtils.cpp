@@ -4856,9 +4856,26 @@ std::vector<bool> GradientUtils::chooseExternalVariant(
 
 /// Whether the local object \p V points into (an alloca, or one reverse
 /// mode moved to the heap) only ever holds constant values: what is stored
-/// or copied into it, other than by \p call, is constant. Such an object,
-/// e.g. the descriptor flang builds to pass on a section of an inactive
-/// array, carries no derivative; its shadow would hold the primal pointers.
+/// or copied into it is constant, and nothing floating-point is read back
+/// from it or known to be in it (which \p call may have written there, as
+/// into a work array).
+/// Such an object, e.g. the descriptor flang builds to pass on a section of
+/// an inactive array, carries no derivative; its shadow would hold the
+/// primal pointers.
+static bool carriesFloat(Type *T) {
+  if (T->isFPOrFPVectorTy())
+    return true;
+  if (auto ST = dyn_cast<StructType>(T)) {
+    for (auto E : ST->elements())
+      if (carriesFloat(E))
+        return true;
+    return false;
+  }
+  if (auto AT = dyn_cast<ArrayType>(T))
+    return carriesFloat(AT->getElementType());
+  return false;
+}
+
 static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
                                           CallBase &call) {
   Instruction *obj = dyn_cast<AllocaInst>(getBaseObject(V));
@@ -4868,6 +4885,14 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
         obj = CI;
   if (!obj)
     return false;
+  if (auto AI = dyn_cast<AllocaInst>(obj))
+    if (carriesFloat(AI->getAllocatedType()))
+      return false;
+  // The object's own contents ([-1, offset]), not what pointers in it point
+  // to.
+  for (auto &[idx, CT] : gutils->TR.query(obj).getMapping())
+    if (idx.size() == 2 && CT.isFloat())
+      return false;
   SmallVector<Value *, 4> todo = {obj};
   SmallPtrSet<Value *, 8> seen;
   while (!todo.empty()) {
@@ -4882,8 +4907,15 @@ static bool localObjectHoldsOnlyConstants(const GradientUtils *gutils, Value *V,
         todo.push_back(I);
         continue;
       }
-      if (isa<LoadInst>(I))
+      if (auto LI = dyn_cast<LoadInst>(I)) {
+        // Only pointers and integers, as type analysis knows them (floats
+        // may be copied as integers).
+        auto CT = gutils->TR.query(LI)[{-1}];
+        if (carriesFloat(LI->getType()) ||
+            !(CT == BaseType::Pointer || CT == BaseType::Integer))
+          return false;
         continue;
+      }
       if (auto SI = dyn_cast<StoreInst>(I)) {
         if (SI->getValueOperand() == cur ||
             !gutils->isConstantValue(SI->getValueOperand()))
