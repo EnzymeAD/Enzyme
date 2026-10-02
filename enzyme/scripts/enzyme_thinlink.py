@@ -408,10 +408,13 @@ def main():
             f.write(f"extern void {g}(void);\n")
             f.write(f"__attribute__((used)) void *__enzyme_inactivefn_{g} = "
                     f"(void *){g};\n")
-            if not act.get(g, {}).get("frees", True):
+            # the build's own registrations hold for routines without IR
+            # (e.g. library routines), which the summaries cannot infer
+            if (not act.get(g, {}).get("frees", True)
+                    or g in regs.get("nofree", ())):
                 f.write(f"__attribute__((used)) void *__enzyme_nofree_{g} = "
                         f"(void *){g};\n")
-            if g in no_escape:
+            if g in no_escape or g in regs.get("no_escape", ()):
                 f.write(f"__attribute__((used)) void "
                         f"*__enzyme_no_escaping_allocation_{g} = (void *){g};\n")
 
