@@ -5257,6 +5257,48 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    // Point-to-point calls of the Fortran MPI ABI pass the datatype handle by
+    // reference. When it is a known constant (stored to a temporary right
+    // before the call, as flang does, or a constant global), the element type
+    // of the buffer follows from it.
+    if (isFortranMPICall(funcName)) {
+      StringRef canon = canonicalizeMPIName(funcName);
+      if (canon == "MPI_Send" || canon == "MPI_Ssend" || canon == "MPI_Recv" ||
+          canon == "MPI_Isend" || canon == "MPI_Irecv") {
+        ConstantInt *handle = nullptr;
+        Value *dt = call.getOperand(2)->stripPointerCasts();
+        if (auto GV = dyn_cast<GlobalVariable>(dt)) {
+          if (GV->isConstant() && GV->hasDefinitiveInitializer())
+            handle = dyn_cast<ConstantInt>(GV->getInitializer());
+        } else if (isa<AllocaInst>(dt)) {
+          // The last store to the temporary in the block of the call
+          for (auto I = call.getReverseIterator(),
+                    E = call.getParent()->rend();
+               I != E; ++I) {
+            if (auto SI = dyn_cast<StoreInst>(&*I)) {
+              if (SI->getPointerOperand() == dt) {
+                handle = dyn_cast<ConstantInt>(SI->getValueOperand());
+                break;
+              }
+            } else if (I->mayWriteToMemory() && &*I != &call) {
+              break;
+            }
+          }
+        }
+        if (handle) {
+          TypeTree buf = TypeTree(BaseType::Pointer);
+          // MPICH: MPI_DOUBLE_PRECISION, MPI_DOUBLE; MPI_REAL, MPI_FLOAT
+          if (handle->getValue() == 1275070495 ||
+              handle->getValue() == 1275070475)
+            buf.insert({0}, Type::getDoubleTy(call.getContext()));
+          else if (handle->getValue() == 1275069468 ||
+                   handle->getValue() == 1275069450)
+            buf.insert({0}, Type::getFloatTy(call.getContext()));
+          updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
+        }
+        return;
+      }
+    }
     if (funcName == "MPI_Send" || funcName == "MPI_Ssend" ||
         funcName == "MPI_Bsend" || funcName == "MPI_Recv" ||
         funcName == "MPI_Brecv" || funcName == "PMPI_Send" ||

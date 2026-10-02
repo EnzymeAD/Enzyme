@@ -212,6 +212,13 @@ bool attributeKnownFunctions(llvm::Function &F) {
   // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
   // ABIs; the Fortran ABI only appends a trailing `ierr` argument.
   StringRef canonMPIName = canonicalizeMPIName(F.getName());
+  // The handles of the Fortran MPI ABI are INTEGERs, so no routine but
+  // MPI_Alloc_mem can make an allocation escape into its arguments.
+  if (isFortranMPICall(F.getName()) && canonMPIName != "MPI_Alloc_mem" &&
+      !F.hasFnAttribute("enzyme_no_escaping_allocation")) {
+    changed = true;
+    F.addFnAttr("enzyme_no_escaping_allocation");
+  }
   if (canonMPIName == "MPI_Irecv") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
@@ -226,10 +233,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     } else {
       PointerABI = false;
     }
-    // OpenMPI vs MPICH
+    // OpenMPI vs MPICH (and the Fortran ABI, which passes the datatype
+    // handle by reference): the datatype is only read
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);

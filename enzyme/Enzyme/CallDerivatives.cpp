@@ -93,11 +93,592 @@ static void createMPIForwardCall(CallInst &call, ArrayRef<unsigned> ShadowArgs,
   }
 }
 
+// Point-to-point communication of the Fortran MPI ABI ("mpi_isend_",
+// "mpi_wait_", ...). Requests there are INTEGER handles, which activity
+// analysis finds inactive and which cannot hold a pointer, so the shadow of a
+// request cannot carry Enzyme's bookkeeping as in the C ABI. Instead, every
+// differentiated call gets a heap record (FortranMPIField) that the reverse
+// pass reaches through the tape. Nonblocking calls also put their record on a
+// list keyed by the request handle, from which mpi_wait / mpi_waitall take it
+// before the request is freed.
+//
+// Reverse mode of isend/irecv + wait:
+//   reverse of the wait:          start the adjoint communication: irecv of
+//                                 the adjoint of an isend's buffer into a
+//                                 temporary, isend of the adjoint of an
+//                                 irecv's buffer
+//   reverse of the isend/irecv:   wait for it, then add the temporary to the
+//                                 isend's buffer adjoint, or zero the irecv's
+// Forward mode sends the shadow buffer alongside the primal one, under its own
+// request, which the wait of the primal request completes.
+namespace {
+enum class FortranMPIField {
+  Next = 0,     // ptr, next record on the list of pending requests
+  Handle = 1,   // i32, primal request handle
+  DBuf = 2,     // ptr, shadow of the buffer
+  Tmp = 3,      // ptr, received adjoint of an isend's buffer
+  Count = 4,    // i32
+  DataType = 5, // i32
+  Peer = 6,     // i32, destination or source
+  Tag = 7,      // i32
+  Comm = 8,     // i32
+  Kind = 9,     // i8, FortranMPIKind
+  State = 10,   // i8, FortranMPIState
+  AdjReq = 11,  // i32, request of the adjoint (or tangent) communication
+};
+enum class FortranMPIKind { Isend = 1, Irecv = 2 };
+enum class FortranMPIState { Posted = 0, Waited = 1, Started = 2 };
+} // namespace
+
+static StructType *getFortranMPIRecord(LLVMContext &C) {
+  auto i32 = Type::getInt32Ty(C);
+  auto i8 = Type::getInt8Ty(C);
+  auto P = getInt8PtrTy(C);
+  Type *types[] = {P, i32, P, P, i32, i32, i32, i32, i32, i8, i8, i32};
+  return StructType::get(C, types, false);
+}
+
+static Value *getFortranMPIField(IRBuilder<> &B, Value *R, FortranMPIField F) {
+  return B.CreateStructGEP(getFortranMPIRecord(B.getContext()), R,
+                           (unsigned)F);
+}
+
+/// The Fortran MPI routine \p name ("MPI_Irecv", ...) in the mangling of
+/// \p caller; every argument, including the trailing ierr, is a pointer.
+static FunctionCallee getFortranMPIFunction(Module &M, StringRef caller,
+                                            StringRef name, unsigned nargs) {
+  SmallVector<Type *, 8> tys(nargs, getInt8PtrTy(M.getContext()));
+  return M.getOrInsertFunction(
+      getRenamedPerCallingConv(caller, name),
+      FunctionType::get(Type::getVoidTy(M.getContext()), tys, false));
+}
+
+/// Head of the list of records of pending nonblocking requests.
+static GlobalVariable *getFortranMPIRequests(Module &M) {
+  StringRef name = "__enzyme_fortran_mpi_requests";
+  if (auto GV = M.getNamedGlobal(name))
+    return GV;
+  auto P = cast<PointerType>(getInt8PtrTy(M.getContext()));
+  return new GlobalVariable(M, P, /*isConstant*/ false,
+                            GlobalValue::LinkOnceODRLinkage,
+                            ConstantPointerNull::get(P), name);
+}
+
+static Function *createFortranMPIHelper(Module &M, StringRef name,
+                                        FunctionType *FT, bool &created) {
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  created = F->empty();
+  if (created) {
+    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+    F->addFnAttr(Attribute::NoUnwind);
+  }
+  return F;
+}
+
+/// ptr pop(ptr request): remove the record of the request handle stored at
+/// `request` from the list of pending requests and return it (null if there
+/// is none, e.g. for a request of an inactive buffer or MPI_REQUEST_NULL).
+static Function *getFortranMPIPop(Module &M) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i32 = Type::getInt32Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(
+      M, "__enzyme_fortran_mpi_pop", FunctionType::get(P, {P}, false), created);
+  if (!created)
+    return F;
+  auto RecTy = getFortranMPIRecord(C);
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *check = BasicBlock::Create(C, "check", F);
+  BasicBlock *next = BasicBlock::Create(C, "next", F);
+  BasicBlock *found = BasicBlock::Create(C, "found", F);
+  BasicBlock *none = BasicBlock::Create(C, "none", F);
+
+  IRBuilder<> B(entry);
+  Value *handle = B.CreateLoad(i32, F->getArg(0), "handle");
+  B.CreateBr(loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *link = B.CreatePHI(P, 2, "link");
+  link->addIncoming(getFortranMPIRequests(M), entry);
+  Value *rec = B.CreateLoad(P, link, "rec");
+  B.CreateCondBr(B.CreateIsNull(rec), none, check);
+
+  B.SetInsertPoint(check);
+  Value *h =
+      B.CreateLoad(i32, B.CreateStructGEP(RecTy, rec, (unsigned)FortranMPIField::Handle));
+  B.CreateCondBr(B.CreateICmpEQ(h, handle), found, next);
+
+  B.SetInsertPoint(next);
+  link->addIncoming(B.CreateStructGEP(RecTy, rec, (unsigned)FortranMPIField::Next),
+                    next);
+  B.CreateBr(loop);
+
+  B.SetInsertPoint(found);
+  B.CreateStore(B.CreateLoad(P, B.CreateStructGEP(RecTy, rec, (unsigned)FortranMPIField::Next)),
+                link);
+  B.CreateStore(ConstantInt::get(Type::getInt8Ty(C), (int)FortranMPIState::Waited),
+                B.CreateStructGEP(RecTy, rec, (unsigned)FortranMPIField::State));
+  B.CreateRet(rec);
+
+  B.SetInsertPoint(none);
+  B.CreateRet(ConstantPointerNull::get(cast<PointerType>(P)));
+  return F;
+}
+
+/// Put the record \p R of a nonblocking call, whose request handle is stored
+/// at \p request, on the list of pending requests.
+static void pushFortranMPIRecord(IRBuilder<> &B, Value *R, Value *request) {
+  auto &M = *B.GetInsertBlock()->getModule();
+  auto P = getInt8PtrTy(B.getContext());
+  auto i32 = Type::getInt32Ty(B.getContext());
+  auto head = getFortranMPIRequests(M);
+  B.CreateStore(B.CreateLoad(i32, request),
+                getFortranMPIField(B, R, FortranMPIField::Handle));
+  B.CreateStore(B.CreateLoad(P, head),
+                getFortranMPIField(B, R, FortranMPIField::Next));
+  B.CreateStore(R, head);
+}
+
+/// void start(ptr R): start the adjoint communication of the record of an
+/// isend or irecv (if any and not yet started) in reverse mode.
+static Function *getFortranMPIStart(Module &M, StringRef caller) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i32 = Type::getInt32Ty(C);
+  auto i8 = Type::getInt8Ty(C);
+  auto i64 = Type::getInt64Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(
+      M, ("__enzyme_fortran_mpi_start_" + caller).str(),
+      FunctionType::get(Type::getVoidTy(C), {P}, false), created);
+  if (!created)
+    return F;
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *notnull = BasicBlock::Create(C, "notnull", F);
+  BasicBlock *nonnull = BasicBlock::Create(C, "start", F);
+  BasicBlock *isend = BasicBlock::Create(C, "isend", F);
+  BasicBlock *irecv = BasicBlock::Create(C, "irecv", F);
+  BasicBlock *end = BasicBlock::Create(C, "end", F);
+
+  Value *R = F->getArg(0);
+  IRBuilder<> B(entry);
+  Value *ierr = B.CreateAlloca(i32, nullptr, "ierr");
+  Value *tysize = B.CreateAlloca(i32, nullptr, "tysize");
+  B.CreateCondBr(B.CreateIsNull(R), end, notnull);
+
+  B.SetInsertPoint(notnull);
+  Value *state = B.CreateLoad(i8, getFortranMPIField(B, R, FortranMPIField::State));
+  B.CreateCondBr(
+      B.CreateICmpEQ(state, ConstantInt::get(i8, (int)FortranMPIState::Started)),
+      end, nonnull);
+
+  B.SetInsertPoint(nonnull);
+  B.CreateStore(ConstantInt::get(i8, (int)FortranMPIState::Started),
+                getFortranMPIField(B, R, FortranMPIField::State));
+  Value *kind = B.CreateLoad(i8, getFortranMPIField(B, R, FortranMPIField::Kind));
+  B.CreateCondBr(B.CreateICmpEQ(kind, ConstantInt::get(i8, (int)FortranMPIKind::Isend)),
+                 isend, irecv);
+
+  auto args = [&](IRBuilder<> &B, Value *buf) {
+    return SmallVector<Value *, 8>{
+        buf,
+        getFortranMPIField(B, R, FortranMPIField::Count),
+        getFortranMPIField(B, R, FortranMPIField::DataType),
+        getFortranMPIField(B, R, FortranMPIField::Peer),
+        getFortranMPIField(B, R, FortranMPIField::Tag),
+        getFortranMPIField(B, R, FortranMPIField::Comm),
+        getFortranMPIField(B, R, FortranMPIField::AdjReq),
+        ierr};
+  };
+
+  // The adjoint of an isend's buffer comes back from the receiver
+  B.SetInsertPoint(isend);
+  B.CreateCall(getFortranMPIFunction(M, caller, "MPI_Type_size", 3),
+               {getFortranMPIField(B, R, FortranMPIField::DataType), tysize, ierr});
+  Value *len = B.CreateMul(
+      B.CreateSExt(B.CreateLoad(i32, getFortranMPIField(B, R, FortranMPIField::Count)), i64),
+      B.CreateSExt(B.CreateLoad(i32, tysize), i64));
+  Value *tmp = CreateAllocation(B, i8, len, "mpi_adjoint_recv");
+  B.CreateStore(tmp, getFortranMPIField(B, R, FortranMPIField::Tmp));
+  B.CreateCall(getFortranMPIFunction(M, caller, "MPI_Irecv", 8), args(B, tmp));
+  B.CreateBr(end);
+
+  // The adjoint of an irecv's buffer goes back to the sender
+  B.SetInsertPoint(irecv);
+  B.CreateCall(getFortranMPIFunction(M, caller, "MPI_Isend", 8),
+               args(B, B.CreateLoad(P, getFortranMPIField(B, R, FortranMPIField::DBuf))));
+  B.CreateBr(end);
+
+  B.SetInsertPoint(end);
+  B.CreateRetVoid();
+  return F;
+}
+
+/// void finish(ptr R): complete the adjoint (reverse) or tangent (forward)
+/// communication of the record of an isend or irecv. In reverse mode, a
+/// communication whose wait the primal did not pass is started here.
+static Function *getFortranMPIFinish(Module &M, StringRef caller,
+                                     bool forward) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i32 = Type::getInt32Ty(C);
+  auto i8 = Type::getInt8Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(
+      M,
+      ((forward ? "__enzyme_fortran_mpi_fwd_finish_"
+                : "__enzyme_fortran_mpi_finish_") +
+       caller)
+          .str(),
+      FunctionType::get(Type::getVoidTy(C), {P}, false), created);
+  if (!created)
+    return F;
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *nonnull = BasicBlock::Create(C, "nonnull", F);
+  BasicBlock *end = BasicBlock::Create(C, "end", F);
+
+  Value *R = F->getArg(0);
+  IRBuilder<> B(entry);
+  Value *ierr = B.CreateAlloca(i32, nullptr, "ierr");
+  // Large enough for MPI_STATUS_SIZE of the common MPI libraries
+  Value *status = B.CreateAlloca(ArrayType::get(i32, 32), nullptr, "status");
+  B.CreateCondBr(B.CreateIsNull(R), end, nonnull);
+
+  B.SetInsertPoint(nonnull);
+  if (!forward) {
+    BasicBlock *unlink = BasicBlock::Create(C, "unlink", F);
+    BasicBlock *wait = BasicBlock::Create(C, "wait", F);
+    Value *state = B.CreateLoad(i8, getFortranMPIField(B, R, FortranMPIField::State));
+    B.CreateCondBr(
+        B.CreateICmpEQ(state, ConstantInt::get(i8, (int)FortranMPIState::Posted)),
+        unlink, wait);
+    B.SetInsertPoint(unlink);
+    B.CreateCall(getFortranMPIPop(M),
+                 {getFortranMPIField(B, R, FortranMPIField::Handle)});
+    B.CreateBr(wait);
+    B.SetInsertPoint(wait);
+    B.CreateCall(getFortranMPIStart(M, caller), {R});
+  }
+  B.CreateCall(getFortranMPIFunction(M, caller, "MPI_Wait", 3),
+               {getFortranMPIField(B, R, FortranMPIField::AdjReq), status, ierr});
+  if (forward)
+    CreateDealloc(B, R);
+  B.CreateBr(end);
+
+  B.SetInsertPoint(end);
+  B.CreateRetVoid();
+  return F;
+}
+
+/// ptr waitall_save(ptr count, ptr requests): take the records of the
+/// requests of an mpi_waitall off the list: {i64 count, ptr records[count]}.
+static Function *getFortranMPIWaitallSave(Module &M) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i32 = Type::getInt32Ty(C);
+  auto i64 = Type::getInt64Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(M, "__enzyme_fortran_mpi_waitall_save",
+                                       FunctionType::get(P, {P, P}, false),
+                                       created);
+  if (!created)
+    return F;
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *end = BasicBlock::Create(C, "end", F);
+  IRBuilder<> B(entry);
+  Value *n = B.CreateSExt(B.CreateLoad(i32, F->getArg(0)), i64, "n");
+  Value *arr = CreateAllocation(B, i64, B.CreateAdd(n, ConstantInt::get(i64, 1)),
+                                "mpi_waitall_records");
+  B.CreateStore(n, arr);
+  B.CreateCondBr(B.CreateICmpSGT(n, ConstantInt::get(i64, 0)), loop, end);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(i64, 2, "i");
+  i->addIncoming(ConstantInt::get(i64, 0), entry);
+  Value *req = B.CreateInBoundsGEP(i32, F->getArg(1), {i});
+  Value *rec = B.CreateCall(getFortranMPIPop(M), {req});
+  Value *inc = B.CreateAdd(i, ConstantInt::get(i64, 1));
+  B.CreateStore(rec, B.CreateInBoundsGEP(P, arr, {inc}));
+  i->addIncoming(inc, loop);
+  B.CreateCondBr(B.CreateICmpEQ(inc, n), end, loop);
+
+  B.SetInsertPoint(end);
+  B.CreateRet(arr);
+  return F;
+}
+
+/// void waitall_each(ptr records): apply \p Each to the records saved by
+/// waitall_save, then free them.
+static Function *getFortranMPIWaitallEach(Module &M, Function *Each) {
+  auto &C = M.getContext();
+  auto P = getInt8PtrTy(C);
+  auto i64 = Type::getInt64Ty(C);
+  bool created;
+  Function *F = createFortranMPIHelper(
+      M, ("__enzyme_fortran_mpi_waitall" + Each->getName()).str(),
+      FunctionType::get(Type::getVoidTy(C), {P}, false), created);
+  if (!created)
+    return F;
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *end = BasicBlock::Create(C, "end", F);
+  Value *arr = F->getArg(0);
+  IRBuilder<> B(entry);
+  Value *n = B.CreateLoad(i64, arr, "n");
+  B.CreateCondBr(B.CreateICmpSGT(n, ConstantInt::get(i64, 0)), loop, end);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(i64, 2, "i");
+  i->addIncoming(ConstantInt::get(i64, 0), entry);
+  Value *inc = B.CreateAdd(i, ConstantInt::get(i64, 1));
+  B.CreateCall(Each, {B.CreateLoad(P, B.CreateInBoundsGEP(P, arr, {inc}))});
+  i->addIncoming(inc, loop);
+  B.CreateCondBr(B.CreateICmpEQ(inc, n), end, loop);
+
+  B.SetInsertPoint(end);
+  CreateDealloc(B, arr);
+  B.CreateRetVoid();
+  return F;
+}
+
+bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
+                                                    Function *called,
+                                                    StringRef funcName) {
+  bool isIsend = funcName == "MPI_Isend";
+  bool isIrecv = funcName == "MPI_Irecv";
+  bool isWait = funcName == "MPI_Wait";
+  bool isWaitall = funcName == "MPI_Waitall";
+  bool isSend = funcName == "MPI_Send" || funcName == "MPI_Ssend";
+  bool isRecv = funcName == "MPI_Recv";
+  if (!(isIsend || isIrecv || isWait || isWaitall || isSend || isRecv))
+    return false;
+
+  bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                     Mode == DerivativeMode::ForwardModeError;
+  bool reverseMode = Mode == DerivativeMode::ReverseModePrimal ||
+                     Mode == DerivativeMode::ReverseModeCombined ||
+                     Mode == DerivativeMode::ReverseModeGradient;
+  // Forward mode of blocking send/recv is the generic shadow call.
+  if ((isSend || isRecv) && !reverseMode)
+    return false;
+  if (!forwardMode && !reverseMode)
+    return false;
+
+  IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
+  BuilderZ.setFastMathFlags(getFast());
+  if (gutils->getWidth() > 1) {
+    std::string s;
+    raw_string_ostream ss(s);
+    ss << funcName << " of the Fortran MPI ABI is not supported in vector "
+       << "mode: " << call;
+    EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+    return true;
+  }
+
+  Module &M = *gutils->newFunc->getParent();
+  LLVMContext &C = call.getContext();
+  StringRef caller = called->getName();
+  auto RecTy = getFortranMPIRecord(C);
+  auto P = getInt8PtrTy(C);
+  auto i8 = Type::getInt8Ty(C);
+  auto i32 = Type::getInt32Ty(C);
+  auto i64 = Type::getInt64Ty(C);
+  auto newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+  bool primal = Mode == DerivativeMode::ReverseModePrimal ||
+                Mode == DerivativeMode::ReverseModeCombined;
+  bool gradient = Mode == DerivativeMode::ReverseModeGradient ||
+                  Mode == DerivativeMode::ReverseModeCombined;
+
+  // A record holding the arguments of an isend/irecv/send/recv and the shadow
+  // of its buffer.
+  auto newRecord = [&](IRBuilder<> &B, int kind) {
+    Value *R = CreateAllocation(B, RecTy, ConstantInt::get(i64, 1),
+                                "mpi_record");
+    Value *dbuf = gutils->invertPointerM(call.getOperand(0), B);
+    if (dbuf->getType()->isIntegerTy())
+      dbuf = B.CreateIntToPtr(dbuf, P);
+    B.CreateStore(dbuf, getFortranMPIField(B, R, FortranMPIField::DBuf));
+    B.CreateStore(ConstantPointerNull::get(cast<PointerType>(P)),
+                  getFortranMPIField(B, R, FortranMPIField::Tmp));
+    FortranMPIField fields[] = {FortranMPIField::Count,
+                                FortranMPIField::DataType,
+                                FortranMPIField::Peer, FortranMPIField::Tag,
+                                FortranMPIField::Comm};
+    for (unsigned i = 0; i < 5; i++)
+      B.CreateStore(
+          B.CreateLoad(i32, gutils->getNewFromOriginal(call.getOperand(i + 1))),
+          getFortranMPIField(B, R, fields[i]));
+    B.CreateStore(ConstantInt::get(i8, kind),
+                  getFortranMPIField(B, R, FortranMPIField::Kind));
+    B.CreateStore(ConstantInt::get(i8, (int)FortranMPIState::Posted),
+                  getFortranMPIField(B, R, FortranMPIField::State));
+    return R;
+  };
+
+  // The record (or records of an mpi_waitall) the reverse pass needs, cached
+  // on the tape. \p make builds it in the primal, at the builder given.
+  auto cacheRecord = [&](IRBuilder<> &B, Value *R) -> Value * {
+    if (!primal) {
+      R = BuilderZ.CreatePHI(P, 0);
+      return gutils->cacheForReverse(BuilderZ, R,
+                                     getIndex(&call, CacheType::Tape, BuilderZ));
+    }
+    return gutils->cacheForReverse(B, R,
+                                   getIndex(&call, CacheType::Tape, B));
+  };
+
+  IRBuilder<> After(newCall->getNextNode());
+  After.SetCurrentDebugLocation(newCall->getDebugLoc());
+
+  if (forwardMode) {
+    if (isIsend || isIrecv) {
+      // The tangent goes alongside the primal value, under its own request.
+      Value *R = newRecord(After, (int)(isIsend ? FortranMPIKind::Isend
+                                                : FortranMPIKind::Irecv));
+      SmallVector<Value *, 8> args;
+      for (auto &op : call.args())
+        args.push_back(gutils->getNewFromOriginal(op));
+      args[0] = After.CreateLoad(P, getFortranMPIField(After, R, FortranMPIField::DBuf));
+      args[6] = getFortranMPIField(After, R, FortranMPIField::AdjReq);
+      After.CreateCall(getFortranMPIFunction(M, caller, funcName, args.size()),
+                       args);
+      After.CreateStore(ConstantInt::get(i8, (int)FortranMPIState::Started),
+                        getFortranMPIField(After, R, FortranMPIField::State));
+      pushFortranMPIRecord(After, R, gutils->getNewFromOriginal(call.getOperand(6)));
+      return true;
+    }
+    Value *req = gutils->getNewFromOriginal(call.getOperand(isWait ? 0 : 1));
+    if (isWait) {
+      Value *R = BuilderZ.CreateCall(getFortranMPIPop(M), {req});
+      After.CreateCall(getFortranMPIFinish(M, caller, /*forward*/ true), {R});
+    } else {
+      Value *recs = BuilderZ.CreateCall(
+          getFortranMPIWaitallSave(M),
+          {gutils->getNewFromOriginal(call.getOperand(0)), req});
+      After.CreateCall(getFortranMPIWaitallEach(
+                           M, getFortranMPIFinish(M, caller, /*forward*/ true)),
+                       {recs});
+    }
+    return true;
+  }
+
+  // Reverse mode
+  Value *R = nullptr;
+  if (isIsend || isIrecv) {
+    if (gutils->isConstantInstruction(&call))
+      return false;
+    if (primal) {
+      R = newRecord(After, (int)(isIsend ? FortranMPIKind::Isend
+                                         : FortranMPIKind::Irecv));
+      pushFortranMPIRecord(After, R,
+                           gutils->getNewFromOriginal(call.getOperand(6)));
+    }
+    R = cacheRecord(After, R);
+  } else if (isSend || isRecv) {
+    if (primal)
+      R = newRecord(BuilderZ, 0);
+    R = cacheRecord(BuilderZ, R);
+  } else if (isWait) {
+    if (primal)
+      R = BuilderZ.CreateCall(getFortranMPIPop(M),
+                              {gutils->getNewFromOriginal(call.getOperand(0))});
+    R = cacheRecord(BuilderZ, R);
+  } else {
+    if (primal)
+      R = BuilderZ.CreateCall(getFortranMPIWaitallSave(M),
+                              {gutils->getNewFromOriginal(call.getOperand(0)),
+                               gutils->getNewFromOriginal(call.getOperand(1))});
+    R = cacheRecord(BuilderZ, R);
+  }
+
+  if (gradient) {
+    IRBuilder<> Builder2(&call);
+    getReverseBuilder(Builder2);
+    R = lookup(R, Builder2);
+    if (isWait) {
+      Builder2.CreateCall(getFortranMPIStart(M, caller), {R});
+    } else if (isWaitall) {
+      Builder2.CreateCall(
+          getFortranMPIWaitallEach(M, getFortranMPIStart(M, caller)), {R});
+    } else {
+      Value *dbuf =
+          Builder2.CreateLoad(P, getFortranMPIField(Builder2, R, FortranMPIField::DBuf));
+      Value *tysize = MPI_TYPE_SIZE(
+          getFortranMPIField(Builder2, R, FortranMPIField::DataType), Builder2,
+          i32, called);
+      Value *len = Builder2.CreateMul(
+          Builder2.CreateSExt(
+              Builder2.CreateLoad(i32, getFortranMPIField(Builder2, R, FortranMPIField::Count)),
+              i64),
+          Builder2.CreateSExt(tysize, i64));
+      Value *ierr = IRBuilder<>(gutils->inversionAllocs)
+                        .CreateAlloca(i32, nullptr, "enzyme_mpi_ierr");
+      Value *tmp = nullptr;
+      if (isIsend || isIrecv) {
+        Builder2.CreateCall(getFortranMPIFinish(M, caller, /*forward*/ false),
+                            {R});
+        if (isIsend)
+          tmp = Builder2.CreateLoad(P, getFortranMPIField(Builder2, R, FortranMPIField::Tmp));
+      } else {
+        SmallVector<Value *, 8> args = {
+            nullptr,
+            getFortranMPIField(Builder2, R, FortranMPIField::Count),
+            getFortranMPIField(Builder2, R, FortranMPIField::DataType),
+            getFortranMPIField(Builder2, R, FortranMPIField::Peer),
+            getFortranMPIField(Builder2, R, FortranMPIField::Tag),
+            getFortranMPIField(Builder2, R, FortranMPIField::Comm)};
+        if (isSend) {
+          // The adjoint of the sent buffer comes back from the receiver
+          tmp = CreateAllocation(Builder2, i8, len, "mpi_adjoint_recv");
+          args[0] = tmp;
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(ArrayType::get(i32, 32), nullptr,
+                                           "enzyme_mpi_status"));
+          args.push_back(ierr);
+          Builder2.CreateCall(getFortranMPIFunction(M, caller, "MPI_Recv", 8),
+                              args);
+        } else {
+          // The adjoint of the received buffer goes back to the sender
+          args[0] = dbuf;
+          args.push_back(ierr);
+          Builder2.CreateCall(getFortranMPIFunction(M, caller, "MPI_Send", 7),
+                              args);
+        }
+      }
+      if (tmp) {
+        // adjoint(buf) += received adjoint
+        DifferentiableMemCopyFloats(call, call.getOperand(0), tmp, dbuf, len,
+                                    Builder2, {});
+        CreateDealloc(Builder2, tmp);
+      } else {
+        // The received values were overwritten: their adjoint is zero
+        Type *memsetTys[] = {P, i64};
+        auto memset = cast<CallInst>(Builder2.CreateCall(
+            getIntrinsicDeclaration(&M, Intrinsic::memset, memsetTys),
+            {dbuf, ConstantInt::get(i8, 0), len,
+             ConstantInt::getFalse(C)}));
+        memset->addParamAttr(0, Attribute::NonNull);
+      }
+      CreateDealloc(Builder2, R);
+    }
+  }
+  if (Mode == DerivativeMode::ReverseModeGradient)
+    eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+  return true;
+}
+
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  llvm::StringRef funcName) {
   using namespace llvm;
 
   assert(called);
+
+  if (isFortranMPICall(called->getName()) &&
+      handleFortranMPIPointToPoint(call, called, funcName))
+    return;
 
   IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
   BuilderZ.setFastMathFlags(getFast());
@@ -2665,6 +3246,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
        canonMPIName == "MPI_Comm_disconnect" || canonMPIName == "MPI_Init" ||
        canonMPIName == "MPI_Init_thread" || canonMPIName == "MPI_Finalize" ||
        canonMPIName == "MPI_Test" || canonMPIName == "MPI_Probe" ||
+       // The INTEGER requests of the Fortran ABI are inactive, but the
+       // records of the active requests they complete are taken there.
+       (isFortranMPICall(funcName) &&
+        (canonMPIName == "MPI_Wait" || canonMPIName == "MPI_Waitall")) ||
        MPIInactiveCommAllocators.find(canonMPIName) !=
            MPIInactiveCommAllocators.end())) {
     handleMPI(call, called, canonMPIName);
