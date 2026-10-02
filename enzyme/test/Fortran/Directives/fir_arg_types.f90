@@ -16,13 +16,14 @@
 ! variables are character data too.
 !
 ! REQUIRES: flang_directives
-! RUN: %fc -fc1 %flangFc1Directives -O0 -emit-llvm %s -o - | FileCheck %s
-! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
+! RUN: mkdir -p %t.mod
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -O0 -emit-llvm %s -o - | FileCheck %s
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
 ! The other annotations off, these on:
-! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-common-types=false -mmlir -enzyme-fir-runtime-types=false -mmlir -enzyme-fir-literal-types=false -O0 -emit-llvm %s -o - | FileCheck %s
-! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-local-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOLOCAL
-! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-unbounded-types -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=UNB
-! RUN: %fc -fc1 %flangFc1Directives -mmlir -enzyme-fir-arg-unbounded-types -mmlir -enzyme-fir-arg-descriptor-data-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NODATA
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-common-types=false -mmlir -enzyme-fir-runtime-types=false -mmlir -enzyme-fir-literal-types=false -O0 -emit-llvm %s -o - | FileCheck %s
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-local-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOLOCAL
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=UNB
+! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -mmlir -enzyme-fir-arg-descriptor-data-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NODATA
 ! NODATA-LABEL: define void @_QMmPdescr(
 ! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, 
 
