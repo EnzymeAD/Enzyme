@@ -123,6 +123,15 @@ llvm::cl::opt<bool>
     EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
                          cl::desc("Split phis according to vector size"));
 
+llvm::cl::opt<std::string> EnzymeImportVariants(
+    "enzyme-import-variants", cl::init(""), cl::Hidden,
+    cl::desc("Under separate compilation: file of the derivative variants "
+             "other modules export (\"<function> <variant>,...\" lines, as "
+             "for -enzyme-export-list). A call through another module's "
+             "derivative picks the variant assuming the most arguments not "
+             "overwritten that the call allows; without it, or for a function "
+             "not listed, every argument is assumed overwritten"));
+
 llvm::cl::opt<bool> EnzymeSeparateCompilation(
     "enzyme-separate-compilation", cl::init(false), cl::Hidden,
     cl::desc("Differentiate calls to functions without a body in this module "
@@ -4756,6 +4765,92 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   llvm_unreachable("unknown constant to create shadow of");
 }
 
+/// Parse "<hex mask, lowest argument first>" into one bool per argument.
+static std::vector<bool> parseHexMask(StringRef hex, unsigned nargs) {
+  std::vector<bool> out(nargs, false);
+  for (unsigned i = 0; i < hex.size(); ++i) {
+    unsigned nibble;
+    if (StringRef(hex.data() + i, 1).getAsInteger(16, nibble))
+      report_fatal_error(Twine("bad argument mask: ") + hex);
+    for (unsigned j = 0; j < 4; ++j)
+      if ((nibble >> j) & 1 && 4 * i + j < nargs)
+        out[4 * i + j] = true;
+  }
+  return out;
+}
+
+std::vector<bool> GradientUtils::chooseExternalVariant(
+    Function *F, DerivativeMode mode, bool runtimeActivity, bool strongZero,
+    unsigned width, const std::vector<bool> &overwritten) {
+  if (EnzymeImportVariants.empty())
+    return {};
+  static std::map<std::string, StringMap<SmallVector<std::string, 2>>> cache;
+  auto &variants = cache[EnzymeImportVariants];
+  if (variants.empty()) {
+    auto buf = MemoryBuffer::getFile(EnzymeImportVariants);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-import-variants file ") +
+                         EnzymeImportVariants);
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines) {
+      auto [name, toks] = line.trim().split(' ');
+      SmallVector<StringRef, 4> parts;
+      toks.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto t : parts)
+        variants[name.trim()].push_back(t.trim().str());
+    }
+    variants[""]; // non-empty marks the file as read
+  }
+  auto found = variants.find(F->getName());
+  if (found == variants.end())
+    return {};
+  std::string modeName = (mode == DerivativeMode::ForwardMode ||
+                          mode == DerivativeMode::ForwardModeError)
+                             ? "forward"
+                         : mode == DerivativeMode::ForwardModeSplit
+                             ? "forwardsplit"
+                             : "reverse";
+  std::vector<bool> best;
+  unsigned bestCount = 0;
+  for (auto &tok : found->second) {
+    SmallVector<StringRef, 4> flags;
+    StringRef(tok).split(flags, '+', -1, /*KeepEmpty*/ false);
+    if (flags.empty() || flags[0] != modeName)
+      continue;
+    bool sz = false, ra = false;
+    unsigned w = 1;
+    StringRef omask;
+    for (auto f : ArrayRef<StringRef>(flags).drop_front()) {
+      if (f == "sz")
+        sz = true;
+      else if (f == "ra")
+        ra = true;
+      else if (f.starts_with("w"))
+        f.drop_front().getAsInteger(10, w);
+      else if (f.starts_with("o"))
+        omask = f.drop_front();
+    }
+    if (sz != strongZero || ra != runtimeActivity || w != width)
+      continue;
+    auto mask = parseHexMask(omask, F->arg_size());
+    // usable only if every argument it assumes kept is kept by this call
+    bool ok = true;
+    unsigned count = 0;
+    for (unsigned i = 0; i < mask.size(); ++i)
+      if (mask[i]) {
+        if (i >= overwritten.size() || overwritten[i])
+          ok = false;
+        ++count;
+      }
+    if (ok && count > bestCount) {
+      best = mask;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 DIFFE_TYPE GradientUtils::getCallArgDiffeType(CallBase &call, unsigned i,
                                               bool foreignFunction) const {
   if (foreignFunction && EnzymeSeparateCompilation)
@@ -4797,10 +4892,26 @@ bool GradientUtils::usesExternalDerivative(Function *F,
   return true;
 }
 
+static std::string hexMask(unsigned n,
+                           llvm::function_ref<bool(unsigned)> bit) {
+  std::string mask;
+  for (unsigned i = 0; i < n; i += 4) {
+    unsigned nibble = 0;
+    for (unsigned j = 0; j < 4 && i + j < n; ++j)
+      if (bit(i + j))
+        nibble |= 1u << j;
+    mask += "0123456789abcdef"[nibble];
+  }
+  while (!mask.empty() && mask.back() == '0')
+    mask.pop_back();
+  return mask;
+}
+
 std::string GradientUtils::externalShadowName(Function *F, DerivativeMode mode,
                                               bool runtimeActivity,
                                               bool strongZero, unsigned width,
-                                              bool AtomicAdd) {
+                                              bool AtomicAdd,
+                                              const std::vector<bool> &notOverwritten) {
   std::string name = "__enzyme_sep_";
   switch (mode) {
   case DerivativeMode::ForwardMode:
@@ -4832,18 +4943,18 @@ std::string GradientUtils::externalShadowName(Function *F, DerivativeMode mode,
     name += "_aa";
   // Parameters declared inactive get no shadow; which ones is part of the
   // calling convention: _c<hex mask of their indices, lowest first>.
-  std::string mask;
-  for (unsigned i = 0, e = F->arg_size(); i < e; i += 4) {
-    unsigned nibble = 0;
-    for (unsigned j = 0; j < 4 && i + j < e; ++j)
-      if (F->getAttributes().hasParamAttr(i + j, "enzyme_inactive"))
-        nibble |= 1u << j;
-    mask += "0123456789abcdef"[nibble];
-  }
-  while (!mask.empty() && mask.back() == '0')
-    mask.pop_back();
+  auto mask = hexMask(F->arg_size(), [&](unsigned i) {
+    return F->getAttributes().hasParamAttr(i, "enzyme_inactive");
+  });
   if (!mask.empty())
     name += "_c" + mask;
+  // Arguments the derivative assumes are not overwritten after the call
+  // (so it need not cache what it reads through them): _o<hex mask>.
+  auto omask = hexMask(F->arg_size(), [&](unsigned i) {
+    return i < notOverwritten.size() && notOverwritten[i];
+  });
+  if (!omask.empty())
+    name += "_o" + omask;
   name += "_";
   name += F->getName();
   return name;
@@ -4852,7 +4963,8 @@ std::string GradientUtils::externalShadowName(Function *F, DerivativeMode mode,
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
-    bool strongZero, unsigned width, bool AtomicAdd) {
+    bool strongZero, unsigned width, bool AtomicAdd,
+    const std::vector<bool> &notOverwritten) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -4872,7 +4984,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                   ? (Type *)PT
                   : (Type *)StructType::get(Ctx, {PT, PT});
     auto name = externalShadowName(fn, mode, runtimeActivity, strongZero, width,
-                                   AtomicAdd);
+                                   AtomicAdd, notOverwritten);
     auto GV = fn->getParent()->getNamedValue(name);
     if (GV == nullptr)
       GV = new GlobalVariable(*fn->getParent(), T, /*isConstant*/ true,
@@ -4898,7 +5010,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   auto shadowName = [&](StringRef prefix) {
     if (exportShadow)
       return externalShadowName(exportedFn, mode, runtimeActivity, strongZero,
-                                width, AtomicAdd);
+                                width, AtomicAdd, notOverwritten);
     return (prefix + "_" + fn->getName() + "'").str();
   };
 
@@ -4951,7 +5063,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   // (i.e. that all args are overwritten)
   std::vector<DIFFE_TYPE> types;
   for (auto &a : fn->args()) {
-    overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
+    // An exported variant may assume (callers guarantee, see
+    // chooseExternalVariant) that some arguments are not overwritten.
+    bool assumedKept = exportShadow && a.getArgNo() < notOverwritten.size() &&
+                       notOverwritten[a.getArgNo()];
+    overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy() &&
+                               !assumedKept);
     TypeTree TT;
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
