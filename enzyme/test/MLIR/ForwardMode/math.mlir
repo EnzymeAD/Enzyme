@@ -75,3 +75,48 @@ func.func @dtan(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.tan %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @asin(%x: f64) -> f64 {
+  %res = math.asin %x : f64
+  return %res : f64
+}
+
+func.func @dasin(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @asin(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeasin(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[omx2:.+]] = arith.subf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[omx2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.asin %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @acos(%x: f64) -> f64 {
+  %res = math.acos %x : f64
+  return %res : f64
+}
+
+func.func @dacos(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @acos(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffeacos(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[negdx:.+]] = arith.negf %[[dx]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[omx2:.+]] = arith.subf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[omx2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[negdx]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.acos %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

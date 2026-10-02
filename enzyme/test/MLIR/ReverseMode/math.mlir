@@ -200,3 +200,46 @@ func.func @dtan(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[cos2]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @asin(%x: f64) -> f64 {
+  %res = math.asin %x : f64
+  return %res : f64
+}
+
+func.func @dasin(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @asin(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffeasin(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[omx2:.+]] = arith.subf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[omx2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @acos(%x: f64) -> f64 {
+  %res = math.acos %x : f64
+  return %res : f64
+}
+
+func.func @dacos(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @acos(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffeacos(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[negdr:.+]] = arith.negf %[[dr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[omx2:.+]] = arith.subf %[[one]], %[[xsqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sqrt:.+]] = math.sqrt %[[omx2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[negdr]], %[[sqrt]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }

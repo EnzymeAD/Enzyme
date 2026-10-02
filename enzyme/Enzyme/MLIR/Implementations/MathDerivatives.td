@@ -125,5 +125,20 @@ def : MLIRDerivative<"math", "TanOp", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "AsinOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), 
+                        (SqrtF( SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "AcosOp", (Op $x),
+                    [
+                      (CheckedDivF (NegF (DiffeRet)), 
+                        (SqrtF( SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
