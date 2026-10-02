@@ -422,6 +422,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "__kmpc_barrier",
       "__kmpc_critical",
       "__kmpc_end_critical",
+      "__kmpc_threadprivate_cached",
       "omp_get_thread_num",
       "omp_get_num_threads",
       "omp_get_max_threads",
