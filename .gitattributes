@@ -15,3 +15,5 @@
 /polly export-ignore
 /tests export-ignore
 /enzyme/benchmarks export-ignore
+enzyme/Poseidon/artifacts/cgo2027/scripts/anon_denylist.txt export-ignore
+enzyme/Poseidon/artifacts/cgo2027/scripts/anon_scan.py export-ignore
