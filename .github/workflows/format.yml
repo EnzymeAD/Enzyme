@@ -23,7 +23,7 @@ jobs:
         persist-credentials: false
     - uses: DoozyX/clang-format-lint-action@bcb4eb2cb0d707ee4f3e5cc3b456eb075f12cf73 # v0.20
       with:
-        source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen'
-        exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'
+        source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen enzyme/Poseidon enzyme/include/poseidon'
+        exclude: './CMakeLists.txt enzyme/Enzyme/SCEV enzyme/Poseidon/artifacts'
         style: 'llvm'
         clangFormatVersion: 16
