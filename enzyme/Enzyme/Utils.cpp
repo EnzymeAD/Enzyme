@@ -5346,6 +5346,24 @@ static Value *getStoredValue(AllocaInst *AI, int64_t offset, unsigned depth) {
         todo.push_back({I, base});
         continue;
       }
+      // A context passed by reference to a derivative call, after the
+      // enzyme_context marker, is only read.
+      auto CB = dyn_cast<CallBase>(I);
+      if (CB && !isa<MemTransferInst>(I)) {
+        bool read = true;
+        for (auto &arg : CB->args()) {
+          if (arg.get() != ptr)
+            continue;
+          unsigned i = CB->getArgOperandNo(&arg);
+          auto marker = i ? dyn_cast<GlobalVariable>(
+                                CB->getArgOperand(i - 1)->stripPointerCasts())
+                          : nullptr;
+          read &= marker && marker->getName() == "enzyme_context";
+        }
+        if (!read)
+          return nullptr;
+        continue;
+      }
       if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
         APInt off(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
         if (!GEP->accumulateConstantOffset(DL, off))
@@ -5390,12 +5408,25 @@ static Value *getStoredValue(AllocaInst *AI, int64_t offset, unsigned depth) {
   return stored;
 }
 
+/// \p V without pointer casts, nor casts between a pointer and an integer
+/// of its size, as Fortran passes a type(c_ptr) by value.
+static Value *stripPointerAndIntCasts(Value *V) {
+  while (true) {
+    V = V->stripPointerCasts();
+    auto Op = dyn_cast<Operator>(V);
+    if (!Op || (Op->getOpcode() != Instruction::IntToPtr &&
+                Op->getOpcode() != Instruction::PtrToInt))
+      return V;
+    V = Op->getOperand(0);
+  }
+}
+
 /// \p V, or, if it is loaded from a local variable that only ever holds one
 /// value, that value. Without optimization, values such as a shadow context
 /// or the address of a global live in local variables, and are copied
 /// between them, e.g. as the member of a struct.
 static Value *lookThroughLocalMemory(Value *V, unsigned depth) {
-  V = V->stripPointerCasts();
+  V = stripPointerAndIntCasts(V);
   auto LI = dyn_cast<LoadInst>(V);
   if (!LI || depth > 8)
     return V;
@@ -5407,7 +5438,8 @@ static Value *lookThroughLocalMemory(Value *V, unsigned depth) {
   if (!AI)
     return V;
   auto stored = getStoredValue(AI, off.getSExtValue(), depth);
-  if (!stored || stored->getType() != LI->getType())
+  if (!stored || DL.getTypeStoreSize(stored->getType()) !=
+                     DL.getTypeStoreSize(LI->getType()))
     return V;
   return stored;
 }
@@ -5416,9 +5448,70 @@ Value *lookThroughLocalMemory(Value *V) { return lookThroughLocalMemory(V, 0); }
 
 GlobalVariable *getShadowContext(Value *V) {
   auto GV = dyn_cast<GlobalVariable>(lookThroughLocalMemory(V));
+  // A context passed by reference, as Fortran passes arguments: a local
+  // variable that only ever holds the context.
+  if (!GV && V->getType()->isPointerTy())
+    if (auto I = dyn_cast<Instruction>(V)) {
+      auto &DL = I->getModule()->getDataLayout();
+      APInt off(DL.getIndexTypeSizeInBits(V->getType()), 0);
+      if (auto AI = dyn_cast<AllocaInst>(V->stripAndAccumulateConstantOffsets(
+              DL, off, /*AllowNonInbounds*/ true)))
+        if (auto stored = getStoredValue(AI, off.getSExtValue(), 0))
+          GV = dyn_cast<GlobalVariable>(stripPointerAndIntCasts(stored));
+    }
   if (!GV || !GV->hasMetadata("enzyme_context"))
     return nullptr;
   return GV;
+}
+
+bool getGlobalSlot(Value *V, GlobalVariable *&GV, int64_t &offset) {
+  auto LI = dyn_cast<LoadInst>(lookThroughLocalMemory(V));
+  if (!LI || !LI->getType()->isPointerTy())
+    return false;
+  auto &DL = LI->getModule()->getDataLayout();
+  APInt off(DL.getIndexTypeSizeInBits(LI->getPointerOperand()->getType()), 0);
+  auto base = LI->getPointerOperand()->stripAndAccumulateConstantOffsets(
+      DL, off, /*AllowNonInbounds*/ true);
+  // A local copy of a value read from the global, such as a descriptor.
+  if (auto AI = dyn_cast<AllocaInst>(base)) {
+    auto copy =
+        dyn_cast_or_null<LoadInst>(getStoredValue(AI, off.getSExtValue(), 0));
+    if (!copy)
+      return false;
+    off = APInt(DL.getIndexTypeSizeInBits(copy->getPointerOperand()->getType()),
+                0);
+    base = copy->getPointerOperand()->stripAndAccumulateConstantOffsets(
+        DL, off, /*AllowNonInbounds*/ true);
+  }
+  GV = dyn_cast<GlobalVariable>(base);
+  offset = off.getSExtValue();
+  return GV;
+}
+
+SmallVector<std::pair<GlobalVariable *, unsigned>, 2>
+getImplicitGlobalShadows(GlobalVariable *GV) {
+  SmallVector<std::pair<GlobalVariable *, unsigned>, 2> shadows;
+  auto MD = GV->getMetadata("enzyme_shadows");
+  if (!MD)
+    return shadows;
+  for (auto &op : MD->operands()) {
+    auto entry = dyn_cast<MDNode>(op);
+    if (!entry || entry->getNumOperands() != 2)
+      continue;
+    auto key = dyn_cast_or_null<ConstantAsMetadata>(entry->getOperand(0));
+    auto shadow = dyn_cast_or_null<ConstantAsMetadata>(entry->getOperand(1));
+    if (!key || !shadow || !isa<GlobalVariable>(shadow->getValue()))
+      continue;
+    unsigned width;
+    if (auto W = dyn_cast<ConstantInt>(key->getValue()))
+      width = W->getZExtValue();
+    else if (auto context = dyn_cast<GlobalVariable>(key->getValue()))
+      width = getShadowContextWidth(context);
+    else
+      continue;
+    shadows.emplace_back(cast<GlobalVariable>(shadow->getValue()), width);
+  }
+  return shadows;
 }
 
 Constant *getConstantShadowInitializer(

@@ -21,7 +21,7 @@
 !
 ! ===----------------------------------------------------------------------=== !
 module enzyme
-  use, intrinsic :: iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int, c_int8_t, c_ptr
   use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
                                    enzyme_fwddiff  => f__enzyme_fwddiff, &
                                    enzyme_function_like => &
@@ -37,9 +37,50 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_scalar")    :: enzyme_scalar
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
+  integer(c_int), public, bind(C, name="enzyme_context")   :: enzyme_context
+
+  ! Bindings for shadow contexts. A context holds a shadow of every global
+  ! (module variable, COMMON block, SAVE variable) at a fixed width:
+  !
+  !   type(c_ptr) :: ctx
+  !   real, pointer :: dg
+  !   ctx = enzyme_new_context(1)
+  !   call c_f_pointer(enzyme_shadow(ctx, g, 0), dg)
+  !   dg = 0
+  !   call enzyme_autodiff(f, enzyme_context, ctx, x, dx)
+  !
+  ! after which dg holds the derivative with respect to g. Each call of
+  ! enzyme_new_context in the source is one context, which must be made in
+  ! the procedure that uses it. enzyme_shadow takes a global, an element of
+  ! one or a whole array, and the lane, from 0, of the shadow to return. An
+  ! allocatable module variable has a shadow allocated, zeroed, and freed with
+  ! it by ALLOCATE and DEALLOCATE. enzyme_zero_shadows(ctx) zeroes every
+  ! shadow in the context, e.g. before each gradient of a loop.
+  interface
+    function enzyme_new_context(width) result(ctx) &
+        bind(C, name="__enzyme_context")
+      import :: c_int, c_ptr
+      integer(c_int), value :: width
+      type(c_ptr) :: ctx
+    end function enzyme_new_context
+    function enzyme_shadow(ctx, var, lane) result(shadow) &
+        bind(C, name="__enzyme_shadow")
+      import :: c_int, c_int8_t, c_ptr
+      type(c_ptr), value :: ctx
+      !dir$ ignore_tkr(tkr) var
+      integer(c_int8_t) :: var(*)
+      integer(c_int), value :: lane
+      type(c_ptr) :: shadow
+    end function enzyme_shadow
+    subroutine enzyme_zero_shadows(ctx) bind(C, name="__enzyme_zero_shadows")
+      import :: c_ptr
+      type(c_ptr), value :: ctx
+    end subroutine enzyme_zero_shadows
+  end interface
 
   ! Bindings for function hooks
   public :: enzyme_autodiff
   public :: enzyme_fwddiff
   public :: enzyme_function_like
+  public :: enzyme_new_context, enzyme_shadow, enzyme_zero_shadows
 end module enzyme

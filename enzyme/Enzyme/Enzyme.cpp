@@ -382,6 +382,14 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   return false;
 }
 
+/// \p ptr as the result of \p CI, which may be a pointer-sized integer:
+/// Fortran returns a type(c_ptr) as one.
+static Value *castToCallResult(IRBuilder<> &B, Value *ptr, CallInst *CI) {
+  if (CI->getType()->isIntegerTy())
+    return B.CreatePtrToInt(ptr, CI->getType());
+  return B.CreatePointerBitCastOrAddrSpaceCast(ptr, CI->getType());
+}
+
 /// Lower the creation of a shadow context,
 ///   void *__enzyme_context(int width)
 /// to a marker global of its own, holding the width. Derivatives requested
@@ -403,12 +411,8 @@ static bool lowerShadowContext(CallInst *CI) {
       M, I32, /*isConstant*/ true, GlobalValue::PrivateLinkage,
       ConstantInt::get(I32, width->getZExtValue()), "enzyme.context");
   context->setMetadata("enzyme_context", MDTuple::get(M.getContext(), {}));
-  Value *V = context;
-  if (V->getType() != CI->getType()) {
-    IRBuilder<> B(CI);
-    V = B.CreatePointerBitCastOrAddrSpaceCast(V, CI->getType());
-  }
-  CI->replaceAllUsesWith(V);
+  IRBuilder<> B(CI);
+  CI->replaceAllUsesWith(castToCallResult(B, context, CI));
   CI->eraseFromParent();
   return true;
 }
@@ -457,10 +461,15 @@ static bool lowerShadowQuery(CallInst *CI) {
       break;
     base = next;
   }
+  // Memory a global points to, such as the data of a Fortran allocatable,
+  // has as shadow the memory that the global's shadow points to, as it does
+  // when the query runs.
   auto GV = dyn_cast<GlobalVariable>(base);
+  int64_t slot = 0;
+  bool pointee = !GV && getGlobalSlot(base, GV, slot);
   if (!GV)
-    return fail("__enzyme_shadow needs a global variable, at a constant "
-                "offset: ");
+    return fail("__enzyme_shadow needs a global variable, or memory a global "
+                "points to, at a constant offset: ");
 
   std::string error;
   GlobalVariable *shadow =
@@ -474,14 +483,306 @@ static bool lowerShadowQuery(CallInst *CI) {
     ptr = B.CreateInBoundsGEP(
         shadow->getValueType(), shadow,
         {B.getInt64(0), B.CreateZExtOrTrunc(lane, B.getInt64Ty())});
+  if (pointee) {
+    ptr = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, slot);
+    ptr = B.CreateLoad(base->getType(), ptr);
+  }
   if (Offset != 0)
     ptr =
         B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, Offset.getSExtValue());
-  if (ptr->getType() != CI->getType())
-    ptr = B.CreatePointerBitCastOrAddrSpaceCast(ptr, CI->getType());
-  CI->replaceAllUsesWith(ptr);
+  CI->replaceAllUsesWith(castToCallResult(B, ptr, CI));
   CI->eraseFromParent();
   return true;
+}
+
+/// The size of the fresh allocation \p V is, if it is one: Fortran's
+/// ALLOCATE of an intrinsic type is a call to malloc.
+static Value *getFreshAllocationSize(Value *V) {
+  auto CI = dyn_cast<CallInst>(lookThroughLocalMemory(V));
+  if (!CI)
+    return nullptr;
+  auto F = getFunctionFromCall(CI);
+  if (!F || F->getName() != "malloc" || CI->arg_size() != 1)
+    return nullptr;
+  return CI->getArgOperand(0);
+}
+
+/// The pointer the shadow of a global holds where the global holds \p V:
+/// a zeroed allocation of the same size for a fresh allocation, null for
+/// null, or null if neither, when the shadow keeps what it held.
+static Value *getShadowAllocation(IRBuilder<> &B, Value *V, CallInst *&alloc) {
+  alloc = nullptr;
+  if (isa<ConstantPointerNull>(V))
+    return V;
+  auto size = getFreshAllocationSize(V);
+  if (!size)
+    return nullptr;
+  auto orig = cast<CallInst>(lookThroughLocalMemory(V));
+  alloc =
+      B.CreateCall(orig->getFunctionType(), orig->getCalledOperand(), {size});
+  B.CreateMemSet(alloc, B.getInt8(0), size, MaybeAlign());
+  return B.CreatePointerBitCastOrAddrSpaceCast(alloc, V->getType());
+}
+
+/// The size of the allocation that lane \p lane of \p shadow points to at
+/// byte \p offset, kept by mirrorGlobalAllocations for
+/// __enzyme_zero_shadows.
+static GlobalVariable *getShadowAllocationSize(GlobalVariable *shadow,
+                                               unsigned lane, int64_t offset) {
+  auto &M = *shadow->getParent();
+  std::string name =
+      (shadow->getName() + ".size." + Twine(lane) + "." + Twine(offset)).str();
+  if (auto GV = M.getGlobalVariable(name, /*AllowInternal*/ true))
+    return GV;
+  auto I64 = Type::getInt64Ty(M.getContext());
+  return new GlobalVariable(M, I64, /*isConstant*/ false,
+                            GlobalValue::PrivateLinkage,
+                            ConstantInt::get(I64, 0), name);
+}
+
+/// The byte offsets, and index paths, of the pointers within type \p T.
+static void getPointerFields(
+    const DataLayout &DL, Type *T, int64_t offset,
+    SmallVectorImpl<unsigned> &path,
+    SmallVectorImpl<std::pair<int64_t, SmallVector<unsigned, 3>>> &fields) {
+  if (T->isPointerTy()) {
+    fields.emplace_back(offset,
+                        SmallVector<unsigned, 3>(path.begin(), path.end()));
+    return;
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto SL = DL.getStructLayout(ST);
+    for (unsigned i = 0; i < ST->getNumElements(); ++i) {
+      path.push_back(i);
+      getPointerFields(DL, ST->getElementType(i),
+                       offset + SL->getElementOffset(i), path, fields);
+      path.pop_back();
+    }
+  } else if (auto AT = dyn_cast<ArrayType>(T)) {
+    auto size = DL.getTypeAllocSize(AT->getElementType());
+    for (unsigned i = 0; i < AT->getNumElements(); ++i) {
+      path.push_back(i);
+      getPointerFields(DL, AT->getElementType(), offset + i * size, path,
+                       fields);
+      path.pop_back();
+    }
+  }
+}
+
+/// Mirror, in the implicit shadows of a global holding pointers, what code
+/// that is not differentiated stores in it: a fresh, zeroed allocation where
+/// the global gets a fresh allocation, as Fortran's ALLOCATE of a module
+/// variable does, null where it gets null, and the integers beside them,
+/// such as the bounds in a descriptor. Freeing the global's memory frees the
+/// shadow's. Any other pointer stored in the global leaves the shadow's.
+static bool mirrorGlobalAllocations(Module &M, ArrayRef<WeakVH> originals) {
+  auto &DL = M.getDataLayout();
+  bool changed = false;
+  auto laneAddress = [](IRBuilder<> &B, GlobalVariable *shadow, unsigned W,
+                        unsigned lane, int64_t offset) {
+    Value *ptr = shadow;
+    if (W > 1)
+      ptr =
+          B.CreateConstInBoundsGEP2_32(shadow->getValueType(), shadow, 0, lane);
+    if (offset)
+      ptr = B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), ptr, offset);
+    return ptr;
+  };
+  auto recordSize = [](IRBuilder<> &B, GlobalVariable *shadow, unsigned lane,
+                       int64_t offset, CallInst *alloc) {
+    auto slot = getShadowAllocationSize(shadow, lane, offset);
+    Value *size =
+        alloc ? B.CreateZExtOrTrunc(alloc->getArgOperand(0), B.getInt64Ty())
+              : B.getInt64(0);
+    B.CreateStore(size, slot);
+  };
+  for (auto &VH : originals) {
+    auto F = dyn_cast_or_null<Function>(VH);
+    if (!F || F->empty())
+      continue;
+    SmallVector<Instruction *, 8> todo;
+    for (auto &I : instructions(*F))
+      if (isa<StoreInst>(&I) || isa<CallInst>(&I))
+        todo.push_back(&I);
+    for (auto I : todo) {
+      if (auto CI = dyn_cast<CallInst>(I)) {
+        auto callee = getFunctionFromCall(CI);
+        if (!callee || callee->getName() != "free" || CI->arg_size() != 1)
+          continue;
+        GlobalVariable *GV;
+        int64_t offset;
+        if (!getGlobalSlot(CI->getArgOperand(0), GV, offset))
+          continue;
+        IRBuilder<> B(CI);
+        for (auto [shadow, W] : getImplicitGlobalShadows(GV))
+          for (unsigned lane = 0; lane < W; ++lane) {
+            auto ptr = B.CreateLoad(CI->getArgOperand(0)->getType(),
+                                    laneAddress(B, shadow, W, lane, offset));
+            B.CreateCall(CI->getFunctionType(), CI->getCalledOperand(), {ptr});
+            changed = true;
+          }
+        continue;
+      }
+      auto SI = cast<StoreInst>(I);
+      APInt off(DL.getIndexTypeSizeInBits(SI->getPointerOperandType()), 0);
+      auto GV = dyn_cast<GlobalVariable>(
+          SI->getPointerOperand()->stripAndAccumulateConstantOffsets(
+              DL, off, /*AllowNonInbounds*/ true));
+      if (!GV)
+        continue;
+      SmallVector<unsigned, 3> path;
+      SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> globalPtrs;
+      getPointerFields(DL, GV->getValueType(), 0, path, globalPtrs);
+      if (globalPtrs.empty())
+        continue;
+      auto shadows = getImplicitGlobalShadows(GV);
+      if (shadows.empty())
+        continue;
+      Value *val = SI->getValueOperand();
+      Type *T = val->getType();
+      int64_t offset = off.getSExtValue();
+      IRBuilder<> B(SI->getNextNode());
+      if (T->isIntegerTy()) {
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane)
+            B.CreateStore(val, laneAddress(B, shadow, W, lane, offset));
+        changed = true;
+        continue;
+      }
+      if (T->isPointerTy()) {
+        for (auto [shadow, W] : shadows)
+          for (unsigned lane = 0; lane < W; ++lane) {
+            CallInst *alloc;
+            if (auto sval = getShadowAllocation(B, val, alloc)) {
+              B.CreateStore(sval, laneAddress(B, shadow, W, lane, offset));
+              recordSize(B, shadow, lane, offset, alloc);
+              changed = true;
+            }
+          }
+        continue;
+      }
+      if (!T->isAggregateType())
+        continue;
+      SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+      getPointerFields(DL, T, 0, path, ptrs);
+      // A whole value, such as a descriptor, with only integers beside its
+      // pointers.
+      bool numbers = true;
+      std::function<void(Type *)> check = [&](Type *T) {
+        if (T->isFloatingPointTy() || T->isVectorTy())
+          numbers = false;
+        else if (auto ST = dyn_cast<StructType>(T))
+          for (auto E : ST->elements())
+            check(E);
+        else if (auto AT = dyn_cast<ArrayType>(T))
+          check(AT->getElementType());
+      };
+      check(T);
+      if (!numbers)
+        continue;
+      Value *src = lookThroughLocalMemory(val);
+      for (auto [shadow, W] : shadows)
+        for (unsigned lane = 0; lane < W; ++lane) {
+          Value *sval = val;
+          for (auto &[poff, ppath] : ptrs) {
+            Value *pv = FindInsertedValue(src, ppath);
+            if (!pv)
+              pv = B.CreateExtractValue(val, ppath);
+            CallInst *alloc;
+            Value *sp = getShadowAllocation(B, pv, alloc);
+            if (sp)
+              recordSize(B, shadow, lane, offset + poff, alloc);
+            else
+              sp = B.CreateLoad(pv->getType(),
+                                laneAddress(B, shadow, W, lane, offset + poff));
+            sval = B.CreateInsertValue(sval, sp, ppath);
+          }
+          B.CreateStore(sval, laneAddress(B, shadow, W, lane, offset));
+          changed = true;
+        }
+    }
+  }
+  return changed;
+}
+
+/// Lower
+///   void __enzyme_zero_shadows(void *ctx)
+/// to zeroing the shadows in \p ctx of every global, once derivatives have
+/// created them all: the numbers in them, and the memory their pointers hold
+/// where it was allocated with the global's own (see
+/// mirrorGlobalAllocations). Integers and pointers in shadows of globals that
+/// hold pointers, such as descriptors, are kept.
+static bool lowerZeroShadows(CallInst *CI) {
+  auto &M = *CI->getModule();
+  auto &DL = M.getDataLayout();
+  auto context =
+      CI->arg_size() == 1 ? getShadowContext(CI->getArgOperand(0)) : nullptr;
+  if (!context) {
+    EmitFailure("IllegalShadowContext", CI->getDebugLoc(), CI,
+                "__enzyme_zero_shadows takes a context made by "
+                "__enzyme_context in the same function: ",
+                *CI);
+    CI->eraseFromParent();
+    return false;
+  }
+  unsigned W = getShadowContextWidth(context);
+  IRBuilder<> B(CI);
+  for (auto &GV : M.globals()) {
+    auto shadow = getGlobalShadow(&GV, W, context);
+    if (!shadow || hasMetadata(&GV, "enzyme_shadow"))
+      continue;
+    SmallVector<unsigned, 3> path;
+    SmallVector<std::pair<int64_t, SmallVector<unsigned, 3>>, 2> ptrs;
+    getPointerFields(DL, GV.getValueType(), 0, path, ptrs);
+    if (ptrs.empty()) {
+      B.CreateMemSet(shadow, B.getInt8(0),
+                     DL.getTypeAllocSize(shadow->getValueType()),
+                     shadow->getAlign());
+      continue;
+    }
+    for (unsigned lane = 0; lane < W; ++lane) {
+      Value *base = shadow;
+      if (W > 1)
+        base = B.CreateConstInBoundsGEP2_32(shadow->getValueType(), shadow, 0,
+                                            lane);
+      // The floats beside the pointers.
+      std::function<void(Type *, int64_t)> zero = [&](Type *T, int64_t offset) {
+        if (T->isFloatingPointTy())
+          B.CreateStore(
+              Constant::getNullValue(T),
+              B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), base, offset));
+        else if (auto ST = dyn_cast<StructType>(T)) {
+          auto SL = DL.getStructLayout(ST);
+          for (unsigned i = 0; i < ST->getNumElements(); ++i)
+            zero(ST->getElementType(i), offset + SL->getElementOffset(i));
+        } else if (auto AT = dyn_cast<ArrayType>(T))
+          for (unsigned i = 0; i < AT->getNumElements(); ++i)
+            zero(AT->getElementType(),
+                 offset + i * DL.getTypeAllocSize(AT->getElementType()));
+      };
+      zero(GV.getValueType(), 0);
+      // The memory the pointers hold.
+      for (auto &[offset, ppath] : ptrs) {
+        auto slot = M.getGlobalVariable(
+            (shadow->getName() + ".size." + Twine(lane) + "." + Twine(offset))
+                .str(),
+            /*AllowInternal*/ true);
+        if (!slot)
+          continue;
+        auto ptr = B.CreateLoad(B.getPtrTy(), B.CreateConstInBoundsGEP1_64(
+                                                  B.getInt8Ty(), base, offset));
+        // Null with a size of zero once freed.
+        B.CreateMemSet(ptr, B.getInt8(0), B.CreateLoad(B.getInt64Ty(), slot),
+                       MaybeAlign());
+      }
+    }
+  }
+  CI->eraseFromParent();
+  return true;
+}
+
+static bool isZeroShadows(const Function *F) {
+  return F && startsWith(F->getName(), "__enzyme_zero_shadows");
 }
 
 static bool isShadowQuery(const Function *F) {
@@ -2880,6 +3181,13 @@ public:
     }
 
     bool changed = false;
+    // The functions of the program itself, as opposed to the derivatives
+    // created below.
+    SmallVector<WeakVH, 16> originals;
+    for (Function &F : M)
+      if (!F.empty())
+        originals.emplace_back(&F);
+
     // Shadow contexts first: the shadow queries and derivative requests that
     // name them are lowered below.
     SmallVector<CallInst *, 2> contexts;
@@ -3126,6 +3434,19 @@ public:
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();
     Logic.clear();
+
+    changed |= mirrorGlobalAllocations(M, originals);
+
+    // Zeroing every shadow in a context, now that derivatives have made
+    // them all.
+    SmallVector<CallInst *, 2> zeroes;
+    for (Function &F : M)
+      for (Instruction &I : instructions(F))
+        if (auto CI = dyn_cast<CallInst>(&I))
+          if (isZeroShadows(getFunctionFromCall(CI)))
+            zeroes.push_back(CI);
+    for (auto CI : zeroes)
+      changed |= lowerZeroShadows(CI);
 
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());

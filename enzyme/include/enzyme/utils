@@ -18,6 +18,7 @@ extern int enzyme_context;
 
 extern "C" void *__enzyme_context(unsigned width);
 extern "C" void *__enzyme_shadow(void *context, void *global, unsigned lane);
+extern "C" void __enzyme_zero_shadows(void *context);
 
 template<typename Return, typename... T>
 Return __enzyme_autodiff(T...);
@@ -64,6 +65,14 @@ namespace enzyme {
       return static_cast<T *>(__enzyme_shadow(
           ctx.value, const_cast<void *>(static_cast<const void *>(&global)),
           lane));
+    }
+
+    /// Zero the shadow of every global in \p ctx, e.g. before each gradient
+    /// in a loop.
+    template < unsigned Width >
+    __attribute__((always_inline))
+    void zero_shadows(Context<Width> ctx) {
+      __enzyme_zero_shadows(ctx.value);
     }
 
     template<bool ReturnPrimal = false>

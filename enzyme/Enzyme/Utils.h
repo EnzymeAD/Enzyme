@@ -3002,6 +3002,16 @@ llvm::GlobalVariable *createImplicitGlobalShadow(llvm::GlobalVariable *GV,
 /// local variables that hold only it. Null if \p V is not a context.
 llvm::GlobalVariable *getShadowContext(llvm::Value *V);
 
+/// Whether \p V is a pointer loaded from the global \p GV at byte \p offset,
+/// e.g. the data of a Fortran allocatable read from its descriptor, possibly
+/// through a local copy of it.
+bool getGlobalSlot(llvm::Value *V, llvm::GlobalVariable *&GV, int64_t &offset);
+
+/// The implicit shadows of \p GV, of every width and context, with their
+/// widths.
+llvm::SmallVector<std::pair<llvm::GlobalVariable *, unsigned>, 2>
+getImplicitGlobalShadows(llvm::GlobalVariable *GV);
+
 /// \p V, or, if it is loaded from a local variable that only ever holds one
 /// value, that value.
 llvm::Value *lookThroughLocalMemory(llvm::Value *V);
