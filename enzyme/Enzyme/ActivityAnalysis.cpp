@@ -1255,6 +1255,74 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
   return false;
 }
 
+/// Whether the memory Val points into can reach callees only through
+/// parameters marked "enzyme_RecursiveNoActiveStore" (see
+/// DetectRecursiveNoActiveStore): its base is a local allocation that is never
+/// captured except by being stored into another such allocation, or by being
+/// passed to a call through such a parameter. Those callees store nothing
+/// active into that memory, nor into memory reachable from it. If Only is
+/// given, only that call is asked about, and other calls merely must not
+/// capture the pointer.
+static bool onlyReachesCallsThroughNoActiveStore(Value *Val,
+                                                 TargetLibraryInfo &TLI,
+                                                 CallBase *Only = nullptr) {
+  SmallVector<Value *, 4> Bases = {getBaseObject(Val)};
+  SmallPtrSet<Value *, 8> Seen;
+  while (!Bases.empty()) {
+    Value *Base = Bases.pop_back_val();
+    if (!Seen.insert(Base).second)
+      continue;
+    if (!isa<AllocaInst>(Base) && !isAllocationCall(Base, TLI))
+      return false;
+    SmallVector<Value *, 8> Ptrs = {Base};
+    while (!Ptrs.empty()) {
+      Value *P = Ptrs.pop_back_val();
+      for (const Use &U : P->uses()) {
+        auto I = cast<Instruction>(U.getUser());
+        if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                    /*includebin*/ true)) {
+          if (Seen.insert(I).second)
+            Ptrs.push_back(I);
+          continue;
+        }
+        if (auto LI = dyn_cast<LoadInst>(I)) {
+          // A pointer loaded from the memory may be one that was stored into
+          // it, so where it goes matters just the same.
+          if (LI->getType()->isPointerTy() && Seen.insert(LI).second)
+            Ptrs.push_back(LI);
+          continue;
+        }
+        if (isa<ICmpInst>(I))
+          continue;
+        if (auto SI = dyn_cast<StoreInst>(I)) {
+          if (U.getOperandNo() == SI->getPointerOperandIndex())
+            continue;
+          // Captured into other memory, through which a callee could reach
+          // it.
+          Bases.push_back(getBaseObject(SI->getPointerOperand()));
+          continue;
+        }
+        if (auto C = dyn_cast<CallBase>(I)) {
+          if (U.getOperandNo() >= C->arg_size())
+            return false;
+          if (isRecursiveNoActiveStore(C, U.getOperandNo()))
+            continue;
+          if (isDeallocationCall(C, TLI) || isa<MemSetInst>(C))
+            continue;
+          if (auto II = dyn_cast<IntrinsicInst>(C))
+            if (II->isLifetimeStartOrEnd())
+              continue;
+          if (Only && C != Only && isNoCapture(C, U.getOperandNo()))
+            continue;
+          return false;
+        }
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
@@ -2219,9 +2287,16 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
+      // Whether I is a call that stores nothing active into the memory of
+      // Val, as it can only reach it through parameters marked
+      // "enzyme_RecursiveNoActiveStore".
+      bool NoActiveStoreCall = false;
+
       if (auto CB = dyn_cast<CallInst>(I)) {
         if (CB->onlyAccessesInaccessibleMemory())
           AARes = ModRefInfo::NoModRef;
+
+        NoActiveStoreCall = onlyReachesCallsThroughNoActiveStore(Val, TLI, CB);
 
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
         if (ReadOnly) {
@@ -2353,10 +2428,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               //        double* I = *Val;
               //        I[0] = active;
               //
-              if ((I->mayWriteToMemory() &&
-                   !Hypothesis->isConstantInstruction(TR, I)) ||
-                  (!Hypothesis->DeducingPointers.count(I) &&
-                   !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I))) {
+              if (!NoActiveStoreCall &&
+                  ((I->mayWriteToMemory() &&
+                    !Hypothesis->isConstantInstruction(TR, I)) ||
+                   (!Hypothesis->DeducingPointers.count(I) &&
+                    !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I)))) {
                 if (EnzymePrintActivity)
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
@@ -2393,7 +2469,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // Otherwise fallback and check if the instruction is active
           // TODO: note that this can be optimized (especially for function
           // calls)
-          auto cop = !Hypothesis->isConstantInstruction(TR, I);
+          auto cop =
+              !NoActiveStoreCall && !Hypothesis->isConstantInstruction(TR, I);
           if (EnzymePrintActivity)
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
                          << " - " << *I << " of "
@@ -3715,8 +3792,14 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
         }
         continue;
       } else {
-        // Storing into active memory, return true
-        if (!isConstantValue(TR, SI->getPointerOperand())) {
+        // Storing into active memory, return true. Unless that memory only
+        // reaches callees through parameters marked
+        // "enzyme_RecursiveNoActiveStore": then no callee stores anything
+        // active through a copy of val loaded from it, and stores through
+        // such copies in this function are seen by the memory search.
+        if (!isConstantValue(TR, SI->getPointerOperand()) &&
+            !onlyReachesCallsThroughNoActiveStore(SI->getPointerOperand(),
+                                                  TLI)) {
           StoredOrReturnedCache[key] = true;
           if (EnzymePrintActivity)
             llvm::errs() << " </ASOR" << (int)directions

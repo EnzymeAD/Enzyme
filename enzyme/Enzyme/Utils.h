@@ -2094,8 +2094,30 @@ static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
   return isReadOnly(F, arg) && isWriteOnly(F, arg);
 }
 
+/// Whether argument idx of call is passed to a parameter marked
+/// "enzyme_RecursiveNoActiveStore" (see DetectRecursiveNoActiveStore): the
+/// callee neither captures it nor stores an active value through it, nor
+/// through any pointer loaded from the memory it points to.
+static inline bool isRecursiveNoActiveStore(const llvm::CallBase *call,
+                                            size_t idx) {
+  if (call->getAttributes().hasParamAttr(idx, "enzyme_RecursiveNoActiveStore"))
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    // As for isNoCapture, the callee's attributes only describe the actual
+    // argument under a matching calling convention.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (idx < F->arg_size() &&
+          F->getAttributes().hasParamAttr(idx, "enzyme_RecursiveNoActiveStore"))
+        return true;
+  }
+  return false;
+}
+
 static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   if (call->doesNotCapture(idx))
+    return true;
+  if (isRecursiveNoActiveStore(call, idx))
     return true;
 
   if (auto F = getFunctionFromCall(call)) {

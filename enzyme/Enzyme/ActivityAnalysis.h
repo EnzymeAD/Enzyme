@@ -278,4 +278,13 @@ constexpr inline const char *to_string(ActivityAnalyzer::UseActivity UA) {
   }
   return "<IllegaluseActivity>";
 }
+/// Whether the call is known to be inactive from attributes, metadata or
+/// Enzyme's list of known inactive functions, without running activity
+/// analysis.
+bool isInactiveCall(llvm::CallBase &CI);
+
+/// Like isInactiveCall, also treating known inactive instructions (e.g.
+/// allocation and deallocation functions) as inactive.
+bool isInactiveCallInst(llvm::CallBase &CB, llvm::TargetLibraryInfo &TLI);
+
 #endif
