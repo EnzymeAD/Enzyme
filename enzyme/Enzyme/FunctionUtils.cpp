@@ -99,6 +99,7 @@
 
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -1452,6 +1453,295 @@ static void ReplaceOMPReductions(Function &NewF) {
     }
     CI->eraseFromParent();
   }
+}
+
+/// Lower the master construct to a test of the thread number. __kmpc_master
+/// returns 1 on the master thread (thread 0 of the team) and implies no
+/// synchronization, so the test is equivalent, and recomputable in the
+/// reverse pass.
+static void ReplaceOMPMaster(Function &NewF) {
+  SmallVector<CallInst *, 2> Masters, EndMasters;
+  for (auto &BB : NewF)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction()) {
+          if (Fn->getName() == "__kmpc_master" && CI->arg_size() == 2)
+            Masters.push_back(CI);
+          else if (Fn->getName() == "__kmpc_end_master" && CI->arg_size() == 2)
+            EndMasters.push_back(CI);
+        }
+  if (Masters.empty() && EndMasters.empty())
+    return;
+  auto &M = *NewF.getParent();
+  // Declared as GradientUtils::ompThreadId does, unless already declared.
+  Function *ThreadNum = M.getFunction("omp_get_thread_num");
+  if (!ThreadNum)
+    ThreadNum = cast<Function>(
+        M.getOrInsertFunction(
+             "omp_get_thread_num",
+             FunctionType::get(Type::getInt64Ty(NewF.getContext()), {}))
+            .getCallee());
+#if LLVM_VERSION_MAJOR >= 16
+  ThreadNum->setOnlyAccessesInaccessibleMemory();
+  ThreadNum->setOnlyReadsMemory();
+#else
+  ThreadNum->addFnAttr(Attribute::InaccessibleMemOnly);
+  ThreadNum->addFnAttr(Attribute::ReadOnly);
+#endif
+  // As attributeKnownFunctions marks it when it was already declared.
+  ThreadNum->addFnAttr(Attribute::NoFree);
+  ThreadNum->addFnAttr("enzyme_no_escaping_allocation");
+  for (auto CI : Masters) {
+    IRBuilder<> B(CI);
+    auto Tid = B.CreateCall(ThreadNum);
+    Tid->setDebugLoc(CI->getDebugLoc());
+    auto IsMaster =
+        B.CreateZExt(B.CreateICmpEQ(Tid, ConstantInt::get(Tid->getType(), 0)),
+                     CI->getType());
+    CI->replaceAllUsesWith(IsMaster);
+    CI->eraseFromParent();
+  }
+  for (auto CI : EndMasters)
+    CI->eraseFromParent();
+}
+
+/// Lower worksharing loops with a dynamic schedule (dynamic, guided, runtime,
+/// ...) to the static schedule. A dynamic schedule hands out chunks of the
+/// iterations in the order threads ask for them, so the reverse pass could
+/// not know which iterations a thread ran. Any schedule is valid for a loop
+/// without an ordered clause, and with the static one each thread runs one
+/// chunk that only depends on its thread number.
+///
+/// The loop asks __kmpc_dispatch_next for chunks until it returns 0. Its
+/// first call (entered from outside the loop over chunks) becomes
+/// __kmpc_for_static_init on the bounds __kmpc_dispatch_init received, and
+/// its later calls (entered from within that loop) return 0, which removes
+/// the loop over chunks once the CFG is simplified.
+static bool ReplaceOMPDynamicSchedules(Function &NewF,
+                                       FunctionAnalysisManager &FAM) {
+  SmallVector<CallInst *, 2> Inits, Nexts, Finis;
+  for (auto &BB : NewF)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction()) {
+          auto name = Fn->getName();
+          if (startsWith(name, "__kmpc_dispatch_init_") && CI->arg_size() == 7)
+            Inits.push_back(CI);
+          else if (startsWith(name, "__kmpc_dispatch_next_") &&
+                   CI->arg_size() == 6)
+            Nexts.push_back(CI);
+          else if (startsWith(name, "__kmpc_dispatch_fini_") ||
+                   name == "__kmpc_dispatch_deinit")
+            Finis.push_back(CI);
+        }
+  if (Nexts.empty())
+    return false;
+
+  DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
+  auto &M = *NewF.getParent();
+  auto &Ctx = NewF.getContext();
+  auto I32 = Type::getInt32Ty(Ctx);
+  auto VoidTy = Type::getVoidTy(Ctx);
+
+  // The innermost dispatch_init of the same width dominating each call.
+  auto findInit = [&](CallInst *Next) -> CallInst * {
+    auto suffix = Next->getCalledFunction()->getName().substr(
+        strlen("__kmpc_dispatch_next_"));
+    CallInst *Found = nullptr;
+    for (auto Init : Inits) {
+      if (Init->getCalledFunction()->getName().substr(
+              strlen("__kmpc_dispatch_init_")) != suffix)
+        continue;
+      if (!DT.dominates(Init, Next))
+        continue;
+      if (!Found || DT.dominates(Found, Init))
+        Found = Init;
+    }
+    return Found;
+  };
+
+  SmallVector<std::pair<CallInst *, CallInst *>, 2> Todo;
+  for (auto Next : Nexts) {
+    auto Init = findInit(Next);
+    if (!Init)
+      return false;
+    Todo.emplace_back(Next, Init);
+  }
+
+  SmallPtrSet<CallInst *, 2> Later;
+  for (auto &pair : Todo)
+    for (auto &other : Todo)
+      if (other.first != pair.first && other.second == pair.second &&
+          DT.dominates(other.first, pair.first))
+        Later.insert(pair.first);
+
+  for (auto &pair : Todo) {
+    CallInst *Next = pair.first;
+    CallInst *Init = pair.second;
+    auto suffix = Next->getCalledFunction()->getName().substr(
+        strlen("__kmpc_dispatch_next_"));
+    bool isSigned = suffix == "4" || suffix == "8";
+    BasicBlock *H = Next->getParent();
+
+    // Calls reached again from within the loop over chunks return 0.
+    SmallVector<BasicBlock *, 2> Outside, Inside;
+    for (auto Pred : predecessors(H)) {
+      if (DT.dominates(H, Pred))
+        Inside.push_back(Pred);
+      else
+        Outside.push_back(Pred);
+    }
+
+    // __kmpc_dispatch_init(loc, gtid, schedule, lb, ub, st, chunk)
+    // __kmpc_dispatch_next(loc, gtid, plastiter, plower, pupper, pstride)
+    auto emitStatic = [&](IRBuilder<> &B) -> Value * {
+      Value *Lb = Init->getArgOperand(3), *Ub = Init->getArgOperand(4),
+            *St = Init->getArgOperand(5);
+      auto IT = Lb->getType();
+      B.CreateStore(Lb, Next->getArgOperand(3));
+      B.CreateStore(Ub, Next->getArgOperand(4));
+      B.CreateStore(St, Next->getArgOperand(5));
+      Type *Tys[] = {Next->getArgOperand(0)->getType(),
+                     Next->getArgOperand(1)->getType(),
+                     I32,
+                     Next->getArgOperand(2)->getType(),
+                     Next->getArgOperand(3)->getType(),
+                     Next->getArgOperand(4)->getType(),
+                     Next->getArgOperand(5)->getType(),
+                     IT,
+                     IT};
+      auto StaticInit =
+          M.getOrInsertFunction(("__kmpc_for_static_init_" + suffix).str(),
+                                FunctionType::get(VoidTy, Tys, false));
+      Value *Args[] = {Next->getArgOperand(0),
+                       Next->getArgOperand(1),
+                       ConstantInt::get(I32, 34 /*kmp_sch_static*/),
+                       Next->getArgOperand(2),
+                       Next->getArgOperand(3),
+                       Next->getArgOperand(4),
+                       Next->getArgOperand(5),
+                       St,
+                       ConstantInt::get(IT, 1)};
+      B.CreateCall(StaticInit, Args)->setDebugLoc(Next->getDebugLoc());
+      // Its reverse is __kmpc_for_static_fini.
+      M.getOrInsertFunction("__kmpc_for_static_fini",
+                            FunctionType::get(VoidTy, {Tys[0], Tys[1]}, false));
+      // A thread without iterations gets a lower bound above the upper one.
+      Value *L = B.CreateLoad(IT, Next->getArgOperand(3));
+      Value *U = B.CreateLoad(IT, Next->getArgOperand(4));
+      return B.CreateZExt(isSigned ? B.CreateICmpSLE(L, U)
+                                   : B.CreateICmpULE(L, U),
+                          Next->getType());
+    };
+
+    // A call after an earlier one of the same loop has no chunk left.
+    if (Later.count(Next)) {
+      SmallVector<Instruction *, 2> Users;
+      for (auto U : Next->users())
+        Users.push_back(cast<Instruction>(U));
+      Next->replaceAllUsesWith(ConstantInt::get(Next->getType(), 0));
+      Next->eraseFromParent();
+      for (auto U : Users)
+        if (auto C = ConstantFoldInstruction(U, M.getDataLayout())) {
+          U->replaceAllUsesWith(C);
+          U->eraseFromParent();
+        }
+      continue;
+    }
+
+    if (Inside.empty()) {
+      IRBuilder<> B(Next);
+      auto R = emitStatic(B);
+      Next->replaceAllUsesWith(R);
+      Next->eraseFromParent();
+      continue;
+    }
+
+    BasicBlock *D =
+        Outside.size() == 1 && Outside[0]->getSingleSuccessor() == H
+            ? Outside[0]
+            : SplitBlockPredecessors(H, Outside, ".omp.static", &DT);
+    IRBuilder<> B(D->getTerminator());
+    auto R = emitStatic(B);
+    IRBuilder<> HB(&*H->begin());
+    auto Phi = HB.CreatePHI(Next->getType(), pred_size(H));
+    for (auto Pred : predecessors(H))
+      Phi->addIncoming(Pred == D ? R : ConstantInt::get(Next->getType(), 0),
+                       Pred);
+    Next->replaceAllUsesWith(Phi);
+    Next->eraseFromParent();
+
+    // If the header only branches on the result being 0, send the edges from
+    // within the loop over chunks directly to where 0 leads.
+    auto Br = H->getTerminator();
+    auto Cmp = isConditionalBranch(Br)
+                   ? dyn_cast<ICmpInst>(getBranchCondition(Br))
+                   : nullptr;
+    if (!Cmp || !Cmp->isEquality() || Cmp->getOperand(0) != Phi ||
+        !isa<ConstantInt>(Cmp->getOperand(1)) ||
+        !cast<ConstantInt>(Cmp->getOperand(1))->isZero() ||
+        Cmp->getParent() != H || !Cmp->hasOneUse() || !Phi->hasOneUse())
+      continue;
+    unsigned ZeroIdx = Cmp->getPredicate() == ICmpInst::ICMP_EQ ? 0 : 1;
+    BasicBlock *T0 = Br->getSuccessor(ZeroIdx);
+    BasicBlock *T1 = Br->getSuccessor(1 - ZeroIdx);
+    if (T0 == H || T1 == H || T0 == T1)
+      continue;
+    // Other instructions of the header (e.g. hoisted there) are skipped on
+    // the redirected edges, so they must be free of side effects and only
+    // used where the chunk was nonempty.
+    bool simple = true;
+    BasicBlockEdge NonEmpty(H, T1);
+    for (auto &I : *H) {
+      if (isa<PHINode>(&I) || &I == Cmp || &I == Br)
+        continue;
+      if (I.mayHaveSideEffects()) {
+        simple = false;
+        break;
+      }
+      for (auto &U : I.uses()) {
+        auto UI = cast<Instruction>(U.getUser());
+        if (UI->getParent() == H && !isa<PHINode>(UI))
+          continue;
+        if (!DT.dominates(NonEmpty, U))
+          simple = false;
+      }
+    }
+    if (!simple)
+      continue;
+    for (auto &TP : T0->phis())
+      if (auto V = dyn_cast<Instruction>(TP.getIncomingValueForBlock(H)))
+        if (V->getParent() == H && !isa<PHINode>(V))
+          simple = false;
+    if (!simple)
+      continue;
+    for (auto P : Inside) {
+      for (auto &TP : T0->phis()) {
+        Value *V = TP.getIncomingValueForBlock(H);
+        if (auto HP = dyn_cast<PHINode>(V))
+          if (HP->getParent() == H)
+            V = HP->getIncomingValueForBlock(P);
+        TP.addIncoming(V, P);
+      }
+      for (auto &HP : H->phis())
+        HP.removeIncomingValue(P, /*DeletePHIIfEmpty*/ false);
+      P->getTerminator()->replaceSuccessorWith(H, T0);
+    }
+  }
+
+  for (auto CI : Inits)
+    CI->eraseFromParent();
+  for (auto CI : Finis)
+    CI->eraseFromParent();
+
+  FAM.invalidate(NewF, PreservedAnalyses::none());
+  // Remove the loops over chunks.
+  {
+    auto PA = SimplifyCFGPass(SimplifyCFGOptions().needCanonicalLoops(false))
+                  .run(NewF, FAM);
+    FAM.invalidate(NewF, PA);
+  }
+  return true;
 }
 
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
@@ -3313,8 +3603,12 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
-  SimplifyMPIQueries(*NewF, FAM);
   ReplaceOMPReductions(*NewF);
+  ReplaceOMPMaster(*NewF);
+  // Before SimplifyMPIQueries, which handles the __kmpc_for_static_init calls
+  // this introduces.
+  ReplaceOMPDynamicSchedules(*NewF, FAM);
+  SimplifyMPIQueries(*NewF, FAM);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
