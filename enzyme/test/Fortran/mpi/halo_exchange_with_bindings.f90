@@ -132,6 +132,38 @@ contains
     y = sum(x * rbuf)
   end subroutine f_module_requests
 
+  ! As MITgcm's exch2: the request is copied from the handle the isend
+  ! wrote into an array, and from there into the variable the wait takes
+  subroutine c_isend(buf, other, handles)
+    use mpi
+    double precision :: buf(n)
+    integer, intent(in) :: other
+    integer :: handles(2)
+    integer :: h, ierr
+    call mpi_isend(buf, n, mpi_double_precision, other, 11, &
+                   mpi_comm_world, h, ierr)
+    handles(1) = h
+  end subroutine c_isend
+
+  subroutine f_copied_requests(x, y)
+    use mpi
+    double precision, intent(in) :: x(n)
+    double precision, intent(out) :: y
+    double precision :: sbuf(n), rbuf(n)
+    integer :: rank, other, ierr, handles(2), w
+    integer :: stat(MPI_STATUS_SIZE)
+
+    call mpi_comm_rank(mpi_comm_world, rank, ierr)
+    other = 1 - rank
+    sbuf = x * x
+    call c_isend(sbuf, other, handles)
+    call mpi_recv(rbuf, n, mpi_double_precision, other, 11, &
+                  mpi_comm_world, stat, ierr)
+    w = handles(1)
+    call mpi_wait(w, stat, ierr)
+    y = sum(x * rbuf)
+  end subroutine f_copied_requests
+
 end module halo
 
 program main
@@ -172,6 +204,11 @@ program main
   call enzyme_autodiff(f_module_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
   call report(dx)
 
+  dx = 0
+  dy = 1
+  call enzyme_autodiff(f_copied_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call report(dx)
+
   ! Forward mode with dx = 1: dy_r = sum(x_o**2 + 2 x_r x_o), i.e. 141 on
   ! rank 0 and 78 on rank 1
   dx = 1
@@ -187,6 +224,11 @@ program main
   dx = 1
   dy = 0
   call enzyme_fwddiff(f_module_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call report_scalar(dy)
+
+  dx = 1
+  dy = 0
+  call enzyme_fwddiff(f_copied_requests, enzyme_dup, x, dx, enzyme_dup, y, dy)
   call report_scalar(dy)
 
   call mpi_finalize(ierr)
@@ -216,6 +258,8 @@ end program main
 ! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
 ! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
 ! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
+! CHECK-NEXT: 24.0 45.0 72.0 9.0 24.0 45.0
+! CHECK-NEXT: 141.0 78.0
 ! CHECK-NEXT: 141.0 78.0
 ! CHECK-NEXT: 141.0 78.0
 ! CHECK-NEXT: 141.0 78.0

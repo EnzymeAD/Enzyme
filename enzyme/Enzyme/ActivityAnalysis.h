@@ -53,6 +53,10 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintActivity;
 extern llvm::cl::opt<bool> EnzymeNonmarkedGlobalsInactive;
 extern llvm::cl::opt<bool> EnzymeGlobalActivity;
+
+/// Whether the pointer is a request (or memory requests are copied through)
+/// of point-to-point calls of the Fortran MPI ABI, which are active.
+bool isFortranMPIRequest(const llvm::Value *V);
 extern llvm::cl::opt<bool> EnzymeEmptyFnInactive;
 extern llvm::cl::opt<bool> EnzymeEnableRecursiveHypotheses;
 }

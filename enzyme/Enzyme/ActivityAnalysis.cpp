@@ -1302,13 +1302,33 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
 
 /// Whether the pointer \p V is (or points into the memory of, through GEPs,
 /// casts, loads of pointers and calls to defined functions) the request
-/// argument of a point-to-point call of the Fortran MPI ABI.
+/// argument of a point-to-point call of the Fortran MPI ABI, or memory that
+/// requests are copied to or from (an integer loaded from \p V stored to a
+/// request, or loaded from a request and stored to \p V).
 static bool isFortranMPIRequest(const Value *V,
                                 SmallPtrSetImpl<const Value *> &seen,
                                 unsigned depth = 0) {
-  if (depth > 8 || !seen.insert(V).second)
+  if (depth > 12 || !seen.insert(V).second)
     return false;
   for (const User *U : V->users()) {
+    if (auto LI = dyn_cast<LoadInst>(U)) {
+      if (LI->getType()->isIntegerTy(32)) {
+        for (const User *U2 : LI->users())
+          if (auto SI = dyn_cast<StoreInst>(U2))
+            if (SI->getValueOperand() == LI &&
+                isFortranMPIRequest(SI->getPointerOperand(), seen, depth + 1))
+              return true;
+        continue;
+      }
+    }
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getPointerOperand() == V)
+        if (auto LI = dyn_cast<LoadInst>(SI->getValueOperand()))
+          if (LI->getType()->isIntegerTy(32) &&
+              isFortranMPIRequest(LI->getPointerOperand(), seen, depth + 1))
+            return true;
+      continue;
+    }
     if (isa<GetElementPtrInst>(U) || isa<BitCastInst>(U) ||
         isa<AddrSpaceCastInst>(U) ||
         (isa<LoadInst>(U) && U->getType()->isPointerTy()) ||
@@ -1341,6 +1361,11 @@ static bool isFortranMPIRequest(const Value *V,
             return true;
   }
   return false;
+}
+
+bool isFortranMPIRequest(const Value *V) {
+  SmallPtrSet<const Value *, 8> seen;
+  return isFortranMPIRequest(V, seen);
 }
 
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
