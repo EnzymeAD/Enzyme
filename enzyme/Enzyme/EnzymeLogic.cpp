@@ -4050,9 +4050,48 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
       }
 
-      FunctionType *FTy =
-          FunctionType::get(revfn->getReturnType(), dupargs,
-                            revfn->getFunctionType()->isVarArg());
+      // A constant floating-point argument is massaged to OUT_DIFF, so the
+      // custom reverse pass also returns its adjoint. The caller does not
+      // expect an adjoint for a constant argument, so only return the
+      // adjoints of the arguments that are OUT_DIFF in the call.
+      Type *RetTy = revfn->getReturnType();
+      SmallVector<unsigned, 2> keptAdjoints;
+      bool dropAdjoints = false;
+      {
+        unsigned idx = 0;
+        for (size_t act_idx = 0; act_idx < key.constant_args.size();
+             act_idx++) {
+          if (next_constant_args[act_idx] != DIFFE_TYPE::OUT_DIFF)
+            continue;
+          if (key.constant_args[act_idx] == DIFFE_TYPE::OUT_DIFF)
+            keptAdjoints.push_back(idx);
+          else
+            dropAdjoints = true;
+          idx++;
+        }
+        if (dropAdjoints) {
+          auto ST = dyn_cast<StructType>(RetTy);
+          if (!ST || ST->getNumElements() != idx) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unexpected return type of custom reverse pass for function "
+               << key.todiff->getName() << ": " << *RetTy << ", expected "
+               << idx << " adjoints\n";
+            if (context.req)
+              ss << " at context: " << *context.req;
+            EmitNoDerivativeError(ss.str(), key.todiff, context);
+            dropAdjoints = false;
+          } else {
+            SmallVector<Type *, 2> keptTys;
+            for (auto kept : keptAdjoints)
+              keptTys.push_back(ST->getElementType(kept));
+            RetTy = StructType::get(ST->getContext(), keptTys);
+          }
+        }
+      }
+
+      FunctionType *FTy = FunctionType::get(
+          RetTy, dupargs, revfn->getFunctionType()->isVarArg());
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
@@ -4102,7 +4141,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         bb.CreateRet(UndefValue::get(NewF->getReturnType()));
       else if (NewF->getReturnType()->isVoidTy())
         bb.CreateRetVoid();
-      else
+      else if (dropAdjoints) {
+        Value *res = UndefValue::get(NewF->getReturnType());
+        for (auto en : llvm::enumerate(keptAdjoints))
+          res = bb.CreateInsertValue(res,
+                                     bb.CreateExtractValue(cal, {en.value()}),
+                                     {(unsigned)en.index()});
+        bb.CreateRet(res);
+      } else
         bb.CreateRet(cal);
 
       return insert_or_assign2<ReverseCacheKey, Function *>(

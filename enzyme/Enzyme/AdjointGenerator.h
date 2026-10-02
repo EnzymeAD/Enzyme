@@ -6309,6 +6309,17 @@ public:
         for (size_t i = 0; i < argsInverted.size(); i++) {
           if (subdata->constant_args[i] == argsInverted[i])
             continue;
+          // A custom augmented forward pass with a constant argument is
+          // massaged to take a constant pointer as its own shadow (DUP_ARG)
+          // and a constant float as active (OUT_DIFF), and the augmented call
+          // records the massaged activity. The custom reverse pass is
+          // massaged the same way from the constant argument, so keep it
+          // constant here.
+          if (argsInverted[i] == DIFFE_TYPE::CONSTANT &&
+              (subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG ||
+               subdata->constant_args[i] == DIFFE_TYPE::OUT_DIFF) &&
+              hasMetadata(called, "enzyme_gradient"))
+            continue;
           assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
           assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);
           argsInverted[i] = DIFFE_TYPE::DUP_ARG;
