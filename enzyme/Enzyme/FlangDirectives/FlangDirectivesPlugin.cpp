@@ -63,6 +63,16 @@ static void registerEnzymeDirectives() {
        PluginDirectiveSubject::Variable,
        {PluginDirectiveArg{"shadow", PluginDirectiveArgKind::Variable,
                            /*required=*/true}}});
+  // In front of a DO or DO WHILE loop: the loop iterates its variables to a
+  // fixed point (__enzyme_set_fixed_point).
+  registerPluginDirective(
+      {"enzyme",
+       "fixed_point",
+       PluginDirectiveSubject::Loop,
+       {PluginDirectiveArg{"reduction", PluginDirectiveArgKind::Real},
+        PluginDirectiveArg{"max_iters", PluginDirectiveArgKind::Integer},
+        procArg("control")},
+       /*minPositional=*/1});
   // `!$enzyme ...` is the same as `!DIR$ ENZYME ...`, and a comment to
   // compilers without this plugin, as Tapenade's `!$AD` is.
   registerPluginDirectiveSentinel("enzyme");
