@@ -717,6 +717,47 @@ getSizeHint(Value *V, Instruction *IP, DominatorTree &DT) {
   return {};
 }
 
+/// The floating-point type of every load and store of `step` through the
+/// object `base`, in the functions it calls too when `base` is a global, if
+/// there is one such type.
+static Type *getUniformFPAccess(Function *step, Value *base) {
+  bool global = isa<GlobalVariable>(base);
+  Type *found = nullptr;
+  SmallPtrSet<Function *, 8> seen;
+  SmallVector<Function *, 8> todo = {step};
+  while (!todo.empty()) {
+    Function *F = todo.pop_back_val();
+    if (F->empty() || !seen.insert(F).second)
+      continue;
+    for (Instruction &I : instructions(F)) {
+      Value *ptr = nullptr;
+      Type *T = nullptr;
+      if (auto *LdI = dyn_cast<LoadInst>(&I)) {
+        ptr = LdI->getPointerOperand();
+        T = LdI->getType();
+      } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
+        ptr = SI->getPointerOperand();
+        T = SI->getValueOperand()->getType();
+      } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+        // What a callee does with a pointer it is given is not seen here.
+        if (!global && is_contained(CB->args(), base))
+          return nullptr;
+        if (Function *callee = getFunctionFromCall(CB))
+          if (global)
+            todo.push_back(callee);
+        continue;
+      }
+      if (!ptr || getBaseObject(ptr) != base)
+        continue;
+      T = T->getScalarType();
+      if (!T->isFloatingPointTy() || (found && found != T))
+        return nullptr;
+      found = T;
+    }
+  }
+  return found;
+}
+
 /// Outline the loop around the annotation `marker` into a checkpointed loop.
 static bool outlineAnnotatedLoop(CallInst *marker) {
   Function &F = *marker->getFunction();
@@ -1160,6 +1201,26 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       args.push_back(V);
     Function *loop = createLoopFunction(M, step, {I64, I64, Ptr, F64},
                                         regionTypes, "fixedpoint", nstates);
+    // The state is floating point, as the iterations measure it. Say of
+    // what type, which the code around the loop may not show once the
+    // loop's accesses are in the step (a memset of the state before it).
+    for (unsigned a = 3, k = 0; a < fpArgs.size(); a += 2, k++) {
+      Value *base = getBaseObject(fpArgs[a]);
+      if (!isa<GlobalVariable>(base)) {
+        Value *mapped = VMap.lookup(fpArgs[a]);
+        if (!mapped)
+          continue;
+        base = getBaseObject(mapped);
+      }
+      Type *T = getUniformFPAccess(step, base);
+      if (!T)
+        continue;
+      TypeTree TT =
+          TypeTree(ConcreteType(T)).Only(-1, nullptr).Only(-1, nullptr);
+      TT.insert({-1}, BaseType::Pointer);
+      loop->addParamAttr(LoopFixedParams + 2 * k,
+                         Attribute::get(Ctx, "enzyme_type", TT.str()));
+    }
     replaceLoop(loop, args);
     return true;
   }
