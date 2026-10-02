@@ -57,6 +57,10 @@ extern llvm::cl::opt<bool> EnzymeGlobalActivity;
 /// Whether the pointer is a request (or memory requests are copied through)
 /// of point-to-point calls of the Fortran MPI ABI, which are active.
 bool isFortranMPIRequest(const llvm::Value *V);
+
+/// Whether the pointer is the buffer of a nonblocking point-to-point call of
+/// the Fortran MPI ABI (also through calls), which keeps it beyond the call.
+bool isFortranMPIAsyncBuffer(const llvm::Value *V);
 extern llvm::cl::opt<bool> EnzymeEmptyFnInactive;
 extern llvm::cl::opt<bool> EnzymeEnableRecursiveHypotheses;
 }

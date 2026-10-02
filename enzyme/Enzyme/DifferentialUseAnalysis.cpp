@@ -547,14 +547,17 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                          << *CI << "\n";
           return true;
         }
+        // The record holds the shadow of the buffer for the reverse pass
+        // (the adjoint communication and the accumulation), so it must stay
+        // allocated until then, also when the primal pass is a separate
+        // function (an alloca'd buffer's shadow is then moved to the heap).
         if (shadow && val == CI->getArgOperand(0) &&
-            mode != DerivativeMode::ReverseModeGradient &&
             canon != "MPI_Wait" && canon != "MPI_Waitall" &&
             canon != "MPI_Barrier" &&
             !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
-                         << *val << " in forward as shadow MPI " << *CI
+                         << *val << " in reverse as shadow MPI buffer " << *CI
                          << "\n";
           return true;
         }

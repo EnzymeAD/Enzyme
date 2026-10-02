@@ -602,6 +602,13 @@ public:
     Act["globals_write_any"] = toArray(GlobalWriteAny);
     Act["unknown_write"] = UnknownWrite;
     Act["calls_at"] = std::move(Calls);
+    // Parameters that a nonblocking call of the Fortran MPI ABI keeps beyond
+    // the call (its buffer), whatever the declared "captures(none)" says: a
+    // caller must not rematerialize their shadows in the reverse pass.
+    json::Array MC;
+    for (auto &A : F.args())
+      MC.push_back(A.getType()->isPointerTy() && isFortranMPIAsyncBuffer(&A));
+    Act["mpi_captures"] = std::move(MC);
   }
 
 private:

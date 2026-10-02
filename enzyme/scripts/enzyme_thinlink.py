@@ -551,6 +551,31 @@ def main():
                     if t:
                         f.write(f"{g}\t{i}\t{t}\n")
 
+    # Parameters that a nonblocking MPI call keeps beyond the call (the
+    # buffer of a Fortran mpi_isend/mpi_irecv), through callees in other
+    # modules too: modules that only declare these functions must not take
+    # their "captures(none)" at its word.
+    capt = {n: list(f["activity"].get("mpi_captures", []))
+            for n, f in fsum.items()}
+    changed = True
+    while changed:
+        changed = False
+        for n, f in fsum.items():
+            for root, callee, k in f["activity"]["edges"]:
+                if root[0] != "a":
+                    continue
+                c = capt.get(callee)
+                i = int(root[1:])
+                if c and k < len(c) and c[k] and i < len(capt[n]) \
+                        and not capt[n][i]:
+                    capt[n][i] = True
+                    changed = True
+    with open(os.path.join(a.out, "captured_params.txt"), "w") as f:
+        for n in sorted(capt):
+            idx = [str(i) for i, x in enumerate(capt[n]) if x]
+            if idx:
+                f.write(f"{n} {','.join(idx)}\n")
+
     # COMMON blocks (shadowed through the build's shadow table).
     common = {}
     for s in mods.values():
