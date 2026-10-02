@@ -586,7 +586,18 @@ static bool lowerFixedPointMarker(CallInst *CI) {
 // extent is an error: give the regions with __enzyme_checkpoint_for.
 
 static bool isLoopAnnotation(const Function *F) {
-  return F && F->getName().contains("__enzyme_set_checkpointing");
+  return F && (F->getName().contains("__enzyme_set_checkpointing") ||
+               F->getName().contains("__enzyme_set_fixed_point"));
+}
+
+/// `__enzyme_set_fixed_point(double reduction, i64 max_iters, ptr control,
+/// [ptr state, i64 bytes]...)` in a loop (a Fortran `!DIR$ ENZYME
+/// FIXED_POINT` directive) makes it a fixed-point loop: as
+/// __enzyme_fixed_point, with one iteration as the step. A negative
+/// reduction or max_iters takes the default, and a null control the
+/// built-in test.
+static bool isFixedPointAnnotation(const Function *F) {
+  return F && F->getName().contains("__enzyme_set_fixed_point");
 }
 
 /// The object `V` points into and its size in bytes, computed in front of
@@ -727,17 +738,26 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     return false;
   };
 
-  auto *modeC = dyn_cast<ConstantInt>(marker->getArgOperand(0));
-  if (!modeC)
-    return failEarly("the checkpointing mode of a loop must be a constant");
-  int64_t mode = modeC->getSExtValue();
+  bool fixedPoint = isFixedPointAnnotation(getFunctionFromCall(marker));
+  int64_t mode = 0;
   std::optional<uint64_t> count;
-  if (marker->arg_size() > 1)
-    if (auto *C = dyn_cast<ConstantInt>(marker->getArgOperand(1)))
-      if (!C->isMinusOne())
-        count = C->getZExtValue();
-  if (mode > 2)
-    return failEarly("unknown checkpointing mode " + Twine(mode));
+  if (fixedPoint) {
+    if (marker->arg_size() < 5 || (marker->arg_size() - 3) % 2 != 0)
+      return failEarly("__enzyme_set_fixed_point needs a reduction, a maximum "
+                       "number of iterations, a control function and at "
+                       "least one state, as a pointer and a size in bytes");
+  } else {
+    auto *modeC = dyn_cast<ConstantInt>(marker->getArgOperand(0));
+    if (!modeC)
+      return failEarly("the checkpointing mode of a loop must be a constant");
+    mode = modeC->getSExtValue();
+    if (marker->arg_size() > 1)
+      if (auto *C = dyn_cast<ConstantInt>(marker->getArgOperand(1)))
+        if (!C->isMinusOne())
+          count = C->getZExtValue();
+    if (mode > 2)
+      return failEarly("unknown checkpointing mode " + Twine(mode));
+  }
 
   // The loop's variables as values, where they can be.
   {
@@ -761,7 +781,19 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
 
   Loop *L = LI.getLoopFor(marker->getParent());
   if (!L)
-    return failEarly("__enzyme_set_checkpointing is not inside a loop");
+    return failEarly(Twine(fixedPoint ? "__enzyme_set_fixed_point"
+                                      : "__enzyme_set_checkpointing") +
+                     " is not inside a loop");
+  // The settings of a fixed-point loop, which must be known before it.
+  SmallVector<Value *, 8> fpArgs;
+  if (fixedPoint)
+    for (Value *V : marker->args()) {
+      if (auto *I = dyn_cast<Instruction>(V))
+        if (L->contains(I))
+          return failEarly("the state and settings of a fixed-point loop "
+                           "must be computed before the loop");
+      fpArgs.push_back(V);
+    }
   // The annotation may have been copied, by unrolling say.
   SmallVector<CallInst *, 2> markers;
   for (BasicBlock *BB : L->blocks())
@@ -773,7 +805,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   for (CallInst *CI : markers)
     CI->eraseFromParent();
   anchor = &*L->getHeader()->getFirstNonPHIIt();
-  if (mode < 1)
+  if (!fixedPoint && mode < 1)
     return true;
 
   simplifyLoop(L, &DT, &LI, &SE, &AC, nullptr, false);
@@ -781,27 +813,30 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
              *latch = L->getLoopLatch(), *X = L->getExitingBlock(),
              *E = L->getUniqueExitBlock();
   if (!P || !latch || !X || !E || (X != latch && X != H))
-    return fail("a checkpointed loop must have a single latch and leave "
-                "from its header or its latch, to a single block");
-  const SCEV *BTC = SE.getBackedgeTakenCount(L);
-  if (isa<SCEVCouldNotCompute>(BTC))
-    return fail("the number of iterations of a checkpointed loop must be "
-                "known when it starts; for other loops use "
-                "__enzyme_checkpoint_while");
-  // A step runs the header and what follows it up to the backedge or the
-  // exit, so there is a step for every time the header runs: one more than
-  // the backedge is taken. A loop that leaves from its header does so in its
-  // last step, having run only the header.
-  const SCEV *N =
-      SE.getAddExpr(SE.getTruncateOrZeroExtend(BTC, I64), SE.getOne(I64));
-
+    return fail(Twine(fixedPoint ? "a fixed-point" : "a checkpointed") +
+                " loop must have a single latch and leave from its header or "
+                "its latch, to a single block");
   Instruction *IP = P->getTerminator();
 #if LLVM_VERSION_MAJOR >= 19
   SCEVExpander Exp(SE, "ckpt");
 #else
   SCEVExpander Exp(SE, M.getDataLayout(), "ckpt");
 #endif
-  Value *nsteps = Exp.expandCodeFor(N, I64, IP);
+  Value *nsteps = nullptr;
+  if (!fixedPoint) {
+    const SCEV *BTC = SE.getBackedgeTakenCount(L);
+    if (isa<SCEVCouldNotCompute>(BTC))
+      return fail("the number of iterations of a checkpointed loop must be "
+                  "known when it starts; for other loops use "
+                  "__enzyme_checkpoint_while");
+    // A step runs the header and what follows it up to the backedge or the
+    // exit, so there is a step for every time the header runs: one more than
+    // the backedge is taken. A loop that leaves from its header does so in
+    // its last step, having run only the header.
+    const SCEV *N =
+        SE.getAddExpr(SE.getTruncateOrZeroExtend(BTC, I64), SE.getOne(I64));
+    nsteps = Exp.expandCodeFor(N, I64, IP);
+  }
 
   // Induction variables, recomputed in each step from its index.
   struct IV {
@@ -875,10 +910,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   SmallVector<Type *, 8> params = {I64};
   for (Value *V : liveins)
     params.push_back(V->getType());
-  auto *step = Function::Create(FunctionType::get(Type::getVoidTy(Ctx),
-                                                  params, false),
-                                GlobalValue::InternalLinkage,
-                                F.getName() + ".ckpt.step", &M);
+  // The step of a fixed-point loop returns whether the loop goes on.
+  auto *step = Function::Create(
+      FunctionType::get(fixedPoint ? I32 : Type::getVoidTy(Ctx), params, false),
+      GlobalValue::InternalLinkage,
+      F.getName() + (fixedPoint ? ".fp.step" : ".ckpt.step"), &M);
   ValueToValueMapTy VMap;
   for (auto [i, V] : enumerate(liveins)) {
     step->getArg(i + 1)->setName(V->getName());
@@ -887,6 +923,21 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   auto mapped = [&](Value *V) -> Value * {
     return isa<Constant>(V) ? V : (Value *)VMap[V];
   };
+  // The type of what a stack slot holds, which the step cannot see.
+  for (auto [i, V] : enumerate(liveins))
+    if (auto *AI = dyn_cast<AllocaInst>(V)) {
+      Type *T = AI->getAllocatedType();
+      ConcreteType CT = T->isFPOrFPVectorTy() ? ConcreteType(T->getScalarType())
+                        : T->isIntOrIntVectorTy()
+                            ? ConcreteType(BaseType::Integer)
+                        : T->isPointerTy() ? ConcreteType(BaseType::Pointer)
+                                           : ConcreteType(BaseType::Unknown);
+      if (CT == BaseType::Unknown)
+        continue;
+      TypeTree TT = TypeTree(CT).Only(-1, nullptr).Only(-1, nullptr);
+      TT.insert({-1}, BaseType::Pointer);
+      step->addParamAttr(i + 1, Attribute::get(Ctx, "enzyme_type", TT.str()));
+    }
   auto *entry = BasicBlock::Create(Ctx, "entry", step);
   IRBuilder<> SB(entry);
   Value *k = step->getArg(0);
@@ -909,8 +960,16 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     cloned.push_back(NB);
   }
   auto *next = BasicBlock::Create(Ctx, "next", step);
-  ReturnInst::Create(Ctx, next);
-  VMap[E] = next;
+  BasicBlock *done = next;
+  if (fixedPoint) {
+    // Back to the header: go on. Out of the loop: stop.
+    done = BasicBlock::Create(Ctx, "done", step);
+    ReturnInst::Create(Ctx, ConstantInt::get(I32, 1), next);
+    ReturnInst::Create(Ctx, ConstantInt::get(I32, 0), done);
+  } else {
+    ReturnInst::Create(Ctx, next);
+  }
+  VMap[E] = done;
   SmallVector<Instruction *, 4> deadPhis;
   for (auto [phi, v] : ivValues) {
     deadPhis.push_back(cast<Instruction>(VMap[phi]));
@@ -952,8 +1011,14 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   }
   SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions;
   SmallPtrSet<Value *, 4> seen;
+  // The state of a fixed-point loop is snapshotted as such.
+  if (fixedPoint)
+    for (unsigned a = 3; a < fpArgs.size(); a += 2)
+      seen.insert(getBaseObject(fpArgs[a]));
   for (auto [i, V] : enumerate(liveins)) {
     if (!V->getType()->isPointerTy())
+      continue;
+    if (seen.count(getBaseObject(V)))
       continue;
     bool w = written.count(step->getArg(i + 1));
     if (auto hint = getSizeHint(V, IP, DT)) {
@@ -979,6 +1044,75 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     if ((w || isa<AllocaInst>(alloc->first)) &&
         seen.insert(alloc->first).second)
       regions.push_back({alloc->first, alloc->second, 0});
+  }
+
+  // The loop is now the call.
+  auto replaceLoop = [&](Function *loop, ArrayRef<Value *> args) {
+    IRBuilder<> B(IP);
+    B.CreateCall(loop, args)->setDebugLoc(loc);
+    IP->eraseFromParent();
+    BranchInst::Create(E, P);
+    for (BasicBlock *BB : blocks)
+      BB->dropAllReferences();
+    for (BasicBlock *BB : blocks)
+      BB->eraseFromParent();
+  };
+
+  if (fixedPoint) {
+    // The step the adjoint iterations differentiate: the same iteration,
+    // but never leaving. At the converged state the loop's own test says to
+    // stop, and a loop tested in its header would then do nothing, whose
+    // derivative is the identity rather than that of an iteration.
+    ValueToValueMapTy TMap;
+    Function *turn = CloneFunction(step, TMap);
+    turn->setName(step->getName() + ".turn");
+    auto *tdone = cast<BasicBlock>(TMap[done]);
+    auto *tX = cast<BasicBlock>(TMap[VMap[X]]);
+    auto *br = dyn_cast<BranchInst>(tX->getTerminator());
+    if (!br || !br->isConditional()) {
+      turn->eraseFromParent();
+      step->eraseFromParent();
+      return fail("a fixed-point loop must leave by a conditional branch");
+    }
+    BasicBlock *stay = br->getSuccessor(0) == tdone ? br->getSuccessor(1)
+                                                    : br->getSuccessor(0);
+    BranchInst::Create(stay, br);
+    br->eraseFromParent();
+    removeUnreachableBlocks(*turn);
+    step->setMetadata("enzyme_fixed_point_turn",
+                      MDTuple::get(Ctx, {ConstantAsMetadata::get(turn)}));
+
+    IRBuilder<> B(IP);
+    Type *F64 = Type::getDoubleTy(Ctx);
+    Value *reduction = B.CreateFPCast(fpArgs[0], F64);
+    reduction =
+        B.CreateSelect(B.CreateFCmpOLT(reduction, ConstantFP::get(F64, 0.0)),
+                       ConstantFP::get(F64, 1e-12), reduction);
+    Value *maxIters = B.CreateSExtOrTrunc(fpArgs[1], I64);
+    maxIters =
+        B.CreateSelect(B.CreateICmpSLT(maxIters, ConstantInt::get(I64, 0)),
+                       ConstantInt::get(I64, 1000), maxIters);
+    Value *control = B.CreatePointerBitCastOrAddrSpaceCast(fpArgs[2], Ptr);
+    SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), maxIters, control,
+                                    reduction};
+    SmallVector<Type *, 4> regionTypes;
+    for (unsigned a = 3; a < fpArgs.size(); a += 2) {
+      regionTypes.push_back(fpArgs[a]->getType());
+      args.push_back(fpArgs[a]);
+      args.push_back(B.CreateSExtOrTrunc(fpArgs[a + 1], I64));
+    }
+    unsigned nstates = regionTypes.size();
+    for (auto &[ptr, bytes, space] : regions) {
+      regionTypes.push_back(ptr->getType());
+      args.push_back(ptr);
+      args.push_back(bytes);
+    }
+    for (Value *V : liveins)
+      args.push_back(V);
+    Function *loop = createLoopFunction(M, step, {I64, I64, Ptr, F64},
+                                        regionTypes, "fixedpoint", nstates);
+    replaceLoop(loop, args);
+    return true;
   }
 
   // The scheme: the reference one of enzyme/checkpoint.h if it is here, or
@@ -1052,15 +1186,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       M, step, {I64, I64, vt->getType(), cfg->getType()}, regionTypes, "for");
   if (device)
     loop->addFnAttr(CheckpointRegionSpacesAttr, spaces);
-  B.CreateCall(loop, args)->setDebugLoc(loc);
-
-  // The loop is now the call.
-  IP->eraseFromParent();
-  BranchInst::Create(E, P);
-  for (BasicBlock *BB : blocks)
-    BB->dropAllReferences();
-  for (BasicBlock *BB : blocks)
-    BB->eraseFromParent();
+  replaceLoop(loop, args);
   return true;
 }
 
@@ -2152,6 +2278,15 @@ static Function *getOrCreateFixedPointIteration(Module &M, FixedPointTypes &T,
 // The step's derivatives and the trampolines
 //===----------------------------------------------------------------------===//
 
+/// What a turn differentiates: the step, or for an outlined fixed-point loop
+/// the step that never leaves.
+static Function *getTurnStep(Function *step) {
+  if (auto *MD = step->getMetadata("enzyme_fixed_point_turn"))
+    return cast<Function>(
+        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue());
+  return step;
+}
+
 namespace {
 struct StepInfo {
   Function *loop;
@@ -2166,9 +2301,13 @@ struct StepInfo {
   std::string suffix;
   unsigned width = 1;
 
+  /// What a turn differentiates (see getTurnStep).
+  Function *turnStep;
+
   StepInfo(Function *loop)
       : loop(loop), step(getStep(loop)), firstArg(getFirstStepArg(loop)),
-        stepTypeInfo(step), env(nullptr) {}
+        stepTypeInfo(getTurnStep(step)), env(nullptr),
+        turnStep(getTurnStep(step)) {}
 };
 } // namespace
 
@@ -2215,7 +2354,7 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
   S.env = StructType::get(Ctx, envTys);
 
   unsigned p = 0;
-  for (auto &a : S.step->args()) {
+  for (auto &a : S.turnStep->args()) {
     TypeTree dt;
     if (p == 0) {
       dt = TypeTree(BaseType::Integer).Only(-1, nullptr);
@@ -2230,6 +2369,12 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
         dt = TypeTree(BaseType::Integer).Only(-1, nullptr);
       else if (a.getType()->isPointerTy())
         dt = TypeTree(BaseType::Pointer).Only(-1, nullptr);
+      // What the outliner knows of a stack slot the loop carries.
+      if (S.turnStep->getAttributes().hasParamAttr(p, "enzyme_type"))
+        dt |= TypeTree::parse(S.turnStep->getAttributes()
+                                  .getParamAttr(p, "enzyme_type")
+                                  .getValueAsString(),
+                              Ctx);
     }
     S.stepTypeInfo.Arguments.insert(std::make_pair(&a, dt));
     S.stepTypeInfo.KnownValues.insert(std::make_pair(&a, std::set<int64_t>()));
@@ -2247,7 +2392,7 @@ static Function *getStepGradient(EnzymeLogic &Logic, RequestContext context,
   std::vector<bool> overwritten(S.step->arg_size(), false);
   return Logic.CreatePrimalAndGradient(
       context,
-      (ReverseCacheKey){.todiff = S.step,
+      (ReverseCacheKey){.todiff = S.turnStep,
                         .retType = DIFFE_TYPE::CONSTANT,
                         .constant_args = S.stepActivity,
                         .subsequent_calls_may_write = false,
@@ -2317,7 +2462,7 @@ getStepAugmented(EnzymeLogic &Logic, RequestContext context, StepInfo &S,
   std::vector<bool> overwritten(S.step->arg_size(), true);
   std::vector<bool> nowrite(S.step->arg_size(), false);
   return &Logic.CreateAugmentedPrimal(
-      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      context, S.turnStep, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
       /*returnUsed*/ false, /*shadowReturnUsed*/ false, S.stepTypeInfo,
       /*subsequent_calls_may_write*/ true, overwritten, nowrite,
       /*forceAnonymousTape*/ false, runtimeActivity, strongZero, S.width,
@@ -2344,7 +2489,7 @@ static Function *getStepReverse(EnzymeLogic &Logic, RequestContext context,
   std::vector<bool> overwritten(S.step->arg_size(), true);
   return Logic.CreatePrimalAndGradient(
       context,
-      (ReverseCacheKey){.todiff = S.step,
+      (ReverseCacheKey){.todiff = S.turnStep,
                         .retType = DIFFE_TYPE::CONSTANT,
                         .constant_args = S.stepActivity,
                         .subsequent_calls_may_write = true,
@@ -2784,7 +2929,7 @@ Function *createCheckpointForward(EnzymeLogic &Logic, RequestContext context,
   }
   // The tangent of one step, at the converged state.
   Function *tan = Logic.CreateForwardDiff(
-      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      context, S.turnStep, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
       /*returnUsed*/ false, DerivativeMode::ForwardMode, /*freeMemory*/ true,
       runtimeActivity, strongZero, width, /*additionalArg*/ nullptr,
       S.stepTypeInfo, /*subsequent_calls_may_write*/ false,
