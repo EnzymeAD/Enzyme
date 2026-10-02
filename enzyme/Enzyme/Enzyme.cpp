@@ -162,7 +162,7 @@ llvm::cl::opt<std::string> EnzymeParamTypes(
     cl::desc("File of \"<function>\\t<i>\\t<TypeTree>\" lines: the types "
              "declared on the parameters of functions defined in other "
              "modules (a whole-program plan for separate compilation), set as "
-             "\"enzyme_type\" where the function is only declared"));
+             "\"enzyme_type\" on calls that pass them local memory"));
 
 llvm::cl::opt<std::string> EnzymeExportList(
     "enzyme-export-list", cl::init(""), cl::Hidden,
@@ -2960,10 +2960,10 @@ public:
     }
   }
 
-  /// -enzyme-param-types: give declarations the parameter types declared
-  /// where the function is defined, which type analysis would have seen
-  /// there with the whole program (e.g. a local array only passed to and
-  /// summed by an external routine).
+  /// -enzyme-param-types: give calls to functions only declared here the
+  /// parameter types declared where the function is defined, which type
+  /// analysis would have seen there with the whole program (e.g. for a local
+  /// array only passed to and summed by an external routine).
   void applyParamTypes(Module &M) {
     if (EnzymeParamTypes.empty())
       return;
@@ -2991,11 +2991,21 @@ public:
       if (i >= F->arg_size() ||
           F->getAttributes().hasParamAttr(i, "enzyme_type"))
         continue;
-      if (F->getArg(i)->getType()->isPointerTy() !=
-          startsWith(parts[2], "{[-1]:Pointer"))
+      if (!F->getArg(i)->getType()->isPointerTy() ||
+          !startsWith(parts[2], "{[-1]:Pointer"))
         continue;
-      F->addParamAttr(i,
-                      Attribute::get(F->getContext(), "enzyme_type", parts[2]));
+      // Only where the argument is local memory of the caller: the module
+      // may know other memory (a global, an argument) better, e.g. as an
+      // untyped part of a COMMON block that the callee's dummy names.
+      auto attr = Attribute::get(F->getContext(), "enzyme_type", parts[2]);
+      for (auto U : F->users()) {
+        auto CB = dyn_cast<CallBase>(U);
+        if (!CB || CB->getCalledOperand() != F || i >= CB->arg_size() ||
+            CB->getAttributes().hasParamAttr(i, "enzyme_type"))
+          continue;
+        if (isa<AllocaInst>(getUnderlyingObject(CB->getArgOperand(i), 100)))
+          CB->addParamAttr(i, attr);
+      }
     }
   }
 
