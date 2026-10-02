@@ -1665,6 +1665,11 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       auto inst = dyn_cast<Instruction>(val);
       if (!inst)
         continue;
+      // An allocation that was rematerialized onto the stack lives in the
+      // block of inversion allocations, at function entry and outside every
+      // loop.
+      if (inst->getParent() == inversionAllocs)
+        continue;
       auto origInstParent = isOriginal(inst->getParent());
       assert(origInstParent);
       const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
