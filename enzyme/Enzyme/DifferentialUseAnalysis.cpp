@@ -531,10 +531,12 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       StringRef canon = canonicalizeMPIName(funcName);
       if (canon == "MPI_Isend" || canon == "MPI_Irecv" ||
           canon == "MPI_Send" || canon == "MPI_Ssend" || canon == "MPI_Recv" ||
-          canon == "MPI_Wait" || canon == "MPI_Waitall") {
+          canon == "MPI_Wait" || canon == "MPI_Waitall" ||
+          canon == "MPI_Barrier") {
         if (shadow && val == CI->getArgOperand(0) &&
             mode != DerivativeMode::ReverseModeGradient &&
             canon != "MPI_Wait" && canon != "MPI_Waitall" &&
+            canon != "MPI_Barrier" &&
             !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "

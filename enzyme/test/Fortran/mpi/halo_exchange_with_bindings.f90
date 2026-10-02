@@ -34,6 +34,7 @@ contains
     call mpi_recv(rbuf, n, mpi_double_precision, other, 7, &
                   mpi_comm_world, stat, ierr)
     call mpi_waitall(1, req, stats, ierr)
+    call mpi_barrier(mpi_comm_world, ierr)
     y = sum(x * rbuf)
   end subroutine f_isend_recv
 

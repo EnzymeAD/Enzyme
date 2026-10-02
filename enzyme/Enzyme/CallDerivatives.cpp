@@ -511,7 +511,9 @@ bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
   bool isWaitall = funcName == "MPI_Waitall";
   bool isSend = funcName == "MPI_Send" || funcName == "MPI_Ssend";
   bool isRecv = funcName == "MPI_Recv";
-  if (!(isIsend || isIrecv || isWait || isWaitall || isSend || isRecv))
+  bool isBarrier = funcName == "MPI_Barrier";
+  if (!(isIsend || isIrecv || isWait || isWaitall || isSend || isRecv ||
+        isBarrier))
     return false;
 
   bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -519,8 +521,9 @@ bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
   bool reverseMode = Mode == DerivativeMode::ReverseModePrimal ||
                      Mode == DerivativeMode::ReverseModeCombined ||
                      Mode == DerivativeMode::ReverseModeGradient;
-  // Forward mode of blocking send/recv is the generic shadow call.
-  if ((isSend || isRecv) && !reverseMode)
+  // Forward mode of blocking send/recv is the generic shadow call (and a
+  // barrier has none).
+  if ((isSend || isRecv || isBarrier) && !reverseMode)
     return false;
   if (!forwardMode && !reverseMode)
     return false;
@@ -639,6 +642,17 @@ bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
     if (primal)
       R = newRecord(BuilderZ, 0);
     R = cacheRecord(BuilderZ, R);
+  } else if (isBarrier) {
+    // The communicator, for the barrier of the reverse pass
+    if (primal) {
+      R = CreateAllocation(BuilderZ, RecTy, ConstantInt::get(i64, 1),
+                           "mpi_record");
+      BuilderZ.CreateStore(
+          BuilderZ.CreateLoad(i32,
+                              gutils->getNewFromOriginal(call.getOperand(0))),
+          getFortranMPIField(BuilderZ, R, FortranMPIField::Comm));
+    }
+    R = cacheRecord(BuilderZ, R);
   } else if (isWait) {
     if (primal)
       R = BuilderZ.CreateCall(getFortranMPIPop(M),
@@ -656,7 +670,14 @@ bool AdjointGenerator::handleFortranMPIPointToPoint(CallInst &call,
     IRBuilder<> Builder2(&call);
     getReverseBuilder(Builder2);
     R = lookup(R, Builder2);
-    if (isWait) {
+    if (isBarrier) {
+      Value *ierr = IRBuilder<>(gutils->inversionAllocs)
+                        .CreateAlloca(i32, nullptr, "enzyme_mpi_ierr");
+      Builder2.CreateCall(
+          getFortranMPIFunction(M, caller, "MPI_Barrier", 2),
+          {getFortranMPIField(Builder2, R, FortranMPIField::Comm), ierr});
+      CreateDealloc(Builder2, R);
+    } else if (isWait) {
       Builder2.CreateCall(getFortranMPIStart(M, caller), {R});
     } else if (isWaitall) {
       Builder2.CreateCall(
