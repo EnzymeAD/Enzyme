@@ -56,6 +56,7 @@
 #include "../EnzymeLogic.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
+#include "../FlangRuntime.h"
 
 #include "../FunctionUtils.h"
 #include "../LibraryFuncs.h"
@@ -5612,6 +5613,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(3),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
+    // The descriptor arguments of the other flang runtime functions that act
+    // on descriptors (see FlangRuntime.h).
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i : replay->shadowArgs) {
+        if (i < 0 || (unsigned)i >= call.arg_size() ||
+            !call.getOperand(i)->getType()->isPointerTy())
+          continue;
+        // The second argument of PointerAssociateScalar is a data address.
+        if (i == 1 && funcName == "_FortranAPointerAssociateScalar")
+          continue;
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
       return;
     }
 
