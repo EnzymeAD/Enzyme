@@ -1,0 +1,114 @@
+# Publishes what the Enzyme Compiler Explorer needs to offer Poseidon: the pass
+# plugin and the Enzyme plugin it co-loads, the profiling runtime, the header,
+# a Herbie build, a cost model for the generic x86-64 target the explorer
+# compiles for (measured on this runner), and tools/explorer/poseidon-ce.sh,
+# which is the executable the explorer calls as its "compiler". One tarball per
+# LLVM version on the `nightly-poseidon` release; the explorer-builder polls
+# this workflow on the `poseidon` branch and unpacks the tarball.
+name: Poseidon Explorer
+
+on:
+  push:
+    branches:
+      - main
+      - poseidon
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Poseidon Explorer LLVM ${{ matrix.llvm }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["21"]
+    timeout-minutes: 180
+
+    steps:
+    - name: Install dependencies
+      run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
+          sudo python3 -m pip install --upgrade pip lit numpy llvmlite
+
+    - uses: Bogdanp/setup-racket@v1.11
+      with:
+        version: '8.15'
+        variant: 'CS'
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: actions/checkout@v4
+
+    - name: Configure
+      run: |
+          cmake -G Ninja -S enzyme -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm \
+            -DLLVM_EXTERNAL_LIT=$(which lit) \
+            -DENZYME_POSEIDON=ON
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Cost model
+      run: |
+          python3 enzyme/Poseidon/tools/calibrate/microbm_cpu.py \
+            --native-arch x86-64 --out build/cm_x86-64_explorer.csv
+          head -3 build/cm_x86-64_explorer.csv
+
+    - name: Package
+      run: |
+          set -e
+          P=poseidon-explorer-llvm${{ matrix.llvm }}
+          rm -rf $P && mkdir -p $P/lib $P/cost_models
+          cp build/Poseidon/lib/Poseidon-${{ matrix.llvm }}.so build/Enzyme/ClangEnzyme-${{ matrix.llvm }}.so \
+             build/Poseidon/lib/libposeidon_profile.a $P/lib/
+          cp -r enzyme/include $P/include
+          cp build/cm_x86-64_explorer.csv $P/cost_models/
+          cp -r build/Poseidon/herbie/install/herbie $P/herbie
+          cp enzyme/Poseidon/tools/explorer/poseidon-ce.sh $P/
+          tar czf $P.tar.gz $P
+          # The wrapper must answer the explorer's version probe and compile
+          # from the unpacked tree before anything is published.
+          POSEIDON_CE_ROOT=$PWD/$P POSEIDON_CE_CLANG=/usr/bin/clang++-${{ matrix.llvm }} $P/poseidon-ce.sh --version
+          cat > smoke.cpp <<'SRC'
+          #include "poseidon/poseidon.h"
+          #include <cmath>
+          #include <cstdio>
+          template <typename R, typename... T> R __poseidon_fp_optimize(void *, T...);
+          extern int enzyme_dup;
+          __attribute__((noinline)) void kernel(const double *x, double *out, int n) {
+            for (int i = 0; i < n; ++i) out[i] = (1.0 - std::cos(x[i])) / (x[i] * x[i]);
+          }
+          int main() {
+            const int n = 4096; static double x[n], out[n], dout[n], dx[n];
+            for (int i = 0; i < n; ++i) { x[i] = 1e-4 * (i + 1) / n; dout[i] = 1.0; }
+            __poseidon_fp_optimize<void>((void *)kernel, enzyme_dup, x, dx, enzyme_dup, out, dout, n);
+            double s = 0; for (int i = 0; i < n; ++i) s += out[i];
+            printf("%.17g\n", s / n); return 0;
+          }
+          SRC
+          POSEIDON_CE_ROOT=$PWD/$P POSEIDON_CE_CLANG=/usr/bin/clang++-${{ matrix.llvm }} $P/poseidon-ce.sh -g -o smoke -O2 smoke.cpp 2>&1 | tee smoke.log
+          grep -q 'Applying solution' smoke.log
+          ./smoke
+
+    - name: Publish
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+          if gh release view nightly-poseidon >/dev/null 2>&1; then
+            gh release edit nightly-poseidon --title "Poseidon Explorer" --notes "Latest build of the Poseidon branch for the Enzyme Compiler Explorer." --target ${{ github.sha }}
+          else
+            gh release create nightly-poseidon --title "Poseidon Explorer" --notes "Latest build of the Poseidon branch for the Enzyme Compiler Explorer." --target ${{ github.sha }}
+          fi
+          gh release upload nightly-poseidon poseidon-explorer-llvm${{ matrix.llvm }}.tar.gz --clobber
