@@ -1814,7 +1814,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
         os << "          for (auto [i, r] : llvm::enumerate(" << origName
            << "->getResults())) {\n";
         os << "            if (gutils->isConstantValue(r)) {\n";
-        os << "              difs[i] = cast<AutoDiffTypeInterface>("
+        os << "              if (isa<AutoDiffTypeInterface>(r.getType()))\n";
+        os << "               difs[i] = cast<AutoDiffTypeInterface>("
               "gutils->getShadowType(r.getType()))"
               ".createNullValue(builder, r.getLoc());\n";
         os << "              continue;\n";
@@ -2259,11 +2260,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           os << curIndent << INDENT << "SmallVector<mlir::Value> difs("
              << origName << "->getNumResults());\n";
           os << curIndent << INDENT << "for (auto [i, r] : llvm::enumerate("
-             << origName << "->getResults()))\n";
+             << origName << "->getResults())) {\n";
+          os << curIndent << INDENT << INDENT << "if (i == resIdx)\n";
+          os << curIndent << INDENT << INDENT << INDENT << "difs[i] = dif;\n";
           os << curIndent << INDENT << INDENT
-             << "difs[i] = (i == resIdx) ? dif : "
-                "cast<AutoDiffTypeInterface>(gutils->getShadowType("
+             << "else if (isa<AutoDiffTypeInterface>(r.getType()))\n";
+          os << curIndent << INDENT << INDENT << INDENT
+             << "difs[i] = cast<AutoDiffTypeInterface>(gutils->getShadowType("
                 "r.getType())).createNullValue(builder, r.getLoc());\n";
+          os << curIndent << INDENT << "}\n";
         } else {
           os << curIndent << "if (!gutils->isConstantValue(" << origName
              << ".getOperand(" << argIdx << "))) {\n";
