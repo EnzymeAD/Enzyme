@@ -3499,54 +3499,58 @@ struct ExpandImpulsePass
     return false;
   }
 
-  // constraint regardless of its (possibly tainted) parameters. With
-  // `throughRegions`, a region op's results (e.g. an `impulse.if` yielding a
-  // tainted value) are tainted when anything nested in it uses a tainted value.
+  // Sample ops block taint: an unregenerated site's value comes from the trace.
+  // An op with regions is tainted if anything nested uses a tainted value.
   static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
-                                                ArrayAttr regenerateAddresses,
-                                                bool throughRegions = false) {
+                                                ArrayAttr regenerateAddresses) {
     DenseSet<Value> tainted;
+    auto isTainted = [&](Value v) { return tainted.contains(v); };
     auto usesTainted = [&](Operation *op) {
-      if (llvm::any_of(op->getOperands(),
-                       [&](Value v) { return tainted.contains(v); }))
+      if (llvm::any_of(op->getOperands(), isTainted))
         return true;
-      if (!throughRegions || op->getNumRegions() == 0)
+      if (op->getNumRegions() == 0)
         return false;
-      bool found = false;
-      op->walk([&](Operation *inner) {
-        if (llvm::any_of(inner->getOperands(),
-                         [&](Value v) { return tainted.contains(v); }))
-          found = true;
-      });
-      return found;
+      return op
+          ->walk([&](Operation *inner) {
+            return llvm::any_of(inner->getOperands(), isTainted)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
     };
     bool changed = true;
     while (changed) {
       changed = false;
+      auto taint = [&](auto values) {
+        for (Value v : values)
+          changed |= tainted.insert(v).second;
+      };
       fn.getFunctionBody().walk([&](Operation *op) {
         if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
           if (addressInList(sampleOp, regenerateAddresses))
-            for (Value r : llvm::drop_begin(op->getResults()))
-              changed |= tainted.insert(r).second;
+            taint(llvm::drop_begin(op->getResults()));
           return;
         }
-        if (usesTainted(op))
-          for (Value r : op->getResults())
-            changed |= tainted.insert(r).second;
+        if (!usesTainted(op))
+          return;
+        taint(op->getResults());
+        for (Region &region : op->getRegions())
+          for (Block &block : region)
+            taint(block.getArguments());
       });
     }
     return tainted;
   }
 
-  // The simple delta lowering handles straight-line bodies of distribution
-  // sites only: no impulse.if and no nested generative calls.
+  // Each site must execute exactly once: one score-tail column per site.
   static bool deltaWeightFeasible(FunctionOpInterface fn) {
     bool feasible = true;
     fn.getFunctionBody().walk([&](Operation *op) {
       if (isa<impulse::IfOp>(op))
         feasible = false;
       if (auto s = dyn_cast<impulse::SampleOp>(op))
-        if (!s.getDistAttr() && !s.getLogpdfAttr())
+        if ((!s.getDistAttr() && !s.getLogpdfAttr()) ||
+            s->getParentOp() != fn.getOperation())
           feasible = false;
     });
     return feasible;
@@ -3624,7 +3628,7 @@ struct ExpandImpulsePass
       if (deltaMode) {
         if (!deltaWeightFeasible(NewF)) {
           CI.emitError("Impulse: regenerate over a score-tail trace requires "
-                       "a straight-line body of distribution sites");
+                       "a straight-line body of top-level distribution sites");
           return failure();
         }
         tainted = computeRegenerateTaint(NewF, CI.getRegenerateAddressesAttr());
@@ -3672,8 +3676,7 @@ struct ExpandImpulsePass
             entryBuilder, initLoc, kType, DenseElementsAttr::get(kType, 0.0));
       } else if (hastings && !deltaMode) {
         // Sites whose old density cannot be evaluated inline at the new state.
-        hTaint = computeRegenerateTaint(NewF, regenAddrs,
-                                        /*throughRegions=*/true);
+        hTaint = computeRegenerateTaint(NewF, regenAddrs);
         SmallVector<Attribute> kAddrs;
         NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
           if (!s.getDistAttr() && !s.getLogpdfAttr())
