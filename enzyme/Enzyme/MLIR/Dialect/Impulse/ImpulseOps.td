@@ -60,7 +60,7 @@ def SampleOp : Impulse_Op<"sample",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -80,7 +80,7 @@ def UntracedCallOp : Impulse_Op<"untracedCall"> {
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -114,7 +114,7 @@ def SimulateOp : Impulse_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpI
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -144,7 +144,7 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $constraint prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -178,7 +178,7 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -207,7 +207,7 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -293,7 +293,7 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     (`initial_potential_energy` `=` $initial_potential_energy^)?
     (`warmup_offset` `=` $warmup_offset^)?
     (`adaptation_state_in` `=` $adaptation_state_in^)?
-    attr-dict `:` functional-type(operands, results)
+    prop-dict attr-dict `:` functional-type(operands, results)
   }];
 
   let hasVerifier = 1;
@@ -335,7 +335,7 @@ def RandomOp : Impulse_Op<"random"> {
   let results = (outs AnyType:$output_rng_state, AnyType:$result);
 
   let assemblyFormat = [{
-    $rng_state `,` $a `,` $b  attr-dict `:` functional-type(operands, results)
+    $rng_state `,` $a `,` $b  prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -454,7 +454,7 @@ def DotOp : Impulse_Op<"dot", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+    $lhs `,` $rhs prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -472,7 +472,7 @@ def CholeskyOp : Impulse_Op<"cholesky", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $input attr-dict `:` functional-type(operands, results)
+    $input prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -496,7 +496,7 @@ def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $a `,` $b attr-dict `:` functional-type(operands, results)
+    $a `,` $b prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -549,7 +549,7 @@ def SliceOp : Impulse_Op<"slice", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $operand attr-dict `:` functional-type($operand, $result)
+    $operand prop-dict attr-dict `:` functional-type($operand, $result)
   }];
 }
 
@@ -567,7 +567,7 @@ def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $operand `,` $start_indices attr-dict `:` functional-type(operands, results)
+    $operand `,` $start_indices prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 

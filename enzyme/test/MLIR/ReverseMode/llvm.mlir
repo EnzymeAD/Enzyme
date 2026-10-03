@@ -8,10 +8,10 @@ module {
 
   func.func @dsquare(%x: f64, %dr: f64) -> f64 {
     %dx = enzyme.autodiff @square(%x, %dr)
-      {
+      <
         activity=[#enzyme.activity<enzyme_active>],
         ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-      } : (f64, f64) -> f64
+      > : (f64, f64) -> f64
     return %dx : f64
   }
 
@@ -33,10 +33,10 @@ llvm.func @multireturn(%x: f64, %y: f64) -> f64 {
 
 func.func @dmultireturn(%x: f64, %y: f64, %dr: f64) -> (f64, f64) {
   %res = enzyme.autodiff @multireturn(%x, %y, %dr)
-    {
+    <
       activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (f64, f64, f64) -> !llvm.struct<(f64, f64)>
+    > : (f64, f64, f64) -> !llvm.struct<(f64, f64)>
   %fst = llvm.extractvalue %res[0] : !llvm.struct<(f64, f64)>
   %snd = llvm.extractvalue %res[1] : !llvm.struct<(f64, f64)>
   return %fst, %snd : f64, f64
@@ -65,10 +65,10 @@ llvm.func @loadstore(%a: !llvm.ptr, %b: f32) -> f32 {
 
 func.func @dloadstore(%a: !llvm.ptr, %da: !llvm.ptr, %b: f32, %dres: f32) -> f32 {
   %res = enzyme.autodiff @loadstore(%a, %da, %b, %dres)
-    {
+    <
       activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_active>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (!llvm.ptr, !llvm.ptr, f32, f32) -> f32
+    > : (!llvm.ptr, !llvm.ptr, f32, f32) -> f32
   return %res : f32
 }
 }
@@ -107,10 +107,10 @@ llvm.func @f_iter(%a: !llvm.ptr) -> f32 {
 }
 func.func @f_iter_autodiff(%a: !llvm.ptr, %da: !llvm.ptr, %dres: f32) {
   enzyme.autodiff @f_iter(%a, %da, %dres)
-    {
+    <
       activity=[#enzyme.activity<enzyme_dup>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (!llvm.ptr, !llvm.ptr, f32) -> ()
+    > : (!llvm.ptr, !llvm.ptr, f32) -> ()
   return
 }
 }
@@ -160,10 +160,10 @@ llvm.func @select_op(%cond: i1, %x: f64, %y: f64) -> f64 {
 
 func.func @dselect_op(%cond: i1, %x: f64, %y: f64, %dr: f64) -> (f64, f64) {
   %res = enzyme.autodiff @select_op(%cond, %x, %y, %dr)
-    {
+    <
       activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (i1, f64, f64, f64) -> !llvm.struct<(f64, f64)>
+    > : (i1, f64, f64, f64) -> !llvm.struct<(f64, f64)>
   %fst = llvm.extractvalue %res[0] : !llvm.struct<(f64, f64)>
   %snd = llvm.extractvalue %res[1] : !llvm.struct<(f64, f64)>
   return %fst, %snd : f64, f64
@@ -194,10 +194,10 @@ llvm.func @alloca_zero(%x: f64) -> f64 {
 
 func.func @dalloca_zero(%x: f64, %dr: f64) -> f64 {
   %dx = enzyme.autodiff @alloca_zero(%x, %dr)
-    {
+    <
       activity=[#enzyme.activity<enzyme_active>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (f64, f64) -> f64
+    > : (f64, f64) -> f64
   return %dx : f64
 }
 }

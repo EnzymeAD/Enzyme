@@ -18,11 +18,11 @@ llvm.func @kernel(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f64, %arg3: f64) {
     %3 = llvm.load %2 : !llvm.ptr -> f64
     %4 = llvm.fmul %3, %a1 : f64
     enzyme.yield %4 : f64
-  } attributes {
+  } <
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
     ret_activity = [#enzyme.activity<enzyme_activenoneed>],
     fn = "compute"
-  } : (!llvm.ptr, !llvm.ptr, f64, f64) -> ()
+  > : (!llvm.ptr, !llvm.ptr, f64, f64) -> ()
   llvm.return
 }
 

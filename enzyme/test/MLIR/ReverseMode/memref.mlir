@@ -12,14 +12,14 @@ func.func @dsubview(
   %x: index, %y: index, %dout: f32
 ) {
   enzyme.autodiff @subview(%mem, %dmem, %x, %y, %dout)
-    {
+    <
       activity=[
         #enzyme.activity<enzyme_dup>,
         #enzyme.activity<enzyme_const>,
         #enzyme.activity<enzyme_const>
       ],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (
+    > : (
       memref<4x3xf32, strided<[?, ?], offset: ?>>,
       memref<4x3xf32, strided<[?, ?], offset: ?>>,
       index, index, f32
@@ -54,14 +54,14 @@ func.func @dsubview(
   %y: index, %out: memref<f32>, %dout: memref<f32>
 ) {
   enzyme.autodiff @subview_in_loop(%mem, %dmem, %y, %out, %dout)
-    {
+    <
       activity=[
         #enzyme.activity<enzyme_dup>,
         #enzyme.activity<enzyme_const>,
         #enzyme.activity<enzyme_dupnoneed>
       ],
       ret_activity=[]
-    } : (
+    > : (
       memref<4x3xf32, strided<[?, ?], offset: ?>>,
       memref<4x3xf32, strided<[?, ?], offset: ?>>,
       index, memref<f32>, memref<f32>

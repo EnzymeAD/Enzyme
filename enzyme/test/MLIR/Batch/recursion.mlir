@@ -6,7 +6,7 @@ module {
     return %0 : tensor<16xf32>
   }
   func.func @main(%arg0: tensor<4x16xf32>, %arg1: tensor<4x16xf32>) {
-    %0 = enzyme.batch @f(%arg0, %arg1) {batch_shape = array<i64: 4>} : (tensor<4x16xf32>, tensor<4x16xf32>) -> tensor<4x16xf32>
+    %0 = enzyme.batch @f(%arg0, %arg1) <batch_shape = [4]> : (tensor<4x16xf32>, tensor<4x16xf32>) -> tensor<4x16xf32>
     return
   }
 }
