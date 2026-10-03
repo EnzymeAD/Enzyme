@@ -291,7 +291,9 @@ double getInstructionCompCost(const Instruction *I) {
       return queryCostModel("sin", P) + queryCostModel("cos", P);
     }
 #endif
-  if (!I->getType()->isFPOrFPVectorTy())
+  // A regime split's condition is an fcmp, whose i1 result is not an FP type
+  // but runs on the FP pipe of its operands.
+  if (!I->getType()->isFPOrFPVectorTy() && !isa<FCmpInst>(I))
     return 0.0;
 
   std::string OpcodeName;
