@@ -32,6 +32,6 @@ end subroutine
 ! CHECK-LABEL: func.func @_QPdriver
 ! x active (dup, with shadow dx), y inactive (const); markers are dropped.
 ! CHECK: enzyme.fwddiff @_QPsquare(
-! CHECK-SAME: activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>]
-! CHECK-SAME: ret_activity = [#enzyme<activity enzyme_dupnoneed>]
+! CHECK-SAME: activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>]
+! CHECK-SAME: ret_activity = [#enzyme.activity<enzyme_dupnoneed>]
 ! CHECK-NOT: fir.call @_QPf__enzyme_fwddiff

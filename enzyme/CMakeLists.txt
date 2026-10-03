@@ -251,16 +251,17 @@ message("found MLIR ${MLIR_FOUND}")
 
 # Flang is discovered the same way as Clang: FlangConfig.cmake exports the
 # FIR/HLFIR dialect targets and sets FLANG_INCLUDE_DIRS, which the FIR/HLFIR
-# autodiff layer (ENZYME_FLANG_MLIR) needs. It references MLIR imported targets, so
-# it must come after the MLIR find_package above or Flang_FOUND ends up FALSE.
-if (DEFINED Flang_DIR)
-    find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
-if (${Flang_FOUND})
+# autodiff layer (ENZYME_FLANG_MLIR) needs. It references MLIR imported
+# targets, so it must come after the MLIR find_package above, or Flang_FOUND
+# ends up FALSE.
+if(DEFINED Flang_DIR)
+  find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
+  if(${Flang_FOUND})
     include_directories(${FLANG_INCLUDE_DIRS})
     message("flang inc dir ${FLANG_INCLUDE_DIRS}")
-endif()
+  endif()
 else()
-    set(Flang_FOUND 0)
+  set(Flang_FOUND 0)
 endif()
 message("found Flang ${Flang_FOUND}")
 # include(AddClang)

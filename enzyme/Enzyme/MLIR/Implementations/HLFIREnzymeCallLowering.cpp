@@ -14,8 +14,8 @@
 //   %r  = fir.call @_QPf__enzyme_fwddiff(%bp, enzyme_dup, %x, %dx, ...) : ...
 //     ==>
 //   %r  = enzyme.fwddiff @_QPmm(%x, %dx, ...)
-//           {activity = [#enzyme<activity enzyme_dup>, ...],
-//            ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (...) -> T
+//           <activity = [#enzyme.activity<enzyme_dup>, ...],
+//            ret_activity = [#enzyme.activity<enzyme_dupnoneed>]> : (...) -> T
 //
 // The callee is recovered by tracing the boxproc operand back to its
 // fir.address_of. Activity markers (enzyme_const / enzyme_dup /
