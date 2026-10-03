@@ -1,0 +1,83 @@
+# Builds Enzyme with the Poseidon plugin against an apt LLVM and runs the
+# Poseidon tests that need no GPU. check-poseidon-integration compiles and
+# launches CUDA kernels, which a GitHub-hosted runner cannot do. LLVM 20 also
+# builds, but there the two scalar-loop raise tests are skipped (its SCEV does
+# not carry no-wrap through the canonical IV's trunc).
+name: Poseidon CI
+
+on:
+  push:
+    branches:
+      - main
+      - poseidon
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  build-linux:
+    name: Poseidon CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["21", "22"]
+        build: ["Release"]
+        os: [ubuntu-22.04]
+
+    timeout-minutes: 120
+
+    steps:
+    - name: Install dependencies
+      run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
+          sudo python3 -m pip install --upgrade pip lit
+
+    - uses: actions/checkout@v4
+
+    - name: Configure
+      run: |
+          # No Herbie: building one pulls in Racket and Rust, and the tests
+          # that need it declare `REQUIRES: herbie` and are skipped without it.
+          cmake -G Ninja -S enzyme -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
+            -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm \
+            -DLLVM_EXTERNAL_LIT=$(which lit) \
+            -DENZYME_POSEIDON=ON \
+            -DPOSEIDON_HERBIE_BINARY=/nonexistent/herbie \
+            -DPOSEIDON_TEST_GPU_ARCH=sm_120
+
+    - name: Build
+      run: cmake --build build
+
+    - name: lit features
+      working-directory: build
+      run: |
+          set -o pipefail
+          lit --show-suites test/Poseidon | tee lit-suites.log
+          grep -E "Available Features:.*\bposeidon\b" lit-suites.log
+          # Without this the Enzyme-dependent tests are UNSUPPORTED and the
+          # suite below passes while testing nothing that involves a derivative.
+          grep -E "Available Features:.*\benzyme\b" lit-suites.log
+
+    - name: check-poseidon
+      working-directory: build
+      run: |
+          set -o pipefail
+          lit -v --filter-out Integration/ test/Poseidon 2>&1 | tee lit-poseidon.log
+          test "$(grep -c '^FAIL:' lit-poseidon.log)" -eq 0
+          # Every test that asks for Enzyme must have RUN. Without the plugin
+          # each is UNSUPPORTED and the check above passes while testing
+          # nothing that involves a derivative.
+          for t in $(grep -rl 'REQUIRES:.*enzyme' "$GITHUB_WORKSPACE"/enzyme/test/Poseidon --include='*.ll' --include='*.c'); do
+            case "$t" in */Integration/*) continue ;; esac
+            grep -q "^PASS: Poseidon :: $(basename "$t") " lit-poseidon.log \
+              || { echo "$(basename "$t") did not run"; exit 1; }
+          done
