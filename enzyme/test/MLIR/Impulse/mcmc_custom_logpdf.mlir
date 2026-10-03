@@ -9,17 +9,24 @@ module {
   }
 
   // CHECK-LABEL: func.func @nuts_logpdf
-  // CHECK: call @logpdf
-  // CHECK-NEXT: %[[U0:.+]] = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @logpdf
-  // CHECK-NEXT: %[[NEG:.+]] = arith.negf
-  // CHECK-NEXT: enzyme.yield
-  // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @logpdf
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // Cloned, not called: a func.call's reverse rule reruns the forward density.
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[Q0]], %[[Q0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK: impulse.for
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[Q1]], %[[Q1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @logpdf
   func.func @nuts_logpdf(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[1.0, -1.0]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -38,17 +45,23 @@ module {
   }
 
   // CHECK-LABEL: func.func @hmc_logpdf
-  // CHECK: call @logpdf
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[Q0]], %[[Q0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
   // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[Q1]], %[[Q1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @logpdf
   func.func @hmc_logpdf(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -74,17 +87,26 @@ module {
   }
 
   // CHECK-LABEL: func.func @nuts_shifted_logpdf
-  // CHECK: call @shifted_logpdf
-  // CHECK-NEXT: %[[U0:.+]] = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @shifted_logpdf
-  // CHECK-NEXT: %[[NEG:.+]] = arith.negf
-  // CHECK-NEXT: enzyme.yield
-  // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @shifted_logpdf
+  // CHECK-SAME: (%{{.+}}: tensor<2xui64>, %[[MU:[^:]+]]: tensor<2xf64>)
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @shifted_logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D0:.+]] = arith.subf %[[Q0]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[D0]], %[[D0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK: impulse.for
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D1:.+]] = arith.subf %[[Q1]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[D1]], %[[D1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @shifted_logpdf
   func.func @nuts_shifted_logpdf(%rng : tensor<2xui64>, %mu : tensor<2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -102,17 +124,26 @@ module {
   }
 
   // CHECK-LABEL: func.func @hmc_shifted_logpdf
-  // CHECK: call @shifted_logpdf
+  // CHECK-SAME: (%{{.+}}: tensor<2xui64>, %[[MU:[^:]+]]: tensor<2xf64>)
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @shifted_logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @shifted_logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D0:.+]] = arith.subf %[[Q0]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[D0]], %[[D0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
   // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @shifted_logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D1:.+]] = arith.subf %[[Q1]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[D1]], %[[D1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @shifted_logpdf
   func.func @hmc_shifted_logpdf(%rng : tensor<2xui64>, %mu : tensor<2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -141,17 +172,31 @@ module {
   }
 
   // CHECK-LABEL: func.func @nuts_anisotropic_logpdf
-  // CHECK: call @anisotropic_logpdf
-  // CHECK-NEXT: %[[U0:.+]] = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @anisotropic_logpdf
-  // CHECK-NEXT: %[[NEG:.+]] = arith.negf
-  // CHECK-NEXT: enzyme.yield
-  // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @anisotropic_logpdf
+  // CHECK-SAME: (%{{.+}}: tensor<2xui64>, %[[MU:[^:]+]]: tensor<2xf64>, %[[PREC:[^:]+]]: tensor<2xf64>)
+  // CHECK-DAG: %[[ONES:.+]] = arith.constant dense<1.000000e+00> : tensor<2xf64>
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @anisotropic_logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D0:.+]] = arith.subf %[[Q0]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[DSQ0:.+]] = arith.mulf %[[D0]], %[[D0]] : tensor<2xf64>
+  // CHECK-NEXT: %[[W0:.+]] = arith.mulf %[[PREC]], %[[DSQ0]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[ONES]], %[[W0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK: impulse.for
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D1:.+]] = arith.subf %[[Q1]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[DSQ1:.+]] = arith.mulf %[[D1]], %[[D1]] : tensor<2xf64>
+  // CHECK-NEXT: %[[W1:.+]] = arith.mulf %[[PREC]], %[[DSQ1]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[ONES]], %[[W1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @anisotropic_logpdf
   func.func @nuts_anisotropic_logpdf(%rng : tensor<2xui64>, %mu : tensor<2xf64>, %precision : tensor<2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -169,17 +214,31 @@ module {
   }
 
   // CHECK-LABEL: func.func @hmc_anisotropic_logpdf
-  // CHECK: call @anisotropic_logpdf
+  // CHECK-SAME: (%{{.+}}: tensor<2xui64>, %[[MU:[^:]+]]: tensor<2xf64>, %[[PREC:[^:]+]]: tensor<2xf64>)
+  // CHECK-DAG: %[[ONES:.+]] = arith.constant dense<1.000000e+00> : tensor<2xf64>
+  // CHECK-DAG: %[[NEGHALF:.+]] = arith.constant dense<-5.000000e-01> : tensor<f64>
+  // CHECK: %{{.+}} = call @anisotropic_logpdf(
   // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @anisotropic_logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q0:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D0:.+]] = arith.subf %[[Q0]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[DSQ0:.+]] = arith.mulf %[[D0]], %[[D0]] : tensor<2xf64>
+  // CHECK-NEXT: %[[W0:.+]] = arith.mulf %[[PREC]], %[[DSQ0]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS0:.+]] = impulse.dot %[[ONES]], %[[W0]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP0:.+]] = arith.mulf %[[SS0]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[LP0]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U0]], %{{.+}} : tensor<f64>, tensor<2xui64>
   // CHECK: impulse.for
-  // CHECK: enzyme.autodiff_region
-  // CHECK: func.call @anisotropic_logpdf
-  // CHECK-NEXT: %{{.+}} = arith.negf
-  // CHECK-NEXT: enzyme.yield
+  // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
+  // CHECK-NEXT: ^bb0(%[[Q1:.+]]: tensor<2xf64>):
+  // CHECK-NEXT: %[[D1:.+]] = arith.subf %[[Q1]], %[[MU]] : tensor<2xf64>
+  // CHECK-NEXT: %[[DSQ1:.+]] = arith.mulf %[[D1]], %[[D1]] : tensor<2xf64>
+  // CHECK-NEXT: %[[W1:.+]] = arith.mulf %[[PREC]], %[[DSQ1]] : tensor<2xf64>
+  // CHECK-NEXT: %[[SS1:.+]] = impulse.dot %[[ONES]], %[[W1]] {{.+}} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+  // CHECK-NEXT: %[[LP1:.+]] = arith.mulf %[[SS1]], %[[NEGHALF]] : tensor<f64>
+  // CHECK-NEXT: %[[U1:.+]] = arith.negf %[[LP1]] : tensor<f64>
+  // CHECK-NEXT: enzyme.yield %[[U1]], %{{.+}} : tensor<f64>, tensor<2xui64>
+  // CHECK-NOT: call @anisotropic_logpdf
   func.func @hmc_anisotropic_logpdf(%rng : tensor<2xui64>, %mu : tensor<2xf64>, %precision : tensor<2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>

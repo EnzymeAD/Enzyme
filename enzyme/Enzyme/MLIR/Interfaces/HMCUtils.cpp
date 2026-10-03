@@ -387,6 +387,27 @@ static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
   return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
 }
 
+/// Inlined: Enzyme's func.call adjoint re-runs the callee's forward pass.
+static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
+                                    Value position, const HMCContext &ctx) {
+  SmallVector<Value> args{position};
+  args.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  auto fn = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+      builder.getInsertionBlock()->getParentOp(), ctx.logpdfFn);
+  if (!fn || !llvm::hasSingleElement(fn.getFunctionBody())) {
+    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                       TypeRange{ctx.getScalarType()}, args);
+    return callOp.getResult(0);
+  }
+
+  Block &entry = fn.getFunctionBody().front();
+  IRMapping mapping;
+  mapping.map(entry.getArguments(), args);
+  for (Operation &op : entry.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(entry.getTerminator()->getOperand(0));
+}
+
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
@@ -451,12 +472,8 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
         arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
     enzyme::YieldOp::create(builder, loc, ValueRange{U, rng});
   } else if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(qArg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, callArgs);
-    Value U = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
+    Value U = arith::NegFOp::create(builder, loc, logDensity);
     // TODO(#2695): handle hybrid case
     enzyme::YieldOp::create(builder, loc, {U, rng});
   } else {
@@ -882,13 +899,8 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
         arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
     enzyme::YieldOp::create(builder, loc, ValueRange{U0_init, rngForAutodiff});
   } else if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Arg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOpInner = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                            TypeRange{scalarType}, callArgs);
-    auto U0_init =
-        arith::NegFOp::create(builder, loc, callOpInner.getResult(0));
+    Value logDensityInit = emitLogpdfFnInAutodiff(builder, loc, q0Arg, ctx);
+    auto U0_init = arith::NegFOp::create(builder, loc, logDensityInit);
     enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
   } else {
     auto fullTraceType =

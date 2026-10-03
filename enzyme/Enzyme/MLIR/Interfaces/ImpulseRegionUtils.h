@@ -14,7 +14,7 @@
 namespace mlir {
 namespace impulse {
 
-/// emitted above the op (sample-invariant captures). Each site's per-site
+/// Builds the logpdf region from the sampler; false leaves the op unchanged.
 bool constructLogpdfRegion(InferRegionOp regionOp);
 
 } // namespace impulse

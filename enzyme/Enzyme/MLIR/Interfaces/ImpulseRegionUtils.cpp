@@ -91,22 +91,37 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
   }
   int64_t numPositionArgs = lpBlock->getNumArguments();
 
+  // An MH move leaves unselected columns intact, so pins may skip past it.
   if (hasUnselected) {
     OpBuilder above(regionOp);
     Value trace = regionOp.getOriginalTrace();
     auto traceType = cast<RankedTensorType>(trace.getType());
     Type elemType = traceType.getElementType();
+    auto pinnedFrom = [&](Attribute addr) {
+      Value from = trace;
+      while (auto prev = from.getDefiningOp<InferRegionOp>()) {
+        Value prevTrace = prev.getOriginalTrace();
+        if (prev.getTrace() != from || !prev.getMhConfig() || !prevTrace ||
+            prevTrace.getType() != traceType ||
+            prev.getAllAddressesAttr() != allAddresses ||
+            llvm::is_contained(prev.getSelectionAttr().getValue(), addr))
+          break;
+        from = prevTrace;
+      }
+      return from;
+    };
     int64_t offset = 0;
     for (Attribute addr : allAddresses) {
       SampleRegionOp site = siteByAddress.lookup(addr);
       bool selected = selectedSet.contains(addr);
+      Value siteTrace = selected ? Value() : pinnedFrom(addr);
       for (unsigned i = 1, e = site.getNumResults(); i < e; ++i) {
         auto resultType = cast<RankedTensorType>(site.getResult(i).getType());
         int64_t numElements = resultType.getNumElements();
         if (!selected) {
           auto sliceType = RankedTensorType::get({1, numElements}, elemType);
           Value slice = SliceOp::create(
-              above, loc, sliceType, trace,
+              above, loc, sliceType, siteTrace,
               above.getDenseI64ArrayAttr({0, offset}),
               above.getDenseI64ArrayAttr({1, offset + numElements}),
               above.getDenseI64ArrayAttr({1, 1}));
