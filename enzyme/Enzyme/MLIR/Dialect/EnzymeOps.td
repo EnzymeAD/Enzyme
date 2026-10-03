@@ -315,9 +315,16 @@ def BinomialProgressOp : Enzyme_Op<"binomial_progress",
     width, or a tensor thereof (with the result taking the same type). The
     tensor forms carry the scalar computation for dialects whose scalars are
     tensors: stablehlo callers use `tensor<i64>`, a rank-0 ranked tensor.
+
+    The optional `max_num_steps` and `max_budget` attributes are static upper
+    bounds on the `num_steps` and `budget` operands. They are set when the
+    bounds are known at compile time, e.g. when checkpointing a loop with a
+    constant trip count.
   }];
   let arguments = (ins BinomialProgressScalarOrTensor:$num_steps,
-                       BinomialProgressScalarOrTensor:$budget);
+                       BinomialProgressScalarOrTensor:$budget,
+                       OptionalAttr<I64Attr>:$max_num_steps,
+                       OptionalAttr<I64Attr>:$max_budget);
   let results = (outs BinomialProgressScalarOrTensor:$result);
   let assemblyFormat = "$num_steps `,` $budget attr-dict `:` type($result)";
   let hasFolder = 1;
