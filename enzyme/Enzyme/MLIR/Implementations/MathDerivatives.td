@@ -35,6 +35,18 @@ def : MLIRDerivative<"math", "SinOp", (Op $x),
                       (CheckedMulF (DiffeRet), (CosF $x))
                     ]
                   >;
+
+def : MLIRDerivative<"math", "SincosOp", (Op $x),
+                    [
+                      (SelectIfAllResultsActive
+                        (SubF
+                          (CheckedMulF (DiffeRetIndex<[0]>), (SincosCosF $x)),
+                          (CheckedMulF (DiffeRetIndex<[1]>), (SincosSinF $x))),
+                        (SubF
+                          (CheckedMulF (DiffeRetIndex<[0]>), (CosF $x)),
+                          (CheckedMulF (DiffeRetIndex<[1]>), (SinF $x))))
+                    ]
+                  >;
 def : MLIRDerivative<"math", "SqrtOp", (Op $x),
                     [
                       (Arith_Select (CmpF (Arith_OEQ), $x, (ConstantFP<"0","arith","ConstantOp"> $x):$zero), $zero, (DivF (DiffeRet), (MulF (ConstantFP<"2.0","arith","ConstantOp"> $x), (SqrtF $x))))
