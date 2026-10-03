@@ -31,8 +31,8 @@
 #include <unordered_map>
 
 #include "Flags.h"
-#include "Types.h"
 #include "Matmul.h"
+#include "Types.h"
 
 namespace poseidon {
 

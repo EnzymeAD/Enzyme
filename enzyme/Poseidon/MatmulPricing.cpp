@@ -4,11 +4,11 @@
 #include "Evaluators.h"
 #include "Flags.h"
 #include "InKernelRaise.h"
+#include "MatmulInternal.h"
 #include "Optimize.h"
 #include "Solvers.h"
 #include "Utils.h"
 #include "WmmaUtils.h"
-#include "MatmulInternal.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"

@@ -143,8 +143,8 @@ void getSampledPoints(
   // subtracted difference is small together.
   size_t numCoincidence = 0;
   if (plan && plan->active && !plan->pairs.empty()) {
-    numCoincidence = static_cast<size_t>(
-        kCancellationFraction * static_cast<double>(numSamples));
+    numCoincidence = static_cast<size_t>(kCancellationFraction *
+                                         static_cast<double>(numSamples));
   }
 
   double maxRange = 1.0;

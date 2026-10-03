@@ -21,9 +21,9 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -667,24 +667,25 @@ bool improveViaHerbie(
     }
 
     SmallVector<SmallString<64>> shardIn(shards), shardOut(shards);
-    auto removeShardFiles = [&]() {
-      for (unsigned s = 0; s < shards; ++s) {
-        if (!shardIn[s].empty())
-          llvm::sys::fs::remove(shardIn[s]);
-        if (!shardOut[s].empty())
-          if (auto EC = llvm::sys::fs::remove_directories(shardOut[s]))
-            llvm::errs()
-                << "Warning: Failed to remove temporary output directory: "
-                << EC.message() << "\n";
-      }
-    };
+    auto removeShardFiles =
+        [&]() {
+          for (unsigned s = 0; s < shards; ++s) {
+            if (!shardIn[s].empty())
+              llvm::sys::fs::remove(shardIn[s]);
+            if (!shardOut[s].empty())
+              if (auto EC = llvm::sys::fs::remove_directories(shardOut[s]))
+                llvm::errs()
+                    << "Warning: Failed to remove temporary output directory: "
+                    << EC.message() << "\n";
+          }
+        };
     bool setupFailed = false;
     for (unsigned s = 0; s < shards && !setupFailed; ++s) {
       if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%",
                                           shardIn[s],
                                           llvm::sys::fs::perms::owner_all) ||
-          llvm::sys::fs::createUniqueDirectory(
-              "herbie_output_%%%%%%%%%%%%%%%%", shardOut[s])) {
+          llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
+                                               shardOut[s])) {
         setupFailed = true;
         break;
       }
@@ -729,10 +730,9 @@ bool improveViaHerbie(
         Args.emplace_back(arg);
       Args.push_back(shardIn[s]);
       Args.push_back(shardOut[s]);
-      llvm::sys::ProcessInfo PI =
-          llvm::sys::ExecuteNoWait(Program, Args, /*Env=*/std::nullopt,
-                                   /*Redirects=*/{}, /*MemoryLimit=*/0,
-                                   &ErrMsg, &ExecutionFailed);
+      llvm::sys::ProcessInfo PI = llvm::sys::ExecuteNoWait(
+          Program, Args, /*Env=*/std::nullopt,
+          /*Redirects=*/{}, /*MemoryLimit=*/0, &ErrMsg, &ExecutionFailed);
       if (!ExecutionFailed)
         procs.push_back(PI);
     }
@@ -746,8 +746,7 @@ bool improveViaHerbie(
         double spent = std::chrono::duration<double>(
                            std::chrono::steady_clock::now() - herbieStart)
                            .count();
-        waitFor = spent + 1 >= wallBudget ? 1u
-                                          : (unsigned)(wallBudget - spent);
+        waitFor = spent + 1 >= wallBudget ? 1u : (unsigned)(wallBudget - spent);
       }
       std::string WaitErr;
       llvm::sys::ProcessInfo R = llvm::sys::Wait(PI, waitFor, &WaitErr);
@@ -807,13 +806,12 @@ bool improveViaHerbie(
         std::string where = Platform.Name;
         if (!Platform.Path.empty())
           where += ", " + Platform.Path;
-        report_fatal_error(Twine("Poseidon: Herbie exited with status ") +
-                           Twine(RC) +
-                           " and produced no usable results.json for "
-                           "subgraph " +
-                           Twine(subgraphIdx) + " of " + funcTag +
-                           " (platform " + where +
-                           "). Its own diagnostics are on stderr above.");
+        report_fatal_error(
+            Twine("Poseidon: Herbie exited with status ") + Twine(RC) +
+            " and produced no usable results.json for "
+            "subgraph " +
+            Twine(subgraphIdx) + " of " + funcTag + " (platform " + where +
+            "). Its own diagnostics are on stderr above.");
       }
       if (shards == 1) {
         content = (*Buf)->getBuffer().str();
@@ -964,8 +962,8 @@ std::string getPrecondition(
 
     if (flags::HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
         std::isfinite(lower) && std::isfinite(upper)) {
-      double floorMag = std::ldexp(std::max(-lower, upper),
-                                   -(int)flags::HerbiePreFloorBits);
+      double floorMag =
+          std::ldexp(std::max(-lower, upper), -(int)flags::HerbiePreFloorBits);
       std::ostringstream floorStr;
       floorStr << std::setprecision(std::numeric_limits<double>::max_digits10)
                << std::scientific << floorMag;
@@ -1157,7 +1155,8 @@ void setUnifiedAccuracyCost(
         ++count;
         double origError = origErrors[pair.index()];
         if (!ifNodes.empty() && !std::isnan(origError))
-          for (const RegimeArm &arm : takenArms(parsedNode.get(), pair.value())) {
+          for (const RegimeArm &arm :
+               takenArms(parsedNode.get(), pair.value())) {
             ArmStats &st = armStats[arm];
             st.candSum += error;
             st.origSum += origError;
@@ -1239,24 +1238,26 @@ void setUnifiedAccuracyCost(
       raw_string_ostream os(armReport);
       for (const FPNode *ifNode : ifNodes)
         for (bool taken : {false, true}) {
-        const ArmStats &st = armStats[{ifNode, taken}];
-        os << " " << (taken ? "then" : "else") << ":" << st.count;
-        if (st.count)
-          os << ":" << format("%.3e", st.candSum / st.count) << "/"
-             << format("%.3e", st.origSum / st.count);
-        if (st.count < flags::MinArmSamples) {
-          discardCandidate = true;
-          continue;
-        }
-        worst = std::max(worst, origCost + (st.candSum - st.origSum) / st.count);
+          const ArmStats &st = armStats[{ifNode, taken}];
+          os << " " << (taken ? "then" : "else") << ":" << st.count;
+          if (st.count)
+            os << ":" << format("%.3e", st.candSum / st.count) << "/"
+               << format("%.3e", st.origSum / st.count);
+          if (st.count < flags::MinArmSamples) {
+            discardCandidate = true;
+            continue;
+          }
+          worst =
+              std::max(worst, origCost + (st.candSum - st.origSum) / st.count);
         }
       if (flags::Print)
         llvm::errs() << "[poseidon] regime-split candidate: arms (samples:cand/"
                         "orig mean error)"
                      << os.str() << "; " << drawn << " extra draws; box cost "
                      << format("%.3e", candCost) << " -> "
-                     << (discardCandidate ? std::string("dropped (unpriced arm)")
-                                          : formatv("{0:e}", worst).str())
+                     << (discardCandidate
+                             ? std::string("dropped (unpriced arm)")
+                             : formatv("{0:e}", worst).str())
                      << "; " << candidate.expr.substr(0, 120) << "\n";
       if (!discardCandidate)
         candCost = worst;

@@ -22,9 +22,9 @@
 // (RgPoly below) make the comparison exact and total, and every dimension is
 // either derived or the whole site is refused.
 #include "Flags.h"
+#include "MatmulInternal.h"
 #include "ProfileRead.h"
 #include "Utils.h"
-#include "MatmulInternal.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

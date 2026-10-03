@@ -7,8 +7,8 @@
 #include "Evaluators.h"
 #include "Flags.h"
 #include "LaunchDescriptors.h"
-#include "Optimize.h"
 #include "Matmul.h"
+#include "Optimize.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/Argument.h"
