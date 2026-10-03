@@ -89,6 +89,13 @@ static std::optional<enzyme::Activity> markerActivity(llvm::StringRef name) {
   return std::nullopt;
 }
 
+// Markers from enzyme.f90 that this lowering does not (yet) understand. They
+// must be diagnosed rather than silently treated as a differentiated argument.
+static bool isUnsupportedMarker(llvm::StringRef name) {
+  return name == "enzyme_scalar" || name == "enzyme_width" ||
+         name == "enzyme_vector";
+}
+
 static bool activityHasShadow(enzyme::Activity a) {
   return a == enzyme::Activity::enzyme_dup ||
          a == enzyme::Activity::enzyme_dupnoneed;
@@ -101,8 +108,10 @@ static LogicalResult lowerEnzymeCall(fir::CallOp call) {
   if (!callee)
     return success(); // indirect call, not a hook
   llvm::StringRef cn = callee->getLeafReference().getValue();
-  bool fwd = cn.contains("enzyme_fwddiff");
-  bool rev = cn.contains("enzyme_autodiff");
+  // Match the LLVM path (Enzyme.cpp), which keys on the double-underscore
+  // prefix, so user procedures that merely mention enzyme_* are left alone.
+  bool fwd = cn.contains("__enzyme_fwddiff");
+  bool rev = cn.contains("__enzyme_autodiff");
   if (!fwd && !rev)
     return success();
 
@@ -126,7 +135,11 @@ static LogicalResult lowerEnzymeCall(fir::CallOp call) {
   SmallVector<Attribute> activity;
   for (size_t i = 1, n = args.size(); i < n;) {
     enzyme::Activity ty = enzyme::Activity::enzyme_dup;
-    if (auto m = markerActivity(traceSymbolName(args[i]))) {
+    llvm::StringRef argSym = traceSymbolName(args[i]);
+    if (isUnsupportedMarker(argSym))
+      return call.emitError("unsupported activity marker '")
+             << argSym << "' in enzyme differentiation hook call";
+    if (auto m = markerActivity(argSym)) {
       ty = *m;
       if (++i >= n)
         return call.emitError("activity marker is not followed by an argument");
