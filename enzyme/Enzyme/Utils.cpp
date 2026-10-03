@@ -1665,10 +1665,28 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      bool byRef, bool cublas, bool julia_decl) {
   assert(fpTy->isFloatingPointTy());
 
+  // Under cuBLAS the inner product, and the dot it is computed with, take the
+  // handle of the original call first. The cuBLAS v2 dot writes its result
+  // through a trailing pointer rather than returning it.
+  const bool cublasv2 =
+      blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
+  Type *handleTy = nullptr;
+  if (cublas) {
+    assert(args.size() == 6);
+    handleTy = args[0]->getType();
+  } else {
+    assert(args.size() == 5);
+  }
+
   // add inner_prod call if not already present
-  std::string prod_name = "__enzyme_inner_prod" + blas.floatType + blas.suffix;
-  auto FInnerProdT =
-      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  std::string prod_name = "__enzyme_inner_prod" +
+                          (cublas ? blas.prefix : std::string()) +
+                          blas.floatType + blas.suffix;
+  SmallVector<Type *, 6> innerTys;
+  if (cublas)
+    innerTys.push_back(handleTy);
+  innerTys.append({BlasIT, BlasIT, BlasPT, BlasIT, BlasPT});
+  auto FInnerProdT = FunctionType::get(fpTy, innerTys, false);
   Function *F =
       cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
 
@@ -1677,28 +1695,40 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   // add dot call if not already present
   std::string dot_name = blas.prefix + blas.floatType + "dot" + blas.suffix;
-  auto FDotT =
-      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
+  SmallVector<Type *, 7> dotTys;
+  if (cublas)
+    dotTys.push_back(handleTy);
+  dotTys.append({BlasIT, BlasPT, BlasIT, BlasPT, BlasIT});
+  if (cublasv2)
+    dotTys.push_back(getUnqual(fpTy));
+  auto FDotT = FunctionType::get(
+      cublasv2 ? Type::getVoidTy(M.getContext()) : fpTy, dotTys, false);
   auto FDot = M.getOrInsertFunction(dot_name, FDotT);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  // A cuBLAS dot reads the matrices on the device, through the handle, and
+  // writes its result to memory: the inner product is not argmemonly there.
+  if (!cublas) {
 #if LLVM_VERSION_MAJOR >= 16
-  F->setOnlyAccessesArgMemory();
-  F->setOnlyReadsMemory();
+    F->setOnlyAccessesArgMemory();
+    F->setOnlyReadsMemory();
 #else
-  F->addFnAttr(Attribute::ArgMemOnly);
-  F->addFnAttr(Attribute::ReadOnly);
+    F->addFnAttr(Attribute::ArgMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
+  }
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
+  // The parameters after the handle, if any.
+  const unsigned off = cublas ? 1 : 0;
   if (!julia_decl) {
-    addFunctionNoCapture(F, 2);
-    addFunctionNoCapture(F, 2);
-    F->addParamAttr(2, Attribute::NoAlias);
-    F->addParamAttr(4, Attribute::NoAlias);
-    F->addParamAttr(2, Attribute::ReadOnly);
-    F->addParamAttr(4, Attribute::ReadOnly);
+    addFunctionNoCapture(F, 2 + off);
+    addFunctionNoCapture(F, 2 + off);
+    F->addParamAttr(2 + off, Attribute::NoAlias);
+    F->addParamAttr(4 + off, Attribute::NoAlias);
+    F->addParamAttr(2 + off, Attribute::ReadOnly);
+    F->addParamAttr(4 + off, Attribute::ReadOnly);
   }
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
@@ -1712,7 +1742,12 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   // always be based on a matrix which we allocated (contiguous)
   //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
 
-  auto blasm = F->arg_begin();
+  Value *handle = nullptr;
+  if (cublas) {
+    handle = F->arg_begin();
+    handle->setName("handle");
+  }
+  auto blasm = F->arg_begin() + off;
   blasm->setName("blasm");
   auto blasn = blasm + 1;
   blasn->setName("blasn");
@@ -1725,6 +1760,23 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   {
     IRBuilder<> B1(entry);
+    // The cuBLAS v2 dot writes its result here.
+    Value *dotRes =
+        cublasv2 ? B1.CreateAlloca(fpTy, nullptr, "dot.res") : nullptr;
+    // A call to the dot of n elements of x and y, as the BLAS calls it.
+    auto callDot = [&](IRBuilder<> &BD, Value *n, Value *x, Value *incx,
+                       Value *y, Value *incy) -> Value * {
+      SmallVector<Value *, 7> dotArgs;
+      if (cublas)
+        dotArgs.push_back(handle);
+      dotArgs.append({n, x, incx, y, incy});
+      if (cublasv2)
+        dotArgs.push_back(dotRes);
+      Value *dot = BD.CreateCall(FDot, dotArgs);
+      if (cublasv2)
+        dot = BD.CreateLoad(fpTy, dotRes, "dot");
+      return dot;
+    };
     Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef,
                                       cublas, nullptr, B1, "constant.one");
 
@@ -1759,8 +1811,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B3.setFastMathFlags(getFast());
     Value *blasA = B3.CreatePointerCast(matA, BlasPT);
     Value *blasB = B3.CreatePointerCast(matB, BlasPT);
-    Value *fastSum =
-        B3.CreateCall(FDot, {blasSize, blasA, blasOne, blasB, blasOne});
+    Value *fastSum = callDot(B3, blasSize, blasA, blasOne, blasB, blasOne);
     B3.CreateBr(end);
 
     IRBuilder<> B4(body);
@@ -1778,8 +1829,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Value *Bi = B4.CreateInBoundsGEP(fpTy, Bfloat, Bidx, "B.i");
     Value *AiDot = B4.CreatePointerCast(Ai, BlasPT);
     Value *BiDot = B4.CreatePointerCast(Bi, BlasPT);
-    Value *newDot =
-        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne});
+    Value *newDot = callDot(B4, blasm, AiDot, blasOne, BiDot, blasOne);
 
     Value *Anext = B4.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B4.CreateNUWAdd(Aidx, m, "Bidx.next");
