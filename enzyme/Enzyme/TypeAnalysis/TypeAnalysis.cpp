@@ -82,6 +82,13 @@ llvm::cl::opt<unsigned> EnzymeMaxTypeDepth("enzyme-max-type-depth", cl::init(6),
                                            cl::Hidden,
                                            cl::desc("Maximum type tree depth"));
 
+llvm::cl::opt<bool> EnzymeTAInactiveBlackBox(
+    "enzyme-ta-inactive-black-box", cl::init(true), cl::Hidden,
+    cl::desc("Do not analyze the body of a callee marked enzyme_inactive: "
+             "it is never differentiated, so only its parameter and return "
+             "enzyme_type annotations (and the uses at the call) type the "
+             "call, as AD tools treat black-box routines"));
+
 llvm::cl::opt<bool> EnzymePrintType("enzyme-print-type", cl::init(false),
                                     cl::Hidden,
                                     cl::desc("Print type analysis algorithm"));
@@ -6164,6 +6171,14 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     if (dontAnalyze(funcName))
+      return;
+
+    // An inactive callee is a black box: its internals (e.g. I/O routines
+    // that index differently-typed arrays of one COMMON block from its base
+    // after inlining) can only add spurious type conflicts.
+    if (EnzymeTAInactiveBlackBox &&
+        (ci->hasFnAttribute("enzyme_inactive") ||
+         call.hasFnAttr("enzyme_inactive")))
       return;
 
     if (!ci->empty() && !hasMetadata(ci, "enzyme_gradient") &&
