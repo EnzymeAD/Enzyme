@@ -3172,15 +3172,26 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // another object file. Differentiating now fails on exactly those calls,
     // while the post-link run sees the whole program: for full LTO that is the
     // FullLinkTimeOptimizationEarly callback below, for ThinLTO this same
-    // callback re-entered with ThinLTOPostLink. Defer to it -- the
-    // PreserveNVVM run above keeps the relevant functions alive until then.
+    // callback re-entered with ThinLTOPostLink. Defer to it, restoring the
+    // linkage PreserveNVVM changed so the bitcode exports nothing new, while
+    // still keeping the relevant functions alive until then.
+    //
+    // A ThinLTO post-link pipeline at O0 invokes no callbacks at all, so that
+    // run would never come. The pre-link run cannot know the post-link level,
+    // but the driver passes the compile -O level on to the linker, so an O0
+    // ThinLTO compile still differentiates here.
     //
     // This requires the plugin to be loaded by the linker as well, e.g.
     // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
     // restore the old behaviour when that is not possible.
     if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
-                              Phase == ThinOrFullLTOPhase::ThinLTOPreLink))
+                              (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
+                               Level != OptimizationLevel::O0))) {
+      MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
+                                    /*PreserveCustomRuleLinkage*/ true,
+                                    /*LTOPreLink*/ true));
       return;
+    }
 #endif
 
     if (Level != OptimizationLevel::O0)
