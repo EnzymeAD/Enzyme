@@ -522,6 +522,60 @@ void RecursivelyReplaceAddressSpace(
         toPostCache.push_back(SI);
         continue;
       }
+      // The pointer itself is stored, e.g. to cache it for the reverse pass.
+      // If the slot is a local one that is only loaded from, move the slot to
+      // the new address space as well and continue from its loads, so that no
+      // tracked value ever holds the moved object.
+      auto Slot = dyn_cast<AllocaInst>(SI->getPointerOperand());
+      if (SI->getValueOperand() == prev && Slot) {
+        bool legalSlot = true;
+        for (auto U : Slot->users()) {
+          if (isa<LoadInst>(U))
+            continue;
+          if (auto SI2 = dyn_cast<StoreInst>(U))
+            if (SI2->getPointerOperand() == Slot &&
+                (SI2 == SI || isa<Constant>(SI2->getValueOperand())))
+              continue;
+          legalSlot = false;
+          break;
+        }
+        if (legalSlot) {
+          IRBuilder<> AB(Slot);
+          auto NSlot = AB.CreateAlloca(rep->getType(), Slot->getArraySize());
+          NSlot->setAlignment(Slot->getAlign());
+          NSlot->takeName(Slot);
+          // Erased in reverse order, so after its loads and stores.
+          toErase.push_back(Slot);
+          for (auto U : llvm::make_early_inc_range(Slot->users())) {
+            IRBuilder<> B(cast<Instruction>(U));
+            if (auto LI = dyn_cast<LoadInst>(U)) {
+              auto NLI = B.CreateAlignedLoad(rep->getType(), NSlot,
+                                             LI->getAlign(), LI->isVolatile());
+              NLI->copyMetadata(*LI);
+              NLI->takeName(LI);
+              for (auto U2 : LI->users())
+                Todo.push_back(std::make_tuple((Value *)NLI, (Value *)LI,
+                                               cast<Instruction>(U2)));
+              toErase.push_back(LI);
+            } else {
+              auto SI2 = cast<StoreInst>(U);
+              Value *V = SI2 == SI
+                             ? rep
+                             : ConstantExpr::getPointerBitCastOrAddrSpaceCast(
+                                   cast<Constant>(SI2->getValueOperand()),
+                                   rep->getType());
+              auto NSI = B.CreateAlignedStore(V, NSlot, SI2->getAlign(),
+                                              SI2->isVolatile());
+              NSI->copyMetadata(*SI2);
+              if (SI2 != SI)
+                SI2->eraseFromParent();
+              else
+                toErase.push_back(SI2);
+            }
+          }
+          continue;
+        }
+      }
     }
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
