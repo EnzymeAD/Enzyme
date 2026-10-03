@@ -5,7 +5,7 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <logpdf = @logpdf, symbol = <1>, name="s"> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
@@ -14,8 +14,8 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { hmc_config = #impulse.hmc_config<trajectory_length = 1.0>,
-        name = "hmc", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }
+      <selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10, hmc_config = <trajectory_length = 1.0>,
+        name = "hmc">
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
@@ -43,11 +43,11 @@ module {
 // CHECK-NEXT: %[[SPLIT2:.+]]:3 = impulse.randomSplit %[[SPLIT1]]#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
 //
 // --- Extract initial position from trace tensor ---
-// CHECK-NEXT: %[[Q0_SLICE:.+]] = impulse.dynamic_slice %[[INIT_TRACE]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>} : (tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[Q0_SLICE:.+]] = impulse.dynamic_slice %[[INIT_TRACE]], %[[C0]], %[[C0]] <slice_sizes = [1, 1]> : (tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[Q0:.+]] = impulse.dynamic_update_slice %[[INIT_TRACE]], %[[Q0_SLICE]], %[[C0]], %[[C0]] : (tensor<1x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>
 //
 // --- Constrain position and call generate for U0 ---
-// CHECK-NEXT: %[[Q0_CONS_S:.+]] = impulse.dynamic_slice %[[Q0]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
+// CHECK-NEXT: %[[Q0_CONS_S:.+]] = impulse.dynamic_slice %[[Q0]], %[[C0]], %[[C0]] <slice_sizes = [1, 1]>
 // CHECK-NEXT: %[[Q0_CONS:.+]] = impulse.dynamic_update_slice %[[INIT_TRACE]], %[[Q0_CONS_S]], %[[C0]], %[[C0]]
 // CHECK-NEXT: %[[GEN_INIT:.+]]:4 = call @test.generate{{.*}}(%[[Q0_CONS]], %[[SPLIT2]]#1, %[[MEAN]], %[[STDDEV]]) : (tensor<1x1xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[GEN_INIT]]#1 : tensor<f64>
@@ -55,12 +55,12 @@ module {
 // --- Initial gradient via autodiff ---
 // CHECK-NEXT: %[[AD_INIT:.+]]:3 = enzyme.autodiff_region(%[[Q0]], %[[ONE]]) {
 // CHECK-NEXT: ^bb0(%[[AD_ARG:.+]]: tensor<1x1xf64>):
-// CHECK-NEXT: %[[AD_SLICE:.+]] = impulse.dynamic_slice %[[AD_ARG]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
+// CHECK-NEXT: %[[AD_SLICE:.+]] = impulse.dynamic_slice %[[AD_ARG]], %[[C0]], %[[C0]] <slice_sizes = [1, 1]>
 // CHECK-NEXT: %[[AD_CONS:.+]] = impulse.dynamic_update_slice %[[INIT_TRACE]], %[[AD_SLICE]], %[[C0]], %[[C0]]
 // CHECK-NEXT: %[[AD_GEN:.+]]:4 = func.call @test.generate{{.*}}(%[[AD_CONS]], %[[SPLIT2]]#1, %[[MEAN]], %[[STDDEV]]) : (tensor<1x1xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[AD_NEG:.+]] = arith.negf %[[AD_GEN]]#1 : tensor<f64>
 // CHECK-NEXT: enzyme.yield %[[AD_NEG]], %[[AD_GEN]]#2 : tensor<f64>, tensor<2xui64>
-// CHECK-NEXT: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
+// CHECK-NEXT: } <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]>
 //
 // --- Main sampling loop ---
 // CHECK: %[[LOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q0]], %[[AD_INIT]]#2, %[[U0]], %[[SPLIT2]]#0, %[[SAMPLES_INIT]], %[[DIAG_INIT]], %[[LD_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64> {
@@ -69,14 +69,14 @@ module {
 // --- Sample momentum p ~ N(0, I) ---
 // CHECK-NEXT: %[[RNG_S:.+]]:3 = impulse.randomSplit %[[RNG_I]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT: %[[RNG_M:.+]]:2 = impulse.randomSplit %[[RNG_S]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
-// CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = impulse.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = impulse.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Transform momentum by mass matrix sqrt: p_transformed = massMatrixSqrt @ p ---
-// CHECK-NEXT: %[[P_XFORM:.+]] = impulse.dot %[[P]], {{.+}} {{{.*}}lhs_contracting_dimensions = array<i64: 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[P_XFORM:.+]] = impulse.dot %[[P]], {{.+}} <{{.*}}lhs_contracting_dimensions = [1]{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
 //
 // --- Initial kinetic energy K0 = 0.5 * p_transformed^T * M^-1 * p_transformed ---
-// CHECK-NEXT: %[[P_V:.+]] = impulse.dot %[[P_XFORM]], {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[KE0_DOT:.+]] = impulse.dot %[[P_XFORM]], %[[P_V]] {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[P_V:.+]] = impulse.dot %[[P_XFORM]], {{.+}} <{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[KE0_DOT:.+]] = impulse.dot %[[P_XFORM]], %[[P_V]] <{{.*}}lhs_contracting_dimensions = [0, 1]{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[KE0:.+]] = arith.mulf %[[KE0_DOT]], %[[HALF]] : tensor<f64>
 //
 // --- Initial Hamiltonian H0 = U + K ---
@@ -97,19 +97,19 @@ module {
 // CHECK-NEXT: %[[P_HALF:.+]] = arith.subf %[[LF_P]], %[[GRAD_SCALED]] : tensor<1x1xf64>
 //
 // --- Leapfrog: full step position q_new = q + eps * M^-1 * p_half ---
-// CHECK-NEXT: %[[P_VINV:.+]] = impulse.dot %[[P_HALF]], {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[P_VINV:.+]] = impulse.dot %[[P_HALF]], {{.+}} <{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[P_STEP:.+]] = arith.mulf %[[DIR_BC]], %[[P_VINV]] : tensor<1x1xf64>
 // CHECK-NEXT: %[[Q_NEW:.+]] = arith.addf %[[LF_Q]], %[[P_STEP]] : tensor<1x1xf64>
 //
 // --- Leapfrog: gradient at new position ---
 // CHECK-NEXT: %[[AD_LF:.+]]:3 = enzyme.autodiff_region(%[[Q_NEW]], %[[ONE]]) {
 // CHECK-NEXT: ^bb0(%[[AD_LF_ARG:.+]]: tensor<1x1xf64>):
-// CHECK-NEXT: %[[AD_LF_SLICE:.+]] = impulse.dynamic_slice %[[AD_LF_ARG]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
+// CHECK-NEXT: %[[AD_LF_SLICE:.+]] = impulse.dynamic_slice %[[AD_LF_ARG]], %[[C0]], %[[C0]] <slice_sizes = [1, 1]>
 // CHECK-NEXT: %[[AD_LF_CONS:.+]] = impulse.dynamic_update_slice %[[INIT_TRACE]], %[[AD_LF_SLICE]], %[[C0]], %[[C0]]
 // CHECK-NEXT: %[[AD_LF_GEN:.+]]:4 = func.call @test.generate(%[[AD_LF_CONS]], %[[LF_RNG]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x1xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[AD_LF_NEG:.+]] = arith.negf %[[AD_LF_GEN]]#1 : tensor<f64>
 // CHECK-NEXT: enzyme.yield %[[AD_LF_NEG]], %[[AD_LF_GEN]]#2 : tensor<f64>, tensor<2xui64>
-// CHECK-NEXT: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
+// CHECK-NEXT: } <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]>
 //
 // --- Leapfrog: second half step momentum p_new = p_half - (eps/2) * grad_new ---
 // CHECK-NEXT: %[[GRAD_NEW_SCALED:.+]] = arith.mulf %[[HALF_DIR_BC]], %[[AD_LF]]#2 : tensor<1x1xf64>
@@ -120,8 +120,8 @@ module {
 // CHECK-NEXT: }
 //
 // --- Final kinetic energy K_new = 0.5 * p_new^T * M^-1 * p_new ---
-// CHECK-NEXT: %[[LF_P_V:.+]] = impulse.dot %[[LF]]#1, {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[KE_DOT:.+]] = impulse.dot %[[LF]]#1, %[[LF_P_V]] {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[LF_P_V:.+]] = impulse.dot %[[LF]]#1, {{.+}} <{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[KE_DOT:.+]] = impulse.dot %[[LF]]#1, %[[LF_P_V]] <{{.*}}lhs_contracting_dimensions = [0, 1]{{.*}}> : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[KE:.+]] = arith.mulf %[[KE_DOT]], %[[HALF]] : tensor<f64>
 //
 // --- Final Hamiltonian H_new = U_new + K_new ---
@@ -133,7 +133,7 @@ module {
 // CHECK-NEXT: %[[ACCEPT_PROB:.+]] = arith.minimumf %[[EXP_DH]], %[[ONE]] : tensor<f64>
 //
 // --- Draw uniform for MH ---
-// CHECK-NEXT: %[[RNG_U:.+]], %[[UNIF:.+]] = impulse.random %[[LF]]#4, %[[ZERO_F]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RNG_U:.+]], %[[UNIF:.+]] = impulse.random %[[LF]]#4, %[[ZERO_F]], %[[ONE]] <rng_distribution = UNIFORM> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 //
 // --- Accept comparison ---
 // CHECK-NEXT: %[[ACCEPTED:.+]] = arith.cmpf olt, %[[UNIF]], %[[ACCEPT_PROB]] : tensor<f64>
@@ -173,7 +173,7 @@ module {
 // CHECK-DAG: %[[G_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[G_ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[G_TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x1xf64>
-// CHECK: %[[G_SLICED:.+]] = impulse.slice %[[G_ARG0]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK: %[[G_SLICED:.+]] = impulse.slice %[[G_ARG0]] <start_indices = [0, 0], limit_indices = [1, 1], strides = [1, 1]> : (tensor<1x1xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[G_VAL:.+]] = impulse.reshape %[[G_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[G_LP:.+]] = call @logpdf(%[[G_VAL]], %[[G_ARG2]], %[[G_ARG3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT: %[[G_W:.+]] = arith.addf %[[G_LP]], %[[G_ZERO]] : tensor<f64>

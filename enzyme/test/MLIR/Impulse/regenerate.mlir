@@ -6,15 +6,15 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <logpdf = @logpdf, symbol = <1>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) <logpdf = @logpdf, symbol = <2>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 
   func.func @test_base(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %prev_trace = arith.constant dense<[[0.5, 1.0]]> : tensor<1x2xf64>
     %res:4 = impulse.regenerate @model(%rng, %mean, %stddev) given %prev_trace
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<2>]] }
+        <selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<2>]]>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -32,7 +32,7 @@ module {
 // BASE-DAG: %[[C0:.+]] = arith.constant dense<0> : tensor<i64>
 // BASE-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // BASE-DAG: %[[TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x2xf64>
-// BASE: %[[KEPT_SLICED:.+]] = impulse.slice %[[ARG0]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// BASE: %[[KEPT_SLICED:.+]] = impulse.slice %[[ARG0]] <start_indices = [0, 0], limit_indices = [1, 1], strides = [1, 1]> : (tensor<1x2xf64>) -> tensor<1x1xf64>
 // BASE-NEXT: %[[KEPT:.+]] = impulse.reshape %[[KEPT_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
 // BASE-NEXT: %[[LP1:.+]] = call @logpdf(%[[KEPT]], %[[ARG2]], %[[ARG3]])
 // BASE-NEXT: %[[W1:.+]] = arith.addf %[[LP1]], %[[ZERO]] : tensor<f64>
@@ -52,22 +52,22 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @inner(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<3> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<4> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <logpdf = @logpdf, symbol = <3>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) <logpdf = @logpdf, symbol = <4>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %s#1, %t#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
   func.func @outer(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:3 = impulse.sample @inner(%s#0, %s#1, %stddev) { symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <logpdf = @logpdf, symbol = <1>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:3 = impulse.sample @inner(%s#0, %s#1, %stddev) <symbol = <2>> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %t#0, %t#1, %t#2 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
   func.func @test_hier(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
     %prev_trace = arith.constant dense<[[0.5, 1.0, 2.0]]> : tensor<1x3xf64>
     %res:5 = impulse.regenerate @outer(%rng, %mean, %stddev) given %prev_trace
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]],
-          regenerate_addresses = [[#impulse.symbol<2>, #impulse.symbol<4>]] }
+        <selection = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]],
+          regenerate_addresses = [[#impulse.symbol<2>, #impulse.symbol<4>]] >
         : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x3xf64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3, %res#4 : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
   }
@@ -85,13 +85,13 @@ module {
 // HIER-DAG: %[[O_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // HIER-DAG: %[[O_ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // HIER-DAG: %[[O_TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x3xf64>
-// HIER: %[[O_KEPT_SLICED:.+]] = impulse.slice %[[O_ARG0]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x3xf64>) -> tensor<1x1xf64>
+// HIER: %[[O_KEPT_SLICED:.+]] = impulse.slice %[[O_ARG0]] <start_indices = [0, 0], limit_indices = [1, 1], strides = [1, 1]> : (tensor<1x3xf64>) -> tensor<1x1xf64>
 // HIER-NEXT: %[[O_KEPT:.+]] = impulse.reshape %[[O_KEPT_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
 // HIER-NEXT: %[[O_LP1:.+]] = call @logpdf(%[[O_KEPT]], %[[O_ARG2]], %[[O_ARG3]])
 // HIER-NEXT: %[[O_W1:.+]] = arith.addf %[[O_LP1]], %[[O_ZERO]] : tensor<f64>
 // HIER-NEXT: %[[O_RS1:.+]] = impulse.reshape %[[O_KEPT]] : (tensor<f64>) -> tensor<1x1xf64>
 // HIER-NEXT: %[[O_TR1:.+]] = impulse.dynamic_update_slice %[[O_TRACE_INIT]], %[[O_RS1]], %[[O_C0]], %[[O_C0]] : (tensor<1x3xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x3xf64>
-// HIER-NEXT: %[[O_SUB_TRACE:.+]] = impulse.slice %[[O_ARG0]] {limit_indices = array<i64: 1, 3>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x3xf64>) -> tensor<1x2xf64>
+// HIER-NEXT: %[[O_SUB_TRACE:.+]] = impulse.slice %[[O_ARG0]] <start_indices = [0, 1], limit_indices = [1, 3], strides = [1, 1]> : (tensor<1x3xf64>) -> tensor<1x2xf64>
 // HIER-NEXT: %[[O_NESTED:.+]]:5 = call @inner.regenerate(%[[O_SUB_TRACE]], %[[O_ARG1]], %[[O_KEPT]], %[[O_ARG3]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
 // HIER-NEXT: %[[O_W2:.+]] = arith.addf %[[O_W1]], %[[O_NESTED]]#1 : tensor<f64>
 // HIER-NEXT: %[[O_TR2:.+]] = impulse.dynamic_update_slice %[[O_TR1]], %[[O_NESTED]]#0, %[[O_C0]], %[[O_C1]] : (tensor<1x3xf64>, tensor<1x2xf64>, tensor<i64>, tensor<i64>) -> tensor<1x3xf64>
@@ -103,7 +103,7 @@ module {
 // HIER-DAG: %[[I_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // HIER-DAG: %[[I_ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // HIER-DAG: %[[I_TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x2xf64>
-// HIER: %[[I_KEPT_SLICED:.+]] = impulse.slice %[[I_ARG0]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// HIER: %[[I_KEPT_SLICED:.+]] = impulse.slice %[[I_ARG0]] <start_indices = [0, 0], limit_indices = [1, 1], strides = [1, 1]> : (tensor<1x2xf64>) -> tensor<1x1xf64>
 // HIER-NEXT: %[[I_KEPT:.+]] = impulse.reshape %[[I_KEPT_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
 // HIER-NEXT: %[[I_LP1:.+]] = call @logpdf(%[[I_KEPT]], %[[I_ARG2]], %[[I_ARG3]])
 // HIER-NEXT: %[[I_W1:.+]] = arith.addf %[[I_LP1]], %[[I_ZERO]] : tensor<f64>

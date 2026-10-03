@@ -11,10 +11,10 @@ module {
   }
 
   func.func @dsquare(%x : memref<?xf64>, %dx : memref<?xf64>, %y : memref<?xf64>, %dy : memref<?xf64>, %n : index) {
-    enzyme.fwddiff @square(%x, %dx, %y, %dy, %n) {
+    enzyme.fwddiff @square(%x, %dx, %y, %dy, %n) <
       activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
       ret_activity=[]
-    } : (memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>, index) -> ()
+    > : (memref<?xf64>, memref<?xf64>, memref<?xf64>, memref<?xf64>, index) -> ()
     return
   }
 }
