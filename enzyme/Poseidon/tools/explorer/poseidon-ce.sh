@@ -12,7 +12,8 @@
 set -eu
 ROOT="${POSEIDON_CE_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 if [ -z "${POSEIDON_CE_CLANG:-}" ]; then
-  for so in $(ls -r "$ROOT"/lib/Poseidon-*.so 2>/dev/null); do
+  for so in "$ROOT"/lib/Poseidon-*.so; do
+    [ -e "$so" ] || continue
     v="${so##*/Poseidon-}"; v="${v%.so}"
     [ -x "/usr/bin/clang++-$v" ] && { POSEIDON_CE_CLANG="/usr/bin/clang++-$v"; break; }
   done
@@ -71,7 +72,7 @@ ls "$work"/profile/*.fpprofile >/dev/null 2>&1 || { echo "poseidon-ce: no site w
   -mllvm -poseidon-herbie-num-threads=4 -mllvm -poseidon-herbie-timeout=20 \
   -mllvm -poseidon-herbie-subgraph-timeout=60 -mllvm -poseidon-num-samples=256 \
   -mllvm -poseidon-print "${pass[@]}" \
-  ${emit:-} "$src" "${link[@]}" -o "$out" 2>"$work/solve.err" \
+  ${emit:+"$emit"} "$src" "${link[@]}" -o "$out" 2>"$work/solve.err" \
   || { cat "$work/solve.err" >&2; exit 1; }
 # What the solver did, as compiler diagnostics Compiler Explorer shows; the
 # whole log on -poseidon-print.

@@ -2,8 +2,8 @@
 #include "Flags.h"
 #include "HostDispatch.h"
 #include "InKernelRaise.h"
-#include "RaiseWMMA.h"
 #include "MatmulInternal.h"
+#include "RaiseWMMA.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/InstIterator.h"

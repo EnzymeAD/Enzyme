@@ -1,9 +1,9 @@
 // Matmul accuracy model: profile-driven sampling, the memoized accuracy cost
 // and the Ozaki-II quantization model.
 #include "Flags.h"
+#include "MatmulInternal.h"
 #include "Optimize.h"
 #include "Utils.h"
-#include "MatmulInternal.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"

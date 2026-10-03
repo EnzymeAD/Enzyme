@@ -55,6 +55,7 @@
 #include "Flags.h"
 #include "Herbie.h"
 #include "HostDispatch.h"
+#include "Matmul.h"
 #include "Optimize.h"
 #include "Precision.h"
 #include "ProfileRead.h"
@@ -63,7 +64,6 @@
 #include "Staging.h"
 #include "Types.h"
 #include "Utils.h"
-#include "Matmul.h"
 
 // The one filename rule, shared verbatim with both FP profiler runtimes that
 // write what this file reads.

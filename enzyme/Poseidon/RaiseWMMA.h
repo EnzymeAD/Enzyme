@@ -13,8 +13,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
 
-#include "ProfileRead.h"
 #include "Matmul.h"
+#include "ProfileRead.h"
 
 namespace llvm {
 class Function;

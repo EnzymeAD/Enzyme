@@ -521,9 +521,10 @@ static void poseidonProbeDriver() {
       double resp = std::fabs(mk - m0);
       double kappa = m0 != 0.0 ? resp / (eps * std::fabs(m0)) : resp / eps;
       bool over = resp > 4.0 * noise;
-      fprintf(stderr,
-              "    eps=%-8g metric=%-24.17g response=%-12.4e kappa=%-12.4e %s\n",
-              eps, mk, resp, kappa, over ? "above noise" : "within noise");
+      fprintf(
+          stderr,
+          "    eps=%-8g metric=%-24.17g response=%-12.4e kappa=%-12.4e %s\n",
+          eps, mk, resp, kappa, over ? "above noise" : "within noise");
       runs.push_back({eps, kappa, false});
       responded |= over;
     }
@@ -607,7 +608,7 @@ void poseidonRegisterProfileStatic(const char *funcName, const char *text) {
 }
 
 void poseidonLogGrad(const char *funcName, size_t idx, double value,
-                   double grad) {
+                     double grad) {
   if (!funcName)
     return;
 
@@ -623,7 +624,7 @@ void poseidonLogGrad(const char *funcName, size_t idx, double value,
 }
 
 void poseidonLogValue(const char *funcName, size_t idx, double res,
-                    size_t numOperands, double *operands) {
+                      size_t numOperands, double *operands) {
   if (!funcName)
     return;
 

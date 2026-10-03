@@ -6,10 +6,10 @@
 #include "HostDispatch.h"
 #include "Instrument.h"
 #include "LaunchDescriptors.h"
+#include "Matmul.h"
 #include "Optimize.h"
 #include "ProfileRead.h"
 #include "RaiseWMMA.h"
-#include "Matmul.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
 #include "FPProfileName.h"
