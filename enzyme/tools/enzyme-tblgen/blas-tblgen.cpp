@@ -1865,7 +1865,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     if (!forward && !runtimeChecked)
       emit_runtime_condition(ruleDag, argName, "        ", "Builder2", true,
                              os);
-    rev_call_args(forward, argPrefix, pattern, ruleDag, os, "", ty, vars);
+    // The inner product returns its result, under cuBLAS v2 too: it has its
+    // own slot for the dot to write to, so no result pointer is passed.
+    rev_call_args(forward, argPrefix, pattern, ruleDag, os, "", ArgType::len,
+                  vars);
 
     os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
        << ValueType_helper(pattern, actArg, ruleDag)
