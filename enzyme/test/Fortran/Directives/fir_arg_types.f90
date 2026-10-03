@@ -25,7 +25,7 @@
 ! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=UNB
 ! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -mmlir -enzyme-fir-arg-descriptor-data-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NODATA
 ! NODATA-LABEL: define void @_QMmPdescr(
-! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, 
+! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
 
 ! OFF-NOT: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}"
 

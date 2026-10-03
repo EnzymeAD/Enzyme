@@ -34,10 +34,10 @@
 #include "FlangDirectives.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
-#include "flang/Optimizer/Support/InternalNames.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
 #include "flang/Optimizer/Dialect/FIRType.h"
 #include "flang/Optimizer/Dialect/FortranVariableInterface.h"
+#include "flang/Optimizer/Support/InternalNames.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -588,7 +588,6 @@ static std::string procArgType(Type ty, const DataLayout &dl) {
 // stays unannotated rather than blowing up the metadata.
 static constexpr int64_t kLayoutBudget = 1 << 14;
 
-
 // What to annotate, each on its own (all of it with
 // -enzyme-fir-type-annotations, see FlangDirectivesPlugin.cpp).
 static llvm::cl::opt<bool> annotateLocalNumbers(
@@ -659,9 +658,10 @@ struct FIRTypeAnnotationsPass
     // later translation to LLVM IR turn enzyme.* attributes into Enzyme's
     // metadata and attributes.
     registry.insert<enzyme::EnzymeAttrDialect, fir::FIROpsDialect>();
-    registry.addExtension(+[](MLIRContext *, enzyme::EnzymeAttrDialect *dialect) {
-      dialect->addInterfaces<EnzymeLLVMIRTranslation>();
-    });
+    registry.addExtension(
+        +[](MLIRContext *, enzyme::EnzymeAttrDialect *dialect) {
+          dialect->addInterfaces<EnzymeLLVMIRTranslation>();
+        });
   }
 
   void runOnOperation() override {
@@ -742,10 +742,10 @@ struct FIRTypeAnnotationsPass
       if (!globalSize || reached < *globalSize)
         continue;
       if (!layout.mixed && layout.uniform) {
-        op->setAttr(kTypeAttr,
-                    StringAttr::get(ctx, printTypeTree({{{-1}, "Pointer"},
-                                                        {{-1, -1},
-                                                         *layout.uniform}})));
+        op->setAttr(
+            kTypeAttr,
+            StringAttr::get(ctx, printTypeTree({{{-1}, "Pointer"},
+                                                {{-1, -1}, *layout.uniform}})));
         continue;
       }
       if (layout.unknown || *globalSize > kMaxTypeOffset)
@@ -775,8 +775,7 @@ struct FIRTypeAnnotationsPass
         std::string t;
         if (erased && wholeObject(arg))
           t = pointerArgType(original, dl);
-        else if (erased &&
-                 isa<fir::BaseBoxType>(fir::unwrapRefType(original)))
+        else if (erased && isa<fir::BaseBoxType>(fir::unwrapRefType(original)))
           // Possibly part of a larger object: the layout of the descriptor,
           // but not the type of its data.
           t = pointerArgType(original, dl, /*descriptorData=*/false);
@@ -853,13 +852,14 @@ struct FIRTypeAnnotationsPass
           if (!ambiguous.contains(entry.getKey()))
             locals.push_back(NamedAttribute(
                 StringAttr::get(ctx, entry.getKey()),
-                ArrayAttr::get(
-                    ctx, {StringAttr::get(ctx, entry.getValue().first),
-                          IntegerAttr::get(IntegerType::get(ctx, 64),
-                                           entry.getValue().second)})));
-        llvm::sort(locals, [](const NamedAttribute &a, const NamedAttribute &b) {
-          return a.getName().strref() < b.getName().strref();
-        });
+                ArrayAttr::get(ctx,
+                               {StringAttr::get(ctx, entry.getValue().first),
+                                IntegerAttr::get(IntegerType::get(ctx, 64),
+                                                 entry.getValue().second)})));
+        llvm::sort(locals,
+                   [](const NamedAttribute &a, const NamedAttribute &b) {
+                     return a.getName().strref() < b.getName().strref();
+                   });
         if (!locals.empty())
           fn->setAttr(kLocalTypesAttr, DictionaryAttr::get(ctx, locals));
       }

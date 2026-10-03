@@ -14,7 +14,8 @@
 //   - defines the !DIR$ ENZYME directives (flang/Support/PluginDirectives.h),
 //     also spelled !$enzyme, which flang then parses, resolves and lowers to
 //     `fir.directives`, and
-//   - adds two passes to flang's pipeline (fir::registerPassPipelineConfigCallback):
+//   - adds two passes to flang's pipeline
+//   (fir::registerPassPipelineConfigCallback):
 //     enzyme-fortran-directives, which turns the directives into the
 //     registrations LLVM Enzyme reads, and enzyme-fir-type-annotations, which
 //     carries the Fortran types LLVM IR erases to LLVM Enzyme's type analysis.
@@ -50,8 +51,8 @@ static void registerEnzymeDirectives() {
     return PluginDirectiveArg{keyword, PluginDirectiveArgKind::Procedure};
   };
   registerPluginDirective({"enzyme", "inactive", PluginDirectiveSubject::Any});
-  registerPluginDirective({"enzyme", "no_escaping_allocation",
-                           PluginDirectiveSubject::Procedure});
+  registerPluginDirective(
+      {"enzyme", "no_escaping_allocation", PluginDirectiveSubject::Procedure});
   registerPluginDirective(
       {"enzyme",
        "custom_rule",
