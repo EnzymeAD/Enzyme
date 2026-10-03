@@ -33,7 +33,7 @@ attributes #2 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast double* %"dst'" to i8*
 ; CHECK-NEXT:   %0 = bitcast double* %dst to i8*
 ; CHECK-NEXT:   %1 = bitcast double* %src to i8*
-; CHECK-NEXT:   tail call void @llvm.memset.p0i8.i64(i8* align 1 %[[ipc]], i8 0, i64 %num, i1 true)
+; CHECK-NEXT:   tail call void @llvm.memset.p0i8.i64(i8* align 1 %[[ipc]], i8 0, i64 %num, i1 false)
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

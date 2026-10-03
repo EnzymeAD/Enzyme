@@ -1764,6 +1764,38 @@ void SplitPHIs(llvm::Function &F) {
 }
 
 // returns if newly changed, subject to the pending calls
+// Whether a parameter carries the function's result: an sret (also one still
+// marked for Enzyme.jl's calling-convention fixup), a Julia sret union, or the
+// roots of a returned value.
+static bool isReturnLikeParam(const Function &F, unsigned argno) {
+  if (F.hasParamAttribute(argno, Attribute::StructRet))
+    return true;
+  for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
+                    "enzymejl_sret_union_bytes"})
+    if (F.getAttribute(argno + AttributeList::FirstArgIndex, name).isValid())
+      return true;
+  return false;
+}
+
+// Whether a derivative of F comes from a custom rule rather than from F's
+// body: one registered by a frontend (Enzyme.jl marks the function
+// enzyme_math=enzyme_custom) or through metadata
+// (__enzyme_register_derivative and friends). Such a rule (augmented forward,
+// reverse, or the forward-mode replacement) may read a parameter the body
+// never reads, so the body alone cannot justify marking a parameter writeonly
+// or readnone, except for one that only carries the result. A marking the
+// function already carries is kept: it was stated deliberately. A function
+// marked enzyme_custom_full_attributes is exempt: the frontend states that its
+// rule accesses no more than the body does (Enzyme.jl sets it for @easy_rule,
+// whose rule only combines the inputs the way the body does).
+static bool mayReadThroughCustomRule(Function &F, unsigned argno) {
+  if (getFuncName(&F) != "enzyme_custom" && !hasCustomRuleMetadata(&F))
+    return false;
+  if (F.hasFnAttribute("enzyme_custom_full_attributes"))
+    return false;
+  return !isReturnLikeParam(F, argno);
+}
+
 bool DetectPointerArgOfFn(llvm::Function &F,
                           SmallPtrSetImpl<Function *> &calls_todo) {
   if (F.empty())
@@ -1896,8 +1928,18 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       changed = true;
     }
 
-    if ((!read && !written) ||
-        Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+    if (mayReadThroughCustomRule(F, arg.getArgNo())) {
+      // Whatever the function was already marked with stays; only readonly
+      // may be concluded from the body.
+      if (!written &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly) &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
+          !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+        arg.addAttr(Attribute::ReadOnly);
+        changed = true;
+      }
+    } else if ((!read && !written) ||
+               Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
           arg.removeAttr(Attribute::ReadOnly);
@@ -2021,8 +2063,10 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
       continue;
     // Never written by us and never read per the existing attribute.
     if (F.hasParamAttribute(argno, Attribute::WriteOnly)) {
-      F.removeParamAttr(argno, Attribute::WriteOnly);
-      F.addParamAttr(argno, Attribute::ReadNone);
+      if (!mayReadThroughCustomRule(F, argno)) {
+        F.removeParamAttr(argno, Attribute::WriteOnly);
+        F.addParamAttr(argno, Attribute::ReadNone);
+      }
       continue;
     }
     F.addParamAttr(argno, Attribute::ReadOnly);
@@ -2892,6 +2936,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         NewF, F, VMap,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
+    resetClonedGUID(NewF);
   }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
@@ -3668,6 +3713,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   if (!F->empty()) {
     CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                       Returns, "", nullptr);
+    resetClonedGUID(NewF);
   }
   if (NewF->empty()) {
     auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
@@ -4206,8 +4252,14 @@ Function *getProductIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
+#if LLVM_VERSION_MAJOR >= 16
+  AL = AL.addAttribute(
+      T->getContext(), AttributeList::FunctionIndex,
+      Attribute::getWithMemoryEffects(T->getContext(), MemoryEffects::none()));
+#else
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::ReadNone);
+#endif
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::NoUnwind);
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
@@ -4231,8 +4283,14 @@ Function *getSumIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
+#if LLVM_VERSION_MAJOR >= 16
+  AL = AL.addAttribute(
+      T->getContext(), AttributeList::FunctionIndex,
+      Attribute::getWithMemoryEffects(T->getContext(), MemoryEffects::none()));
+#else
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::ReadNone);
+#endif
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
                        Attribute::NoUnwind);
   AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
@@ -8781,6 +8839,69 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
   return InnerTy(new Constraints(v, isEqual, Loop, false));
 }
 
+// Automatic sparsity rewrites sums and products as calls to the
+// __enzyme_sum / __enzyme_product placeholders. Turn them back into
+// arithmetic, whether or not the sparsification succeeded.
+static void lowerSparsePlaceholders(llvm::Function &F) {
+  for (auto &F2 : F.getParent()->functions()) {
+    if (startsWith(F2.getName(), "__enzyme_product")) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = v->getType()->isIntegerTy() ? B.CreateMul(res, v)
+                                              : B.CreateFMul(res, v);
+          }
+        }
+        CB->replaceAllUsesWith(res);
+        toErase.push_back(CB);
+      }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
+    } else if (startsWith(F2.getName(), "__enzyme_sum")) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = v->getType()->isIntegerTy() ? B.CreateAdd(res, v)
+                                              : B.CreateFAdd(res, v);
+          }
+        }
+        CB->replaceAllUsesWith(res);
+        toErase.push_back(CB);
+      }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
+    }
+  }
+}
+
+// Remove the enzyme.sparse.inbounds markers of a sparsification that was
+// abandoned.
+static void eraseSparseInbounds(llvm::Function &F) {
+  SmallVector<CallInst *, 1> toErase;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction())
+          if (Fn->getName() == "enzyme.sparse.inbounds")
+            toErase.push_back(CI);
+  for (auto CI : toErase)
+    CI->eraseFromParent();
+}
+
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                       SetVector<BasicBlock *> &toDenseBlocks) {
 
@@ -8917,6 +9038,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
 
   if (!legalToSparse) {
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -8936,6 +9058,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           Assumptions.push_back(II);
 
   bool sawError = false;
+  SmallVector<std::pair<Instruction *, Value *>, 1> origConditions;
 
   for (auto [blk, br] : sparseBlocks) {
     auto L = LI.getLoopFor(blk);
@@ -9049,11 +9172,16 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     if (!negated)
       nidx = B.CreateNot(nidx);
 
+    origConditions.emplace_back(br, cond);
     setBranchCondition(br, nidx);
     forSparsification[L].second.emplace_back(blk, solutions);
   }
 
   if (sawError) {
+    // Undo the rewrite of the branches that were already sparsified.
+    for (auto &[br, cond] : origConditions)
+      setBranchCondition(br, cond);
+    eraseSparseInbounds(F);
     for (auto &pair : forSparsification) {
       for (auto PN : {pair.second.first.first, pair.second.first.second}) {
         PN->replaceAllUsesWith(UndefValue::get(PN->getType()));
@@ -9064,6 +9192,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       llvm::errs() << F << "\n";
       report_fatal_error("function failed verification (6)");
     }
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -9071,6 +9200,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto context = &F.getEntryBlock().front();
     EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F,
                 "\n Found no stores for sparsification");
+    lowerSparsePlaceholders(F);
     return;
   }
 
@@ -9256,47 +9386,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
   }
 
-  for (auto &F2 : F.getParent()->functions()) {
-    if (startsWith(F2.getName(), "__enzyme_product")) {
-      SmallVector<Instruction *, 1> toErase;
-      for (llvm::User *I : F2.users()) {
-        auto CB = cast<CallBase>(I);
-        IRBuilder<> B(CB);
-        B.setFastMathFlags(getFast());
-        Value *res = nullptr;
-        for (auto v : callOperands(CB)) {
-          if (res == nullptr)
-            res = v;
-          else {
-            res = B.CreateFMul(res, v);
-          }
-        }
-        CB->replaceAllUsesWith(res);
-        toErase.push_back(CB);
-      }
-      for (auto CB : toErase)
-        CB->eraseFromParent();
-    } else if (startsWith(F2.getName(), "__enzyme_sum")) {
-      SmallVector<Instruction *, 1> toErase;
-      for (llvm::User *I : F2.users()) {
-        auto CB = cast<CallBase>(I);
-        IRBuilder<> B(CB);
-        B.setFastMathFlags(getFast());
-        Value *res = nullptr;
-        for (auto v : callOperands(CB)) {
-          if (res == nullptr)
-            res = v;
-          else {
-            res = B.CreateFAdd(res, v);
-          }
-        }
-        CB->replaceAllUsesWith(res);
-        toErase.push_back(CB);
-      }
-      for (auto CB : toErase)
-        CB->eraseFromParent();
-    }
-  }
+  lowerSparsePlaceholders(F);
 }
 
 void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,

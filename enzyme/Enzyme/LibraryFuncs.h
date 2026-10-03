@@ -75,8 +75,9 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
 #endif
 
   switch (libfunc) {
-  case LibFunc_malloc: // malloc(unsigned int);
-  case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_malloc:        // malloc(unsigned int);
+  case LibFunc_valloc:        // valloc(unsigned int);
+  case LibFunc_aligned_alloc: // aligned_alloc(size_t align, size_t size);
 
   case LibFunc_Znwj:                // new(unsigned int);
   case LibFunc_ZnwjRKSt9nothrow_t:  // new(unsigned int, nothrow);
@@ -236,7 +237,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 
   Value *allocSize = argValues[0];
   if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-      funcName == "ijl_gc_alloc_typed") {
+      funcName == "ijl_gc_alloc_typed" || funcName == "aligned_alloc") {
     allocSize = argValues[1];
   }
   if (funcName == "enzyme_allocator") {

@@ -82,6 +82,20 @@ static inline bool isUnconditionalBranch(const llvm::Value *V) {
 #endif
 }
 
+// LLVM 23 persists every function's GUID as `!guid` metadata and
+// CloneFunctionInto copies it, so a derivative clone would share its primal's
+// GUID. LTO keys per-function state by GUID and then mishandles the pair; a
+// definition that is reachable only through the clone (e.g. a registered
+// custom rule) is dropped to a declaration and the link fails. Give a fresh
+// clone a GUID derived from its own name. No-op before LLVM 23.
+static inline void resetClonedGUID(llvm::Function *F) {
+#if LLVM_VERSION_MAJOR >= 23
+  F->reassignGUID();
+#else
+  (void)F;
+#endif
+}
+
 /// The condition of a branch isConditionalBranch says yes to.
 static inline llvm::Value *getBranchCondition(llvm::Value *V) {
 #if LLVM_VERSION_MAJOR >= 24
@@ -1607,19 +1621,22 @@ llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
 
+// Whether a custom derivative was registered for the function or call through
+// metadata (__enzyme_register_derivative and friends).
+template <typename T> static inline bool hasCustomRuleMetadata(const T *V) {
+  return hasMetadata(V, "enzyme_augment") ||
+         hasMetadata(V, "enzyme_gradient") ||
+         hasMetadata(V, "enzyme_derivative") ||
+         hasMetadata(V, "enzyme_splitderivative");
+}
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
 
-  if (CI->hasFnAttr("enzyme_preserve_primal") ||
-      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
-      hasMetadata(CI, "enzyme_derivative") ||
-      hasMetadata(CI, "enzyme_splitderivative") ||
-      (F &&
-       (F->hasFnAttribute("enzyme_preserve_primal") ||
-        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
-        hasMetadata(F, "enzyme_derivative") ||
-        hasMetadata(F, "enzyme_splitderivative"))) ||
+  if (CI->hasFnAttr("enzyme_preserve_primal") || hasCustomRuleMetadata(CI) ||
+      (F && (F->hasFnAttribute("enzyme_preserve_primal") ||
+             hasCustomRuleMetadata(F))) ||
       !F) {
     return true;
   }
@@ -2694,13 +2711,15 @@ bool isNVLoad(const llvm::Value *V);
 
 //! Check if value if b captured after definition before executing inst.
 //! If checkLoadCaptured != 0, also consider catpures of any loads of the value
-//! as a capture (for the number of loads set).
+//! as a capture (for the number of loads set). With TLI, passing the value to
+//! a deallocation function is not a capture.
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured,
-                       llvm::Instruction *startinst = nullptr);
+                       llvm::Instruction *startinst = nullptr,
+                       llvm::TargetLibraryInfo *TLI = nullptr);
 
 //! Check if value if b captured
-bool notCaptured(llvm::Value *V);
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI = nullptr);
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].

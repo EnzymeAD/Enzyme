@@ -4743,14 +4743,16 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures, Instruction *startinst) {
+                       size_t checkLoadCaptures, Instruction *startinst,
+                       llvm::TargetLibraryInfo *TLI) {
+  // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
     VI = dyn_cast<Instruction>(V);
-  if (!VI)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  else
+  if (VI)
     VI = VI->getNextNode();
+  else if (inst)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
   if (inst) {
     SmallVector<BasicBlock *, 1> todo;
@@ -4813,6 +4815,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     }
 
     if (auto CI = dyn_cast<CallBase>(UI)) {
+      // Freeing the memory does not capture it.
+      if (TLI && level == 0 && isDeallocationCall(CI, *TLI))
+        continue;
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -4825,7 +4830,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
           return false;
         }
       }
-      return true;
+      // This call does not capture; keep checking the remaining users.
+      continue;
     }
 
     if (isa<CmpInst>(UI)) {
@@ -4851,7 +4857,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
-bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
+  return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
+}
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
