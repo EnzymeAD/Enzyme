@@ -1387,6 +1387,73 @@ Function *CreateMPIWrapper(Function *F) {
   return W;
 }
 
+/// Lower OpenMP reductions to critical sections. The runtime may combine
+/// the private copies of other threads itself, by calling the reduction
+/// function a tree reduction passes to __kmpc_reduce, which leaves that
+/// combination invisible to differentiation. As a critical section, every
+/// thread combines its own private copy into the shared variable in code
+/// Enzyme sees, and whose critical section it mirrors in the reverse pass.
+static void ReplaceOMPReductions(Function &NewF) {
+  SmallVector<CallInst *, 2> Reduces, EndReduces;
+  for (auto &BB : NewF)
+    for (auto &I : BB)
+      if (auto CI = dyn_cast<CallInst>(&I))
+        if (auto Fn = CI->getCalledFunction()) {
+          auto name = Fn->getName();
+          if ((name == "__kmpc_reduce" || name == "__kmpc_reduce_nowait") &&
+              CI->arg_size() == 7)
+            Reduces.push_back(CI);
+          else if ((name == "__kmpc_end_reduce" ||
+                    name == "__kmpc_end_reduce_nowait") &&
+                   CI->arg_size() == 3)
+            EndReduces.push_back(CI);
+        }
+  if (Reduces.empty() && EndReduces.empty())
+    return;
+
+  auto &M = *NewF.getParent();
+  auto VoidTy = Type::getVoidTy(NewF.getContext());
+
+  for (auto CI : Reduces) {
+    IRBuilder<> B(CI);
+    // __kmpc_reduce(loc, gtid, num_vars, size, data, reduce_func, lck)
+    Value *Args[] = {CI->getArgOperand(0), CI->getArgOperand(1),
+                     CI->getArgOperand(6)};
+    auto Critical = M.getOrInsertFunction(
+        "__kmpc_critical",
+        FunctionType::get(
+            VoidTy,
+            {Args[0]->getType(), Args[1]->getType(), Args[2]->getType()},
+            false));
+    B.CreateCall(Critical, Args)->setDebugLoc(CI->getDebugLoc());
+    // 1: this thread combines its private copy into the shared variable.
+    CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 1));
+    CI->eraseFromParent();
+  }
+  for (auto CI : EndReduces) {
+    IRBuilder<> B(CI);
+    // __kmpc_end_reduce(loc, gtid, lck)
+    Value *Args[] = {CI->getArgOperand(0), CI->getArgOperand(1),
+                     CI->getArgOperand(2)};
+    auto EndCritical = M.getOrInsertFunction(
+        "__kmpc_end_critical",
+        FunctionType::get(
+            VoidTy,
+            {Args[0]->getType(), Args[1]->getType(), Args[2]->getType()},
+            false));
+    B.CreateCall(EndCritical, Args)->setDebugLoc(CI->getDebugLoc());
+    // The blocking variant ends with a barrier.
+    if (CI->getCalledFunction()->getName() == "__kmpc_end_reduce") {
+      auto Barrier = M.getOrInsertFunction(
+          "__kmpc_barrier",
+          FunctionType::get(VoidTy, {Args[0]->getType(), Args[1]->getType()},
+                            false));
+      B.CreateCall(Barrier, {Args[0], Args[1]})->setDebugLoc(CI->getDebugLoc());
+    }
+    CI->eraseFromParent();
+  }
+}
+
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
   SmallVector<CallBase *, 4> Todo;
@@ -3048,6 +3115,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   SimplifyMPIQueries(*NewF, FAM);
+  ReplaceOMPReductions(*NewF);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
