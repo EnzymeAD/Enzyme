@@ -11,27 +11,33 @@
 ! RUN: %flang_fc1 -emit-hlfir %s -o - | %fir_enzyme --pass-pipeline='builtin.module(enzyme-lower-fortran-calls)' | FileCheck %s
 
 module marks
+  implicit none
+  public
   integer, bind(C, name="enzyme_dup")   :: enzyme_dup
   integer, bind(C, name="enzyme_const") :: enzyme_const
-end module
+end module marks
 
-real function square(x, y)
-  real, intent(in) :: x, y
-  square = x * x + y
-end function
+module fns
+  implicit none
+  public
+contains
+  real function square(x, y)
+    real, intent(in) :: x, y
+    square = x * x + y
+  end function square
 
-subroutine driver(x, dx, y, r)
-  use marks
-  real, intent(in)  :: x, dx, y
-  real, intent(out) :: r
-  real, external    :: square
-  real, external    :: f__enzyme_fwddiff
-  r = f__enzyme_fwddiff(square, enzyme_dup, x, dx, enzyme_const, y)
-end subroutine
+  subroutine driver(x, dx, y, r)
+    use marks, only: enzyme_dup, enzyme_const
+    real, intent(in)  :: x, dx, y
+    real, intent(out) :: r
+    real, external    :: f__enzyme_fwddiff
+    r = f__enzyme_fwddiff(square, enzyme_dup, x, dx, enzyme_const, y)
+  end subroutine driver
+end module fns
 
-! CHECK-LABEL: func.func @_QPdriver
+! CHECK-LABEL: func.func @_QMfnsPdriver
 ! x active (dup, with shadow dx), y inactive (const); markers are dropped.
-! CHECK: enzyme.fwddiff @_QPsquare(
+! CHECK: enzyme.fwddiff @_QMfnsPsquare(
 ! CHECK-SAME: activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>]
 ! CHECK-SAME: ret_activity = [#enzyme.activity<enzyme_dupnoneed>]
 ! CHECK-NOT: fir.call @_QPf__enzyme_fwddiff
