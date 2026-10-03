@@ -343,6 +343,32 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
   return computeExitCountExhaustively(L, ExitCond, ExitIfTrue);
 }
 
+namespace {
+// llvm/llvm-project#226846 folded howManyGreaterThans into
+// howManyLessThans(..., Invert=true) within LLVM 24, so the version macro
+// cannot tell the two apart. Detect the member instead.
+template <typename SE, typename = void>
+struct HasHowManyGreaterThans : std::false_type {};
+template <typename SE>
+struct HasHowManyGreaterThans<SE,
+                              std::void_t<decltype(&SE::howManyGreaterThans)>>
+    : std::true_type {};
+
+template <typename SE, typename LHSTy, typename RHSTy>
+ScalarEvolution::ExitLimit
+howManyGreaterThansCompat(SE &S, LHSTy LHS, RHSTy RHS, const Loop *L,
+                          bool IsSigned, bool ControlsExit,
+                          bool AllowPredicates) {
+  if constexpr (HasHowManyGreaterThans<SE>::value)
+    return S.howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
+                                 AllowPredicates);
+  else
+    // "X > Y" is analyzed as the equivalent "~X < ~Y".
+    return S.howManyLessThans(LHS, RHS, L, IsSigned, /*Invert=*/true,
+                              ControlsExit, AllowPredicates);
+}
+} // namespace
+
 ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     const Loop *L, ICmpInst *ExitCond, bool ExitIfTrue, bool ControlsExit,
     bool AllowPredicates) {
@@ -482,8 +508,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
       else
         RHS = getAddExpr(sv, SCEV::FlagNUW);
     }
-    ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
-                                       AllowPredicates);
+    ExitLimit EL = howManyGreaterThansCompat<ScalarEvolution>(
+        *this, LHS, RHS, L, IsSigned, ControlsExit, AllowPredicates);
     if (EL.hasAnyInfo())
       return EL;
     break;

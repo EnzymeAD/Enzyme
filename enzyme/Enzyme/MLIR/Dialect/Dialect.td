@@ -22,6 +22,10 @@ def Enzyme_Dialect : Dialect {
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  // MLIR switched this on by default (llvm/llvm-project#225742). Keep the
+  // existing assembly format until the ops move to prop-dict together with
+  // Enzyme-JAX.
+  let useStrictPropertiesInAssemblyFormat = 0;
 
   // Canonicalizing an atomic accumulation of zero away leaves a plain load
   // behind, in whichever of these dialects the op was addressing memory in.
