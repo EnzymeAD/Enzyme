@@ -21,11 +21,13 @@
 !
 ! ===----------------------------------------------------------------------=== !
 module enzyme
-  use, intrinsic :: iso_c_binding, only: c_int
+  use, intrinsic :: iso_c_binding, only: c_int, c_int64_t, c_ptr, c_null_ptr
   use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
                                    enzyme_fwddiff  => f__enzyme_fwddiff, &
                                    enzyme_function_like => &
-                                     f__enzyme_function_like
+                                     f__enzyme_function_like, &
+                                   enzyme_checkpoint_for => &
+                                     f__enzyme_checkpoint_for
   implicit none
   private
 
@@ -38,8 +40,69 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
 
+  ! Bindings for checkpointed loops (see enzyme/checkpoint.h). A loop
+  !
+  !   do i = start, start + n - 1
+  !     call step(i, args...)
+  !   end do
+  !
+  ! whose step takes `integer(8), value :: i` is written
+  !
+  !   call enzyme_checkpoint_for(step, start, n, enzyme_scheme, scheme, config, &
+  !                              [enzyme_checkpoint_region, array, bytes,] &
+  !                              args...)
+  !
+  ! with integer(8) start, n and bytes, scheme a type(c_ptr) from
+  ! enzyme_ckpt_revolve() and its siblings, and config an enzyme_ckpt_config.
+  integer(c_int), public, bind(C, name="enzyme_scheme") :: enzyme_scheme
+  integer(c_int), public, bind(C, name="enzyme_checkpoint_region") :: &
+    enzyme_checkpoint_region
+
+  type, public, bind(C) :: enzyme_ckpt_stats
+    integer(c_int64_t) :: forward_steps = 0
+    integer(c_int64_t) :: taped_steps = 0
+    integer(c_int64_t) :: stores = 0
+    integer(c_int64_t) :: restores = 0
+    integer(c_int64_t) :: max_slots = 0
+    integer(c_int64_t) :: max_bytes = 0
+  end type enzyme_ckpt_stats
+
+  type, public, bind(C) :: enzyme_ckpt_config
+    ! Revolve: number of snapshot slots. Periodic: number of segments.
+    integer(c_int64_t) :: snapshots = 1
+    ! 1 prints a summary, 2 also every action.
+    integer(c_int) :: verbose = 0
+    ! A C string (c_loc of a character array ending in c_null_char), or
+    ! c_null_ptr to keep every snapshot in memory.
+    type(c_ptr) :: spill_dir = c_null_ptr
+    ! With spill_dir: slots whose start is past this many bytes go to files.
+    integer(c_int64_t) :: mem_budget = 0
+    ! c_loc of an enzyme_ckpt_stats to fill in, or c_null_ptr.
+    type(c_ptr) :: stats = c_null_ptr
+  end type enzyme_ckpt_config
+
+  interface
+    function enzyme_ckpt_revolve() result(scheme) &
+        bind(C, name="enzyme_ckpt_revolve_scheme")
+      import :: c_ptr
+      type(c_ptr) :: scheme
+    end function enzyme_ckpt_revolve
+    function enzyme_ckpt_periodic() result(scheme) &
+        bind(C, name="enzyme_ckpt_periodic_scheme")
+      import :: c_ptr
+      type(c_ptr) :: scheme
+    end function enzyme_ckpt_periodic
+    function enzyme_ckpt_store_all() result(scheme) &
+        bind(C, name="enzyme_ckpt_store_all_scheme")
+      import :: c_ptr
+      type(c_ptr) :: scheme
+    end function enzyme_ckpt_store_all
+  end interface
+
   ! Bindings for function hooks
   public :: enzyme_autodiff
   public :: enzyme_fwddiff
   public :: enzyme_function_like
+  public :: enzyme_checkpoint_for
+  public :: enzyme_ckpt_revolve, enzyme_ckpt_periodic, enzyme_ckpt_store_all
 end module enzyme

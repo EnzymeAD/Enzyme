@@ -237,6 +237,12 @@ void EnzymeRegisterCallHandler(const char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
                                CustomFunctionReverse RevHandle);
 
+/// Replace the calls to `__enzyme_checkpoint_for` in `M` by calls to
+/// checkpointed loop functions (see include/enzyme/checkpoint.h). Returns
+/// whether `M` changed. Frontends that do not run the Enzyme pass call this
+/// before creating derivatives of functions that contain such calls.
+uint8_t EnzymeLowerCheckpointMarkers(LLVMModuleRef M);
+
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val);
 
