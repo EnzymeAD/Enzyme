@@ -18,6 +18,8 @@ def Impulse_Dialect : Dialect {
     "mlir::enzyme::EnzymeDialect",
   ];
   let useDefaultAttributePrinterParser = 1;
+  // See Enzyme_Dialect: keep the existing assembly format for now.
+  let useStrictPropertiesInAssemblyFormat = 0;
 }
 
 //===----------------------------------------------------------------------===//
