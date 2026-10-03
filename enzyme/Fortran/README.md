@@ -90,6 +90,39 @@ supported, with the following caveats.
 > currently supported when compiling with Flang. It should work with ifx,
 > however.
 
+## Function hooks for split reverse mode
+
+`enzyme_autodiff` runs the forward and the reverse pass in one call. To run them
+separately, for example to run other code in between or to reverse several
+forward passes in a chosen order, use `enzyme_augmentfwd` and
+`enzyme_reverse`. These are bindings for `__enzyme_augmentfwd` and
+`__enzyme_reverse`. They use the same implicit interfaces as `enzyme_autodiff`.
+
+The forward pass records the values that the reverse pass needs on a tape. Pass
+the `enzyme_tape` descriptor, followed by a `type(c_ptr)` variable, to both
+calls. `enzyme_augmentfwd` allocates the tape and stores a pointer to it in that
+variable. `enzyme_reverse` reads the tape from the variable and frees it.
+Pass the same activity descriptors and arguments to both calls.
+
+```fortran
+use, intrinsic :: iso_c_binding, only: c_ptr
+use enzyme, only: enzyme_dup, enzyme_tape, enzyme_augmentfwd, enzyme_reverse
+
+type(c_ptr) :: tape
+
+call enzyme_augmentfwd(my_subroutine, enzyme_tape, tape, &
+                       enzyme_dup, x, dx, enzyme_dup, y, dy)
+! y holds the primal result here. The reverse pass uses the x recorded on the
+! tape, so x can change before the next call.
+call enzyme_reverse(my_subroutine, enzyme_tape, tape, &
+                    enzyme_dup, x, dx, enzyme_dup, y, dy)
+```
+
+> [!NOTE]
+> Fortran passes `enzyme_allocated` and its size by reference, but Enzyme needs
+> the size as a constant value. Thus the bindings support only tapes that
+> `enzyme_augmentfwd` allocates itself.
+
 ## Activity descriptors
 
 We provide bindings for the activity descriptors `enzyme_const`, `enzyme_dup`,
