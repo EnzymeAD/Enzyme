@@ -6,7 +6,7 @@ module {
     return %y : f64
   }
   func.func @dsq(%x : tensor<10x2xf64>) -> tensor<10x2xf64> {
-    %r = enzyme.batch @square(%x) { batch_shape=array<i64: 10, 2> } : (tensor<10x2xf64>) -> (tensor<10x2xf64>)
+    %r = enzyme.batch @square(%x) <batch_shape=[10, 2]> : (tensor<10x2xf64>) -> (tensor<10x2xf64>)
     return %r : tensor<10x2xf64>
   }
 }

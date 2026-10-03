@@ -15,10 +15,10 @@ llvm.func @loadstore(%a: !llvm.ptr, %b: f32) -> f32 {
 
 func.func @dloadstore(%a: !llvm.ptr, %da: !llvm.ptr, %b: f32, %dres: f32) -> f32 {
   %res = enzyme.autodiff @loadstore(%a, %da, %b, %dres)
-    {
+    <
       activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_active>],
       ret_activity=[#enzyme.activity<enzyme_activenoneed>]
-    } : (!llvm.ptr, !llvm.ptr, f32, f32) -> f32
+    > : (!llvm.ptr, !llvm.ptr, f32, f32) -> f32
   return %res : f32
 }
 }

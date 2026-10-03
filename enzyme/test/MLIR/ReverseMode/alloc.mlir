@@ -8,10 +8,10 @@ func.func private @test_fillzero(%x: f32) -> f32 {
 }
 
 func.func @dtest_fillzero(%x: f32, %dr: f32) -> f32 {
-  %dx = enzyme.autodiff @test_fillzero(%x, %dr) {
+  %dx = enzyme.autodiff @test_fillzero(%x, %dr) <
     activity = [#enzyme.activity<enzyme_active>],
     ret_activity = [#enzyme.activity<enzyme_activenoneed>]
-  } : (f32, f32) -> f32
+  > : (f32, f32) -> f32
   return %dx : f32
 }
 

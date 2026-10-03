@@ -482,8 +482,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
       else
         RHS = getAddExpr(sv, SCEV::FlagNUW);
     }
+#if LLVM_VERSION_MAJOR >= 24
+    // "X > Y" is analyzed as the equivalent "~X < ~Y".
+    ExitLimit EL = ScalarEvolution::howManyLessThans(
+        LHS, RHS, L, IsSigned, /*Invert=*/true, ControlsExit, AllowPredicates);
+#else
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
+#endif
     if (EL.hasAnyInfo())
       return EL;
     break;
