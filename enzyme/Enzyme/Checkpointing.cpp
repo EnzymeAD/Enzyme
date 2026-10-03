@@ -37,6 +37,12 @@
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -45,6 +51,14 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include "Utils.h"
 
@@ -54,6 +68,11 @@ static cl::opt<bool> EnzymeCheckpointSplitSteps(
     "enzyme-checkpoint-split-steps", cl::init(false), cl::Hidden,
     cl::desc("Differentiate each checkpointed step as its augmented forward "
              "pass followed by its reverse pass, instead of in combined mode"));
+
+static cl::opt<int> EnzymeCheckpointLoopVerbose(
+    "enzyme-checkpoint-loop-verbose", cl::init(0), cl::Hidden,
+    cl::desc("The verbosity of the reference schemes of loops annotated for "
+             "checkpointing: 1 prints a summary, 2 every action"));
 
 static cl::opt<bool> EnzymePrintCheckpointRegions(
     "enzyme-print-checkpoint-regions", cl::init(false), cl::Hidden,
@@ -68,6 +87,8 @@ static constexpr const char *CheckpointAttr = "enzyme_checkpoint";
 static constexpr const char *CheckpointRegionsAttr =
     "enzyme_checkpoint_nregions";
 static constexpr const char *CheckpointStepMD = "enzyme_checkpoint_step";
+static constexpr const char *CheckpointRegionSpacesAttr =
+    "enzyme_checkpoint_region_spaces";
 static constexpr const char *FixedPointStatesAttr =
     "enzyme_fixed_point_nstates";
 
@@ -544,7 +565,799 @@ static bool lowerFixedPointMarker(CallInst *CI) {
   return true;
 }
 
+//===----------------------------------------------------------------------===//
+// Loop annotations
+//===----------------------------------------------------------------------===//
+//
+// `[[enzyme::checkpointing_enable("binomial" or "regular", count)]]` on a for
+// statement (the Clang plugin, as in Reactant) calls
+// `__enzyme_set_checkpointing(mode, count)` at the top of the loop body: mode
+// 1 is periodic, 2 binomial, and count the budget of snapshots, all ones if
+// it is not given. These are Enzyme-MLIR's enzyme.enable_checkpointing,
+// enzyme.binomial_checkpointing and enzyme.checkpoint_period, which Enzyme-JAX
+// raises the call into.
+//
+// Here the loop is outlined, one iteration a step, into a checkpointed loop
+// run by the reference Revolve or Periodic scheme of enzyme/checkpoint.h:
+// induction variables are recomputed from the step index, other values
+// carried from one iteration to the next and values used after the loop go
+// through the stack, and the snapshot holds the globals the step writes (as
+// for any checkpointed loop), those stack slots, and the heap blocks the loop
+// writes whose size is known before it. A loop that writes memory of unknown
+// extent is an error: give the regions with __enzyme_checkpoint_for.
+
+static bool isLoopAnnotation(const Function *F) {
+  return F && (F->getName().contains("__enzyme_set_checkpointing") ||
+               F->getName().contains("__enzyme_set_fixed_point"));
+}
+
+/// `__enzyme_set_fixed_point(double reduction, i64 max_iters, ptr control,
+/// [ptr state, i64 bytes]...)` in a loop (a Fortran `!DIR$ ENZYME
+/// FIXED_POINT` directive) makes it a fixed-point loop: as
+/// __enzyme_fixed_point, with one iteration as the step. A negative
+/// reduction or max_iters takes the default, and a null control the
+/// built-in test.
+static bool isFixedPointAnnotation(const Function *F) {
+  return F && F->getName().contains("__enzyme_set_fixed_point");
+}
+
+/// The object `V` points into and its size in bytes, computed in front of
+/// `IP`, if both are known there.
+static std::optional<std::pair<Value *, Value *>>
+getKnownAllocation(Value *V, Instruction *IP, DominatorTree &DT) {
+  const DataLayout &DL = IP->getModule()->getDataLayout();
+  Value *base = getBaseObject(V);
+  IRBuilder<> B(IP);
+  Type *I64 = B.getInt64Ty();
+  auto available = [&](Value *X) {
+    if (isa<Constant>(X) || isa<Argument>(X))
+      return true;
+    auto *I = dyn_cast<Instruction>(X);
+    return I && DT.dominates(I, IP);
+  };
+  if (!available(base))
+    return {};
+  if (auto *AI = dyn_cast<AllocaInst>(base)) {
+    auto size = AI->getAllocationSize(DL);
+    if (!size || size->isScalable())
+      return {};
+    return std::make_pair(base, (Value *)ConstantInt::get(
+                                    I64, size->getFixedValue()));
+  }
+  auto *CB = dyn_cast<CallBase>(base);
+  Function *callee = CB ? getFunctionFromCall(CB) : nullptr;
+  if (!callee)
+    return {};
+  StringRef name = callee->getName();
+  if (name == "malloc" || name == "_Znwm" || name == "_Znam") {
+    Value *n = CB->getArgOperand(0);
+    if (!available(n))
+      return {};
+    return std::make_pair(base, B.CreateZExtOrTrunc(n, I64));
+  }
+  if (name == "calloc") {
+    Value *n = CB->getArgOperand(0), *m = CB->getArgOperand(1);
+    if (!available(n) || !available(m))
+      return {};
+    return std::make_pair(base, B.CreateMul(B.CreateZExtOrTrunc(n, I64),
+                                            B.CreateZExtOrTrunc(m, I64)));
+  }
+  return {};
+}
+
+/// The arguments of `step` it may write through, and a store through a
+/// pointer that is none of its arguments, globals or stack slots, if any.
+/// Pointers of unknown origin passed to a call are not counted: they are
+/// as often opaque handles (a stream, a file, a communicator), and what the
+/// callee writes through memory it is not visibly given cannot be seen here
+/// in any case; that is what __enzyme_ptr_size_hint is for.
+static Instruction *getWrittenArgs(Function *step,
+                                   SmallPtrSetImpl<Argument *> &written) {
+  Instruction *unknown = nullptr;
+  auto note = [&](Value *ptr, Instruction *I, bool direct = true) {
+    Value *base = getBaseObject(ptr);
+    if (auto *A = dyn_cast<Argument>(base))
+      written.insert(A);
+    // A function (a kernel launched, a callback) is not memory written.
+    else if (direct && !isa<GlobalVariable>(base) &&
+             !isa<AllocaInst>(base) && !isa<Function>(base) &&
+             !isa<ConstantPointerNull>(base) && !unknown)
+      unknown = I;
+  };
+  for (Instruction &I : instructions(step)) {
+    if (auto *SI = dyn_cast<StoreInst>(&I))
+      note(SI->getPointerOperand(), &I);
+    else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
+      note(RMW->getPointerOperand(), &I);
+    else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(&I))
+      note(CX->getPointerOperand(), &I);
+    else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
+      note(MI->getDest(), &I);
+    else if (auto *CB = dyn_cast<CallBase>(&I)) {
+      if (isa<IntrinsicInst>(CB) || CB->onlyReadsMemory())
+        continue;
+      for (unsigned i = 0; i < CB->arg_size(); i++)
+        if (CB->getArgOperand(i)->getType()->isPointerTy() &&
+            !CB->onlyReadsMemory(i))
+          note(CB->getArgOperand(i), &I, /*direct*/ false);
+    }
+  }
+  return unknown;
+}
+
+static bool isPtrSizeHint(const Function *F) {
+  return F && F->getName().contains("__enzyme_ptr_size_hint");
+}
+
+/// The object `V` points into, its size and its memory space from a call
+/// `__enzyme_ptr_size_hint(ptr, bytes[, space])` in front of `IP`, as
+/// Enzyme-MLIR reads it: the extent of an allocation Enzyme did not see made,
+/// and the memory space it really is in (a cudaMalloc'ed buffer is a plain
+/// pointer).
+static std::optional<std::tuple<Value *, Value *, unsigned>>
+getSizeHint(Value *V, Instruction *IP, DominatorTree &DT) {
+  Value *base = getBaseObject(V);
+  for (Instruction &I : instructions(*IP->getFunction())) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    if (!CI || !isPtrSizeHint(getFunctionFromCall(CI)) || CI->arg_size() < 2 ||
+        getBaseObject(CI->getArgOperand(0)) != base || !DT.dominates(CI, IP))
+      continue;
+    unsigned space = 0;
+    if (CI->arg_size() > 2) {
+      auto *C = dyn_cast<ConstantInt>(CI->getArgOperand(2));
+      if (!C)
+        continue;
+      space = C->getZExtValue();
+    }
+    IRBuilder<> B(IP);
+    return std::make_tuple(
+        CI->getArgOperand(0),
+        B.CreateZExtOrTrunc(CI->getArgOperand(1), B.getInt64Ty()), space);
+  }
+  return {};
+}
+
+/// The floating-point type of every load and store of `step` through the
+/// object `base`, in the functions it calls too when `base` is a global, if
+/// there is one such type.
+static Type *getUniformFPAccess(Function *step, Value *base) {
+  bool global = isa<GlobalVariable>(base);
+  Type *found = nullptr;
+  SmallPtrSet<Function *, 8> seen;
+  SmallVector<Function *, 8> todo = {step};
+  while (!todo.empty()) {
+    Function *F = todo.pop_back_val();
+    if (F->empty() || !seen.insert(F).second)
+      continue;
+    for (Instruction &I : instructions(F)) {
+      Value *ptr = nullptr;
+      Type *T = nullptr;
+      if (auto *LdI = dyn_cast<LoadInst>(&I)) {
+        ptr = LdI->getPointerOperand();
+        T = LdI->getType();
+      } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
+        ptr = SI->getPointerOperand();
+        T = SI->getValueOperand()->getType();
+      } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+        // What a callee does with a pointer it is given is not seen here.
+        if (!global && is_contained(CB->args(), base))
+          return nullptr;
+        if (Function *callee = getFunctionFromCall(CB))
+          if (global)
+            todo.push_back(callee);
+        continue;
+      }
+      if (!ptr || getBaseObject(ptr) != base)
+        continue;
+      T = T->getScalarType();
+      if (!T->isFloatingPointTy() || (found && found != T))
+        return nullptr;
+      found = T;
+    }
+  }
+  return found;
+}
+
+/// Outline the loop around the annotation `marker` into a checkpointed loop.
+static bool outlineAnnotatedLoop(CallInst *marker) {
+  Function &F = *marker->getFunction();
+  Module &M = *F.getParent();
+  LLVMContext &Ctx = M.getContext();
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  auto *Ptr = getInt8PtrTy(Ctx);
+  DebugLoc loc = marker->getDebugLoc();
+  Instruction *anchor = marker;
+  auto fail = [&](const Twine &msg) {
+    std::string str = msg.str();
+    EmitFailure("CheckpointLoop", loc, anchor, str);
+    return false;
+  };
+  // Before the loop is found, a failure drops the annotation itself.
+  auto failEarly = [&](const Twine &msg) {
+    fail(msg);
+    marker->eraseFromParent();
+    return false;
+  };
+
+  bool fixedPoint = isFixedPointAnnotation(getFunctionFromCall(marker));
+  int64_t mode = 0;
+  std::optional<uint64_t> count;
+  if (fixedPoint) {
+    if (marker->arg_size() < 5 || (marker->arg_size() - 3) % 2 != 0)
+      return failEarly("__enzyme_set_fixed_point needs a reduction, a maximum "
+                       "number of iterations, a control function and at "
+                       "least one state, as a pointer and a size in bytes");
+  } else {
+    auto *modeC = dyn_cast<ConstantInt>(marker->getArgOperand(0));
+    if (!modeC)
+      return failEarly("the checkpointing mode of a loop must be a constant");
+    mode = modeC->getSExtValue();
+    if (marker->arg_size() > 1)
+      if (auto *C = dyn_cast<ConstantInt>(marker->getArgOperand(1)))
+        if (!C->isMinusOne())
+          count = C->getZExtValue();
+    if (mode > 2)
+      return failEarly("unknown checkpointing mode " + Twine(mode));
+  }
+
+  // The loop's variables as values, where they can be.
+  {
+    DominatorTree DT(F);
+    SmallVector<AllocaInst *, 8> allocas;
+    for (Instruction &I : F.getEntryBlock())
+      if (auto *AI = dyn_cast<AllocaInst>(&I))
+        if (isAllocaPromotable(AI))
+          allocas.push_back(AI);
+    if (!allocas.empty()) {
+      AssumptionCache AC(F);
+      PromoteMemToReg(allocas, DT, &AC);
+    }
+  }
+  DominatorTree DT(F);
+  LoopInfo LI(DT);
+  AssumptionCache AC(F);
+  TargetLibraryInfoImpl TLII{Triple(M.getTargetTriple())};
+  TargetLibraryInfo TLI(TLII, &F);
+  ScalarEvolution SE(F, TLI, AC, DT, LI);
+
+  Loop *L = LI.getLoopFor(marker->getParent());
+  if (!L)
+    return failEarly(Twine(fixedPoint ? "__enzyme_set_fixed_point"
+                                      : "__enzyme_set_checkpointing") +
+                     " is not inside a loop");
+  // The settings of a fixed-point loop, which must be known before it.
+  SmallVector<Value *, 8> fpArgs;
+  if (fixedPoint)
+    for (Value *V : marker->args()) {
+      if (auto *I = dyn_cast<Instruction>(V))
+        if (L->contains(I))
+          return failEarly("the state and settings of a fixed-point loop "
+                           "must be computed before the loop");
+      fpArgs.push_back(V);
+    }
+  // The annotation may have been copied, by unrolling say.
+  SmallVector<CallInst *, 2> markers;
+  for (BasicBlock *BB : L->blocks())
+    for (Instruction &I : *BB)
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (LI.getLoopFor(BB) == L &&
+            isLoopAnnotation(getFunctionFromCall(CI)))
+          markers.push_back(CI);
+  for (CallInst *CI : markers)
+    CI->eraseFromParent();
+  anchor = getFirstNonPHI(L->getHeader());
+  if (!fixedPoint && mode < 1)
+    return true;
+
+  simplifyLoop(L, &DT, &LI, &SE, &AC, nullptr, false);
+  BasicBlock *P = L->getLoopPreheader(), *H = L->getHeader(),
+             *latch = L->getLoopLatch(), *X = L->getExitingBlock(),
+             *E = L->getUniqueExitBlock();
+  if (!P || !latch || !X || !E || (X != latch && X != H))
+    return fail(Twine(fixedPoint ? "a fixed-point" : "a checkpointed") +
+                " loop must have a single latch and leave from its header or "
+                "its latch, to a single block");
+  Instruction *IP = P->getTerminator();
+#if LLVM_VERSION_MAJOR >= 22
+  SCEVExpander Exp(SE, "ckpt");
+#else
+  SCEVExpander Exp(SE, M.getDataLayout(), "ckpt");
+#endif
+  Value *nsteps = nullptr;
+  if (!fixedPoint) {
+    const SCEV *BTC = SE.getBackedgeTakenCount(L);
+    if (isa<SCEVCouldNotCompute>(BTC))
+      return fail("the number of iterations of a checkpointed loop must be "
+                  "known when it starts; for other loops use "
+                  "__enzyme_checkpoint_while");
+    // A step runs the header and what follows it up to the backedge or the
+    // exit, so there is a step for every time the header runs: one more than
+    // the backedge is taken. A loop that leaves from its header does so in
+    // its last step, having run only the header.
+    const SCEV *N =
+        SE.getAddExpr(SE.getTruncateOrZeroExtend(BTC, I64), SE.getOne(I64));
+    nsteps = Exp.expandCodeFor(N, I64, IP);
+  }
+
+  // Induction variables, recomputed in each step from its index.
+  struct IV {
+    PHINode *phi;
+    Value *start, *step;
+  };
+  SmallVector<IV, 4> ivs;
+  SmallVector<PHINode *, 4> carried;
+  for (PHINode &phi : H->phis()) {
+    bool usedAfter = any_of(phi.users(), [&](User *U) {
+      return !L->contains(cast<Instruction>(U));
+    });
+    auto *AR = SE.isSCEVable(phi.getType())
+                   ? dyn_cast<SCEVAddRecExpr>(SE.getSCEV(&phi))
+                   : nullptr;
+    if (!usedAfter && AR && AR->getLoop() == L && AR->isAffine() &&
+        (phi.getType()->isIntegerTy() || phi.getType()->isPointerTy())) {
+      const SCEV *stepS = AR->getStepRecurrence(SE);
+      ivs.push_back({&phi, Exp.expandCodeFor(AR->getStart(), phi.getType(), IP),
+                     Exp.expandCodeFor(stepS, stepS->getType(), IP)});
+    } else
+      carried.push_back(&phi);
+  }
+
+  // Everything else carried from one iteration to the next, or used after
+  // the loop, through the stack.
+#if LLVM_VERSION_MAJOR >= 19
+  auto allocaIP = F.getEntryBlock().getFirstInsertionPt();
+#else
+  Instruction *allocaIP = &*F.getEntryBlock().getFirstInsertionPt();
+#endif
+  FoldSingleEntryPHINodes(E);
+  // A floating-point value a fixed-point loop carries is part of its state,
+  // as the state it names: optimization may have moved that state from
+  // memory into such values (load PRE carries a global through a phi, its
+  // memory written but read only at the next iteration's start). A value
+  // reloaded each iteration from memory the loop does not write is not: it
+  // is a parameter, whose adjoint flows back out of the loop; nor is one
+  // only compared, as the loop's own error is, which carries no derivative.
+  SmallPtrSet<Value *, 4> stateSlots;
+  SmallVector<Value *, 4> loopWrites;
+  bool unknownWrites = false;
+  if (fixedPoint)
+    for (BasicBlock *BB : L->blocks())
+      for (Instruction &I : *BB) {
+        if (!I.mayWriteToMemory())
+          continue;
+        if (auto *SI = dyn_cast<StoreInst>(&I))
+          loopWrites.push_back(getBaseObject(SI->getPointerOperand()));
+        else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
+          loopWrites.push_back(getBaseObject(MI->getDest()));
+        else
+          unknownWrites = true;
+      }
+  auto isParameter = [&](PHINode *phi) {
+    Value *V = phi->getIncomingValueForBlock(latch);
+    if (V == phi)
+      return true;
+    auto *LdI = dyn_cast<LoadInst>(V);
+    if (!LdI || unknownWrites || !L->isLoopInvariant(LdI->getPointerOperand()))
+      return false;
+    Value *base = getBaseObject(LdI->getPointerOperand());
+    if (!isa<GlobalVariable>(base) && !isa<AllocaInst>(base))
+      return false;
+    return all_of(loopWrites, [&](Value *W) {
+      return W != base && (isa<GlobalVariable>(W) || isa<AllocaInst>(W));
+    });
+  };
+  for (PHINode *phi : carried) {
+    bool state =
+        fixedPoint && phi->getType()->isFPOrFPVectorTy() && !isParameter(phi) &&
+        !all_of(phi->users(), [](User *U) { return isa<FCmpInst>(U); });
+    AllocaInst *slot = DemotePHIToStack(phi, allocaIP);
+    if (state)
+      stateSlots.insert(slot);
+  }
+  for (BasicBlock *BB : L->blocks())
+    for (Instruction &I : make_early_inc_range(*BB)) {
+      if (isa<PHINode>(I))
+        continue;
+      if (any_of(I.users(), [&](User *U) {
+            return !L->contains(cast<Instruction>(U));
+          }))
+        DemoteRegToStack(I, false, allocaIP);
+    }
+
+  // The step: one iteration, from the header to the backedge or the exit.
+  SmallVector<BasicBlock *, 8> blocks(L->blocks().begin(),
+                                      L->blocks().end());
+  SmallPtrSet<Value *, 4> ivPhis;
+  for (auto &iv : ivs)
+    ivPhis.insert(iv.phi);
+  SetVector<Value *> liveins;
+  auto noteLivein = [&](Value *V) {
+    if (auto *I = dyn_cast<Instruction>(V)) {
+      if (!L->contains(I))
+        liveins.insert(V);
+    } else if (isa<Argument>(V))
+      liveins.insert(V);
+  };
+  for (BasicBlock *BB : blocks)
+    for (Instruction &I : *BB) {
+      if (ivPhis.count(&I))
+        continue;
+      for (Value *Op : I.operands())
+        noteLivein(Op);
+    }
+  for (auto &iv : ivs) {
+    noteLivein(iv.start);
+    noteLivein(iv.step);
+  }
+
+  SmallVector<Type *, 8> params = {I64};
+  for (Value *V : liveins)
+    params.push_back(V->getType());
+  // The step of a fixed-point loop returns whether the loop goes on.
+  auto *step = Function::Create(
+      FunctionType::get(fixedPoint ? I32 : Type::getVoidTy(Ctx), params, false),
+      GlobalValue::InternalLinkage,
+      F.getName() + (fixedPoint ? ".fp.step" : ".ckpt.step"), &M);
+  ValueToValueMapTy VMap;
+  for (auto [i, V] : enumerate(liveins)) {
+    step->getArg(i + 1)->setName(V->getName());
+    VMap[V] = step->getArg(i + 1);
+  }
+  auto mapped = [&](Value *V) -> Value * {
+    return isa<Constant>(V) ? V : (Value *)VMap[V];
+  };
+  // The type of what a stack slot holds, which the step cannot see.
+  for (auto [i, V] : enumerate(liveins))
+    if (auto *AI = dyn_cast<AllocaInst>(V)) {
+      Type *T = AI->getAllocatedType();
+      ConcreteType CT = T->isFPOrFPVectorTy() ? ConcreteType(T->getScalarType())
+                        : T->isIntOrIntVectorTy()
+                            ? ConcreteType(BaseType::Integer)
+                        : T->isPointerTy() ? ConcreteType(BaseType::Pointer)
+                                           : ConcreteType(BaseType::Unknown);
+      if (CT == BaseType::Unknown)
+        continue;
+      TypeTree TT = TypeTree(CT).Only(-1, nullptr).Only(-1, nullptr);
+      TT.insert({-1}, BaseType::Pointer);
+      step->addParamAttr(i + 1, Attribute::get(Ctx, "enzyme_type", TT.str()));
+    }
+  auto *entry = BasicBlock::Create(Ctx, "entry", step);
+  IRBuilder<> SB(entry);
+  Value *k = step->getArg(0);
+  k->setName("k");
+  SmallVector<std::pair<PHINode *, Value *>, 4> ivValues;
+  for (auto &iv : ivs) {
+    Value *start = mapped(iv.start), *stride = mapped(iv.step);
+    Value *off = SB.CreateMul(SB.CreateSExtOrTrunc(k, stride->getType()),
+                              stride);
+    Value *v = iv.phi->getType()->isPointerTy()
+                   ? SB.CreateGEP(SB.getInt8Ty(), start, off)
+                   : SB.CreateAdd(start,
+                                  SB.CreateSExtOrTrunc(off, start->getType()));
+    ivValues.push_back({iv.phi, v});
+  }
+  SmallVector<BasicBlock *, 8> cloned;
+  for (BasicBlock *BB : blocks) {
+    auto *NB = CloneBasicBlock(BB, VMap, "", step);
+    VMap[BB] = NB;
+    cloned.push_back(NB);
+  }
+  auto *next = BasicBlock::Create(Ctx, "next", step);
+  BasicBlock *done = next;
+  if (fixedPoint) {
+    // Back to the header: go on. Out of the loop: stop.
+    done = BasicBlock::Create(Ctx, "done", step);
+    ReturnInst::Create(Ctx, ConstantInt::get(I32, 1), next);
+    ReturnInst::Create(Ctx, ConstantInt::get(I32, 0), done);
+  } else {
+    ReturnInst::Create(Ctx, next);
+  }
+  VMap[E] = done;
+  SmallVector<Instruction *, 4> deadPhis;
+  for (auto [phi, v] : ivValues) {
+    deadPhis.push_back(cast<Instruction>(VMap[phi]));
+    VMap[phi] = v;
+  }
+  remapInstructionsInBlocks(cloned, VMap);
+  for (Instruction *I : deadPhis) {
+    I->dropAllReferences();
+    I->eraseFromParent();
+  }
+  auto *newH = cast<BasicBlock>(VMap[H]);
+  SB.CreateBr(newH);
+  cast<BasicBlock>(VMap[latch])->getTerminator()->replaceSuccessorWith(newH,
+                                                                        next);
+  // The step is a function of its own: the loop's debug locations are not,
+  // and the loop's stack slots are arguments, which lifetime markers cannot
+  // apply to.
+  for (BasicBlock &BB : *step)
+    for (Instruction &I : make_early_inc_range(BB)) {
+      I.setDebugLoc(DebugLoc());
+#if LLVM_VERSION_MAJOR >= 19
+      I.dropDbgRecords();
+#endif
+      if (auto *II = dyn_cast<IntrinsicInst>(&I))
+        if (isa<DbgInfoIntrinsic>(II) || II->isLifetimeStartOrEnd())
+          II->eraseFromParent();
+    }
+
+  // What a snapshot holds besides the globals.
+  SmallPtrSet<Argument *, 8> written;
+  if (Instruction *I = getWrittenArgs(step, written)) {
+    std::string inst;
+    raw_string_ostream ss(inst);
+    ss << *I;
+    step->eraseFromParent();
+    return fail("a checkpointed loop writes through a pointer it loads from "
+                "memory, whose extent is not known (" + ss.str() +
+                "); give the regions with __enzyme_checkpoint_for");
+  }
+  SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions, slotStates;
+  SmallPtrSet<Value *, 4> seen;
+  // The state of a fixed-point loop is snapshotted as such.
+  if (fixedPoint)
+    for (unsigned a = 3; a < fpArgs.size(); a += 2)
+      seen.insert(getBaseObject(fpArgs[a]));
+  for (auto [i, V] : enumerate(liveins)) {
+    if (!V->getType()->isPointerTy())
+      continue;
+    if (seen.count(getBaseObject(V)))
+      continue;
+    bool w = written.count(step->getArg(i + 1));
+    if (auto hint = getSizeHint(V, IP, DT)) {
+      if (seen.insert(getBaseObject(V)).second)
+        regions.push_back(*hint);
+      continue;
+    }
+    auto alloc = getKnownAllocation(V, IP, DT);
+    if (!alloc) {
+      if (w) {
+        std::string name;
+        raw_string_ostream ss(name);
+        V->printAsOperand(ss, false);
+        step->eraseFromParent();
+        return fail("a checkpointed loop writes through " + ss.str() +
+                    ", whose extent is not known before it; give it with "
+                    "__enzyme_ptr_size_hint, or the regions with "
+                    "__enzyme_checkpoint_for");
+      }
+      continue;
+    }
+    // Stack slots always: they are the loop's own state.
+    if ((w || isa<AllocaInst>(alloc->first)) &&
+        seen.insert(alloc->first).second)
+      (stateSlots.count(alloc->first) ? slotStates : regions)
+          .push_back({alloc->first, alloc->second, 0});
+  }
+
+  // The loop is now the call.
+  auto replaceLoop = [&](Function *loop, ArrayRef<Value *> args) {
+    IRBuilder<> B(IP);
+    B.CreateCall(loop, args)->setDebugLoc(loc);
+    IP->eraseFromParent();
+    BranchInst::Create(E, P);
+    for (BasicBlock *BB : blocks)
+      BB->dropAllReferences();
+    for (BasicBlock *BB : blocks)
+      BB->eraseFromParent();
+  };
+
+  if (fixedPoint) {
+    // The step the adjoint iterations differentiate: the same iteration,
+    // but never leaving. At the converged state the loop's own test says to
+    // stop, and a loop tested in its header would then do nothing, whose
+    // derivative is the identity rather than that of an iteration.
+    ValueToValueMapTy TMap;
+    Function *turn = CloneFunction(step, TMap);
+    turn->setName(step->getName() + ".turn");
+    auto *tdone = cast<BasicBlock>(TMap[done]);
+    auto *tX = cast<BasicBlock>(TMap[VMap[X]]);
+    auto *br = dyn_cast<BranchInst>(tX->getTerminator());
+    if (!br || !br->isConditional()) {
+      turn->eraseFromParent();
+      step->eraseFromParent();
+      return fail("a fixed-point loop must leave by a conditional branch");
+    }
+    BasicBlock *stay = br->getSuccessor(0) == tdone ? br->getSuccessor(1)
+                                                    : br->getSuccessor(0);
+    BranchInst::Create(stay, br);
+    br->eraseFromParent();
+    removeUnreachableBlocks(*turn);
+    step->setMetadata("enzyme_fixed_point_turn",
+                      MDTuple::get(Ctx, {ConstantAsMetadata::get(turn)}));
+
+    IRBuilder<> B(IP);
+    Type *F64 = Type::getDoubleTy(Ctx);
+    Value *reduction = B.CreateFPCast(fpArgs[0], F64);
+    reduction =
+        B.CreateSelect(B.CreateFCmpOLT(reduction, ConstantFP::get(F64, 0.0)),
+                       ConstantFP::get(F64, 1e-12), reduction);
+    Value *maxIters = B.CreateSExtOrTrunc(fpArgs[1], I64);
+    maxIters =
+        B.CreateSelect(B.CreateICmpSLT(maxIters, ConstantInt::get(I64, 0)),
+                       ConstantInt::get(I64, 1000), maxIters);
+    Value *control = B.CreatePointerBitCastOrAddrSpaceCast(fpArgs[2], Ptr);
+    SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), maxIters, control,
+                                    reduction};
+    SmallVector<Type *, 4> regionTypes;
+    for (unsigned a = 3; a < fpArgs.size(); a += 2) {
+      regionTypes.push_back(fpArgs[a]->getType());
+      args.push_back(fpArgs[a]);
+      args.push_back(B.CreateSExtOrTrunc(fpArgs[a + 1], I64));
+    }
+    for (auto &[ptr, bytes, space] : slotStates) {
+      regionTypes.push_back(ptr->getType());
+      args.push_back(ptr);
+      args.push_back(bytes);
+    }
+    unsigned nstates = regionTypes.size();
+    for (auto &[ptr, bytes, space] : regions) {
+      regionTypes.push_back(ptr->getType());
+      args.push_back(ptr);
+      args.push_back(bytes);
+    }
+    for (Value *V : liveins)
+      args.push_back(V);
+    Function *loop = createLoopFunction(M, step, {I64, I64, Ptr, F64},
+                                        regionTypes, "fixedpoint", nstates);
+    // The state is floating point, as the iterations measure it. Say of
+    // what type, which the code around the loop may not show once the
+    // loop's accesses are in the step (a memset of the state before it).
+    for (unsigned a = 3, k = 0; a < fpArgs.size(); a += 2, k++) {
+      Value *base = getBaseObject(fpArgs[a]);
+      if (!isa<GlobalVariable>(base)) {
+        Value *mapped = VMap.lookup(fpArgs[a]);
+        if (!mapped)
+          continue;
+        base = getBaseObject(mapped);
+      }
+      Type *T = getUniformFPAccess(step, base);
+      if (!T)
+        continue;
+      TypeTree TT =
+          TypeTree(ConcreteType(T)).Only(-1, nullptr).Only(-1, nullptr);
+      TT.insert({-1}, BaseType::Pointer);
+      loop->addParamAttr(LoopFixedParams + 2 * k,
+                         Attribute::get(Ctx, "enzyme_type", TT.str()));
+    }
+    replaceLoop(loop, args);
+    return true;
+  }
+
+  // The scheme: the reference one of enzyme/checkpoint.h if it is here, or
+  // __enzyme_checkpoint_builtin(mode) from the runtime.
+  IRBuilder<> B(IP);
+  // (In C++ the header's tables have internal names, mangled.)
+  StringRef table = mode == 2 ? "EnzymeCkptRevolve" : "EnzymeCkptPeriodic";
+  Value *vt = nullptr;
+  for (GlobalVariable &G : M.globals())
+    if (G.getName() == table ||
+        (G.hasLocalLinkage() && G.getName().starts_with("_ZL") &&
+         G.getName().ends_with(table)))
+      vt = &G;
+  if (!vt) {
+    FunctionCallee builtin = M.getOrInsertFunction(
+        "__enzyme_checkpoint_builtin", FunctionType::get(Ptr, {I64}, false));
+    // The scheme carries no derivative, wherever it is defined, and the call
+    // only returns the address of a constant table.
+    if (auto *F = dyn_cast<Function>(builtin.getCallee())) {
+      F->addFnAttr(Attribute::get(Ctx, "enzyme_inactive"));
+      F->addFnAttr(Attribute::get(Ctx, "enzyme_no_escaping_allocation"));
+      F->setDoesNotAccessMemory();
+      F->setDoesNotThrow();
+      F->setWillReturn();
+    }
+    auto *call = B.CreateCall(builtin, {ConstantInt::get(I64, mode)});
+    call->addFnAttr(Attribute::get(Ctx, "enzyme_inactive"));
+    call->setDoesNotAccessMemory();
+    call->setMetadata("enzyme_inactive", MDNode::get(Ctx, {}));
+    vt = call;
+  }
+  // EnzymeCkptConfig: the budget, by default the square root of the number
+  // of steps, as Enzyme-MLIR's periodic default.
+  auto *CfgTy = StructType::get(Ctx, {I64, I32, Ptr, I64, Ptr});
+  IRBuilder<> EB(&*allocaIP);
+  auto *cfg = EB.CreateAlloca(CfgTy, nullptr, "ckpt.config");
+  Value *budget;
+  if (count)
+    budget = ConstantInt::get(I64, *count);
+  else {
+    Value *root = B.CreateFPToUI(
+        B.CreateUnaryIntrinsic(Intrinsic::sqrt,
+                               B.CreateUIToFP(nsteps, B.getDoubleTy())),
+        I64);
+    budget = B.CreateSelect(B.CreateICmpULT(root, ConstantInt::get(I64, 1)),
+                            ConstantInt::get(I64, 1), root);
+  }
+  B.CreateStore(budget, B.CreateStructGEP(CfgTy, cfg, 0));
+  B.CreateStore(ConstantInt::get(I32, EnzymeCheckpointLoopVerbose),
+                B.CreateStructGEP(CfgTy, cfg, 1));
+  B.CreateStore(ConstantPointerNull::get(Ptr),
+                B.CreateStructGEP(CfgTy, cfg, 2));
+  B.CreateStore(ConstantInt::get(I64, 0), B.CreateStructGEP(CfgTy, cfg, 3));
+  B.CreateStore(ConstantPointerNull::get(Ptr),
+                B.CreateStructGEP(CfgTy, cfg, 4));
+
+  SmallVector<Type *, 4> regionTypes;
+  SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), nsteps, vt, cfg};
+  std::string spaces;
+  bool device = false;
+  for (auto &[ptr, bytes, space] : regions) {
+    regionTypes.push_back(ptr->getType());
+    args.push_back(ptr);
+    args.push_back(bytes);
+    spaces += (spaces.empty() ? "" : ",") + std::to_string(space);
+    device |= space != 0;
+  }
+  for (Value *V : liveins)
+    args.push_back(V);
+  Function *loop = createLoopFunction(
+      M, step, {I64, I64, vt->getType(), cfg->getType()}, regionTypes, "for");
+  if (device)
+    loop->addFnAttr(CheckpointRegionSpacesAttr, spaces);
+  replaceLoop(loop, args);
+  return true;
+}
+
+static bool outlineAnnotatedLoops(Module &M) {
+  bool changed = false;
+  while (true) {
+    CallInst *marker = nullptr;
+    for (Function &F : M) {
+      for (Instruction &I : instructions(F))
+        if (auto *CI = dyn_cast<CallInst>(&I))
+          if (isLoopAnnotation(getFunctionFromCall(CI))) {
+            marker = CI;
+            break;
+          }
+      if (marker)
+        break;
+    }
+    if (!marker)
+      return changed;
+    // A failure is reported, and the annotation is gone either way.
+    outlineAnnotatedLoop(marker);
+    changed = true;
+  }
+}
+
+bool protectAnnotatedLoops(Module &M) {
+  bool changed = false;
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    SmallVector<CallInst *, 2> markers;
+    for (Instruction &I : instructions(F))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (isLoopAnnotation(getFunctionFromCall(CI)))
+          markers.push_back(CI);
+    if (markers.empty())
+      continue;
+    // A loop of a known, small trip count would be fully unrolled, leaving
+    // its annotation copied outside any loop.
+    DominatorTree DT(F);
+    LoopInfo LI(DT);
+    for (CallInst *CI : markers)
+      if (Loop *L = LI.getLoopFor(CI->getParent()))
+        if (!findStringMetadataForLoop(L, "llvm.loop.unroll.disable")) {
+          addStringMetadataToLoop(L, "llvm.loop.unroll.disable", 1);
+          changed = true;
+        }
+  }
+  return changed;
+}
+
 bool lowerCheckpointMarkers(Module &M) {
+  bool annotated = outlineAnnotatedLoops(M);
+  // The size hints have been read; they have no run-time effect.
+  for (Function &F : M)
+    for (Instruction &I : make_early_inc_range(instructions(F)))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (isPtrSizeHint(getFunctionFromCall(CI))) {
+          CI->eraseFromParent();
+          annotated = true;
+        }
   SmallVector<std::pair<CallInst *, int>, 4> calls;
   for (Function &F : M)
     for (Instruction &I : instructions(F))
@@ -561,7 +1374,7 @@ bool lowerCheckpointMarkers(Module &M) {
         else if (callee->getName().contains("__enzyme_fixed_point"))
           calls.push_back({CI, 2});
       }
-  bool changed = false;
+  bool changed = annotated;
   for (auto [CI, kind] : calls)
     changed |= kind == 2 ? lowerFixedPointMarker(CI) : lowerMarker(CI, kind);
   return changed;
@@ -1602,6 +2415,15 @@ static Function *getOrCreateFixedPointIteration(Module &M, FixedPointTypes &T,
 // The step's derivatives and the trampolines
 //===----------------------------------------------------------------------===//
 
+/// What a turn differentiates: the step, or for an outlined fixed-point loop
+/// the step that never leaves.
+static Function *getTurnStep(Function *step) {
+  if (auto *MD = step->getMetadata("enzyme_fixed_point_turn"))
+    return cast<Function>(
+        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue());
+  return step;
+}
+
 namespace {
 struct StepInfo {
   Function *loop;
@@ -1616,9 +2438,13 @@ struct StepInfo {
   std::string suffix;
   unsigned width = 1;
 
+  /// What a turn differentiates (see getTurnStep).
+  Function *turnStep;
+
   StepInfo(Function *loop)
       : loop(loop), step(getStep(loop)), firstArg(getFirstStepArg(loop)),
-        stepTypeInfo(step), env(nullptr) {}
+        stepTypeInfo(getTurnStep(step)), env(nullptr),
+        turnStep(getTurnStep(step)) {}
 };
 } // namespace
 
@@ -1665,7 +2491,7 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
   S.env = StructType::get(Ctx, envTys);
 
   unsigned p = 0;
-  for (auto &a : S.step->args()) {
+  for (auto &a : S.turnStep->args()) {
     TypeTree dt;
     if (p == 0) {
       dt = TypeTree(BaseType::Integer).Only(-1, nullptr);
@@ -1680,6 +2506,12 @@ static bool getStepInfo(StepInfo &S, ArrayRef<DIFFE_TYPE> constant_args,
         dt = TypeTree(BaseType::Integer).Only(-1, nullptr);
       else if (a.getType()->isPointerTy())
         dt = TypeTree(BaseType::Pointer).Only(-1, nullptr);
+      // What the outliner knows of a stack slot the loop carries.
+      if (S.turnStep->getAttributes().hasParamAttr(p, "enzyme_type"))
+        dt |= TypeTree::parse(S.turnStep->getAttributes()
+                                  .getParamAttr(p, "enzyme_type")
+                                  .getValueAsString(),
+                              Ctx);
     }
     S.stepTypeInfo.Arguments.insert(std::make_pair(&a, dt));
     S.stepTypeInfo.KnownValues.insert(std::make_pair(&a, std::set<int64_t>()));
@@ -1697,7 +2529,7 @@ static Function *getStepGradient(EnzymeLogic &Logic, RequestContext context,
   std::vector<bool> overwritten(S.step->arg_size(), false);
   return Logic.CreatePrimalAndGradient(
       context,
-      (ReverseCacheKey){.todiff = S.step,
+      (ReverseCacheKey){.todiff = S.turnStep,
                         .retType = DIFFE_TYPE::CONSTANT,
                         .constant_args = S.stepActivity,
                         .subsequent_calls_may_write = false,
@@ -1767,7 +2599,7 @@ getStepAugmented(EnzymeLogic &Logic, RequestContext context, StepInfo &S,
   std::vector<bool> overwritten(S.step->arg_size(), true);
   std::vector<bool> nowrite(S.step->arg_size(), false);
   return &Logic.CreateAugmentedPrimal(
-      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      context, S.turnStep, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
       /*returnUsed*/ false, /*shadowReturnUsed*/ false, S.stepTypeInfo,
       /*subsequent_calls_may_write*/ true, overwritten, nowrite,
       /*forceAnonymousTape*/ false, runtimeActivity, strongZero, S.width,
@@ -1794,7 +2626,7 @@ static Function *getStepReverse(EnzymeLogic &Logic, RequestContext context,
   std::vector<bool> overwritten(S.step->arg_size(), true);
   return Logic.CreatePrimalAndGradient(
       context,
-      (ReverseCacheKey){.todiff = S.step,
+      (ReverseCacheKey){.todiff = S.turnStep,
                         .retType = DIFFE_TYPE::CONSTANT,
                         .constant_args = S.stepActivity,
                         .subsequent_calls_may_write = true,
@@ -1966,10 +2798,24 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
                    DL.getTypeAllocSize(tableTy));
     bytes = ConstantInt::get(T.I64, globalBytes);
   }
+  // The memory space of a marked region is its pointer's, unless the loop
+  // says otherwise (a device buffer behind a plain host pointer, from
+  // __enzyme_ptr_size_hint).
+  SmallVector<unsigned, 4> spaces;
+  if (loop->hasFnAttribute(CheckpointRegionSpacesAttr)) {
+    SmallVector<StringRef, 4> parts;
+    loop->getFnAttribute(CheckpointRegionSpacesAttr)
+        .getValueAsString()
+        .split(parts, ',');
+    for (StringRef part : parts)
+      spaces.push_back(std::stoul(part.str()));
+  }
   for (unsigned r = 0; r < nmarked; r++) {
     Value *ptr = primals[LoopFixedParams + 2 * r];
     Value *size = primals[LoopFixedParams + 2 * r + 1];
-    unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+    unsigned AS = r < spaces.size()
+                      ? spaces[r]
+                      : cast<PointerType>(ptr->getType())->getAddressSpace();
     Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
     B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
                   B.CreateStructGEP(T.Region, slot, 0));
@@ -2220,7 +3066,7 @@ Function *createCheckpointForward(EnzymeLogic &Logic, RequestContext context,
   }
   // The tangent of one step, at the converged state.
   Function *tan = Logic.CreateForwardDiff(
-      context, S.step, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
+      context, S.turnStep, DIFFE_TYPE::CONSTANT, S.stepActivity, TA,
       /*returnUsed*/ false, DerivativeMode::ForwardMode, /*freeMemory*/ true,
       runtimeActivity, strongZero, width, /*additionalArg*/ nullptr,
       S.stepTypeInfo, /*subsequent_calls_may_write*/ false,

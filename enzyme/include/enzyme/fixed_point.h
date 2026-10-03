@@ -53,6 +53,20 @@
  * phi_z = 0 at its fixed point, takes two passes. The primal state after it is
  * the one the loop ended in.
  *
+ * Instead of a step function, a loop may be marked from inside, as a Fortran
+ * !DIR$ ENZYME FIXED_POINT directive lowers to:
+ *
+ *     while (...) {
+ *       __enzyme_set_fixed_point(reduction, max_iters, control,
+ *                                state, bytes, ...);
+ *       ...
+ *     }
+ *
+ * (a negative reduction or max_iters, or a null control, for the defaults;
+ * all of them computed before the loop). Enzyme outlines one iteration as
+ * the step. The loop needs a single latch and a single exit, from its header
+ * or its latch; the adjoint iterations run its body even where the loop's
+ * own test would stop it, as it does at the converged state.
  * Fortran passes every argument by reference, which the markers accept.
  */
 #ifndef ENZYME_FIXED_POINT_H
@@ -71,6 +85,8 @@ extern int enzyme_fp_control;
 extern int enzyme_checkpoint_region;
 
 void __enzyme_fixed_point(void *step, ...);
+void __enzyme_set_fixed_point(double reduction, int64_t max_iters,
+                              void *control, ...);
 
 #ifdef __cplusplus
 }
