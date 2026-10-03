@@ -1,4 +1,4 @@
-// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math --cse %s | FileCheck %s
 
 func.func @both(%x: f64) -> f64 {
   %s, %c = math.sincos %x : f64
@@ -17,9 +17,8 @@ func.func @dboth(%x: f64, %dr: f64) -> f64 {
 
 // x̄ = dr·cos(x) − dr·sin(x)
 // CHECK-LABEL: func.func private @diffeboth(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %[[COS:.+]] = math.cos %arg0 fastmath<fast> : f64
+// CHECK-NEXT:    %[[SIN:.+]], %[[COS:.+]] = math.sincos %arg0 fastmath<fast> : f64
 // CHECK-NEXT:    %[[A:.+]] = arith.mulf %arg1, %[[COS]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[SIN:.+]] = math.sin %arg0 fastmath<fast> : f64
 // CHECK-NEXT:    %[[B:.+]] = arith.mulf %arg1, %[[SIN]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[R:.+]] = arith.subf %[[A]], %[[B]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[R]] : f64
