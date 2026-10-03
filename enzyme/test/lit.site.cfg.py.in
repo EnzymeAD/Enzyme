@@ -157,6 +157,27 @@ config.substitutions.append(('%flangEnzymePlugin',
 if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
     config.available_features.add('flangenzyme')
 
+# Built by ENZYME_FLANG_DIRECTIVES=ON: the flang -load plugin for the
+# !DIR$ ENZYME directives (and Fortran type annotations for LLVM Enzyme).
+flang_directives_plugin = ('@ENZYME_BINARY_DIR@/Enzyme/FlangDirectives/FlangEnzymeDirectives-'
+                           + config.llvm_ver + config.llvm_shlib_ext)
+config.substitutions.append(('%flangDirectives',
+                             ' -Xflang -load -Xflang ' + flang_directives_plugin))
+# (not %fc...: lit substitutes %fc first, as a prefix)
+config.substitutions.append(('%flangFc1Directives', ' -load ' + flang_directives_plugin))
+# Full LTO with Enzyme in the link (lld), the route of large Fortran codes
+# whose directives and rules span translation units. lld parses -mllvm options
+# before it loads plugins, hence the plugin twice.
+lld_enzyme_plugin = ('@ENZYME_BINARY_DIR@/Enzyme/LLDEnzyme-'
+                     + config.llvm_ver + config.llvm_shlib_ext)
+config.substitutions.append(('%lldEnzyme',
+                             ' -flto=full -fuse-ld=lld -Wl,--load-pass-plugin='
+                             + lld_enzyme_plugin + ' -Wl,-mllvm=-load='
+                             + lld_enzyme_plugin))
+if ("@ENZYME_FLANG_DIRECTIVES_ENABLED@" == "1"
+        and os.path.basename(config.fc).startswith("flang")):
+    config.available_features.add('flang_directives')
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:

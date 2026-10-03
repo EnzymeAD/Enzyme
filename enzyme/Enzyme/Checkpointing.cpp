@@ -1136,7 +1136,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     IRBuilder<> B(IP);
     B.CreateCall(loop, args)->setDebugLoc(loc);
     IP->eraseFromParent();
-    BranchInst::Create(E, P);
+    createUnconditionalBranch(E, P);
     for (BasicBlock *BB : blocks)
       BB->dropAllReferences();
     for (BasicBlock *BB : blocks)
@@ -1153,15 +1153,19 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     turn->setName(step->getName() + ".turn");
     auto *tdone = cast<BasicBlock>(TMap[done]);
     auto *tX = cast<BasicBlock>(TMap[VMap[X]]);
-    auto *br = dyn_cast<BranchInst>(tX->getTerminator());
-    if (!br || !br->isConditional()) {
+    Instruction *br = tX->getTerminator();
+    if (!isConditionalBranch(br)) {
       turn->eraseFromParent();
       step->eraseFromParent();
       return fail("a fixed-point loop must leave by a conditional branch");
     }
     BasicBlock *stay = br->getSuccessor(0) == tdone ? br->getSuccessor(1)
                                                     : br->getSuccessor(0);
-    BranchInst::Create(stay, br);
+#if LLVM_VERSION_MAJOR >= 19
+    createUnconditionalBranch(stay, br->getIterator());
+#else
+    createUnconditionalBranch(stay, br);
+#endif
     br->eraseFromParent();
     removeUnreachableBlocks(*turn);
     step->setMetadata("enzyme_fixed_point_turn",

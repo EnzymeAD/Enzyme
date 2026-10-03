@@ -4,6 +4,12 @@ else()
   set(ENZYME_FLANG_ENABLED 0)
 endif()
 
+if(ENZYME_FLANG_DIRECTIVES)
+  set(ENZYME_FLANG_DIRECTIVES_ENABLED 1)
+else()
+  set(ENZYME_FLANG_DIRECTIVES_ENABLED 0)
+endif()
+
 # Locate an MPI implementation for the Fortran MPI regression tests
 # (enzyme/test/Fortran/mpi); the tests are marked unsupported if none is
 # found. The include and link flags are serialized into lit substitutions

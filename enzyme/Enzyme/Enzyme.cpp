@@ -3122,7 +3122,7 @@ namespace {
 /// Keeps the loops marked for checkpointing or as fixed points whole until
 /// Enzyme outlines them.
 class ProtectAnnotatedLoopsNewPM final
-    : public PassInfoMixin<ProtectAnnotatedLoopsNewPM> {
+    : public PassParent<ProtectAnnotatedLoopsNewPM> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     return protectAnnotatedLoops(M) ? PreservedAnalyses::none()
