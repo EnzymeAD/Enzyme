@@ -101,10 +101,6 @@ __device__ float  __nv_copysignf(float, float);
 __device__ double __nv_copysign(double, double);
 __device__ float  __nv_fmaf(float, float, float);
 __device__ double __nv_fma(double, double, double);
-__device__ float  __nv_fmaxf(float, float);
-__device__ double __nv_fmax(double, double);
-__device__ float  __nv_fminf(float, float);
-__device__ double __nv_fmin(double, double);
 __device__ float  __nv_fabsf(float);
 __device__ double __nv_fabs(double);
 __device__ float  __nv_ceilf(float);
@@ -301,8 +297,8 @@ K_LIBM_BIN(hypot,     float, __nv_hypotf,     1.0001f)
 K_LIBM_BIN(fmod,      float, __nv_fmodf,      1.0001f)
 K_LIBM_BIN(remainder, float, __nv_remainderf, 1.0001f)
 K_LIBM_BIN(fdim,      float, __nv_fdimf,      0.5f)
-K_LIBM_BIN(maxnum,    float, __nv_fmaxf,      1.0001f)
-K_LIBM_BIN(minnum,    float, __nv_fminf,      1.0001f)
+K_PTX_BIN(maxnum, float, "f", "max.f32", "0f3F800000")
+K_PTX_BIN(minnum, float, "f", "min.f32", "0f3F800000")
 K_LIBM_BIN(copysign,  float, __nv_copysignf, -1.0f)
 
 K_PTX_BIN(fadd, double, "d", "add.f64",     "0d3FF0000000000000")
@@ -352,8 +348,8 @@ K_LIBM_BIN(hypot,     double, __nv_hypot,     1.0001)
 K_LIBM_BIN(fmod,      double, __nv_fmod,      1.0001)
 K_LIBM_BIN(remainder, double, __nv_remainder, 1.0001)
 K_LIBM_BIN(fdim,      double, __nv_fdim,      0.5)
-K_LIBM_BIN(maxnum,    double, __nv_fmax,      1.0001)
-K_LIBM_BIN(minnum,    double, __nv_fmin,      1.0001)
+K_PTX_BIN(maxnum, double, "d", "max.f64", "0d3FF0000000000000")
+K_PTX_BIN(minnum, double, "d", "min.f64", "0d3FF0000000000000")
 K_LIBM_BIN(copysign,  double, __nv_copysign, -1.0)
 
 K_CVT(cvt_f32_f64, float, double, "f", "d", "cvt.f64.f32",    "cvt.rn.f32.f64")
