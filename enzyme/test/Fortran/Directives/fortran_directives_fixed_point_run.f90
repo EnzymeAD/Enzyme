@@ -46,13 +46,11 @@ contains
     end do
   end function loss
 
-  ! Not u = 0: at -O2 that is a memset of u in front of the loop, of which
-  ! Enzyme's type analysis cannot deduce the type once the loop is outlined.
   subroutine init(x)
     real(8), intent(in) :: x(m)
     integer :: k
     do k = 1, m
-      u(k) = 1d-3 * k
+      u(k) = 0
       p(k) = x(k)
     end do
   end subroutine init
