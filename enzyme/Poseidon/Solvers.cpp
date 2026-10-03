@@ -12,11 +12,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
 
 #include "CostModel.h"
 #include "Flags.h"
@@ -48,6 +51,29 @@ namespace poseidon {
 // Dispatch and raise prices are measured wall-clock ratios that repeat to about
 // 0.6% run to run, so a smaller modelled cost gap is a tie.
 static constexpr double kCostTieBandRel = 0.006;
+
+// Pricing is also where candidates are dropped, and a table hit skips pricing,
+// so the hit sees every candidate the table's positions were taken without; a
+// cached step names its candidate as well as its position.
+static std::string candidateKey(StringRef text) {
+  return utohexstr(xxh3_64bits(text));
+}
+
+template <typename CandT, typename TextFn>
+static std::optional<size_t> findCandidate(ArrayRef<CandT> cands, size_t hint,
+                                           StringRef key, TextFn text) {
+  if (hint < cands.size() && candidateKey(text(cands[hint])) == key)
+    return hint;
+  std::optional<size_t> found;
+  for (size_t i = 0; i < cands.size(); ++i) {
+    if (candidateKey(text(cands[i])) != key)
+      continue;
+    if (found)
+      return std::nullopt;
+    found = i;
+  }
+  return found;
+}
 
 static json::Value jsonFloat(double v) {
   if (std::isfinite(v))
@@ -201,6 +227,12 @@ static bool resolveConflicts(const SmallVectorImpl<SolutionStep> &priorSteps,
                              CandidateOutput *cand,
                              SmallVector<SolutionStep> &reduced,
                              InstructionCost &base, double &baseAcc) {
+  // The binary64 and binary32 searches of one output are separate items, but
+  // only one rewrite of that output can be materialized.
+  for (const auto &step : priorSteps)
+    if (auto *const *co = std::get_if<CandidateOutput *>(&step.item))
+      if (cand && (*co)->oldOutput == cand->oldOutput)
+        return false;
   return resolveElementwiseConflicts(
       priorSteps, cand,
       cand && cand->subgraph ? &cand->subgraph->operations : nullptr, reduced,
@@ -330,6 +362,15 @@ openDPCacheEntry(StringRef cacheFilePath, StringRef fnName,
                    << " was solved against a different cost model ("
                    << (got ? got->str() : std::string("<unstamped>"))
                    << " != " << want << "); ignoring it and re-solving.\n";
+    root.reset();
+    return nullptr;
+  }
+
+  if (!jsonObj->getBoolean("candidateKeys").value_or(false)) {
+    if (!quiet)
+      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
+                   << " predates candidate-keyed steps; ignoring it and "
+                      "re-solving.\n";
     root.reset();
     return nullptr;
   }
@@ -482,37 +523,38 @@ static bool loadDPCache(
         StringRef itemType = stepObj->getString("itemType").value();
         size_t candidateIndex = stepObj->getInteger("candidateIndex").value();
         size_t itemIndex = stepObj->getInteger("itemIndex").value();
+        StringRef key = stepObj->getString("candidateKey").value_or("");
 
-        // The table is keyed by function name, not by candidate set: the same
-        // body can decompose into a different number of units in another
-        // translation unit, so out-of-range indices mean a stale table, which
-        // must trigger a re-solve rather than an abort.
+        // Pricing was skipped for this compile, so a table that does not
+        // match its candidates cannot be re-solved here.
         auto staleCache = [&](const char *what) -> bool {
-          llvm::errs() << "[poseidon] DP cache for " << fnName << " is STALE ("
-                       << what << ": item " << itemIndex << ", candidate "
-                       << candidateIndex
-                       << " out of range for this compile, which has "
-                       << COs.size() << " CO / " << CSs.size() << " CS / "
-                       << CMs.size()
-                       << " CM). Discarding the cached table and re-solving.\n";
-          costToAccuracyMap.clear();
-          costToSolutionMap.clear();
-          return false;
+          report_fatal_error(
+              Twine("Poseidon: the DP cache ") + cacheFilePath + " for " +
+              fnName + " does not match this compile (" + what + ": item " +
+              Twine(itemIndex) + ", candidate " + Twine(candidateIndex) + "; " +
+              Twine(COs.size()) + " CO / " + Twine(CSs.size()) + " CS / " +
+              Twine(CMs.size()) +
+              " CM). Delete that table.json (keep the Herbie outputs) and "
+              "recompile.");
         };
-        // The candidate index is as compile-specific as the item count (Herbie
-        // alternatives, strict-mode filtering), so both axes are checked.
         if (itemType == "CO") {
           if (itemIndex >= COs.size())
             return staleCache("CandidateOutput");
-          if (candidateIndex >= COs[itemIndex].candidates.size())
+          auto idx = findCandidate(
+              ArrayRef(COs[itemIndex].candidates), candidateIndex, key,
+              [](const RewriteCandidate &c) -> StringRef { return c.expr; });
+          if (!idx)
             return staleCache("CandidateOutput candidate");
-          solutionSteps.emplace_back(&COs[itemIndex], candidateIndex);
+          solutionSteps.emplace_back(&COs[itemIndex], *idx);
         } else if (itemType == "CS") {
           if (itemIndex >= CSs.size())
             return staleCache("CandidateSubgraph");
-          if (candidateIndex >= CSs[itemIndex].candidates.size())
+          auto idx = findCandidate(
+              ArrayRef(CSs[itemIndex].candidates), candidateIndex, key,
+              [](const PTCandidate &c) -> StringRef { return c.desc; });
+          if (!idx)
             return staleCache("CandidateSubgraph candidate");
-          solutionSteps.emplace_back(&CSs[itemIndex], candidateIndex);
+          solutionSteps.emplace_back(&CSs[itemIndex], *idx);
         } else if (itemType == "CM") {
           if (itemIndex >= CMs.size())
             return staleCache("CandidateMatmul");
@@ -589,9 +631,13 @@ writeDPCache(StringRef cacheFilePath, StringRef fnName,
             if constexpr (std::is_same_v<T, CandidateOutput>) {
               stepObj["itemType"] = "CO";
               stepObj["itemIndex"] = static_cast<int64_t>(coPtrToIndex[item]);
+              stepObj["candidateKey"] =
+                  candidateKey(item->candidates[step.candidateIndex].expr);
             } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
               stepObj["itemType"] = "CS";
               stepObj["itemIndex"] = static_cast<int64_t>(csPtrToIndex[item]);
+              stepObj["candidateKey"] =
+                  candidateKey(item->candidates[step.candidateIndex].desc);
             } else if constexpr (std::is_same_v<T, CandidateMatmul>) {
               stepObj["itemType"] = "CM";
               stepObj["itemIndex"] = static_cast<int64_t>(cmPtrToIndex[item]);
@@ -619,7 +665,8 @@ writeDPCache(StringRef cacheFilePath, StringRef fnName,
         if (json::Object *priorObj = prior->getAsObject()) {
           std::optional<StringRef> fp =
               priorObj->getString("costModelFingerprint");
-          if (fp && fp->str() == wantFP)
+          if (fp && fp->str() == wantFP &&
+              priorObj->getBoolean("candidateKeys").value_or(false))
             if (json::Object *priorFuncs = priorObj->getObject("functions"))
               functions = *priorFuncs;
         }
@@ -634,6 +681,7 @@ writeDPCache(StringRef cacheFilePath, StringRef fnName,
   // The table is a function of every price the model supplied; without the
   // stamp a re-solve after a cost-model change would replay the previous picks.
   jsonObj["costModelFingerprint"] = wantFP;
+  jsonObj["candidateKeys"] = true;
   jsonObj["functions"] = std::move(functions);
 
   std::error_code EC;
@@ -1779,6 +1827,9 @@ bool applySolution(
   llvm::errs() << "\n!!! Applying solution (" << steps.size()
                << " step(s)) "
                   "... !!!\n";
+  // The binary64 and binary32 searches of one output are separate items, and
+  // the first rewrite erases the output the second would replace.
+  SmallPtrSet<Value *, 8> rewrittenOutputs;
   for (const auto &step : steps) {
     std::visit(
         [&](auto *item) {
@@ -1787,6 +1838,11 @@ bool applySolution(
             llvm::errs() << "Applying solution for " << item->expr << " --("
                          << step.candidateIndex << ")-> "
                          << item->candidates[step.candidateIndex].expr << "\n";
+            if (!rewrittenOutputs.insert(item->oldOutput).second) {
+              llvm::errs() << "[poseidon] output already rewritten by an "
+                              "earlier step; skipping this one\n";
+              return;
+            }
             item->apply(step.candidateIndex, valueToNodeMap, symbolToValueMap);
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
             llvm::errs() << "Applying solution for CS: "
