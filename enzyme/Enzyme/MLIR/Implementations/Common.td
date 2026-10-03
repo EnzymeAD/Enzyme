@@ -196,6 +196,8 @@ def ComplexIm : ComplexInst<"ImOp">;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
+def CoshF : MathInst<"CoshOp">;
+def SinhF : MathInst<"SinhOp">;
 def ExpF : MathInst<"ExpOp">;
 def Exp2F : MathInst<"Exp2Op">;
 def SqrtF : MathInst<"SqrtOp">;
@@ -205,5 +207,7 @@ def LogF : MathInst<"LogOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def RsqrtF : MathInst<"RsqrtOp">;
+def CbrtF : MathInst<"CbrtOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
