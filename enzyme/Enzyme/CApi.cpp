@@ -954,6 +954,21 @@ const char *EnzymeTypeAnalyzerToString(void *src) {
   return cstr;
 }
 
+// As EnzymeTypeAnalyzerToString, but keeps at most limit bytes (0 = all).
+const char *EnzymeTypeAnalyzerToStringBounded(void *src, size_t limit) {
+  auto TA = (TypeAnalyzer *)src;
+  std::string str;
+  {
+    BoundedStringOStream ss(str, limit);
+    TA->dump(ss);
+    if (ss.truncated())
+      str += "\n... [truncated]\n";
+  }
+  char *cstr = new char[str.length() + 1];
+  std::strcpy(cstr, str.c_str());
+  return cstr;
+}
+
 EnzymeLogicRef EnzymeTypeAnalyzerGetLogic(void *src) {
   auto TA = (TypeAnalyzer *)src;
   return (EnzymeLogicRef)&TA->interprocedural.Logic;

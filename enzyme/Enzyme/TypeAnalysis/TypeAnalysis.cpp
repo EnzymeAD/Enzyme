@@ -6690,8 +6690,12 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
+    // The function and the type analysis can be huge (GBs for large
+    // functions) and this error is recoverable, i.e. it may be emitted for
+    // many values. Name the function only; EmitNoTypeError appends the
+    // (bounded) function and type analysis if there is no custom handler,
+    // which otherwise gets the analyzer to inspect as it sees fit.
+    ss << "fn: " << analyzer->fntypeinfo.Function->getName() << "\n";
 
     EmitNoTypeError(str, *I, nullptr, *BuilderIfShouldErr);
   }
@@ -6753,8 +6757,12 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
+    // The function and the type analysis can be huge (GBs for large
+    // functions) and this error is recoverable, i.e. it may be emitted for
+    // many values. Name the function only; EmitNoTypeError appends the
+    // (bounded) function and type analysis if there is no custom handler,
+    // which otherwise gets the analyzer to inspect as it sees fit.
+    ss << "fn: " << analyzer->fntypeinfo.Function->getName() << "\n";
 
     EmitNoTypeError(str, *I, gutils, *BuilderIfShouldErr);
   }
