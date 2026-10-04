@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; A loop counting down while a signed `i >= m` holds. The bound %m may be
 ; negative, so the trip count is only known when the comparison is treated
