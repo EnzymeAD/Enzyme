@@ -12,7 +12,7 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double %x) #0 {
 entry:
-  %call = call fast double @__enzyme_autodiff(i8* bitcast (double (double)* @f to i8*), double %x)
+  %call = call fast noinline double @__enzyme_autodiff(i8* bitcast (double (double)* @f to i8*), double %x)
   ret double %call
 }
 
@@ -24,3 +24,7 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret { double } zeroinitializer
 ; CHECK-NEXT: }
+; CHECK-LABEL: define dso_local double @dsumsquare(double %x)
+; CHECK: %[[call:.+]] = call fast noinline { double } @diffef(double %x, double 1.000000e+00)
+; CHECK-NEXT: %[[ret:.+]] = extractvalue { double } %[[call]], 0
+; CHECK-NEXT: ret double %[[ret]]
