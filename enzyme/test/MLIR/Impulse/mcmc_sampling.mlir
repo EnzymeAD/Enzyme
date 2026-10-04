@@ -5,7 +5,7 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
@@ -14,8 +14,8 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-        name = "sampling_basic", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
+        name = "sampling_basic", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
@@ -25,8 +25,8 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-        name = "sampling_thinning", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10, thinning = 2 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
+        name = "sampling_thinning", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10, thinning = 2 }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<5x1xf64>, tensor<5x2xi1>, tensor<5xf64>, tensor<2xui64>
   }
@@ -36,8 +36,8 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
-        name = "sampling_with_warmup", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 5, num_samples = 10 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
+        name = "sampling_with_warmup", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 5, num_samples = 10 }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
@@ -65,7 +65,7 @@ module {
 // CHECK: func.call @test.generate
 // CHECK: arith.negf
 // CHECK: enzyme.yield
-// CHECK: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
+// CHECK: } <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]>
 //
 // --- Sampling loop: for i in 0..10 ---
 // CHECK: %[[SLOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>)
@@ -74,10 +74,10 @@ module {
 // CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<10x1xf64>, %{{.+}}: tensor<10x2xi1>, %{{.+}}: tensor<10xf64>):
 //
 // --- Momentum sampling ---
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK: impulse.random {{.*}} <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Kinetic energy ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 //
 // --- NUTS tree building ---
 // CHECK: impulse.while
@@ -151,7 +151,7 @@ module {
 //
 // --- Momentum with adapted mass matrix ---
 // CHECK: impulse.dot {{.*}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 //
 // CHECK: return {{.*}} : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
 // CHECK: }

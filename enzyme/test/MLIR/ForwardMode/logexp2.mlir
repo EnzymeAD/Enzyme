@@ -7,10 +7,10 @@ module {
   }
 
   func.func @dlog2(%x: f64, %dx: f64) -> f64 {
-    %dy = enzyme.fwddiff @log2(%x, %dx) {
+    %dy = enzyme.fwddiff @log2(%x, %dx) <{
       activity = [#enzyme.activity<enzyme_dup>],
       ret_activity = [#enzyme.activity<enzyme_dupnoneed>]
-    } : (f64, f64) -> f64
+    }> : (f64, f64) -> f64
     return %dy : f64
   }
 
@@ -20,10 +20,10 @@ module {
   }
 
   func.func @dexp2(%x: f64, %dx: f64) -> f64 {
-    %dy = enzyme.fwddiff @exp2(%x, %dx) {
+    %dy = enzyme.fwddiff @exp2(%x, %dx) <{
       activity = [#enzyme.activity<enzyme_dup>],
       ret_activity = [#enzyme.activity<enzyme_dupnoneed>]
-    } : (f64, f64) -> f64
+    }> : (f64, f64) -> f64
     return %dy : f64
   }
 }

@@ -49,7 +49,7 @@ jobs:
       with:
         persist-credentials: false
         repository: 'llvm/llvm-project'
-        ref: 'e56c2cefc3e7978de4a2d799fa3abec77d75af21'
+        ref: '018a9e4a74ba5d383351bda907a8b116bc5d8c47'
         path: 'llvm-project'
 
     - name: Set BASE_DIR
