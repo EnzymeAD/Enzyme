@@ -281,6 +281,14 @@ def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
 }
 
+def PrintBaseObjectPass : Pass<"test-print-base-object"> {
+  let summary = "Print the base object of each function return operand";
+  let options = [
+    Option<"offsetAllowed", "offset-allowed", "bool", "true",
+           "Look through operations that can change the address">
+  ];
+}
+
 def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
   let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
 }

@@ -21,6 +21,7 @@ add_mlir_dialect_library(
   LowerLLVMExtPass.cpp
   PrintActivityAnalysis.cpp
   PrintAliasAnalysis.cpp
+  PrintBaseObject.cpp
   EnzymeToMemRef.cpp
   SimplifyMath.cpp
   SplitMultiResults.cpp
