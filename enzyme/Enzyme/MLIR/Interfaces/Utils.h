@@ -38,8 +38,9 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 
 // Walks a pointer-like value to the object it is derived from, looking
 // through view-like ops (memref.cast, memref.memory_space_cast, subviews),
-// llvm.getelementptr, llvm.bitcast, and llvm.addrspacecast.
-Value getBaseObject(Value v);
+// llvm.getelementptr, llvm.bitcast, and llvm.addrspacecast. If offsetAllowed is
+// false, only follow operations known to preserve the starting address.
+Value getBaseObject(Value v, bool offsetAllowed = true);
 
 // Checks if 2 values v1 and v2 may alias with each other locally
 bool mayAlias(Value v1, Value v2);
