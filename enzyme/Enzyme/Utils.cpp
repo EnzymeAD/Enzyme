@@ -1657,6 +1657,76 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   return;
 }
 
+void emitCuBLASPointerModeCheck(IRBuilder<> &B, Value *handle, Function *called,
+                                CallInst &orig) {
+  // cuBLAS reads alpha and beta, and writes the result of a reduction, through
+  // pointers whose memory depends on the pointer mode of the handle. The
+  // derivatives of a cuBLAS v2 call pass and receive those scalars in host
+  // memory, so they are only correct in CUBLAS_POINTER_MODE_HOST. A handle in
+  // CUBLAS_POINTER_MODE_DEVICE (which CUDA.jl sets on every handle, for one)
+  // would read them as device pointers.
+  Module &M = *B.GetInsertBlock()->getParent()->getParent();
+  LLVMContext &C = M.getContext();
+  Type *handleTy = handle->getType();
+  Type *i32 = Type::getInt32Ty(C);
+
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << "Enzyme: the derivative of " << called->getName()
+     << " is only supported for a cuBLAS handle in CUBLAS_POINTER_MODE_HOST, "
+        "but the handle is in another pointer mode\n";
+  emit_backtrace(&orig, ss);
+
+  // One check per call site, so that the error it raises can name the call.
+  static int count = 0;
+  std::string name =
+      "__enzyme_cublas_pointer_mode_check" + std::to_string(count++);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C), {handleTy}, false);
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *good = BasicBlock::Create(C, "good", F);
+  BasicBlock *bad = BasicBlock::Create(C, "bad", F);
+  Value *fhandle = F->getArg(0);
+  fhandle->setName("handle");
+
+  IRBuilder<> EB(entry);
+  // cublasStatus_t cublasGetPointerMode_v2(cublasHandle_t handle,
+  //                                        cublasPointerMode_t *mode)
+  // called as the original cuBLAS function is called, e.g. through the same
+  // library under the Julia calling convention.
+  auto getModeF = M.getOrInsertFunction(
+      getRenamedPerCallingConv(called->getName(), "cublasGetPointerMode_v2"),
+      FunctionType::get(i32, {handleTy, getUnqual(i32)}, false));
+  Value *mode = EB.CreateAlloca(i32, nullptr, "mode");
+  // Neither host nor device, should the query fail.
+  EB.CreateStore(ConstantInt::get(i32, -1), mode);
+  EB.CreateCall(getModeF, {fhandle, mode});
+  Value *isHost = EB.CreateICmpEQ(EB.CreateLoad(i32, mode, "mode"),
+                                  ConstantInt::get(i32, 0), "is.host");
+  EB.CreateCondBr(isHost, good, bad);
+
+  EB.SetInsertPoint(good);
+  EB.CreateRetVoid();
+
+  EB.SetInsertPoint(bad);
+  if (CustomErrorHandler) {
+    CustomErrorHandler(ss.str().c_str(), wrap(&orig), ErrorType::RuntimeError,
+                       nullptr, nullptr, wrap(&EB));
+  } else {
+    auto PutsF = M.getOrInsertFunction(
+        "puts", FunctionType::get(i32, {getInt8PtrTy(C)}, false));
+    EB.CreateCall(PutsF, getString(M, ss.str()));
+    auto ExitF = M.getOrInsertFunction(
+        "exit", FunctionType::get(Type::getVoidTy(C), {i32}, false));
+    EB.CreateCall(ExitF, ConstantInt::get(i32, 1));
+  }
+  EB.CreateUnreachable();
+
+  B.CreateCall(F, {handle});
+}
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
