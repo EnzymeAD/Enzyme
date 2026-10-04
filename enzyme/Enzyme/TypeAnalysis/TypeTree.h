@@ -834,13 +834,16 @@ public:
         return nullptr;
       }
     }
-    size_t chunk = dl.getTypeSizeInBits(flt) / 8;
+    // If offset 0 is Anything (and anythingIsFloat), flt is still null here;
+    // walk bytewise until a concrete float type is found.
+    size_t chunk = flt ? dl.getTypeSizeInBits(flt) / 8 : 1;
     for (size_t i = chunk; i < size; i += chunk) {
       auto mx = TypeTree::operator[]({(int)i});
       if (auto f2 = mx.isFloat()) {
         if (f2 != flt) {
           if (anythingIsFloat && !flt) {
             flt = f2;
+            chunk = dl.getTypeSizeInBits(flt) / 8;
             continue;
           }
           return nullptr;
