@@ -120,6 +120,34 @@ module's target-cpu, in `~/.cache/poseidon` and then in what the installation
 ships; zero or several matches abort naming the tool. `cost_models/README.md`
 describes the row families and what each calibration arm measures.
 
+## Compiler Explorer
+
+`tools/explorer/` puts Poseidon in Compiler Explorer. `poseidon-ce.sh` is the
+compiler it calls: it builds the program with profiling, runs it once, and
+compiles it again under `-poseidon-tau` (default 1e-6); every other
+`-poseidon-<flag>` reaches the pass. The `Dockerfile` builds a standalone
+explorer from the release tarball the `Poseidon Explorer` workflow publishes
+(`nightly-poseidon`), with C++ only, the example `examples/c++/` and plain
+clang next to Poseidon for comparison:
+
+```sh
+cd enzyme/Poseidon/tools/explorer
+docker compose up -d --build              # http://localhost:10240
+```
+
+`--build-arg POSEIDON_TARBALL=<url>` takes another tarball. To run a local
+build instead, lay it out with `package.sh <build> <cost-model.csv> <dir>` and
+mount it over the downloaded one; its LLVM must be one the image has a clang
+for (`LLVM_VERSION`, default 21):
+
+```sh
+docker run -d -p 10240:10240 -v <dir>:/opt/compiler-explorer/poseidon:ro poseidon-explorer
+```
+
+The explorer compiles for a
+generic x86-64 CPU with a cost model measured for one, so the CPU marker form
+`__poseidon_fp_optimize` is what it can show; GPU kernels need a local build.
+
 ## Artifacts
 
 The reproduction packages of the papers (`artifacts/cgo2027`, `artifacts/cgo2026`,

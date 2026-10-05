@@ -39,6 +39,7 @@ SECS="${POSEIDON_CE_PROFILE_SECONDS:-10}"
 
 args=() pass=() src="" out="" emit="" tau_given=0 verbose=0
 while [ $# -gt 0 ]; do
+  case "$1 ${2:-}" in -mllvm\ -poseidon-*) shift ;; esac
   case "$1" in
     -poseidon-tau=*) tau_given=1; pass+=(-mllvm "$1") ;;
     -poseidon-print|-poseidon-show-table) verbose=1; pass+=(-mllvm "$1") ;;
@@ -64,7 +65,7 @@ link=()
   -o "$work/profiled" 2>"$work/profile.err" || { cat "$work/profile.err" >&2; exit 1; }
 (cd "$work" && POSEIDON_PROFILE_DIR="$work/profile" timeout "$SECS" ./profiled </dev/null >"$work/profile.out" 2>&1) \
   || { echo "poseidon-ce: the profiling run failed or exceeded ${SECS}s" >&2; tail -20 "$work/profile.out" >&2; exit 1; }
-ls "$work"/profile/*.fpprofile >/dev/null 2>&1 || { echo "poseidon-ce: no site was profiled; mark one with POSEIDON_OPTIMIZE or __poseidon_fp_optimize" >&2; exit 1; }
+ls "$work"/profile/*.fpprofile >/dev/null 2>&1 || { cat "$work/profile.err" >&2; echo "poseidon-ce: no site was profiled; on the host a site is a call wrapped in __poseidon_fp_optimize (POSEIDON_OPTIMIZE marks GPU kernels)" >&2; exit 1; }
 
 "$CLANG" "${common[@]}" "${load[@]}" \
   -mllvm "-poseidon-profile-use=$work/profile" -mllvm "-poseidon-cost-model=$COST_MODEL" \
