@@ -1584,13 +1584,17 @@ static bool ReplaceOMPDynamicSchedules(Function &NewF,
     BasicBlock *H = Next->getParent();
 
     // Calls reached again from within the loop over chunks return 0.
+    // When __kmpc_dispatch_init is in the same block, every entry into it
+    // starts the loop anew (e.g. from the latch of a serial loop around the
+    // worksharing loop, which H dominates), so there is no such call.
     SmallVector<BasicBlock *, 2> Outside, Inside;
-    for (auto Pred : predecessors(H)) {
-      if (DT.dominates(H, Pred))
-        Inside.push_back(Pred);
-      else
-        Outside.push_back(Pred);
-    }
+    if (Init->getParent() != H)
+      for (auto Pred : predecessors(H)) {
+        if (DT.dominates(H, Pred))
+          Inside.push_back(Pred);
+        else
+          Outside.push_back(Pred);
+      }
 
     // __kmpc_dispatch_init(loc, gtid, schedule, lb, ub, st, chunk)
     // __kmpc_dispatch_next(loc, gtid, plastiter, plower, pupper, pstride)
