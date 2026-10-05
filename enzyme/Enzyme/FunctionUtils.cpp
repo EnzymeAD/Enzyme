@@ -2073,6 +2073,187 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
   }
 }
 
+// Whether the base object V is a Julia Memory object that did not exist
+// before this function: one allocated here by jl_alloc_genericmemory, or the
+// empty Memory singleton (a global Enzyme.jl marks enzymejl_empty_memory),
+// which no in-bounds access writes.
+static bool isFreshJuliaMemory(Value *V) {
+  if (auto CB = dyn_cast<CallBase>(V)) {
+    auto name = getFuncNameFromCall(CB);
+    return name == "jl_alloc_genericmemory" ||
+           name == "ijl_alloc_genericmemory" ||
+           name == "jl_alloc_genericmemory_unchecked" ||
+           name == "ijl_alloc_genericmemory_unchecked";
+  }
+  if (auto GV = dyn_cast<GlobalVariable>(V))
+    return GV->getMetadata("enzymejl_empty_memory") != nullptr;
+  return false;
+}
+
+static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
+                                          SmallPtrSetImpl<Value *> &seen);
+
+// Whether the data field, at offset 0, of Obj, an object allocated in its
+// function, only ever holds fresh data (see isFreshJuliaMemoryOrArrayData)
+// while the function runs. Every write to the field must store such data (or
+// null, through which nothing is written), and Obj's address must not be
+// stored or passed to a call that may capture or write through it, so that no
+// other code can write the field. Returning Obj is fine: the field may then
+// change only after the function returns.
+static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
+                                        TargetLibraryInfo &TLI,
+                                        SmallPtrSetImpl<Value *> &seen) {
+  auto &DL = Obj->getModule()->getDataLayout();
+  int64_t fieldSize = DL.getPointerSize();
+  // Pointers derived from Obj, with their offset from it if constant.
+  SmallVector<std::pair<Value *, std::optional<int64_t>>, 4> todo;
+  SmallPtrSet<Value *, 8> visited;
+  todo.emplace_back(Obj, 0);
+  while (!todo.empty()) {
+    auto [V, off] = todo.pop_back_val();
+    if (!visited.insert(V).second)
+      continue;
+    for (auto U : V->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        return false;
+      if (isa<LoadInst>(I) || isa<ICmpInst>(I) || isa<ReturnInst>(I))
+        continue;
+      if (auto CI = dyn_cast<CastInst>(I)) {
+        if (!CI->getDestTy()->isPointerTy())
+          return false;
+        todo.emplace_back(CI, off);
+        continue;
+      }
+      if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
+        if (GEP->getPointerOperand() != V)
+          return false;
+        std::optional<int64_t> gepOff;
+        APInt gepOffset(DL.getIndexSizeInBits(GEP->getPointerAddressSpace()),
+                        0);
+        if (off && GEP->accumulateConstantOffset(DL, gepOffset))
+          gepOff = *off + gepOffset.getSExtValue();
+        todo.emplace_back(GEP, gepOff);
+        continue;
+      }
+      if (isa<PHINode>(I) || isa<SelectInst>(I)) {
+        if (auto SI = dyn_cast<SelectInst>(I))
+          if (SI->getCondition() == V)
+            return false;
+        todo.emplace_back(I, off);
+        continue;
+      }
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        if (SI->getValueOperand() == V)
+          return false;
+        if (!off)
+          return false;
+        int64_t size = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+        if (*off + size <= 0 || *off >= fieldSize)
+          continue;
+        if (*off != 0 || size != fieldSize)
+          return false;
+        auto val = getBaseObject(SI->getValueOperand());
+        if (isa<ConstantPointerNull>(val) || isa<UndefValue>(val))
+          continue;
+        if (!isFreshJuliaMemoryOrArrayData(val, TLI, seen))
+          return false;
+        continue;
+      }
+      if (auto MI = dyn_cast<MemIntrinsic>(I)) {
+        if (MI->getRawDest() != V)
+          continue;
+        auto len = dyn_cast<ConstantInt>(MI->getLength());
+        if (!off || !len)
+          return false;
+        if (*off + (int64_t)len->getZExtValue() <= 0 || *off >= fieldSize)
+          continue;
+        return false;
+      }
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        auto name = getFuncNameFromCall(CB);
+        if (name == "julia.write_barrier")
+          continue;
+        if (CB->isLifetimeStartOrEnd())
+          continue;
+        for (unsigned i = 0; i < CB->arg_size(); ++i) {
+          if (CB->getArgOperand(i) != V)
+            continue;
+          if (!CB->doesNotCapture(i) || !CB->onlyReadsMemory(i))
+            return false;
+        }
+        if (CB->getCalledOperand() == V)
+          return false;
+        continue;
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+// Whether the base object V is a Julia array object that did not exist before
+// this function, whose data field, at offset 0, only ever holds fresh data
+// while it runs (see dataFieldOnlyHoldsFreshData). On Julia 1.10,
+// jl_alloc_array_* and jl_new_array allocate it with fresh data. From Julia
+// 1.11 on it is allocated like any other object, and the function stores the
+// data of a fresh Memory into the field.
+static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
+                              SmallPtrSetImpl<Value *> &seen) {
+  // An array whose data field we are already checking, reached again through
+  // a store to a data field: it holds fresh data if everything else does.
+  if (!seen.insert(V).second)
+    return true;
+  auto CB = dyn_cast<CallBase>(V);
+  if (!CB)
+    return false;
+  auto name = getFuncNameFromCall(CB);
+  if (name.contains("alloc_genericmemory"))
+    return false;
+  if (name == "jl_alloc_array_1d" || name == "ijl_alloc_array_1d" ||
+      name == "jl_alloc_array_2d" || name == "ijl_alloc_array_2d" ||
+      name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
+      name == "jl_new_array" || name == "ijl_new_array" ||
+      isAllocationCall(CB, TLI))
+    return dataFieldOnlyHoldsFreshData(CB, TLI, seen);
+  return false;
+}
+
+// Whether Obj, the base object of a written pointer, is data that did not
+// exist before this function: a pointer loaded from the data field of
+//  * a fresh Julia Memory (see isFreshJuliaMemory), which follows the length.
+//    The field is set when the object is allocated and never changed, so the
+//    data is as fresh as the object.
+//  * a fresh Julia array (see isFreshJuliaArray), at offset 0.
+// The pointer may be loaded from a phi or select of such objects.
+static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
+                                          SmallPtrSetImpl<Value *> &seen) {
+  if (!EnzymeJuliaAddrLoad)
+    return false;
+  auto LI = dyn_cast<LoadInst>(Obj);
+  if (!LI)
+    return false;
+  auto &DL = LI->getModule()->getDataLayout();
+  Value *ptr = LI->getPointerOperand();
+  APInt offset(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
+  ptr = ptr->stripAndAccumulateConstantOffsets(DL, offset,
+                                               /*AllowNonInbounds*/ true);
+  bool memoryField = offset == DL.getPointerSize();
+  if (!memoryField && offset != 0)
+    return false;
+  for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
+    if (memoryField ? !isFreshJuliaMemory(base)
+                    : !isFreshJuliaArray(base, TLI, seen))
+      return false;
+  }
+  return true;
+}
+
+static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
+  SmallPtrSet<Value *, 4> seen;
+  return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2096,6 +2277,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
+        // Writing the data of a fresh Julia Memory or array writes memory
+        // that did not exist before the call.
+        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
@@ -2127,6 +2314,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
         auto Obj = getBaseObject(MSI->getOperand(0));
+        // Writing the data of a fresh Julia Memory or array writes memory
+        // that did not exist before the call.
+        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
@@ -2290,6 +2483,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto Obj = getBaseObject(SI->getPointerOperand());
+        // Writing the data of a fresh Julia Memory or array writes memory
+        // that did not exist before the call.
+        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
