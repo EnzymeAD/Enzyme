@@ -12,11 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Interfaces/AddressPreservingViewInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
-#include "Interfaces/NoOffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -480,11 +480,17 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
 
-    memref::CastOp::attachInterface<NoOffsetViewInterface>(*context);
-    memref::MemorySpaceCastOp::attachInterface<NoOffsetViewInterface>(*context);
-    memref::ReshapeOp::attachInterface<NoOffsetViewInterface>(*context);
-    memref::ExpandShapeOp::attachInterface<NoOffsetViewInterface>(*context);
-    memref::CollapseShapeOp::attachInterface<NoOffsetViewInterface>(*context);
-    memref::TransposeOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::CastOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::CastOp>>(*context);
+    memref::MemorySpaceCastOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::MemorySpaceCastOp>>(*context);
+    memref::ReshapeOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::ReshapeOp>>(*context);
+    memref::ExpandShapeOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::ExpandShapeOp>>(*context);
+    memref::CollapseShapeOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::CollapseShapeOp>>(*context);
+    memref::TransposeOp::attachInterface<
+        AddressPreservingViewInterface::Model<memref::TransposeOp>>(*context);
   });
 }

@@ -1,4 +1,4 @@
-//===- NoOffsetViewInterface.td - Views with no offset ------*- tablegen -*-===//
+//===- AddressPreservingViewInterface.td ------------------*- tablegen -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_MLIR_INTERFACES_NOOFFSETVIEWINTERFACE
-#define ENZYME_MLIR_INTERFACES_NOOFFSETVIEWINTERFACE
+#ifndef ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE
+#define ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE
 
 include "mlir/Interfaces/ViewLikeInterface.td"
 
-def NoOffsetViewInterface
-    : OpInterface<"NoOffsetViewInterface", [ViewLikeOpInterface]> {
+def AddressPreservingViewInterface
+    : OpInterface<"AddressPreservingViewInterface", [ViewLikeOpInterface]> {
   let cppNamespace = "::mlir::enzyme";
   let description = [{
     The view has the same starting address as its source. It preserves any
@@ -25,4 +25,4 @@ def NoOffsetViewInterface
   }];
 }
 
-#endif // ENZYME_MLIR_INTERFACES_NOOFFSETVIEWINTERFACE
+#endif // ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE

@@ -1,4 +1,4 @@
-//===- NoOffsetViewInterface.cpp - Views with no offset ----------------===//
+//===- AddressPreservingViewInterface.cpp --------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,6 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "NoOffsetViewInterface.h"
+#include "AddressPreservingViewInterface.h"
 
-#include "MLIR/Interfaces/NoOffsetViewInterface.cpp.inc"
+#include "MLIR/Interfaces/AddressPreservingViewInterface.cpp.inc"

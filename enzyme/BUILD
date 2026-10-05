@@ -786,28 +786,28 @@ gentbl_cc_library(
 )
 
 td_library(
-    name = "NoOffsetViewInterfaceTdFiles",
-    srcs = ["Enzyme/MLIR/Interfaces/NoOffsetViewInterface.td"],
+    name = "AddressPreservingViewInterfaceTdFiles",
+    srcs = ["Enzyme/MLIR/Interfaces/AddressPreservingViewInterface.td"],
     includes = ["."],
     deps = ["@llvm-project//mlir:ViewLikeInterfaceTdFiles"],
 )
 
 gentbl_cc_library(
-    name = "NoOffsetViewInterfaceIncGen",
+    name = "AddressPreservingViewInterfaceIncGen",
     strip_include_prefix = "Enzyme",
     tbl_outs = [
         (
             ["--gen-op-interface-decls"],
-            "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.h.inc",
+            "Enzyme/MLIR/Interfaces/AddressPreservingViewInterface.h.inc",
         ),
         (
             ["--gen-op-interface-defs"],
-            "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.cpp.inc",
+            "Enzyme/MLIR/Interfaces/AddressPreservingViewInterface.cpp.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.td",
-    deps = [":NoOffsetViewInterfaceTdFiles"],
+    td_file = "Enzyme/MLIR/Interfaces/AddressPreservingViewInterface.td",
+    deps = [":AddressPreservingViewInterfaceTdFiles"],
 )
 
 td_library(
@@ -1001,6 +1001,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":AddressPreservingViewInterfaceIncGen",
         ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeAttributesIncGen",
         ":EnzymeEnumsIncGen",
@@ -1015,7 +1016,6 @@ cc_library(
         ":ImpulseOpsIncGen",
         ":ImpulseTypesIncGen",
         ":LLVMExtDialect",
-        ":NoOffsetViewInterfaceIncGen",
         ":affine-derivatives",
         ":arith-derivatives",
         ":cf-derivatives",
