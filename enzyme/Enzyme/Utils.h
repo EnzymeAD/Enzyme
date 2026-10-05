@@ -2408,6 +2408,12 @@ llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
                                  llvm::IRBuilder<> &entryBuilder,
                                  llvm::Twine const & = "");
 
+// max(1, V) in the BLAS calling convention, for use as a leading dimension
+llvm::Value *max_one_callconv(llvm::IRBuilder<> &B, llvm::Type *intType,
+                              llvm::Value *V, bool byRef, bool cublas,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder);
+
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,

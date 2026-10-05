@@ -970,10 +970,26 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         const auto dim1Name = Dag->getArgNameStr(3);
         const auto dim2Name = Dag->getArgNameStr(4);
         const auto matName = Dag->getArgNameStr(0);
-        os << "{get_cached_mat_width(Builder2, ";
+        os << "{({ Value *ld = get_cached_mat_width(Builder2, ";
         rev_call_arg(forward, Dag, pattern, 1, os, vars);
         os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
-           << ", cache_" << matName << ", byRef, cublas)}";
+           << ", cache_" << matName << ", byRef, cublas);\n";
+        // The cached matrix is packed, so its leading dimension is one of its
+        // dimensions, which BLAS rejects if zero.
+        os << "    if (cache_" << matName << ")\n";
+        os << "      ld = max_one_callconv(Builder2, intType, ld, byRef, "
+              "cublas, "
+              "julia_decl_type, allocationBuilder);\n";
+        os << "    ld; })}";
+        return;
+      }
+      if (Def->getName() == "max_one") {
+        if (Dag->getNumArgs() != 1)
+          PrintFatalError(pattern.getLoc(),
+                          "only 1-arg max_one operands supported");
+        const auto name = Dag->getArgNameStr(0);
+        os << "{max_one_callconv(Builder2, intType, arg_" << name
+           << ", byRef, cublas, julia_decl_type, allocationBuilder)}";
         return;
       }
       if (Def->getName() == "is_zero") {

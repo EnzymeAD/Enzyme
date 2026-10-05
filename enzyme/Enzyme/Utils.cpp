@@ -4219,6 +4219,18 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
 // } else {
 //   ld_A = arg_lda;
 // }
+llvm::Value *max_one_callconv(llvm::IRBuilder<> &B, llvm::Type *intType,
+                              llvm::Value *V, bool byRef, bool cublas,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder) {
+  auto I = load_if_ref(B, intType, V, byRef);
+  auto one = ConstantInt::get(I->getType(), 1);
+  auto M = B.CreateSelect(B.CreateICmpEQ(I, ConstantInt::get(I->getType(), 0)),
+                          one, I);
+  return to_blas_callconv(B, M, byRef, cublas, julia_decl, entryBuilder,
+                          "max_one");
+}
+
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim1,
