@@ -399,32 +399,6 @@ bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
 void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &B);
 
-/// A string stream that keeps at most Limit bytes (0 = unlimited) and drops
-/// the rest, so that dumping a huge function or type analysis into an error
-/// message cannot exhaust memory.
-class BoundedStringOStream final : public llvm::raw_ostream {
-  std::string &Str;
-  size_t Limit;
-  uint64_t Pos = 0;
-  bool Truncated = false;
-  void write_impl(const char *Ptr, size_t Size) override {
-    Pos += Size;
-    if (Limit != 0 && Str.size() + Size > Limit) {
-      Truncated = true;
-      Size = Str.size() < Limit ? Limit - Str.size() : 0;
-    }
-    Str.append(Ptr, Size);
-  }
-  uint64_t current_pos() const override { return Pos; }
-
-public:
-  BoundedStringOStream(std::string &Str, size_t Limit)
-      : Str(Str), Limit(Limit) {
-    SetUnbuffered();
-  }
-  bool truncated() const { return Truncated; }
-};
-
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 
