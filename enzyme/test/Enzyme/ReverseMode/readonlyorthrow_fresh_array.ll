@@ -47,6 +47,20 @@ top:
   ret void
 }
 
+; Either of two such arrays, through a select.
+
+define void @fill_array_110_select(ptr addrspace(11) nocapture readonly %x, i64 %n, i1 %c) {
+top:
+  %a1 = call ptr addrspace(10) @jl_alloc_array_1d(ptr addrspace(10) @arrty, i64 %n)
+  %a2 = call ptr addrspace(10) @jl_alloc_array_1d(ptr addrspace(10) @arrty, i64 %n)
+  %a = select i1 %c, ptr addrspace(10) %a1, ptr addrspace(10) %a2
+  %a11 = addrspacecast ptr addrspace(10) %a to ptr addrspace(11)
+  %data = load ptr, ptr addrspace(11) %a11, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  ret void
+}
+
 ; The data field holds data that may exist before the call.
 
 define void @fill_array_other_data(ptr %task, ptr addrspace(11) nocapture readonly %x, ptr %other) {
@@ -108,6 +122,7 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 
 ; CHECK: define void @fill_array({{.*}}) #[[FILL:[0-9]+]] {
 ; CHECK: define void @fill_array_110({{.*}}) #[[FILL]] {
+; CHECK: define void @fill_array_110_select({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_array_other_data(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {

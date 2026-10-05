@@ -74,6 +74,21 @@ exit:
   ret void
 }
 
+; Likewise with a select instead of a phi.
+
+define void @fill_or_empty_select(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %isempty = icmp eq i64 %n, 0
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem = select i1 %isempty, ptr addrspace(10) @empty, ptr addrspace(10) %m
+  %mem11 = addrspacecast ptr addrspace(10) %mem to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  ret void
+}
+
 ; Any other global may be a Memory existing before the call, so a function
 ; that may write its data must not be marked.
 
@@ -128,6 +143,7 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 
 ; CHECK: define void @fill({{.*}}) #[[FILL:[0-9]+]] {
 ; CHECK: define void @fill_or_empty({{.*}}) #[[FILL]] {
+; CHECK: define void @fill_or_empty_select({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_or_other(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {

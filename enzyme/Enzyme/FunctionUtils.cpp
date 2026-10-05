@@ -2225,7 +2225,7 @@ static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
 //    The field is set when the object is allocated and never changed, so the
 //    data is as fresh as the object.
 //  * a fresh Julia array (see isFreshJuliaArray), at offset 0.
-// The pointer may be loaded from a phi of such objects.
+// The pointer may be loaded from a phi or select of such objects.
 static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
                                           SmallPtrSetImpl<Value *> &seen) {
   if (!EnzymeJuliaAddrLoad)
