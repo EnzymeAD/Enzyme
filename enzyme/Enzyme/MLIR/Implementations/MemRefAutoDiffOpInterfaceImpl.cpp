@@ -12,15 +12,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
-#include "Interfaces/AddressPreservingViewInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LogicalResult.h"
 
 using namespace mlir;
@@ -28,6 +29,22 @@ using namespace mlir::enzyme;
 
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
+
+struct SubViewOpOffsetInterface
+    : public OffsetViewInterface::ExternalModel<SubViewOpOffsetInterface,
+                                                memref::SubViewOp> {
+  bool isZeroOffset(Operation *op) const {
+    return cast<memref::SubViewOp>(op).hasZeroOffset();
+  }
+};
+
+struct ViewOpOffsetInterface
+    : public OffsetViewInterface::ExternalModel<ViewOpOffsetInterface,
+                                                memref::ViewOp> {
+  bool isZeroOffset(Operation *op) const {
+    return matchPattern(cast<memref::ViewOp>(op).getByteShift(), m_Zero());
+  }
+};
 
 // Lets activity analysis treat memref.store generically via StoreLikeInterface.
 struct MemRefStoreLike
@@ -481,16 +498,18 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
 
     memref::CastOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::CastOp>>(*context);
+        OffsetViewInterface::Model<memref::CastOp>>(*context);
     memref::MemorySpaceCastOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::MemorySpaceCastOp>>(*context);
+        OffsetViewInterface::Model<memref::MemorySpaceCastOp>>(*context);
     memref::ReshapeOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::ReshapeOp>>(*context);
+        OffsetViewInterface::Model<memref::ReshapeOp>>(*context);
     memref::ExpandShapeOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::ExpandShapeOp>>(*context);
+        OffsetViewInterface::Model<memref::ExpandShapeOp>>(*context);
     memref::CollapseShapeOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::CollapseShapeOp>>(*context);
+        OffsetViewInterface::Model<memref::CollapseShapeOp>>(*context);
     memref::TransposeOp::attachInterface<
-        AddressPreservingViewInterface::Model<memref::TransposeOp>>(*context);
+        OffsetViewInterface::Model<memref::TransposeOp>>(*context);
+    memref::SubViewOp::attachInterface<SubViewOpOffsetInterface>(*context);
+    memref::ViewOp::attachInterface<ViewOpOffsetInterface>(*context);
   });
 }

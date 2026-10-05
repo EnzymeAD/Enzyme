@@ -9,9 +9,9 @@
 
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
-#include "Interfaces/AddressPreservingViewInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -160,23 +160,12 @@ Value getBaseObject(Value v, bool offsetAllowed) {
       continue;
     }
     if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
-      if (offsetAllowed) {
-        v = view.getViewSource();
-      } else {
-        // offset isnt allowed
-        if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
-          if (!subview.hasZeroOffset())
-            break;
-        } else if (auto byteView = dyn_cast<memref::ViewOp>(def)) {
-          if (!matchPattern(byteView.getByteShift(), m_Zero()))
-            break;
-        } else if (!isa<AddressPreservingViewInterface>(def)) {
-          // Other views can change the address. In particular, reinterpret_cast
-          // sets an absolute offset instead of adding to the source offset.
+      if (!offsetAllowed) {
+        auto offsetView = dyn_cast<OffsetViewInterface>(def);
+        if (!offsetView || !offsetView.isZeroOffset())
           break;
-        }
-        v = view.getViewSource();
       }
+      v = view.getViewSource();
       continue;
     }
     break;

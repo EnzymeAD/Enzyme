@@ -1,4 +1,4 @@
-//===- AddressPreservingViewInterface.h -----------------------*- C++ -*-===//
+//===- OffsetViewInterface.h ----------------------------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,11 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE_H
-#define ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE_H
+#ifndef ENZYME_MLIR_INTERFACES_OFFSETVIEWINTERFACE_H
+#define ENZYME_MLIR_INTERFACES_OFFSETVIEWINTERFACE_H
 
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
-#include "MLIR/Interfaces/AddressPreservingViewInterface.h.inc"
+#include "MLIR/Interfaces/OffsetViewInterface.h.inc"
 
-#endif // ENZYME_MLIR_INTERFACES_ADDRESSPRESERVINGVIEWINTERFACE_H
+#endif // ENZYME_MLIR_INTERFACES_OFFSETVIEWINTERFACE_H

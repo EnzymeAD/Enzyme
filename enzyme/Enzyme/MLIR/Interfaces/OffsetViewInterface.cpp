@@ -1,4 +1,4 @@
-//===- AddressPreservingViewInterface.cpp --------------------------------===//
+//===- OffsetViewInterface.cpp -------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,6 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "AddressPreservingViewInterface.h"
+#include "OffsetViewInterface.h"
 
-#include "MLIR/Interfaces/AddressPreservingViewInterface.cpp.inc"
+#include "MLIR/Interfaces/OffsetViewInterface.cpp.inc"
