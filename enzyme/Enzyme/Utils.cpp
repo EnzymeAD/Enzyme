@@ -193,7 +193,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     // OpenMPI vs MPICH
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
