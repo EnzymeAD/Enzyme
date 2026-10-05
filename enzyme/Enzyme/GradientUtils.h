@@ -550,6 +550,14 @@ public:
       TypeAnalysis &TA, llvm::Function *F, DerivativeMode mode,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
 
+  /// The activity of the result of the derivative that the shadow of a
+  /// function (GetOrCreateShadowFunction) points to, for a function returning
+  /// \p RT. Callers through the shadow rely on it to know what that derivative
+  /// returns. In forward mode it also returns the primal result whenever \p RT
+  /// is not void or empty.
+  static DIFFE_TYPE shadowFunctionReturnType(llvm::Type *RT,
+                                             DerivativeMode mode);
+
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,
       const std::map<llvm::BasicBlock *,

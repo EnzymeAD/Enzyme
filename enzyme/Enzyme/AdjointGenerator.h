@@ -5422,6 +5422,9 @@ public:
 
       Value *newcalled = nullptr;
       FunctionType *FT = nullptr;
+      // What the derivative called returns next to each other.
+      bool returnsPrimal = subretused;
+      bool returnsShadow = subretType != DIFFE_TYPE::CONSTANT;
 
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
@@ -5449,12 +5452,21 @@ public:
             gutils->getNewFromOriginal(call.getDebugLoc()), &call);
 
         auto ft = call.getFunctionType();
-        bool retActive = subretType != DIFFE_TYPE::CONSTANT;
+        // The derivative the shadow of a function points to was made for
+        // every caller (GetOrCreateShadowFunction), so what it returns
+        // depends only on the return type, not on this call.
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
+          auto RT = ft->getReturnType();
+          returnsPrimal = !RT->isVoidTy() && !RT->isEmptyTy();
+          returnsShadow = GradientUtils::shadowFunctionReturnType(RT, Mode) !=
+                          DIFFE_TYPE::CONSTANT;
+        }
 
         FT = getFunctionTypeForClone(
             ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
             argsInverted, false, /*returnTape*/ false,
-            /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
+            /*returnPrimal*/ returnsPrimal, /*returnShadow*/ returnsShadow);
         PointerType *fptype = getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
@@ -5493,14 +5505,16 @@ public:
       Value *primal = nullptr;
       Value *diffe = nullptr;
 
-      if (subretused && subretType != DIFFE_TYPE::CONSTANT) {
+      if (returnsPrimal && returnsShadow) {
         primal = Builder2.CreateExtractValue(diffes, 0);
         diffe = Builder2.CreateExtractValue(diffes, 1);
-      } else if (subretType != DIFFE_TYPE::CONSTANT) {
+      } else if (returnsShadow) {
         diffe = diffes;
       } else if (!FT->getReturnType()->isVoidTy()) {
         primal = diffes;
       }
+      if (subretType == DIFFE_TYPE::CONSTANT)
+        diffe = nullptr;
 
       if (ifound != gutils->invertedPointers.end()) {
         auto placeholder = cast<PHINode>(&*ifound->second);
