@@ -18,7 +18,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
@@ -130,27 +129,7 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 
 Value getBaseObject(Value v, bool offsetAllowed) {
   while (Operation *def = v.getDefiningOp()) {
-    // Handle LLVM operations before their generic view interfaces.
-    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
-      if (!offsetAllowed) {
-        bool isZero = true;
-        for (auto index : gep.getIndices()) {
-          if (auto attr = dyn_cast<IntegerAttr>(index))
-            isZero = attr.getValue().isZero();
-          else
-            isZero = matchPattern(cast<Value>(index), m_Zero());
-
-          if (!isZero)
-            break;
-        }
-
-        if (!isZero) {
-          break;
-        }
-      }
-      v = gep.getBase();
-      continue;
-    }
+    // LLVM casts preserve the address.
     if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
       v = bc.getArg();
       continue;
