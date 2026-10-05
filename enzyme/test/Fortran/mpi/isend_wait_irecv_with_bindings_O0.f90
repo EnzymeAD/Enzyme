@@ -3,9 +3,7 @@
 ! REQUIRES: fortran, mpi
 ! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
-
-! NOTE: The in-process FlangEnzyme plugin variant of this test lives in
-!       isend_wait_irecv_flangenzyme_O0.f90 (currently XFAIL)
+! RUN: %fc -O0 %loadFortran %mpi_include %loadFlangEnzyme %s %mpi_libs -o %t2 && mpirun -np 2 %t2 | FileCheck %s
 
 ! NOTE: This test is only configured to run with the flang compiler at -O0.
 !       For it to work with the ifx compiler we will need to figure out how to
@@ -38,7 +36,8 @@ program main
     write(*,"(f0.1)") dy
   end if
 
-  ! TODO Do the same thing with reverse mode
+  ! TODO: Do the same thing with reverse mode
+  !       https://github.com/EnzymeAD/Enzyme/issues/3203
 
   call mpi_finalize(ierr)
 

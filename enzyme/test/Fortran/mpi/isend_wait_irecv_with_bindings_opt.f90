@@ -1,17 +1,10 @@
-! Test differentiation through mpi_isend, mpi_wait, mpi_irecv via the
-! in-process FlangEnzyme plugin.
+! Test differentiation through mpi_isend, mpi_wait, mpi_irecv
 !
-! REQUIRES: fortran, mpi, flangenzyme
-! UNSUPPORTED: ifx
-! RUN: %fc -O0 %loadFortran %mpi_include %loadFlangEnzyme %s %mpi_libs -o %t2 && mpirun -np 2 %t2 | FileCheck %s
-
-! XFAIL: *
-
-! NOTE: XFAILs with MPI_ERR_TYPE on rank 0. The in-process EnzymeNewPM
-!       pipeline inlines fwddiffe_power and dead-store-eliminates the store
-!       feeding mpi_irecv_'s writeonly datatype argument, leaving it
-!       uninitialised. The opt-driven variant isend_wait_irecv_with_bindings_O0.f90
-!       passes.
+! REQUIRES: fortran, mpi
+! RUN: %fc -flto -O1 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
+! RUN: %fc -flto -O2 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
+! RUN: %fc -flto -O3 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O3 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
+! RUN: %fc -O2 %loadFortran %mpi_include %loadFlangEnzyme %s %mpi_libs -o %t2 && mpirun -np 2 %t2 | FileCheck %s
 
 program main
   use enzyme, only: enzyme_dup, enzyme_autodiff, enzyme_fwddiff
@@ -40,7 +33,8 @@ program main
     write(*,"(f0.1)") dy
   end if
 
-  ! TODO Do the same thing with reverse mode
+  ! TODO: Do the same thing with reverse mode
+  !       https://github.com/EnzymeAD/Enzyme/issues/3203
 
   call mpi_finalize(ierr)
 
