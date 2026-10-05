@@ -34,6 +34,14 @@ static mlir::Value allocaExtent(mlir::OpBuilder &builder,
                                 mlir::LLVM::AllocaOp alloca);
 #include "Implementations/LLVMDerivatives.inc"
 
+struct BitcastOpViewInterface
+    : public ViewLikeOpInterface::ExternalModel<BitcastOpViewInterface,
+                                                LLVM::BitcastOp> {
+  Value getViewSource(Operation *op) const {
+    return cast<LLVM::BitcastOp>(op).getArg();
+  }
+};
+
 struct GEPOpOffsetInterface
     : public OffsetViewInterface::ExternalModel<GEPOpOffsetInterface,
                                                 LLVM::GEPOp> {
@@ -1117,6 +1125,9 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpOffsetInterface>(*context);
+    LLVM::BitcastOp::attachInterface<BitcastOpViewInterface>(*context);
+    LLVM::BitcastOp::attachInterface<
+        OffsetViewInterface::Model<LLVM::BitcastOp>>(*context);
     LLVM::AddrSpaceCastOp::attachInterface<AddrSpaceCastOpInterfaceReverse>(
         *context);
     LLVM::AddrSpaceCastOp::attachInterface<
