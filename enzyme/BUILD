@@ -786,6 +786,31 @@ gentbl_cc_library(
 )
 
 td_library(
+    name = "NoOffsetViewInterfaceTdFiles",
+    srcs = ["Enzyme/MLIR/Interfaces/NoOffsetViewInterface.td"],
+    includes = ["."],
+    deps = ["@llvm-project//mlir:ViewLikeInterfaceTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "NoOffsetViewInterfaceIncGen",
+    strip_include_prefix = "Enzyme",
+    tbl_outs = [
+        (
+            ["--gen-op-interface-decls"],
+            "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.h.inc",
+        ),
+        (
+            ["--gen-op-interface-defs"],
+            "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/NoOffsetViewInterface.td",
+    deps = [":NoOffsetViewInterfaceTdFiles"],
+)
+
+td_library(
     name = "ImplementationsCommonTdFiles",
     srcs = [
         "Enzyme/MLIR/Implementations/Common.td",
@@ -990,6 +1015,7 @@ cc_library(
         ":ImpulseOpsIncGen",
         ":ImpulseTypesIncGen",
         ":LLVMExtDialect",
+        ":NoOffsetViewInterfaceIncGen",
         ":affine-derivatives",
         ":arith-derivatives",
         ":cf-derivatives",

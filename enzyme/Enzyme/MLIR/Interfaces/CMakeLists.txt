@@ -1,4 +1,5 @@
 add_mlir_interface(AutoDiffOpInterface)
+add_mlir_interface(NoOffsetViewInterface)
 
 set(LLVM_TARGET_DEFINITIONS AutoDiffTypeInterface.td)
 mlir_tablegen(AutoDiffTypeInterface.h.inc -gen-type-interface-decls)
@@ -14,6 +15,7 @@ add_mlir_library(
   GradientUtilsReverse.cpp
   HMCUtils.cpp
   ImpulseUtils.cpp
+  NoOffsetViewInterface.cpp
   TransformUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp
@@ -21,11 +23,13 @@ add_mlir_library(
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
   MLIRAutoDiffTypeInterfaceIncGen
+  MLIRNoOffsetViewInterfaceIncGen
   MLIREnzymeEnumsIncGen
   MLIRImpulseOpsIncGen
   MLIRImpulseEnumsIncGen
   LINK_LIBS
   PUBLIC
   MLIRIR
+  MLIRViewLikeInterface
   MLIREnzymeAnalysis
   MLIRImpulse)
