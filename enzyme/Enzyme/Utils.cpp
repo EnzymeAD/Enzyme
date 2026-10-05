@@ -4606,10 +4606,15 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
     std::string str;
     raw_string_ostream ss(str);
     ss << message << "\n";
-    gutils->TR.dump(ss);
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
 }

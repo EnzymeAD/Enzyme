@@ -6690,9 +6690,6 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
-
     EmitNoTypeError(str, *I, nullptr, *BuilderIfShouldErr);
   }
   return dt;
@@ -6752,9 +6749,6 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     raw_string_ostream ss(str);
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
-
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
 
     EmitNoTypeError(str, *I, gutils, *BuilderIfShouldErr);
   }
