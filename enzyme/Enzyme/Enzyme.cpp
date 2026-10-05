@@ -116,6 +116,12 @@ llvm::cl::opt<bool> EnzymeDetectReadThrow(
     "enzyme-detect-readthrow", cl::init(true), cl::Hidden,
     cl::desc("Run preprocessing detect readonly or throw optimization"));
 
+llvm::cl::opt<bool> EnzymeDetectRecursiveNoActiveStore(
+    "enzyme-detect-recursive-no-active-store", cl::init(false), cl::Hidden,
+    cl::desc("Mark pointer arguments through which nothing is captured and "
+             "no active value is stored, even through pointers loaded from "
+             "their memory"));
+
 llvm::cl::opt<std::string> EnzymeTruncateAll(
     "enzyme-truncate-all", cl::init(""), cl::Hidden,
     cl::desc(
@@ -2766,6 +2772,10 @@ public:
     }
 
     if (EnzymeDetectReadThrow && DetectReadonlyOrThrow(M)) {
+      changed = true;
+    }
+
+    if (EnzymeDetectRecursiveNoActiveStore && DetectRecursiveNoActiveStore(M)) {
       changed = true;
     }
 
