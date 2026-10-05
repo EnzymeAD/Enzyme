@@ -497,8 +497,8 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
 
-    memref::CastOp::attachInterface<
-        OffsetViewInterface::Model<memref::CastOp>>(*context);
+    memref::CastOp::attachInterface<OffsetViewInterface::Model<memref::CastOp>>(
+        *context);
     memref::MemorySpaceCastOp::attachInterface<
         OffsetViewInterface::Model<memref::MemorySpaceCastOp>>(*context);
     memref::ReshapeOp::attachInterface<
