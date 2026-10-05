@@ -37,7 +37,7 @@ module {
 // CHECK-NEXT:      %2 = arith.subi %c10, %arg4 : index
 // CHECK-NEXT:      %3 = arith.subi %c4, %arg3 : index
 // CHECK-NEXT:      %4 = arith.minui %3, %2 : index
-// CHECK-NEXT:      %5 = enzyme.binomial_progress %2, %4 : index
+// CHECK-NEXT:      %5 = enzyme.binomial_progress %2, %4 {max_budget = 4 : i64, max_num_steps = 10 : i64} : index
 // CHECK-NEXT:      %subview = memref.subview %alloc_1[%arg3, 0] [1, 10] [1, 1] : memref<4x10xf64> to memref<10xf64, strided<[1], offset: ?>>
 // CHECK-NEXT:      memref.copy %arg0, %subview : memref<10xf64> to memref<10xf64, strided<[1], offset: ?>>
 // CHECK-NEXT:      %6 = scf.for %arg6 = %c0 to %5 step %c1 iter_args(%arg7 = %arg5) -> (f64) {
@@ -68,7 +68,7 @@ module {
 // CHECK-NEXT:        %14 = arith.subi %3, %arg6 : index
 // CHECK-NEXT:        %15 = arith.subi %c4, %arg7 : index
 // CHECK-NEXT:        %16 = arith.minui %15, %14 : index
-// CHECK-NEXT:        %17 = enzyme.binomial_progress %14, %16 : index
+// CHECK-NEXT:        %17 = enzyme.binomial_progress %14, %16 {max_budget = 4 : i64, max_num_steps = 10 : i64} : index
 // CHECK-NEXT:        memref.store %arg8, %alloc[%arg7] : memref<4xf64>
 // CHECK-NEXT:        memref.store %arg6, %alloc_0[%arg7] : memref<4xindex>
 // CHECK-NEXT:        %subview_3 = memref.subview %alloc_1[%arg7, 0] [1, 10] [1, 1] : memref<4x10xf64> to memref<10xf64, strided<[1], offset: ?>>
