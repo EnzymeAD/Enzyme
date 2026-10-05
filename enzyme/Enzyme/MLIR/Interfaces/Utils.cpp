@@ -129,13 +129,9 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 
 Value getBaseObject(Value v, bool offsetAllowed) {
   while (Operation *def = v.getDefiningOp()) {
-    // LLVM casts preserve the address.
+    // Bitcasts do not implement ViewLikeOpInterface.
     if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
       v = bc.getArg();
-      continue;
-    }
-    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
-      v = asc.getArg();
       continue;
     }
     if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {

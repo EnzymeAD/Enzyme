@@ -1119,6 +1119,8 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::GEPOp::attachInterface<GEPOpOffsetInterface>(*context);
     LLVM::AddrSpaceCastOp::attachInterface<AddrSpaceCastOpInterfaceReverse>(
         *context);
+    LLVM::AddrSpaceCastOp::attachInterface<
+        OffsetViewInterface::Model<LLVM::AddrSpaceCastOp>>(*context);
     LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
         *context);
     LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(
