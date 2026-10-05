@@ -512,18 +512,8 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
     ss << " addingType: " << *addingType << "\n";
   else
     ss << " addingType: null\n";
-  if (CustomErrorHandler) {
-    CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
-                       nullptr, nullptr, wrap(&BuilderM));
-  } else {
-    DebugLoc loc;
-    if (auto inst = dyn_cast<Instruction>(val))
-      EmitFailure("UnhandledAccumulate", inst->getDebugLoc(), inst, ss.str());
-    else {
-      llvm::errs() << ss.str() << "\n";
-      llvm_unreachable("UnhandledAccumulate");
-    }
-  }
+  EmitError("UnhandledAccumulate", ErrorType::NoAccumulate, ss.str(), val,
+            nullptr, nullptr, &BuilderM);
   return {};
 }
 
@@ -688,16 +678,12 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       if (auto inst = dyn_cast<Instruction>(val)) {
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
-      } else if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
-        return addedSelects;
-      } else {
-        TR.dump(ss);
-        llvm::errs() << ss.str() << "\n";
-        llvm_unreachable("Cannot deduce adding type");
-        return addedSelects;
       }
+      if (!CustomErrorHandler && !EnzymeRuntimeError)
+        TR.dump(ss);
+      EmitError("CannotDeduceType", ErrorType::NoType, ss.str(), val,
+                TR.analyzer, nullptr, &BuilderM);
+      return addedSelects;
     }
     assert(addingType);
     assert(addingType->isFPOrFPVectorTy());
@@ -721,20 +707,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
          << " old: " << *old << " dif: " << *dif << "\n"
          << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
          << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
-        return addedSelects;
-      } else {
-        DebugLoc loc;
-        if (auto inst = dyn_cast<Instruction>(val))
-          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
-        else {
-          llvm::errs() << ss.str() << "\n";
-          llvm_unreachable("Cannot deduce adding type");
-        }
-        return addedSelects;
-      }
+      EmitError("CannotDeduceType", ErrorType::NoType, ss.str(), val,
+                TR.analyzer, nullptr, &BuilderM);
+      return addedSelects;
     }
 
     Value *bcold = old;
@@ -1122,15 +1097,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       llvm::raw_string_ostream ss(s);
       ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
          << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(orig),
-                           ErrorType::NoDerivative, this, nullptr,
-                           wrap(&BuilderM));
-        return;
-      } else {
-        EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());
-        return;
-      }
+      EmitError("NoDerivative", ErrorType::NoDerivative, ss.str(), orig, this,
+                nullptr, &BuilderM);
+      return;
     }
 
     /*

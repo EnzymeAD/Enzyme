@@ -1197,15 +1197,11 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            if (CustomErrorHandler) {
-              diff = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
-                  wrap(orig_val), wrap(&BuilderZ)));
-              if (diff)
-                needs_writebarrier = true;
-            } else
-              EmitWarningAlways("MixedActivityError", I, ss.str(),
-                                MixedActivityHint);
+            diff =
+                EmitError("MixedActivityError", ErrorType::MixedActivityError,
+                          ss.str(), &I, gutils, orig_val, &BuilderZ);
+            if (diff)
+              needs_writebarrier = true;
           }
         }
       }
@@ -1448,15 +1444,11 @@ public:
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
-                  if (CustomErrorHandler) {
-                    valueop = unwrap(CustomErrorHandler(
-                        str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                        gutils, wrap(orig_val), wrap(&BuilderZ)));
-                    if (valueop)
-                      needs_writebarrier = true;
-                  } else
-                    EmitWarningAlways("MixedActivityError", I, ss.str(),
-                                      MixedActivityHint);
+                  valueop = EmitError("MixedActivityError",
+                                      ErrorType::MixedActivityError, ss.str(),
+                                      &I, gutils, orig_val, &BuilderZ);
+                  if (valueop)
+                    needs_writebarrier = true;
                 }
               }
             }
@@ -5769,13 +5761,8 @@ public:
           ss << "Mismatched estimated activity type for " << *argType
              << " expected DUP_ARG or CONSTANT found " << wt
              << ", call = " << call << "\n";
-          if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(&call),
-                               ErrorType::InternalError, nullptr, nullptr,
-                               nullptr);
-          } else {
-            EmitFailure("MismatchArgType", call.getDebugLoc(), &call, ss.str());
-          }
+          EmitError("MismatchArgType", ErrorType::InternalError, ss.str(),
+                    &call);
         }
       } else {
         if (foreignFunction)
@@ -6122,14 +6109,8 @@ public:
                 raw_string_ostream ss(str);
                 ss << "Failed to compute consistent cache index for operation: "
                    << call << "\n";
-                if (CustomErrorHandler) {
-                  CustomErrorHandler(str.c_str(), wrap(&call),
-                                     ErrorType::InternalError, nullptr, nullptr,
-                                     nullptr);
-                } else {
-                  EmitFailure("GetIndexError", call.getDebugLoc(), &call,
-                              ss.str());
-                }
+                EmitError("GetIndexError", ErrorType::InternalError, ss.str(),
+                          &call);
               } else {
                 if (Mode == DerivativeMode::ReverseModeCombined)
                   cachereplace = newCall;
@@ -6189,14 +6170,8 @@ public:
                     "function\n";
               ss << " call" << call << "\n";
               ss << " augmentcall" << *augmentcall << "\n";
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&call),
-                                   ErrorType::InternalError, nullptr, nullptr,
-                                   nullptr);
-              } else {
-                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
-                            ss.str());
-              }
+              EmitError("GetIndexError", ErrorType::InternalError, ss.str(),
+                        &call);
               placeholder->replaceAllUsesWith(
                   UndefValue::get(placeholder->getType()));
               if (placeholder == &*BuilderZ.GetInsertPoint()) {
