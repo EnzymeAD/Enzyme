@@ -757,21 +757,7 @@ double FPConst::getLowerBound() const {
     return -std::numeric_limits<double>::infinity();
   }
 
-  double constantValue;
-  size_t div = strValue.find('/');
-
-  if (div != std::string::npos) {
-    std::string numerator = strValue.substr(0, div);
-    std::string denominator = strValue.substr(div + 1);
-    double num = stringToDouble(numerator);
-    double denom = stringToDouble(denominator);
-
-    constantValue = num / denom;
-  } else {
-    constantValue = stringToDouble(strValue);
-  }
-
-  return constantValue;
+  return literalToDouble(strValue);
 }
 
 double FPConst::getUpperBound() const { return getLowerBound(); }
@@ -789,21 +775,7 @@ Value *FPConst::getLLValue(IRBuilder<> &builder,
     return ConstantFP::getInfinity(Ty, true);
   }
 
-  double constantValue;
-  size_t div = strValue.find('/');
-
-  if (div != std::string::npos) {
-    std::string numerator = strValue.substr(0, div);
-    std::string denominator = strValue.substr(div + 1);
-    double num = stringToDouble(numerator);
-    double denom = stringToDouble(denominator);
-
-    constantValue = num / denom;
-  } else {
-    constantValue = stringToDouble(strValue);
-  }
-
-  return ConstantFP::get(Ty, constantValue);
+  return ConstantFP::get(Ty, literalToDouble(strValue));
 }
 
 bool FPConst::classof(const FPNode *N) {

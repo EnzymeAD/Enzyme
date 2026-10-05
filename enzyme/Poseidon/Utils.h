@@ -75,6 +75,7 @@ const std::unordered_set<std::string> &libmFuncs();
 // attribute an AD pass would have put on them.
 llvm::StringRef deviceMathName(llvm::StringRef fnName);
 double stringToDouble(const std::string &str);
+double literalToDouble(const std::string &str);
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
               llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
 void reverseTopoSort(const llvm::SetVector<llvm::Instruction *> &insts,
