@@ -184,6 +184,24 @@ static bool writesOnlyUncapturedLocalMemory(Instruction *I,
 
 struct CacheAnalysis {
 
+  /// Whether I may modify the memory at loc. Unless it throws, a
+  /// LocalReadOnlyOrThrow call writes only memory it allocated, which cannot
+  /// be loc, and its sret-like arguments.
+  static bool mayModify(AAResults &AA, Instruction *I,
+                        const MemoryLocation &loc) {
+    auto CB = dyn_cast<CallBase>(I);
+    if (!CB || !isLocalReadOnlyOrThrow(CB))
+      return isModSet(AA.getModRefInfo(I, loc));
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
+        continue;
+      if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
+        return true;
+    }
+    return false;
+  }
+
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
   const ValueMap<Value *, GradientUtils::Rematerializer>
@@ -681,23 +699,6 @@ struct CacheAnalysis {
       if (!writesOnlyUncapturedLocalMemory(inst2, TLI))
         next_subsequent_inst_may_write = true;
 
-      // Whether inst2 may modify the memory at loc. Unless it throws, a
-      // LocalReadOnlyOrThrow call writes only memory it allocated, which
-      // cannot be loc, and its sret-like arguments.
-      auto mayModify = [&](const MemoryLocation &loc) {
-        auto CB = dyn_cast<CallBase>(inst2);
-        if (!CB || !isLocalReadOnlyOrThrow(CB))
-          return llvm::isModSet(AA.getModRefInfo(inst2, loc));
-        for (unsigned j = 0; j < CB->arg_size(); ++j) {
-          auto arg = CB->getArgOperand(j);
-          if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(j))
-            continue;
-          if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
-            return true;
-        }
-        return false;
-      };
-
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -712,7 +713,8 @@ struct CacheAnalysis {
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            mayModify(MemoryLocation::getForArgument(callsite_op, i, TLI))) {
+            mayModify(AA, inst2,
+                      MemoryLocation::getForArgument(callsite_op, i, TLI))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
