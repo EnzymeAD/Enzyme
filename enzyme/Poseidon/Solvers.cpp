@@ -396,8 +396,12 @@ openDPCacheEntry(StringRef cacheFilePath, StringRef fnName,
 }
 
 // Keyed on this function: a table for an earlier site says nothing about this
-// one.
+// one. -poseidon-apply-rewrites names candidates by their position in a priced
+// solve's report, and only a priced compile has that list, so it never takes
+// the hit.
 bool dpCacheHasFunction(StringRef fnName) {
+  if (!flags::ApplyRewrites.empty())
+    return false;
   std::optional<llvm::json::Value> root;
   return openDPCacheEntry(dpCachePath(), fnName, root,
                           /*quiet=*/true) != nullptr;
