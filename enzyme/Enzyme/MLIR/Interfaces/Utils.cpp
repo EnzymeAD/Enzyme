@@ -167,10 +167,7 @@ Value getBaseObject(Value v, bool offsetAllowed) {
         } else if (auto byteView = dyn_cast<memref::ViewOp>(def)) {
           if (!matchPattern(byteView.getByteShift(), m_Zero()))
             break;
-        } else if (!isa<NoOffsetViewInterface, memref::CastOp,
-                        memref::MemorySpaceCastOp, memref::ReshapeOp,
-                        memref::ExpandShapeOp, memref::CollapseShapeOp,
-                        memref::TransposeOp>(def)) {
+        } else if (!isa<NoOffsetViewInterface>(def)) {
           // Other views can change the address. In particular, reinterpret_cast
           // sets an absolute offset instead of adding to the source offset.
           break;

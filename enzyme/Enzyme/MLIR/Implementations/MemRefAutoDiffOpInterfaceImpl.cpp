@@ -16,6 +16,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/NoOffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -478,5 +479,12 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
+
+    memref::CastOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::MemorySpaceCastOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::ReshapeOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::ExpandShapeOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::CollapseShapeOp::attachInterface<NoOffsetViewInterface>(*context);
+    memref::TransposeOp::attachInterface<NoOffsetViewInterface>(*context);
   });
 }
