@@ -43,8 +43,8 @@ entry:
 ; CHECK-NEXT:   %[[SMIN:.+]] = call i64 @llvm.smin.i64(i64 %[[MM1]], i64 %[[NM1]])
 ; CHECK-NEXT:   %[[CNT:.+]] = sub {{.*}}i64 %[[NM1]], %[[SMIN]]
 ; CHECK-NEXT:   %[[TRIPS:.+]] = add {{.*}}i64 %[[CNT]], 1
-; CHECK-NEXT:   %mallocsize = mul {{.*}}i64 %[[TRIPS]], 8
-; CHECK-NEXT:   %acc_malloccache = tail call noalias nonnull ptr @malloc(i64 %mallocsize)
+; CHECK-NEXT:   %[[mallocsize:.+]] = mul {{.*}}i64 %[[TRIPS]], 8
+; CHECK-NEXT:   %[[acc_malloccache:.+]] = tail call noalias nonnull ptr @malloc(i64 %[[mallocsize]])
 
 ; CHECK: invertloop:
 ; CHECK:   %"iv'ac.0" = phi i64 [ %[[START:.+]], %invertexit.loopexit ], [ %{{.+}}, %incinvertloop ]
