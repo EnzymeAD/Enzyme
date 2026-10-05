@@ -211,9 +211,6 @@ extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
-/// Maximum number of bytes of IR / type analysis appended to diagnostics
-/// (0 = unlimited)
-extern llvm::cl::opt<unsigned> EnzymeMaxErrorDump;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);

@@ -104,11 +104,6 @@ llvm::cl::opt<bool> EnzymeCheckDerivativeNaN(
     "enzyme-check-nan", cl::init(false), cl::Hidden,
     cl::desc("Add NaN checks to all derivative intermediate values"));
 
-llvm::cl::opt<unsigned> EnzymeMaxErrorDump(
-    "enzyme-max-error-dump", cl::init(1 << 20), cl::Hidden,
-    cl::desc("Maximum number of bytes of IR and type analysis to append to "
-             "an error message (0 = unlimited)"));
-
 llvm::cl::opt<bool> EnzymeNonPower2Cache(
     "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
     cl::desc("Disable caching of integers which are not a power of 2"));
@@ -4611,21 +4606,16 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
-    // Without a custom handler, append the function and its type analysis
-    // once, bounded by -enzyme-max-error-dump. (A custom handler is given the
-    // analyzer and the instruction and can produce these itself.)
-    std::string str = message + "\n";
-    {
-      std::string dumped;
-      BoundedStringOStream ss(dumped, EnzymeMaxErrorDump);
-      ss << "fn: " << *inst.getParent()->getParent() << "\n";
-      if (gutils)
-        gutils->TR.dump(ss);
-      str += dumped;
-      if (ss.truncated())
-        str += "\n... [truncated, see -enzyme-max-error-dump]\n";
-    }
-    EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, str);
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
+    EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
 }
 
