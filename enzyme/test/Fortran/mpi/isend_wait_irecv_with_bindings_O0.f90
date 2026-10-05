@@ -3,7 +3,7 @@
 ! REQUIRES: fortran, mpi
 ! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O0 -c %loadFortran %mpi_include %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O0 %t.ll %mpi_libs -o %t1 && mpirun -np 2 %t1 | FileCheck %s
-! RUN: %fc -O0 %loadFortran %mpi_include %loadFlangEnzyme %s %mpi_libs -o %t2 && mpirun -np 2 %t2 | FileCheck %s
+! RUN: %if flangenzyme %{ %fc -O0 %loadFortran %mpi_include %loadFlangEnzyme %s %mpi_libs -o %t2 && mpirun -np 2 %t2 | FileCheck %s %}
 
 ! NOTE: This test is only configured to run with the flang compiler at -O0.
 !       For it to work with the ifx compiler we will need to figure out how to
