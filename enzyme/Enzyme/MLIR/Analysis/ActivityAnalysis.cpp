@@ -3587,8 +3587,6 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             LLVM::FRemOp,
             LLVM::FNegOp,
             // Cast op
-            LLVM::BitcastOp,
-            LLVM::AddrSpaceCastOp,
             LLVM::IntToPtrOp,
             LLVM::PtrToIntOp,
             LLVM::SExtOp,
