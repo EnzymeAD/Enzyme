@@ -5383,7 +5383,7 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
   llvm_unreachable("Unknown type to recursively accumulate");
 }
 
-static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
+bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
   if (!TT.anyPointer(C, dl)) {
     return true;
   }
@@ -6255,8 +6255,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     {
       auto tval = arg->getTrueValue();
       if (!runtimeActivity && TT.anyPointer(tval, DL) &&
-          !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-          !isa<ConstantAggregateZero>(tval) && isConstantValue(tval)) {
+          !allNullOrUndef(tval, DL, TT) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -6276,8 +6275,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     {
       auto fval = arg->getFalseValue();
       if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
-          !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-          !isa<ConstantAggregateZero>(fval) && isConstantValue(fval)) {
+          !allNullOrUndef(fval, DL, TT) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;

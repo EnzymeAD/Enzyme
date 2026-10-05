@@ -1163,8 +1163,10 @@ public:
         TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
           ConcreteType ct = vd[{(int)i}];
-          if (!ct.isKnown())
+          if (!ct.isKnown()) {
             ct = valTT[{(int)i}];
+            vd.orIn({(int)i}, ct);
+          }
           if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
@@ -1191,8 +1193,7 @@ public:
       bool needs_writebarrier = false;
       if (!gutils->runtimeActivity && constantval) {
         if (anyPointer && vd[{-1, -1}] != BaseType::Integer) {
-          if (!isa<UndefValue>(orig_val) &&
-              !isa<ConstantPointerNull>(orig_val)) {
+          if (!allNullOrUndef(orig_val, DL, vd)) {
             std::string str;
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
@@ -1442,8 +1443,7 @@ public:
           if (constantval) {
             if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
-                if (!isa<UndefValue>(orig_val) &&
-                    !isa<ConstantPointerNull>(orig_val)) {
+                if (!allNullOrUndef(orig_val, DL, vd)) {
                   std::string str;
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I

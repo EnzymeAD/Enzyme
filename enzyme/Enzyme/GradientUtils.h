@@ -681,6 +681,8 @@ public:
   bool needsCacheWholeAllocation(const llvm::Value *V) const;
 };
 
+bool allNullOrUndef(llvm::Value *C, const llvm::DataLayout &dl, TypeTree TT);
+
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,
                        llvm::Type *secretty, llvm::Intrinsic::ID intrinsic,
                        unsigned dstalign, unsigned srcalign, unsigned offset,
