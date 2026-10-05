@@ -621,6 +621,21 @@ bool isLaunchStub(const Function &F) {
   return F.getName().contains("__device_stub__");
 }
 
+// A site's profiled clone takes a shadow per pointer argument, which only a
+// kernel launch can supply; any other annotated function stays as written.
+constexpr StringLiteral kNotASite = "poseidon-not-a-site";
+
+void rejectAnnotatedFunction(Function &F) {
+  if (F.hasFnAttribute(kNotASite))
+    return;
+  F.addFnAttr(kNotASite);
+  F.getContext().diagnose(DiagnosticInfoUnsupported(
+      F,
+      "Poseidon: POSEIDON_OPTIMIZE marks GPU kernels; on the host, wrap the "
+      "call in __poseidon_fp_optimize. Emitting the original computation.",
+      F.getSubprogram(), DS_Warning));
+}
+
 // The kernels of this module that are sites, in module order so that the site
 // numbering does not depend on the order a container happened to hash them in.
 // `byRegex`, when given, receives the sites -poseidon-kernels named and the
@@ -652,14 +667,18 @@ void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
           continue;
         // In a CUDA host compilation the same annotation lands on the launch
         // stub; the site itself lives in the device module.
-        if (!isLaunchStub(*fn) && !fn->hasFnAttribute(kSiteLowered)) {
-          found.insert(fn);
-          if (tau && tauOut) {
-            auto [it, inserted] = tauOut->try_emplace(fn, *tau);
-            if (!inserted && it->second != *tau)
-              report_fatal_error(Twine("Poseidon: ") + fn->getName() +
-                                 " carries two different accuracy targets");
-          }
+        if (isLaunchStub(*fn) || fn->hasFnAttribute(kSiteLowered))
+          continue;
+        if (fn->getCallingConv() != CallingConv::PTX_Kernel) {
+          rejectAnnotatedFunction(*fn);
+          continue;
+        }
+        found.insert(fn);
+        if (tau && tauOut) {
+          auto [it, inserted] = tauOut->try_emplace(fn, *tau);
+          if (!inserted && it->second != *tau)
+            report_fatal_error(Twine("Poseidon: ") + fn->getName() +
+                               " carries two different accuracy targets");
         }
       }
     }
