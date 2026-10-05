@@ -125,12 +125,40 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
+/// Whether obj is memory local to this function (an alloca, an allocation made
+/// here, or a noalias argument) whose address is never captured.
+static bool isUncapturedLocalMemory(Value *obj, TargetLibraryInfo &TLI) {
+  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
+    return notCaptured(obj, &TLI);
+  if (auto arg = dyn_cast<Argument>(obj))
+    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
+  return false;
+}
+
 /// Whether I writes only to memory local to this function (an alloca, an
 /// allocation made here, or a noalias argument) whose address is never
 /// captured, or does not write at all (a lifetime marker). No pointer loaded
 /// from memory can point to such memory.
+///
+/// A call that, unless it throws, writes only memory it allocated and its
+/// sret-like arguments (LocalReadOnlyOrThrow) qualifies, provided each such
+/// argument is uncaptured local memory.
 static bool writesOnlyUncapturedLocalMemory(Instruction *I,
                                             TargetLibraryInfo &TLI) {
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (!isLocalReadOnlyOrThrow(CB))
+      return false;
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy())
+        continue;
+      if (CB->onlyReadsMemory(i))
+        continue;
+      if (!isUncapturedLocalMemory(getBaseObject(arg), TLI))
+        return false;
+    }
+    return true;
+  }
   Value *ptr = nullptr;
   if (auto SI = dyn_cast<StoreInst>(I)) {
     ptr = SI->getPointerOperand();
@@ -151,12 +179,7 @@ static bool writesOnlyUncapturedLocalMemory(Instruction *I,
   }
   if (!ptr)
     return false;
-  auto obj = getBaseObject(ptr);
-  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
-    return notCaptured(obj, &TLI);
-  if (auto arg = dyn_cast<Argument>(obj))
-    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
-  return false;
+  return isUncapturedLocalMemory(getBaseObject(ptr), TLI);
 }
 
 struct CacheAnalysis {
@@ -645,11 +668,36 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
+      // A call that writes memory existing before it only on paths that throw
+      // cannot overwrite anything the callee read: if it throws, the reverse
+      // pass never runs.
+      if (auto CB = dyn_cast<CallBase>(inst2))
+        if (isReadOnlyOrThrow(CB))
+          return false;
+
       // A write to uncaptured local memory is not an unknown write: the callee
       // can only reach that memory through an argument, which is marked
       // overwritten below.
       if (!writesOnlyUncapturedLocalMemory(inst2, TLI))
         next_subsequent_inst_may_write = true;
+
+      // Whether inst2 may modify the memory at loc. Unless it throws, a
+      // LocalReadOnlyOrThrow call writes only memory it allocated, which
+      // cannot be loc, and its sret-like arguments.
+      auto mayModify = [&](const MemoryLocation &loc) {
+        auto CB = dyn_cast<CallBase>(inst2);
+        if (!CB || !isLocalReadOnlyOrThrow(CB))
+          return llvm::isModSet(AA.getModRefInfo(inst2, loc));
+        for (unsigned j = 0; j < CB->arg_size(); ++j) {
+          auto arg = CB->getArgOperand(j);
+          if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(j))
+            continue;
+          if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
+            return true;
+        }
+        return false;
+      };
+
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -664,8 +712,7 @@ struct CacheAnalysis {
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            llvm::isModSet(AA.getModRefInfo(
-                inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
+            mayModify(MemoryLocation::getForArgument(callsite_op, i, TLI))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
