@@ -125,12 +125,44 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
-/// Whether I writes only to memory local to this function (an alloca, an
-/// allocation made here, or a noalias argument) whose address is never
-/// captured, or does not write at all (a lifetime marker). No pointer loaded
-/// from memory can point to such memory.
-static bool writesOnlyUncapturedLocalMemory(Instruction *I,
+/// Whether obj is an alloca, an allocation made in this function, or a noalias
+/// argument, whose address is never captured. No pointer loaded from memory
+/// can reach such memory while this function runs: a local object's address
+/// was never stored, and accessing a noalias argument's memory through a
+/// pointer not derived from it while it is modified would be undefined.
+static bool isUncapturedLocalOrNoaliasArgMemory(Value *obj,
+                                                TargetLibraryInfo &TLI) {
+  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
+    return notCaptured(obj, &TLI);
+  if (auto arg = dyn_cast<Argument>(obj))
+    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
+  return false;
+}
+
+/// Whether I writes only to uncaptured local or noalias argument memory (see
+/// isUncapturedLocalOrNoaliasArgMemory), or does not write at all (a lifetime
+/// marker).
+///
+/// A call that, unless it throws, writes only memory it allocated and its
+/// sret-like arguments (LocalReadOnlyOrThrow) qualifies, provided each such
+/// argument is uncaptured local or noalias argument memory.
+static bool
+writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
                                             TargetLibraryInfo &TLI) {
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (!isLocalReadOnlyOrThrow(CB))
+      return false;
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy())
+        continue;
+      if (CB->onlyReadsMemory(i))
+        continue;
+      if (!isUncapturedLocalOrNoaliasArgMemory(getBaseObject(arg), TLI))
+        return false;
+    }
+    return true;
+  }
   Value *ptr = nullptr;
   if (auto SI = dyn_cast<StoreInst>(I)) {
     ptr = SI->getPointerOperand();
@@ -151,15 +183,28 @@ static bool writesOnlyUncapturedLocalMemory(Instruction *I,
   }
   if (!ptr)
     return false;
-  auto obj = getBaseObject(ptr);
-  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
-    return notCaptured(obj, &TLI);
-  if (auto arg = dyn_cast<Argument>(obj))
-    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
-  return false;
+  return isUncapturedLocalOrNoaliasArgMemory(getBaseObject(ptr), TLI);
 }
 
 struct CacheAnalysis {
+
+  /// Whether I may modify the memory at loc. Unless it throws, a
+  /// LocalReadOnlyOrThrow call writes only memory it allocated, which cannot
+  /// be loc, and its sret-like arguments.
+  static bool mayModify(AAResults &AA, Instruction *I,
+                        const MemoryLocation &loc) {
+    auto CB = dyn_cast<CallBase>(I);
+    if (!CB || !isLocalReadOnlyOrThrow(CB))
+      return isModSet(AA.getModRefInfo(I, loc));
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
+        continue;
+      if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
+        return true;
+    }
+    return false;
+  }
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
@@ -645,11 +690,19 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
-      // A write to uncaptured local memory is not an unknown write: the callee
-      // can only reach that memory through an argument, which is marked
-      // overwritten below.
-      if (!writesOnlyUncapturedLocalMemory(inst2, TLI))
+      // A call that writes memory existing before it only on paths that throw
+      // cannot overwrite anything the callee read: if it throws, the reverse
+      // pass never runs.
+      if (auto CB = dyn_cast<CallBase>(inst2))
+        if (isReadOnlyOrThrow(CB))
+          return false;
+
+      // A write to uncaptured local or noalias argument memory is not an
+      // unknown write: the callee can only reach that memory through an
+      // argument, which is marked overwritten below.
+      if (!writesOnlyUncapturedLocalOrNoaliasArgMemory(inst2, TLI))
         next_subsequent_inst_may_write = true;
+
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -664,8 +717,8 @@ struct CacheAnalysis {
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            llvm::isModSet(AA.getModRefInfo(
-                inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
+            mayModify(AA, inst2,
+                      MemoryLocation::getForArgument(callsite_op, i, TLI))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
