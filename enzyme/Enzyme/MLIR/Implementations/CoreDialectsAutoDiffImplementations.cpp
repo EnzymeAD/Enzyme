@@ -594,7 +594,7 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       width,
       /* addedType */ nullptr, type_args, overwritten_args,
       /* augmented */ nullptr, gutils->omp, gutils->postpasses,
-      gutils->verifyPostPasses, gutils->strongZero);
+      gutils->strongZero);
 
   if (!forwardFn)
     return orig->emitError()
@@ -770,7 +770,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
       fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
       mode, freeMemory, gutils->AtomicAdd, width, /*addedType*/ nullptr,
       type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
-      gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
+      gutils->postpasses, gutils->strongZero,
       /*markReadonly=*/false);
 
   if (!revFn)

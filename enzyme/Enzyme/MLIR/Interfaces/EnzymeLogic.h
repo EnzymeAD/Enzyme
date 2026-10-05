@@ -13,6 +13,12 @@ namespace enzyme {
 
 typedef void(buildReturnFunction)(OpBuilder &, mlir::Block *);
 
+// Runs the post-differentiation passes on a newly generated function. A pass
+// driving differentiation passes a closure around its Pass::runPipeline, so
+// the passes run under its pass manager and share its instrumentation
+// (nested timing, IR printing, ...). Null if there are no such passes.
+using PostPasses = llvm::function_ref<LogicalResult(Operation *)>;
+
 class MGradientUtilsReverse;
 
 class MFnTypeInfo {
@@ -228,19 +234,17 @@ public:
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> overwritten_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses,
-                    bool verifyPostPasses, bool strongZero);
+                    void *augmented, bool omp, PostPasses postpasses,
+                    bool strongZero);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    std::vector<bool> returnPrimals,
-                    std::vector<bool> returnShadows, DerivativeMode mode,
-                    bool freeMemory, bool atomicAdd, size_t width,
-                    mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> overwritten_args, void *augmented,
-                    bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
-                    bool strongZero, bool markReadonly);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
+      mlir::Type addedType, MFnTypeInfo type_args,
+      std::vector<bool> overwritten_args, void *augmented, bool omp,
+      PostPasses postpasses, bool strongZero, bool markReadonly);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,

@@ -13,8 +13,6 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
-#include "mlir/Pass/PassManager.h"
-#include "mlir/Pass/PassRegistry.h"
 
 #include "llvm/ADT/BreadthFirstIterator.h"
 
@@ -86,7 +84,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
     std::vector<bool> overwritten_args, void *augmented, bool omp,
-    llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero) {
+    PostPasses postpasses, bool strongZero) {
   if (fn.getFunctionBody().empty()) {
     fn.emitError() << "cannot differentiate a function without a body: "
                    << fn.getNameAttr() << "\n";
@@ -115,7 +113,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
-      /*omp*/ false, postpasses, verifyPostPasses, strongZero);
+      /*omp*/ false, postpasses, strongZero);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
   insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(
@@ -205,20 +203,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   if (!valid)
     return nullptr;
 
-  if (postpasses != "") {
-    mlir::PassManager pm(nf->getContext());
-    pm.enableVerifier(verifyPostPasses);
-    std::string error_message;
-    // llvm::raw_string_ostream error_stream(error_message);
-    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
-    if (mlir::failed(result)) {
-      return nullptr;
-    }
-
-    if (!mlir::succeeded(pm.run(nf))) {
-      return nullptr;
-    }
-  }
+  if (postpasses && failed(postpasses(nf)))
+    return nullptr;
 
   return nf;
 }
