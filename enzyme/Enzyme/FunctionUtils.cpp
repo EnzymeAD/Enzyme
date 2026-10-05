@@ -2073,40 +2073,11 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
   }
 }
 
-// Strips casts and constant-offset GEPs from ptr, adding their offset to
-// offset. Returns null if an offset is not constant.
-static Value *stripCastsAndConstantOffsets(Value *ptr, const DataLayout &DL,
-                                           APInt &offset) {
-  while (true) {
-    if (auto CI = dyn_cast<CastInst>(ptr)) {
-      if (!CI->getSrcTy()->isPointerTy() || !CI->getDestTy()->isPointerTy())
-        return nullptr;
-      ptr = CI->getOperand(0);
-      continue;
-    }
-    if (auto GEP = dyn_cast<GEPOperator>(ptr)) {
-      if (DL.getIndexSizeInBits(GEP->getPointerAddressSpace()) !=
-          offset.getBitWidth())
-        return nullptr;
-      APInt gepOffset(offset.getBitWidth(), 0);
-      if (!GEP->accumulateConstantOffset(DL, gepOffset))
-        return nullptr;
-      offset += gepOffset;
-      ptr = GEP->getPointerOperand();
-      continue;
-    }
-    return ptr;
-  }
-}
-
-// Whether V is a Julia Memory object that did not exist before this function:
-// one allocated here by jl_alloc_genericmemory, or the empty Memory singleton
-// (a global Enzyme.jl marks enzymejl_empty_memory), which no in-bounds access
-// writes. Phis and selects of such objects qualify.
-static bool isFreshJuliaMemory(Value *V, SmallPtrSetImpl<Value *> &seen) {
-  V = getBaseObject(V, /*offsetAllowed*/ false);
-  if (!seen.insert(V).second)
-    return true;
+// Whether the base object V is a Julia Memory object that did not exist
+// before this function: one allocated here by jl_alloc_genericmemory, or the
+// empty Memory singleton (a global Enzyme.jl marks enzymejl_empty_memory),
+// which no in-bounds access writes.
+static bool isFreshJuliaMemory(Value *V) {
   if (auto CB = dyn_cast<CallBase>(V)) {
     auto name = getFuncNameFromCall(CB);
     return name == "jl_alloc_genericmemory" ||
@@ -2116,15 +2087,6 @@ static bool isFreshJuliaMemory(Value *V, SmallPtrSetImpl<Value *> &seen) {
   }
   if (auto GV = dyn_cast<GlobalVariable>(V))
     return GV->getMetadata("enzymejl_empty_memory") != nullptr;
-  if (auto PN = dyn_cast<PHINode>(V)) {
-    for (auto &op : PN->incoming_values())
-      if (!isFreshJuliaMemory(op, seen))
-        return false;
-    return true;
-  }
-  if (auto SI = dyn_cast<SelectInst>(V))
-    return isFreshJuliaMemory(SI->getTrueValue(), seen) &&
-           isFreshJuliaMemory(SI->getFalseValue(), seen);
   return false;
 }
 
@@ -2230,38 +2192,30 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
   return true;
 }
 
-// Whether V is a Julia array object that did not exist before this function,
-// whose data field, at offset 0, only ever holds fresh data while it runs
-// (see dataFieldOnlyHoldsFreshData). On Julia 1.10, jl_alloc_array_* and
-// jl_new_array allocate it with fresh data. From Julia 1.11 on it is allocated
-// like any other object, and the function stores the data of a fresh Memory
-// into the field. Phis and selects of such objects qualify.
+// Whether the base object V is a Julia array object that did not exist before
+// this function, whose data field, at offset 0, only ever holds fresh data
+// while it runs (see dataFieldOnlyHoldsFreshData). On Julia 1.10,
+// jl_alloc_array_* and jl_new_array allocate it with fresh data. From Julia
+// 1.11 on it is allocated like any other object, and the function stores the
+// data of a fresh Memory into the field.
 static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
                               SmallPtrSetImpl<Value *> &seen) {
-  V = getBaseObject(V, /*offsetAllowed*/ false);
+  // An array whose data field we are already checking, reached again through
+  // a store to a data field: it holds fresh data if everything else does.
   if (!seen.insert(V).second)
     return true;
-  if (auto CB = dyn_cast<CallBase>(V)) {
-    auto name = getFuncNameFromCall(CB);
-    if (name.contains("alloc_genericmemory"))
-      return false;
-    if (name == "jl_alloc_array_1d" || name == "ijl_alloc_array_1d" ||
-        name == "jl_alloc_array_2d" || name == "ijl_alloc_array_2d" ||
-        name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
-        name == "jl_new_array" || name == "ijl_new_array" ||
-        isAllocationCall(CB, TLI))
-      return dataFieldOnlyHoldsFreshData(CB, TLI, seen);
+  auto CB = dyn_cast<CallBase>(V);
+  if (!CB)
     return false;
-  }
-  if (auto PN = dyn_cast<PHINode>(V)) {
-    for (auto &op : PN->incoming_values())
-      if (!isFreshJuliaArray(op, TLI, seen))
-        return false;
-    return true;
-  }
-  if (auto SI = dyn_cast<SelectInst>(V))
-    return isFreshJuliaArray(SI->getTrueValue(), TLI, seen) &&
-           isFreshJuliaArray(SI->getFalseValue(), TLI, seen);
+  auto name = getFuncNameFromCall(CB);
+  if (name.contains("alloc_genericmemory"))
+    return false;
+  if (name == "jl_alloc_array_1d" || name == "ijl_alloc_array_1d" ||
+      name == "jl_alloc_array_2d" || name == "ijl_alloc_array_2d" ||
+      name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
+      name == "jl_new_array" || name == "ijl_new_array" ||
+      isAllocationCall(CB, TLI))
+    return dataFieldOnlyHoldsFreshData(CB, TLI, seen);
   return false;
 }
 
@@ -2271,6 +2225,7 @@ static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
 //    The field is set when the object is allocated and never changed, so the
 //    data is as fresh as the object.
 //  * a fresh Julia array (see isFreshJuliaArray), at offset 0.
+// The pointer may be loaded from a phi of such objects.
 static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
                                           SmallPtrSetImpl<Value *> &seen) {
   if (!EnzymeJuliaAddrLoad)
@@ -2281,16 +2236,17 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
   auto &DL = LI->getModule()->getDataLayout();
   Value *ptr = LI->getPointerOperand();
   APInt offset(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
-  ptr = stripCastsAndConstantOffsets(ptr, DL, offset);
-  if (!ptr)
+  ptr = ptr->stripAndAccumulateConstantOffsets(DL, offset,
+                                               /*AllowNonInbounds*/ true);
+  bool memoryField = offset == DL.getPointerSize();
+  if (!memoryField && offset != 0)
     return false;
-  if (offset == DL.getPointerSize()) {
-    SmallPtrSet<Value *, 4> seenMemory;
-    return isFreshJuliaMemory(ptr, seenMemory);
+  for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
+    if (memoryField ? !isFreshJuliaMemory(base)
+                    : !isFreshJuliaArray(base, TLI, seen))
+      return false;
   }
-  if (offset == 0)
-    return isFreshJuliaArray(ptr, TLI, seen);
-  return false;
+  return true;
 }
 
 static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
