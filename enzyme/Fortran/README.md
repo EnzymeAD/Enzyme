@@ -6,9 +6,7 @@ detailed in the following.
 The [custom derivatives](#custom-derivatives) section registers reverse-mode and
 forward-mode rules through a derived type of Fortran procedure pointers.
 
-## Note on compilers
-
-> [!NOTE] Note on compilers
+> [!NOTE]
 > Before providing details on the Fortran bindings, it is worth noting that
 > Enzyme only supports the `2023.0.0` and `2023.2.4` versions of the Intel
 > IFX Fortran compiler. We strongly recommend using the
