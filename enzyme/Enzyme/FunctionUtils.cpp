@@ -2073,6 +2073,72 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
   }
 }
 
+// Whether V is a Julia Memory object that did not exist before this function:
+// one allocated here by jl_alloc_genericmemory, or the empty Memory singleton
+// (a global Enzyme.jl marks enzymejl_empty_memory), which no in-bounds access
+// writes. Phis and selects of such objects qualify.
+static bool isFreshJuliaMemory(Value *V, SmallPtrSetImpl<Value *> &seen) {
+  V = getBaseObject(V, /*offsetAllowed*/ false);
+  if (!seen.insert(V).second)
+    return true;
+  if (auto CB = dyn_cast<CallBase>(V)) {
+    auto name = getFuncNameFromCall(CB);
+    return name == "jl_alloc_genericmemory" ||
+           name == "ijl_alloc_genericmemory" ||
+           name == "jl_alloc_genericmemory_unchecked" ||
+           name == "ijl_alloc_genericmemory_unchecked";
+  }
+  if (auto GV = dyn_cast<GlobalVariable>(V))
+    return GV->getMetadata("enzymejl_empty_memory") != nullptr;
+  if (auto PN = dyn_cast<PHINode>(V)) {
+    for (auto &op : PN->incoming_values())
+      if (!isFreshJuliaMemory(op, seen))
+        return false;
+    return true;
+  }
+  if (auto SI = dyn_cast<SelectInst>(V))
+    return isFreshJuliaMemory(SI->getTrueValue(), seen) &&
+           isFreshJuliaMemory(SI->getFalseValue(), seen);
+  return false;
+}
+
+// Whether Obj, the base object of a written pointer, is the data of a Julia
+// Memory object that did not exist before this function: a pointer loaded from
+// the data field, which follows the length, of such an object. The field is
+// set when the object is allocated and never changed, so the data is as fresh
+// as the object.
+static bool isFreshJuliaMemoryData(Value *Obj) {
+  if (!EnzymeJuliaAddrLoad)
+    return false;
+  auto LI = dyn_cast<LoadInst>(Obj);
+  if (!LI)
+    return false;
+  auto &DL = LI->getModule()->getDataLayout();
+  Value *ptr = LI->getPointerOperand();
+  APInt offset(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
+  while (true) {
+    if (auto CI = dyn_cast<CastInst>(ptr)) {
+      if (!CI->getSrcTy()->isPointerTy())
+        return false;
+      ptr = CI->getOperand(0);
+      continue;
+    }
+    if (auto GEP = dyn_cast<GEPOperator>(ptr)) {
+      APInt gepOffset(offset.getBitWidth(), 0);
+      if (!GEP->accumulateConstantOffset(DL, gepOffset))
+        return false;
+      offset += gepOffset;
+      ptr = GEP->getPointerOperand();
+      continue;
+    }
+    break;
+  }
+  if (offset != DL.getPointerSize())
+    return false;
+  SmallPtrSet<Value *, 4> seen;
+  return isFreshJuliaMemory(ptr, seen);
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2096,6 +2162,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
+        // Writing the data of a fresh Julia Memory writes memory that did
+        // not exist before the call.
+        if (isFreshJuliaMemoryData(Obj)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
@@ -2127,6 +2199,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
         auto Obj = getBaseObject(MSI->getOperand(0));
+        // Writing the data of a fresh Julia Memory writes memory that did
+        // not exist before the call.
+        if (isFreshJuliaMemoryData(Obj)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
@@ -2290,6 +2368,12 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto Obj = getBaseObject(SI->getPointerOperand());
+        // Writing the data of a fresh Julia Memory writes memory that did
+        // not exist before the call.
+        if (isFreshJuliaMemoryData(Obj)) {
+          local = true;
+          continue;
+        }
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
