@@ -4587,6 +4587,25 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   return subretType;
 }
 
+bool GradientUtils::augmentedPrimalReturnUsed(llvm::Value *orig) const {
+  // In the reverse pass of split mode, answer as the augmented pass did. Its
+  // own analysis can differ, e.g. when only the augmented function returns the
+  // primal, and callers use this to rebuild how a call was augmented.
+  if (mode == DerivativeMode::ReverseModeGradient && primalUnnecessaryValuesP) {
+    bool used = !primalUnnecessaryValuesP->count(orig);
+    auto found = primalKnownRecomputeHeuristicP->find(orig);
+    if (found != primalKnownRecomputeHeuristicP->end() && !found->second)
+      used = true;
+    return used;
+  }
+  bool used = false;
+  getReturnDiffeType(orig, &used, nullptr,
+                     mode == DerivativeMode::ReverseModeGradient
+                         ? DerivativeMode::ReverseModePrimal
+                         : mode);
+  return used;
+}
+
 DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
