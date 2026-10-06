@@ -22,7 +22,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "mlir/Transforms/WalkPatternRewriteDriver.h"
@@ -46,6 +45,7 @@ template <typename SourceOp>
 static bool
 checkRangeDominance(IRMapping &btop, DominanceInfo &dom, SourceOp &rootOp,
                     SetVector<Operation *> &specialOps, ValueRange values) {
+  SmallVector<Value> blockArgs(rootOp.getBody().getArguments());
   for (auto value : values) {
     if (dom.properlyDominates(value, rootOp))
       continue;
@@ -95,62 +95,62 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<SourceOp> {
       }
     }
 
-    // Values captured from above are constant at this differentiation boundary.
-    // They must not be replaced with an active block argument, even when that
-    // argument has the same incoming SSA value as the capture.
+    // rename all uses of primal
+    llvm::SetVector<Value> freeValues;
+    getUsedValuesDefinedAbove(autodiffRegion, freeValues);
+    for (Value value : freeValues) {
+      for (auto [pval, bval] : llvm::zip(primalArgs, blockArgs)) {
+        if (value == pval) {
+          for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
+            if (rootOp->isProperAncestor(use.getOwner()))
+              use.assign(bval);
+          }
+        }
+      }
+    }
 
     llvm::SetVector<Operation *> liftOps;
+    llvm::SetVector<Operation *> stationaryOps;
     llvm::SmallVector<MemoryEffects::EffectInstance> stationaryEffects;
     for (Block &blk : autodiffRegion.getBlocks()) {
       // If bodyOp is in a block which does not post-dominate the entry
       // block to the regionOp, then we disable lifting it
       if (pdom.postDominates(&blk, &autodiffRegion.front())) {
         for (Operation &bodyOp : blk.without_terminator()) {
+          bool canLift = true;
           llvm::SmallVector<MemoryEffects::EffectInstance> bodyOpEffects;
-          // A failed effect collection must remain a rejection after all
-          // subsequent dependency and allocation-scope checks.
-          bool canLift =
+
+          bool couldCollectEffects =
               enzyme::oputils::collectOpEffects(&bodyOp, bodyOpEffects);
-          for (auto effect : bodyOpEffects) {
-            if (!isa<MemoryEffects::Allocate>(effect.getEffect()) ||
-                !isa<SideEffects::AutomaticAllocationScopeResource>(
-                    effect.getResource()))
-              continue;
-            // The AD region is an allocation scope. An allocation may only
-            // move if its owning scope moves with it (e.g. an scf.for).
-            Operation *allocation =
-                effect.getValue() ? effect.getValue().getDefiningOp() : nullptr;
-            Operation *scope = allocation
-                                   ? allocation->getParentWithTrait<
-                                         OpTrait::AutomaticAllocationScope>()
-                                   : nullptr;
-            canLift &= scope && bodyOp.isAncestor(scope);
-          }
-          canLift &= checkRangeDominance(btop, dom, rootOp, liftOps,
-                                         bodyOp.getOperands());
+
+          if (!couldCollectEffects)
+            canLift = false;
+
+          canLift = checkRangeDominance(btop, dom, rootOp, liftOps,
+                                        bodyOp.getOperands());
 
           llvm::SetVector<Value> inside_values;
           if (bodyOp.getNumRegions()) {
+            canLift = false;
             getUsedValuesDefinedAbove(bodyOp.getRegions(), inside_values);
-            canLift &= checkRangeDominance(btop, dom, rootOp, liftOps,
-                                           inside_values.getArrayRef());
+            canLift = checkRangeDominance(btop, dom, rootOp, liftOps,
+                                          inside_values.getArrayRef());
           }
-
-          // TODO: Account for execution order across conditional effects,
-          // CFG loops, and operations that may trap or fail to terminate.
-          // Postdominance and memory-conflict checks alone are insufficient.
 
           // Check for memory conflicts with current set of stationary ops
           for (auto stationaryEffect : stationaryEffects) {
             for (auto bodyOpEffect : bodyOpEffects) {
-              // Allocation and deallocation affect memory lifetime, so they
-              // must also conflict with accesses to the same storage.
-              if (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
-                  isa<MemoryEffects::Read>(bodyOpEffect.getEffect()))
-                continue;
-              if (enzyme::oputils::mayAlias(bodyOpEffect, stationaryEffect)) {
-                canLift = false;
-                break;
+              if ((isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+                   isa<MemoryEffects::Read>(bodyOpEffect.getEffect())) ||
+                  (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
+                   isa<MemoryEffects::Write>(bodyOpEffect.getEffect())) ||
+                  (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+                   isa<MemoryEffects::Write>(bodyOpEffect.getEffect()))) {
+
+                if (enzyme::oputils::mayAlias(bodyOpEffect, stationaryEffect)) {
+                  canLift = false;
+                  break;
+                }
               }
             }
           }
@@ -175,14 +175,13 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<SourceOp> {
 
             liftOps.insert(&bodyOp);
           } else {
-            llvm::append_range(stationaryEffects, bodyOpEffects);
+            stationaryOps.insert(&bodyOp);
+            stationaryEffects.append(bodyOpEffects.begin(),
+                                     bodyOpEffects.end());
           }
         }
       }
     }
-
-    if (liftOps.empty())
-      return failure();
 
     // Lift operations
     for (Operation *op : llvm::make_early_inc_range(liftOps)) {
