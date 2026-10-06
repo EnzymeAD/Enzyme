@@ -3,8 +3,8 @@ name: MLIR+CIR
 on:
   push:
     branches:
-    - users/aokblast/*
-	- users/weihanglong/*
+    - users/aokblast/**
+	- users/weihanglong/**
   pull_request:
     branches:
     - main
