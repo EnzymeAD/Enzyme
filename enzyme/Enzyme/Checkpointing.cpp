@@ -35,6 +35,8 @@
 
 #include "Checkpointing.h"
 
+#include <set>
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -666,6 +668,39 @@ getSizeHint(Value *V, Instruction *IP, DominatorTree &DT,
   return {};
 }
 
+/// Where a region starts, as the loads and constant offsets that reach it
+/// from a value: two regions with the same address are the same memory, as
+/// the data of an array a struct holds, loaded for the struct and for the
+/// array, both in front of the loop.
+static SmallVector<const void *, 4> getRegionAddress(Value *V) {
+  SmallVector<const void *, 4> key;
+  const DataLayout &DL = cast<Instruction>(V)->getModule()->getDataLayout();
+  while (true) {
+    V = V->stripPointerCasts();
+    if (auto *LI = dyn_cast<LoadInst>(V)) {
+      key.push_back(nullptr);
+      V = LI->getPointerOperand();
+      continue;
+    }
+    if (auto *GEP = dyn_cast<GEPOperator>(V)) {
+      APInt off(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+      if (GEP->accumulateConstantOffset(DL, off)) {
+        key.push_back((const void *)(uintptr_t)(off.getZExtValue() + 1));
+        V = GEP->getPointerOperand();
+        continue;
+      }
+    }
+    if (auto *CI = dyn_cast<CallInst>(V))
+      if (Function *F = getFunctionFromCall(CI))
+        if (F->getName() == "julia.pointer_from_objref") {
+          V = CI->getArgOperand(0);
+          continue;
+        }
+    key.push_back(V);
+    return key;
+  }
+}
+
 static bool isJuliaState(const Function *F) {
   return F && F->getName() == "__enzyme_julia_state";
 }
@@ -1038,7 +1073,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
                 "); give the regions with __enzyme_checkpoint_for");
   }
   SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions;
-  SmallPtrSet<Value *, 4> seen;
+  std::set<SmallVector<const void *, 4>> seen;
+  auto unseen = [&](Value *ptr) {
+    return isa<Instruction>(ptr) ? seen.insert(getRegionAddress(ptr)).second
+                                 : seen.insert({ptr}).second;
+  };
   for (auto [i, V] : enumerate(liveins)) {
     if (!V->getType()->isPointerTy() || isJuliaTaskState(V))
       continue;
@@ -1063,7 +1102,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
                       "snapshot (does it resize an array?)");
         }
         for (auto &r : *state)
-          if (seen.insert(getBaseObject(std::get<0>(r))).second)
+          if (unseen(std::get<0>(r)))
             regions.push_back(r);
         if (!slot)
           continue;
@@ -1086,13 +1125,13 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
                     ", whose extent is not known before "
                     "it; give it with __enzyme_ptr_size_hint on that pointer");
       }
-      if (seen.insert(getBaseObject(std::get<0>(*hint))).second)
+      if (unseen(std::get<0>(*hint)))
         regions.push_back(*hint);
       if (!w)
         continue;
     }
     if (auto hint = getSizeHint(V, IP, DT, blocks)) {
-      if (seen.insert(getBaseObject(V)).second)
+      if (unseen(std::get<0>(*hint)))
         regions.push_back(*hint);
       continue;
     }
@@ -1111,8 +1150,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       continue;
     }
     // Stack slots always: they are the loop's own state.
-    if ((w || isa<AllocaInst>(alloc->first)) &&
-        seen.insert(alloc->first).second)
+    if ((w || isa<AllocaInst>(alloc->first)) && unseen(alloc->first))
       regions.push_back({alloc->first, alloc->second, 0});
   }
 
