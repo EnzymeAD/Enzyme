@@ -476,6 +476,11 @@ EnzymeGradientUtilsGetDiffeType(GradientUtils *G, LLVMValueRef oval,
   return (CDIFFE_TYPE)(G->getDiffeType(unwrap(oval), foreignFunction != 0));
 }
 
+uint8_t EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(GradientUtils *G,
+                                                        LLVMValueRef oval) {
+  return G->augmentedPrimalReturnUsed(unwrap(oval));
+}
+
 CDIFFE_TYPE
 EnzymeGradientUtilsGetReturnDiffeType(GradientUtils *G, LLVMValueRef oval,
                                       uint8_t *needsPrimal,

@@ -3294,6 +3294,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
   if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
+  AugmentedCachedFunctions.find(tup)->second.primalUnnecessaryValues.insert(
+      unnecessaryValues.begin(), unnecessaryValues.end());
+  AugmentedCachedFunctions.find(tup)->second.primalKnownRecomputeHeuristic =
+      gutils->knownRecomputeHeuristic;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
   for (auto pair : gfnusers) {
@@ -4469,6 +4473,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                   key.mode, gutils, TLI, key.constant_args,
                                   guaranteedUnreachable);
   gutils->unnecessaryValuesP = &unnecessaryValues;
+  if (augmenteddata && key.mode == DerivativeMode::ReverseModeGradient) {
+    gutils->primalUnnecessaryValuesP = &augmenteddata->primalUnnecessaryValues;
+    gutils->primalKnownRecomputeHeuristicP =
+        &augmenteddata->primalKnownRecomputeHeuristic;
+  }
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
