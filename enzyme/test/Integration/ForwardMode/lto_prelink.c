@@ -19,9 +19,12 @@
 // callee from this translation unit alone.
 // RUN: if [ %llvmver -ge 20 ]; then not %clang -std=c11 -O2 -flto %loadClangEnzyme -mllvm -enzyme-lto-prelink=1 -c %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNRESOLVED; fi
 
-// A ThinLTO post-link pipeline at O0 runs no extension point callbacks, so an
-// O0 ThinLTO compile cannot defer and differentiates here, as without LTO.
-// RUN: if [ %llvmver -ge 20 ]; then not %clang -std=c11 -O0 -flto=thin %loadClangEnzyme -c %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNRESOLVED; fi
+// Before LLVM 24, a ThinLTO post-link pipeline at O0 runs no extension point
+// callbacks, so an O0 ThinLTO compile cannot defer and differentiates here, as
+// without LTO. From LLVM 24 on, the post-link run differentiates at
+// ThinLinkTimeOptimizationEarly at every level, so O0 defers too.
+// RUN: if [ %llvmver -ge 20 ] && [ %llvmver -lt 24 ]; then not %clang -std=c11 -O0 -flto=thin %loadClangEnzyme -c %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNRESOLVED; fi
+// RUN: if [ %llvmver -ge 24 ]; then %clang -std=c11 -O0 -flto=thin %loadClangEnzyme -c %s -o /dev/null; fi
 
 // Without LTO nothing changes: Enzyme still runs per translation unit, and the
 // declaration is still an error there.

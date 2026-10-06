@@ -38,18 +38,23 @@ class Module;
 /// that functions it defines and differentiates call.
 bool enzymeThinLTORequestImports(llvm::Module &M);
 
-/// At ThinLTO post-link: drop the anchor the pre-link added, and give every
-/// imported function to differentiate an internal copy.
-bool enzymeThinLTOLocalizeImports(llvm::Module &M);
+/// At ThinLTO post-link: drop the anchor the pre-link added, and with
+/// \p Localize give every imported function to differentiate an internal copy.
+bool enzymeThinLTOLocalizeImports(llvm::Module &M, bool Localize = true);
 
 class EnzymeThinLTOImportPass final
     : public PassParent<EnzymeThinLTOImportPass> {
   friend PassParent<EnzymeThinLTOImportPass>;
   bool PostLink;
+  bool Localize;
   static llvm::AnalysisKey Key;
 
 public:
-  explicit EnzymeThinLTOImportPass(bool PostLink) : PostLink(PostLink) {}
+  /// With \p Localize false, the post-link half only drops the anchor: for a
+  /// post-link run that differentiates before available_externally bodies are
+  /// dropped.
+  explicit EnzymeThinLTOImportPass(bool PostLink, bool Localize = true)
+      : PostLink(PostLink), Localize(Localize) {}
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &);
 };
 

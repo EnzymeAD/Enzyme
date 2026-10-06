@@ -120,13 +120,15 @@ bool enzymeThinLTORequestImports(Module &M) {
   return true;
 }
 
-bool enzymeThinLTOLocalizeImports(Module &M) {
+bool enzymeThinLTOLocalizeImports(Module &M, bool Localize) {
   bool Changed = false;
   if (Function *Anchor = M.getFunction(AnchorName)) {
     removeFromUsedLists(M, [&](Constant *C) { return C == Anchor; });
     Anchor->eraseFromParent();
     Changed = true;
   }
+  if (!Localize)
+    return Changed;
 
   // The function to differentiate is the first argument. An imported one has
   // available_externally linkage, so EliminateAvailableExternally would drop
@@ -187,7 +189,7 @@ llvm::AnalysisKey EnzymeThinLTOImportPass::Key;
 
 PreservedAnalyses EnzymeThinLTOImportPass::run(Module &M,
                                                ModuleAnalysisManager &) {
-  bool Changed = PostLink ? enzymeThinLTOLocalizeImports(M)
+  bool Changed = PostLink ? enzymeThinLTOLocalizeImports(M, Localize)
                           : enzymeThinLTORequestImports(M);
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
