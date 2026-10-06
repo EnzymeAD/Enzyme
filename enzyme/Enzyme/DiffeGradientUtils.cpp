@@ -970,6 +970,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto &DL = oldFunc->getParent()->getDataLayout();
 
   auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
+  // Without a known alignment, the pointer is only known to be aligned for
+  // the element type. Do not let the loads and stores below take the larger
+  // ABI alignment of the vector type built from it.
+  if (!align)
+    align = DL.getABITypeAlign(addingType);
   if (addingSize != size) {
     assert(size > addingSize);
     addingType =
@@ -1051,6 +1056,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
+        Al->setAlignment(
+            std::max(Al->getAlign(), DL.getABITypeAlign(dif->getType())));
         BuilderM.CreateStore(
             dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
         Value *idxs[] = {
@@ -1058,7 +1065,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
         auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs, "gep.ptr");
-        dif = BuilderM.CreateLoad(addingType, difp, "gep.load");
+        dif = BuilderM.CreateAlignedLoad(addingType, difp,
+                                         commonAlignment(Al->getAlign(), start),
+                                         "gep.load");
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -1075,9 +1084,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           IRBuilder<> A(inversionAllocs);
           auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
           BuilderM.CreateStore(dif, Al);
-          dif = BuilderM.CreateLoad(
+          dif = BuilderM.CreateAlignedLoad(
               addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
-              "cast.load");
+              Al->getAlign(), "cast.load");
         }
       }
       return dif;
