@@ -54,11 +54,37 @@ struct SwitchFlatBranchOpInterface
 };
 } // namespace
 
+class AutoDiffCIRFuncOpFunctionInterface
+    : public AutoDiffFunctionInterface::ExternalModel<
+          AutoDiffCIRFuncOpFunctionInterface, cir::FuncOp> {
+public:
+  void transformResultTypes(Operation *, SmallVectorImpl<Type> &types) const {
+    assert(types.size() <= 1 && "TODO: pack multiple results into cir.record");
+  }
+  void detachFromPrimalDefinition(Operation *self) const {
+    // cir.func has comdat as a unit attr, not a symbol ref: nothing to
+    // retarget.
+  }
+  Operation *createCall(Operation *self, OpBuilder &b, Location loc,
+                        ValueRange args) const {
+    auto fn = cast<cir::FuncOp>(self);
+    Type res = fn.getFunctionType().getReturnTypes().empty()
+                   ? Type()
+                   : fn.getFunctionType().getReturnType();
+    return cir::CallOp::create(b, loc, SymbolRefAttr::get(fn), res, args);
+  }
+  Operation *createReturn(Operation *, OpBuilder &b, Location loc,
+                          ValueRange args) const {
+    return cir::ReturnOp::create(b, loc, args);
+  }
+};
+
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
     cir::SwitchFlatOp::attachInterface<SwitchFlatBranchOpInterface>(*context);
     registerInterfaces(context);
     registerCIRAutoDiffTypeInterfaces(context);
+    cir::FuncOp::attachInterface<AutoDiffCIRFuncOpFunctionInterface>(*context);
   });
 }
