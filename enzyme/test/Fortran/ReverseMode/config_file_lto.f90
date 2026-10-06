@@ -12,6 +12,11 @@
 ! RUN: %fc -cpp -DCALLEE_ONLY -flto=thin -O2 -c %flangEnzymeConfig %s -o %t.callee.thin.o
 ! RUN: %fc -cpp -DCALLER_ONLY -flto=thin -O2 -c %flangEnzymeConfig %s -o %t.caller.thin.o
 ! RUN: %fc -flto=thin -O2 %flangEnzymeConfig %t.caller.thin.o %t.callee.thin.o -o %t2 && %t2 | FileCheck %s
+! At -O0 the pre-link run defers as well (LLVM 24 and later). Every function
+! compiled at -O0 is noinline, which ThinLTO only imports with -force-import-all.
+! RUN: if [ %llvmver -ge 24 ]; then %fc -cpp -DCALLEE_ONLY -flto=thin -O0 -c %flangEnzymeConfig %s -o %t.callee.thin0.o; fi
+! RUN: if [ %llvmver -ge 24 ]; then %fc -cpp -DCALLER_ONLY -flto=thin -O0 -c %flangEnzymeConfig %s -o %t.caller.thin0.o; fi
+! RUN: if [ %llvmver -ge 24 ]; then %fc -flto=thin -O2 %flangEnzymeConfig -Wl,-mllvm,-force-import-all %t.caller.thin0.o %t.callee.thin0.o -o %t3 && %t3 | FileCheck %s; fi
 
 #ifndef CALLER_ONLY
 real function cube(x)

@@ -3162,6 +3162,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
   {
+#if LLVM_VERSION_MAJOR >= 24
+    // The ThinLTO post-link run differentiates at ThinLinkTimeOptimizationEarly
+    // instead (see below).
+    if (!EnzymeLTOPreLink && Phase == ThinOrFullLTOPhase::ThinLTOPostLink)
+      return;
+#endif
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
     if (!EnzymeEnable)
@@ -3177,17 +3183,20 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // linkage PreserveNVVM changed so the bitcode exports nothing new, while
     // still keeping the relevant functions alive until then.
     //
-    // A ThinLTO post-link pipeline at O0 invokes no callbacks at all, so that
-    // run would never come. The pre-link run cannot know the post-link level,
-    // but the driver passes the compile -O level on to the linker, so an O0
-    // ThinLTO compile still differentiates here.
+    // Before LLVM 24, a ThinLTO post-link pipeline at O0 invokes no callbacks
+    // at all, so that run would never come. The pre-link run cannot know the
+    // post-link level, but the driver passes the compile -O level on to the
+    // linker, so an O0 ThinLTO compile still differentiates here. From LLVM 24
+    // on, the post-link run happens at ThinLinkTimeOptimizationEarly, which
+    // every level invokes.
     //
     // This requires the plugin to be loaded by the linker as well, e.g.
     // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
     // restore the old behaviour when that is not possible.
-    if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
-                              (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
-                               Level != OptimizationLevel::O0))) {
+    if (!EnzymeLTOPreLink &&
+        (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
+         (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
+          (LLVM_VERSION_MAJOR >= 24 || Level != OptimizationLevel::O0)))) {
       MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
                                     /*PreserveCustomRuleLinkage*/ true,
                                     /*LTOPreLink*/ true));
@@ -3243,7 +3252,21 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
 
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // The ThinLTO post-link run. ThinLinkTimeOptimizationEarly starts the
+  // post-link pipeline at every level, O0 included, and comes before
+  // EliminateAvailableExternally, so the bodies ThinLTO imported for the
+  // __enzyme_* calls are still there to differentiate.
+  PB.registerThinLinkTimeOptimizationEarlyEPCallback(
+      [loadPass](ModulePassManager &MPM, OptimizationLevel Level) {
+        if (EnzymeLTOPreLink)
+          return;
+        if (EnzymeEnable)
+          MPM.addPass(EnzymeThinLTOImportPass(/*PostLink*/ true,
+                                              /*Localize*/ false));
+        loadPass(MPM, Level, ThinOrFullLTOPhase::None);
+      });
+#elif LLVM_VERSION_MAJOR >= 20
   // Functions imported by ThinLTO are available_externally, and the
   // optimization pipeline drops those bodies (EliminateAvailableExternally)
   // before the OptimizerEarly callback where the post-link run differentiates.
