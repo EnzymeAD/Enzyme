@@ -38,7 +38,10 @@ $ flang --config=/path/to/FlangEnzyme-21.cfg -flto a.o b.o -o program
 Under `-flto` (full or thin) the compile step leaves `__enzyme_autodiff` calls alone,
 because their callee may be compiled in another file; lld differentiates the linked
 program instead. The config file selects lld and loads `LLDEnzyme-<LLVM version>`
-into it, so the same flags work with and without `-flto`.
+into it, so the same flags work with and without `-flto`. With `-flto=thin`, lld
+differentiates each module on its own, so the function passed to `__enzyme_autodiff`
+has to be defined in the same file as the call (ThinLTO imports only functions that
+are called); use full `-flto` when it is compiled in another file.
 
 Without the plugin the derivative has to be produced out of line, by emitting LLVM IR
 from flang and running the Enzyme pass over it with `opt`:

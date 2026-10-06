@@ -6,9 +6,11 @@
 ! RUN: %fc -cpp -DCALLEE_ONLY -flto -O2 -c %flangEnzymeConfig %s -o %t.callee.o
 ! RUN: %fc -cpp -DCALLER_ONLY -flto -O2 -c %flangEnzymeConfig %s -o %t.caller.o
 ! RUN: %fc -flto -O2 %flangEnzymeConfig %t.caller.o %t.callee.o -o %t1 && %t1 | FileCheck %s
-! RUN: %fc -cpp -DCALLEE_ONLY -flto=thin -O2 -c %flangEnzymeConfig %s -o %t.callee.thin.o
-! RUN: %fc -cpp -DCALLER_ONLY -flto=thin -O2 -c %flangEnzymeConfig %s -o %t.caller.thin.o
-! RUN: %fc -flto=thin -O2 %flangEnzymeConfig %t.caller.thin.o %t.callee.thin.o -o %t2 && %t2 | FileCheck %s
+! With -flto=thin, lld differentiates each module on its own, which then has to
+! define the function: ThinLTO imports functions that are called, not ones that
+! are only passed to __enzyme_autodiff, so here both are in one object file.
+! RUN: %fc -cpp -flto=thin -O2 -c %flangEnzymeConfig %s -o %t.thin.o
+! RUN: %fc -flto=thin -O2 %flangEnzymeConfig %t.thin.o -o %t2 && %t2 | FileCheck %s
 
 #ifndef CALLER_ONLY
 real function cube(x)
