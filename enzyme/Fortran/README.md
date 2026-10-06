@@ -27,6 +27,19 @@ $ flang -fpass-plugin=/path/to/FlangEnzyme-21.so -I /path/to/enzyme/modules prog
 The `-I` flag points at the directory holding the `enzyme.mod` module file, which is
 built by `-DENZYME_FORTRAN=ON` (see the sections below).
 
+The same build installs `FlangEnzyme-<LLVM version>.cfg` next to the plugin. Passing
+it with `--config` replaces the plugin flag and also covers link-time optimization:
+
+```console
+$ flang --config=/path/to/FlangEnzyme-21.cfg -I /path/to/enzyme/modules -flto -c a.f90 b.f90
+$ flang --config=/path/to/FlangEnzyme-21.cfg -flto a.o b.o -o program
+```
+
+Under `-flto` (full or thin) the compile step leaves `__enzyme_autodiff` calls alone,
+because their callee may be compiled in another file; lld differentiates the linked
+program instead. The config file selects lld and loads `LLDEnzyme-<LLVM version>`
+into it, so the same flags work with and without `-flto`.
+
 Without the plugin the derivative has to be produced out of line, by emitting LLVM IR
 from flang and running the Enzyme pass over it with `opt`:
 
