@@ -2359,6 +2359,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           // sret passed straight through to the callee after call-slot
           // optimization), and anything else disqualifies us.
           if (!isReadOnlyOrThrow(CI)) {
+            // The callee may also return memory it allocated and wrote. If
+            // that escapes us (e.g. we return it), we are only local too.
+            if (!local && !CI->getType()->isVoidTy() && !notCaptured(CI, &TLI))
+              local = true;
             auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
             size_t nargs = CI->arg_size();
