@@ -175,6 +175,15 @@ def JacobianOp : Enzyme_Op<"jacobian",
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
+  let description = [{
+    The activity of each primal region block argument is specified by the
+    corresponding entry in `activity`. Values captured from outside the region
+    are constant at this differentiation boundary, including when the same
+    value is also supplied as an active or duplicated primal input. Captured
+    uses and block argument uses retain these distinct differentiation roles.
+    A value that is constant at a nested boundary may still be active at an
+    enclosing differentiation boundary.
+  }];
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add, OptionalAttr<StrAttr>:$fn);
   let regions = (region AnyRegion:$body);
   let results = (outs Variadic<AnyType>:$outputs);
@@ -212,6 +221,15 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
 
 def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform forward mode AD on a child region";
+  let description = [{
+    The activity of each primal region block argument is specified by the
+    corresponding entry in `activity`. Values captured from outside the region
+    are constant at this differentiation boundary, including when the same
+    value is also supplied as a duplicated primal input. Captured uses and block
+    argument uses retain these distinct differentiation roles. A value that is
+    constant at a nested boundary may still be active at an enclosing
+    differentiation boundary.
+  }];
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
   let regions = (region AnyRegion:$body);
   let results = (outs Variadic<AnyType>:$outputs);
