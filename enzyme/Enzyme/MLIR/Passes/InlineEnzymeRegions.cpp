@@ -258,16 +258,27 @@ static FailureOr<func::FuncOp> outlineAutoDiffFunc(
   llvm::SetVector<Value> freeValues;
   getUsedValuesDefinedAbove(autodiffRegion, freeValues);
 
-  // Captures are constant at this differentiation boundary, even when a
-  // captured value is also passed as a primal input. Only uses of the region's
-  // block arguments carry the corresponding input activities. Keep separate
-  // arguments for these roles instead of replacing captures with block
-  // arguments based on their equal incoming values.
-  for (Value value : freeValues) {
-    inputs.push_back(value);
-    argTypes.push_back(value.getType());
-    argLocs.push_back(value.getLoc());
-    argActivities.push_back(enzyme::Activity::enzyme_const);
+  llvm::SmallVector<Value> primalValuesAbove = op.getPrimalInputs();
+  llvm::SmallVector<Value> blockArgs(autodiffRegion.getArguments());
+  for (Value value : llvm::make_early_inc_range(freeValues)) {
+    bool isPrimal = false;
+    for (auto [pval, bval] : llvm::zip(primalValuesAbove, blockArgs)) {
+      if (value == pval) {
+        isPrimal = true;
+        for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
+          if (op->isProperAncestor(use.getOwner()))
+            use.assign(bval);
+        }
+        freeValues.remove(value);
+      }
+    }
+
+    if (!isPrimal) {
+      inputs.push_back(value);
+      argTypes.push_back(value.getType());
+      argLocs.push_back(value.getLoc());
+      argActivities.push_back(enzyme::Activity::enzyme_const);
+    }
   }
   auto fnType = builder.getFunctionType(argTypes, resultTypes);
 
@@ -422,32 +433,32 @@ struct OutlineEnzymeFromRegion
     : public enzyme::impl::OutlineEnzymeFromRegionPassBase<
           OutlineEnzymeFromRegion> {
   void runOnOperation() override {
-    // Outlining erases the original region and all its children. Process
-    // nested regions first, regardless of their differentiation mode, so that
-    // every boundary keeps its own capture activities and no saved operation
-    // points into an already erased parent.
-    SmallVector<Operation *> toOutline;
-    getOperation()->walk<WalkOrder::PostOrder>([&](Operation *op) {
-      if (isa<enzyme::AutoDiffRegionOp, enzyme::ForwardDiffRegionOp>(op))
-        toOutline.push_back(op);
-    });
+    SmallVector<enzyme::AutoDiffRegionOp> toOutlineRev;
+    getOperation()->walk(
+        [&](enzyme::AutoDiffRegionOp op) { toOutlineRev.push_back(op); });
+
+    SmallVector<enzyme::ForwardDiffRegionOp> toOutlineFwd;
+    getOperation()->walk(
+        [&](enzyme::ForwardDiffRegionOp op) { toOutlineFwd.push_back(op); });
 
     OpBuilder builder(getOperation());
     unsigned increment = 0;
-    for (Operation *regionOp : toOutline) {
+    for (auto regionOp : toOutlineRev) {
       auto symbol = regionOp->getParentOfType<SymbolOpInterface>();
-      auto reverseOp = dyn_cast<enzyme::AutoDiffRegionOp>(regionOp);
       std::string defaultName =
-          (Twine(symbol.getName(), reverseOp ? "_to_diff" : "_to_fwddiff") +
-           Twine(increment))
-              .str();
-      LogicalResult result =
-          reverseOp
-              ? outlineEnzymeAutoDiffRegion(reverseOp, defaultName, builder)
-              : outlineEnzymeForwardDiffRegion(
-                    cast<enzyme::ForwardDiffRegionOp>(regionOp), defaultName,
-                    builder);
-      if (failed(result))
+          (Twine(symbol.getName(), "_to_diff") + Twine(increment)).str();
+      if (failed(outlineEnzymeAutoDiffRegion(regionOp, defaultName, builder)))
+        return signalPassFailure();
+
+      ++increment;
+    }
+
+    for (auto regionOp : toOutlineFwd) {
+      auto symbol = regionOp->getParentOfType<SymbolOpInterface>();
+      std::string defaultName =
+          (Twine(symbol.getName(), "_to_fwddiff") + Twine(increment)).str();
+      if (failed(
+              outlineEnzymeForwardDiffRegion(regionOp, defaultName, builder)))
         return signalPassFailure();
 
       ++increment;

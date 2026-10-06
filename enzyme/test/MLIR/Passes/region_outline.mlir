@@ -179,11 +179,11 @@ func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
 
 
 // CHECK:  func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg0, %arg1) <activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]> : (f64, f64, f64) -> f64
+// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]> : (f64, f64) -> f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
-// CHECK:  func.func private @dsquare_to_diff0(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %0 = arith.mulf %arg1, %arg0 : f64
+// CHECK:  func.func private @dsquare_to_diff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 
@@ -200,10 +200,10 @@ func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
 
 
 // CHECK: func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1, %arg0) <activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]> : (f64, f64, f64) -> f64
+// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) <activity = [#enzyme.activity<enzyme_dup>], ret_activity = [#enzyme.activity<enzyme_dupnoneed>]> : (f64, f64) -> f64
 // CHECK-NEXT:   return %0 : f64
 // CHECK-NEXT: }
-// CHECK: func.func private @dsquare_fwd_to_fwddiff0(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:   %0 = arith.mulf %arg1, %arg0 : f64
+// CHECK: func.func private @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:   %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:   return %0 : f64
 // CHECK-NEXT: }
