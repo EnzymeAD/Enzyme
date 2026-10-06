@@ -2254,6 +2254,23 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
   return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
 }
 
+// Whether a value of type T may hold a pointer.
+static bool typeMayHoldPointer(Type *T) {
+  if (T->isPointerTy())
+    return true;
+  if (auto ST = dyn_cast<StructType>(T)) {
+    for (auto E : ST->elements())
+      if (typeMayHoldPointer(E))
+        return true;
+    return false;
+  }
+  if (auto AT = dyn_cast<ArrayType>(T))
+    return typeMayHoldPointer(AT->getElementType());
+  if (auto VT = dyn_cast<VectorType>(T))
+    return typeMayHoldPointer(VT->getElementType());
+  return false;
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2359,6 +2376,13 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           // sret passed straight through to the callee after call-slot
           // optimization), and anything else disqualifies us.
           if (!isReadOnlyOrThrow(CI)) {
+            // Unlike a fully read-only-or-throw callee, a local one may also
+            // write memory it allocates and hand it to us, through its return
+            // value or its sret-like arguments. If a pointer to such memory
+            // can reach us that way, we may hand it on in turn, so we are
+            // only local read-only-or-throw too.
+            if (typeMayHoldPointer(CI->getType()))
+              local = true;
             auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
             size_t nargs = CI->arg_size();
@@ -2369,26 +2393,43 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               Value *arg = CI->getArgOperand(i);
               if (!arg->getType()->isPointerTy())
                 continue;
-              bool sretLike = CI->paramHasAttr(i, Attribute::StructRet);
-              if (!sretLike && Callee && i < Callee->arg_size()) {
-                sretLike = Callee
-                               ->getAttribute(i + AttributeList::FirstArgIndex,
-                                              "enzymejl_returnRoots")
-                               .isValid() ||
-                           Callee
-                               ->getAttribute(i + AttributeList::FirstArgIndex,
-                                              "enzymejl_sret_union_bytes")
-                               .isValid();
+              bool sret = CI->paramHasAttr(i, Attribute::StructRet);
+              bool roots = false;
+              bool unionBytes = false;
+              if (Callee && i < Callee->arg_size()) {
+                roots = Callee
+                            ->getAttribute(i + AttributeList::FirstArgIndex,
+                                           "enzymejl_returnRoots")
+                            .isValid();
+                unionBytes =
+                    Callee
+                        ->getAttribute(i + AttributeList::FirstArgIndex,
+                                       "enzymejl_sret_union_bytes")
+                        .isValid();
               }
-              if (!sretLike)
+              if (!sret && !roots && !unionBytes)
                 continue;
+              // Whether the callee may store a pointer to memory it allocated
+              // here.
+              bool mayHoldPointer = roots;
+              if (sret) {
+#if LLVM_VERSION_MAJOR >= 14
+                mayHoldPointer |=
+                    typeMayHoldPointer(CI->getParamStructRetType(i));
+#else
+                mayHoldPointer = true;
+#endif
+              }
               auto Obj = getBaseObject(arg);
-              if (isa<AllocaInst>(Obj))
+              if (isa<AllocaInst>(Obj)) {
+                if (mayHoldPointer)
+                  local = true;
                 continue;
+              }
               if (isAllocationCall(Obj, TLI)) {
                 if (local)
                   continue;
-                if (notCaptured(Obj))
+                if (notCaptured(Obj) && !mayHoldPointer)
                   continue;
                 local = true;
                 continue;
