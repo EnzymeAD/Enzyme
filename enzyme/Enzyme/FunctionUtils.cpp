@@ -2289,7 +2289,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         continue;
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
-      if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
+      // A call marked local read-only-or-throw is handled like a call to a
+      // local read-only-or-throw function below, as it may hand us memory it
+      // wrote.
+      bool localMD = hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow");
+      if (localMD && !isa<CallBase>(&I))
         continue;
 
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
@@ -2368,7 +2372,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (isLocalReadOnlyOrThrow(CI)) {
+        if (localMD || isLocalReadOnlyOrThrow(CI)) {
           // A local read-only-or-throw callee may still write through its
           // sret-like arguments, and those writes land in memory of ours.
           // Classify them as we would a store of our own: memory local to us

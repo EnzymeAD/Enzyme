@@ -44,8 +44,32 @@ top:
   ret ptr addrspace(10) %r
 }
 
+; The same for a call marked local read-only-or-throw by metadata, rather than
+; by an attribute of the callee. A caller whose call returns no pointer stays
+; fully read-only-or-throw.
+
+declare ptr addrspace(10) @make(ptr addrspace(11))
+declare i64 @makeint(ptr addrspace(11))
+
+define ptr addrspace(10) @wrap_md(ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @make(ptr addrspace(11) %x), !enzyme_LocalReadOnlyOrThrow !0
+  ret ptr addrspace(10) %r
+}
+
+define i64 @wrap_md_int(ptr addrspace(11) nocapture %x) {
+top:
+  %r = call i64 @makeint(ptr addrspace(11) %x), !enzyme_LocalReadOnlyOrThrow !0
+  ret i64 %r
+}
+
+!0 = !{}
+
 ; CHECK: define ptr addrspace(10) @fresh({{.*}}) #[[LOCAL:[0-9]+]]
 ; CHECK: define ptr addrspace(10) @wrap({{.*}}) #[[LOCAL]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_sret({{.*}}) #[[LOCAL]]
-; CHECK: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
+; CHECK: define ptr addrspace(10) @wrap_md({{.*}}) #[[LOCAL]]
+; CHECK: define i64 @wrap_md_int({{.*}}) #[[RO:[0-9]+]]
+; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
+; CHECK-DAG: attributes #[[RO]] = { {{.*}}"enzyme_ReadOnlyOrThrow" }

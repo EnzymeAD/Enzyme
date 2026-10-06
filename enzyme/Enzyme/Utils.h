@@ -1948,13 +1948,14 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 // Whether the function does not write to memory visible before the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose allocation happened
-// within the call to F (including a local alloca, a malloc call, even if .
-// returned). This is also legal to write to an sret and/or returnroots
-// parameter (which must be an alloca).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory which did not exist prior to the function call, i.e.
+//     memory allocated within the call to F (including a local alloca, or a
+//     malloc call, even if returned), and to an sret and/or returnroots
+//     parameter (which must be an alloca).
+// A call to F may thus return memory it wrote, directly or through such a
+// parameter.
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -1989,12 +1990,18 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 // Whether the function does not write to memory visible outside the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose lifetime is
-// entirely contained within F (including a local alloca, a malloc call locally
-// freed, but not .     a returned malloc call).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory whose lifetime is entirely contained within the call to
+//     F (including a local alloca, or a malloc call locally freed), but not
+//     to memory it returns or otherwise lets escape, even if allocated within
+//     it. The exception is initializing an object it allocates and returns
+//     (e.g. a Julia allocation writing the object's type tag), which must not
+//     store anything derived from what F reads.
+// A call to F thus never returns memory holding data it wrote: if it returns a
+// pointer, derivatives can only flow through the memory it points to, not
+// through the call. A function that may return memory it wrote, including
+// memory a callee wrote and returned to it, is only local read-only-or-throw.
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
