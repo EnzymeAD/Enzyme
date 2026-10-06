@@ -127,7 +127,12 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   // = getGuaranteedUnreachable(gutils->oldFunc);
 
   // gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
+  if (failed(gutils->forceAugmentedReturns())) {
+    ForwardCachedFunctions.erase(tup);
+    gutils->newFunc.erase();
+    delete gutils;
+    return nullptr;
+  }
   /*
 
   // TODO populate with actual unnecessaryInstructions once the dependency

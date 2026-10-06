@@ -267,7 +267,29 @@ void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
   invertedPointers.map(val, toset);
 }
 
-void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
+LogicalResult mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
+  // Validate active intermediate types before constructing their shadows.
+  auto validate = [&](Value val) -> LogicalResult {
+    if (isConstantValue(val) || isa<AutoDiffTypeInterface>(val.getType()))
+      return success();
+    return emitError(val.getLoc())
+           << "AutoDiffTypeInterface not implemented for active type "
+           << val.getType();
+  };
+  auto checked = oldFunc.walk([&](Operation *op) -> WalkResult {
+    for (Value val : op->getResults())
+      if (failed(validate(val)))
+        return WalkResult::interrupt();
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument arg : block.getArguments())
+          if (failed(validate(arg)))
+            return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  if (checked.wasInterrupted())
+    return failure();
+
   // TODO also block arguments
   // assert(TR.getFunction() == oldFunc);
 
@@ -320,6 +342,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       invertedPointers.map(res, anti);
     }
   });
+  return success();
 }
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
