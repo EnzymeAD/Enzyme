@@ -20,6 +20,11 @@ namespace oputils {
 
 const std::set<std::string> &getNonCapturingFunctions();
 
+// Checks whether a value escapes through its uses, following view results.
+// If seenuse is provided, sets it to true when potentialUser is encountered.
+bool isCaptured(Value v, Operation *potentialUser = nullptr,
+                bool *seenuse = nullptr);
+
 // Checks if the operation/function has any memory write effects. This enables
 // batching specific AD optimiziations(which are triggered only if the primal
 // function doesnt modify memory operands)
