@@ -522,7 +522,9 @@ static Instruction *getWrittenArgs(Function *step,
                                    SmallPtrSetImpl<Argument *> &written,
                                    SmallPtrSetImpl<Argument *> &indirect) {
   Instruction *unknown = nullptr;
-  auto note = [&](Value *ptr, Instruction *I, bool direct = true) {
+  // `readonly`: a call does not write through `ptr` itself.
+  auto note = [&](Value *ptr, Instruction *I, bool direct = true,
+                  bool readonly = false) {
     Value *base = getHintBase(ptr);
     if (isFreshAllocation(base))
       return;
@@ -536,12 +538,19 @@ static Instruction *getWrittenArgs(Function *step,
         return;
       }
     }
-    if (auto *A = dyn_cast<Argument>(base))
-      written.insert(A);
+    if (auto *A = dyn_cast<Argument>(base)) {
+      // A callee may write what a Julia object points to (an array's data)
+      // even when it does not write the object, which is all `readonly`
+      // says of it.
+      if (!direct && A->getType()->getPointerAddressSpace() == 10)
+        indirect.insert(A);
+      if (!readonly)
+        written.insert(A);
+    }
     // A function (a kernel launched, a callback) is not memory written.
-    else if (direct && !isa<GlobalVariable>(base) &&
-             !isa<AllocaInst>(base) && !isa<Function>(base) &&
-             !isa<ConstantPointerNull>(base) && !unknown)
+    else if (direct && !isa<GlobalVariable>(base) && !isa<AllocaInst>(base) &&
+             !isa<Function>(base) && !isa<ConstantPointerNull>(base) &&
+             !unknown)
       unknown = I;
   };
   for (Instruction &I : instructions(step)) {
@@ -556,10 +565,13 @@ static Instruction *getWrittenArgs(Function *step,
     else if (auto *CB = dyn_cast<CallBase>(&I)) {
       if (isa<IntrinsicInst>(CB) || CB->onlyReadsMemory())
         continue;
-      for (unsigned i = 0; i < CB->arg_size(); i++)
-        if (CB->getArgOperand(i)->getType()->isPointerTy() &&
-            !CB->onlyReadsMemory(i))
-          note(CB->getArgOperand(i), &I, /*direct*/ false);
+      for (unsigned i = 0; i < CB->arg_size(); i++) {
+        Value *A = CB->getArgOperand(i);
+        if (A->getType()->isPointerTy() &&
+            (!CB->onlyReadsMemory(i) ||
+             A->getType()->getPointerAddressSpace() == 10))
+          note(A, &I, /*direct*/ false, CB->onlyReadsMemory(i));
+      }
     }
   }
   return unknown;
@@ -588,9 +600,12 @@ static bool mayWriteInLoop(Value *Obj, ArrayRef<BasicBlock *> blocks) {
       else if (auto *CB = dyn_cast<CallBase>(&I)) {
         if (CB->onlyReadsMemory())
           continue;
-        for (Value *A : CB->args())
-          if (A->getType()->isPointerTy() && getBaseObject(A) == base)
+        for (unsigned i = 0; i < CB->arg_size(); i++) {
+          Value *A = CB->getArgOperand(i);
+          if (A->getType()->isPointerTy() && !CB->onlyReadsMemory(i) &&
+              getBaseObject(A) == base)
             return true;
+        }
         continue;
       }
       if (ptr && getBaseObject(ptr) == base)

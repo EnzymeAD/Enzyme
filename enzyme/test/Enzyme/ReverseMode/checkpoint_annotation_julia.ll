@@ -60,14 +60,45 @@ exit:
   ret void
 }
 
+; The step only calls a function that writes the array's data, which Julia
+; marks readonly as it does not write the array object itself: the data is
+; still part of the snapshot.
+declare void @julia_step(ptr addrspace(10) readonly)
+
+define void @call(ptr addrspace(10) %x, i64 %n) {
+entry:
+  %a = addrspacecast ptr addrspace(10) %x to ptr addrspace(11)
+  %data0 = load ptr, ptr addrspace(11) %a
+  %lenp = getelementptr inbounds i8, ptr addrspace(11) %a, i64 16
+  %len = load i64, ptr addrspace(11) %lenp
+  %bytes = shl i64 %len, 3
+  call void @__enzyme_ptr_size_hint(ptr %data0, i64 %bytes)
+  %go = icmp sgt i64 %n, 0
+  br i1 %go, label %loop, label %exit
+
+loop:
+  %i = phi i64 [ 0, %entry ], [ %i.next, %loop ]
+  call void @julia_step(ptr addrspace(10) %x)
+  %i.next = add nuw nsw i64 %i, 1
+  %done = icmp eq i64 %i.next, %n
+  br i1 %done, label %exit, label %loop, !llvm.loop !2
+
+exit:
+  ret void
+}
+
 !0 = distinct !{!0, !1}
 !1 = !{!"enzyme.checkpoint", !"revolve", i64 3}
+!2 = distinct !{!2, !1}
 
 ; The region is the hint's pointer and size; the step gets the array object
 ; and the raw data pointer, and makes the derived pointer itself.
 ; CHECK: define void @run(
 ; CHECK: call void @enzyme.ckpt.for.run.ckpt.step(i64 0, i64 %n, ptr %0, ptr %ckpt.config, ptr %data0, i64 %bytes, i64 %len, i64 %n, ptr %pgcstack, ptr addrspace(10) %mem, ptr %data)
 ; CHECK-NOT: __enzyme_ptr_size_hint(
+
+; CHECK: define void @call(
+; CHECK: call void @enzyme.ckpt.for.call.ckpt.step(i64 0, i64 %n, ptr %{{.+}}, ptr %ckpt.config, ptr %data0, i64 %bytes, ptr addrspace(10) %x, i64 %n)
 
 ; CHECK: define internal void @run.ckpt.step(i64 %k, i64 %len, i64 %n, ptr %pgcstack, ptr addrspace(10) %mem, ptr %data)
 ; CHECK-NEXT: entry:
