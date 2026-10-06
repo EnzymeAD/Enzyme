@@ -109,6 +109,7 @@ if(ENZYME_FLANG_MLIR)
     MLIREnzymeHLFIRImplementations
     HLFIREnzymeCallLowering.cpp
     EnzymeFortranAutoDiffRegistration.cpp
+    FIRTypeAnnotations.cpp
     PARTIAL_SOURCES_INTENDED
     DEPENDS
     MLIRAutoDiffOpInterfaceIncGen
@@ -119,7 +120,8 @@ if(ENZYME_FLANG_MLIR)
     MLIREnzymeAutoDiffInterface
     HLFIRDialect
     FIRBuilder
-    MLIRIR)
+    MLIRIR
+    MLIRTargetLLVMIRExport)
   target_include_directories(
     MLIREnzymeHLFIRImplementations
     PRIVATE ${FLANG_INCLUDE_DIRS})

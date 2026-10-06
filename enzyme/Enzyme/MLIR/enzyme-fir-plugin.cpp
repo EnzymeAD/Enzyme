@@ -46,5 +46,6 @@ mlirGetPassPluginInfo() {
   return {MLIR_PLUGIN_API_VERSION, "Enzyme", LLVM_VERSION_STRING, []() {
             mlir::enzyme::registerenzymePasses();
             mlir::enzyme::registerHLFIRLowerEnzymeCallsPass();
+            mlir::enzyme::registerFIRTypeAnnotationsPass();
           }};
 }
