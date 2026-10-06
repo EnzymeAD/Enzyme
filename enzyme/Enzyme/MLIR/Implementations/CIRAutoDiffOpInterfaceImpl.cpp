@@ -32,5 +32,6 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
     registerInterfaces(context);
+    registerCIRAutoDiffTypeInterfaces(context);
   });
 }
