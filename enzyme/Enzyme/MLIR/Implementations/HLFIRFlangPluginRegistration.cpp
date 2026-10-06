@@ -15,11 +15,18 @@
 //   1. enzyme-lower-fortran-calls: f__enzyme_fwddiff/autodiff -> enzyme.* ops.
 //   2. enzyme: differentiate those ops in place.
 //
+// and the FIROptLast extension point to add, while FIR still has the Fortran
+// types that LLVM IR erases,
+//
+//   3. enzyme-fir-type-annotations: carry those types to LLVM Enzyme's type
+//      analysis (FIRTypeAnnotations.cpp).
+//
 // Only the Enzyme code is carried here; MLIR/FIR/HLFIR and flang symbols
 // resolve from the host at load time.
 //
 //===----------------------------------------------------------------------===//
 
+#include "Implementations/FIRTypeAnnotations.h"
 #include "Implementations/HLFIRAutoDiffOpInterfaceImpl.h"
 #include "Passes/Passes.h"
 
@@ -35,6 +42,12 @@
 using namespace mlir;
 
 namespace {
+
+static llvm::cl::opt<bool> typeAnnotations(
+    "enzyme-fir-type-annotations", llvm::cl::init(true),
+    llvm::cl::desc("Carry the Fortran types that LLVM IR erases to LLVM "
+                   "Enzyme's type analysis (each kind has its own "
+                   "-enzyme-fir-*-types switch)"));
 
 // Attach the Enzyme dialect and the Fortran autodiff models to the flang-owned
 // context. flang has already loaded FIR/HLFIR/func/... into it, so appending
@@ -55,6 +68,11 @@ struct EnzymeFlangPipelineRegistration {
                 appendEnzymeFortranInterfaces(*pm.getContext());
                 pm.addPass(mlir::enzyme::createHLFIRLowerEnzymeCallsPass());
                 pm.addPass(mlir::enzyme::createDifferentiatePass());
+              });
+          config.registerFIROptLastEPCallbacks(
+              [](mlir::PassManager &pm, llvm::OptimizationLevel) {
+                if (typeAnnotations)
+                  pm.addPass(mlir::enzyme::createFIRTypeAnnotationsPass());
               });
         });
   }

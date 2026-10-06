@@ -4,3 +4,13 @@
 #   C003: 'implicit none' missing 'external' - this is a Fortran 2013 feature and we support older standards
 #   C091: external procedure - this is crucial to the way the Fortran bindings are set up
 ignore = ["S001", "C003", "C091"]
+
+[check.per-file-ignores]
+# The type-annotation tests check the Enzyme types the FlangEnzymeMLIR plugin
+# gives the constructs these rules flag (COMMON blocks, assumed-size and
+# character(*) dummies, implicit interfaces, numeric kind literals), so the
+# constructs are the point of the tests.
+"enzyme/test/MLIR/FIR/fir_*.f90" = [
+    "C001", "C061", "C071", "C072", "C092", "C131",
+    "OB011", "PORT011", "S061", "S241",
+]

@@ -130,8 +130,8 @@ if(ENZYME_FLANG_MLIR)
   # HLFIRFlangPluginRegistration.cpp.
   add_llvm_library(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE
-    HLFIRFlangPluginRegistration.cpp PARTIAL_SOURCES_INTENDED
-    DISABLE_LLVM_LINK_LLVM_DYLIB)
+    HLFIRFlangPluginRegistration.cpp FIRTypeAnnotations.cpp
+    PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
   add_dependencies(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     MLIREnzymeHLFIRImplementations
