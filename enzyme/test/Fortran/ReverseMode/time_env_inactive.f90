@@ -8,9 +8,10 @@
 ! inactive, also with -enzyme-global-activity.
 
 program main
+  use, intrinsic :: iso_fortran_env, only: int64, real64
   use enzyme, only: enzyme_autodiff
   implicit none
-  real(8) :: x, dx
+  real(real64) :: x, dx
 
   x = 3
   dx = 0
@@ -19,10 +20,10 @@ program main
 
 contains
 
-  real(8) function f(x)
-    real(8), intent(in) :: x
-    real(8) :: t, s
-    integer(8) :: count, rate, cmax
+  real(real64) function f(x)
+    real(real64), intent(in) :: x
+    real(real64) :: t, s
+    integer(int64) :: count, rate, cmax
     integer :: n, len
     character(len=8) :: date
     character(len=64) :: arg

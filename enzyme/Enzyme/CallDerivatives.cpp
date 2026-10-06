@@ -3082,11 +3082,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                                ? sdescs
                                : gutils->extractMeta(B, sdescs, w);
             Value *sbase = field(sdesc, I8PtrTy, 0);
-            Value *valid = B.CreateAnd(B.CreateICmpNE(sbase, base),
-                                       B.CreateIsNotNull(sbase));
+            Value *notPrimal = B.CreateICmpNE(sbase, base);
+            Value *notNull = B.CreateIsNotNull(sbase);
+            Value *valid = B.CreateAnd(notPrimal, notNull);
             auto add = [&](Value *cond, Value *addr) {
-              elems.push_back(B.CreateSelect(
-                  cond, addr, Constant::getNullValue(I8PtrTy)));
+              elems.push_back(
+                  B.CreateSelect(cond, addr, Constant::getNullValue(I8PtrTy)));
             };
             if (i == 1) {
               add(valid, sbase);
@@ -3094,21 +3095,21 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             }
             Value *extent = field(desc, IdxTy, DimOff + P);
             Value *sm = field(desc, IdxTy, DimOff + 2 * P);
-            add(B.CreateAnd(valid, B.CreateICmpSGE(
-                                       extent, ConstantInt::get(IdxTy, 1))),
-                sbase);
-            add(B.CreateAnd(valid, B.CreateICmpSGE(
-                                       extent, ConstantInt::get(IdxTy, 2))),
-                B.CreateInBoundsGEP(B.getInt8Ty(), sbase, sm));
+            Value *has1 = B.CreateICmpSGE(extent, ConstantInt::get(IdxTy, 1));
+            add(B.CreateAnd(valid, has1), sbase);
+            Value *has2 = B.CreateICmpSGE(extent, ConstantInt::get(IdxTy, 2));
+            Value *valid2 = B.CreateAnd(valid, has2);
+            add(valid2, B.CreateInBoundsGEP(B.getInt8Ty(), sbase, sm));
           }
         }
         return elems;
       };
       auto zero = [&](IRBuilder<> &B, Value *addr) {
         auto VT = FixedVectorType::get(B.getFloatTy(), 1);
-        B.CreateMaskedStore(Constant::getNullValue(VT),
-                            B.CreatePointerCast(addr, getUnqual(VT)), Align(4),
-                            B.CreateVectorSplat(1, B.CreateIsNotNull(addr)));
+        Value *ptr = B.CreatePointerCast(addr, getUnqual(VT));
+        Value *notNull = B.CreateIsNotNull(addr);
+        Value *mask = B.CreateVectorSplat(1, notNull);
+        B.CreateMaskedStore(Constant::getNullValue(VT), ptr, Align(4), mask);
       };
 
       if (Mode == DerivativeMode::ForwardMode) {
@@ -3134,8 +3135,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (auto I = dyn_cast<Instruction>(tape))
           gutils->TapesToPreventRecomputation.insert(I);
       }
-      tape = gutils->cacheForReverse(BuilderZ, tape,
-                                     getIndex(&call, CacheType::Tape, BuilderZ));
+      tape = gutils->cacheForReverse(
+          BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
 
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {

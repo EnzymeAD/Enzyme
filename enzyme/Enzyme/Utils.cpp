@@ -115,7 +115,7 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 bool isFlangRuntimeNoFree(llvm::StringRef name) {
   for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
                       "_FortranAModuloInteger", "_FortranAModuloReal"})
-    if (name.starts_with(prefix))
+    if (startsWith(name, prefix))
       return true;
   static const char *Names[] = {
       "_FortranAFlush",
