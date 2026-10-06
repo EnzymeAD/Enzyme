@@ -36,8 +36,11 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "EnzymeSummary.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include <optional>
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
@@ -121,6 +124,39 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
     cl::desc(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
+
+llvm::cl::opt<std::string> EnzymeExportDerivatives(
+    "enzyme-export-derivatives", cl::init(""), cl::Hidden,
+    cl::desc("With -enzyme-separate-compilation, export derivatives of every "
+             "externally visible function defined in the module for the "
+             "given comma-separated modes (forward, forwardsplit, reverse). "
+             "Functions can also request this individually with the "
+             "\"enzyme_export_derivative\" attribute."));
+
+llvm::cl::opt<bool> EnzymeExportStrongZero(
+    "enzyme-export-strong-zero", cl::init(false), cl::Hidden,
+    cl::desc("With -enzyme-export-derivatives, also export the strong-zero "
+             "(_sz) variant of every exported derivative"));
+
+llvm::cl::opt<std::string> EnzymeInvariantGlobals(
+    "enzyme-invariant-globals", cl::init(""), cl::Hidden,
+    cl::desc("File of global variables (one per line) that nothing writes "
+             "while the differentiated code runs (a whole-program plan): loads "
+             "from them are not cached, the reverse pass reads them again"));
+
+llvm::cl::opt<std::string> EnzymeInactiveParams(
+    "enzyme-inactive-params", cl::init(""), cl::Hidden,
+    cl::desc("File of \"<function> <i>,<j>,...\" lines: mark these "
+             "parameters \"enzyme_inactive\" wherever the function is "
+             "defined or declared (a whole-program plan for separate "
+             "compilation, so that every module agrees)"));
+
+llvm::cl::opt<std::string> EnzymeExportList(
+    "enzyme-export-list", cl::init(""), cl::Hidden,
+    cl::desc("Only export functions listed in this file, one per line, each "
+             "optionally followed by the variants to export, e.g. "
+             "\"foo reverse,reverse+sz\" (default: those of "
+             "-enzyme-export-derivatives)"));
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -2715,8 +2751,222 @@ public:
     return Changed;
   }
 
+  /// Separate compilation: create the derivative tables other modules
+  /// reference for functions defined here (see
+  /// GradientUtils::externalShadowName). Which modes to export comes from
+  /// -enzyme-export-derivatives for all externally visible functions, or from
+  /// a function's "enzyme_export_derivative" attribute.
+  bool exportDerivatives(Module &M) {
+    if (!EnzymeSeparateCompilation)
+      return false;
+    auto parseModes = [](StringRef str, SmallVectorImpl<DerivativeMode> &out) {
+      SmallVector<StringRef, 3> parts;
+      str.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        part = part.trim();
+        if (part == "forward")
+          out.push_back(DerivativeMode::ForwardMode);
+        else if (part == "forwardsplit")
+          out.push_back(DerivativeMode::ForwardModeSplit);
+        else if (part == "reverse")
+          out.push_back(DerivativeMode::ReverseModeGradient);
+        else
+          report_fatal_error(Twine("unknown derivative mode to export: ") +
+                             part);
+      }
+    };
+    SmallVector<DerivativeMode, 3> allModes;
+    parseModes(EnzymeExportDerivatives, allModes);
+
+    // One variant of a derivative: the mode and the conventions it is built
+    // under (all part of the exported symbol's name).
+    struct Variant {
+      DerivativeMode mode;
+      bool strongZero = false;
+      bool runtimeActivity = false;
+      unsigned width = 1;
+      // hex mask of the arguments assumed not overwritten after the call
+      std::string notOverwritten;
+    };
+    // A token is <mode>[+sz][+ra][+w<N>][+o<hex>], e.g. "reverse+sz" or
+    // "reverse+sz+o5" (arguments 0 and 2 not overwritten after the call).
+    auto parseVariants = [&](StringRef str, SmallVectorImpl<Variant> &out) {
+      SmallVector<StringRef, 3> parts;
+      str.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        SmallVector<StringRef, 3> flags;
+        part.trim().split(flags, '+', -1, /*KeepEmpty*/ false);
+        if (flags.empty())
+          continue;
+        SmallVector<DerivativeMode, 1> mode;
+        parseModes(flags[0], mode);
+        Variant v{mode[0]};
+        for (auto flag : ArrayRef<StringRef>(flags).drop_front()) {
+          if (flag == "sz")
+            v.strongZero = true;
+          else if (flag == "ra")
+            v.runtimeActivity = true;
+          else if (startsWith(flag, "o"))
+            v.notOverwritten = flag.drop_front().str();
+          else if (!startsWith(flag, "w") ||
+                   flag.drop_front().getAsInteger(10, v.width))
+            report_fatal_error(Twine("unknown derivative variant flag: ") +
+                               flag);
+        }
+        out.push_back(v);
+      }
+    };
+
+    // -enzyme-export-list: one function per line, optionally followed by the
+    // variants to export (otherwise those of -enzyme-export-derivatives).
+    std::optional<StringMap<SmallVector<Variant, 4>>> exportList;
+    if (!EnzymeExportList.empty()) {
+      auto buf = MemoryBuffer::getFile(EnzymeExportList);
+      if (!buf)
+        report_fatal_error(Twine("could not read -enzyme-export-list file ") +
+                           EnzymeExportList);
+      exportList.emplace();
+      SmallVector<StringRef, 32> lines;
+      (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+      for (auto line : lines) {
+        line = line.trim();
+        if (line.empty())
+          continue;
+        auto [name, variants] = line.split(' ');
+        if (variants.empty())
+          std::tie(name, variants) = line.split('\t');
+        (*exportList)[name.trim()];
+        parseVariants(variants.trim(), (*exportList)[name.trim()]);
+      }
+    }
+
+    // Variants of -enzyme-export-derivatives (and -enzyme-export-strong-zero)
+    SmallVector<Variant, 4> defaultVariants;
+    for (auto mode : allModes)
+      for (bool strongZero : {false, true})
+        if (!strongZero || EnzymeExportStrongZero)
+          defaultVariants.push_back(Variant{mode, strongZero});
+
+    SmallVector<std::pair<Function *, SmallVector<Variant, 4>>, 4> todo;
+    for (Function &F : M) {
+      if (F.empty() || F.hasLocalLinkage() || F.hasAvailableExternallyLinkage())
+        continue;
+      if (startsWith(F.getName(), "__enzyme") || F.getName() == "main")
+        continue;
+      // Functions with a custom derivative: callers use the rule itself
+      // (see GradientUtils::usesExternalDerivative), nothing to export.
+      if (hasMetadata(&F, "enzyme_callwrapper") ||
+          hasMetadata(&F, "enzyme_augment") ||
+          hasMetadata(&F, "enzyme_gradient") ||
+          hasMetadata(&F, "enzyme_derivative") ||
+          F.hasFnAttribute("enzyme_inactive"))
+        continue;
+      SmallVector<Variant, 4> variants;
+      if (F.hasFnAttribute("enzyme_export_derivative")) {
+        parseVariants(
+            F.getFnAttribute("enzyme_export_derivative").getValueAsString(),
+            variants);
+        if (EnzymeExportStrongZero)
+          for (size_t i = 0, e = variants.size(); i < e; ++i)
+            if (!variants[i].strongZero) {
+              auto v = variants[i];
+              v.strongZero = true;
+              variants.push_back(v);
+            }
+      } else if (!exportList)
+        variants = defaultVariants;
+      else {
+        auto found = exportList->find(F.getName());
+        if (found != exportList->end())
+          variants = found->second.empty() ? defaultVariants : found->second;
+      }
+      if (!variants.empty())
+        todo.emplace_back(&F, variants);
+    }
+    if (todo.empty())
+      return false;
+
+    TypeAnalysis TA(Logic);
+    bool AtomicAdd = isGPUArch(llvm::Triple(M.getTargetTriple()));
+    for (auto &[F, variants] : todo)
+      for (auto &v : variants) {
+        std::vector<bool> kept(F->arg_size(), false);
+        for (unsigned i = 0; i < v.notOverwritten.size(); ++i) {
+          unsigned nibble;
+          if (StringRef(v.notOverwritten.data() + i, 1)
+                  .getAsInteger(16, nibble))
+            report_fatal_error(Twine("bad argument mask: ") + v.notOverwritten);
+          for (unsigned j = 0; j < 4; ++j)
+            if ((nibble >> j) & 1 && 4 * i + j < kept.size())
+              kept[4 * i + j] = true;
+        }
+        GradientUtils::GetOrCreateShadowFunction(
+            RequestContext(), Logic,
+            Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*F), TA, F, v.mode,
+            v.runtimeActivity, v.strongZero, v.width, AtomicAdd, kept);
+      }
+    return true;
+  }
+
+  /// -enzyme-inactive-params: parameters known (from a whole-program plan)
+  /// never to carry derivatives.
+  void applyInactiveParams(Module &M) {
+    if (EnzymeInactiveParams.empty())
+      return;
+    auto buf = MemoryBuffer::getFile(EnzymeInactiveParams);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-inactive-params file ") +
+                         EnzymeInactiveParams);
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines) {
+      auto [name, idxs] = line.trim().split(' ');
+      auto F = M.getFunction(name);
+      if (!F)
+        continue;
+      SmallVector<StringRef, 8> parts;
+      idxs.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto part : parts) {
+        unsigned i;
+        if (part.trim().getAsInteger(10, i) || i >= F->arg_size())
+          report_fatal_error(Twine("bad parameter index in "
+                                   "-enzyme-inactive-params for ") +
+                             name + ": " + part);
+        F->addParamAttr(i, Attribute::get(F->getContext(), "enzyme_inactive"));
+      }
+    }
+  }
+
+  /// -enzyme-invariant-globals: mark loads from globals nothing overwrites
+  /// during differentiation "enzyme_nocache".
+  void applyInvariantGlobals(Module &M) {
+    if (EnzymeInvariantGlobals.empty())
+      return;
+    auto buf = MemoryBuffer::getFile(EnzymeInvariantGlobals);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-invariant-globals ") +
+                         EnzymeInvariantGlobals);
+    StringSet<> names;
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines)
+      if (!line.trim().empty())
+        names.insert(line.trim());
+    for (auto &F : M)
+      for (auto &BB : F)
+        for (auto &I : BB)
+          if (auto LI = dyn_cast<LoadInst>(&I))
+            if (auto G =
+                    dyn_cast<GlobalVariable>(getBaseObject(LI->getOperand(0))))
+              if (names.contains(G->getName()))
+                LI->setMetadata("enzyme_nocache",
+                                MDNode::get(LI->getContext(), {}));
+  }
+
   bool run(Module &M) {
     Logic.clear();
+    applyInactiveParams(M);
+    applyInvariantGlobals(M);
 
     for (Function &F : make_early_inc_range(M)) {
       attributeKnownFunctions(F);
@@ -2776,6 +3026,8 @@ public:
 
       changed |= lowerEnzymeCalls(F, done);
     }
+
+    changed |= exportDerivatives(M);
 
     for (Function &F : M) {
       if (F.empty())
@@ -3488,6 +3740,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "enzyme-summary") {
+          MPM.addPass(EnzymeSummaryNewPM());
           return true;
         }
         if (Name == "preserve-nvvm-end") {

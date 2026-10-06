@@ -3433,9 +3433,10 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           }
           // If we and a constant against an integer, the result remains an
           // integer
+          // (AnalysisLHS/RHS are Data0() of the operands, so a scalar's type
+          // is at index {}.)
           if (!isNegMask && Args[i] && isa<ConstantInt>(Args[i]) &&
-              (i == 0 ? AnalysisRHS : AnalysisLHS).Inner0() ==
-                  BaseType::Integer) {
+              (i == 0 ? AnalysisRHS : AnalysisLHS)[{}] == BaseType::Integer) {
             Result = TypeTree(BaseType::Integer);
           }
         }

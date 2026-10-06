@@ -123,6 +123,21 @@ llvm::cl::opt<bool>
     EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
                          cl::desc("Split phis according to vector size"));
 
+llvm::cl::opt<std::string> EnzymeImportVariants(
+    "enzyme-import-variants", cl::init(""), cl::Hidden,
+    cl::desc("Under separate compilation: file of the derivative variants "
+             "other modules export (\"<function> <variant>,...\" lines, as "
+             "for -enzyme-export-list). A call through another module's "
+             "derivative picks the variant assuming the most arguments not "
+             "overwritten that the call allows; without it, or for a function "
+             "not listed, every argument is assumed overwritten"));
+
+llvm::cl::opt<bool> EnzymeSeparateCompilation(
+    "enzyme-separate-compilation", cl::init(false), cl::Hidden,
+    cl::desc("Differentiate calls to functions without a body in this module "
+             "through externally linked derivative symbols, and export the "
+             "derivative symbols of externally visible functions"));
+
 llvm::cl::opt<bool>
     EnzymePrintDiffUse("enzyme-print-diffuse", cl::init(false), cl::Hidden,
                        cl::desc("Print differential use analysis"));
@@ -4740,10 +4755,203 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   llvm_unreachable("unknown constant to create shadow of");
 }
 
+/// Parse "<hex mask, lowest argument first>" into one bool per argument.
+static std::vector<bool> parseHexMask(StringRef hex, unsigned nargs) {
+  std::vector<bool> out(nargs, false);
+  for (unsigned i = 0; i < hex.size(); ++i) {
+    unsigned nibble;
+    if (StringRef(hex.data() + i, 1).getAsInteger(16, nibble))
+      report_fatal_error(Twine("bad argument mask: ") + hex);
+    for (unsigned j = 0; j < 4; ++j)
+      if ((nibble >> j) & 1 && 4 * i + j < nargs)
+        out[4 * i + j] = true;
+  }
+  return out;
+}
+
+std::vector<bool> GradientUtils::chooseExternalVariant(
+    Function *F, DerivativeMode mode, bool runtimeActivity, bool strongZero,
+    unsigned width, const std::vector<bool> &overwritten) {
+  if (EnzymeImportVariants.empty())
+    return {};
+  static std::map<std::string, StringMap<SmallVector<std::string, 2>>> cache;
+  auto &variants = cache[EnzymeImportVariants];
+  if (variants.empty()) {
+    auto buf = MemoryBuffer::getFile(EnzymeImportVariants);
+    if (!buf)
+      report_fatal_error(Twine("could not read -enzyme-import-variants file ") +
+                         EnzymeImportVariants);
+    SmallVector<StringRef, 32> lines;
+    (*buf)->getBuffer().split(lines, '\n', -1, /*KeepEmpty*/ false);
+    for (auto line : lines) {
+      auto [name, toks] = line.trim().split(' ');
+      SmallVector<StringRef, 4> parts;
+      toks.split(parts, ',', -1, /*KeepEmpty*/ false);
+      for (auto t : parts)
+        variants[name.trim()].push_back(t.trim().str());
+    }
+    variants[""]; // non-empty marks the file as read
+  }
+  auto found = variants.find(F->getName());
+  if (found == variants.end())
+    return {};
+  std::string modeName = (mode == DerivativeMode::ForwardMode ||
+                          mode == DerivativeMode::ForwardModeError)
+                             ? "forward"
+                         : mode == DerivativeMode::ForwardModeSplit
+                             ? "forwardsplit"
+                             : "reverse";
+  std::vector<bool> best;
+  unsigned bestCount = 0;
+  for (auto &tok : found->second) {
+    SmallVector<StringRef, 4> flags;
+    StringRef(tok).split(flags, '+', -1, /*KeepEmpty*/ false);
+    if (flags.empty() || flags[0] != modeName)
+      continue;
+    bool sz = false, ra = false;
+    unsigned w = 1;
+    StringRef omask;
+    for (auto f : ArrayRef<StringRef>(flags).drop_front()) {
+      if (f == "sz")
+        sz = true;
+      else if (f == "ra")
+        ra = true;
+      else if (startsWith(f, "w"))
+        f.drop_front().getAsInteger(10, w);
+      else if (startsWith(f, "o"))
+        omask = f.drop_front();
+    }
+    if (sz != strongZero || ra != runtimeActivity || w != width)
+      continue;
+    auto mask = parseHexMask(omask, F->arg_size());
+    // usable only if every argument it assumes kept is kept by this call
+    bool ok = true;
+    unsigned count = 0;
+    for (unsigned i = 0; i < mask.size(); ++i)
+      if (mask[i]) {
+        if (i >= overwritten.size() || overwritten[i])
+          ok = false;
+        ++count;
+      }
+    if (ok && count > bestCount) {
+      best = mask;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+DIFFE_TYPE GradientUtils::getCallArgDiffeType(CallBase &call, unsigned i,
+                                              bool foreignFunction) const {
+  if (foreignFunction && EnzymeSeparateCompilation)
+    if (auto F = getFunctionFromCall(&call))
+      if (usesExternalDerivative(F, TLI) &&
+          F->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+        return DIFFE_TYPE::CONSTANT;
+  return getDiffeType(call.getArgOperand(i), foreignFunction);
+}
+
+bool GradientUtils::usesExternalDerivative(Function *F,
+                                           TargetLibraryInfo &TLI) {
+  if (!EnzymeSeparateCompilation)
+    return false;
+  if (!F->isDeclaration() && !F->hasAvailableExternallyLinkage())
+    return false;
+  if (F->isIntrinsic() || F->isVarArg())
+    return false;
+  // Declared inactive (e.g. __enzyme_inactivefn registrations): no
+  // derivative exists or is needed.
+  if (F->hasFnAttribute("enzyme_inactive"))
+    return false;
+  if (hasMetadata(F, "enzyme_callwrapper") ||
+      hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
+      hasMetadata(F, "enzyme_derivative"))
+    return false;
+#if LLVM_VERSION_MAJOR >= 24
+  if (TLI.getLibFunc(*F) != NotLibFunc)
+    return false;
+#else
+  LibFunc LF;
+  if (TLI.getLibFunc(*F, LF))
+    return false;
+#endif
+  auto name = F->getName();
+  if (startsWith(name, "_Fortran") || startsWith(name, "__enzyme") ||
+      startsWith(name, "llvm."))
+    return false;
+  return true;
+}
+
+static std::string hexMask(unsigned n, llvm::function_ref<bool(unsigned)> bit) {
+  std::string mask;
+  for (unsigned i = 0; i < n; i += 4) {
+    unsigned nibble = 0;
+    for (unsigned j = 0; j < 4 && i + j < n; ++j)
+      if (bit(i + j))
+        nibble |= 1u << j;
+    mask += "0123456789abcdef"[nibble];
+  }
+  while (!mask.empty() && mask.back() == '0')
+    mask.pop_back();
+  return mask;
+}
+
+std::string GradientUtils::externalShadowName(
+    Function *F, DerivativeMode mode, bool runtimeActivity, bool strongZero,
+    unsigned width, bool AtomicAdd, const std::vector<bool> &notOverwritten) {
+  std::string name = "__enzyme_sep_";
+  switch (mode) {
+  case DerivativeMode::ForwardMode:
+    name += "fwd";
+    break;
+  case DerivativeMode::ForwardModeError:
+    name += "fwderr";
+    break;
+  case DerivativeMode::ForwardModeSplit:
+    name += "fwdsplit";
+    break;
+  case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeGradient:
+  case DerivativeMode::ReverseModePrimal:
+    name += "rev";
+    break;
+  }
+  name += "_w" + std::to_string(width);
+  if (runtimeActivity)
+    name += "_ra";
+  if (strongZero)
+    name += "_sz";
+  // Forward-mode derivatives never accumulate, so they do not depend on
+  // AtomicAdd.
+  bool reverse = mode == DerivativeMode::ReverseModeCombined ||
+                 mode == DerivativeMode::ReverseModeGradient ||
+                 mode == DerivativeMode::ReverseModePrimal;
+  if (AtomicAdd && reverse)
+    name += "_aa";
+  // Parameters declared inactive get no shadow; which ones is part of the
+  // calling convention: _c<hex mask of their indices, lowest first>.
+  auto mask = hexMask(F->arg_size(), [&](unsigned i) {
+    return F->getAttributes().hasParamAttr(i, "enzyme_inactive");
+  });
+  if (!mask.empty())
+    name += "_c" + mask;
+  // Arguments the derivative assumes are not overwritten after the call
+  // (so it need not cache what it reads through them): _o<hex mask>.
+  auto omask = hexMask(F->arg_size(), [&](unsigned i) {
+    return i < notOverwritten.size() && notOverwritten[i];
+  });
+  if (!omask.empty())
+    name += "_o" + omask;
+  name += "_";
+  name += F->getName();
+  return name;
+}
+
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
-    bool strongZero, unsigned width, bool AtomicAdd) {
+    bool strongZero, unsigned width, bool AtomicAdd,
+    const std::vector<bool> &notOverwritten) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -4752,6 +4960,47 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   //  indirect augmented calls), topLevel MUST be true otherwise subcalls will
   //  not be able to lookup the augmenteddata/subdata (triggering an assertion
   //  failure, among much worse)
+  if (usesExternalDerivative(fn, TLI)) {
+    // Separate compilation: the module defining fn exports its derivatives
+    // under a name that encodes the conventions below. Forward mode stores a
+    // single function pointer; split modes store {augmented, derivative}.
+    auto &Ctx = fn->getContext();
+    auto PT = getInt8PtrTy(Ctx);
+    Type *T = (mode == DerivativeMode::ForwardMode ||
+               mode == DerivativeMode::ForwardModeError)
+                  ? (Type *)PT
+                  : (Type *)StructType::get(Ctx, {PT, PT});
+    auto name = externalShadowName(fn, mode, runtimeActivity, strongZero, width,
+                                   AtomicAdd, notOverwritten);
+    auto GV = fn->getParent()->getNamedValue(name);
+    if (GV == nullptr)
+      GV = new GlobalVariable(*fn->getParent(), T, /*isConstant*/ true,
+                              GlobalValue::ExternalLinkage, nullptr, name);
+    return ConstantExpr::getPointerCast(GV, fn->getType());
+  }
+
+  // Under separate compilation, the shadow of an externally visible function
+  // is exported so that other modules can call its derivatives.
+  bool exportShadow = EnzymeSeparateCompilation && !fn->empty() &&
+                      !fn->hasLocalLinkage() &&
+                      !fn->hasAvailableExternallyLinkage();
+  Function *exportedFn = fn;
+  auto shadowLinkage = [&]() {
+    if (!exportShadow)
+      return GlobalValue::LinkageTypes::InternalLinkage;
+    if (exportedFn->hasLinkOnceODRLinkage() || exportedFn->hasWeakODRLinkage())
+      return GlobalValue::LinkageTypes::WeakODRLinkage;
+    if (exportedFn->hasLinkOnceLinkage() || exportedFn->hasWeakLinkage())
+      return GlobalValue::LinkageTypes::WeakAnyLinkage;
+    return GlobalValue::LinkageTypes::ExternalLinkage;
+  };
+  auto shadowName = [&](StringRef prefix) {
+    if (exportShadow)
+      return externalShadowName(exportedFn, mode, runtimeActivity, strongZero,
+                                width, AtomicAdd, notOverwritten);
+    return (prefix + "_" + fn->getName() + "'").str();
+  };
+
   bool isRealloc = false;
   if (fn->empty()) {
     if (hasMetadata(fn, "enzyme_callwrapper")) {
@@ -4801,20 +5050,39 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   // (i.e. that all args are overwritten)
   std::vector<DIFFE_TYPE> types;
   for (auto &a : fn->args()) {
-    overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
+    // An exported variant may assume (callers guarantee, see
+    // chooseExternalVariant) that some arguments are not overwritten.
+    bool assumedKept = exportShadow && a.getArgNo() < notOverwritten.size() &&
+                       notOverwritten[a.getArgNo()];
+    overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy() &&
+                               !assumedKept);
     TypeTree TT;
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
+    // Types declared on the signature (e.g. from Fortran explicit interfaces
+    // or Julia) hold for every caller, so they can seed a call-site
+    // independent derivative.
+    if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type"))
+      TT |= TypeTree::parse(fn->getAttributes()
+                                .getParamAttr(a.getArgNo(), "enzyme_type")
+                                .getValueAsString(),
+                            fn->getContext());
     type_args.Arguments.insert(std::pair<Argument *, TypeTree>(&a, TT));
     type_args.KnownValues.insert(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
     DIFFE_TYPE typ;
-    if (a.getType()->isFPOrFPVectorTy()) {
+    if (exportShadow &&
+        fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_inactive")) {
+      typ = DIFFE_TYPE::CONSTANT;
+    } else if (a.getType()->isFPOrFPVectorTy()) {
       typ = (mode == DerivativeMode::ForwardMode ||
              mode == DerivativeMode::ForwardModeError)
                 ? DIFFE_TYPE::DUP_ARG
                 : DIFFE_TYPE::OUT_DIFF;
-    } else if (a.getType()->isIntegerTy() &&
+      // Callers of an external derivative treat every non-floating argument
+      // as duplicated (see GradientUtils::getDiffeType), so an exported
+      // shadow takes a shadow for small integers too.
+    } else if (!exportShadow && a.getType()->isIntegerTy() &&
                cast<IntegerType>(a.getType())->getBitWidth() < 16) {
       typ = DIFFE_TYPE::CONSTANT;
     } else if (a.getType()->isVoidTy() || a.getType()->isEmptyTy()) {
@@ -4873,13 +5141,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
       prefix += std::to_string(width);
     }
 
-    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
+    std::string globalname = shadowName(prefix);
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), newf->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, newf,
-                              globalname);
+                              shadowLinkage(), newf, globalname);
     }
 
     return ConstantExpr::getPointerCast(GV, fn->getType());
@@ -4912,13 +5179,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
 
-    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
+    std::string globalname = shadowName(prefix);
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), cdata->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, cdata,
-                              globalname);
+                              shadowLinkage(), cdata, globalname);
     }
 
     return ConstantExpr::getPointerCast(GV, fn->getType());
@@ -4964,13 +5230,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
-    std::string globalname = ("_enzyme_reverse_" + fn->getName() + "'").str();
+    std::string globalname = shadowName("_enzyme_reverse");
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), cdata->getType(), true,
-                              GlobalValue::LinkageTypes::InternalLinkage, cdata,
-                              globalname);
+                              shadowLinkage(), cdata, globalname);
     }
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
