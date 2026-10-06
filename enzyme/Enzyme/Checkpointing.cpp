@@ -58,6 +58,7 @@
 #include "llvm/Transforms/Utils/LoopSimplify.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "Utils.h"
 
@@ -463,17 +464,78 @@ getKnownAllocation(Value *V, Instruction *IP, DominatorTree &DT) {
   return {};
 }
 
+/// The object `P` points into, looking through julia.gc_loaded, which makes
+/// a pointer into a Julia object the object roots.
+static Value *getHintBase(Value *P) {
+  Value *B = getBaseObject(P);
+  if (auto *CI = dyn_cast<CallInst>(B))
+    if (Function *F = getFunctionFromCall(CI))
+      if (F->getName() == "julia.gc_loaded")
+        return getBaseObject(CI->getArgOperand(1));
+  return B;
+}
+
+/// Whether `V` points into the Julia runtime's state of the task (its
+/// thread's allocator, the current task), which the step's allocations and
+/// safepoints use and which is no part of what the loop computes.
+static bool isJuliaTaskState(Value *V) {
+  Value *B = getBaseObject(V);
+  while (auto *LI = dyn_cast<LoadInst>(B))
+    B = getBaseObject(LI->getPointerOperand());
+  auto *CI = dyn_cast<CallInst>(B);
+  Function *F = CI ? getFunctionFromCall(CI) : nullptr;
+  return F && (F->getName() == "julia.get_pgcstack" ||
+               F->getName() == "julia.get_pgcstack_or_new" ||
+               F->getName() == "julia.ptls_states");
+}
+
+/// Whether `B` is memory allocated where it is, which a step that allocates
+/// it does not need to have snapshotted: the copy Julia makes of an array
+/// that may alias another, the exception it throws.
+static bool isFreshAllocation(Value *B) {
+  auto *CB = dyn_cast<CallBase>(B);
+  if (!CB)
+    return false;
+  if (CB->returnDoesNotAlias())
+    return true;
+  Function *F = getFunctionFromCall(CB);
+  if (!F)
+    return false;
+  StringRef name = F->getName();
+  return name == "julia.gc_alloc_obj" || name == "malloc" || name == "calloc" ||
+         name == "_Znwm" || name == "_Znam" ||
+         name.contains("jl_alloc_genericmemory") ||
+         name.contains("jl_gc_alloc");
+}
+
 /// The arguments of `step` it may write through, and a store through a
 /// pointer that is none of its arguments, globals or stack slots, if any.
 /// Pointers of unknown origin passed to a call are not counted: they are
 /// as often opaque handles (a stream, a file, a communicator), and what the
 /// callee writes through memory it is not visibly given cannot be seen here
 /// in any case; that is what __enzyme_ptr_size_hint is for.
+///
+/// A store through a pointer the step loads from an argument (the data of a
+/// Julia array, which the step loads from the array each time) is a write to
+/// the memory that argument points to, and the argument is in `indirect`.
 static Instruction *getWrittenArgs(Function *step,
-                                   SmallPtrSetImpl<Argument *> &written) {
+                                   SmallPtrSetImpl<Argument *> &written,
+                                   SmallPtrSetImpl<Argument *> &indirect) {
   Instruction *unknown = nullptr;
   auto note = [&](Value *ptr, Instruction *I, bool direct = true) {
-    Value *base = getBaseObject(ptr);
+    Value *base = getHintBase(ptr);
+    if (isFreshAllocation(base))
+      return;
+    auto *LI = dyn_cast<LoadInst>(base);
+    if (LI && direct) {
+      Value *from = getBaseObject(LI->getPointerOperand());
+      if (isFreshAllocation(from))
+        return;
+      if (auto *A = dyn_cast<Argument>(from)) {
+        indirect.insert(A);
+        return;
+      }
+    }
     if (auto *A = dyn_cast<Argument>(base))
       written.insert(A);
     // A function (a kernel launched, a callback) is not memory written.
@@ -507,18 +569,66 @@ static bool isPtrSizeHint(const Function *F) {
   return F && F->getName().contains("__enzyme_ptr_size_hint");
 }
 
+/// Where the pointer `B` was loaded from, if it was.
+static Value *getLoadedFrom(Value *B) {
+  auto *LI = dyn_cast<LoadInst>(B);
+  return LI ? LI->getPointerOperand()->stripPointerCasts() : nullptr;
+}
+
+/// Whether the loop may write the object `Obj` points into.
+static bool mayWriteInLoop(Value *Obj, ArrayRef<BasicBlock *> blocks) {
+  Value *base = getBaseObject(Obj);
+  for (BasicBlock *BB : blocks)
+    for (Instruction &I : *BB) {
+      Value *ptr = nullptr;
+      if (auto *SI = dyn_cast<StoreInst>(&I))
+        ptr = SI->getPointerOperand();
+      else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
+        ptr = MI->getDest();
+      else if (auto *CB = dyn_cast<CallBase>(&I)) {
+        if (CB->onlyReadsMemory())
+          continue;
+        for (Value *A : CB->args())
+          if (A->getType()->isPointerTy() && getBaseObject(A) == base)
+            return true;
+        continue;
+      }
+      if (ptr && getBaseObject(ptr) == base)
+        return true;
+    }
+  return false;
+}
+
 /// The object `V` points into, its size and its memory space from a call
 /// `__enzyme_ptr_size_hint(ptr, bytes[, space])` in front of `IP`, as
 /// Enzyme-MLIR reads it: the extent of an allocation Enzyme did not see made,
 /// and the memory space it really is in (a cudaMalloc'ed buffer is a plain
 /// pointer).
+///
+/// A Julia array's data pointer is loaded from the array where it is used, so
+/// the hint and the loop may hold two loads of it: they are the same pointer
+/// when they load from the same place and the loop does not write it.
+///
+/// With `indirect`, the hint is for the memory `V` points to: its pointer is
+/// loaded from `V`, as the data of a Julia array is from the array.
 static std::optional<std::tuple<Value *, Value *, unsigned>>
-getSizeHint(Value *V, Instruction *IP, DominatorTree &DT) {
-  Value *base = getBaseObject(V);
+getSizeHint(Value *V, Instruction *IP, DominatorTree &DT,
+            ArrayRef<BasicBlock *> loop, bool indirect = false) {
+  Value *base = getHintBase(V);
+  auto matches = [&](Value *P) {
+    Value *B = getHintBase(P);
+    Value *from = getLoadedFrom(B);
+    if (indirect)
+      return from && from == V->stripPointerCasts() &&
+             !mayWriteInLoop(from, loop);
+    if (B == base)
+      return true;
+    return from && from == getLoadedFrom(base) && !mayWriteInLoop(from, loop);
+  };
   for (Instruction &I : instructions(*IP->getFunction())) {
     auto *CI = dyn_cast<CallInst>(&I);
     if (!CI || !isPtrSizeHint(getFunctionFromCall(CI)) || CI->arg_size() < 2 ||
-        getBaseObject(CI->getArgOperand(0)) != base || !DT.dominates(CI, IP))
+        !DT.dominates(CI, IP) || !matches(CI->getArgOperand(0)))
       continue;
     unsigned space = 0;
     if (CI->arg_size() > 2) {
@@ -607,13 +717,61 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     return true;
 
   simplifyLoop(L, &DT, &LI, &SE, &AC, nullptr, false);
+
+  // Exits that can only throw (Julia's checks of an array's dimensions, an
+  // `unreachable` after a failed assumption): the blocks that follow them,
+  // up to the `unreachable`, become part of the step, which throws as the
+  // loop did. They must not be reached otherwise.
+  SmallPtrSet<BasicBlock *, 8> throwing;
+  SmallVector<BasicBlock *, 4> exits;
+  L->getUniqueExitBlocks(exits);
+  BasicBlock *E = nullptr;
+  for (BasicBlock *EB : exits) {
+    SmallVector<BasicBlock *, 8> todo = {EB};
+    SmallPtrSet<BasicBlock *, 8> seen = {EB};
+    bool throws = true;
+    while (!todo.empty() && throws) {
+      BasicBlock *BB = todo.pop_back_val();
+      Instruction *T = BB->getTerminator();
+      if (isa<ReturnInst>(T) || isa<ResumeInst>(T) ||
+          (T->getNumSuccessors() && !isa<BranchInst>(T) && !isa<SwitchInst>(T)))
+        throws = false;
+      for (BasicBlock *S : successors(BB)) {
+        if (L->contains(S))
+          throws = false;
+        else if (seen.insert(S).second)
+          todo.push_back(S);
+      }
+    }
+    if (throws)
+      for (BasicBlock *BB : seen)
+        for (BasicBlock *Pred : predecessors(BB))
+          if (!L->contains(Pred) && !seen.count(Pred))
+            throws = false;
+    if (throws)
+      throwing.insert(seen.begin(), seen.end());
+    else if (E)
+      return fail("a checkpointed loop must leave to a single block, "
+                  "except to throw");
+    else
+      E = EB;
+  }
   BasicBlock *P = L->getLoopPreheader(), *H = L->getHeader(),
-             *latch = L->getLoopLatch(), *X = L->getExitingBlock(),
-             *E = L->getUniqueExitBlock();
-  if (!P || !latch || !X || !E || (X != latch && X != H))
+             *latch = L->getLoopLatch(), *X = nullptr;
+  if (E)
+    for (BasicBlock *Pred : predecessors(E))
+      if (L->contains(Pred))
+        X = X && X != Pred ? (BasicBlock *)E : Pred;
+  if (!P || !latch || !E || !X || X == E || (X != latch && X != H))
     return fail("a checkpointed loop must have a single latch and leave "
                 "from its header or its latch, to a single block");
-  const SCEV *BTC = SE.getBackedgeTakenCount(L);
+  // What the step runs: the loop and where it throws.
+  auto inStep = [&](Instruction *I) {
+    return L->contains(I) || throwing.count(I->getParent());
+  };
+  // The steps that do not throw.
+  const SCEV *BTC =
+      throwing.empty() ? SE.getBackedgeTakenCount(L) : SE.getExitCount(L, X);
   if (isa<SCEVCouldNotCompute>(BTC))
     return fail("the number of iterations of a checkpointed loop must be "
                 "known when it starts; for other loops use "
@@ -641,9 +799,8 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   SmallVector<IV, 4> ivs;
   SmallVector<PHINode *, 4> carried;
   for (PHINode &phi : H->phis()) {
-    bool usedAfter = any_of(phi.users(), [&](User *U) {
-      return !L->contains(cast<Instruction>(U));
-    });
+    bool usedAfter = any_of(
+        phi.users(), [&](User *U) { return !inStep(cast<Instruction>(U)); });
     auto *AR = SE.isSCEVable(phi.getType())
                    ? dyn_cast<SCEVAddRecExpr>(SE.getSCEV(&phi))
                    : nullptr;
@@ -670,22 +827,22 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     for (Instruction &I : make_early_inc_range(*BB)) {
       if (isa<PHINode>(I))
         continue;
-      if (any_of(I.users(), [&](User *U) {
-            return !L->contains(cast<Instruction>(U));
-          }))
+      if (any_of(I.users(),
+                 [&](User *U) { return !inStep(cast<Instruction>(U)); }))
         DemoteRegToStack(I, false, allocaIP);
     }
 
   // The step: one iteration, from the header to the backedge or the exit.
   SmallVector<BasicBlock *, 8> blocks(L->blocks().begin(),
                                       L->blocks().end());
+  blocks.append(throwing.begin(), throwing.end());
   SmallPtrSet<Value *, 4> ivPhis;
   for (auto &iv : ivs)
     ivPhis.insert(iv.phi);
   SetVector<Value *> liveins;
   auto noteLivein = [&](Value *V) {
     if (auto *I = dyn_cast<Instruction>(V)) {
-      if (!L->contains(I))
+      if (!inStep(I))
         liveins.insert(V);
     } else if (isa<Argument>(V))
       liveins.insert(V);
@@ -700,6 +857,44 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   for (auto &iv : ivs) {
     noteLivein(iv.start);
     noteLivein(iv.step);
+  }
+  // Julia's derived pointers (into an object, 11, or loaded from it, 13)
+  // may not be stored to memory, where the driver keeps the step's
+  // arguments, nor live across its calls: the step makes them again from
+  // the objects they derive from.
+  SmallVector<Instruction *, 4> remat;
+  if (M.getFunction("julia.get_pgcstack") || M.getFunction("julia.gc_loaded")) {
+    auto isDerived = [](Value *V) {
+      auto *PT = dyn_cast<PointerType>(V->getType());
+      if (!PT || PT->getAddressSpace() < 11 || PT->getAddressSpace() > 13)
+        return false;
+      if (isa<AddrSpaceCastInst>(V) || isa<GetElementPtrInst>(V) ||
+          isa<BitCastInst>(V))
+        return true;
+      auto *CI = dyn_cast<CallInst>(V);
+      Function *callee = CI ? getFunctionFromCall(CI) : nullptr;
+      return callee && callee->getName() == "julia.gc_loaded";
+    };
+    bool again = true;
+    while (again) {
+      again = false;
+      for (Value *V : liveins.getArrayRef()) {
+        if (!isDerived(V))
+          continue;
+        auto *I = cast<Instruction>(V);
+        liveins.remove(V);
+        remat.push_back(I);
+        for (Value *Op : I->operands())
+          if (!isa<Function>(Op))
+            noteLivein(Op);
+        again = true;
+        break;
+      }
+    }
+    // Each before what is made from it.
+    llvm::stable_sort(remat, [&](Instruction *A, Instruction *B) {
+      return A != B && DT.dominates(A, B);
+    });
   }
 
   SmallVector<Type *, 8> params = {I64};
@@ -719,6 +914,13 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   };
   auto *entry = BasicBlock::Create(Ctx, "entry", step);
   IRBuilder<> SB(entry);
+  for (Instruction *I : remat) {
+    Instruction *C = I->clone();
+    SB.Insert(C, I->getName());
+    RemapInstruction(C, VMap, RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
+    C->setDebugLoc(DebugLoc());
+    VMap[I] = C;
+  }
   Value *k = step->getArg(0);
   k->setName("k");
   SmallVector<std::pair<PHINode *, Value *>, 4> ivValues;
@@ -770,8 +972,8 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     }
 
   // What a snapshot holds besides the globals.
-  SmallPtrSet<Argument *, 8> written;
-  if (Instruction *I = getWrittenArgs(step, written)) {
+  SmallPtrSet<Argument *, 8> written, indirect;
+  if (Instruction *I = getWrittenArgs(step, written, indirect)) {
     std::string inst;
     raw_string_ostream ss(inst);
     ss << *I;
@@ -783,10 +985,31 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   SmallVector<std::tuple<Value *, Value *, unsigned>, 4> regions;
   SmallPtrSet<Value *, 4> seen;
   for (auto [i, V] : enumerate(liveins)) {
-    if (!V->getType()->isPointerTy())
+    if (!V->getType()->isPointerTy() || isJuliaTaskState(V))
       continue;
     bool w = written.count(step->getArg(i + 1));
-    if (auto hint = getSizeHint(V, IP, DT)) {
+    // The memory V points to, which the loop writes through a pointer it
+    // loads from V; V itself, which holds that pointer, is not written, so
+    // the pointer loaded before the loop is the one the loop writes through.
+    if (indirect.count(step->getArg(i + 1))) {
+      auto hint = getSizeHint(V, IP, DT, blocks, /*indirect*/ true);
+      if (!hint) {
+        std::string name;
+        raw_string_ostream ss(name);
+        V->printAsOperand(ss, false);
+        step->eraseFromParent();
+        return fail("a checkpointed loop writes through a pointer it loads "
+                    "from " +
+                    ss.str() +
+                    ", whose extent is not known before "
+                    "it; give it with __enzyme_ptr_size_hint on that pointer");
+      }
+      if (seen.insert(getBaseObject(std::get<0>(*hint))).second)
+        regions.push_back(*hint);
+      if (!w)
+        continue;
+    }
+    if (auto hint = getSizeHint(V, IP, DT, blocks)) {
       if (seen.insert(getBaseObject(V)).second)
         regions.push_back(*hint);
       continue;
@@ -894,8 +1117,129 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   return true;
 }
 
+// A loop can also be annotated with its loop metadata, the way Julia spells
+// loop annotations (`Expr(:loopinfo, (Symbol("enzyme.checkpoint"), "revolve",
+// 4))` at the end of the loop body) and other front ends without a call to
+// emit can:
+//
+//   br i1 %c, label %exit, label %header, !llvm.loop !0
+//   !0 = distinct !{!0, !1}
+//   !1 = !{!"enzyme.checkpoint", !"revolve", i64 4}
+//
+// The mode is "revolve" or "binomial" (binomial), "periodic" or "regular"
+// (periodic), "none", or the integer of __enzyme_set_checkpointing; the count
+// is optional. Each such loop gets the equivalent __enzyme_set_checkpointing
+// call at the top of its header, and the entry is removed from its metadata.
+
+static constexpr const char *CheckpointLoopMD = "enzyme.checkpoint";
+
+static MDNode *getCheckpointLoopMD(Loop *L) {
+  MDNode *LoopID = L->getLoopID();
+  if (!LoopID)
+    return nullptr;
+  for (unsigned i = 1, e = LoopID->getNumOperands(); i < e; i++)
+    if (auto *N = dyn_cast_or_null<MDNode>(LoopID->getOperand(i)))
+      if (N->getNumOperands() > 0)
+        if (auto *S = dyn_cast_or_null<MDString>(N->getOperand(0)))
+          if (S->getString() == CheckpointLoopMD)
+            return N;
+  return nullptr;
+}
+
+static bool markersFromLoopMetadata(Function &F) {
+  bool hasLoopMD = false;
+  for (BasicBlock &BB : F)
+    if (BB.getTerminator() &&
+        BB.getTerminator()->getMetadata(LLVMContext::MD_loop))
+      hasLoopMD = true;
+  if (!hasLoopMD)
+    return false;
+  LLVMContext &Ctx = F.getContext();
+  Type *I64 = Type::getInt64Ty(Ctx);
+  DominatorTree DT(F);
+  LoopInfo LI(DT);
+  bool changed = false;
+  for (Loop *L : LI.getLoopsInPreorder()) {
+    MDNode *N = getCheckpointLoopMD(L);
+    if (!N)
+      continue;
+    Instruction *IP = &*L->getHeader()->getFirstInsertionPt();
+    DebugLoc loc = L->getStartLoc();
+    int64_t mode = 1, count = -1;
+    bool ok = true;
+    auto fail = [&](const Twine &msg) {
+      std::string str = msg.str();
+      EmitFailure("CheckpointLoop", loc, IP, str);
+      ok = false;
+    };
+    if (N->getNumOperands() > 3)
+      fail("enzyme.checkpoint loop metadata takes at most a mode and a "
+           "count");
+    if (ok && N->getNumOperands() > 1) {
+      const MDOperand &op = N->getOperand(1);
+      if (auto *S = dyn_cast_or_null<MDString>(op)) {
+        StringRef name = S->getString();
+        if (name == "revolve" || name == "binomial")
+          mode = 2;
+        else if (name == "periodic" || name == "regular")
+          mode = 1;
+        else if (name == "none")
+          mode = 0;
+        else
+          fail("unknown checkpointing mode '" + name +
+               "', expected \"revolve\", \"binomial\", \"periodic\", "
+               "\"regular\" or \"none\"");
+      } else if (auto *C = mdconst::dyn_extract_or_null<ConstantInt>(op)) {
+        mode = C->getSExtValue();
+      } else {
+        fail("the checkpointing mode of a loop must be a string or an "
+             "integer");
+      }
+    }
+    if (ok && N->getNumOperands() > 2) {
+      auto *C = mdconst::dyn_extract_or_null<ConstantInt>(N->getOperand(2));
+      if (!C)
+        fail("the number of checkpoints of a loop must be an integer");
+      else
+        count = C->getSExtValue();
+    }
+
+    // The entry has been read; drop it so the loop is annotated only once.
+    MDNode *LoopID = L->getLoopID();
+    SmallVector<Metadata *, 4> MDs(1);
+    for (unsigned i = 1, e = LoopID->getNumOperands(); i < e; i++)
+      if (LoopID->getOperand(i) != N)
+        MDs.push_back(LoopID->getOperand(i));
+    if (MDs.size() == 1) {
+      SmallVector<BasicBlock *, 2> latches;
+      L->getLoopLatches(latches);
+      for (BasicBlock *BB : latches)
+        BB->getTerminator()->setMetadata(LLVMContext::MD_loop, nullptr);
+    } else {
+      MDNode *NewID = MDNode::getDistinct(Ctx, MDs);
+      NewID->replaceOperandWith(0, NewID);
+      L->setLoopID(NewID);
+    }
+    changed = true;
+    if (!ok)
+      continue;
+
+    FunctionCallee marker = F.getParent()->getOrInsertFunction(
+        "__enzyme_set_checkpointing",
+        FunctionType::get(Type::getVoidTy(Ctx), {I64, I64}, false));
+    IRBuilder<> B(IP);
+    auto *CI = B.CreateCall(
+        marker, {ConstantInt::get(I64, mode), ConstantInt::get(I64, count)});
+    CI->setDebugLoc(loc);
+  }
+  return changed;
+}
+
 static bool outlineAnnotatedLoops(Module &M) {
   bool changed = false;
+  for (Function &F : M)
+    if (!F.isDeclaration())
+      changed |= markersFromLoopMetadata(F);
   while (true) {
     CallInst *marker = nullptr;
     for (Function &F : M) {
