@@ -7,7 +7,7 @@
 ! Reverse mode through a routine containing a parallel loop, called twice
 ! with its input overwritten in between.
 
-module m
+module calleeReverse
   use, intrinsic :: iso_fortran_env, only: real64
   implicit none
   public
@@ -32,13 +32,13 @@ contains
     x = 2 * x
     call step(n, x, y)
   end subroutine drive
-end module m
+end module calleeReverse
 
 program main
   use, intrinsic :: iso_fortran_env, only: real64
   use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
   use omp_lib, only: omp_set_num_threads
-  use m, only: drive
+  use calleeReverse, only: drive
   implicit none
 
   integer, parameter :: n = 8
