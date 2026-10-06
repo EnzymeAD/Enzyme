@@ -117,6 +117,10 @@ public:
 
   std::map<llvm::Instruction *, bool> can_modref_map;
 
+  //! Whether this pass used the primal return of each call, so that the
+  //! split reverse pass makes the same choices for custom rules
+  std::map<const llvm::CallInst *, bool> primal_return_used_map;
+
   std::set<ssize_t> tapeIndiciesToFree;
 
   const std::vector<DIFFE_TYPE> constant_args;

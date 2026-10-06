@@ -188,7 +188,13 @@ public:
   const std::map<llvm::Instruction *, bool> *can_modref_map;
   const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       *overwritten_args_map_ptr;
+  //! In a split reverse pass, whether the augmented forward pass used the
+  //! primal return of each call (see AugmentedReturn).
+  const std::map<const llvm::CallInst *, bool> *primal_return_used_map_ptr;
   const llvm::SmallPtrSetImpl<const llvm::Value *> *unnecessaryValuesP;
+
+  //! Whether the primal return of orig is needed by this function.
+  bool isPrimalReturnUsed(const llvm::Value *orig) const;
 
   llvm::SmallVector<llvm::OperandBundleDef, 2> getInvertedBundles(
       llvm::CallInst *orig, llvm::ArrayRef<ValueType> types,

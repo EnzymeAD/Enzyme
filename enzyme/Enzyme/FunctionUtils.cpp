@@ -1787,13 +1787,24 @@ static bool isReturnLikeParam(const Function &F, unsigned argno) {
 // function already carries is kept: it was stated deliberately. A function
 // marked enzyme_custom_full_attributes is exempt: the frontend states that its
 // rule accesses no more than the body does (Enzyme.jl sets it for @easy_rule,
-// whose rule only combines the inputs the way the body does).
+// whose rule only combines the inputs the way the body does). That never
+// covers a Julia argument passed by reference or its roots array, which
+// lowering the rule itself reads.
 static bool mayReadThroughCustomRule(Function &F, unsigned argno) {
   if (getFuncName(&F) != "enzyme_custom" && !hasCustomRuleMetadata(&F))
     return false;
-  if (F.hasFnAttribute("enzyme_custom_full_attributes"))
+  if (isReturnLikeParam(F, argno))
     return false;
-  return !isReturnLikeParam(F, argno);
+  // Lowering a Julia custom rule loads each argument passed by reference, and
+  // its roots array, to build the value the rule receives, whatever the rule
+  // itself accesses.
+  auto idx = argno + AttributeList::FirstArgIndex;
+  if (F.getAttribute(idx, "enzymejl_rooted_typ").isValid())
+    return true;
+  auto ref = F.getAttribute(idx, "enzymejl_parmtype_ref");
+  if (ref.isValid() && ref.getValueAsString() == "1")
+    return true;
+  return !F.hasFnAttribute("enzyme_custom_full_attributes");
 }
 
 bool DetectPointerArgOfFn(llvm::Function &F,

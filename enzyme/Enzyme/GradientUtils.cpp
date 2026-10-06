@@ -188,7 +188,8 @@ GradientUtils::GradientUtils(
                     Logic.PPC, Logic.PPC.getAAResultsFromFunction(oldFunc_),
                     notForAnalysis, TLI_, constantvalues_, activevals_,
                     ReturnActivity)),
-      overwritten_args_map_ptr(nullptr), unnecessaryValuesP(nullptr),
+      overwritten_args_map_ptr(nullptr), primal_return_used_map_ptr(nullptr),
+      unnecessaryValuesP(nullptr),
       tid(nullptr), numThreads(nullptr),
       OrigAA(oldFunc_->empty() ? ((AAResults *)nullptr)
                                : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
@@ -4570,21 +4571,24 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
     }
   }
 
-  if (primalReturnUsedP) {
-    bool subretused = !unnecessaryValuesP || unnecessaryValuesP->find(orig) ==
-                                                 unnecessaryValuesP->end();
-    auto found = knownRecomputeHeuristic.find(orig);
-    if (found != knownRecomputeHeuristic.end()) {
-      if (!found->second) {
-        subretused = true;
-      }
-    }
-    *primalReturnUsedP = subretused;
-  }
+  if (primalReturnUsedP)
+    *primalReturnUsedP = isPrimalReturnUsed(orig);
 
   if (shadowReturnUsedP)
     *shadowReturnUsedP = shadowReturnUsed;
   return subretType;
+}
+
+bool GradientUtils::isPrimalReturnUsed(const llvm::Value *orig) const {
+  bool subretused = !unnecessaryValuesP ||
+                    unnecessaryValuesP->find(orig) == unnecessaryValuesP->end();
+  auto found = knownRecomputeHeuristic.find(orig);
+  if (found != knownRecomputeHeuristic.end()) {
+    if (!found->second) {
+      subretused = true;
+    }
+  }
+  return subretused;
 }
 
 DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {

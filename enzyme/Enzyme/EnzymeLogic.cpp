@@ -2299,13 +2299,15 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       else
         bb.CreateRet(cal);
 
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
-                                 aug.returns, aug.overwritten_args_map,
-                                 aug.can_modref_map, next_constant_args,
-                                 shadowReturnUsed))
-          ->second;
+      auto &wrapped = insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                          AugmentedCachedFunctions, tup,
+                          AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
+                                          aug.returns, aug.overwritten_args_map,
+                                          aug.can_modref_map,
+                                          next_constant_args, shadowReturnUsed))
+                          ->second;
+      wrapped.primal_return_used_map = aug.primal_return_used_map;
+      return wrapped;
     }
 
     if (foundcalled->hasStructRetAttr() && !todiff->hasStructRetAttr()) {
@@ -2644,6 +2646,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    overwritten_args_map, can_modref_map,
                                    constant_args, shadowReturnUsed));
+  {
+    auto &primal_return_used_map =
+        AugmentedCachedFunctions.find(tup)->second.primal_return_used_map;
+    for (auto &I : instructions(*gutils->oldFunc))
+      if (auto CI = dyn_cast<CallInst>(&I))
+        primal_return_used_map[CI] = gutils->isPrimalReturnUsed(CI);
+  }
 
   auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
@@ -4440,6 +4449,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           (augmenteddata) ? augmenteddata->overwritten_args_map
                           : CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
+  if (augmenteddata)
+    gutils->primal_return_used_map_ptr = &augmenteddata->primal_return_used_map;
 
   const std::map<Instruction *, bool> can_modref_map =
       augmenteddata ? augmenteddata->can_modref_map

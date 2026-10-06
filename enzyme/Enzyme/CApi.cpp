@@ -615,6 +615,45 @@ uint8_t EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
   return 1;
 }
 
+/// In a split reverse pass, report whether the augmented forward pass used the
+/// primal return of the call orig, so a custom rule can be configured the same
+/// way in both passes. Returns 0 if unknown, else 1 and sets *used.
+uint8_t EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(GradientUtils *gutils,
+                                                        LLVMValueRef orig,
+                                                        uint8_t *used) {
+  if (gutils->mode != DerivativeMode::ReverseModeGradient ||
+      !gutils->primal_return_used_map_ptr)
+    return 0;
+  auto found =
+      gutils->primal_return_used_map_ptr->find(cast<CallInst>(unwrap(orig)));
+  if (found == gutils->primal_return_used_map_ptr->end())
+    return 0;
+  *used = found->second;
+  return 1;
+}
+
+/// Whether a custom rule may read (or, if write, write) the shadow of the
+/// pointer orig in the forward pass. Its memory may only exist in the reverse
+/// pass (read as zero there before); a write also needs the shadow argument
+/// not to be nowrite. These are the tests that mark a call's shadow argument
+/// nowrite.
+uint8_t EnzymeGradientUtilsShadowInForward(GradientUtils *gutils,
+                                           LLVMValueRef orig, uint8_t write) {
+  auto baseOp = getBaseObject(unwrap(orig));
+  if (write)
+    if (auto arg = dyn_cast<Argument>(baseOp))
+      if (arg->getArgNo() < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[arg->getArgNo()])
+        return 0;
+  if (isAllocationCall(baseOp, gutils->TLI)) {
+    auto found = gutils->backwardsOnlyShadows.find(baseOp);
+    if (found != gutils->backwardsOnlyShadows.end() &&
+        !found->second.primalInitialize)
+      return 0;
+  }
+  return 1;
+}
+
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,
                                                     LLVMValueRef val) {
   auto v = unwrap(val);
