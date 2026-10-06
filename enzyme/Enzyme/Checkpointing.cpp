@@ -626,7 +626,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       SE.getAddExpr(SE.getTruncateOrZeroExtend(BTC, I64), SE.getOne(I64));
 
   Instruction *IP = P->getTerminator();
+#if LLVM_VERSION_MAJOR >= 19
   SCEVExpander Exp(SE, "ckpt");
+#else
+  SCEVExpander Exp(SE, M.getDataLayout(), "ckpt");
+#endif
   Value *nsteps = Exp.expandCodeFor(N, I64, IP);
 
   // Induction variables, recomputed in each step from its index.
@@ -654,7 +658,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
 
   // Everything else carried from one iteration to the next, or used after
   // the loop, through the stack.
+#if LLVM_VERSION_MAJOR >= 19
   auto allocaIP = F.getEntryBlock().getFirstInsertionPt();
+#else
+  Instruction *allocaIP = &*F.getEntryBlock().getFirstInsertionPt();
+#endif
   FoldSingleEntryPHINodes(E);
   for (PHINode *phi : carried)
     DemotePHIToStack(phi, allocaIP);
@@ -753,7 +761,9 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   for (BasicBlock &BB : *step)
     for (Instruction &I : make_early_inc_range(BB)) {
       I.setDebugLoc(DebugLoc());
+#if LLVM_VERSION_MAJOR >= 19
       I.dropDbgRecords();
+#endif
       if (auto *II = dyn_cast<IntrinsicInst>(&I))
         if (isa<DbgInfoIntrinsic>(II) || II->isLifetimeStartOrEnd())
           II->eraseFromParent();
