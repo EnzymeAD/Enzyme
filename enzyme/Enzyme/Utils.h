@@ -1481,6 +1481,90 @@ static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   return "";
 }
 
+/// Julia write barriers. Before julia#62737 these are
+/// `julia.write_barrier(parent, children...)` (and
+/// `julia.write_barrier_binding`); since then codegen emits
+/// `julia.object_write_barrier(parent, children...)` and the field-aware
+/// `julia.field_write_barrier.p11/.p13(parent, slot, child, slot, child...)`,
+/// where each slot is a derived pointer into parent that child is stored to.
+static inline bool isJuliaFieldWriteBarrier(llvm::StringRef name) {
+  return name == "julia.field_write_barrier.p11" ||
+         name == "julia.field_write_barrier.p13";
+}
+
+static inline bool isJuliaWriteBarrier(llvm::StringRef name) {
+  return name == "julia.write_barrier" ||
+         name == "julia.write_barrier_binding" ||
+         name == "julia.object_write_barrier" || isJuliaFieldWriteBarrier(name);
+}
+
+/// Get the whole-object write barrier `(parent, children...)` to emit into M:
+/// `julia.object_write_barrier` if M already uses the julia#62737 barriers,
+/// `julia.write_barrier` otherwise.
+static inline llvm::FunctionCallee
+getJuliaObjectWriteBarrier(llvm::Module &M, llvm::FunctionType *FT) {
+  for (auto name :
+       {"julia.object_write_barrier", "julia.field_write_barrier.p11",
+        "julia.field_write_barrier.p13"})
+    if (M.getFunction(name))
+      return M.getOrInsertFunction("julia.object_write_barrier", FT);
+  return M.getOrInsertFunction("julia.write_barrier", FT);
+}
+
+/// Compute the shadow of the write barrier CB, given the activity and shadow
+/// of its operands. Fills args and returns the callee to call with them (CB's
+/// own, or a whole-object barrier if a field barrier cannot keep its slots),
+/// or a null callee if no shadow barrier is needed.
+template <typename IsConstant, typename Shadow>
+static inline llvm::FunctionCallee
+getShadowJuliaWriteBarrier(llvm::CallBase *CB,
+                           llvm::SmallVectorImpl<llvm::Value *> &args,
+                           IsConstant isConstant, Shadow shadow) {
+  using namespace llvm;
+  args.clear();
+  Value *parent = CB->getArgOperand(0);
+  if (isConstant(parent))
+    return FunctionCallee();
+  FunctionCallee callee(CB->getFunctionType(), CB->getCalledOperand());
+  SmallVector<Value *, 4> ops = {parent};
+  if (!isJuliaFieldWriteBarrier(getFuncNameFromCall(CB))) {
+    for (unsigned i = 1; i < CB->arg_size(); i++)
+      if (!isConstant(CB->getArgOperand(i)))
+        ops.push_back(CB->getArgOperand(i));
+    for (auto op : ops)
+      args.push_back(shadow(op));
+    return callee;
+  }
+  // Keep the (slot, child) pairs whose child is active. A slot into an active
+  // parent should itself be active; if not, fall back to a whole-object
+  // barrier of the shadow parent, which is always correct.
+  SmallVector<std::pair<Value *, Value *>, 2> pairs;
+  bool constantSlot = false;
+  for (unsigned i = 1; i + 1 < CB->arg_size(); i += 2) {
+    Value *slot = CB->getArgOperand(i);
+    Value *child = CB->getArgOperand(i + 1);
+    if (isConstant(child))
+      continue;
+    constantSlot |= isConstant(slot);
+    pairs.emplace_back(slot, child);
+  }
+  if (pairs.empty())
+    return FunctionCallee();
+  if (constantSlot) {
+    auto FT = FunctionType::get(Type::getVoidTy(CB->getContext()),
+                                {parent->getType()}, true);
+    callee = getJuliaObjectWriteBarrier(*CB->getModule(), FT);
+  }
+  for (auto &pair : pairs) {
+    if (!constantSlot)
+      ops.push_back(pair.first);
+    ops.push_back(pair.second);
+  }
+  for (auto op : ops)
+    args.push_back(shadow(op));
+  return callee;
+}
+
 static inline bool hasNoCache(llvm::Value *op) {
   using namespace llvm;
   if (auto CB = dyn_cast<CallBase>(op)) {

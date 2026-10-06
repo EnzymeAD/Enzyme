@@ -5162,10 +5162,10 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
     if (PT->getAddressSpace() == 10 && extracted.size()) {
       extracted.insert(extracted.begin(), obj);
       auto JLT = getPointerType(StructType::get(PT->getContext(), {}), 10);
-      auto FT = FunctionType::get(JLT, {}, true);
-      auto wb =
-          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-              "julia.write_barrier", FT);
+      auto FT =
+          FunctionType::get(Type::getVoidTy(PT->getContext()), {JLT}, true);
+      auto wb = getJuliaObjectWriteBarrier(
+          *B.GetInsertBlock()->getParent()->getParent(), FT);
       assert(obj->getType() == JLT);
       B.CreateCall(wb, extracted);
     }

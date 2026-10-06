@@ -3376,9 +3376,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             StringRef funcName = getFuncNameFromCall(CI);
             if (funcName == "enzyme_zerotype")
               continue;
-            if (funcName == "julia.write_barrier" ||
-                funcName == "julia.write_barrier_binding" ||
-                isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
+            if (isJuliaWriteBarrier(funcName) || isa<MemSetInst>(&I) ||
+                isa<MemTransferInst>(&I)) {
 
               // TODO
               SmallVector<Value *, 2> args;
@@ -3575,28 +3574,23 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             }
           } else if (auto CI = dyn_cast<CallInst>(&I)) {
             StringRef funcName = getFuncNameFromCall(CI);
-            if (funcName == "julia.write_barrier" ||
-                funcName == "julia.write_barrier_binding") {
+            if (isJuliaWriteBarrier(funcName)) {
 
               // TODO
-              SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-              for (auto &arg : CI->args())
-#else
-              for (auto &arg : CI->arg_operands())
-#endif
-                if (!isConstantValue(arg))
-                  args.push_back(
-                      lookupM(invertPointerM(arg, NB), NB, available));
+              SmallVector<Value *, 3> args;
+              auto shadowBarrier = getShadowJuliaWriteBarrier(
+                  CI, args, [&](Value *arg) { return isConstantValue(arg); },
+                  [&](Value *arg) {
+                    return lookupM(invertPointerM(arg, NB), NB, available);
+                  });
 
-              if (args.size()) {
+              if (shadowBarrier) {
                 SmallVector<ValueType, 2> BundleTypes(args.size(),
                                                       ValueType::Primal);
 
                 auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                                /*lookup*/ true, available);
-                auto cal = NB.CreateCall(CI->getFunctionType(),
-                                         CI->getCalledOperand(), args, Defs);
+                auto cal = NB.CreateCall(shadowBarrier, args, Defs);
                 cal->setAttributes(CI->getAttributes());
                 cal->setCallingConv(CI->getCallingConv());
                 cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
@@ -5155,10 +5149,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
         auto FT = FunctionType::get(Type::getVoidTy(newval->getContext()),
                                     {T_prjlvalue}, true);
-        auto wb = BuilderM.GetInsertBlock()
-                      ->getParent()
-                      ->getParent()
-                      ->getOrInsertFunction("julia.write_barrier", FT);
+        auto wb = getJuliaObjectWriteBarrier(
+            *BuilderM.GetInsertBlock()->getParent()->getParent(), FT);
 
         auto subvals = getJuliaObjects(newval, BuilderM);
 
@@ -9554,12 +9546,15 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         frees.insert(CI);
         continue;
       }
-      // The allocation arg is the first arg of the write barrier.
-      //  The capturing store in subsequent args should be handled by forbidding
-      //  capturing stores
-      if (funcName == "julia.write_barrier" ||
-          funcName == "julia.write_barrier_binding") {
-        if (CI->getArgOperand(0) == prev) {
+      // The allocation arg is the first arg of the write barrier, and the
+      // slots of a field write barrier point into it. The capturing store in
+      // the children should be handled by forbidding capturing stores
+      if (isJuliaWriteBarrier(funcName)) {
+        bool isStore = CI->getArgOperand(0) == prev;
+        if (isJuliaFieldWriteBarrier(funcName))
+          for (unsigned i = 1; i < CI->arg_size(); i += 2)
+            isStore |= CI->getArgOperand(i) == prev;
+        if (isStore) {
           stores.insert(CI);
         }
         continue;
