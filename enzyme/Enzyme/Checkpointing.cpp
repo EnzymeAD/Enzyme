@@ -518,9 +518,14 @@ static bool isFreshAllocation(Value *B) {
 /// A store through a pointer the step loads from an argument (the data of a
 /// Julia array, which the step loads from the array each time) is a write to
 /// the memory that argument points to, and the argument is in `indirect`.
+///
+/// In Julia code (`julia`) a callee may write what any object it is passed
+/// points to, as Julia marks an argument readonly when the callee does not
+/// write the object itself: those arguments are in `indirect` too.
 static Instruction *getWrittenArgs(Function *step,
                                    SmallPtrSetImpl<Argument *> &written,
-                                   SmallPtrSetImpl<Argument *> &indirect) {
+                                   SmallPtrSetImpl<Argument *> &indirect,
+                                   bool julia) {
   Instruction *unknown = nullptr;
   // `readonly`: a call does not write through `ptr` itself.
   auto note = [&](Value *ptr, Instruction *I, bool direct = true,
@@ -528,11 +533,14 @@ static Instruction *getWrittenArgs(Function *step,
     Value *base = getHintBase(ptr);
     if (isFreshAllocation(base))
       return;
-    auto *LI = dyn_cast<LoadInst>(base);
-    if (LI && direct) {
-      Value *from = getBaseObject(LI->getPointerOperand());
-      if (isFreshAllocation(from))
-        return;
+    // Through pointers loaded from an argument (an array held by a struct).
+    if (direct && isa<LoadInst>(base)) {
+      Value *from = base;
+      while (auto *LI = dyn_cast<LoadInst>(from)) {
+        from = getHintBase(LI->getPointerOperand());
+        if (isFreshAllocation(from))
+          return;
+      }
       if (auto *A = dyn_cast<Argument>(from)) {
         indirect.insert(A);
         return;
@@ -542,7 +550,7 @@ static Instruction *getWrittenArgs(Function *step,
       // A callee may write what a Julia object points to (an array's data)
       // even when it does not write the object, which is all `readonly`
       // says of it.
-      if (!direct && A->getType()->getPointerAddressSpace() == 10)
+      if (!direct && julia)
         indirect.insert(A);
       if (!readonly)
         written.insert(A);
@@ -567,9 +575,7 @@ static Instruction *getWrittenArgs(Function *step,
         continue;
       for (unsigned i = 0; i < CB->arg_size(); i++) {
         Value *A = CB->getArgOperand(i);
-        if (A->getType()->isPointerTy() &&
-            (!CB->onlyReadsMemory(i) ||
-             A->getType()->getPointerAddressSpace() == 10))
+        if (A->getType()->isPointerTy() && (!CB->onlyReadsMemory(i) || julia))
           note(A, &I, /*direct*/ false, CB->onlyReadsMemory(i));
       }
     }
@@ -656,6 +662,38 @@ getSizeHint(Value *V, Instruction *IP, DominatorTree &DT,
     return std::make_tuple(
         CI->getArgOperand(0),
         B.CreateZExtOrTrunc(CI->getArgOperand(1), B.getInt64Ty()), space);
+  }
+  return {};
+}
+
+static bool isJuliaState(const Function *F) {
+  return F && F->getName() == "__enzyme_julia_state";
+}
+
+/// The memory that can be written through the Julia value `V` points into,
+/// or whose data `V` is, from a call `__enzyme_julia_state(obj, ptr, bytes,
+/// ...)` in front of `IP`, which Enzyme.jl makes from the value's type: the
+/// data of the arrays it holds, and the mutable objects among it. `self` is
+/// whether `V` points into the value rather than being data loaded from it.
+static std::optional<SmallVector<std::tuple<Value *, Value *, unsigned>, 2>>
+getJuliaState(Value *V, Instruction *IP, DominatorTree &DT, bool &self) {
+  SmallVector<Value *, 2> bases = {getBaseObject(V)};
+  if (auto *LI = dyn_cast<LoadInst>(bases[0]))
+    bases.push_back(getBaseObject(LI->getPointerOperand()));
+  for (Instruction &I : instructions(*IP->getFunction())) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    if (!CI || !isJuliaState(getFunctionFromCall(CI)) || CI->arg_size() < 1 ||
+        !DT.dominates(CI, IP) ||
+        !is_contained(bases, getBaseObject(CI->getArgOperand(0))))
+      continue;
+    self = getBaseObject(CI->getArgOperand(0)) == bases[0];
+    SmallVector<std::tuple<Value *, Value *, unsigned>, 2> regions;
+    IRBuilder<> B(IP);
+    for (unsigned i = 1; i + 1 < CI->arg_size(); i += 2)
+      regions.push_back(
+          {CI->getArgOperand(i),
+           B.CreateZExtOrTrunc(CI->getArgOperand(i + 1), B.getInt64Ty()), 0});
+    return regions;
   }
   return {};
 }
@@ -988,7 +1026,9 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
 
   // What a snapshot holds besides the globals.
   SmallPtrSet<Argument *, 8> written, indirect;
-  if (Instruction *I = getWrittenArgs(step, written, indirect)) {
+  bool julia =
+      M.getFunction("julia.get_pgcstack") || M.getFunction("julia.gc_loaded");
+  if (Instruction *I = getWrittenArgs(step, written, indirect, julia)) {
     std::string inst;
     raw_string_ostream ss(inst);
     ss << *I;
@@ -1003,10 +1043,37 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     if (!V->getType()->isPointerTy() || isJuliaTaskState(V))
       continue;
     bool w = written.count(step->getArg(i + 1));
+    bool ind = indirect.count(step->getArg(i + 1));
+    // What a Julia value holds, as its type says.
+    if (julia && (w || ind)) {
+      bool self = false;
+      if (auto state = getJuliaState(V, IP, DT, self)) {
+        Value *base = getBaseObject(V);
+        bool slot = isa<AllocaInst>(base);
+        if (w && self && !slot && none_of(*state, [&](auto &r) {
+              return getBaseObject(std::get<0>(r)) == base;
+            })) {
+          std::string name;
+          raw_string_ostream ss(name);
+          V->printAsOperand(ss, false);
+          step->eraseFromParent();
+          return fail("a checkpointed loop writes the Julia object " +
+                      ss.str() +
+                      " itself, of which only what it holds can be in a "
+                      "snapshot (does it resize an array?)");
+        }
+        for (auto &r : *state)
+          if (seen.insert(getBaseObject(std::get<0>(r))).second)
+            regions.push_back(r);
+        if (!slot)
+          continue;
+        ind = false;
+      }
+    }
     // The memory V points to, which the loop writes through a pointer it
     // loads from V; V itself, which holds that pointer, is not written, so
     // the pointer loaded before the loop is the one the loop writes through.
-    if (indirect.count(step->getArg(i + 1))) {
+    if (ind) {
       auto hint = getSizeHint(V, IP, DT, blocks, /*indirect*/ true);
       if (!hint) {
         std::string name;
@@ -1281,7 +1348,8 @@ bool lowerCheckpointMarkers(Module &M) {
   for (Function &F : M)
     for (Instruction &I : make_early_inc_range(instructions(F)))
       if (auto *CI = dyn_cast<CallInst>(&I))
-        if (isPtrSizeHint(getFunctionFromCall(CI))) {
+        if (isPtrSizeHint(getFunctionFromCall(CI)) ||
+            isJuliaState(getFunctionFromCall(CI))) {
           CI->eraseFromParent();
           annotated = true;
         }
