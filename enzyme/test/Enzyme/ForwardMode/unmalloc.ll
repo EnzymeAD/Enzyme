@@ -1,5 +1,6 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -instsimplify -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -instsimplify -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s -check-prefixes LL16,CHECK; fi
+; RUN: if [ %llvmver -le 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s -check-prefixes LL16,CHECK; fi
+; RUN: if [ %llvmver -ge 17 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s -check-prefixes LL24,CHECK; fi
 
 declare void @__enzyme_fwddiff(...)
 
@@ -22,12 +23,14 @@ declare void @free(i8*)
 
 declare i8* @malloc(i64)
 
-; CHECK: define internal void @fwddiffejulia_gradient_deferred__5305(double %i95, double %"i95'", double* %i346, double* %"i346'")
-; CHECK-NEXT:   %[[i1:.+]] = call noalias nonnull i8* @malloc(i64 100)
-; CHECK-NEXT:   %"i74'ipc" = bitcast i8* %[[i1]] to double*
-; CHECK-NEXT:   store double %"i95'", double* %"i74'ipc", align 8
-; CHECK-NEXT:   %"i257'ipl" = load double, double* %"i74'ipc", align 8
-; CHECK-NEXT:   store double %"i257'ipl", double* %"i346'"
-; CHECK-NEXT:   call void @free(i8* nonnull %[[i1]])
+; CHECK: define internal void @fwddiffejulia_gradient_deferred__5305(double %i95, double %"i95'", {{ptr|double\*}} %i346, {{ptr|double\*}} %"i346'")
+; CHECK-NEXT:   %[[i1:.+]] = call noalias nonnull {{ptr|i8\*}} @malloc(i64 100)
+; LL16-NEXT:    %"i74'ipc" = bitcast i8* %[[i1]] to double*
+; LL16-NEXT:    store double %"i95'", double* %"i74'ipc", align 8{{.*}}
+; LL16-NEXT:    %"i257'ipl" = load double, double* %"i74'ipc", align 8{{.*}}
+; LL24-NEXT:    store double %"i95'", ptr %[[i1]], align 8{{.*}}
+; LL24-NEXT:    %"i257'ipl" = load double, ptr %[[i1]], align 8{{.*}}
+; CHECK-NEXT:   store double %"i257'ipl", {{ptr|double\*}} %"i346'"
+; CHECK-NEXT:   call void @free({{ptr|i8\*}} nonnull %[[i1]])
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -38,7 +38,7 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*, double**, doub
 attributes #0 = { noinline nounwind uwtable optnone }
 
 
-; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n)
+; CHECK: define internal void @fwddiffef({{ptr|double\*}} %x, {{ptr|double\*}} %"x'", {{ptr|double\*\*}} %y, {{ptr|double\*\*}} %"y'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = add {{(nuw )?}}i64 %n, 1
 ; CHECK-NEXT:   br label %for.cond
@@ -50,16 +50,16 @@ attributes #0 = { noinline nounwind uwtable optnone }
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %for.end
 
 ; CHECK: for.body:                                         ; preds = %for.cond
-; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'"
-; CHECK-NEXT:   %[[i1:.+]] = load double, double* %x
-; CHECK-NEXT:   %[[ipl:.+]] = load double*, double** %"y'"
-; CHECK-NEXT:   %[[i3:.+]] = load double*, double** %y
-; CHECK-NEXT:   %[[i5:.+]] = load double, double* %[[ipl]]
-; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]]
+; CHECK-NEXT:   %[[i2:.+]] = load double, {{ptr|double\*}} %"x'"
+; CHECK-NEXT:   %[[i1:.+]] = load double, {{ptr|double\*}} %x
+; CHECK-NEXT:   %[[ipl:.+]] = load {{ptr|double\*}}, {{ptr|double\*\*}} %"y'"
+; CHECK-NEXT:   %[[i3:.+]] = load {{ptr|double\*}}, {{ptr|double\*\*}} %y
+; CHECK-NEXT:   %[[i5:.+]] = load double, {{ptr|double\*}} %[[ipl]]
+; CHECK-NEXT:   %[[i4:.+]] = load double, {{ptr|double\*}} %[[i3]]
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[i4]], %[[i1]]
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i2]]
-; CHECK-NEXT:   store double %[[i6]], double* %[[ipl]]
-; CHECK-NEXT:   store double %[[add]], double* %[[i3]]
+; CHECK-NEXT:   store double %[[i6]], {{ptr|double\*}} %[[ipl]]
+; CHECK-NEXT:   store double %[[add]], {{ptr|double\*}} %[[i3]]
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.end:                                          ; preds = %for.cond

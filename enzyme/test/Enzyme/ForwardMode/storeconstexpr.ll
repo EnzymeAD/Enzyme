@@ -19,9 +19,9 @@ entry:
 ; Function Attrs: alwaysinline
 declare double @__enzyme_fwddiff(i8*, ...)
 
-; CHECK: define internal void @fwddiffecallee(i64* %from, i64* %"from'", i64* %to, i64* %"to'")
+; CHECK: define internal void @fwddiffecallee({{ptr|i64\*}} %from, {{ptr|i64\*}} %"from'", {{ptr|i64\*}} %to, {{ptr|i64\*}} %"to'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   store i64 ptrtoint ([18 x i8]* @.str to i64), i64* %"to'", align 4
-; CHECK-NEXT:   store i64 ptrtoint ([18 x i8]* @.str to i64), i64* %to, align 4
+; CHECK-NEXT:   store i64 ptrtoint ({{ptr|\[18 x i8\]\*}} @.str to i64), {{ptr|i64\*}} %"to'", align 4
+; CHECK-NEXT:   store i64 ptrtoint ({{ptr|\[18 x i8\]\*}} @.str to i64), {{ptr|i64\*}} %to, align 4
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
