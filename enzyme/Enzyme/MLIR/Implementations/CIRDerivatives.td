@@ -95,10 +95,10 @@ def : MLIRDerivative<"cir", "FMAOp", (Op $x, $y, $z),
                     ]>;
 
 def CirIsPosZero : SubRoutine<(Op $x), (CirCmp (CirEQ),
-                                          (CirCopysign (TypeOf $x), (CirCF1 $x), $x),
+                                          (CirCopysign (CirCF1 $x), $x),
                                           (CirCF1 $x))>;
 def CirIsNegZero : SubRoutine<(Op $x), (CirCmp (CirEQ),
-                                          (CirCopysign (TypeOf $x), (CirCF1 $x), $x),
+                                          (CirCopysign (CirCF1 $x), $x),
                                           (CirCFNeg1 $x))>;
 
 def : MLIRDerivative<"cir", "FMaxNumOp", (Op $x, $y),
@@ -116,15 +116,15 @@ def : MLIRDerivative<"cir", "FMinNumOp", (Op $x, $y),
 def : MLIRDerivative<"cir", "FMaximumOp", (Op $x, $y),
                     [
                       (CirSelect (CirCmp (CirLT), $x, $y),
-                        (CirCF0 $x),
+                        (CirCF0 (Shadow $x)),
                         (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
-                            (CirCF0 $x),
+                            (CirCF0 (Shadow $x)),
                             (DiffeRet))),
                       (CirSelect (CirCmp (CirLT), $x, $y),
                         (DiffeRet),
                         (CirSelect (CirAnd (CirIsNegZero $x), (CirIsPosZero $y)),
                             (DiffeRet),
-                            (CirCF0 $x)))
+                            (CirCF0 (Shadow $x))))
                     ]>;
 
 def : MLIRDerivative<"cir", "FMinimumOp", (Op $x, $y),
@@ -148,7 +148,7 @@ def : MLIRDerivative<"cir", "FModOp", (Op $x, $y),
                     [
                       (DiffeRet),
                       (CirFMul (DiffeRet),
-                        (CirFNeg (CirCopysign (TypeOf $x), (CirFloor (CirFAbs (CirFDiv $x, $y):$div)), $div)))
+                        (CirFNeg (CirCopysign (CirFloor (CirFAbs (CirFDiv $x, $y):$div)), $div)))
                     ]
                   >;
 
@@ -156,7 +156,7 @@ def : MLIRDerivative<"cir", "FRemOp", (Op $x, $y),
                     [
                       (DiffeRet),
                       (CirFMul (DiffeRet),
-                        (CirFNeg (CirCopysign (TypeOf $x), (CirFloor (CirFAbs (CirFDiv $x, $y):$div)), $div)))
+                        (CirFNeg (CirCopysign (CirFloor (CirFAbs (CirFDiv $x, $y):$div)), $div)))
                     ]
                   >;
 
@@ -182,9 +182,8 @@ def : MLIRDerivative<"cir", "CopysignOp", (Op $x, $y),
                       (CirFMul
                         (DiffeRet),
                         (CirFMul
-						// Workaround for https://github.com/llvm/llvm-project/pull/226876
-                          (CirCopysign (TypeOf $x), (CirCF1 $x), $x),
-                          (CirCopysign (TypeOf $x), (CirCF1 $y), $y))),
+                          (CirCopysign (CirCF1 $x), $x),
+                          (CirCopysign (CirCF1 $y), $y))),
                       (InactiveArg)
                     ]
                   >;
@@ -273,8 +272,8 @@ def : MLIRDerivative<"cir", "SqrtOp", (Op $x),
 
 def : MLIRDerivative<"cir", "PowOp", (Op $x, $y),
                     [
-                      (CirFMul (DiffeRet), (CirFMul $y, (CirPow (TypeOf $x), $x, (CirFSub $y, (CirCF1 $y))))),
-                      (CirFMul (DiffeRet), (CirSelect (CirCmp (CirEQ), $x, (CirCF0 $x):$pzero), $pzero, (CirFMul (CirPow (TypeOf $x), $x, $y), (CirLog $x))))
+                      (CirFMul (DiffeRet), (CirFMul $y, (CirPow $x, (CirFSub $y, (CirCF1 $y))))),
+                      (CirFMul (DiffeRet), (CirSelect (CirCmp (CirEQ), $x, (CirCF0 $x):$pzero), $pzero, (CirFMul (CirPow $x, $y), (CirLog $x))))
                     ]
                   >;
 
