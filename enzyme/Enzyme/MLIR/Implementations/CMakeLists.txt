@@ -186,9 +186,10 @@ if(ENZYME_FLANG_MLIR)
     target_compile_definitions(
       FlangEnzyme-${LLVM_VERSION_MAJOR}
       PRIVATE
-        FLANG_ENZYME_MLIR_FILE="FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}${CMAKE_SHARED_MODULE_SUFFIX}"
-    )
-    target_link_libraries(FlangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE ${CMAKE_DL_LIBS})
+        FLANG_ENZYME_MLIR_FILE="FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}${CMAKE_SHARED_MODULE_SUFFIX}")
+    target_link_libraries(
+      FlangEnzyme-${LLVM_VERSION_MAJOR}
+      PRIVATE ${CMAKE_DL_LIBS})
     add_dependencies(FlangEnzyme-${LLVM_VERSION_MAJOR}
                      FlangEnzymeMLIR-${LLVM_VERSION_MAJOR})
   endif()
