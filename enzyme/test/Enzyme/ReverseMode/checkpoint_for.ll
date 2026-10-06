@@ -79,7 +79,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; REGIONS-NEXT:   global state (32 bytes)
 ; REGIONS-NOT: param
 
-; CHECK: @enzyme.ckpt.regions.step = private constant [1 x { ptr, i64, i32, i32 }] [{ ptr, i64, i32, i32 } { ptr @state, i64 32, i32 0, i32 0 }]
+; CHECK: @enzyme.ckpt.regions.step = private constant [1 x { ptr, i64, i32, i32, ptr, ptr }] [{ ptr, i64, i32, i32, ptr, ptr } { ptr @state, i64 32, i32 0, i32 0, ptr null, ptr null }]
 ; CHECK: @enzyme.ckpt.paths.step = private constant [3 x i64] [i64 0, i64 -1, i64 3]
 
 ; CHECK: define double @f(

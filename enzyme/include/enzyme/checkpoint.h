@@ -102,13 +102,43 @@ typedef struct EnzymeCkptAction {
   int64_t cpnum;
 } EnzymeCkptAction;
 
-/* One piece of memory a snapshot holds. */
+struct EnzymeCkptCallbacks;
+
+/* A region with this flag is state a callback snapshots, rather than memory
+ * copied: ptr and shadow are the primal and shadow of its root, bytes is 0. */
+#define ENZYME_CKPT_REGION_CALLBACK 1u
+
+/* One piece of memory a snapshot holds. shadow is its shadow in a
+ * derivative's pass when it has one, else NULL. */
 typedef struct EnzymeCkptRegion {
   void *ptr;
   uint64_t bytes;
   uint32_t addrspace;
   uint32_t flags;
+  void *shadow;
+  const struct EnzymeCkptCallbacks *callbacks;
 } EnzymeCkptRegion;
+
+/* The state of a callback region, a garbage-collected object graph say,
+ * which the frontend snapshots itself. Its shadow holds references that
+ * must point to the shadows of what the primal references: the forward
+ * sweep runs steps without their derivatives, and a restore puts back the
+ * primal's references only, so the drivers call sync before each step's
+ * derivative runs and when the forward sweep is done. enter is called when
+ * the forward sweep starts, leave when the reverse sweep is done. */
+typedef struct EnzymeCkptCallbacks {
+  void (*enter)(const struct EnzymeCkptCallbacks *cb, void *primal,
+                void *shadow);
+  void (*save)(const struct EnzymeCkptCallbacks *cb, void *primal,
+               void *shadow, int64_t slot);
+  void (*restore)(const struct EnzymeCkptCallbacks *cb, void *primal,
+                  void *shadow, int64_t slot);
+  void (*sync)(const struct EnzymeCkptCallbacks *cb, void *primal,
+               void *shadow);
+  void (*leave)(const struct EnzymeCkptCallbacks *cb, void *primal,
+                void *shadow);
+  void *data;
+} EnzymeCkptCallbacks;
 
 typedef struct EnzymeCheckpointScheme {
   uint32_t version; /* ENZYME_CKPT_ABI_VERSION */
@@ -326,6 +356,10 @@ static inline void enzyme_ckpt_store_put(enzyme_ckpt_store *st, int64_t slot,
       }
     }
   }
+  for (r = 0; r < nregions; r++)
+    if (regions[r].flags & ENZYME_CKPT_REGION_CALLBACK)
+      regions[r].callbacks->save(regions[r].callbacks, regions[r].ptr,
+                                 regions[r].shadow, slot);
   if (slot < 0)
     return;
   st->stats.stores++;
@@ -378,6 +412,10 @@ static inline void enzyme_ckpt_store_get(enzyme_ckpt_store *st, int64_t slot,
       }
     }
   }
+  for (r = 0; r < nregions; r++)
+    if (regions[r].flags & ENZYME_CKPT_REGION_CALLBACK)
+      regions[r].callbacks->restore(regions[r].callbacks, regions[r].ptr,
+                                    regions[r].shadow, slot);
   if (slot >= 0)
     st->stats.restores++;
 }

@@ -129,6 +129,19 @@ enum HandleField : unsigned {
   H_Empty,
 };
 
+// A region whose snapshot callbacks take (ENZYME_CKPT_REGION_CALLBACK): the
+// space of its marker, which gives the callbacks as its size.
+static constexpr unsigned CallbackRegionSpace = ~0u;
+static constexpr unsigned RegionCallbackFlag = 1;
+// Fields of EnzymeCkptCallbacks.
+enum CallbacksField : unsigned {
+  CB_Enter = 0,
+  CB_Save,
+  CB_Restore,
+  CB_Sync,
+  CB_Leave,
+};
+
 // Parameters of the loop function before the region pairs.
 static constexpr unsigned LoopFixedParams = 4;
 
@@ -218,7 +231,8 @@ static Value *castArg(IRBuilder<> &B, Value *V, Type *T) {
 
 static Function *createLoopFunction(Module &M, Function *step,
                                     ArrayRef<Type *> regionTypes, Type *vtTy,
-                                    Type *dataTy, bool isWhile) {
+                                    Type *dataTy, bool isWhile,
+                                    ArrayRef<bool> callbackRegions = {}) {
   LLVMContext &Ctx = M.getContext();
   Type *I64 = Type::getInt64Ty(Ctx);
   SmallVector<Type *, 8> params = {I64, I64, vtTy, dataTy};
@@ -240,9 +254,15 @@ static Function *createLoopFunction(Module &M, Function *step,
   F->addFnAttr(Attribute::NoInline);
   F->setMetadata(CheckpointStepMD,
                  MDTuple::get(Ctx, {ConstantAsMetadata::get(step)}));
-  // The schedule's own arguments carry no derivative.
-  for (unsigned i = 0; i < LoopFixedParams + 2 * regionTypes.size(); i++)
+  // The schedule's own arguments carry no derivative, but for the root of a
+  // callback region, whose shadow its callbacks are given.
+  for (unsigned i = 0; i < LoopFixedParams + 2 * regionTypes.size(); i++) {
+    unsigned r = (i - LoopFixedParams) / 2;
+    if (i >= LoopFixedParams && (i - LoopFixedParams) % 2 == 0 &&
+        r < callbackRegions.size() && callbackRegions[r])
+      continue;
     F->addParamAttr(i, Attribute::get(Ctx, "enzyme_inactive"));
+  }
 
   auto *entry = BasicBlock::Create(Ctx, "entry", F);
   auto *body = BasicBlock::Create(Ctx, "body", F);
@@ -510,6 +530,42 @@ static bool isFreshAllocation(Value *B) {
          name.contains("jl_gc_alloc");
 }
 
+/// The arguments that `V`, a pointer loaded from memory (through phis and
+/// selects), is ultimately loaded from, if they are all it is loaded from:
+/// memory the step allocated, and in Julia code its stack slots, which hold
+/// references to the state, may be on the way.
+static bool getLoadRoots(Value *V, SmallPtrSetImpl<Argument *> &roots,
+                         bool julia, SmallPtrSetImpl<Value *> *seen = nullptr) {
+  SmallPtrSet<Value *, 8> local;
+  if (!seen)
+    seen = &local;
+  V = getHintBase(V);
+  if (!seen->insert(V).second)
+    return true;
+  if (isFreshAllocation(V) || isa<ConstantPointerNull>(V))
+    return true;
+  if (auto *A = dyn_cast<Argument>(V)) {
+    roots.insert(A);
+    return true;
+  }
+  if (auto *LI = dyn_cast<LoadInst>(V)) {
+    Value *from = getHintBase(LI->getPointerOperand());
+    if (julia && isa<AllocaInst>(from))
+      return true;
+    return getLoadRoots(from, roots, julia, seen);
+  }
+  if (auto *Phi = dyn_cast<PHINode>(V)) {
+    for (Value *In : Phi->incoming_values())
+      if (!getLoadRoots(In, roots, julia, seen))
+        return false;
+    return true;
+  }
+  if (auto *Sel = dyn_cast<SelectInst>(V))
+    return getLoadRoots(Sel->getTrueValue(), roots, julia, seen) &&
+           getLoadRoots(Sel->getFalseValue(), roots, julia, seen);
+  return false;
+}
+
 /// The arguments of `step` it may write through, and a store through a
 /// pointer that is none of its arguments, globals or stack slots, if any.
 /// Pointers of unknown origin passed to a call are not counted: they are
@@ -535,16 +591,13 @@ static Instruction *getWrittenArgs(Function *step,
     Value *base = getHintBase(ptr);
     if (isFreshAllocation(base))
       return;
-    // Through pointers loaded from an argument (an array held by a struct).
-    if (direct && isa<LoadInst>(base)) {
-      Value *from = base;
-      while (auto *LI = dyn_cast<LoadInst>(from)) {
-        from = getHintBase(LI->getPointerOperand());
-        if (isFreshAllocation(from))
-          return;
-      }
-      if (auto *A = dyn_cast<Argument>(from)) {
-        indirect.insert(A);
+    // Through pointers loaded from an argument (an array held by a struct,
+    // the element of an array of arrays, whichever one a phi picks).
+    if (direct &&
+        (isa<LoadInst>(base) || isa<PHINode>(base) || isa<SelectInst>(base))) {
+      SmallPtrSet<Argument *, 2> roots;
+      if (getLoadRoots(base, roots, julia)) {
+        indirect.insert(roots.begin(), roots.end());
         return;
       }
     }
@@ -702,7 +755,26 @@ static SmallVector<const void *, 4> getRegionAddress(Value *V) {
 }
 
 static bool isJuliaState(const Function *F) {
-  return F && F->getName() == "__enzyme_julia_state";
+  return F && (F->getName() == "__enzyme_julia_state" ||
+               F->getName() == "__enzyme_julia_dynamic_state" ||
+               F->getName() == "__enzyme_julia_ref_slots");
+}
+
+/// The callbacks of `__enzyme_julia_ref_slots(refs, pointers)` in front of
+/// `IP`: a stack slot holding a Julia object reference (`refs`), or a pointer
+/// into one's data (`pointers`), a value the loop carries or leaves, is a
+/// callback region with them, so that the shadow slot follows the primal one
+/// as the shadows of the state do.
+static Value *getJuliaRefSlotCallbacks(Instruction *IP, DominatorTree &DT,
+                                       bool pointers) {
+  for (Instruction &I : instructions(*IP->getFunction())) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    Function *F = CI ? getFunctionFromCall(CI) : nullptr;
+    if (F && F->getName() == "__enzyme_julia_ref_slots" &&
+        CI->arg_size() == 2 && DT.dominates(CI, IP))
+      return CI->getArgOperand(pointers ? 1 : 0);
+  }
+  return nullptr;
 }
 
 /// The memory that can be written through the Julia value `V` points into,
@@ -724,6 +796,18 @@ getJuliaState(Value *V, Instruction *IP, DominatorTree &DT, bool &self) {
     self = getBaseObject(CI->getArgOperand(0)) == bases[0];
     SmallVector<std::tuple<Value *, Value *, unsigned>, 2> regions;
     IRBuilder<> B(IP);
+    // __enzyme_julia_dynamic_state(value, root, callbacks, ...): state the
+    // frontend snapshots itself, from each root, at run time.
+    if (getFunctionFromCall(CI)->getName() == "__enzyme_julia_dynamic_state") {
+      if (CI->arg_size() % 2 != 1)
+        continue;
+      for (unsigned i = 1; i + 1 < CI->arg_size(); i += 2)
+        regions.push_back(
+            {CI->getArgOperand(i),
+             B.CreatePtrToInt(CI->getArgOperand(i + 1), B.getInt64Ty()),
+             CallbackRegionSpace});
+      return regions;
+    }
     for (unsigned i = 1; i + 1 < CI->arg_size(); i += 2)
       regions.push_back(
           {CI->getArgOperand(i),
@@ -832,11 +916,6 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       }
     }
     if (throws)
-      for (BasicBlock *BB : seen)
-        for (BasicBlock *Pred : predecessors(BB))
-          if (!L->contains(Pred) && !seen.count(Pred))
-            throws = false;
-    if (throws)
       throwing.insert(seen.begin(), seen.end());
     else if (E)
       return fail("a checkpointed loop must leave to a single block, "
@@ -853,10 +932,26 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   if (!P || !latch || !E || !X || X == E || (X != latch && X != H))
     return fail("a checkpointed loop must have a single latch and leave "
                 "from its header or its latch, to a single block");
+  // Blocks where it throws that are reached from outside the loop too (a
+  // shared error path): the step gets a copy, and they stay.
+  SmallPtrSet<BasicBlock *, 8> shared;
+  {
+    SmallVector<BasicBlock *, 8> todo;
+    for (BasicBlock *BB : throwing)
+      for (BasicBlock *Pred : predecessors(BB))
+        if (!L->contains(Pred) && !throwing.count(Pred))
+          if (shared.insert(BB).second)
+            todo.push_back(BB);
+    while (!todo.empty())
+      for (BasicBlock *S : successors(todo.pop_back_val()))
+        if (throwing.count(S) && shared.insert(S).second)
+          todo.push_back(S);
+  }
   // What the step runs: the loop and where it throws.
-  auto inStep = [&](Instruction *I) {
-    return L->contains(I) || throwing.count(I->getParent());
+  auto inStepBlock = [&](BasicBlock *BB) {
+    return L->contains(BB) || throwing.count(BB);
   };
+  auto inStep = [&](Instruction *I) { return inStepBlock(I->getParent()); };
   // The steps that do not throw.
   const SCEV *BTC =
       throwing.empty() ? SE.getBackedgeTakenCount(L) : SE.getExitCount(L, X);
@@ -913,12 +1008,50 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     DemotePHIToStack(phi, allocaIP);
   for (BasicBlock *BB : L->blocks())
     for (Instruction &I : make_early_inc_range(*BB)) {
-      if (isa<PHINode>(I))
+      // The header's phis are carried or recomputed, above; another block's
+      // phi (a value picked in the latch) may be used after the loop too.
+      if (isa<PHINode>(I) && BB == H)
         continue;
       if (any_of(I.users(),
                  [&](User *U) { return !inStep(cast<Instruction>(U)); }))
         DemoteRegToStack(I, false, allocaIP);
     }
+
+  // Floating-point values the loop uses but does not compute go to the
+  // step by reference, through a stack slot: the driver passes the step's
+  // arguments by reference to take their derivatives, which accumulate in
+  // the slot's shadow.
+  {
+    const DataLayout &DL = M.getDataLayout();
+    SmallMapVector<Value *, AllocaInst *, 4> slots;
+    SmallVector<BasicBlock *, 8> stepBlocks(L->blocks().begin(),
+                                            L->blocks().end());
+    stepBlocks.append(throwing.begin(), throwing.end());
+    for (BasicBlock *BB : stepBlocks)
+      for (Instruction &I : *BB)
+        for (Use &U : I.operands()) {
+          Value *V = U.get();
+          if (!V->getType()->isFPOrFPVectorTy())
+            continue;
+          if (auto *VI = dyn_cast<Instruction>(V)) {
+            if (inStep(VI))
+              continue;
+          } else if (!isa<Argument>(V))
+            continue;
+          auto *Phi = dyn_cast<PHINode>(&I);
+          if (Phi && !inStepBlock(Phi->getIncomingBlock(U)))
+            continue;
+          AllocaInst *&slot = slots[V];
+          if (!slot) {
+            slot = new AllocaInst(V->getType(), DL.getAllocaAddrSpace(),
+                                  V->getName() + ".byref", allocaIP);
+            new StoreInst(V, slot, IP);
+          }
+          Instruction *at =
+              Phi ? Phi->getIncomingBlock(U)->getTerminator() : &I;
+          U.set(new LoadInst(V->getType(), slot, V->getName() + ".ld", at));
+        }
+  }
 
   // The step: one iteration, from the header to the backedge or the exit.
   SmallVector<BasicBlock *, 8> blocks(L->blocks().begin(),
@@ -939,8 +1072,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     for (Instruction &I : *BB) {
       if (ivPhis.count(&I))
         continue;
-      for (Value *Op : I.operands())
-        noteLivein(Op);
+      auto *Phi = dyn_cast<PHINode>(&I);
+      for (Use &U : I.operands())
+        // Not what a shared error path gets from outside the loop.
+        if (!Phi || inStepBlock(Phi->getIncomingBlock(U)))
+          noteLivein(U.get());
     }
   for (auto &iv : ivs) {
     noteLivein(iv.start);
@@ -1036,6 +1172,12 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     deadPhis.push_back(cast<Instruction>(VMap[phi]));
     VMap[phi] = v;
   }
+  // The copies of shared error paths are entered from the step only.
+  for (BasicBlock *NB : cloned)
+    for (PHINode &Phi : NB->phis())
+      for (unsigned i = Phi.getNumIncomingValues(); i-- > 0;)
+        if (!inStepBlock(Phi.getIncomingBlock(i)))
+          Phi.removeIncomingValue(i, /*DeletePHIIfEmpty*/ false);
   remapInstructionsInBlocks(cloned, VMap);
   for (Instruction *I : deadPhis) {
     I->dropAllReferences();
@@ -1083,6 +1225,19 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       continue;
     bool w = written.count(step->getArg(i + 1));
     bool ind = indirect.count(step->getArg(i + 1));
+    if (julia)
+      if (auto *AI = dyn_cast<AllocaInst>(V))
+        if (auto *PT = dyn_cast<PointerType>(AI->getAllocatedType()))
+          if (PT->getAddressSpace() == 10 || PT->getAddressSpace() == 0)
+            if (Value *cb = getJuliaRefSlotCallbacks(
+                    IP, DT, PT->getAddressSpace() == 0)) {
+              if (unseen(V)) {
+                IRBuilder<> B(IP);
+                regions.push_back({V, B.CreatePtrToInt(cb, B.getInt64Ty()),
+                                   CallbackRegionSpace});
+              }
+              continue;
+            }
     // What a Julia value holds, as its type says.
     if (julia && (w || ind)) {
       bool self = false;
@@ -1212,17 +1367,20 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   SmallVector<Value *, 8> args = {ConstantInt::get(I64, 0), nsteps, vt, cfg};
   std::string spaces;
   bool device = false;
+  SmallVector<bool, 4> callbackRegions;
   for (auto &[ptr, bytes, space] : regions) {
     regionTypes.push_back(ptr->getType());
     args.push_back(ptr);
     args.push_back(bytes);
     spaces += (spaces.empty() ? "" : ",") + std::to_string(space);
     device |= space != 0;
+    callbackRegions.push_back(space == CallbackRegionSpace);
   }
   for (Value *V : liveins)
     args.push_back(V);
-  Function *loop = createLoopFunction(M, step, regionTypes, vt->getType(),
-                                      cfg->getType(), /*isWhile*/ false);
+  Function *loop =
+      createLoopFunction(M, step, regionTypes, vt->getType(), cfg->getType(),
+                         /*isWhile*/ false, callbackRegions);
   if (device)
     loop->addFnAttr(CheckpointRegionSpacesAttr, spaces);
   B.CreateCall(loop, args)->setDebugLoc(loc);
@@ -1230,9 +1388,17 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   // The loop is now the call.
   IP->eraseFromParent();
   BranchInst::Create(E, P);
+  SmallVector<BasicBlock *, 8> dead;
   for (BasicBlock *BB : blocks)
+    if (!shared.count(BB))
+      dead.push_back(BB);
+  for (BasicBlock *BB : shared)
+    for (BasicBlock *Pred : dead)
+      if (is_contained(predecessors(BB), Pred))
+        BB->removePredecessor(Pred);
+  for (BasicBlock *BB : dead)
     BB->dropAllReferences();
-  for (BasicBlock *BB : blocks)
+  for (BasicBlock *BB : dead)
     BB->eraseFromParent();
   return true;
 }
@@ -1699,7 +1865,7 @@ struct DriverTypes {
   PointerType *I8P;
   StructType *Action, *Region, *VTable, *Handle;
   FunctionType *InitFT, *NextFT, *StoreFT, *FinalizeFT, *StateFT, *StepFT,
-      *FwdFT, *RevDriverFT, *PathsFT, *WhileFT, *NStepsFT;
+      *FwdFT, *RevDriverFT, *PathsFT, *WhileFT, *NStepsFT, *CallbackFT;
 
   DriverTypes(LLVMContext &Ctx) : Ctx(Ctx) {
     Void = Type::getVoidTy(Ctx);
@@ -1707,7 +1873,7 @@ struct DriverTypes {
     I64 = Type::getInt64Ty(Ctx);
     I8P = getInt8PtrTy(Ctx);
     Action = StructType::get(Ctx, {I32, I64, I64, I64});
-    Region = StructType::get(Ctx, {I8P, I64, I32, I32});
+    Region = StructType::get(Ctx, {I8P, I64, I32, I32, I8P, I8P});
     VTable = StructType::get(
         Ctx, {I32, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P, I8P});
     Handle = StructType::get(Ctx, {I8P, I8P, I8P, I64, I64, I64, I32});
@@ -1730,6 +1896,7 @@ struct DriverTypes {
     // handle, regions, nregions, env, primal, turn
     RevDriverFT =
         FunctionType::get(Void, {I8P, I8P, I64, I8P, I8P, I8P}, false);
+    CallbackFT = FunctionType::get(Void, {I8P, I8P, I8P}, false);
   }
 };
 
@@ -1806,6 +1973,38 @@ struct DriverBuilder {
               {state, slot, step, regions, nregions},
               B.CreateICmpNE(nregions, ConstantInt::get(T.I64, 0)));
   }
+  /// Call callback `idx` of each callback region.
+  void regionCallbacks(Value *regions, Value *nregions, CallbacksField idx) {
+    auto *pre = B.GetInsertBlock();
+    auto *body = block("cb.body");
+    auto *call = block("cb.call");
+    auto *next = block("cb.next");
+    auto *after = block("cb.after");
+    B.CreateCondBr(B.CreateICmpSGT(nregions, ConstantInt::get(T.I64, 0)), body,
+                   after);
+    B.SetInsertPoint(body);
+    auto *r = B.CreatePHI(T.I64, 2, "r");
+    r->addIncoming(ConstantInt::get(T.I64, 0), pre);
+    Value *region = B.CreateGEP(
+        T.Region, B.CreatePointerCast(regions, getUnqual(T.Region)), r);
+    Value *flags = B.CreateLoad(T.I32, B.CreateStructGEP(T.Region, region, 3));
+    B.CreateCondBr(B.CreateICmpNE(B.CreateAnd(flags, RegionCallbackFlag),
+                                  ConstantInt::get(T.I32, 0)),
+                   call, next);
+    B.SetInsertPoint(call);
+    Value *ptr = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, region, 0));
+    Value *shadow = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, region, 4));
+    Value *cb = B.CreateLoad(T.I8P, B.CreateStructGEP(T.Region, region, 5));
+    Value *fp = B.CreateLoad(
+        T.I8P, B.CreateConstInBoundsGEP1_64(T.I8P, cb, (unsigned)idx));
+    callFn(fp, T.CallbackFT, {cb, ptr, shadow});
+    B.CreateBr(next);
+    B.SetInsertPoint(next);
+    auto *r1 = B.CreateAdd(r, ConstantInt::get(T.I64, 1));
+    r->addIncoming(r1, next);
+    B.CreateCondBr(B.CreateICmpSLT(r1, nregions), body, after);
+    B.SetInsertPoint(after);
+  }
   void trap() {
     B.CreateCall(getIntrinsicDeclaration(F->getParent(), Intrinsic::trap), {});
     B.CreateUnreachable();
@@ -1848,6 +2047,7 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.callIfSet(D.vtFn(vt, VT_SetPaths, "set_paths"), T.PathsFT,
               {state, paths, npaths},
               B.CreateICmpNE(npaths, ConstantInt::get(T.I64, 0)));
+  D.regionCallbacks(regions, nregions, CB_Enter);
 
   auto *loop = D.block("loop");
   B.CreateBr(loop);
@@ -1925,6 +2125,9 @@ static Function *getOrCreateFwdDriver(Module &M, DriverTypes &T) {
   D.store(T.Handle, h, H_LastJ, lastj);
   D.snapshot(true, vt, state, D.slot(LastSlot), lastj, regions, nregions, env);
   D.callFn(primal, T.StepFT, {env, B.CreateAdd(start, lastj)});
+  // The steps ran without their derivatives: the shadow's references are
+  // made to follow the primal's for what comes after the loop.
+  D.regionCallbacks(regions, nregions, CB_Sync);
   B.CreateRet(h);
 
   // Nothing to reverse (n == 0).
@@ -1967,6 +2170,7 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
   B.SetInsertPoint(first);
   D.snapshot(true, vt, state, D.slot(EntrySlot), n, regions, nregions, env);
   D.snapshot(false, vt, state, D.slot(LastSlot), lastj, regions, nregions, env);
+  D.regionCallbacks(regions, nregions, CB_Sync);
   D.callFn(turn, T.StepFT, {env, B.CreateAdd(start, lastj)});
   B.CreateBr(loop);
 
@@ -2006,14 +2210,17 @@ static Function *getOrCreateRevDriver(Module &M, DriverTypes &T) {
 
   B.SetInsertPoint(turnBB);
   Value *i = B.CreateAdd(start, B.CreateSub(it, ConstantInt::get(T.I64, 1)));
+  D.regionCallbacks(regions, nregions, CB_Sync);
   D.callFn(turn, T.StepFT, {env, i});
   B.CreateBr(loop);
 
   B.SetInsertPoint(finish);
   D.snapshot(false, vt, state, D.slot(EntrySlot), n, regions, nregions, env);
+  D.regionCallbacks(regions, nregions, CB_Sync);
   B.CreateBr(free);
 
   B.SetInsertPoint(free);
+  D.regionCallbacks(regions, nregions, CB_Leave);
   D.callIfSet(D.vtFn(vt, VT_Finalize, "finalize"), T.FinalizeFT, {state});
   B.CreateCall(D.Free, {B.CreatePointerCast(h, T.I8P)});
   B.CreateRetVoid();
@@ -2372,7 +2579,8 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
           {ConstantExpr::getPointerBitCastOrAddrSpaceCast(GV, T.I8P),
            ConstantInt::get(T.I64, size),
            ConstantInt::get(T.I32, GV->getType()->getPointerAddressSpace()),
-           ConstantInt::get(T.I32, 0)}));
+           ConstantInt::get(T.I32, 0), ConstantPointerNull::get(T.I8P),
+           ConstantPointerNull::get(T.I8P)}));
     }
     auto *tableTy = ArrayType::get(T.Region, entries.size());
     std::string name = ("enzyme.ckpt.regions." + S.step->getName()).str();
@@ -2399,19 +2607,34 @@ static PassFrame buildFrame(IRBuilder<> &B, Function *F, StepInfo &S,
       spaces.push_back(std::stoul(part.str()));
   }
   for (unsigned r = 0; r < nmarked; r++) {
-    Value *ptr = primals[LoopFixedParams + 2 * r];
-    Value *size = primals[LoopFixedParams + 2 * r + 1];
+    unsigned k = LoopFixedParams + 2 * r;
+    Value *ptr = primals[k];
+    Value *size = primals[k + 1];
     unsigned AS = r < spaces.size()
                       ? spaces[r]
                       : cast<PointerType>(ptr->getType())->getAddressSpace();
+    // A callback region: its "size" is its callbacks.
+    bool callback = AS == CallbackRegionSpace;
+    Value *callbacks = ConstantPointerNull::get(T.I8P);
+    if (callback) {
+      callbacks = B.CreateIntToPtr(size, T.I8P);
+      size = ConstantInt::get(T.I64, 0);
+      AS = 0;
+    }
+    Value *shadow =
+        shadows[k] && !shadows[k]->getType()->isArrayTy()
+            ? B.CreatePointerBitCastOrAddrSpaceCast(shadows[k], T.I8P)
+            : (Value *)ConstantPointerNull::get(T.I8P);
     Value *slot = B.CreateConstInBoundsGEP2_32(regionArr, regions, 0, r);
     B.CreateStore(B.CreatePointerBitCastOrAddrSpaceCast(ptr, T.I8P),
                   B.CreateStructGEP(T.Region, slot, 0));
     B.CreateStore(size, B.CreateStructGEP(T.Region, slot, 1));
     B.CreateStore(ConstantInt::get(T.I32, AS),
                   B.CreateStructGEP(T.Region, slot, 2));
-    B.CreateStore(ConstantInt::get(T.I32, 0),
+    B.CreateStore(ConstantInt::get(T.I32, callback ? RegionCallbackFlag : 0),
                   B.CreateStructGEP(T.Region, slot, 3));
+    B.CreateStore(shadow, B.CreateStructGEP(T.Region, slot, 4));
+    B.CreateStore(callbacks, B.CreateStructGEP(T.Region, slot, 5));
     bytes = B.CreateAdd(bytes, size);
   }
   frame.regions = B.CreatePointerCast(regions, T.I8P);
