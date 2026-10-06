@@ -11,13 +11,13 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
@@ -39,8 +39,7 @@ const std::set<std::string> &getNonCapturingFunctions() {
   return NonCapturingFunctions;
 }
 
-static bool isCaptured(Value v, Operation *potentialUser = nullptr,
-                       bool *seenuse = nullptr) {
+bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
   SmallVector<Value> todo = {v};
   while (todo.size()) {
     Value v = todo.pop_back_val();
@@ -64,14 +63,11 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
           return true;
         continue;
       }
-      if (auto sub = dyn_cast<LLVM::GEPOp>(u)) {
-        todo.push_back(sub);
-      }
-      if (auto sub = dyn_cast<LLVM::BitcastOp>(u)) {
-        todo.push_back(sub);
-      }
-      if (auto sub = dyn_cast<LLVM::AddrSpaceCastOp>(u)) {
-        todo.push_back(sub);
+      if (auto view = dyn_cast<ViewLikeOpInterface>(u)) {
+        if (view.getViewSource() == v) {
+          todo.push_back(view.getViewDest());
+          continue;
+        }
       }
       if (auto sub = dyn_cast<func::ReturnOp>(u)) {
         continue;
@@ -84,9 +80,6 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
       }
       if (auto sub = dyn_cast<LLVM::MemmoveOp>(u)) {
         continue;
-      }
-      if (auto sub = dyn_cast<memref::CastOp>(u)) {
-        todo.push_back(sub);
       }
       if (auto sub = dyn_cast<memref::DeallocOp>(u)) {
         continue;
@@ -129,50 +122,11 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 
 Value getBaseObject(Value v, bool offsetAllowed) {
   while (Operation *def = v.getDefiningOp()) {
-    // Handle LLVM operations before their generic view interfaces.
-    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
-      if (!offsetAllowed) {
-        bool isZero = true;
-        for (auto index : gep.getIndices()) {
-          if (auto attr = dyn_cast<IntegerAttr>(index))
-            isZero = attr.getValue().isZero();
-          else
-            isZero = matchPattern(cast<Value>(index), m_Zero());
-
-          if (!isZero)
-            break;
-        }
-
-        if (!isZero) {
-          break;
-        }
-      }
-      v = gep.getBase();
-      continue;
-    }
-    if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
-      v = bc.getArg();
-      continue;
-    }
-    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
-      v = asc.getArg();
-      continue;
-    }
     if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
       if (!offsetAllowed) {
-        if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
-          if (!subview.hasZeroOffset())
-            break;
-        } else if (auto byteView = dyn_cast<memref::ViewOp>(def)) {
-          if (!matchPattern(byteView.getByteShift(), m_Zero()))
-            break;
-        } else if (!isa<memref::CastOp, memref::MemorySpaceCastOp,
-                        memref::ReshapeOp, memref::ExpandShapeOp,
-                        memref::CollapseShapeOp, memref::TransposeOp>(def)) {
-          // Other views can change the address. In particular, reinterpret_cast
-          // sets an absolute offset instead of adding to the source offset.
+        auto offsetView = dyn_cast<OffsetViewInterface>(def);
+        if (!offsetView || !offsetView.isZeroOffset())
           break;
-        }
       }
       v = view.getViewSource();
       continue;

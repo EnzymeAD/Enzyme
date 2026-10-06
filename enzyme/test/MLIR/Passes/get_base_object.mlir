@@ -46,6 +46,19 @@ func.func @constant_zero_gep(%base: !llvm.ptr) -> !llvm.ptr {
   return %same : !llvm.ptr
 }
 
+// Every index must be zero, including indices into an aggregate.
+// DEFAULT: @multi_index_gep return 0: %{{[^ ]+}} -> %arg0
+// DEFAULT-NEXT: @multi_index_gep return 1: %{{[^ ]+}} -> %arg0
+// NOOFFSET: @multi_index_gep return 0: %{{[^ ]+}} -> %arg0
+// NOOFFSET-NEXT: @multi_index_gep return 1: %[[SHIFTED:[^ ]+]] -> %[[SHIFTED]]
+func.func @multi_index_gep(%base: !llvm.ptr) -> (!llvm.ptr, !llvm.ptr) {
+  %same = llvm.getelementptr %base[0, 0] :
+      (!llvm.ptr) -> !llvm.ptr, !llvm.array<4 x f32>
+  %shifted = llvm.getelementptr %base[0, 1] :
+      (!llvm.ptr) -> !llvm.ptr, !llvm.array<4 x f32>
+  return %same, %shifted : !llvm.ptr, !llvm.ptr
+}
+
 // Follow the zero GEP, then stop at the nonzero GEP beneath it.
 // DEFAULT: @gep_chain return 0: %{{[^ ]+}} -> %arg0
 // DEFAULT-NEXT: @gep_chain return 1: %{{[^ ]+}} -> %arg0
