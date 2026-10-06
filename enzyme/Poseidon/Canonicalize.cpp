@@ -111,17 +111,16 @@ struct CanonicalizeAnalyses {
   }
 };
 
+// A noreturn call marked willreturn is UB, which turns the guard in front of an
+// exit() into an assume in the clone that ships.
 void setFullWillReturn(Function *NewF) {
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
-      if (auto *CI = dyn_cast<CallInst>(&I)) {
-        CI->addFnAttr(Attribute::WillReturn);
-        CI->addFnAttr(Attribute::MustProgress);
-      }
-      if (auto *II = dyn_cast<InvokeInst>(&I)) {
-        II->addFnAttr(Attribute::WillReturn);
-        II->addFnAttr(Attribute::MustProgress);
-      }
+      auto *CB = dyn_cast<CallBase>(&I);
+      if (!CB || !isa<CallInst, InvokeInst>(CB) || CB->doesNotReturn())
+        continue;
+      CB->addFnAttr(Attribute::WillReturn);
+      CB->addFnAttr(Attribute::MustProgress);
     }
   }
 }
