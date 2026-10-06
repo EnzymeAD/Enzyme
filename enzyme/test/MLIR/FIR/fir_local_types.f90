@@ -21,11 +21,16 @@
 ! NONUM-LABEL: define void @locs_(
 ! NONUM-NOT: alloca i32, i64 1, align 4, !enzyme_type
 ! NONUM: alloca [12 x i8], i64 1, align 1, !enzyme_type
+! allow(procedure-not-in-module)
 subroutine locs(n, x)
-  integer :: n, cnt, k
-  real(8) :: x(n), acc, buf(10), big(1000), auto(n)
+  use, intrinsic :: iso_fortran_env, only: real64
+  implicit none
+  integer, intent(in) :: n
+  integer :: cnt, k
+  real(real64), intent(in) :: x(n)
+  real(real64) :: acc, buf(10), big(1000), auto(n)
   logical :: flag
-  complex(8) :: z
+  complex(real64) :: z
   character(len=12) :: name
   external :: fill, use
   call fill(cnt)
@@ -35,9 +40,9 @@ subroutine locs(n, x)
     acc = acc + x(k)
   end do
   buf = acc; big = acc; auto = acc
-  flag = acc > 0; z = acc; name = 'x'
+  flag = acc > 0; z = acc; name = "x"
   call use(buf, big, auto, flag, z, name, k)
-end subroutine
+end subroutine locs
 
 ! CHECK-DAG: ![[Z]] = !{!"Unknown", i32 -1, ![[ZP:[0-9]+]]}
 ! CHECK-DAG: ![[ZP]] = !{!"Pointer", i32 0, ![[D:[0-9]+]], i32 8, ![[D]]}

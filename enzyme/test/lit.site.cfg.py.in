@@ -79,9 +79,21 @@ config.substitutions.append(('%fir_enzyme',
 if os.path.exists(fir_opt) and os.path.exists(fir_enzyme_plugin):
   config.available_features.add('fir_enzyme_plugin')
 
-# flang -fc1, for compiling Fortran to HLFIR.
+# flang -fc1, for compiling Fortran to HLFIR. flang -fc1 has no intrinsic
+# module search path of its own (the driver adds it): give it the driver's, as
+# flang's own tests do, for `use iso_fortran_env`.
 flang = config.llvm_tools_dir + "/flang"
-config.substitutions.append(('%flang_fc1', flang + " -fc1"))
+flang_fc1 = flang + " -fc1"
+if os.path.exists(flang):
+  import subprocess
+  try:
+    builtins_mod = subprocess.check_output(
+        [flang, "-print-file-name=__fortran_builtins.mod"], text=True).strip()
+    if os.path.isabs(builtins_mod):
+      flang_fc1 += " -fintrinsic-modules-path=" + os.path.dirname(builtins_mod)
+  except (OSError, subprocess.CalledProcessError):
+    pass
+config.substitutions.append(('%flang_fc1', flang_fc1))
 
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
@@ -177,7 +189,7 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 config.substitutions.append(('%flang_enzyme_driver',
   flang + " -Xflang -load -Xflang " + flang_enzyme_plugin))
 config.substitutions.append(('%flang_enzyme',
-  flang + " -fc1 -load " + flang_enzyme_plugin))
+  flang_fc1 + " -load " + flang_enzyme_plugin))
 if (int(config.llvm_ver) >= 24 and os.path.exists(flang)
         and os.path.exists(flang_enzyme_plugin)):
     config.available_features.add('flang_enzyme_mlir')
