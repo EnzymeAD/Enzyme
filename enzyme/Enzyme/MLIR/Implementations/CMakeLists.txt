@@ -54,12 +54,14 @@ if(ENZYME_CLANG_HAS_CIR)
   set(LLVM_TARGET_DEFINITIONS CIRDerivatives.td)
   enzyme_tablegen(CIRDerivatives.inc -gen-mlir-derivatives)
   add_public_tablegen_target(CIRDerivativesIncGen)
-  list(APPEND ENZYME_CIR_SOURCES CIRAutoDiffOpInterfaceImpl.cpp CIRAutoDiffTypeInterfaceImpl.cpp)
+  list(APPEND ENZYME_CIR_SOURCES CIRAutoDiffOpInterfaceImpl.cpp
+       CIRAutoDiffTypeInterfaceImpl.cpp)
   list(APPEND ENZYME_CIR_DEPENDS CIRDerivativesIncGen)
   list(APPEND ENZYME_CIR_LIBS MLIRCIR)
 endif()
 
-set(LLVM_OPTIONAL_SOURCES CIRAutoDiffOpInterfaceImpl.cpp CIRAutoDiffTypeInterfaceImpl.cpp)
+set(LLVM_OPTIONAL_SOURCES CIRAutoDiffOpInterfaceImpl.cpp
+    CIRAutoDiffTypeInterfaceImpl.cpp)
 
 add_mlir_library(
   MLIREnzymeImplementations
