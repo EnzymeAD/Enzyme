@@ -195,6 +195,13 @@ public:
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
 
+  /// The Julia allocation zeroing bundles (julia.gc_alloc_ptr_offsets,
+  /// julia.gc_alloc_zeroinit[_indirect]) of orig, for use on a shadow
+  /// allocation of the same size.
+  llvm::SmallVector<llvm::OperandBundleDef, 1>
+  getAllocationZeroingBundles(llvm::CallInst *orig, llvm::IRBuilder<> &Builder2,
+                              bool lookup);
+
   bool usedInRooting(const llvm::CallBase *orig,
                      llvm::ArrayRef<ValueType> types, const llvm::Value *val,
                      bool shadow) const;

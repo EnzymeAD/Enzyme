@@ -3489,10 +3489,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             uint64_t idx = 0;
             Value *prev = nullptr;
             ;
+            auto Defs = gutils->getAllocationZeroingBundles(&call, bb,
+                                                            /*lookup*/ false);
             auto rule = [&]() {
               Value *anti =
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                                args, call.getName() + "'mi");
+                                args, Defs, call.getName() + "'mi");
               cast<CallInst>(anti)->setAttributes(call.getAttributes());
               cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
               cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
