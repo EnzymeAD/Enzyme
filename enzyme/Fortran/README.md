@@ -43,7 +43,7 @@ differentiates each module on its own, after ThinLTO imported functions into it.
 The compile step asks ThinLTO to import the function passed to `__enzyme_autodiff`
 and the functions it calls. ThinLTO still applies its size limit to functions further
 down the call graph, and never imports functions marked `noinline` (which includes
-everything compiled at `-O0`). When such a function is missing, Enzyme reports that
+everything clang compiles at `-O0`; flang does not mark them). When such a function is missing, Enzyme reports that
 it has no derivative for it; compile it in the same file as the call, raise the limit
 with `-Wl,-mllvm,-import-instr-limit=<N>`, or use full `-flto`.
 
