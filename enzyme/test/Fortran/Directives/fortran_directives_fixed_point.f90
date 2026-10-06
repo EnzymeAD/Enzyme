@@ -14,18 +14,22 @@
 ! RUN: %fc -fc1 %flangFc1Directives -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=O2
 
 module fp
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: u(5)
-  real(8), allocatable :: v(:)
-  real(8) :: a(3), b
+  public
+  real(real64) :: u(5)
+  real(real64), allocatable :: v(:)
+  real(real64) :: a(3), b
+  ! allow(common-block)
   common /blk/ a, b
   interface
     logical function step()
+      implicit none
     end function step
   end interface
 contains
   integer function ctl(cumul, reduction)
-    real(8), intent(inout) :: cumul, reduction
+    real(real64), intent(inout) :: cumul, reduction
     ctl = 0
   end function ctl
 
@@ -36,8 +40,8 @@ contains
   end subroutine solve
 
   subroutine solve_defaults(w, n)
-    integer :: n
-    real(8) :: w(n)
+    integer, intent(in) :: n
+    real(real64), intent(inout) :: w(n)
     integer :: i
     !DIR$ ENZYME FIXED_POINT(w, /blk/)
     do i = 1, n

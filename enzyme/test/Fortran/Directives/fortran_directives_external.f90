@@ -26,55 +26,70 @@ module registrations
   private
   interface
     subroutine ext_double(x, y)
+      implicit none
       real, intent(in) :: x
       real, intent(out) :: y
-    end subroutine
+    end subroutine ext_double
     subroutine ext_double_aug(x, dx, y, dy)
+      implicit none
       real, intent(in) :: x, dx
       real, intent(out) :: y
       real, intent(inout) :: dy
-    end subroutine
+    end subroutine ext_double_aug
     subroutine ext_double_rev(x, dx, y, dy)
+      implicit none
       real, intent(in) :: x, y
       real, intent(inout) :: dx, dy
-    end subroutine
+    end subroutine ext_double_rev
   end interface
   external :: ext_scale
   !dir$ enzyme custom_rule(ext_double, augmented=ext_double_aug, reverse=ext_double_rev)
   !dir$ enzyme inactive(ext_scale)
-end module
+end module registrations
 
+! allow(procedure-not-in-module)
 subroutine ext_double(x, y)
+  implicit none
   real, intent(in) :: x
   real, intent(out) :: y
   y = 2.0 * x
-end subroutine
+end subroutine ext_double
+! allow(procedure-not-in-module)
 subroutine ext_double_aug(x, dx, y, dy)
+  implicit none
   real, intent(in) :: x, dx
   real, intent(out) :: y
   real, intent(inout) :: dy
   call ext_double(x, y)
-end subroutine
+end subroutine ext_double_aug
+! allow(procedure-not-in-module)
 subroutine ext_double_rev(x, dx, y, dy)
+  implicit none
   real, intent(in) :: x, y
   real, intent(inout) :: dx, dy
   dx = dx + dy / (1.0 + x)
   dy = 0.0
-end subroutine
+end subroutine ext_double_rev
+! allow(procedure-not-in-module)
 real function ext_scale(x)
+  implicit none
   real, intent(in) :: x
   ext_scale = x
-end function
+end function ext_scale
 
+! allow(procedure-not-in-module)
 real function wrapper(x)
+  implicit none
   real, intent(in) :: x
   call ext_double(x, wrapper)
-end function
+end function wrapper
+! allow(procedure-not-in-module)
 real function scaled(x)
+  implicit none
   real, intent(in) :: x
   real, external :: ext_scale
   scaled = x * ext_scale(x)
-end function
+end function scaled
 
 #ifndef FIR_ONLY
 program main
@@ -85,12 +100,12 @@ program main
   x = 2.0
   dx = 0.0
   call enzyme_autodiff(wrapper, x, dx)
-  print '(F6.4)', dx
+  print "(F6.4)", dx
   x = 3.0
   dx = 0.0
   call enzyme_autodiff(scaled, x, dx)
-  print '(F6.4)', dx
-end program
+  print "(F6.4)", dx
+end program main
 #endif
 
 ! CHECK: 0.3333

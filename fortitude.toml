@@ -4,15 +4,5 @@
 #   C003: 'implicit none' missing 'external' - this is a Fortran 2013 feature and we support older standards
 #   C091: external procedure - this is crucial to the way the Fortran bindings are set up
 ignore = ["S001", "C003", "C091"]
-
-[check.per-file-ignores]
-# The Flang directives tests check how the plugin lowers the legacy and
-# implicit-interface constructs these rules flag (COMMON blocks, assumed-size
-# and character(*) dummies, external procedures without explicit interfaces,
-# numeric kind literals), so the constructs are the point of the tests.
-"enzyme/test/Fortran/Directives/*.f90" = [
-    "C001", "C002", "C051", "C061", "C071", "C072", "C092", "C121", "C131",
-    "OB011", "PORT011", "S061", "S071", "S241",
-]
-# Fixed-form source (compiled with -ffixed-form) that fortitude parses as free form.
-"enzyme/test/Fortran/Directives/fortran_directives_sentinel_fixed.f90" = ["E001"]
+# Fixed-form source (compiled with -ffixed-form), which fortitude cannot parse.
+extend-exclude = ["enzyme/test/Fortran/Directives/fortran_directives_sentinel_fixed.f90"]

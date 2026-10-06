@@ -5,12 +5,12 @@
 !
 ! REQUIRES: flang_directives
 ! RUN: rm -rf %t && mkdir -p %t
-! RUN: %fc -fc1 %flangFc1Directives -emit-fir \
-! RUN:   -module-dir %t %s -o - | FileCheck %s
+! RUN: %fc -fc1 %flangFc1Directives -emit-fir -module-dir %t %s -o - | FileCheck %s
 ! RUN: FileCheck %s --check-prefix=MOD < %t/rules.mod
 
 module rules
   implicit none
+  public
   real :: g, g_d
   !dir$ enzyme custom_rule(f, augmented=f_aug, reverse=f_rev)
   !dir$ enzyme shadow(g, shadow=g_d)
@@ -19,32 +19,34 @@ contains
     real, intent(in) :: x
     real, intent(out) :: y
     y = 2.0 * x
-  end subroutine
+  end subroutine f
   subroutine f_aug(x, dx, y, dy)
     real, intent(in) :: x, dx
     real, intent(out) :: y
     real, intent(inout) :: dy
     call f(x, y)
-  end subroutine
+  end subroutine f_aug
   subroutine f_rev(x, dx, y, dy)
     real, intent(in) :: x, y
     real, intent(inout) :: dx, dy
     dx = dx + dy
     dy = 0.0
-  end subroutine
+  end subroutine f_rev
   real function timer()
     !dir$ enzyme inactive
     !dir$ enzyme no_escaping_allocation
     timer = 0.0
-  end function
+  end function timer
   subroutine uses_common()
     real :: a, a_d
+    ! allow(common-block)
     common /blk/ a
+    ! allow(common-block)
     common /blk_d/ a_d
     !dir$ enzyme shadow(/blk/, shadow=/blk_d/)
     a = 1.0
-  end subroutine
-end module
+  end subroutine uses_common
+end module rules
 
 ! The plugin's pass turns them into the markers Enzyme reads.
 ! CHECK-DAG: fir.global @_QMrulesEg {fir.directives = [{args = {shadow = @_QMrulesEg_d}, keyword = "shadow", prefix = "enzyme"}]} : f32

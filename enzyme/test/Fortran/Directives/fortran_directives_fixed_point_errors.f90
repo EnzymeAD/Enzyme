@@ -10,9 +10,12 @@
 
 #if PART == 1
 subroutine where(x, n)
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  integer :: n, i
-  real(8) :: x(n), y
+  integer, intent(in) :: n
+  integer :: i
+  real(real64), intent(inout) :: x(n)
+  real(real64) :: y
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(x)
   y = 1
@@ -32,8 +35,9 @@ subroutine where(x, n)
 end subroutine where
 
 subroutine declarations(x)
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: x
+  real(real64), intent(inout) :: x
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(x)
   integer :: k
@@ -43,8 +47,10 @@ subroutine declarations(x)
 end subroutine declarations
 
 module no_loops
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: q
+  public
+  real(real64) :: q
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(q)
 end module no_loops
@@ -52,9 +58,12 @@ end module no_loops
 
 #if PART == 2
 subroutine args(x, n)
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  integer :: n, i
-  real(8) :: x(n), y
+  integer, intent(in) :: n
+  integer :: i
+  real(real64), intent(inout) :: x(n)
+  real(real64) :: y
   ! ARGS: error: A 'enzyme fixed_point' directive needs at least 1 variable(s)
   !$enzyme fixed_point max_iters(3)
   do i = 1, n

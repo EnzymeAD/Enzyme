@@ -6,16 +6,12 @@
 !
 ! REQUIRES: flang_directives
 ! RUN: rm -rf %t && mkdir -p %t
-! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=1 -emit-fir \
-! RUN:   -module-dir %t %s -o %t/lib.fir
+! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=1 -emit-fir -module-dir %t %s -o %t/lib.fir
 ! RUN: FileCheck %s --check-prefix=LIB < %t/lib.fir
 ! RUN: FileCheck %s --check-prefix=MOD < %t/gen_lib.mod
-! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=2 -emit-fir \
-! RUN:   -module-dir %t %s -o - | FileCheck %s --check-prefix=USER
-! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=2 -emit-llvm \
-! RUN:   -module-dir %t %s -o - | FileCheck %s --check-prefix=USER-LL
-! RUN: not %fc -fc1 %flangFc1Directives -cpp -DPART=3 -fsyntax-only \
-! RUN:   -module-dir %t %s 2>&1 | FileCheck %s --check-prefix=ERR
+! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=2 -emit-fir -module-dir %t %s -o - | FileCheck %s --check-prefix=USER
+! RUN: %fc -fc1 %flangFc1Directives -cpp -DPART=2 -emit-llvm -module-dir %t %s -o - | FileCheck %s --check-prefix=USER-LL
+! RUN: not %fc -fc1 %flangFc1Directives -cpp -DPART=3 -fsyntax-only -module-dir %t %s 2>&1 | FileCheck %s --check-prefix=ERR
 
 #if PART == 1
 module gen_lib
@@ -34,26 +30,28 @@ contains
   subroutine spec_r(x)
     real, intent(inout) :: x
     x = 2.0 * x
-  end subroutine
+  end subroutine spec_r
   subroutine spec_i(n)
     integer, intent(inout) :: n
     n = n + 1
-  end subroutine
+  end subroutine spec_i
   subroutine other_a(x)
     real, intent(inout) :: x
     x = x + 1.0
-  end subroutine
+  end subroutine other_a
   subroutine other_b(n)
     integer, intent(inout) :: n
     n = n - 1
-  end subroutine
+  end subroutine other_b
   subroutine rule_aug(x, dx)
-    real :: x, dx
-  end subroutine
+    real, intent(in) :: x
+    real, intent(inout) :: dx
+  end subroutine rule_aug
   subroutine rule_rev(x, dx)
-    real :: x, dx
-  end subroutine
-end module
+    real, intent(in) :: x
+    real, intent(inout) :: dx
+  end subroutine rule_rev
+end module gen_lib
 
 ! LIB-DAG: func.func @_QMgen_libPother_a({{.*}}fir.directives = [{args = {}, keyword = "no_escaping_allocation", prefix = "enzyme"}]
 ! LIB-DAG: func.func @_QMgen_libPother_b({{.*}}fir.directives = [{args = {}, keyword = "no_escaping_allocation", prefix = "enzyme"}]
@@ -68,13 +66,14 @@ end module
 module gen_user
   use gen_lib, only: gen
   implicit none
+  public
   !$enzyme inactive(gen)
 contains
   subroutine work(x)
     real, intent(inout) :: x
     x = x * x
-  end subroutine
-end module
+  end subroutine work
+end module gen_user
 
 ! USER-DAG: func.func private @_QMgen_libPspec_r({{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]
 ! USER-DAG: func.func private @_QMgen_libPspec_i({{.*}}fir.directives = [{args = {}, keyword = "inactive", prefix = "enzyme"}]
@@ -94,16 +93,18 @@ end module
 module gen_errors
   use gen_lib, only: gen, rule_aug, rule_rev
   implicit none
+  public
   ! ERR: error: 'gen' is a generic interface; a 'enzyme custom_rule' directive must name one of its specific procedures
   !$enzyme custom_rule(gen, augmented=rule_aug, reverse=rule_rev)
 contains
   subroutine f(x, dx)
-    real :: x, dx
-  end subroutine
+    real, intent(in) :: x
+    real, intent(inout) :: dx
+  end subroutine f
   ! ERR: error: 'gen' is a generic interface; argument 'reverse' of a 'enzyme custom_rule' directive must name a specific procedure
   subroutine g(x)
-    real :: x
+    real, intent(in) :: x
     !$enzyme custom_rule(augmented=rule_aug, reverse=gen)
-  end subroutine
-end module
+  end subroutine g
+end module gen_errors
 #endif

@@ -22,25 +22,28 @@
 #ifdef MODS
 module state
   implicit none
+  public
   real :: g = 2.0
 contains
   real function times_g(x)
     real, intent(in) :: x
     times_g = x * g
-  end function
-end module
+  end function times_g
+end module state
 
 module shadows
   implicit none
+  public
   real :: g_d = 0.0
-end module
+end module shadows
 #elif defined(REG)
 module registrations
   use state, only: g
   use shadows, only: g_d
   implicit none
+  public
   !dir$ enzyme shadow(g, shadow=g_d)
-end module
+end module registrations
 #else
 program main
   use state, only: times_g
@@ -51,8 +54,8 @@ program main
   x = 3.0
   dx = 0.0
   g_d = 1.0
-  print '(F6.4)', f__enzyme_fwddiff(times_g, x, dx)
-end program
+  print "(F6.4)", f__enzyme_fwddiff(times_g, x, dx)
+end program main
 #endif
 
 ! CHECK: 3.0000
