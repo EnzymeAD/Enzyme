@@ -679,7 +679,6 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (!addingType) {
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Cannot deduce adding type of: " << *val << "\n";
       ss << " + idxs {";
       for (auto idx : idxs)
@@ -715,7 +714,6 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     } else {
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Illegal intermediate when adding to: " << *val
          << " with addingType: " << *addingType << "\n"
          << " old: " << *old << " dif: " << *dif << "\n"

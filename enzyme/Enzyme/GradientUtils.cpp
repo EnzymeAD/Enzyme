@@ -3132,7 +3132,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
         if (auto inst = dyn_cast<Instruction>(malloc)) {
-          entryBuilder.SetInsertPoint(inst->getNextNode());
+          // Store after all phis of the block when caching a phi.
+          entryBuilder.SetInsertPoint(isa<PHINode>(inst)
+                                          ? getFirstNonPHI(inst->getParent())
+                                          : inst->getNextNode());
         }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;

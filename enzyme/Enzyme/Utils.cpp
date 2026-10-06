@@ -193,7 +193,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     // OpenMPI vs MPICH
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
@@ -4606,10 +4606,15 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
     std::string str;
     raw_string_ostream ss(str);
     ss << message << "\n";
-    gutils->TR.dump(ss);
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
 }

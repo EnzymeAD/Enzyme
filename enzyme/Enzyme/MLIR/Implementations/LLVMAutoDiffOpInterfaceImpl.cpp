@@ -17,9 +17,11 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -31,6 +33,30 @@ namespace {
 static mlir::Value allocaExtent(mlir::OpBuilder &builder,
                                 mlir::LLVM::AllocaOp alloca);
 #include "Implementations/LLVMDerivatives.inc"
+
+struct BitcastOpViewInterface
+    : public ViewLikeOpInterface::ExternalModel<BitcastOpViewInterface,
+                                                LLVM::BitcastOp> {
+  Value getViewSource(Operation *op) const {
+    return cast<LLVM::BitcastOp>(op).getArg();
+  }
+};
+
+struct GEPOpOffsetInterface
+    : public OffsetViewInterface::ExternalModel<GEPOpOffsetInterface,
+                                                LLVM::GEPOp> {
+  bool isZeroOffset(Operation *op) const {
+    for (auto index : cast<LLVM::GEPOp>(op).getIndices()) {
+      if (auto attr = dyn_cast<IntegerAttr>(index)) {
+        if (!attr.getValue().isZero())
+          return false;
+      } else if (!matchPattern(cast<Value>(index), m_Zero())) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
 
 // Lets activity analysis treat llvm.store generically via StoreLikeInterface.
 struct LLVMStoreLike
@@ -1109,8 +1135,14 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
+    LLVM::GEPOp::attachInterface<GEPOpOffsetInterface>(*context);
+    LLVM::BitcastOp::attachInterface<BitcastOpViewInterface>(*context);
+    LLVM::BitcastOp::attachInterface<
+        OffsetViewInterface::Model<LLVM::BitcastOp>>(*context);
     LLVM::AddrSpaceCastOp::attachInterface<AddrSpaceCastOpInterfaceReverse>(
         *context);
+    LLVM::AddrSpaceCastOp::attachInterface<
+        OffsetViewInterface::Model<LLVM::AddrSpaceCastOp>>(*context);
     LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
         *context);
     LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(

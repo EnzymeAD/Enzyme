@@ -1863,6 +1863,12 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
       continue;
     }
 
+    if (auto SI = llvm::dyn_cast<llvm::SelectInst>(obj)) {
+      todo.push_back(SI->getTrueValue());
+      todo.push_back(SI->getFalseValue());
+      continue;
+    }
+
     auto cur = getBaseObject(obj, offsetAllowed);
     if (cur != obj) {
       todo.push_back(cur);
