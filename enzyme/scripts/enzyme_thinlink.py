@@ -429,6 +429,16 @@ def main():
                     f.write(f"{g} {','.join(idx)}\n")
                     nparams += len(idx)
 
+    # The types declared on the parameters of exported functions, for the
+    # modules that only declare them: type analysis would have seen them on
+    # the definition with the whole program.
+    with open(os.path.join(a.out, "param_types.txt"), "w") as f:
+        for m, e in sorted(exports.items()):
+            for g in sorted(e):
+                for i, t in enumerate(fsum.get(g, {}).get("arg_types", [])):
+                    if t:
+                        f.write(f"{g}\t{i}\t{t}\n")
+
     # COMMON blocks (shadowed through the build's shadow table).
     common = {}
     for s in mods.values():
