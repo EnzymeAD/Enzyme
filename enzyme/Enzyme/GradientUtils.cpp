@@ -378,8 +378,7 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
 
 SmallVector<OperandBundleDef, 1>
 GradientUtils::getAllocationZeroingBundles(CallInst *orig,
-                                           IRBuilder<> &Builder2,
-                                           bool lookup) {
+                                           IRBuilder<> &Builder2, bool lookup) {
   SmallVector<OperandBundleDef, 2> OrigDefs;
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 1> Defs;
