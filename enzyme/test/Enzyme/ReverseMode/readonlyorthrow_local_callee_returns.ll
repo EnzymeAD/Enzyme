@@ -25,11 +25,31 @@ top:
   ret ptr addrspace(10) %r
 }
 
-; A caller that only reads the memory a local callee returned does not let it
-; escape, so it writes no memory that outlives it and stays fully
-; read-only-or-throw.
+; A caller that only uses the memory a local callee returned internally does
+; not let it reach its return value, so it writes no memory that outlives it
+; and stays fully read-only-or-throw.
 
-define double @use_only(ptr %task, ptr addrspace(11) nocapture %x) {
+define void @use_only(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
+  %v = load double, ptr addrspace(11) %r11, align 8
+  ret void
+}
+
+; Returning a value loaded through that memory may return a pointer to it
+; unless type info rules that out: here the return value is only known to be a
+; double by the function's enzyme_type, without which the caller is local.
+
+define double @use_ret(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
+  %v = load double, ptr addrspace(11) %r11, align 8
+  ret double %v
+}
+
+define "enzyme_type"="{[-1]:Float@double}" double @use_ret_typed(ptr %task, ptr addrspace(11) nocapture %x) {
 top:
   %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
   %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
@@ -58,10 +78,12 @@ top:
 }
 
 ; The same for a call marked local read-only-or-throw by metadata, rather than
-; by an attribute of the callee. A caller whose call returns no pointer stays
-; fully read-only-or-throw.
+; by an attribute of the callee. A caller whose call returns nothing, or
+; returns an integer that type info says is not a pointer, stays fully
+; read-only-or-throw; an integer without such info may be a pointer.
 
 declare ptr addrspace(10) @make(ptr addrspace(11))
+declare void @makevoid(ptr addrspace(11))
 declare i64 @makeint(ptr addrspace(11))
 
 define ptr addrspace(10) @wrap_md(ptr addrspace(11) nocapture %x) {
@@ -70,9 +92,21 @@ top:
   ret ptr addrspace(10) %r
 }
 
+define void @wrap_md_void(ptr addrspace(11) nocapture %x) {
+top:
+  call void @makevoid(ptr addrspace(11) %x), !enzyme_LocalReadOnlyOrThrow !0
+  ret void
+}
+
 define i64 @wrap_md_int(ptr addrspace(11) nocapture %x) {
 top:
   %r = call i64 @makeint(ptr addrspace(11) %x), !enzyme_LocalReadOnlyOrThrow !0
+  ret i64 %r
+}
+
+define i64 @wrap_md_int_typed(ptr addrspace(11) nocapture %x) {
+top:
+  %r = call "enzyme_type"="{[-1]:Integer}" i64 @makeint(ptr addrspace(11) %x), !enzyme_LocalReadOnlyOrThrow !0
   ret i64 %r
 }
 
@@ -80,10 +114,14 @@ top:
 
 ; CHECK: define ptr addrspace(10) @fresh({{.*}}) #[[LOCAL:[0-9]+]]
 ; CHECK: define ptr addrspace(10) @wrap({{.*}}) #[[LOCAL]]
-; CHECK: define double @use_only({{.*}}) #[[RO:[0-9]+]]
+; CHECK: define void @use_only({{.*}}) #[[RO:[0-9]+]]
+; CHECK: define double @use_ret({{.*}}) #[[LOCAL]]
+; CHECK: define "enzyme_type"="{[-1]:Float@double}" double @use_ret_typed({{.*}}) #[[RO]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_md({{.*}}) #[[LOCAL]]
-; CHECK: define i64 @wrap_md_int({{.*}}) #[[RO]]
+; CHECK: define void @wrap_md_void({{.*}}) #[[RO]]
+; CHECK: define i64 @wrap_md_int({{.*}}) #[[LOCAL]]
+; CHECK: define i64 @wrap_md_int_typed({{.*}}) #[[RO]]
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
 ; CHECK-DAG: attributes #[[RO]] = { {{.*}}"enzyme_ReadOnlyOrThrow" }
