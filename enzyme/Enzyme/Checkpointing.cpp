@@ -40,7 +40,6 @@
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -447,14 +446,7 @@ static bool lowerMarker(CallInst *CI, bool isWhile) {
 /// enzyme.binomial_checkpointing), "revolve" Revolve, "regular" an older
 /// name of "periodic".
 static int64_t getScheduleTag(StringRef name) {
-  return StringSwitch<int64_t>(name)
-      .Case("none", ENZYME_CKPT_SCHEDULE_NONE)
-      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
-      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
-      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
-      .Default(-1);
+  return enzyme_ckpt_schedule_from_name(name.data(), name.size());
 }
 
 static bool isLoopAnnotation(const Function *F) {

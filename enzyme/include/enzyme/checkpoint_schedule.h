@@ -21,6 +21,7 @@
 #ifndef ENZYME_CHECKPOINT_SCHEDULE_H
 #define ENZYME_CHECKPOINT_SCHEDULE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* The built-in schedules. The values are those of the loop annotations
@@ -39,6 +40,33 @@ enum {
    * same snapshots. */
   ENZYME_CKPT_SCHEDULE_BINOMIAL = 4,
 };
+
+/* The schedule a loop annotation names, the frontends' spelling of the tags
+ * above: "binomial", "revolve", "periodic" (or "regular", its older name),
+ * "store_all" or "none". -1 for any other name. `name` holds `len` characters
+ * and need not be null-terminated. */
+static inline int64_t enzyme_ckpt_schedule_from_name(const char *name,
+                                                     size_t len) {
+  static const struct {
+    const char *name;
+    int64_t schedule;
+  } names[] = {
+      {"none", ENZYME_CKPT_SCHEDULE_NONE},
+      {"periodic", ENZYME_CKPT_SCHEDULE_PERIODIC},
+      {"regular", ENZYME_CKPT_SCHEDULE_PERIODIC},
+      {"revolve", ENZYME_CKPT_SCHEDULE_REVOLVE},
+      {"store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL},
+      {"binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL},
+  };
+  size_t i, k;
+  for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+    for (k = 0; k < len && names[i].name[k] == name[k]; k++)
+      ;
+    if (k == len && names[i].name[k] == '\0')
+      return names[i].schedule;
+  }
+  return -1;
+}
 
 /* What a schedule asks the driver to do next. Values match Checkpointing.jl's
  * ActionFlag. */

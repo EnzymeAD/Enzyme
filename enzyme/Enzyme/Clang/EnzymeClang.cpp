@@ -472,13 +472,7 @@ static void emitFunctionCall(Sema &S, Stmt *St, std::string FunctionName,
 // enzyme/checkpoint_schedule.h, or -1. "regular" is an older name of
 // "periodic".
 static int64_t getCheckpointSchedule(StringRef Name) {
-  return llvm::StringSwitch<int64_t>(Name)
-      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
-      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
-      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
-      .Default(-1);
+  return enzyme_ckpt_schedule_from_name(Name.data(), Name.size());
 }
 
 // [[enzyme::checkpoint("revolve", 4)]] on a for statement, or its GNU
@@ -516,7 +510,7 @@ struct EnzymeLoopCheckpointAttrInfo : public ParsedAttrInfo {
         unsigned ID = S.getDiagnostics().getCustomDiagID(
             DiagnosticsEngine::Error,
             "first argument to '%0' must be a string literal: \"binomial\", "
-            "\"revolve\", \"periodic\" or \"store_all\"");
+            "\"revolve\", \"periodic\", \"store_all\" or \"none\"");
         S.Diag(Attr.getLoc(), ID) << AttrName;
         return AttributeNotApplied;
       }
@@ -525,7 +519,7 @@ struct EnzymeLoopCheckpointAttrInfo : public ParsedAttrInfo {
         unsigned ID = S.getDiagnostics().getCustomDiagID(
             DiagnosticsEngine::Error,
             "unknown checkpointing schedule '%0', expected \"binomial\", "
-            "\"revolve\", \"periodic\" or \"store_all\"");
+            "\"revolve\", \"periodic\", \"store_all\" or \"none\"");
         S.Diag(Attr.getLoc(), ID) << Literal->getString();
         return AttributeNotApplied;
       }

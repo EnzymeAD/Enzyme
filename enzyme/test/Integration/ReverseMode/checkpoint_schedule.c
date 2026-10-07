@@ -169,6 +169,27 @@ int main() {
   CHECK(enzyme_ckpt_isqrt(37) == 6 && enzyme_ckpt_isqrt(36) == 6 &&
             enzyme_ckpt_isqrt(35) == 5,
         "isqrt");
+  // The frontends' names of the schedules.
+  CHECK(enzyme_ckpt_schedule_from_name("binomial", 8) ==
+                ENZYME_CKPT_SCHEDULE_BINOMIAL &&
+            enzyme_ckpt_schedule_from_name("revolve", 7) ==
+                ENZYME_CKPT_SCHEDULE_REVOLVE &&
+            enzyme_ckpt_schedule_from_name("periodic", 8) ==
+                ENZYME_CKPT_SCHEDULE_PERIODIC &&
+            enzyme_ckpt_schedule_from_name("regular", 7) ==
+                ENZYME_CKPT_SCHEDULE_PERIODIC &&
+            enzyme_ckpt_schedule_from_name("store_all", 9) ==
+                ENZYME_CKPT_SCHEDULE_STORE_ALL &&
+            enzyme_ckpt_schedule_from_name("none", 4) ==
+                ENZYME_CKPT_SCHEDULE_NONE,
+        "schedule names");
+  // Not null-terminated, a prefix, or longer than a name.
+  CHECK(enzyme_ckpt_schedule_from_name("revolve,4", 7) ==
+                ENZYME_CKPT_SCHEDULE_REVOLVE &&
+            enzyme_ckpt_schedule_from_name("revolve", 6) == -1 &&
+            enzyme_ckpt_schedule_from_name("revolves", 8) == -1 &&
+            enzyme_ckpt_schedule_from_name("", 0) == -1,
+        "schedule name bounds");
   {
     EnzymeCkptPeriodicSplit s = enzyme_ckpt_periodic_split(10, 0);
     CHECK(s.inner == 3 && s.outer == 3 && s.trailing == 1,
