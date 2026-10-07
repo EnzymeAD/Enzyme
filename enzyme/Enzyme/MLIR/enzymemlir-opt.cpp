@@ -38,6 +38,7 @@
 
 #ifdef ENZYME_CLANG_HAS_CIR
 #include "clang/CIR/Dialect/IR/CIROpsDialect.h.inc"
+#include "clang/CIR/Dialect/Passes.h"
 #endif
 
 #include "Dialect/Dialect.h"
@@ -85,6 +86,9 @@ int main(int argc, char **argv) {
   registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
 #ifdef ENZYME_CLANG_HAS_CIR
   registry.insert<cir::CIRDialect>();
+  mlir::registerCIRCanonicalize();
+  mlir::registerCIRFlattenCFG();
+  mlir::registerCIRSimplify();
 #endif
 
   mlir::enzyme::registerenzymePasses();

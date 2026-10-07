@@ -20,6 +20,9 @@ set(LIBS
     MLIREnzyme
     MLIROptLib
     MLIRFuncInlinerExtension)
+if(ENZYME_CLANG_HAS_CIR)
+  list(APPEND LIBS MLIRCIRTransforms)
+endif()
 add_llvm_executable(enzymemlir-opt enzymemlir-opt.cpp)
 
 install(
