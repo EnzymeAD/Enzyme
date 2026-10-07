@@ -1,10 +1,10 @@
 // clang-format off
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c11 -O0 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c2x -DATTR -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c11 -DGNU -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -x c++ -std=c++17 -DATTR -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -x c++ -std=c++17 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c11 -O0 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c2x -DATTR -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c11 -DGNU -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -x c++ -std=c++17 -DATTR -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -x c++ -std=c++17 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // clang-format on
 
 // The spellings of a checkpointed loop, for every schedule of
