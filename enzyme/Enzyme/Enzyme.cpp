@@ -92,6 +92,7 @@
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include "CApi.h"
+#include "ThinLTOImport.h"
 using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
@@ -3190,6 +3191,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
                                     /*PreserveCustomRuleLinkage*/ true,
                                     /*LTOPreLink*/ true));
+      // A ThinLTO backend only sees the functions imported into its module,
+      // and the importer follows calls, not the function an __enzyme_* call
+      // takes. Ask for those explicitly; the post-link pipeline then keeps
+      // the imported bodies around until Enzyme runs (see below).
+      if (Phase == ThinOrFullLTOPhase::ThinLTOPreLink)
+        MPM.addPass(EnzymeThinLTOImportPass(/*PostLink*/ false));
       return;
     }
 #endif
@@ -3235,6 +3242,21 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
+
+#if LLVM_VERSION_MAJOR >= 20
+  // Functions imported by ThinLTO are available_externally, and the
+  // optimization pipeline drops those bodies (EliminateAvailableExternally)
+  // before the OptimizerEarly callback where the post-link run differentiates.
+  // Before the post-link simplification starts, give the imported functions
+  // that __enzyme_* calls differentiate internal copies, which are simplified
+  // along with the rest of the module and stay until Enzyme has run.
+  PB.registerPipelineEarlySimplificationEPCallback(
+      [](ModulePassManager &MPM, OptimizationLevel, ThinOrFullLTOPhase Phase) {
+        if (EnzymeEnable && !EnzymeLTOPreLink &&
+            Phase == ThinOrFullLTOPhase::ThinLTOPostLink)
+          MPM.addPass(EnzymeThinLTOImportPass(/*PostLink*/ true));
+      });
+#endif
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {

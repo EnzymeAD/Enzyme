@@ -126,6 +126,19 @@ if len("@ENZYME_BINARY_DIR@") != 0:
                       + config.llvm_ver + config.llvm_shlib_ext)
 config.substitutions.append(('%loadLLDEnzymeOpt', loadLLDEnzymeOpt))
 
+# Link flags that load LLDEnzyme into lld, for clang -flto links; the lld
+# feature needs an ld.lld beside the LLVM tools or on the PATH.
+config.substitutions.append(('%linkLLDEnzyme',
+                             ' -fuse-ld=lld -Wl,-mllvm,-load=@ENZYME_BINARY_DIR@/Enzyme/LLDEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext
+                             + ' -Wl,--load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLDEnzyme-'
+                             + config.llvm_ver + config.llvm_shlib_ext))
+if len("@ENZYME_BINARY_DIR@") != 0:
+  import shutil
+  if (os.path.exists(os.path.join(config.llvm_tools_dir, 'ld.lld'))
+          or shutil.which('ld.lld') is not None):
+    config.available_features.add('lld')
+
 config.substitutions.append(('%hasMPFR', has_mpfr))
 
 # Fortran-specific configuration

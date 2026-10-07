@@ -39,9 +39,13 @@ Under `-flto` (full or thin) the compile step leaves `__enzyme_autodiff` calls a
 because their callee may be compiled in another file; lld differentiates the linked
 program instead. The config file selects lld and loads `LLDEnzyme-<LLVM version>`
 into it, so the same flags work with and without `-flto`. With `-flto=thin`, lld
-differentiates each module on its own, so the function passed to `__enzyme_autodiff`
-has to be defined in the same file as the call (ThinLTO imports only functions that
-are called); use full `-flto` when it is compiled in another file.
+differentiates each module on its own, after ThinLTO imported functions into it.
+The compile step asks ThinLTO to import the function passed to `__enzyme_autodiff`
+and the functions it calls. ThinLTO still applies its size limit to functions further
+down the call graph, and never imports functions marked `noinline` (which includes
+everything compiled at `-O0`). When such a function is missing, Enzyme reports that
+it has no derivative for it; compile it in the same file as the call, raise the limit
+with `-Wl,-mllvm,-import-instr-limit=<N>`, or use full `-flto`.
 
 Without the plugin the derivative has to be produced out of line, by emitting LLVM IR
 from flang and running the Enzyme pass over it with `opt`:
