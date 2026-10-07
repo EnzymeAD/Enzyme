@@ -17,6 +17,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
+#include "enzyme/checkpoint_schedule.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -1384,30 +1385,21 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       sched.nOuter = *period;
       return sched;
     }
-    if (*numIters <= 0) {
-      // Nothing to segment. Spelled out because both splits below divide by a
-      // quantity derived from the trip count, and because a zero-length segment
-      // would give the scaffold loop a zero step.
-      sched.nInner = 1;
-      sched.nOuter = 0;
-      return sched;
-    }
-    if (period && *period > 0) {
-      // Rounding the length up is what holds the segment count to the budget:
-      // numSegments() then lands at or below `period`, never above.
-      sched.nInner = (*numIters + *period - 1) / *period;
-    } else {
-      sched.nInner = (int64_t)std::sqrt(*numIters);
-    }
-    // Whole segments, plus a remainder shorter than one of them. The remainder
-    // has to be the shorter part: a dialect whose segment bound is
-    // min(nInner, remaining) -- affine.for's boundary-tile map, stablehlo's
-    // runtime clamp -- silently truncates a trailing segment longer than
-    // nInner, and the tail of the loop is then never replayed at all. Splitting
-    // sqrt(N) as nOuter == nInner and letting the remainder run on up to
-    // 2*sqrt(N), which is what this did, is what made that reachable.
-    sched.nOuter = *numIters / sched.nInner;
-    sched.trailingIters = *numIters % sched.nInner;
+    // The split of enzyme/checkpoint_schedule.h, which LLVM Enzyme's periodic
+    // schedule makes too: the segment length rounded up from numIters /
+    // period, so there are at most `period` segments, or floor(sqrt(numIters))
+    // without a period; whole segments, then a remainder shorter than one of
+    // them. The remainder has to be the shorter part: a dialect whose segment
+    // bound is min(nInner, remaining) -- affine.for's boundary-tile map,
+    // stablehlo's runtime clamp -- silently truncates a trailing segment
+    // longer than nInner, and the tail of the loop is then never replayed.
+    // A non-positive trip count gives no segments, and segments of length 1
+    // so the scaffold loop never gets a zero step.
+    EnzymeCkptPeriodicSplit split =
+        enzyme_ckpt_periodic_split(*numIters, period ? *period : 0);
+    sched.nInner = split.inner;
+    sched.nOuter = split.outer;
+    sched.trailingIters = split.trailing;
     return sched;
   }
 
@@ -1901,24 +1893,25 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // forward pass left is never overwritten.
   //===--------------------------------------------------------------------===//
 
-  // Action flags of enzyme/checkpoint.h.
-  static constexpr int64_t kCkptStore = 1, kCkptRestore = 2, kCkptForward = 3,
-                           kCkptFirstUTurn = 4, kCkptUTurn = 5, kCkptDone = 7;
+  // Action flags of enzyme/checkpoint_schedule.h.
+  static constexpr int64_t kCkptStore = ENZYME_CKPT_STORE,
+                           kCkptRestore = ENZYME_CKPT_RESTORE,
+                           kCkptForward = ENZYME_CKPT_FORWARD,
+                           kCkptFirstUTurn = ENZYME_CKPT_FIRSTUTURN,
+                           kCkptUTurn = ENZYME_CKPT_UTURN,
+                           kCkptDone = ENZYME_CKPT_DONE;
 
   // The mode and budget __enzyme_ckpt_schedule_begin is called with. A
-  // periodic loop without a period gets the number of segments the compiled
-  // schedule would cut it into. With a trip count known only at run time,
-  // where the compiled schedule has no default, budget 0 has the runtime
-  // take its square root, as LLVM Enzyme does for a loop without a count.
+  // periodic loop without a period gets budget 0, the default segment length
+  // of the shared split.
   static std::pair<int64_t, int64_t> getRuntimeScheme(OpName forOp) {
+    // The schedules and budgets of enzyme/checkpoint_schedule.h, which the
+    // compiled forms above follow: the same loop checkpoints the same steps
+    // whichever way it is lowered.
     auto budget = FinalClass::getCheckpointBudget(forOp);
     if (FinalClass::hasBinomialAttr(forOp))
-      return {2, *budget};
-    if (budget && *budget > 0)
-      return {1, *budget};
-    if (FinalClass::getConstantNumberOfIterations(forOp))
-      return {1, FinalClass::getStaticPeriodicSchedule(forOp).numSegments()};
-    return {1, 0};
+      return {ENZYME_CKPT_SCHEDULE_BINOMIAL, *budget};
+    return {ENZYME_CKPT_SCHEDULE_PERIODIC, budget && *budget > 0 ? *budget : 0};
   }
 
   // Call `name` of the checkpointing runtime, declaring it private in the
@@ -2499,7 +2492,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         return dummyCaches;
       }
       if (runtime)
-        return cacheRuntime(forOp, 2, *budget, gutils);
+        return cacheRuntime(forOp, ENZYME_CKPT_SCHEDULE_BINOMIAL, *budget,
+                            gutils);
       return cacheBinomial(forOp, *budget, gutils);
     }
 

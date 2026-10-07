@@ -68,10 +68,12 @@ module {
 // CHECK:         %[[H:.+]] = call @__enzyme_ckpt_schedule_begin(%[[C1]], %[[C0]], %[[N]])
 // CHECK:         call @__enzyme_ckpt_schedule_end(%[[H]])
 
-// floor(sqrt(10)) = 3 iterations a segment: 3 segments and a trailing one.
+// Budget 0: the default split of enzyme/checkpoint_schedule.h, floor(sqrt(10))
+// = 3 iterations a segment, 3 segments and a trailing one, as the compiled
+// schedule cuts it.
 // CHECK-LABEL: func.func private @static_default_grad(
 // CHECK-DAG:     %[[C10:.+]] = arith.constant 10 : i64
-// CHECK-DAG:     %[[C4:.+]] = arith.constant 4 : i64
+// CHECK-DAG:     %[[C0:.+]] = arith.constant 0 : i64
 // CHECK-DAG:     %[[C1:.+]] = arith.constant 1 : i64
-// CHECK:         %[[H:.+]] = call @__enzyme_ckpt_schedule_begin(%[[C1]], %[[C4]], %[[C10]])
+// CHECK:         %[[H:.+]] = call @__enzyme_ckpt_schedule_begin(%[[C1]], %[[C0]], %[[C10]])
 // CHECK:         call @__enzyme_ckpt_schedule_end(%[[H]])

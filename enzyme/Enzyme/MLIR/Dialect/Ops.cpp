@@ -7,6 +7,7 @@
 
 #include "Ops.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "enzyme/checkpoint_schedule.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
@@ -73,8 +74,10 @@ InitOp::handlePromotionComplete(const MemorySlot &slot, Value defaultValue,
 // BinomialProgressOp
 //===----------------------------------------------------------------------===//
 
-// Revolve "split" function: given `n` remaining steps and `s` available
-// checkpoints, return how many steps to advance before placing the next one.
+// Folds to enzyme_ckpt_binomial_progress (enzyme/checkpoint_schedule.h), which
+// LLVM Enzyme's binomial schedule calls too: the Revolve "split" function,
+// given `n` remaining steps and `s` available checkpoints, returns how many
+// steps to advance before placing the next one.
 //
 // Let beta(s, t) = C(s + t, t) be the longest chain reversible with `s`
 // checkpoints and at most `t` recomputations of each step, and let `t` be
@@ -93,40 +96,6 @@ InitOp::handlePromotionComplete(const MemorySlot &slot, Value defaultValue,
 // other advance landing in [1, n-1], that is what makes the per-slot advances
 // sum to exactly `n` across `budget` slots -- which is what the callers' outer
 // loop relies on to reach the end of the primal.
-static int64_t binomialProgress(int64_t n, int64_t s) {
-  if (n <= 0)
-    return 0;
-  if (n == 1)
-    return 1;
-  if (s <= 1)
-    return n;
-
-  int64_t t = 0, beta = 1; // beta == C(s + t, t)
-  while (beta < n) {
-    ++t;
-    beta = beta * (s + t) / t; // C(s+t,t) from C(s+t-1,t-1); exact
-  }
-
-  // beta(s-1, t) == beta * s / (s + t) and beta(s, t-1) == beta * t / (s + t),
-  // both exact in integers.
-  int64_t lo = n - beta * s / (s + t);
-  int64_t hi = beta * t / (s + t);
-  if (lo < 1)
-    lo = 1;
-  if (hi > n - 1)
-    hi = n - 1;
-  int64_t m = (lo + hi) / 2; // lo <= hi, so this is already in [1, n-1]
-
-  // Leave at least one step for each of the s-1 checkpoints still to be placed.
-  // Without this the advances can exhaust the interval before the slots run
-  // out, and a caller that walks one slot per iteration then records slots at a
-  // step past the end -- holding the final state rather than a checkpoint.
-  int64_t cap = n - (s - 1);
-  if (m > cap)
-    m = cap;
-  return m < 1 ? 1 : m;
-}
-
 OpFoldResult BinomialProgressOp::fold(FoldAdaptor adaptor) {
   auto numSteps = dyn_cast_or_null<IntegerAttr>(adaptor.getNumSteps());
   auto budget = dyn_cast_or_null<IntegerAttr>(adaptor.getBudget());
@@ -137,7 +106,7 @@ OpFoldResult BinomialProgressOp::fold(FoldAdaptor adaptor) {
   if (n <= 0 || s <= 0)
     return {};
 
-  return IntegerAttr::get(getType(), binomialProgress(n, s));
+  return IntegerAttr::get(getType(), enzyme_ckpt_binomial_progress(n, s));
 }
 
 //===----------------------------------------------------------------------===//

@@ -33,8 +33,9 @@ module {
 // CHECK-SAME:      %[[X:.+]]: f64, %[[DRET:.+]]: f64) -> f64
 // CHECK-DAG:     %[[C10:.+]] = arith.constant 10 : i64
 // CHECK-DAG:     %[[C3:.+]] = arith.constant 3 : i64
-// CHECK-DAG:     %[[C2:.+]] = arith.constant 2 : i64
-// CHECK:         %[[H:.+]] = call @__enzyme_ckpt_schedule_begin(%[[C2]], %[[C3]], %[[C10]])
+// Schedule 4, the binomial schedule the compiled form follows.
+// CHECK-DAG:     %[[C4:.+]] = arith.constant 4 : i64
+// CHECK:         %[[H:.+]] = call @__enzyme_ckpt_schedule_begin(%[[C4]], %[[C3]], %[[C10]])
 // CHECK:         %[[NS:.+]] = call @__enzyme_ckpt_schedule_slots(%[[H]])
 // CHECK:         %[[LAST:.+]] = arith.index_cast %[[NS]] : i64 to index
 // CHECK:         %[[ROWS:.+]] = arith.addi %[[LAST]], %{{.+}} : index

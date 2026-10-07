@@ -1,5 +1,7 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+# enzyme/checkpoint_schedule.h, shared with LLVM Enzyme's checkpointing.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 add_subdirectory(Analysis)
 add_subdirectory(Dialect)
 add_subdirectory(Interfaces)
