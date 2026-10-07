@@ -2499,7 +2499,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     // Check activity modifies the captured variables, and also returns a value
