@@ -3557,6 +3557,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           FPM.addPass(SimpleGVNNewPM());
           return true;
         }
+        if (Name == "print<enzyme-function-summary>") {
+          FPM.addPass(EnzymeFunctionSummaryPrinterPass(llvm::outs()));
+          return true;
+        }
         return false;
       });
 }

@@ -1018,8 +1018,7 @@ size_t EnzymeFunctionSummaryNumArgs(EnzymeFunctionSummaryRef S) {
   return ((EnzymeFunctionSummary *)S)->numArgs();
 }
 
-uint8_t EnzymeFunctionSummaryArgEffects(EnzymeFunctionSummaryRef S,
-                                        size_t i) {
+uint8_t EnzymeFunctionSummaryArgEffects(EnzymeFunctionSummaryRef S, size_t i) {
   auto &A = ((EnzymeFunctionSummary *)S)->Args[i];
   return (A.ReadFP ? ENZYME_SUMMARY_ARG_READ_FP : 0) |
          (A.WriteFP ? ENZYME_SUMMARY_ARG_WRITE_FP : 0) |
@@ -1039,16 +1038,21 @@ uint32_t EnzymeFunctionSummaryFlags(EnzymeFunctionSummaryRef S) {
          (Sum.MemTransfer ? ENZYME_SUMMARY_MEMTRANSFER : 0) |
          (Sum.Inactive ? ENZYME_SUMMARY_INACTIVE : 0) |
          (Sum.NoFree ? ENZYME_SUMMARY_NOFREE : 0) |
-         (Sum.NoEscapingAllocation ? ENZYME_SUMMARY_NO_ESCAPING_ALLOCATION
-                                   : 0);
+         (Sum.NoEscapingAllocation ? ENZYME_SUMMARY_NO_ESCAPING_ALLOCATION : 0);
+}
+
+static void copyMatrix(const std::vector<std::vector<bool>> &M, uint8_t *out) {
+  for (size_t s = 0; s < M.size(); ++s)
+    for (size_t t = 0; t < M[s].size(); ++t)
+      out[s * M[s].size() + t] = M[s][t];
 }
 
 void EnzymeFunctionSummaryFlow(EnzymeFunctionSummaryRef S, uint8_t *out) {
-  auto &Sum = *(EnzymeFunctionSummary *)S;
-  size_t cols = Sum.numArgs() + 2;
-  for (size_t s = 0; s < Sum.Flow.size(); ++s)
-    for (size_t t = 0; t < cols; ++t)
-      out[s * cols + t] = Sum.Flow[s][t];
+  copyMatrix(((EnzymeFunctionSummary *)S)->Flow, out);
+}
+
+void EnzymeFunctionSummaryPointsTo(EnzymeFunctionSummaryRef S, uint8_t *out) {
+  copyMatrix(((EnzymeFunctionSummary *)S)->PointsTo, out);
 }
 
 static const std::set<std::string> &summaryGlobals(EnzymeFunctionSummaryRef S,

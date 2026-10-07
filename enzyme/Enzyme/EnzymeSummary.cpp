@@ -210,19 +210,239 @@ std::string signatureType(const AttributeList &AL, unsigned ArgNo) {
   return "";
 }
 
+/// The name standing for a global that cannot be named (a constant
+/// inttoptr address, as Julia emits for its objects) and for memory a callee
+/// may have allocated and handed back.
+const char *const AnyGlobal = "*";
+
+/// The type may hold pointers (an aggregate as well as a pointer).
+bool hasPointer(Type *T) {
+  if (T->isPtrOrPtrVectorTy())
+    return true;
+  if (auto *ST = dyn_cast<StructType>(T)) {
+    for (auto *E : ST->elements())
+      if (hasPointer(E))
+        return true;
+    return false;
+  }
+  if (auto *AT = dyn_cast<ArrayType>(T))
+    return hasPointer(AT->getElementType());
+  return false;
+}
+
 /// Where a pointer may point: into the memory reachable from an argument or
 /// a global (dereferences collapsed, as in ActivityAnalysis.jl's pseudo
-/// classes), into local memory, or anywhere.
+/// classes), into a local object (an alloca or a fresh allocation, tracked
+/// per object), or anywhere. As a set of data sources (see DataFlow), the
+/// same sets name where the data was loaded from.
 struct Roots {
   std::set<unsigned> Args;
   std::set<std::string> Globals;
+  std::set<const Value *> Locals;
   bool Unknown = false;
-  void merge(const Roots &O) {
+  /// Returns whether anything was added.
+  bool merge(const Roots &O) {
+    size_t Before = Args.size() + Globals.size() + Locals.size();
+    bool WasUnknown = Unknown;
     Args.insert(O.Args.begin(), O.Args.end());
     Globals.insert(O.Globals.begin(), O.Globals.end());
+    Locals.insert(O.Locals.begin(), O.Locals.end());
     Unknown |= O.Unknown;
+    return Unknown != WasUnknown ||
+           Args.size() + Globals.size() + Locals.size() != Before;
   }
   bool nonLocal() const { return Unknown || !Args.empty() || !Globals.empty(); }
+  Roots withoutLocals() const {
+    Roots R = *this;
+    R.Locals.clear();
+    return R;
+  }
+};
+
+/// Calls the summary treats as their own kind of effect, rather than as a
+/// call whose effects are composed from the callee's summary later.
+bool isFreshPointer(StringRef N) {
+  // fresh memory, the flang runtime's own handles (I/O cookies), and Julia's
+  // markers returning task-local state (julia.get_pgcstack)
+  return isAllocationName(N) || startsWith(N, "_Fortran") || isJuliaMarker(N);
+}
+
+/// Where each pointer in a function may point. Pointers stored into a local
+/// object are tracked per object, so a pointer that goes through a stack
+/// slot or a buffer a callee fills (a Julia sret) keeps its roots.
+/// Computed as a fixpoint over the whole function, so cycles through phis
+/// and through memory are followed.
+class Provenance {
+public:
+  explicit Provenance(Function &F) {
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (auto &I : instructions(F)) {
+        if (hasPointer(I.getType()))
+          Changed |= State[&I].merge(eval(I));
+        Changed |= update(I);
+      }
+    }
+  }
+
+  /// The roots of a pointer, or of the pointers in an aggregate.
+  Roots roots(const Value *V) const {
+    Roots R;
+    V = V->stripPointerCasts();
+    if (auto *A = dyn_cast<Argument>(V)) {
+      R.Args.insert(A->getArgNo());
+    } else if (auto *G = dyn_cast<GlobalVariable>(V)) {
+      if (!G->isConstant())
+        R.Globals.insert(G->getName().str());
+    } else if (auto *CE = dyn_cast<ConstantExpr>(V)) {
+      if (CE->getOpcode() == Instruction::IntToPtr)
+        R.Globals.insert(AnyGlobal);
+      else
+        for (auto &Op : CE->operands())
+          R.merge(roots(Op));
+    } else if (auto *C = dyn_cast<ConstantAggregate>(V)) {
+      for (auto &Op : C->operands())
+        R.merge(roots(Op));
+    } else if (isa<Constant>(V) || isa<MetadataAsValue>(V)) {
+    } else if (auto *I = dyn_cast<Instruction>(V)) {
+      auto found = State.find(I);
+      if (found != State.end())
+        R = found->second;
+    } else
+      R.Unknown = true;
+    return R;
+  }
+
+  /// R and what the local objects in it point to, transitively: all the
+  /// memory reachable from a pointer with roots R.
+  Roots deep(const Roots &R) const {
+    Roots Out = R;
+    SmallVector<const Value *, 8> todo(R.Locals.begin(), R.Locals.end());
+    while (!todo.empty()) {
+      auto found = Contents.find(todo.pop_back_val());
+      if (found == Contents.end())
+        continue;
+      for (auto *L : found->second.Locals)
+        if (!Out.Locals.count(L))
+          todo.push_back(L);
+      Out.merge(found->second);
+    }
+    return Out;
+  }
+
+  /// The roots of a pointer loaded through a pointer with roots R.
+  Roots loaded(const Roots &R) const {
+    Roots Out = R.withoutLocals(); // dereferences collapsed
+    for (auto *L : R.Locals) {
+      auto found = Contents.find(L);
+      if (found != Contents.end())
+        Out.merge(found->second);
+    }
+    return Out;
+  }
+
+  /// What a call to a function the summary does not look into may return,
+  /// or store into the memory it is given: a pointer into memory it can
+  /// reach from its arguments, a global, or memory it allocated.
+  Roots calleeResult(const CallBase &CB) const {
+    Roots R;
+    for (auto &A : CB.args())
+      if (hasPointer(A->getType()))
+        R.merge(deep(roots(A)));
+    R.Globals.insert(AnyGlobal);
+    return R;
+  }
+
+private:
+  std::map<const Instruction *, Roots> State;
+  /// Local object -> roots of the pointers stored into it.
+  std::map<const Value *, Roots> Contents;
+
+  Roots eval(Instruction &I) {
+    Roots R;
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(&I))
+      return roots(GEP->getPointerOperand());
+    if (isa<BitCastInst>(&I) || isa<AddrSpaceCastInst>(&I) ||
+        isa<FreezeInst>(&I))
+      return roots(I.getOperand(0));
+    if (isa<AllocaInst>(&I)) {
+      R.Locals.insert(&I);
+      return R;
+    }
+    if (auto *L = dyn_cast<LoadInst>(&I))
+      return loaded(roots(L->getPointerOperand()));
+    if (auto *Sel = dyn_cast<SelectInst>(&I)) {
+      R = roots(Sel->getTrueValue());
+      R.merge(roots(Sel->getFalseValue()));
+      return R;
+    }
+    if (isa<PHINode>(&I) || isa<ExtractValueInst>(&I) ||
+        isa<InsertValueInst>(&I) || isa<ExtractElementInst>(&I) ||
+        isa<InsertElementInst>(&I) || isa<ShuffleVectorInst>(&I)) {
+      for (auto &Op : I.operands())
+        if (hasPointer(Op->getType()))
+          R.merge(roots(Op));
+      return R;
+    }
+    if (auto *CB = dyn_cast<CallBase>(&I)) {
+      if (isa<IntrinsicInst>(CB)) {
+        // llvm.ptrmask, llvm.launder.invariant.group, ...
+        for (auto &A : CB->args())
+          if (hasPointer(A->getType()))
+            R.merge(roots(A));
+        return R;
+      }
+      auto *Callee = calledFunction(*CB);
+      StringRef N = Callee ? Callee->getName() : "";
+      if (auto *Through = juliaPassThrough(*CB, N))
+        return roots(Through);
+      if (Callee && isFreshPointer(N)) {
+        R.Locals.insert(&I);
+        return R;
+      }
+      return calleeResult(*CB);
+    }
+    // inttoptr, pointers of unknown origin
+    R.Unknown = true;
+    return R;
+  }
+
+  /// Pointers stored into local objects.
+  bool update(Instruction &I) {
+    bool Changed = false;
+    auto into = [&](const Roots &Dest, const Roots &R) {
+      for (auto *L : Dest.Locals)
+        Changed |= Contents[L].merge(R);
+    };
+    if (auto *St = dyn_cast<StoreInst>(&I)) {
+      if (hasPointer(St->getValueOperand()->getType()))
+        into(roots(St->getPointerOperand()), roots(St->getValueOperand()));
+    } else if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
+      into(roots(MT->getDest()), loaded(roots(MT->getSource())));
+    } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+      if (isa<IntrinsicInst>(CB) || CB->onlyReadsMemory())
+        return false;
+      auto *Callee = calledFunction(*CB);
+      StringRef N = Callee ? Callee->getName() : "";
+      // allocations do not store into what they are given, except
+      // posix_memalign
+      if (Callee && (isJuliaMarker(N) || startsWith(N, "__enzyme") ||
+                     (isAllocationName(N) && N != "posix_memalign")))
+        return false;
+      Roots Out;
+      if (Callee && isFreshPointer(N))
+        Out.Locals.insert(CB); // e.g. posix_memalign, flang descriptors
+      else
+        Out = calleeResult(*CB);
+      for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
+        Value *A = CB->getArgOperand(k);
+        if (hasPointer(A->getType()) && !CB->onlyReadsMemory(k))
+          into(deep(roots(A)), Out);
+      }
+    }
+    return Changed;
+  }
 };
 
 /// Effects on floating-point data of one function, before composing with
@@ -231,10 +451,12 @@ struct Roots {
 /// what callees do with it.
 class ActivityFacts {
 public:
-  ActivityFacts(Function &F, EnzymeFunctionSummary &S) : F(F), S(S) {
+  ActivityFacts(Function &F, EnzymeFunctionSummary &S, const Provenance &P)
+      : F(F), S(S), P(P) {
     unsigned N = F.arg_size();
     S.Args.assign(N, EnzymeArgEffects());
     S.Flow.assign(N + 1, std::vector<bool>(N + 2, false));
+    S.PointsTo.assign(N + 1, std::vector<bool>(N + 2, false));
     for (auto &A : F.args()) {
       // An argument whose declared type has no floating-point part cannot
       // carry derivatives through untyped copies.
@@ -242,102 +464,158 @@ public:
       if (!T.empty() && !StringRef(T).contains("Float"))
         IntTyped.insert(A.getArgNo());
     }
+    // where the data in each value comes from, through local memory
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (auto &I : instructions(F)) {
+        if (!I.getType()->isPtrOrPtrVectorTy() && !I.getType()->isVoidTy())
+          Changed |= Sources[&I].merge(evalSources(I));
+        Changed |= update(I);
+      }
+    }
     for (auto &I : instructions(F))
       visit(I);
+    for (unsigned i = 0; i < N; ++i)
+      for (unsigned t = 0; t < N + 2; ++t)
+        if (t != i && S.PointsTo[i][t])
+          S.Args[i].Escape = true;
     S.ReturnsFP = F.getReturnType()->isFPOrFPVectorTy();
   }
 
 private:
   Function &F;
   EnzymeFunctionSummary &S;
+  const Provenance &P;
   std::set<unsigned> IntTyped;
-  std::map<const Value *, Roots> Memo;
-  std::map<const Value *, Roots> SourceMemo;
+  /// Value -> where its data may come from: "a<i>" an argument passed by
+  /// value or memory reachable from it, a global's memory; never a local
+  /// object (its contents are substituted).
+  std::map<const Instruction *, Roots> Sources;
+  /// Local object -> where the data stored into it may come from.
+  std::map<const Value *, Roots> Contents;
 
-  Roots roots(const Value *V) {
-    auto found = Memo.find(V);
-    if (found != Memo.end())
-      return found->second;
-    Memo[V] = Roots(); // cycles (phis) contribute nothing new
+  /// Where the data in a value may come from. Addresses are not data:
+  /// pointers only contribute through the loads that read through them.
+  Roots sources(const Value *V) const {
     Roots R;
-    V = V->stripPointerCasts();
-    if (auto *GEP = dyn_cast<GEPOperator>(V))
-      R = roots(GEP->getPointerOperand());
-    else if (auto *A = dyn_cast<Argument>(V))
+    if (V->getType()->isPtrOrPtrVectorTy())
+      return R;
+    if (auto *A = dyn_cast<Argument>(V))
       R.Args.insert(A->getArgNo());
-    else if (auto *G = dyn_cast<GlobalVariable>(V)) {
-      if (!G->isConstant())
-        R.Globals.insert(G->getName().str());
-    } else if (isa<AllocaInst>(V) || isa<Constant>(V))
-      ;
-    else if (auto *L = dyn_cast<LoadInst>(V))
-      R = roots(L->getPointerOperand()); // dereferences collapsed
-    else if (auto *P = dyn_cast<PHINode>(V)) {
-      for (auto &In : P->incoming_values())
-        R.merge(roots(In));
-    } else if (auto *Sel = dyn_cast<SelectInst>(V)) {
-      R = roots(Sel->getTrueValue());
-      R.merge(roots(Sel->getFalseValue()));
-    } else if (auto *CB = dyn_cast<CallBase>(V)) {
+    else if (auto *I = dyn_cast<Instruction>(V)) {
+      auto found = Sources.find(I);
+      if (found != Sources.end())
+        R = found->second;
+    }
+    return R;
+  }
+
+  /// The data in the memory a pointer with roots R points to directly.
+  Roots stored(const Roots &R) const {
+    Roots Out = R.withoutLocals();
+    for (auto *L : R.Locals) {
+      auto found = Contents.find(L);
+      if (found != Contents.end())
+        Out.merge(found->second);
+    }
+    return Out;
+  }
+
+  /// The data a call may compute its result, or what it stores, from: what
+  /// it is passed, the memory reachable from that, and globals.
+  Roots callInputs(const CallBase &CB) const {
+    Roots R;
+    for (auto &A : CB.args()) {
+      R.merge(sources(A));
+      if (hasPointer(A->getType()))
+        R.merge(stored(P.deep(P.roots(A))));
+    }
+    auto *Callee = calledFunction(CB);
+    StringRef N = Callee ? Callee->getName() : "";
+    if (!CB.doesNotAccessMemory() &&
+        !(Callee && (isFreshPointer(N) || startsWith(N, "__enzyme"))))
+      R.Globals.insert(AnyGlobal);
+    return R;
+  }
+
+  Roots evalSources(Instruction &I) const {
+    if (auto *L = dyn_cast<LoadInst>(&I))
+      return stored(P.roots(L->getPointerOperand()));
+    auto *CB = dyn_cast<CallBase>(&I);
+    if (CB && !isa<IntrinsicInst>(CB))
+      return callInputs(*CB);
+    Roots R;
+    for (auto &Op : I.operands()) {
+      if (isa<BasicBlock>(Op))
+        continue;
+      R.merge(sources(Op));
+      // intrinsics reading memory (llvm.masked.load, ...)
+      if (CB && CB->mayReadFromMemory() && Op->getType()->isPointerTy())
+        R.merge(stored(P.roots(Op)));
+    }
+    return R;
+  }
+
+  /// Data stored into local objects.
+  bool update(Instruction &I) {
+    bool Changed = false;
+    auto into = [&](const Roots &Dest, const Roots &R) {
+      for (auto *L : Dest.Locals)
+        Changed |= Contents[L].merge(R);
+    };
+    if (auto *St = dyn_cast<StoreInst>(&I)) {
+      into(P.roots(St->getPointerOperand()), sources(St->getValueOperand()));
+    } else if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
+      into(P.roots(MT->getDest()), stored(P.roots(MT->getSource())));
+    } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+      if (isa<IntrinsicInst>(CB) || CB->onlyReadsMemory())
+        return false;
       auto *Callee = calledFunction(*CB);
       StringRef N = Callee ? Callee->getName() : "";
-      if (auto *Through = juliaPassThrough(*CB, N))
-        R = roots(Through);
-      // fresh memory, and the flang runtime's own handles (I/O cookies)
-      else if (!(isAllocationName(N) || startsWith(N, "_Fortran")))
-        R.Unknown = true;
-    } else
-      R.Unknown = true;
-    Memo[V] = R;
-    return R;
-  }
-
-  /// Where the data in a (non-pointer) value may come from: arguments passed
-  /// by value, memory reachable from arguments or globals that was loaded,
-  /// or somewhere unknown. Addresses are not data: pointer operands are not
-  /// followed except through the loads that read them.
-  Roots sources(const Value *V) {
-    auto found = SourceMemo.find(V);
-    if (found != SourceMemo.end())
-      return found->second;
-    SourceMemo[V] = Roots();
-    Roots R;
-    if (auto *A = dyn_cast<Argument>(V)) {
-      if (!A->getType()->isPointerTy())
-        R.Args.insert(A->getArgNo());
-    } else if (isa<Constant>(V))
-      ;
-    else if (auto *L = dyn_cast<LoadInst>(V))
-      R = roots(L->getPointerOperand());
-    else if (auto *CB = dyn_cast<CallBase>(V);
-             CB && !isa<IntrinsicInst>(CB)) {
-      // What the callee computes from what it is given; what it reads
-      // beyond its arguments is composed from its own summary later.
-      for (auto &A : CB->args())
-        R.merge(A->getType()->isPointerTy() ? roots(A) : sources(A));
-    } else if (auto *I = dyn_cast<Instruction>(V)) {
-      for (auto &Op : I->operands())
-        if (!Op->getType()->isPointerTy() && !isa<BasicBlock>(Op))
-          R.merge(sources(Op));
+      // fresh memory holds no data yet; what the flang runtime reads into
+      // local variables (I/O) is not derived from anything
+      if (Callee && (isFreshPointer(N) || startsWith(N, "__enzyme")))
+        return false;
+      auto In = callInputs(*CB);
+      for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
+        Value *A = CB->getArgOperand(k);
+        if (hasPointer(A->getType()) && !CB->onlyReadsMemory(k))
+          into(P.deep(P.roots(A)), In);
+      }
     }
-    SourceMemo[V] = R;
-    return R;
+    return Changed;
   }
 
-  void flow(const Roots &From, const Roots &To, bool ToReturn = false) {
-    auto flowTo = [&](unsigned Src) {
+  /// Marks, for each source s in From and sink t in To, that s may reach t
+  /// in M (Flow or PointsTo).
+  void relate(std::vector<std::vector<bool>> &M, const Roots &From,
+              const Roots &To, bool ToReturn) {
+    auto row = [&](unsigned Src) {
       for (auto i : To.Args)
-        S.Flow[Src][i] = true;
+        M[Src][i] = true;
       if (!To.Globals.empty())
-        S.Flow[Src][S.globalsSink()] = true;
+        M[Src][S.globalsSink()] = true;
       if (ToReturn)
-        S.Flow[Src][S.returnSink()] = true;
+        M[Src][S.returnSink()] = true;
     };
     for (auto i : From.Args)
-      flowTo(i);
+      row(i);
     if (!From.Globals.empty())
-      flowTo(S.globalsSource());
-    S.Unknown |= From.Unknown;
+      row(S.globalsSource());
+    S.Unknown |= From.Unknown || To.Unknown;
+  }
+  void flow(const Roots &From, const Roots &To, bool ToReturn = false) {
+    relate(S.Flow, From, To, ToReturn);
+  }
+
+  /// A pointer with roots R becomes reachable from To: the memory it
+  /// reaches now aliases To's, and the data in its local objects flows
+  /// there.
+  void publish(const Roots &R, const Roots &To, bool ToReturn = false) {
+    auto D = P.deep(R);
+    relate(S.PointsTo, D.withoutLocals(), To, ToReturn);
+    flow(stored(D), To, ToReturn);
   }
 
   /// A global that holds no floating-point data: its "enzyme_type" (e.g.
@@ -386,17 +664,11 @@ private:
     S.GlobalsWriteFP.insert(R.Globals.begin(), R.Globals.end());
     S.Unknown |= R.Unknown;
   }
-  void escape(const Roots &R) {
-    for (auto i : R.Args)
-      S.Args[i].Escape = true;
-    if (!R.Globals.empty())
-      S.Unknown = true;
-  }
 
   void visit(Instruction &I) {
     if (auto *L = dyn_cast<LoadInst>(&I)) {
       if (carriesFloat(L->getType()))
-        read(roots(L->getPointerOperand()));
+        read(P.roots(L->getPointerOperand()).withoutLocals());
       return;
     }
     if (auto *St = dyn_cast<StoreInst>(&I)) {
@@ -404,24 +676,27 @@ private:
       bool FP = carriesFloat(V->getType());
       if (auto *BC = dyn_cast<BitCastInst>(V))
         FP |= carriesFloat(BC->getSrcTy());
-      auto Dest = roots(St->getPointerOperand());
+      auto Dest = P.roots(St->getPointerOperand()).withoutLocals();
       if (FP) {
         write(Dest);
         flow(sources(V), Dest);
-      } else if (V->getType()->isPointerTy() && Dest.nonLocal())
-        escape(roots(V));
+      }
+      if (hasPointer(V->getType()) && Dest.nonLocal())
+        publish(P.roots(V), Dest);
       return;
     }
     if (auto *MT = dyn_cast<MemTransferInst>(&I)) {
-      auto Dest = typed(roots(MT->getDest()));
-      auto Src = typed(roots(MT->getSource()));
+      auto Src = P.roots(MT->getSource());
+      auto Dest = typed(P.roots(MT->getDest()).withoutLocals());
       write(Dest);
-      read(Src);
-      flow(Src, Dest);
+      read(typed(Src.withoutLocals()));
+      flow(typed(stored(Src)), Dest);
+      if (Dest.nonLocal())
+        publish(P.loaded(Src), Dest);
       return;
     }
     if (auto *MS = dyn_cast<MemSetInst>(&I)) {
-      write(typed(roots(MS->getDest())));
+      write(typed(P.roots(MS->getDest()).withoutLocals()));
       return;
     }
     if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I)) {
@@ -430,10 +705,9 @@ private:
     }
     if (auto *R = dyn_cast<ReturnInst>(&I)) {
       if (auto *V = R->getReturnValue()) {
-        if (V->getType()->isPointerTy())
-          escape(roots(V));
-        else
-          flow(sources(V), Roots(), /*ToReturn*/ true);
+        flow(sources(V), Roots(), /*ToReturn*/ true);
+        if (hasPointer(V->getType()))
+          publish(P.roots(V), Roots(), /*ToReturn*/ true);
       }
       return;
     }
@@ -470,7 +744,7 @@ private:
         if (!A->getType()->isPointerTy() || NoFP)
           continue;
         // the runtime's C signatures are untyped: declared types decide
-        auto R = typed(roots(A));
+        auto R = typed(P.deep(P.roots(A)).withoutLocals());
         if (!Out)
           write(R);
         if (!In)
@@ -478,16 +752,31 @@ private:
       }
       return;
     }
+    // What the callee does with the memory it is given is composed from its
+    // own summary through the edges. What it does with data that has no
+    // root here (passed by value, or held in local objects) is not: that
+    // may reach anything the callee can write.
+    Roots Local, Sinks;
     for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
       Value *A = CB->getArgOperand(k);
-      if (!A->getType()->isPointerTy())
+      Local.merge(sources(A));
+      if (!hasPointer(A->getType()))
         continue;
-      auto R = roots(A);
+      auto R = P.deep(P.roots(A));
       S.Unknown |= R.Unknown;
       for (auto i : R.Args)
         S.Edges.insert({"a" + std::to_string(i), N.str(), k});
       for (auto &G : R.Globals)
         S.Edges.insert({"g" + G, N.str(), k});
+      Roots InLocals;
+      InLocals.Locals = R.Locals;
+      Local.merge(stored(InLocals));
+      if (!CB->onlyReadsMemory(k))
+        Sinks.merge(R.withoutLocals());
+    }
+    if (!CB->onlyReadsMemory()) {
+      Sinks.Globals.insert(AnyGlobal);
+      flow(Local, Sinks);
     }
   }
 };
@@ -498,7 +787,8 @@ private:
 /// points into may be written again afterwards (loops included).
 class WriteFacts {
 public:
-  WriteFacts(Function &F, EnzymeFunctionSummary &S) : F(F), S(S) {
+  WriteFacts(Function &F, EnzymeFunctionSummary &S, const Provenance &P)
+      : S(S), P(P) {
     for (auto &BB : F)
       for (auto &I : BB)
         Writes[&I] = writes(I);
@@ -540,7 +830,7 @@ public:
           Value *A = CB->getArgOperand(k);
           EnzymeCallArg Arg;
           if (A->getType()->isPointerTy()) {
-            auto Ks = keys(A);
+            auto Ks = keys(P.roots(A));
             Arg.Root = Ks.size() == 1 ? *Ks.begin() : "u";
             if (Arg.Root[0] == 'l')
               Arg.Root = "l";
@@ -553,79 +843,42 @@ public:
   }
 
 private:
-  Function &F;
   EnzymeFunctionSummary &S;
+  const Provenance &P;
   std::map<const Instruction *, std::set<std::string>> Writes;
   std::map<const BasicBlock *, SmallPtrSet<BasicBlock *, 8>> After;
-  std::map<const Value *, std::set<std::string>> Memo;
   std::map<const Value *, unsigned> LocalIds;
 
-  std::string local(const Value *V) {
-    auto Id = LocalIds.emplace(V, LocalIds.size()).first->second;
-    return "l" + std::to_string(Id);
-  }
-
-  /// Memory a pointer may point into: "a<i>" (reachable from argument i),
-  /// "g<name>", "l<n>" (a local object), "u" (unknown).
-  std::set<std::string> keys(const Value *V) {
-    auto found = Memo.find(V);
-    if (found != Memo.end())
-      return found->second;
-    Memo[V] = {};
+  /// Memory a pointer with roots R may point into: "a<i>" (reachable from
+  /// argument i), "g<name>", "l<n>" (a local object), "u" (unknown).
+  std::set<std::string> keys(const Roots &R) {
     std::set<std::string> K;
-    V = V->stripPointerCasts();
-    if (auto *GEP = dyn_cast<GEPOperator>(V))
-      K = keys(GEP->getPointerOperand());
-    else if (auto *A = dyn_cast<Argument>(V))
-      K.insert("a" + std::to_string(A->getArgNo()));
-    else if (auto *G = dyn_cast<GlobalVariable>(V))
-      K.insert("g" + G->getName().str());
-    else if (isa<AllocaInst>(V))
-      K.insert(local(V));
-    else if (isa<Constant>(V))
-      ;
-    else if (auto *L = dyn_cast<LoadInst>(V))
-      K = keys(L->getPointerOperand()); // dereferences collapsed
-    else if (auto *P = dyn_cast<PHINode>(V)) {
-      for (auto &In : P->incoming_values()) {
-        auto Ki = keys(In);
-        K.insert(Ki.begin(), Ki.end());
-      }
-    } else if (auto *Sel = dyn_cast<SelectInst>(V)) {
-      K = keys(Sel->getTrueValue());
-      auto Kf = keys(Sel->getFalseValue());
-      K.insert(Kf.begin(), Kf.end());
-    } else if (auto *CB = dyn_cast<CallBase>(V)) {
-      auto *Callee = calledFunction(*CB);
-      StringRef N = Callee ? Callee->getName() : "";
-      if (auto *Through = juliaPassThrough(*CB, N))
-        K = keys(Through);
-      // fresh memory, and the flang runtime's own handles (I/O cookies)
-      else if (Callee &&
-               (isAllocationName(N) || startsWith(N, "_Fortran")))
-        K.insert(local(V));
-      else
-        K.insert("u");
-    } else
+    for (auto i : R.Args)
+      K.insert("a" + std::to_string(i));
+    for (auto &G : R.Globals)
+      K.insert("g" + G);
+    for (auto *L : R.Locals)
+      K.insert("l" + std::to_string(
+                         LocalIds.emplace(L, LocalIds.size()).first->second));
+    if (R.Unknown)
       K.insert("u");
-    Memo[V] = K;
     return K;
   }
 
   std::set<std::string> writes(Instruction &I) {
     std::set<std::string> W;
-    auto add = [&](const Value *P) {
-      auto K = keys(P);
+    auto add = [&](const Roots &R) {
+      auto K = keys(R);
       if (K.count("u"))
         W.insert("*");
       W.insert(K.begin(), K.end());
     };
     if (auto *St = dyn_cast<StoreInst>(&I))
-      add(St->getPointerOperand());
+      add(P.roots(St->getPointerOperand()));
     else if (auto *MI = dyn_cast<MemIntrinsic>(&I))
-      add(MI->getDest());
+      add(P.roots(MI->getDest()));
     else if (isa<AtomicRMWInst>(&I) || isa<AtomicCmpXchgInst>(&I))
-      add(I.getOperand(0));
+      add(P.roots(I.getOperand(0)));
     else if (auto *CB = dyn_cast<CallBase>(&I)) {
       if (isa<IntrinsicInst>(&I) || !I.mayWriteToMemory())
         return W;
@@ -633,14 +886,14 @@ private:
       StringRef N = Callee ? Callee->getName() : "";
       if (!Callee)
         W.insert("*");
-      if (isJuliaMarker(N))
+      if (isJuliaMarker(N) || (isAllocationName(N) && N != "posix_memalign"))
         return W;
       bool outputIO = startsWith(N, "_FortranAio") && N.contains("Output");
       for (unsigned k = 0, e = CB->arg_size(); k < e; ++k) {
         Value *A = CB->getArgOperand(k);
         if (!A->getType()->isPointerTy() || outputIO || CB->onlyReadsMemory(k))
           continue;
-        add(A);
+        add(P.deep(P.roots(A)));
       }
       // what the callee writes beyond its pointer arguments (globals) is
       // composed by the thin-link step, which knows whether it has IR
@@ -761,17 +1014,17 @@ EnzymeFunctionSummary summarizeFunction(Function &F) {
   S.Inactive = F.hasFnAttribute("enzyme_inactive");
   S.NoFree = F.hasFnAttribute(Attribute::NoFree);
   S.NoEscapingAllocation = F.hasFnAttribute("enzyme_no_escaping_allocation");
-  ActivityFacts(F, S);
-  WriteFacts(F, S);
+  Provenance P(F);
+  ActivityFacts(F, S, P);
+  WriteFacts(F, S, P);
   return S;
 }
 
 json::Object EnzymeFunctionSummary::toJSON() const {
   json::Array JArgs, JWriteAny;
   for (auto &A : Args) {
-    JArgs.push_back(json::Object{{"read", A.ReadFP},
-                                 {"write", A.WriteFP},
-                                 {"escape", A.Escape}});
+    JArgs.push_back(json::Object{
+        {"read", A.ReadFP}, {"write", A.WriteFP}, {"escape", A.Escape}});
     JWriteAny.push_back(A.WriteAny);
   }
   // {source: [sinks...]} for the sources whose data reaches some sink;
@@ -787,15 +1040,18 @@ json::Object EnzymeFunctionSummary::toJSON() const {
       return std::string("g");
     return "a" + std::to_string(t);
   };
-  json::Object JFlow;
-  for (unsigned s = 0; s < Flow.size(); ++s) {
-    json::Array Sinks;
-    for (unsigned t = 0; t < Flow[s].size(); ++t)
-      if (Flow[s][t])
-        Sinks.push_back(sinkName(t));
-    if (!Sinks.empty())
-      JFlow[sourceName(s)] = std::move(Sinks);
-  }
+  auto matrix = [&](const std::vector<std::vector<bool>> &M) {
+    json::Object J;
+    for (unsigned s = 0; s < M.size(); ++s) {
+      json::Array Sinks;
+      for (unsigned t = 0; t < M[s].size(); ++t)
+        if (M[s][t])
+          Sinks.push_back(sinkName(t));
+      if (!Sinks.empty())
+        J[sourceName(s)] = std::move(Sinks);
+    }
+    return J;
+  };
   json::Array JEdges;
   for (auto &[Root, Callee, Idx] : Edges)
     JEdges.push_back(json::Array{Root, Callee, Idx});
@@ -819,7 +1075,8 @@ json::Object EnzymeFunctionSummary::toJSON() const {
   json::Object Activity{{"args", std::move(JArgs)},
                         {"globals_read", toArray(GlobalsReadFP)},
                         {"globals_write", toArray(GlobalsWriteFP)},
-                        {"flow", std::move(JFlow)},
+                        {"flow", matrix(Flow)},
+                        {"pts", matrix(PointsTo)},
                         {"edges", std::move(JEdges)},
                         {"unknown", Unknown},
                         {"returns_fp", ReturnsFP},
@@ -849,6 +1106,16 @@ json::Object EnzymeFunctionSummary::toJSON() const {
 }
 
 llvm::AnalysisKey EnzymeFunctionSummaryAnalysis::Key;
+
+PreservedAnalyses
+EnzymeFunctionSummaryPrinterPass::run(Function &F,
+                                      FunctionAnalysisManager &FAM) {
+  if (!F.isDeclaration())
+    OS << "enzyme-function-summary " << F.getName() << ": "
+       << json::Value(FAM.getResult<EnzymeFunctionSummaryAnalysis>(F).toJSON())
+       << "\n";
+  return PreservedAnalyses::all();
+}
 
 EnzymeFunctionSummary
 EnzymeFunctionSummaryAnalysis::run(Function &F, FunctionAnalysisManager &) {

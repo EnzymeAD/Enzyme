@@ -299,6 +299,9 @@ uint32_t EnzymeFunctionSummaryFlags(EnzymeFunctionSummaryRef S);
 /// (memory of argument t, the return value for t = n, any global for
 /// t = n + 1).
 void EnzymeFunctionSummaryFlow(EnzymeFunctionSummaryRef S, uint8_t *out);
+/// The points-to matrix, laid out as the flow matrix: out[s * (n + 2) + t]
+/// is 1 if memory reachable from source s may become reachable from sink t.
+void EnzymeFunctionSummaryPointsTo(EnzymeFunctionSummaryRef S, uint8_t *out);
 size_t EnzymeFunctionSummaryNumGlobals(EnzymeFunctionSummaryRef S,
                                        EnzymeSummaryGlobals kind);
 /// Name of the i-th global of a set, owned by the summary.

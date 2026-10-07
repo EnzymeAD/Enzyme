@@ -50,7 +50,8 @@ struct EnzymeArgEffects {
   bool WriteFP = false;
   /// May write data of any type to it.
   bool WriteAny = false;
-  /// The pointer may be stored to non-local memory or returned.
+  /// Memory reachable from it may become reachable from another argument's
+  /// memory, the return value or a global (a row of PointsTo).
   bool Escape = false;
 };
 
@@ -85,9 +86,18 @@ struct EnzymeFunctionSummary {
   ///           0 <= i < n, then any global (index n).
   ///  Sinks:   memory reachable from argument i for 0 <= i < n, then the
   ///           return value (index n), then any global (index n + 1).
-  /// What callees do with data passed to them is not included: that is
-  /// what Edges is for.
+  /// What callees do with memory passed to them is not included: that is
+  /// what Edges is for. Data without a root in the caller (passed by value,
+  /// or held in local objects) that is given to a callee is assumed to reach
+  /// everything the callee may write.
+  /// Matches ActivityAnalysis.jl's ActivityDescriptor.matrix (rows and
+  /// columns below n, and the return column) and escape_data (the globals
+  /// column).
   std::vector<std::vector<bool>> Flow;
+  /// PointsTo[s][t]: memory reachable from source s may become reachable
+  /// from sink t (a pointer to it is stored there, or returned). Same shape
+  /// as Flow; matches ActivityDescriptor.pts_matrix.
+  std::vector<std::vector<bool>> PointsTo;
   /// The function has effects the summary cannot describe (indirect calls,
   /// atomics, pointers of unknown origin), so treat it as touching anything.
   bool Unknown = false;
@@ -97,7 +107,9 @@ struct EnzymeFunctionSummary {
   bool ReturnsFP = false;
   bool ReturnsPointer = false;
   /// (root, callee, parameter): memory rooted at root ("a<i>" or
-  /// "g<name>") is passed to callee as that parameter.
+  /// "g<name>") is reachable from what callee is given as that parameter.
+  /// A global named "*" is one that cannot be named (a constant inttoptr
+  /// address, as Julia emits for its objects) or memory a callee returned.
   std::set<std::tuple<std::string, std::string, unsigned>> Edges;
   /// Per call site, what each pointer argument points into and whether it
   /// may be overwritten after the call.
@@ -149,6 +161,19 @@ public:
 /// The facts about a whole module a thin-link step needs: every function's
 /// summary, the __enzyme_* calls and registrations, and the globals.
 llvm::json::Object summarizeModule(llvm::Module &M);
+
+/// Prints the summary of each function with a body as one line of JSON:
+/// -passes='print<enzyme-function-summary>'.
+class EnzymeFunctionSummaryPrinterPass
+    : public llvm::PassInfoMixin<EnzymeFunctionSummaryPrinterPass> {
+  llvm::raw_ostream &OS;
+
+public:
+  explicit EnzymeFunctionSummaryPrinterPass(llvm::raw_ostream &OS) : OS(OS) {}
+  llvm::PreservedAnalyses run(llvm::Function &F,
+                              llvm::FunctionAnalysisManager &FAM);
+  static bool isRequired() { return true; }
+};
 
 /// The enzyme-summary pass: writes summarizeModule as JSON to
 /// -enzyme-summary-out (stdout if empty).
