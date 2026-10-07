@@ -147,6 +147,11 @@ docker run -d -p 10240:10240 -v <dir>:/opt/compiler-explorer/poseidon:ro poseido
 The explorer compiles for a
 generic x86-64 CPU with a cost model measured for one, so the CPU marker form
 `__poseidon_fp_optimize` is what it can show; GPU kernels need a local build.
+Compile with `-O1` or higher. Herbie results are kept in `POSEIDON_CE_CACHE`
+(default `/tmp/poseidon-ce-cache`) and reused by later compiles; `package.sh`
+ships the examples' results so their first compile does not search.
+`test-explorer.py --url http://localhost:10240` checks a running explorer
+through its REST API.
 
 ## Artifacts
 
