@@ -39,6 +39,7 @@
 #include "clang/Sema/SemaDiagnostic.h"
 
 #include "../Utils.h"
+#include "enzyme/checkpoint_schedule.h"
 
 #include "bundled_includes.h"
 
@@ -499,7 +500,7 @@ struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
-    uint64_t Mode = 1; // default: regular
+    uint64_t Mode = ENZYME_CKPT_SCHEDULE_PERIODIC; // the default
     if (NumArgs >= 1) {
       auto *Arg0 = Attr.getArgAsExpr(0);
       StringLiteral *Literal =
@@ -508,20 +509,26 @@ struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
         unsigned ID = S.getDiagnostics().getCustomDiagID(
             DiagnosticsEngine::Error,
             "first argument to 'enzyme_checkpointing_enable' must be a "
-            "string literal, either \"binomial\" or \"regular\"");
+            "string literal: \"binomial\", \"revolve\", \"periodic\" or "
+            "\"store_all\"");
         S.Diag(Attr.getLoc(), ID);
         return AttributeNotApplied;
       }
+      // The schedules of enzyme/checkpoint_schedule.h.
       StringRef Mode0 = Literal->getString();
       if (Mode0 == "binomial") {
-        Mode = 2;
-      } else if (Mode0 == "regular") {
-        Mode = 1;
+        Mode = ENZYME_CKPT_SCHEDULE_BINOMIAL;
+      } else if (Mode0 == "revolve") {
+        Mode = ENZYME_CKPT_SCHEDULE_REVOLVE;
+      } else if (Mode0 == "periodic" || Mode0 == "regular") {
+        Mode = ENZYME_CKPT_SCHEDULE_PERIODIC;
+      } else if (Mode0 == "store_all") {
+        Mode = ENZYME_CKPT_SCHEDULE_STORE_ALL;
       } else {
         unsigned ID = S.getDiagnostics().getCustomDiagID(
             DiagnosticsEngine::Error,
-            "unknown checkpointing mode '%0', expected \"binomial\" or "
-            "\"regular\"");
+            "unknown checkpointing mode '%0', expected \"binomial\", "
+            "\"revolve\", \"periodic\" or \"store_all\"");
         S.Diag(Attr.getLoc(), ID) << Mode0;
         return AttributeNotApplied;
       }

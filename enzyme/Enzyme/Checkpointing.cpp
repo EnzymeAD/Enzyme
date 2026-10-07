@@ -34,11 +34,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "Checkpointing.h"
+#include "enzyme/checkpoint_schedule.h"
 
 #include <set>
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -421,13 +423,15 @@ static bool lowerMarker(CallInst *CI, bool isWhile) {
 // Loop annotations
 //===----------------------------------------------------------------------===//
 //
-// `[[enzyme::checkpointing_enable("binomial" or "regular", count)]]` on a for
-// statement (the Clang plugin, as in Reactant) calls
-// `__enzyme_set_checkpointing(mode, count)` at the top of the loop body: mode
-// 1 is periodic, 2 binomial, and count the budget of snapshots, all ones if
-// it is not given. These are Enzyme-MLIR's enzyme.enable_checkpointing,
-// enzyme.binomial_checkpointing and enzyme.checkpoint_period, which Enzyme-JAX
-// raises the call into.
+// `[[enzyme::checkpointing_enable("binomial", count)]]` on a for statement
+// (the Clang plugin, as in Reactant) calls `__enzyme_set_checkpointing(mode,
+// count)` at the top of the loop body: mode is a schedule of
+// enzyme/checkpoint_schedule.h (1 periodic, 2 Revolve, 3 store all, 4
+// binomial) and count its budget, all ones if it is not given, for the
+// schedule's default. Periodic and binomial are Enzyme-MLIR's
+// enzyme.enable_checkpointing, enzyme.binomial_checkpointing and
+// enzyme.checkpoint_period, which Enzyme-JAX raises the call into, and take
+// the same steps.
 //
 // Here the loop is outlined, one iteration a step, into a checkpointed loop
 // run by the reference Revolve or Periodic scheme of enzyme/checkpoint.h:
@@ -437,6 +441,21 @@ static bool lowerMarker(CallInst *CI, bool isWhile) {
 // for any checkpointed loop), those stack slots, and the heap blocks the loop
 // writes whose size is known before it. A loop that writes memory of unknown
 // extent is an error: give the regions with __enzyme_checkpoint_for.
+
+/// The schedule of enzyme/checkpoint_schedule.h a loop annotation names, or
+/// -1: "binomial" is Enzyme-MLIR's binomial schedule (its
+/// enzyme.binomial_checkpointing), "revolve" Revolve, "regular" an older
+/// name of "periodic".
+static int64_t getScheduleTag(StringRef name) {
+  return StringSwitch<int64_t>(name)
+      .Case("none", ENZYME_CKPT_SCHEDULE_NONE)
+      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
+      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
+      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
+      .Default(-1);
+}
 
 static bool isLoopAnnotation(const Function *F) {
   return F && F->getName().contains("__enzyme_set_checkpointing");
@@ -848,7 +867,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     if (auto *C = dyn_cast<ConstantInt>(marker->getArgOperand(1)))
       if (!C->isMinusOne())
         count = C->getZExtValue();
-  if (mode > 2)
+  if (mode > ENZYME_CKPT_SCHEDULE_BINOMIAL)
     return failEarly("unknown checkpointing mode " + Twine(mode));
 
   // The loop's variables as values, where they can be.
@@ -906,7 +925,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       BasicBlock *BB = todo.pop_back_val();
       Instruction *T = BB->getTerminator();
       if (isa<ReturnInst>(T) || isa<ResumeInst>(T) ||
-          (T->getNumSuccessors() && !isa<BranchInst>(T) && !isa<SwitchInst>(T)))
+          (T->getNumSuccessors() && !isAnyBranch(T) && !isa<SwitchInst>(T)))
         throws = false;
       for (BasicBlock *S : successors(BB)) {
         if (L->contains(S))
@@ -1045,11 +1064,12 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
           if (!slot) {
             slot = new AllocaInst(V->getType(), DL.getAllocaAddrSpace(),
                                   V->getName() + ".byref", allocaIP);
-            new StoreInst(V, slot, IP);
+            IRBuilder<>(IP).CreateStore(V, slot);
           }
           Instruction *at =
               Phi ? Phi->getIncomingBlock(U)->getTerminator() : &I;
-          U.set(new LoadInst(V->getType(), slot, V->getName() + ".ld", at));
+          U.set(IRBuilder<>(at).CreateLoad(V->getType(), slot,
+                                           V->getName() + ".ld"));
         }
   }
 
@@ -1313,7 +1333,11 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
   // __enzyme_checkpoint_builtin(mode) from the runtime.
   IRBuilder<> B(IP);
   // (In C++ the header's tables have internal names, mangled.)
-  StringRef table = mode == 2 ? "EnzymeCkptRevolve" : "EnzymeCkptPeriodic";
+  StringRef table =
+      mode == ENZYME_CKPT_SCHEDULE_REVOLVE     ? "EnzymeCkptRevolve"
+      : mode == ENZYME_CKPT_SCHEDULE_STORE_ALL ? "EnzymeCkptStoreAll"
+      : mode == ENZYME_CKPT_SCHEDULE_BINOMIAL  ? "EnzymeCkptBinomial"
+                                               : "EnzymeCkptPeriodic";
   Value *vt = nullptr;
   for (GlobalVariable &G : M.globals())
     if (G.getName() == table ||
@@ -1338,22 +1362,12 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
     call->setMetadata("enzyme_inactive", MDNode::get(Ctx, {}));
     vt = call;
   }
-  // EnzymeCkptConfig: the budget, by default the square root of the number
-  // of steps, as Enzyme-MLIR's periodic default.
+  // EnzymeCkptConfig: the budget, or 0 for the schedule's default
+  // (enzyme/checkpoint_schedule.h), which Enzyme-MLIR's takes too.
   auto *CfgTy = StructType::get(Ctx, {I64, I32, Ptr, I64, Ptr});
   IRBuilder<> EB(&*allocaIP);
   auto *cfg = EB.CreateAlloca(CfgTy, nullptr, "ckpt.config");
-  Value *budget;
-  if (count)
-    budget = ConstantInt::get(I64, *count);
-  else {
-    Value *root = B.CreateFPToUI(
-        B.CreateUnaryIntrinsic(Intrinsic::sqrt,
-                               B.CreateUIToFP(nsteps, B.getDoubleTy())),
-        I64);
-    budget = B.CreateSelect(B.CreateICmpULT(root, ConstantInt::get(I64, 1)),
-                            ConstantInt::get(I64, 1), root);
-  }
+  Value *budget = ConstantInt::get(I64, count ? *count : 0);
   B.CreateStore(budget, B.CreateStructGEP(CfgTy, cfg, 0));
   B.CreateStore(ConstantInt::get(I32, EnzymeCheckpointLoopVerbose),
                 B.CreateStructGEP(CfgTy, cfg, 1));
@@ -1387,7 +1401,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
 
   // The loop is now the call.
   IP->eraseFromParent();
-  BranchInst::Create(E, P);
+  IRBuilder<>(P).CreateBr(E);
   SmallVector<BasicBlock *, 8> dead;
   for (BasicBlock *BB : blocks)
     if (!shared.count(BB))
@@ -1465,16 +1479,11 @@ static bool markersFromLoopMetadata(Function &F) {
       const MDOperand &op = N->getOperand(1);
       if (auto *S = dyn_cast_or_null<MDString>(op)) {
         StringRef name = S->getString();
-        if (name == "revolve" || name == "binomial")
-          mode = 2;
-        else if (name == "periodic" || name == "regular")
-          mode = 1;
-        else if (name == "none")
-          mode = 0;
-        else
+        mode = getScheduleTag(name);
+        if (mode < 0)
           fail("unknown checkpointing mode '" + name +
                "', expected \"revolve\", \"binomial\", \"periodic\", "
-               "\"regular\" or \"none\"");
+               "\"store_all\" or \"none\"");
       } else if (auto *C = mdconst::dyn_extract_or_null<ConstantInt>(op)) {
         mode = C->getSExtValue();
       } else {

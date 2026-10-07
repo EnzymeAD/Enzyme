@@ -40,6 +40,8 @@ add_public_tablegen_target(BlasTAIncGen)
 add_public_tablegen_target(BlasDiffUseIncGen)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
+# enzyme/checkpoint_schedule.h, shared with Enzyme-MLIR's checkpointing.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 
 set(LLVM_LINK_COMPONENTS Demangle)
 

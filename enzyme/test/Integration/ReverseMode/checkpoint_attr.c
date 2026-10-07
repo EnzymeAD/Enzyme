@@ -5,10 +5,10 @@
 // RUN: if [ %llvmver -ge 17 ]; then %clang -x c++ -std=c++17 -DCXX -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 
 // A loop annotated for checkpointing, as in Enzyme-MLIR and Reactant:
-// [[enzyme_checkpointing_enable("binomial" or "regular", count)]] on the for
-// statement. Its state is a global, a malloc'ed array, a local array and a
-// scalar carried from one iteration to the next. The gradient and the value
-// must be those of the same loop without the annotation, for every mode,
+// [[enzyme_checkpointing_enable("binomial", "revolve" or "regular", count)]] on
+// the for statement. Its state is a global, a malloc'ed array, a local array
+// and a scalar carried from one iteration to the next. The gradient and the
+// value must be those of the same loop without the annotation, for every mode,
 // including the default (periodic, with the square root of the number of
 // steps as the budget). The loop of `hinted` writes through a pointer
 // argument, whose extent __enzyme_ptr_size_hint gives, and is annotated with
@@ -104,6 +104,7 @@ __attribute__((noinline)) double plain_hinted(const double *x, long n) {
   return r;
 }
 RUN(binomial, CKPT("binomial", 2))
+RUN(revolve, CKPT("revolve", 2))
 RUN(regular, CKPT("regular", 3))
 RUN(dflt, CKPT0)
 
@@ -115,6 +116,7 @@ RUN(dflt, CKPT0)
   }
 GRAD(plain)
 GRAD(binomial)
+GRAD(revolve)
 GRAD(regular)
 GRAD(dflt)
 GRAD(hinted)
@@ -124,9 +126,9 @@ typedef void (*gfn)(long, double *);
 
 int main(void) {
   long steps[] = {0, 1, 2, 7, 20};
-  fn fs[] = {binomial, regular, dflt};
-  gfn gs[] = {grad_binomial, grad_regular, grad_dflt};
-  const char *names[] = {"binomial", "regular", "default"};
+  fn fs[] = {binomial, revolve, regular, dflt};
+  gfn gs[] = {grad_binomial, grad_revolve, grad_regular, grad_dflt};
+  const char *names[] = {"binomial", "revolve", "regular", "default"};
   int failures = 0;
   for (unsigned a = 0; a < 5; a++) {
     double x[N] = {0.3, 0.7, 1.1, 1.5};
@@ -148,7 +150,7 @@ int main(void) {
     double want[N], got[N];
     double x[N] = {0.3, 0.7, 1.1, 1.5};
     grad_plain(steps[a], want);
-    for (unsigned s = 0; s < 3; s++) {
+    for (unsigned s = 0; s < 4; s++) {
       if (fs[s](x, steps[a]) != plain(x, steps[a])) {
         printf("%s n=%ld: primal differs\n", names[s], steps[a]);
         failures++;
