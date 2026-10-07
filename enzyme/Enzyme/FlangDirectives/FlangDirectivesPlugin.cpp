@@ -74,6 +74,16 @@ static void registerEnzymeDirectives() {
         PluginDirectiveArg{"max_iters", PluginDirectiveArgKind::Integer},
         procArg("control")},
        /*minPositional=*/1});
+  // In front of a DO loop: the loop is checkpointed with a schedule of
+  // enzyme/checkpoint_schedule.h (__enzyme_set_checkpointing), its
+  // variables added to what its snapshots hold.
+  registerPluginDirective(
+      {"enzyme",
+       "checkpoint",
+       PluginDirectiveSubject::Loop,
+       {PluginDirectiveArg{"schedule", PluginDirectiveArgKind::String},
+        PluginDirectiveArg{"budget", PluginDirectiveArgKind::Integer}},
+       /*minPositional=*/0});
   // `!$enzyme ...` is the same as `!DIR$ ENZYME ...`, and a comment to
   // compilers without this plugin, as Tapenade's `!$AD` is.
   registerPluginDirectiveSentinel("enzyme");
