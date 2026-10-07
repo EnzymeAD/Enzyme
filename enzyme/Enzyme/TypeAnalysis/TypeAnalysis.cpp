@@ -54,9 +54,9 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "../EnzymeLogic.h"
+#include "../FlangRuntime.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
-#include "../FlangRuntime.h"
 
 #include "../FunctionUtils.h"
 #include "../LibraryFuncs.h"
