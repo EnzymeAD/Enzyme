@@ -26,7 +26,8 @@ add_llvm_library(
   FortranDirectives.cpp FIRTypeAnnotations.cpp DISABLE_LLVM_LINK_LLVM_DYLIB)
 target_include_directories(
   FlangEnzymeDirectives-${LLVM_VERSION_MAJOR}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${MLIR_INCLUDE_DIRS} ${FLANG_INCLUDE_DIRS})
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+          ${MLIR_INCLUDE_DIRS} ${FLANG_INCLUDE_DIRS})
 # MLIR, FIR and flang symbols resolve from the host `flang -fc1` at load.
 target_link_options(
   FlangEnzymeDirectives-${LLVM_VERSION_MAJOR}
