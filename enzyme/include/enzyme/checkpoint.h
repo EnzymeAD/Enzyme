@@ -59,6 +59,8 @@
  * `enzyme_scheme, &EnzymeCkptRevolve, &config`:
  *
  *   EnzymeCkptRevolve   binomial checkpointing, config.snapshots slots
+ *   EnzymeCkptBinomial  Enzyme-MLIR's binomial schedule, config.snapshots
+ *                       slots
  *   EnzymeCkptPeriodic  config.snapshots segments; the steps of the segment
  *                       being reversed are all stored
  *   EnzymeCkptStoreAll  a snapshot before every step (periodic with one
@@ -70,6 +72,7 @@
 #ifndef ENZYME_CHECKPOINT_H
 #define ENZYME_CHECKPOINT_H
 
+#include "checkpoint_schedule.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -82,17 +85,7 @@ extern "C" {
 
 #define ENZYME_CKPT_ABI_VERSION 1
 
-/* Values match Checkpointing.jl's ActionFlag. */
-enum {
-  ENZYME_CKPT_NONE = 0,
-  ENZYME_CKPT_STORE = 1,
-  ENZYME_CKPT_RESTORE = 2,
-  ENZYME_CKPT_FORWARD = 3,
-  ENZYME_CKPT_FIRSTUTURN = 4,
-  ENZYME_CKPT_UTURN = 5,
-  ENZYME_CKPT_ERROR = 6,
-  ENZYME_CKPT_DONE = 7
-};
+/* The action flags are in checkpoint_schedule.h. */
 
 /* Same layout as Checkpointing.jl's Action. */
 typedef struct EnzymeCkptAction {
@@ -196,7 +189,8 @@ typedef struct EnzymeCkptStats {
 } EnzymeCkptStats;
 
 typedef struct EnzymeCkptConfig {
-  /* Revolve: number of snapshot slots. Periodic: number of segments. */
+  /* Revolve, Binomial: number of snapshot slots. Periodic: number of
+   * segments. 0 or less: the default (see checkpoint_schedule.h). */
   int64_t snapshots;
   /* 1 prints a summary, 2 also prints every action to stderr. */
   int verbose;
@@ -510,9 +504,7 @@ static inline void *enzyme_ckpt_revolve_init(void *data, int64_t nsteps,
   s->config = config;
   s->steps = nsteps;
   s->tail = 1;
-  s->acp = config->snapshots < nsteps ? config->snapshots : nsteps;
-  if (s->acp < 1)
-    s->acp = 1;
+  s->acp = enzyme_ckpt_binomial_slots(nsteps, config->snapshots);
   s->cstart = 0;
   s->cend = nsteps;
   s->rwcp = -1;
@@ -652,6 +644,152 @@ static const EnzymeCheckpointScheme EnzymeCkptRevolve = {
     NULL,
     NULL};
 
+/* --- Binomial: Enzyme-MLIR's binomial schedule. ---
+ *
+ * The schedule of cacheBinomial and reverseBinomial in Enzyme-MLIR's
+ * LoopCheckpointing.h, as actions. Slots form a stack. The forward sweep
+ * stores slot k at step pos[k] and advances
+ * enzyme_ckpt_binomial_progress(steps left, slots left) steps, which sum to
+ * the number of steps. To reverse step cur - 1 it restores the top slot and
+ * replays to cur - 1, storing a slot at each step it starts an advance from,
+ * the same way; the slots it stored are the stack from then on, and a slot
+ * at cur - 1 itself is popped. The driver's first turn runs the last step
+ * from the state before it, so the forward sweep stops a step short of the
+ * end; reversing the last step replays to there, as Enzyme-MLIR does. The
+ * actions are made one turn at a time. */
+
+typedef struct enzyme_ckpt_binomial_state {
+  enzyme_ckpt_store store;
+  const EnzymeCkptConfig *config;
+  int64_t steps, slots, sp, cur;
+  int64_t *pos;
+  EnzymeCkptAction *queue;
+  int64_t qlen, qpos;
+} enzyme_ckpt_binomial_state;
+
+static inline void enzyme_ckpt_binomial_push(enzyme_ckpt_binomial_state *b,
+                                             int32_t flag, int64_t iteration,
+                                             int64_t start, int64_t cpnum) {
+  EnzymeCkptAction *a = &b->queue[b->qlen++];
+  a->flag = flag;
+  a->iteration = iteration;
+  a->startiteration = start;
+  a->cpnum = cpnum;
+}
+
+/* Queue the reversal of step cur - 1. */
+static inline void enzyme_ckpt_binomial_turn(enzyme_ckpt_binomial_state *b,
+                                             int first) {
+  int64_t cur = b->cur, capo = b->sp - 1, ck = b->pos[capo];
+  int64_t q = ck, a = capo;
+  enzyme_ckpt_binomial_push(b, ENZYME_CKPT_RESTORE, ck, ck, capo);
+  while (q + 1 < cur) {
+    int64_t rem = cur - q, left = b->slots - a, np, ub;
+    /* The top slot already holds this state. */
+    if (a != capo)
+      enzyme_ckpt_binomial_push(b, ENZYME_CKPT_STORE, q, q, a);
+    b->pos[a] = q;
+    np = q + enzyme_ckpt_binomial_progress(rem, left < rem ? left : rem);
+    ub = np == cur ? cur - 1 : np;
+    if (ub > q)
+      enzyme_ckpt_binomial_push(b, ENZYME_CKPT_FORWARD, ub, q, a);
+    q = np;
+    a++;
+  }
+  b->sp = a == capo ? capo : a;
+  enzyme_ckpt_binomial_push(
+      b, first ? ENZYME_CKPT_FIRSTUTURN : ENZYME_CKPT_UTURN, cur, cur - 1, 0);
+  b->cur--;
+}
+
+static inline void *enzyme_ckpt_binomial_init(void *data, int64_t nsteps,
+                                              uint64_t bytes) {
+  const EnzymeCkptConfig *config = (const EnzymeCkptConfig *)data;
+  enzyme_ckpt_binomial_state *b;
+  int64_t k, q = 0;
+  if (nsteps < 0)
+    enzyme_ckpt_fail("the binomial schedule needs the number of steps");
+  b = (enzyme_ckpt_binomial_state *)calloc(1, sizeof(*b));
+  enzyme_ckpt_store_init(&b->store, config, bytes);
+  b->config = config;
+  b->steps = nsteps;
+  b->slots = enzyme_ckpt_binomial_slots(nsteps, config->snapshots);
+  b->pos = (int64_t *)calloc(b->slots, sizeof(int64_t));
+  /* The forward sweep, then the first turn. */
+  b->queue =
+      (EnzymeCkptAction *)calloc(4 * b->slots + 8, sizeof(EnzymeCkptAction));
+  if (nsteps == 0) {
+    enzyme_ckpt_binomial_push(b, ENZYME_CKPT_DONE, 0, 0, -1);
+    return b;
+  }
+  for (k = 0; k < b->slots && q < nsteps; k++) {
+    int64_t rem = nsteps - q, left = b->slots - k, np, ub;
+    enzyme_ckpt_binomial_push(b, ENZYME_CKPT_STORE, q, q, k);
+    b->pos[k] = q;
+    np = q + enzyme_ckpt_binomial_progress(rem, left < rem ? left : rem);
+    ub = np == nsteps ? nsteps - 1 : np;
+    if (ub > q)
+      enzyme_ckpt_binomial_push(b, ENZYME_CKPT_FORWARD, ub, q, k);
+    q = np;
+  }
+  b->sp = k;
+  b->cur = nsteps;
+  enzyme_ckpt_binomial_turn(b, 1);
+  return b;
+}
+
+static inline void enzyme_ckpt_binomial_next(void *state,
+                                             EnzymeCkptAction *out) {
+  enzyme_ckpt_binomial_state *b = (enzyme_ckpt_binomial_state *)state;
+  if (b->qpos == b->qlen) {
+    b->qlen = b->qpos = 0;
+    if (b->cur == 0)
+      enzyme_ckpt_binomial_push(b, ENZYME_CKPT_DONE, 0, 0, -1);
+    else
+      enzyme_ckpt_binomial_turn(b, 0);
+  }
+  *out = b->queue[b->qpos++];
+  enzyme_ckpt_trace(b->config, &b->store, out);
+}
+
+static inline void enzyme_ckpt_binomial_store(void *state, int64_t slot,
+                                              int64_t step,
+                                              const EnzymeCkptRegion *regions,
+                                              uint64_t nregions) {
+  (void)step;
+  enzyme_ckpt_store_put(&((enzyme_ckpt_binomial_state *)state)->store, slot,
+                        regions, nregions);
+}
+
+static inline void enzyme_ckpt_binomial_restore(void *state, int64_t slot,
+                                                int64_t step,
+                                                const EnzymeCkptRegion *regions,
+                                                uint64_t nregions) {
+  (void)step;
+  enzyme_ckpt_store_get(&((enzyme_ckpt_binomial_state *)state)->store, slot,
+                        regions, nregions);
+}
+
+static inline void enzyme_ckpt_binomial_finalize(void *state) {
+  enzyme_ckpt_binomial_state *b = (enzyme_ckpt_binomial_state *)state;
+  enzyme_ckpt_finish(b->config, &b->store);
+  free(b->pos);
+  free(b->queue);
+  free(b);
+}
+
+static const EnzymeCheckpointScheme EnzymeCkptBinomial = {
+    ENZYME_CKPT_ABI_VERSION,
+    enzyme_ckpt_binomial_init,
+    enzyme_ckpt_binomial_next,
+    enzyme_ckpt_binomial_store,
+    enzyme_ckpt_binomial_restore,
+    NULL,
+    enzyme_ckpt_binomial_finalize,
+    NULL,
+    NULL,
+    NULL};
+
 /* --- Periodic: config.snapshots segments. ---
  *
  * The forward sweep stores the start of every segment. Reversing a segment
@@ -664,6 +802,7 @@ typedef struct enzyme_ckpt_periodic_state {
   enzyme_ckpt_store store;
   const EnzymeCkptConfig *config;
   int64_t steps, segments;
+  EnzymeCkptPeriodicSplit split;
   EnzymeCkptAction *queue;
   int64_t qlen, qpos, qcap;
   int64_t segment; /* the segment whose actions are queued */
@@ -676,7 +815,7 @@ typedef struct enzyme_ckpt_periodic_state {
 
 static inline int64_t enzyme_ckpt_seg_start(enzyme_ckpt_periodic_state *p,
                                             int64_t k) {
-  return (k * p->steps) / p->segments;
+  return k >= p->segments ? p->steps : enzyme_ckpt_periodic_start(p->split, k);
 }
 
 static inline void enzyme_ckpt_push(enzyme_ckpt_periodic_state *p,
@@ -738,7 +877,9 @@ static inline void *enzyme_ckpt_periodic_init_k(const EnzymeCkptConfig *config,
   enzyme_ckpt_store_init(&p->store, config, bytes);
   p->config = config;
   p->steps = nsteps;
-  p->segments = segments < nsteps ? segments : nsteps;
+  /* The segments Enzyme-MLIR's periodic checkpointing makes. */
+  p->split = enzyme_ckpt_periodic_split(nsteps, segments);
+  p->segments = enzyme_ckpt_periodic_segments(p->split);
   if (p->segments < 1)
     p->segments = 1;
   if (nsteps == 0) {
@@ -882,7 +1023,16 @@ static const EnzymeCheckpointScheme EnzymeCkptStoreAll = {
  * not include this header gets it from one that does. */
 __attribute__((weak, used)) const EnzymeCheckpointScheme *
 __enzyme_checkpoint_builtin(int64_t mode) {
-  return mode == 2 ? &EnzymeCkptRevolve : &EnzymeCkptPeriodic;
+  switch (mode) {
+  case ENZYME_CKPT_SCHEDULE_REVOLVE:
+    return &EnzymeCkptRevolve;
+  case ENZYME_CKPT_SCHEDULE_STORE_ALL:
+    return &EnzymeCkptStoreAll;
+  case ENZYME_CKPT_SCHEDULE_BINOMIAL:
+    return &EnzymeCkptBinomial;
+  default:
+    return &EnzymeCkptPeriodic;
+  }
 }
 
 /* --- A schedule without a driver. ---
@@ -896,12 +1046,12 @@ __enzyme_checkpoint_builtin(int64_t mode) {
  *     ... __enzyme_ckpt_schedule_iteration(h), _start(h), _slot(h) ...
  *   __enzyme_ckpt_schedule_end(h);
  *
- * mode is 1 for EnzymeCkptPeriodic, 2 for EnzymeCkptRevolve and 3 for
- * EnzymeCkptStoreAll; budget is config.snapshots, or, if it is not
- * positive, the square root of nsteps (at least 1), the default of an
- * annotated loop without a count. The scheme's store and restore are not
- * called: at STORE the caller saves the state into slot _slot(h), at RESTORE
- * it loads it back. The slots the actions name are 0 to
+ * mode is a schedule of checkpoint_schedule.h: 1 for EnzymeCkptPeriodic, 2
+ * for EnzymeCkptRevolve, 3 for EnzymeCkptStoreAll and 4 for
+ * EnzymeCkptBinomial; budget is config.snapshots, its default if it is not
+ * positive, as for an annotated loop without a count. The scheme's store and
+ * restore are not called: at STORE the caller saves the state into slot
+ * _slot(h), at RESTORE it loads it back. The slots the actions name are 0 to
  * __enzyme_ckpt_schedule_slots(h) - 1. Slots -2 and -1 of the driver are the
  * caller's own business.
  *
@@ -938,31 +1088,31 @@ __enzyme_ckpt_schedule_begin(int64_t mode, int64_t budget, int64_t nsteps) {
   int64_t k, len;
   if (nsteps < 0)
     enzyme_ckpt_fail("a schedule needs the number of steps");
-  if (budget < 1) {
-    for (budget = 1; (budget + 1) * (budget + 1) <= nsteps; budget++)
-      ;
-  }
   s = (enzyme_ckpt_schedule *)calloc(1, sizeof(*s));
   s->config.snapshots = budget;
   s->config.stats = &s->stats;
   s->verbose = verbose ? atoi(verbose) : 0;
   /* The slots the reference schemes name, as they count them in init. */
   switch (mode) {
-  case 1:
-  case 3:
-    s->scheme = mode == 1 ? &EnzymeCkptPeriodic : &EnzymeCkptStoreAll;
-    k = mode == 3 ? 1 : budget < nsteps ? budget : nsteps;
+  case ENZYME_CKPT_SCHEDULE_PERIODIC:
+  case ENZYME_CKPT_SCHEDULE_STORE_ALL: {
+    EnzymeCkptPeriodicSplit split = enzyme_ckpt_periodic_split(
+        nsteps, mode == ENZYME_CKPT_SCHEDULE_STORE_ALL ? 1 : budget);
+    s->scheme = mode == ENZYME_CKPT_SCHEDULE_PERIODIC ? &EnzymeCkptPeriodic
+                                                      : &EnzymeCkptStoreAll;
+    k = enzyme_ckpt_periodic_segments(split);
     if (k < 1)
       k = 1;
-    len = (nsteps + k - 1) / k;
+    len = split.inner;
     /* Segment starts, then the steps of one segment but its first. */
     s->slots = k + (len > 1 ? len - 1 : 0);
     break;
-  case 2:
-    s->scheme = &EnzymeCkptRevolve;
-    s->slots = budget < nsteps ? budget : nsteps;
-    if (s->slots < 1)
-      s->slots = 1;
+  }
+  case ENZYME_CKPT_SCHEDULE_REVOLVE:
+  case ENZYME_CKPT_SCHEDULE_BINOMIAL:
+    s->scheme = mode == ENZYME_CKPT_SCHEDULE_REVOLVE ? &EnzymeCkptRevolve
+                                                     : &EnzymeCkptBinomial;
+    s->slots = enzyme_ckpt_binomial_slots(nsteps, budget);
     break;
   default:
     enzyme_ckpt_fail("unknown built-in scheme");
