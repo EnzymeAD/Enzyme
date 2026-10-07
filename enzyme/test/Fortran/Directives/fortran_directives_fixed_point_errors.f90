@@ -10,18 +10,12 @@
 
 #if PART == 1
 subroutine where(x, n)
-<<<<<<< HEAD
-  implicit none
-  integer :: n, i
-  real(8) :: x(n), y
-=======
   use, intrinsic :: iso_fortran_env, only: real64
   implicit none
   integer, intent(in) :: n
   integer :: i
   real(real64), intent(inout) :: x(n)
   real(real64) :: y
->>>>>>> vc/flang-checkpoint-directive
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(x)
   y = 1
@@ -41,14 +35,9 @@ subroutine where(x, n)
 end subroutine where
 
 subroutine declarations(x)
-<<<<<<< HEAD
-  implicit none
-  real(8) :: x
-=======
   use, intrinsic :: iso_fortran_env, only: real64
   implicit none
   real(real64), intent(inout) :: x
->>>>>>> vc/flang-checkpoint-directive
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(x)
   integer :: k
@@ -58,15 +47,10 @@ subroutine declarations(x)
 end subroutine declarations
 
 module no_loops
-<<<<<<< HEAD
-  implicit none
-  real(8) :: q
-=======
   use, intrinsic :: iso_fortran_env, only: real64
   implicit none
   public
   real(real64) :: q
->>>>>>> vc/flang-checkpoint-directive
   ! WHERE: error: A DO or DO WHILE loop must follow the 'ENZYME FIXED_POINT' directive
   !$enzyme fixed_point(q)
 end module no_loops
@@ -74,18 +58,12 @@ end module no_loops
 
 #if PART == 2
 subroutine args(x, n)
-<<<<<<< HEAD
-  implicit none
-  integer :: n, i
-  real(8) :: x(n), y
-=======
   use, intrinsic :: iso_fortran_env, only: real64
   implicit none
   integer, intent(in) :: n
   integer :: i
   real(real64), intent(inout) :: x(n)
   real(real64) :: y
->>>>>>> vc/flang-checkpoint-directive
   ! ARGS: error: A 'enzyme fixed_point' directive needs at least 1 variable(s)
   !$enzyme fixed_point max_iters(3)
   do i = 1, n
