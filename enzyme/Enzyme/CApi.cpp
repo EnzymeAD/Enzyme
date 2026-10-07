@@ -36,6 +36,7 @@
 #include "DiffeGradientUtils.h"
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
+#include "EnzymeSummary.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 #if LLVM_VERSION_MAJOR >= 16
@@ -1003,6 +1004,98 @@ LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
 }
 
 void EnzymeStringFree(const char *cstr) { delete[] cstr; }
+
+EnzymeFunctionSummaryRef EnzymeComputeFunctionSummary(LLVMValueRef F) {
+  return (EnzymeFunctionSummaryRef)(new EnzymeFunctionSummary(
+      summarizeFunction(*cast<Function>(unwrap(F)))));
+}
+
+void EnzymeFreeFunctionSummary(EnzymeFunctionSummaryRef S) {
+  delete (EnzymeFunctionSummary *)S;
+}
+
+size_t EnzymeFunctionSummaryNumArgs(EnzymeFunctionSummaryRef S) {
+  return ((EnzymeFunctionSummary *)S)->numArgs();
+}
+
+uint8_t EnzymeFunctionSummaryArgEffects(EnzymeFunctionSummaryRef S,
+                                        size_t i) {
+  auto &A = ((EnzymeFunctionSummary *)S)->Args[i];
+  return (A.ReadFP ? ENZYME_SUMMARY_ARG_READ_FP : 0) |
+         (A.WriteFP ? ENZYME_SUMMARY_ARG_WRITE_FP : 0) |
+         (A.WriteAny ? ENZYME_SUMMARY_ARG_WRITE_ANY : 0) |
+         (A.Escape ? ENZYME_SUMMARY_ARG_ESCAPE : 0);
+}
+
+uint32_t EnzymeFunctionSummaryFlags(EnzymeFunctionSummaryRef S) {
+  auto &Sum = *(EnzymeFunctionSummary *)S;
+  return (Sum.Unknown ? ENZYME_SUMMARY_UNKNOWN : 0) |
+         (Sum.UnknownWrite ? ENZYME_SUMMARY_UNKNOWN_WRITE : 0) |
+         (Sum.Frees ? ENZYME_SUMMARY_FREES : 0) |
+         (Sum.ReturnsFP ? ENZYME_SUMMARY_RETURNS_FP : 0) |
+         (Sum.ReturnsPointer ? ENZYME_SUMMARY_RETURNS_POINTER : 0) |
+         (Sum.TouchesFP ? ENZYME_SUMMARY_TOUCHES_FP : 0) |
+         (Sum.Allocates ? ENZYME_SUMMARY_ALLOCATES : 0) |
+         (Sum.MemTransfer ? ENZYME_SUMMARY_MEMTRANSFER : 0) |
+         (Sum.Inactive ? ENZYME_SUMMARY_INACTIVE : 0) |
+         (Sum.NoFree ? ENZYME_SUMMARY_NOFREE : 0) |
+         (Sum.NoEscapingAllocation ? ENZYME_SUMMARY_NO_ESCAPING_ALLOCATION
+                                   : 0);
+}
+
+void EnzymeFunctionSummaryFlow(EnzymeFunctionSummaryRef S, uint8_t *out) {
+  auto &Sum = *(EnzymeFunctionSummary *)S;
+  size_t cols = Sum.numArgs() + 2;
+  for (size_t s = 0; s < Sum.Flow.size(); ++s)
+    for (size_t t = 0; t < cols; ++t)
+      out[s * cols + t] = Sum.Flow[s][t];
+}
+
+static const std::set<std::string> &summaryGlobals(EnzymeFunctionSummaryRef S,
+                                                   EnzymeSummaryGlobals kind) {
+  auto &Sum = *(EnzymeFunctionSummary *)S;
+  switch (kind) {
+  case ENZYME_SUMMARY_GLOBALS_READ_FP:
+    return Sum.GlobalsReadFP;
+  case ENZYME_SUMMARY_GLOBALS_WRITE_FP:
+    return Sum.GlobalsWriteFP;
+  case ENZYME_SUMMARY_GLOBALS_WRITE_ANY:
+    return Sum.GlobalsWriteAny;
+  }
+  llvm_unreachable("unknown set of globals");
+}
+
+size_t EnzymeFunctionSummaryNumGlobals(EnzymeFunctionSummaryRef S,
+                                       EnzymeSummaryGlobals kind) {
+  return summaryGlobals(S, kind).size();
+}
+
+const char *EnzymeFunctionSummaryGlobal(EnzymeFunctionSummaryRef S,
+                                        EnzymeSummaryGlobals kind, size_t i) {
+  auto &G = summaryGlobals(S, kind);
+  return std::next(G.begin(), i)->c_str();
+}
+
+static const char *copyString(const std::string &str) {
+  char *cstr = new char[str.size() + 1];
+  memcpy(cstr, str.data(), str.size());
+  cstr[str.size()] = 0;
+  return cstr;
+}
+
+const char *EnzymeFunctionSummaryToJSON(EnzymeFunctionSummaryRef S) {
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << json::Value(((EnzymeFunctionSummary *)S)->toJSON());
+  return copyString(ss.str());
+}
+
+const char *EnzymeModuleSummaryToJSON(LLVMModuleRef M) {
+  std::string str;
+  raw_string_ostream ss(str);
+  ss << json::Value(summarizeModule(*unwrap(M)));
+  return copyString(ss.str());
+}
 
 void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
                       LLVMBuilderRef B) {
