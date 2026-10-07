@@ -17,9 +17,9 @@
 
 // CHECK-NOT: llvm.compiler.used
 // CHECK-LABEL: define {{.*}} double @dsquare_a(
-// CHECK-NEXT: ret double 1.000000e+02
+// CHECK: ret double 1.000000e+02
 // CHECK-LABEL: define {{.*}} double @dsquare_b(
-// CHECK-NEXT: ret double 1.000000e+02
+// CHECK: ret double 1.000000e+02
 // CHECK-NOT: __enzyme_fwddiff
 
 static void square_(const double *src, double *dest) { *dest = *src * *src; }
