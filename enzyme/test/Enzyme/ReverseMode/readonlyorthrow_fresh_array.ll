@@ -3,7 +3,9 @@
 ; Like readonlyorthrow_fresh_memory.ll, but the data is written through a
 ; pointer loaded from the data field, at offset 0, of a Julia array. The field
 ; can change, so it is only fresh if the array was allocated here, its address
-; does not escape, and every store to the field stores fresh data.
+; does not escape, and every store to the field stores fresh data. As none of
+; these functions returns the array, they are fully read-only-or-throw, except
+; @fill_array_110_ret, which returns it and is only local.
 
 @memty = external addrspace(10) global i8
 @arrty = external addrspace(10) global i8
@@ -56,6 +58,35 @@ top:
   %a = select i1 %c, ptr addrspace(10) %a1, ptr addrspace(10) %a2
   %a11 = addrspacecast ptr addrspace(10) %a to ptr addrspace(11)
   %data = load ptr, ptr addrspace(11) %a11, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  ret void
+}
+
+define ptr addrspace(10) @fill_array_110_ret(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %a = call ptr addrspace(10) @jl_alloc_array_1d(ptr addrspace(10) @arrty, i64 %n)
+  %a11 = addrspacecast ptr addrspace(10) %a to ptr addrspace(11)
+  %data = load ptr, ptr addrspace(11) %a11, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  ret ptr addrspace(10) %a
+}
+
+; Any field of an object allocated uninitialized, here the one at offset 8,
+; that is only set to fresh data.
+
+define void @fill_struct_field(ptr %task, ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %m11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %mdatap = getelementptr inbounds i8, ptr addrspace(11) %m11, i64 8
+  %mdata = load ptr, ptr addrspace(11) %mdatap, align 8
+  %o = call ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 16, ptr addrspace(10) @arrty)
+  %o11 = addrspacecast ptr addrspace(10) %o to ptr addrspace(11)
+  %fp = getelementptr inbounds i8, ptr addrspace(11) %o11, i64 8
+  store ptr %mdata, ptr addrspace(11) %fp, align 8
+  %data = load ptr, ptr addrspace(11) %fp, align 8
   %xi = load double, ptr addrspace(11) %x, align 8
   store double %xi, ptr %data, align 8
   ret void
@@ -123,6 +154,8 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK: define void @fill_array({{.*}}) #[[FILL:[0-9]+]] {
 ; CHECK: define void @fill_array_110({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_array_110_select({{.*}}) #[[FILL]] {
+; CHECK: define ptr addrspace(10) @fill_array_110_ret({{.*}}) #[[LOCAL:[0-9]+]] {
+; CHECK: define void @fill_struct_field({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_array_other_data(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {
@@ -135,4 +168,5 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK: define void @fill_array_wrong_field(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {
-; CHECK: attributes #[[FILL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
+; CHECK-DAG: attributes #[[FILL]] = { {{.*}}"enzyme_ReadOnlyOrThrow"{{.*}} }
+; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
