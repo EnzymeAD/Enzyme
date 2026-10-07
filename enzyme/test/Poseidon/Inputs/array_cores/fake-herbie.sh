@@ -1,6 +1,10 @@
 #!/bin/sh
-eval "in=\${$(($# - 1))}"
-eval "out=\${$#}"
+in=
+out=
+for a; do
+  in=$out
+  out=$a
+done
 echo "fake-herbie: $*" >&2
 cat "$in" >&2
 d=$(dirname "$0")
