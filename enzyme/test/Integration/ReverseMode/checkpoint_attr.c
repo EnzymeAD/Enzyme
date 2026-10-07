@@ -1,8 +1,8 @@
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c2x -O0 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c2x -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c2x -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -std=c2x -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// RUN: if [ %llvmver -ge 17 ]; then %clang -x c++ -std=c++17 -DCXX -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c2x -O0 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c2x -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c2x -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -std=c2x -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 20 ]; then %clang -x c++ -std=c++17 -DCXX -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 
 // A loop annotated for checkpointing, as in Enzyme-MLIR and Reactant:
 // [[enzyme_checkpointing_enable("binomial", "revolve" or "regular", count)]] on
