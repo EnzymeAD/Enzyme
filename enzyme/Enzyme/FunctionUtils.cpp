@@ -2271,16 +2271,73 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI,
   return isFreshData(Obj, TLI, seen, &bases);
 }
 
-// Whether a value of type T may be a pointer to memory, or hold one.
-static bool mayBeOrHoldPointer(Type *T) {
-  return !T->isVoidTy() && !T->isTokenTy() && !T->isMetadataTy() &&
-         !T->isIntOrIntVectorTy() && !T->isFPOrFPVectorTy();
+// Whether type info TT for a value of type T says every byte of it is an
+// integer or a float, so that it cannot be or hold a pointer.
+static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
+                                    const DataLayout &DL) {
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  for (int i = 0, size = DL.getTypeStoreSize(T); i < size; ++i) {
+    auto CT = TT[{i}];
+    if (CT != BaseType::Integer && !CT.isFloat())
+      return false;
+  }
+  return true;
+}
+
+static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
+                                      const DataLayout &DL) {
+  return attr.isValid() &&
+         typeTreeRulesOutPointer(
+             TypeTree::parse(attr.getValueAsString(), T->getContext()), T, DL);
+}
+
+// Whether value V cannot be or hold a pointer by its type, or by the
+// enzyme_type info given for it.
+static bool cannotHoldPointer(Value *V) {
+  auto T = V->getType();
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  auto I = dyn_cast<Instruction>(V);
+  if (!I)
+    return false;
+  auto &DL = I->getModule()->getDataLayout();
+  if (auto MD = I->getMetadata("enzyme_type"))
+    if (typeTreeRulesOutPointer(TypeTree::fromMD(MD), T, DL))
+      return true;
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (enzymeTypeRulesOutPointer(
+            CB->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                             "enzyme_type"),
+            T, DL))
+      return true;
+    if (auto F = CB->getCalledFunction())
+      if (enzymeTypeRulesOutPointer(
+              F->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                              "enzyme_type"),
+              T, DL))
+        return true;
+  }
+  return false;
+}
+
+// Whether returning V from its function cannot return a pointer, by the
+// enzyme_type info given for V or for the function's return value.
+static bool returnCannotHoldPointer(ReturnInst *RI) {
+  auto V = RI->getReturnValue();
+  if (!V || cannotHoldPointer(V))
+    return true;
+  auto F = RI->getParent()->getParent();
+  return enzymeTypeRulesOutPointer(
+      F->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                      "enzyme_type"),
+      V->getType(), F->getParent()->getDataLayout());
 }
 
 // Whether call CB may hand a pointer back to its caller, through its result or
 // an sret-like argument.
 static bool mayHandBackPointer(CallBase *CB) {
-  return mayBeOrHoldPointer(CB->getType()) || hasSRetRRootsOrUnionSRet(CB);
+  return !cannotHoldPointer(CB) || hasSRetRRootsOrUnionSRet(CB);
 }
 
 // Values that may be a pointer to written memory (false), or that point to
@@ -2320,8 +2377,11 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         return true;
       if (I == Ignore)
         continue;
-      if (isa<ReturnInst>(I))
+      if (auto RI = dyn_cast<ReturnInst>(I)) {
+        if (returnCannotHoldPointer(RI))
+          continue;
         return true;
+      }
       if (isa<ICmpInst>(I))
         continue;
       if (auto SI = dyn_cast<SelectInst>(I)) {
@@ -2336,7 +2396,7 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         continue;
       }
       if (auto LI = dyn_cast<LoadInst>(I)) {
-        if (Holds && mayBeOrHoldPointer(LI->getType()))
+        if (Holds && !cannotHoldPointer(LI))
           pushMayBePointer(todo, LI, Deep);
         continue;
       }
@@ -2513,7 +2573,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
             // written to, if that memory, or memory a pointer loaded from it
             // points to, may escape us, we are only local read-only-or-throw
             // too.
-            if (!local && mayBeOrHoldPointer(CI->getType()) &&
+            if (!local && !cannotHoldPointer(CI) &&
                 mayReachReturn(CI, TLI, /*Deep*/ true))
               local = true;
             auto Callee = CI->getCalledFunction();
