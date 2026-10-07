@@ -3059,7 +3059,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
           FunctionCallee sizeFn, initFn;
           if (replay->allocates) {
-            auto I8Ptr = PointerType::getUnqual(C);
+            auto I8Ptr = getInt8PtrTy(C);
             auto I32 = Type::getInt32Ty(C);
             sizeFn = M.getOrInsertFunction(
                 "_FortranASize", FunctionType::get(Type::getInt64Ty(C),
@@ -3085,14 +3085,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (replay->allocates) {
               // base_addr and elem_len lead every descriptor.
               Value *desc = args[0];
-              auto nullp = ConstantPointerNull::get(PointerType::getUnqual(C));
+              auto nullp = ConstantPointerNull::get(getInt8PtrTy(C));
               auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
               Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
               Value *elemLen = Builder2.CreateLoad(
                   Type::getInt64Ty(C), Builder2.CreateConstInBoundsGEP1_64(
                                            Type::getInt8Ty(C), desc, 8));
-              Value *base =
-                  Builder2.CreateLoad(PointerType::getUnqual(C), desc);
+              Value *base = Builder2.CreateLoad(getInt8PtrTy(C), desc);
               Builder2.CreateMemSet(base, Builder2.getInt8(0),
                                     Builder2.CreateMul(count, elemLen),
                                     MaybeAlign());
