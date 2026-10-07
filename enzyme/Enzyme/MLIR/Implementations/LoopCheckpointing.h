@@ -1914,6 +1914,19 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // The mode and budget __enzyme_ckpt_schedule_begin is called with. A
   // periodic loop without a period gets budget 0, the default segment length
   // of the shared split.
+  // The checkpoints a binomial schedule keeps: the budget asked for, or, for
+  // a loop of known trip count, enzyme/checkpoint_schedule.h's default
+  // (floor(sqrt(n)) slots), never fewer than the two the schedule needs.
+  static std::optional<int64_t> getBinomialBudget(OpName forOp) {
+    auto budget = FinalClass::getCheckpointBudget(forOp);
+    if (budget && *budget > 1)
+      return budget;
+    if (auto n = FinalClass::getConstantNumberOfIterations(forOp))
+      return std::max<int64_t>(
+          enzyme_ckpt_binomial_slots(*n, budget ? *budget : 0), 2);
+    return std::nullopt;
+  }
+
   static std::pair<int64_t, int64_t> getRuntimeScheme(OpName forOp) {
     // The schedules and budgets of enzyme/checkpoint_schedule.h, which the
     // compiled forms above follow: the same loop checkpoints the same steps
@@ -2481,8 +2494,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       return SmallVector<Value>();
 
     if (FinalClass::needsBinomialCheckpointing(forOp)) {
-      auto budget = FinalClass::getCheckpointBudget(forOp);
-      if (!budget || *budget <= 1) {
+      auto budget = getBinomialBudget(forOp);
+      if (!budget) {
         // Error is reported in tryCreateReverseModeAdjoint; fall back to
         // caching the bounds so the reverse pass can proceed to emit the
         // diagnostic (mirrors the plain-loop path's 3-cache convention).
@@ -2535,9 +2548,10 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       return failure();
 
     if (FinalClass::needsBinomialCheckpointing(forOp)) {
-      auto budget = FinalClass::getCheckpointBudget(forOp);
-      if (!budget || *budget <= 1) {
-        op->emitError() << "binomial checkpointing requires a "
+      auto budget = getBinomialBudget(forOp);
+      if (!budget) {
+        op->emitError() << "binomial checkpointing of a loop without a "
+                           "constant trip count requires a "
                         << FinalClass::checkpointPeriodAttrName()
                         << " attribute greater than 1";
         return failure();
