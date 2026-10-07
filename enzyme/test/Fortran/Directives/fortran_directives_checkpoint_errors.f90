@@ -17,4 +17,4 @@ contains
   end subroutine bad
 end module ckerr
 
-! CHECK: enzyme checkpoint: unknown schedule "fastest", expected binomial, revolve, periodic or store_all
+! CHECK: enzyme checkpoint: unknown schedule "fastest", expected binomial, revolve, periodic, store_all or none

@@ -60,7 +60,6 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
-#include "llvm/ADT/StringSwitch.h"
 
 using namespace mlir;
 
@@ -352,13 +351,9 @@ static LogicalResult lowerFixedPoint(ModuleOp module, fir::CallOp marker,
 // The schedule of enzyme/checkpoint_schedule.h a checkpoint directive names,
 // or -1.
 static int64_t getCheckpointSchedule(StringRef name) {
-  return llvm::StringSwitch<int64_t>(name.lower())
-      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
-      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
-      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
-      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
-      .Default(-1);
+  // Fortran names are case-insensitive.
+  std::string lower = name.lower();
+  return enzyme_ckpt_schedule_from_name(lower.data(), lower.size());
 }
 
 static LLVM::LLVMFuncOp getOrDeclare(ModuleOp module, Location loc,
@@ -394,8 +389,8 @@ static LogicalResult lowerCheckpoint(ModuleOp module, fir::CallOp marker,
     schedule = name ? getCheckpointSchedule(name.getValue()) : -1;
     if (schedule < 0)
       return emitError(loc) << "enzyme checkpoint: unknown schedule " << a
-                            << ", expected binomial, revolve, periodic or "
-                               "store_all";
+                            << ", expected binomial, revolve, periodic, "
+                               "store_all or none";
   }
   int64_t budget = -1;
   if (Attribute a = args ? args.get("budget") : Attribute()) {
