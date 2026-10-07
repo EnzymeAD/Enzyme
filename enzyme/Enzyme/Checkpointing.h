@@ -38,8 +38,11 @@
 
 #include "EnzymeLogic.h"
 
+#include "llvm/ADT/SmallVector.h"
+
 namespace llvm {
 class Function;
+class GlobalVariable;
 class Module;
 } // namespace llvm
 
@@ -56,6 +59,12 @@ bool keepCheckpointLoops(llvm::Module &M);
 
 /// Whether `F` is a loop function made by `lowerCheckpointMarkers`.
 bool isCheckpointLoop(const llvm::Function *F);
+
+/// The globals the step of checkpointed loop `F` reads or writes that its
+/// snapshots hold. They are not among the loop function's arguments, so a
+/// call to it is active when one of them is.
+llvm::SmallVector<llvm::GlobalVariable *, 8>
+getCheckpointGlobals(llvm::Function *F);
 
 /// The augmented forward pass of a checkpointed loop. It takes the loop's
 /// arguments, each followed by its shadow if it is duplicated, and returns the

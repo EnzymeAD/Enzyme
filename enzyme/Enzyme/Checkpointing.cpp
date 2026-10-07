@@ -1707,6 +1707,12 @@ static void scanFunction(Function &F, GlobalAccesses &acc,
 
 /// The globals a snapshot before a step of `step` must hold: those the step
 /// writes, and those it reads that other code may write.
+static SmallVector<GlobalVariable *, 8> getGlobalRegions(Function *step);
+
+SmallVector<GlobalVariable *, 8> getCheckpointGlobals(Function *F) {
+  return getGlobalRegions(getStep(F));
+}
+
 static SmallVector<GlobalVariable *, 8> getGlobalRegions(Function *step) {
   Module &M = *step->getParent();
 
