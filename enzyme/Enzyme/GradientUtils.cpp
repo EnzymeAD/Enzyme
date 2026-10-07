@@ -9654,19 +9654,12 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       }
 
     } else if (auto cmp = dyn_cast<ICmpInst>(cur);
-               cmp &&
-               isa<ConstantPointerNull>(
-                   cmp->getOperand(cmp->getOperand(0) == prev ? 1 : 0)) &&
-               !hasMetadata(V, "enzyme_fromstack")) {
+               cmp && isa<ConstantPointerNull>(cmp->getOperand(
+                          cmp->getOperand(0) == prev ? 1 : 0))) {
       // A null check on the allocation (e.g. libstdc++'s deallocation path)
       // neither reads, writes, nor captures the memory, so it says nothing
       // about whether the contents can be recreated. Any reallocation is also
       // non-null, so replaying it in the reverse pass yields the same result.
-      //
-      // Not for a stack slot that preprocessing turned into a heap allocation
-      // (enzyme_fromstack): LowerAllocAddr later moves it back to the stack and
-      // cannot rewrite a cached pointer derived from it, which rematerializing
-      // it here introduces (EnzymeAD/Enzyme.jl Flux LSTM on Julia 1.11).
     } else {
       promotable = false;
       shadowpromotable = false;

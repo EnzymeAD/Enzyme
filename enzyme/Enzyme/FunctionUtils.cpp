@@ -522,6 +522,66 @@ void RecursivelyReplaceAddressSpace(
         toPostCache.push_back(SI);
         continue;
       }
+      // A pointer derived from the object being moved is stored into a stack
+      // slot that only holds it, such as a cache made for the reverse pass.
+      // The slot cannot keep its tracked type, since the GC would then see a
+      // stack address. Instead give the slot the new pointer type and follow
+      // each load from it as a value derived from the moved object.
+      if (SI->getValueOperand() == prev) {
+        auto AI = dyn_cast<AllocaInst>(SI->getPointerOperand());
+        bool legalSlot = AI && AI->getAllocatedType() == prev->getType() &&
+                         !AI->isArrayAllocation();
+        if (legalSlot)
+          for (auto U : AI->users()) {
+            if (auto LI = dyn_cast<LoadInst>(U))
+              if (LI->getPointerOperand() == AI &&
+                  LI->getType() == prev->getType())
+                continue;
+            if (auto SI2 = dyn_cast<StoreInst>(U))
+              if (SI2->getPointerOperand() == AI &&
+                  (SI2->getValueOperand() == prev ||
+                   isa<Constant>(SI2->getValueOperand())))
+                continue;
+            legalSlot = false;
+            break;
+          }
+        if (legalSlot) {
+          IRBuilder<> AB(AI);
+          auto nAI =
+              AB.CreateAlloca(rep->getType(), AI->getAddressSpace(), nullptr);
+          nAI->setAlignment(AI->getAlign());
+          nAI->takeName(AI);
+          toErase.push_back(AI);
+          for (auto U : llvm::make_early_inc_range(AI->users())) {
+            auto I = cast<Instruction>(U);
+            IRBuilder<> B(I);
+            if (auto SI2 = dyn_cast<StoreInst>(I)) {
+              Value *val = SI2->getValueOperand();
+              if (val == prev)
+                val = rep;
+              else
+                val = ConstantExpr::getPointerBitCastOrAddrSpaceCast(
+                    cast<Constant>(val), rep->getType());
+              auto nSI = B.CreateStore(val, nAI);
+              nSI->copyMetadata(*SI2);
+              nSI->setAlignment(SI2->getAlign());
+              nSI->setVolatile(SI2->isVolatile());
+            } else {
+              auto LI = cast<LoadInst>(I);
+              auto nLI = B.CreateLoad(rep->getType(), nAI);
+              nLI->copyMetadata(*LI);
+              nLI->setAlignment(LI->getAlign());
+              nLI->setVolatile(LI->isVolatile());
+              nLI->takeName(LI);
+              for (auto U2 : LI->users())
+                Todo.push_back(std::make_tuple((Value *)nLI, (Value *)LI,
+                                               cast<Instruction>(U2)));
+            }
+            toErase.push_back(I);
+          }
+          continue;
+        }
+      }
     }
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
