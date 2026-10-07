@@ -1353,6 +1353,7 @@ static bool outlineAnnotatedLoop(CallInst *marker) {
       F->addFnAttr(Attribute::get(Ctx, "enzyme_inactive"));
       F->addFnAttr(Attribute::get(Ctx, "enzyme_no_escaping_allocation"));
       F->setDoesNotAccessMemory();
+      F->setDoesNotFreeMemory();
       F->setDoesNotThrow();
       F->setWillReturn();
     }

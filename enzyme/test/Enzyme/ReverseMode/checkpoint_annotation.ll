@@ -56,5 +56,5 @@ exit:
 ; CHECK: declare ptr @__enzyme_checkpoint_builtin(i64) #[[builtin:.+]]
 
 ; CHECK: define internal void @enzyme.ckpt.for.run.ckpt.step(i64 "enzyme_inactive" %0, i64 "enzyme_inactive" %1, ptr "enzyme_inactive" %2, ptr "enzyme_inactive" %3, i64 %4) #{{.*}} !enzyme_checkpoint_step
-; CHECK: attributes #[[builtin]] = { nounwind willreturn memory(none) "enzyme_inactive" "enzyme_no_escaping_allocation" }
+; CHECK: attributes #[[builtin]] = { nofree nounwind willreturn memory(none) "enzyme_inactive" "enzyme_no_escaping_allocation" }
 ; CHECK: attributes #[[inactive]] = { memory(none) "enzyme_inactive" }
