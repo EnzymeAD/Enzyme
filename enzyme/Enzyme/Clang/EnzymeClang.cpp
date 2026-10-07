@@ -33,10 +33,12 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/Pragma.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include "../Utils.h"
 #include "enzyme/checkpoint_schedule.h"
@@ -466,7 +468,119 @@ static void emitFunctionCall(Sema &S, Stmt *St, std::string FunctionName,
   ForSt->setBody(newBody);
 }
 
-struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
+// The schedule a loop annotation names: a schedule of
+// enzyme/checkpoint_schedule.h, or -1. "regular" is an older name of
+// "periodic".
+static int64_t getCheckpointSchedule(StringRef Name) {
+  return llvm::StringSwitch<int64_t>(Name)
+      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
+      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
+      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
+      .Default(-1);
+}
+
+// [[enzyme::checkpoint("revolve", 4)]] on a for statement, or its GNU
+// spelling __attribute__((enzyme_checkpoint("revolve", 4))), which
+// `#pragma enzyme checkpoint("revolve", 4)` on the line before the loop
+// turns into: the schedule by name (periodic by default) and the budget,
+// the schedule's default without one. It becomes
+// __enzyme_set_checkpointing(schedule, budget) at the top of the loop body.
+// enzyme_checkpointing_enable, Reactant's spelling, stays as an alias.
+struct EnzymeLoopCheckpointAttrInfo : public ParsedAttrInfo {
+  bool diagAppertainsToStmt(Sema &S, const ParsedAttr &Attr,
+                            const Stmt *St) const override {
+    return ExpectForStatement(S, Attr, St);
+  }
+
+  AttrHandling handleStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &Attr,
+                                   class Attr *&Result) const override {
+    StringRef AttrName = Attr.getAttrName()->getName();
+    unsigned NumArgs = Attr.getNumArgs();
+    if (NumArgs > 2) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'%0' takes at most two arguments (a schedule name and an "
+          "optional integer budget)");
+      S.Diag(Attr.getLoc(), ID) << AttrName;
+      return AttributeNotApplied;
+    }
+
+    int64_t Mode = ENZYME_CKPT_SCHEDULE_PERIODIC; // the default
+    if (NumArgs >= 1) {
+      auto *Arg0 = Attr.getArgAsExpr(0);
+      StringLiteral *Literal =
+          dyn_cast<StringLiteral>(Arg0->IgnoreParenCasts());
+      if (!Literal) {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "first argument to '%0' must be a string literal: \"binomial\", "
+            "\"revolve\", \"periodic\" or \"store_all\"");
+        S.Diag(Attr.getLoc(), ID) << AttrName;
+        return AttributeNotApplied;
+      }
+      Mode = getCheckpointSchedule(Literal->getString());
+      if (Mode < 0) {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "unknown checkpointing schedule '%0', expected \"binomial\", "
+            "\"revolve\", \"periodic\" or \"store_all\"");
+        S.Diag(Attr.getLoc(), ID) << Literal->getString();
+        return AttributeNotApplied;
+      }
+    }
+
+    // __enzyme_set_checkpointing is declared afresh (bypassing normal
+    // redeclaration merging) at every attributed loop, so every call site
+    // must agree on the same arity -- otherwise codegen can reuse an
+    // earlier, differently-typed declaration for a later call, producing
+    // invalid IR. Always emit both arguments, defaulting the budget to a
+    // sentinel (all bits set) when the caller didn't provide one, since 0
+    // is a plausible real count.
+    uint64_t Count = std::numeric_limits<uint64_t>::max();
+    if (NumArgs >= 2) {
+      auto *Arg1 = Attr.getArgAsExpr(1);
+      clang::Expr::EvalResult EvalRes;
+      if (!Arg1->EvaluateAsInt(EvalRes, S.getASTContext())) {
+        unsigned ID = S.getDiagnostics().getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "second argument to '%0' must be an integer constant");
+        S.Diag(Attr.getLoc(), ID) << AttrName;
+        return AttributeNotApplied;
+      }
+      Count = EvalRes.Val.getInt().getZExtValue();
+    }
+
+    emitFunctionCall(S, St, "__enzyme_set_checkpointing",
+                     {(uint64_t)Mode, Count});
+    return AttributeApplied;
+  }
+};
+
+struct EnzymeCheckpointAttrInfo : public EnzymeLoopCheckpointAttrInfo {
+  EnzymeCheckpointAttrInfo() {
+    OptArgs = 2;
+    static constexpr Spelling S[] = {
+        {ParsedAttr::AS_GNU, "enzyme_checkpoint"},
+#if LLVM_VERSION_MAJOR > 17
+        {ParsedAttr::AS_C23, "enzyme_checkpoint"},
+        {ParsedAttr::AS_C23, "enzyme::checkpoint"},
+#else
+        {ParsedAttr::AS_C2x, "enzyme_checkpoint"},
+        {ParsedAttr::AS_C2x, "enzyme::checkpoint"},
+#endif
+        {ParsedAttr::AS_CXX11, "enzyme_checkpoint"},
+        {ParsedAttr::AS_CXX11, "enzyme::checkpoint"}};
+    Spellings = S;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeCheckpointAttrInfo>
+    XCheckpoint("enzyme_checkpoint", "");
+
+struct EnzymeLoopCheckpointingEnableAttrInfo
+    : public EnzymeLoopCheckpointAttrInfo {
   EnzymeLoopCheckpointingEnableAttrInfo() {
     OptArgs = 2;
     // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
@@ -482,87 +596,68 @@ struct EnzymeLoopCheckpointingEnableAttrInfo : public ParsedAttrInfo {
         {ParsedAttr::AS_CXX11, "enzyme::checkpointing_enable"}};
     Spellings = S;
   }
-
-  bool diagAppertainsToStmt(Sema &S, const ParsedAttr &Attr,
-                            const Stmt *St) const override {
-    return ExpectForStatement(S, Attr, St);
-  }
-
-  AttrHandling handleStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &Attr,
-                                   class Attr *&Result) const override {
-    unsigned NumArgs = Attr.getNumArgs();
-    if (NumArgs > 2) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "'enzyme_checkpointing_enable' takes at most two arguments "
-          "(a mode string and an optional integer)");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-
-    uint64_t Mode = ENZYME_CKPT_SCHEDULE_PERIODIC; // the default
-    if (NumArgs >= 1) {
-      auto *Arg0 = Attr.getArgAsExpr(0);
-      StringLiteral *Literal =
-          dyn_cast<StringLiteral>(Arg0->IgnoreParenCasts());
-      if (!Literal) {
-        unsigned ID = S.getDiagnostics().getCustomDiagID(
-            DiagnosticsEngine::Error,
-            "first argument to 'enzyme_checkpointing_enable' must be a "
-            "string literal: \"binomial\", \"revolve\", \"periodic\" or "
-            "\"store_all\"");
-        S.Diag(Attr.getLoc(), ID);
-        return AttributeNotApplied;
-      }
-      // The schedules of enzyme/checkpoint_schedule.h.
-      StringRef Mode0 = Literal->getString();
-      if (Mode0 == "binomial") {
-        Mode = ENZYME_CKPT_SCHEDULE_BINOMIAL;
-      } else if (Mode0 == "revolve") {
-        Mode = ENZYME_CKPT_SCHEDULE_REVOLVE;
-      } else if (Mode0 == "periodic" || Mode0 == "regular") {
-        Mode = ENZYME_CKPT_SCHEDULE_PERIODIC;
-      } else if (Mode0 == "store_all") {
-        Mode = ENZYME_CKPT_SCHEDULE_STORE_ALL;
-      } else {
-        unsigned ID = S.getDiagnostics().getCustomDiagID(
-            DiagnosticsEngine::Error,
-            "unknown checkpointing mode '%0', expected \"binomial\", "
-            "\"revolve\", \"periodic\" or \"store_all\"");
-        S.Diag(Attr.getLoc(), ID) << Mode0;
-        return AttributeNotApplied;
-      }
-    }
-
-    // __enzyme_set_checkpointing is declared afresh (bypassing normal
-    // redeclaration merging) at every attributed loop, so every call site
-    // must agree on the same arity -- otherwise codegen can reuse an
-    // earlier, differently-typed declaration for a later call, producing
-    // invalid IR. Always emit both arguments, defaulting the count to a
-    // sentinel (all bits set) when the caller didn't provide one, since 0
-    // is a plausible real count.
-    uint64_t Count = std::numeric_limits<uint64_t>::max();
-    if (NumArgs >= 2) {
-      auto *Arg1 = Attr.getArgAsExpr(1);
-      clang::Expr::EvalResult EvalRes;
-      if (!Arg1->EvaluateAsInt(EvalRes, S.getASTContext())) {
-        unsigned ID = S.getDiagnostics().getCustomDiagID(
-            DiagnosticsEngine::Error,
-            "second argument to 'enzyme_checkpointing_enable' must be an "
-            "integer constant");
-        S.Diag(Attr.getLoc(), ID);
-        return AttributeNotApplied;
-      }
-      Count = EvalRes.Val.getInt().getZExtValue();
-    }
-
-    emitFunctionCall(S, St, "__enzyme_set_checkpointing", {Mode, Count});
-    return AttributeApplied;
-  }
 };
 
 static ParsedAttrInfoRegistry::Add<EnzymeLoopCheckpointingEnableAttrInfo>
     XCheckpointing("enzyme_checkpointing_enable", "");
+
+// `#pragma enzyme checkpoint(...)`, for C compilers without C23 attributes:
+// the pragma becomes __attribute__((enzyme_checkpoint(...))), which applies
+// to the statement after it.
+struct EnzymePragmaHandler : public PragmaHandler {
+  EnzymePragmaHandler() : PragmaHandler("enzyme") {}
+
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override {
+    Token Tok;
+    PP.Lex(Tok);
+    if (Tok.isNot(tok::identifier) ||
+        Tok.getIdentifierInfo()->getName() != "checkpoint") {
+      unsigned ID = PP.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Warning,
+          "unknown '#pragma enzyme' directive, expected 'checkpoint'");
+      PP.Diag(Tok.getLocation(), ID);
+      PP.DiscardUntilEndOfDirective();
+      return;
+    }
+    SourceLocation Loc = Tok.getLocation();
+    SmallVector<Token, 16> Args;
+    PP.Lex(Tok);
+    while (Tok.isNot(tok::eod)) {
+      Args.push_back(Tok);
+      PP.Lex(Tok);
+    }
+
+    auto make = [&](tok::TokenKind Kind, IdentifierInfo *II = nullptr) {
+      Token T;
+      T.startToken();
+      T.setKind(Kind);
+      T.setLocation(Loc);
+      T.setLength(0);
+      if (II)
+        T.setIdentifierInfo(II);
+      return T;
+    };
+    SmallVector<Token, 24> Toks;
+    Toks.push_back(make(tok::kw___attribute));
+    Toks.push_back(make(tok::l_paren));
+    Toks.push_back(make(tok::l_paren));
+    Toks.push_back(
+        make(tok::identifier, PP.getIdentifierInfo("enzyme_checkpoint")));
+    Toks.append(Args.begin(), Args.end());
+    Toks.push_back(make(tok::r_paren));
+    Toks.push_back(make(tok::r_paren));
+
+    auto Buffer = std::make_unique<Token[]>(Toks.size());
+    std::copy(Toks.begin(), Toks.end(), Buffer.get());
+    PP.EnterTokenStream(std::move(Buffer), Toks.size(),
+                        /*DisableMacroExpansion=*/false,
+                        /*IsReinject=*/false);
+  }
+};
+
+static PragmaHandlerRegistry::Add<EnzymePragmaHandler>
+    XPragma("enzyme", "Enzyme loop directives: checkpoint");
 #endif // LLVM_VERSION_MAJOR >= 17
 
 struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
