@@ -354,6 +354,10 @@ uint8_t EnzymeLowerCheckpointMarkers(LLVMModuleRef M) {
   return lowerCheckpointMarkers(*unwrap(M));
 }
 
+uint8_t EnzymeKeepCheckpointLoops(LLVMModuleRef M) {
+  return keepCheckpointLoops(*unwrap(M));
+}
+
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle) {
   shadowHandlers[Name] = [=](IRBuilder<> &B, CallInst *CI,

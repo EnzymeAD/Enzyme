@@ -1521,6 +1521,67 @@ static bool markersFromLoopMetadata(Function &F) {
   return changed;
 }
 
+bool keepCheckpointLoops(Module &M) {
+  bool changed = false;
+  LLVMContext &Ctx = M.getContext();
+  auto hint = [&](StringRef name, Metadata *V = nullptr) -> Metadata * {
+    SmallVector<Metadata *, 2> ops = {MDString::get(Ctx, name)};
+    if (V)
+      ops.push_back(V);
+    return MDNode::get(Ctx, ops);
+  };
+  auto *I1 = Type::getInt1Ty(Ctx), *I32 = Type::getInt32Ty(Ctx);
+  SmallVector<Metadata *, 4> hints = {
+      hint("llvm.loop.unroll.disable"),
+      hint("llvm.loop.vectorize.enable",
+           ConstantAsMetadata::get(ConstantInt::get(I1, 0))),
+      hint("llvm.loop.interleave.count",
+           ConstantAsMetadata::get(ConstantInt::get(I32, 1))),
+      hint("llvm.loop.distribute.enable",
+           ConstantAsMetadata::get(ConstantInt::get(I1, 0)))};
+  DenseMap<MDNode *, MDNode *> done;
+  for (Function &F : M)
+    for (BasicBlock &BB : F) {
+      Instruction *T = BB.getTerminator();
+      MDNode *LoopID = T ? T->getMetadata(LLVMContext::MD_loop) : nullptr;
+      if (!LoopID)
+        continue;
+      MDNode *&NewID = done[LoopID];
+      if (!NewID) {
+        bool annotated = false;
+        SmallVector<Metadata *, 8> ops = {nullptr};
+        for (unsigned i = 1; i < LoopID->getNumOperands(); i++) {
+          Metadata *Op = LoopID->getOperand(i);
+          // The hints replace whatever the loop said about these.
+          if (auto *N = dyn_cast_or_null<MDNode>(Op))
+            if (N->getNumOperands())
+              if (auto *S = dyn_cast_or_null<MDString>(N->getOperand(0))) {
+                if (S->getString() == CheckpointLoopMD)
+                  annotated = true;
+                if (S->getString().starts_with("llvm.loop.unroll.") ||
+                    S->getString().starts_with("llvm.loop.vectorize.") ||
+                    S->getString() == "llvm.loop.interleave.count" ||
+                    S->getString() == "llvm.loop.distribute.enable")
+                  continue;
+              }
+          ops.push_back(Op);
+        }
+        if (!annotated) {
+          NewID = LoopID;
+          continue;
+        }
+        ops.append(hints.begin(), hints.end());
+        NewID = MDNode::getDistinct(Ctx, ops);
+        NewID->replaceOperandWith(0, NewID);
+      }
+      if (NewID != LoopID) {
+        T->setMetadata(LLVMContext::MD_loop, NewID);
+        changed = true;
+      }
+    }
+  return changed;
+}
+
 static bool outlineAnnotatedLoops(Module &M) {
   bool changed = false;
   for (Function &F : M)

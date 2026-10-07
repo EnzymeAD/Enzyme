@@ -47,6 +47,13 @@ class Module;
 /// internal loop function carrying the `enzyme_checkpoint` attribute.
 bool lowerCheckpointMarkers(llvm::Module &M);
 
+/// Tell each loop annotated for checkpointing with its loop metadata not to
+/// be unrolled, vectorized or distributed, so that the pipeline before
+/// differentiation keeps it as one iteration a step. For a frontend that
+/// optimizes the code it differentiates separately from its own code, which
+/// keeps those optimizations.
+bool keepCheckpointLoops(llvm::Module &M);
+
 /// Whether `F` is a loop function made by `lowerCheckpointMarkers`.
 bool isCheckpointLoop(const llvm::Function *F);
 
