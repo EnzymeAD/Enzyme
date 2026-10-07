@@ -66,6 +66,21 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+
+# The MLIR execution tests lower with mlir-opt and run with mlir-runner, from
+# an LLVM built with MLIR, and build the checkpointing runtime from
+# enzyme/checkpoint.h with the host C compiler.
+mlir_runner = config.llvm_tools_dir + "/mlir-runner"
+host_cc = "@CMAKE_C_COMPILER@"
+if os.path.exists(mlir_runner) and host_cc and os.path.exists(host_cc):
+  config.available_features.add('mlir-runner')
+config.substitutions.append(('%mlir-opt', config.llvm_tools_dir + "/mlir-opt"))
+config.substitutions.append(('%mlir-runner', mlir_runner))
+for lib in ['mlir_runner_utils', 'mlir_c_runner_utils']:
+  config.substitutions.append(('%' + lib, config.llvm_libs_dir + "/lib" + lib
+                               + config.llvm_shlib_ext))
+config.substitutions.append(('%host_cc', host_cc))
+config.substitutions.append(('%enzyme_include', "@ENZYME_SOURCE_DIR@/include"))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
