@@ -1237,6 +1237,8 @@ json::Object summarizeModule(Module &M) {
   };
 }
 
+llvm::AnalysisKey EnzymeFunctionSummaryPrinterPass::Key;
+
 llvm::AnalysisKey EnzymeSummaryNewPM::Key;
 
 PreservedAnalyses EnzymeSummaryNewPM::run(Module &M, ModuleAnalysisManager &) {

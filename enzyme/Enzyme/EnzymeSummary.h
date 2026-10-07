@@ -164,8 +164,10 @@ llvm::json::Object summarizeModule(llvm::Module &M);
 
 /// Prints the summary of each function with a body as one line of JSON:
 /// -passes='print<enzyme-function-summary>'.
-class EnzymeFunctionSummaryPrinterPass
-    : public llvm::PassInfoMixin<EnzymeFunctionSummaryPrinterPass> {
+class EnzymeFunctionSummaryPrinterPass final
+    : public PassParent<EnzymeFunctionSummaryPrinterPass> {
+  friend PassParent<EnzymeFunctionSummaryPrinterPass>;
+  static llvm::AnalysisKey Key;
   llvm::raw_ostream &OS;
 
 public:
