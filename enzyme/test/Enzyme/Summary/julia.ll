@@ -2,8 +2,9 @@
 
 ; Function summaries of Julia IR: pointers in addrspace(10)/(11)/(13),
 ; julia.gc_alloc_obj as an allocation, julia.gc_loaded as a pointer into its
-; parent, julia.write_barrier and julia.get_pgcstack as markers, and objects
-; addressed by constant inttoptr as an unnamed global ("*").
+; parent, julia.write_barrier and julia.get_pgcstack as markers, the
+; swiftself task pointer as no user memory, objects addressed by constant
+; inttoptr as an unnamed global ("*"), and dynamic dispatch (julia.call2).
 
 declare ptr @julia.get_pgcstack()
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
@@ -32,6 +33,8 @@ top:
 ; CHECK-SAME: "args_write_any":[false,false]
 ; CHECK-SAME: "edges":[]
 ; CHECK-SAME: "flow":{"a1":["ret"]}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
 ; CHECK-SAME: "globals_write":[]
 ; CHECK-SAME: "globals_write_any":[]
 ; CHECK-SAME: "pts":{}
@@ -51,6 +54,8 @@ top:
 ; CHECK-SAME: "args_write_any":[false,true,false]
 ; CHECK-SAME: "edges":[]
 ; CHECK-SAME: "flow":{"a2":["a1"]}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
 ; CHECK-SAME: "globals_write":[]
 ; CHECK-SAME: "globals_write_any":[]
 ; CHECK-SAME: "pts":{"a2":["a1"]}
@@ -75,6 +80,8 @@ top:
 ; CHECK-SAME: "args_write_any":[false,true,false]
 ; CHECK-SAME: "edges":{{\[\[}}"a1","julia_g_1",0{{\]\]}}
 ; CHECK-SAME: "flow":{"a2":["a1"]}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
 ; CHECK-SAME: "globals_write":[]
 ; CHECK-SAME: "globals_write_any":[]
 ; CHECK-SAME: "pts":{}
@@ -91,8 +98,75 @@ top:
 ; CHECK-SAME: "args_write_any":[false,false]
 ; CHECK-SAME: "edges":[]
 ; CHECK-SAME: "flow":{"a1":["g"]}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
 ; CHECK-SAME: "globals_write":["*"]
 ; CHECK-SAME: "globals_write_any":["*"]
 ; CHECK-SAME: "pts":{}
+; CHECK-SAME: "unknown":false
+
+declare nonnull ptr addrspace(10) @julia.call2(ptr, ptr addrspace(10), ptr addrspace(10), ...)
+declare nonnull ptr addrspace(10) @ijl_invoke(...)
+
+; a pointer round-tripped through ptrtoint/inttoptr keeps its roots
+define void @julia_roundtrip(ptr addrspace(10) %x, double %v) {
+top:
+  %xd = addrspacecast ptr addrspace(10) %x to ptr addrspace(11)
+  %data = load ptr, ptr addrspace(11) %xd, align 8
+  %i = ptrtoint ptr %data to i64
+  %j = add i64 %i, 8
+  %p = inttoptr i64 %j to ptr
+  store double %v, ptr %p, align 8
+  ret void
+}
+; CHECK-LABEL: enzyme-function-summary julia_roundtrip:
+; CHECK-SAME: "args":[{"escape":false,"read":false,"write":true},{"escape":false,"read":false,"write":false}]
+; CHECK-SAME: "args_write_any":[true,false]
+; CHECK-SAME: "edges":[]
+; CHECK-SAME: "flow":{"a1":["a0"]}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
+; CHECK-SAME: "globals_write":[]
+; CHECK-SAME: "globals_write_any":[]
+; CHECK-SAME: "pts":{}
+; CHECK-SAME: "unknown":false
+
+; an address loaded as an integer is unknown
+define void @julia_intaddr(ptr %x, double %v) {
+top:
+  %i = load i64, ptr %x, align 8
+  %p = inttoptr i64 %i to ptr
+  store double %v, ptr %p, align 8
+  ret void
+}
+; CHECK-LABEL: enzyme-function-summary julia_intaddr:
+; CHECK-SAME: "args":[{"escape":false,"read":false,"write":false},{"escape":false,"read":false,"write":false}]
+; CHECK-SAME: "args_write_any":[false,false]
+; CHECK-SAME: "edges":[]
+; CHECK-SAME: "flow":{}
+; CHECK-SAME: "frees":false
+; CHECK-SAME: "globals_read":[]
+; CHECK-SAME: "globals_write":[]
+; CHECK-SAME: "globals_write_any":[]
+; CHECK-SAME: "pts":{}
+; CHECK-SAME: "unknown":true
+
+; dynamic dispatch may read and write everything reachable from what it is
+; given and any global
+define nonnull ptr addrspace(10) @julia_dynamic(ptr addrspace(10) %f, ptr addrspace(10) %x) {
+top:
+  %r = call nonnull ptr addrspace(10) (ptr, ptr addrspace(10), ptr addrspace(10), ...) @julia.call2(ptr @ijl_invoke, ptr addrspace(10) %f, ptr addrspace(10) %x)
+  ret ptr addrspace(10) %r
+}
+; CHECK-LABEL: enzyme-function-summary julia_dynamic:
+; CHECK-SAME: "args":[{"escape":true,"read":true,"write":true},{"escape":true,"read":true,"write":true}]
+; CHECK-SAME: "args_write_any":[true,true]
+; CHECK-SAME: "edges":[]
+; CHECK-SAME: "flow":{"a0":["a0","a1","ret","g"],"a1":["a0","a1","ret","g"],"g":["a0","a1","ret","g"]}
+; CHECK-SAME: "frees":true
+; CHECK-SAME: "globals_read":["*"]
+; CHECK-SAME: "globals_write":["*"]
+; CHECK-SAME: "globals_write_any":["*"]
+; CHECK-SAME: "pts":{"a0":["a0","a1","ret","g"],"a1":["a0","a1","ret","g"],"g":["a0","a1","ret","g"]}
 ; CHECK-SAME: "unknown":false
 

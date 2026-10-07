@@ -109,9 +109,10 @@ bool isAllocationName(StringRef N) {
          N == "aligned_alloc" || N == "posix_memalign" || N == "_Znwm" ||
          N == "_Znam" || startsWith(N, "_FortranAAllocatableAllocate") ||
          startsWith(N, "_FortranAPointerAllocate") ||
-         N == "julia.gc_alloc_obj" || N.contains("gc_pool_alloc") ||
-         N.contains("gc_small_alloc") || N.contains("gc_big_alloc") ||
-         N.contains("alloc_genericmemory") || N.contains("alloc_array");
+         N == "julia.gc_alloc_obj" || N == "julia.gc_alloc_bytes" ||
+         N.contains("gc_pool_alloc") || N.contains("gc_small_alloc") ||
+         N.contains("gc_big_alloc") || N.contains("alloc_genericmemory") ||
+         N.contains("alloc_array");
 }
 
 /// Julia's codegen markers, which neither move data nor call user code.
@@ -119,7 +120,7 @@ bool isAllocationName(StringRef N) {
 /// among them.
 bool isJuliaMarker(StringRef N) {
   return startsWith(N, "julia.") && !startsWith(N, "julia.call") &&
-         N != "julia.gc_alloc_obj";
+         !isAllocationName(N);
 }
 
 /// Julia markers returning a pointer derived from one of their arguments.
@@ -291,7 +292,9 @@ public:
     Roots R;
     V = V->stripPointerCasts();
     if (auto *A = dyn_cast<Argument>(V)) {
-      R.Args.insert(A->getArgNo());
+      // Julia passes its task state as the swiftself parameter
+      if (!A->hasSwiftSelfAttr())
+        R.Args.insert(A->getArgNo());
     } else if (auto *G = dyn_cast<GlobalVariable>(V)) {
       if (!G->isConstant())
         R.Globals.insert(G->getName().str());
@@ -356,6 +359,34 @@ public:
 
 private:
   std::map<const Instruction *, Roots> State;
+
+  /// The roots of a pointer computed as an integer: the pointers converted
+  /// with ptrtoint in it, other operands taken as offsets. Found is set if
+  /// there are any.
+  Roots intRoots(const Value *V, bool &Found, unsigned Depth = 0) const {
+    Roots R;
+    if (auto *PI = dyn_cast<PtrToIntOperator>(V)) {
+      Found = true;
+      return roots(PI->getPointerOperand());
+    }
+    if (isa<Constant>(V))
+      return R;
+    if (auto *BO = dyn_cast<BinaryOperator>(V)) {
+      if (Depth < 8) {
+        for (auto &Op : BO->operands())
+          R.merge(intRoots(Op, Found, Depth + 1));
+        return R;
+      }
+    } else if (auto *C = dyn_cast<CastInst>(V)) {
+      if (C->getSrcTy()->isIntegerTy() && Depth < 8)
+        return intRoots(C->getOperand(0), Found, Depth + 1);
+    }
+    // an integer from memory or elsewhere: maybe an address
+    Found = true;
+    R.Unknown = true;
+    return R;
+  }
+
   /// Local object -> roots of the pointers stored into it.
   std::map<const Value *, Roots> Contents;
 
@@ -372,6 +403,15 @@ private:
     }
     if (auto *L = dyn_cast<LoadInst>(&I))
       return loaded(roots(L->getPointerOperand()));
+    if (auto *IP = dyn_cast<IntToPtrInst>(&I)) {
+      // Julia round-trips pointers through ptrtoint/inttoptr; a constant
+      // address is a global nothing here names
+      bool Found = false;
+      R = intRoots(IP->getOperand(0), Found);
+      if (!Found)
+        R.Globals.insert(AnyGlobal);
+      return R;
+    }
     if (auto *Sel = dyn_cast<SelectInst>(&I)) {
       R = roots(Sel->getTrueValue());
       R.merge(roots(Sel->getFalseValue()));
@@ -397,6 +437,9 @@ private:
       StringRef N = Callee ? Callee->getName() : "";
       if (auto *Through = juliaPassThrough(*CB, N))
         return roots(Through);
+      // task state (julia.get_pgcstack) and type tags hold no user data
+      if (Callee && isJuliaMarker(N))
+        return R;
       if (Callee && isFreshPointer(N)) {
         R.Locals.insert(&I);
         return R;
@@ -665,6 +708,29 @@ private:
     S.Unknown |= R.Unknown;
   }
 
+  /// A call to a callee that is not known (an indirect call, or Julia's
+  /// dynamic julia.call): it may read, write and free everything reachable
+  /// from what it is given and any global, and move data and pointers
+  /// among them.
+  void opaqueCall(CallBase &CB) {
+    Roots In, Sinks;
+    In.Globals.insert(AnyGlobal);
+    Sinks.Globals.insert(AnyGlobal);
+    for (auto &A : CB.args()) {
+      In.merge(sources(A));
+      if (!hasPointer(A->getType()))
+        continue;
+      auto R = P.deep(P.roots(A));
+      In.merge(stored(R));
+      Sinks.merge(R.withoutLocals());
+    }
+    read(Sinks);
+    write(Sinks);
+    flow(In, Sinks);
+    relate(S.PointsTo, Sinks, Sinks, /*ToReturn*/ false);
+    S.Frees = true;
+  }
+
   void visit(Instruction &I) {
     if (auto *L = dyn_cast<LoadInst>(&I)) {
       if (carriesFloat(L->getType()))
@@ -716,7 +782,7 @@ private:
       return;
     auto *Callee = calledFunction(*CB);
     if (!Callee) {
-      S.Unknown = true;
+      opaqueCall(*CB);
       return;
     }
     StringRef N = Callee->getName();
@@ -727,7 +793,7 @@ private:
         isJuliaMarker(N))
       return;
     if (startsWith(N, "julia.call")) {
-      S.Unknown = true;
+      opaqueCall(*CB);
       return;
     }
     if (startsWith(N, "_Fortran")) {
@@ -886,6 +952,9 @@ private:
       StringRef N = Callee ? Callee->getName() : "";
       if (!Callee)
         W.insert("*");
+      // a callee that is not known may write any global
+      if (!Callee || startsWith(N, "julia.call"))
+        W.insert("g" + std::string(AnyGlobal));
       if (isJuliaMarker(N) || (isAllocationName(N) && N != "posix_memalign"))
         return W;
       bool outputIO = startsWith(N, "_FortranAio") && N.contains("Output");
