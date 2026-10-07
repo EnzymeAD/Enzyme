@@ -58,6 +58,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "ActivityAnalysis.h"
+#include "Checkpointing.h"
 #include "Utils.h"
 
 #include "llvm/Demangle/Demangle.h"
@@ -2888,6 +2889,20 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       }
       return false;
     });
+    // A checkpointed loop reads and writes the globals its step does, which
+    // are not its arguments.
+    if (!seenuse)
+      if (Function *F = ci->getCalledFunction())
+        if (isCheckpointLoop(F))
+          for (GlobalVariable *GV : getCheckpointGlobals(F))
+            if (!isConstantValue(TR, GV)) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "nonconstant(" << (int)directions << ")  up-checkpoint "
+                    << *inst << " global " << GV->getName() << "\n";
+              seenuse = true;
+              break;
+            }
     if (EnzymeGlobalActivity) {
       if (!ci->onlyAccessesArgMemory() && !ci->doesNotAccessMemory()) {
         bool legalUse = false;

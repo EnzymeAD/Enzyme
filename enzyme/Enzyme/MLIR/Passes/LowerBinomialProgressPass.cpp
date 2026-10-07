@@ -13,6 +13,7 @@
 
 #include "Dialect/Ops.h"
 #include "Passes/Passes.h"
+#include "enzyme/checkpoint_schedule.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
@@ -55,31 +56,6 @@ namespace {
 //
 // The guard must be a branch, not a select: for s <= 1 the update leaves %beta
 // at 1 and the loop would spin forever.
-static int64_t binomialProgress(int64_t n, int64_t s) {
-  if (n <= 0)
-    return 0;
-  if (n == 1)
-    return 1;
-  if (s <= 1)
-    return n;
-  int64_t t = 0, beta = 1; // beta == C(s + t, t)
-  while (beta < n) {
-    ++t;
-    beta = beta * (s + t) / t;
-  }
-  int64_t lo = n - beta * s / (s + t);
-  int64_t hi = beta * t / (s + t);
-  if (lo < 1)
-    lo = 1;
-  if (hi > n - 1)
-    hi = n - 1;
-  int64_t m = (lo + hi) / 2;
-  int64_t cap = n - (s - 1); // leave a step for each slot still to be placed
-  if (m > cap)
-    m = cap;
-  return m < 1 ? 1 : m;
-}
-
 static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
   // Tensor operands are lowered elsewhere; this pass only handles the
   // scalar integer/index case.
@@ -101,8 +77,8 @@ static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
   if (matchPattern(n, m_ConstantInt(&nCst)) &&
       matchPattern(s, m_ConstantInt(&sCst)) && nCst.getSExtValue() > 0 &&
       sCst.getSExtValue() > 0) {
-    Value c =
-        constOfType(binomialProgress(nCst.getSExtValue(), sCst.getSExtValue()));
+    Value c = constOfType(enzyme_ckpt_binomial_progress(nCst.getSExtValue(),
+                                                        sCst.getSExtValue()));
     op.getResult().replaceAllUsesWith(c);
     op->erase();
     return;

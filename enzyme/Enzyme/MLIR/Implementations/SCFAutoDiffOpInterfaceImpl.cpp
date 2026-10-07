@@ -194,6 +194,8 @@ struct ForOpInterfaceReverse
     return success();
   }
 
+  static bool supportsRuntimeSchedule() { return true; }
+
   static void cloneOp(OpBuilder &builder, Operation &op, IRMapping &mapping) {
     builder.clone(op, mapping);
   }

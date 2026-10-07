@@ -229,11 +229,24 @@ cc_library(
     ],
 )
 
+# The checkpointing schedules and their runtime (enzyme/checkpoint.h), which
+# the LLVM and MLIR passes and the Clang plugin share.
+cc_library(
+    name = "EnzymeCheckpointHeaders",
+    hdrs = [
+        "include/enzyme/checkpoint.h",
+        "include/enzyme/checkpoint_schedule.h",
+    ],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "EnzymeDiffCore",
     srcs = [
         "Enzyme/ActivityAnalysis.cpp",
         "Enzyme/CallDerivatives.cpp",
+        "Enzyme/Checkpointing.cpp",
         "Enzyme/DiffeGradientUtils.cpp",
         "Enzyme/DifferentialUseAnalysis.cpp",
         "Enzyme/EnzymeLogic.cpp",
@@ -255,6 +268,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":EnzymeCheckpointHeaders",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -328,6 +342,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeCacheUtility",
+        ":EnzymeCheckpointHeaders",
         ":EnzymeDiffCore",
         ":EnzymeTypeAnalysis",
         ":bundled-includes",
@@ -1004,6 +1019,7 @@ cc_library(
         ":OffsetViewInterfaceIncGen",
         ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeAttributesIncGen",
+        ":EnzymeCheckpointHeaders",
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",

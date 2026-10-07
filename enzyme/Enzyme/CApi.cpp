@@ -33,6 +33,7 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "Checkpointing.h"
 #include "DiffeGradientUtils.h"
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
@@ -347,6 +348,14 @@ void EnzymeGradientUtilsEraseWithPlaceholder(GradientUtils *G, LLVMValueRef I,
 void EnzymeGradientUtilsReplaceAWithB(GradientUtils *G, LLVMValueRef A,
                                       LLVMValueRef B) {
   return G->replaceAWithB(unwrap(A), unwrap(B));
+}
+
+uint8_t EnzymeLowerCheckpointMarkers(LLVMModuleRef M) {
+  return lowerCheckpointMarkers(*unwrap(M));
+}
+
+uint8_t EnzymeKeepCheckpointLoops(LLVMModuleRef M) {
+  return keepCheckpointLoops(*unwrap(M));
 }
 
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
