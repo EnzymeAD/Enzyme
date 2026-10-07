@@ -224,6 +224,24 @@ cl::opt<std::string> HerbiePlatform(
     cl::desc("Explicit Herbie platform: a path (contains '/' or ends in "
              ".rkt) to a generated platform file, or a name compiled into the "
              "Herbie binary (e.g. cuda-sm120)."));
+// One (array ...) core per precision for a subgraph's outputs, with the
+// subterms they share let*-bound: Herbie searches them jointly and the rewrite
+// is priced as one unit, so work the outputs share is costed and erased once.
+cl::opt<bool> HerbieArrays(
+    "poseidon-herbie-arrays", cl::init(false), cl::Hidden,
+    cl::desc("Send a multi-output subgraph to Herbie as one array FPCore per "
+             "precision; per-output cores are sent only for an array core "
+             "that returns nothing."));
+cl::opt<std::string> HerbieArrayGrouping(
+    "poseidon-herbie-array-grouping", cl::init("inputs"), cl::Hidden,
+    cl::desc("Which outputs share an array core: 'inputs' (same inputs and "
+             "execution count) or 'executions' (same execution count)."));
+cl::opt<std::string> HerbieArrayWeights(
+    "poseidon-herbie-array-weights", cl::init("sensitivity"), cl::Hidden,
+    cl::desc("How array elements are weighted (:herbie-weights): "
+             "'sensitivity' (profiled sum of |gradient * value|), 'gradient' "
+             "(|gradient| times the mean magnitude of the profiled range, the "
+             "weight of an ULP in the accuracy model), or 'none'."));
 
 // Matmul raising and host dispatch.
 cl::opt<bool> OzakiHostDispatch(

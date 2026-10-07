@@ -21,11 +21,13 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <map>
@@ -136,6 +138,15 @@ public:
   static bool classof(const FPNode *N);
 };
 
+// Lowers one expression per output, element k at the builder `at(k)` returns,
+// computing a subterm several elements share once wherever that copy
+// dominates the later use (every earlier copy, when DT is null).
+llvm::SmallVector<llvm::Value *, 4>
+emitSharedElements(llvm::ArrayRef<std::shared_ptr<FPNode>> elements,
+                   llvm::function_ref<llvm::IRBuilder<> &(size_t)> at,
+                   llvm::ValueToValueMapTy *VMap,
+                   const llvm::DominatorTree *DT);
+
 struct Subgraph {
   llvm::SetVector<llvm::Value *> inputs;
   llvm::SetVector<llvm::Instruction *> outputs;
@@ -183,14 +194,38 @@ public:
   double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   llvm::SmallVector<RewriteCandidate> candidates;
   llvm::SetVector<llvm::Instruction *> erasableInsts;
+  // The outputs one candidate replaces, in array element order: the single
+  // oldOutput for a per-output core, all of them for an array core.
+  llvm::SmallVector<llvm::Value *, 1> roots;
+  llvm::SmallVector<double, 1> rootGrads;
+  bool herbieAnswered = false;
 
   explicit CandidateOutput(Subgraph &subgraph, llvm::Value *oldOutput,
                            std::string expr, double grad, unsigned executions)
       : subgraph(&subgraph), oldOutput(oldOutput), expr(expr), grad(grad),
-        executions(executions) {
+        executions(executions), roots({oldOutput}), rootGrads({grad}) {
     initialCompCost = getCompCost({oldOutput}, subgraph.inputs);
     findErasableInstructions();
   }
+
+  explicit CandidateOutput(Subgraph &subgraph,
+                           llvm::ArrayRef<llvm::Value *> outputs,
+                           llvm::ArrayRef<double> grads, std::string expr,
+                           unsigned executions)
+      : subgraph(&subgraph), oldOutput(outputs.front()), expr(expr),
+        executions(executions), roots(outputs.begin(), outputs.end()),
+        rootGrads(grads.begin(), grads.end()) {
+    grad = 0.0;
+    for (double g : grads)
+      grad += std::fabs(g);
+    initialCompCost = getCompCost(
+        llvm::SmallVector<llvm::Value *>(outputs.begin(), outputs.end()),
+        subgraph.inputs);
+    findErasableInstructions();
+  }
+
+  bool isArray() const { return roots.size() > 1; }
+  bool sharesRoot(const CandidateOutput &other) const;
 
   void apply(size_t candidateIndex,
              std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>

@@ -37,7 +37,8 @@ bool improveViaHerbie(
     std::vector<CandidateOutput> &COs, llvm::Module *M,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    int subgraphIdx, llvm::StringRef funcTag, llvm::StringRef cacheKey);
+    int subgraphIdx, llvm::StringRef funcTag, llvm::StringRef cacheKey,
+    llvm::StringRef keyTag = "");
 
 std::string getHerbieOperator(const llvm::Instruction &I);
 

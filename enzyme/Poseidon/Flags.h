@@ -99,6 +99,9 @@ extern llvm::cl::opt<unsigned> HerbieProcesses;
 extern llvm::cl::opt<unsigned> HerbiePreFloorBits;
 extern llvm::cl::opt<std::string> HerbieBinary;
 extern llvm::cl::opt<std::string> HerbiePlatform;
+extern llvm::cl::opt<bool> HerbieArrays;
+extern llvm::cl::opt<std::string> HerbieArrayWeights;
+extern llvm::cl::opt<std::string> HerbieArrayGrouping;
 
 // Matmul raising and host dispatch.
 extern llvm::cl::opt<bool> OzakiHostDispatch;

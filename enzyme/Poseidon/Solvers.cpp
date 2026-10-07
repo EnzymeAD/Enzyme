@@ -231,7 +231,7 @@ static bool resolveConflicts(const SmallVectorImpl<SolutionStep> &priorSteps,
   // only one rewrite of that output can be materialized.
   for (const auto &step : priorSteps)
     if (auto *const *co = std::get_if<CandidateOutput *>(&step.item))
-      if (cand && (*co)->oldOutput == cand->oldOutput)
+      if (cand && (*co)->sharesRoot(*cand))
         return false;
   return resolveElementwiseConflicts(
       priorSteps, cand,
@@ -461,6 +461,7 @@ static double baselineAccCost(ArrayRef<CandidateOutput> COs,
     subgraphsWithCS.insert(CS.subgraph);
   }
   unsigned unpriced = 0;
+  SmallPtrSet<const Value *, 8> arrayPriced;
   for (const auto &CO : COs) {
     if (subgraphsWithCS.count(CO.subgraph))
       continue;
@@ -472,6 +473,13 @@ static double baselineAccCost(ArrayRef<CandidateOutput> COs,
       ++unpriced;
       continue;
     }
+    // An array core prices all of its outputs at once; each output's baseline
+    // is counted once however many cores cover it.
+    if (llvm::any_of(CO.roots,
+                     [&](const Value *V) { return arrayPriced.contains(V); }))
+      continue;
+    if (CO.isArray())
+      arrayPriced.insert(CO.roots.begin(), CO.roots.end());
     baseline += CO.initialAccCost;
   }
   if (unpricedOut)
@@ -1842,11 +1850,14 @@ bool applySolution(
             llvm::errs() << "Applying solution for " << item->expr << " --("
                          << step.candidateIndex << ")-> "
                          << item->candidates[step.candidateIndex].expr << "\n";
-            if (!rewrittenOutputs.insert(item->oldOutput).second) {
+            if (llvm::any_of(item->roots, [&](Value *root) {
+                  return rewrittenOutputs.contains(root);
+                })) {
               llvm::errs() << "[poseidon] output already rewritten by an "
                               "earlier step; skipping this one\n";
               return;
             }
+            rewrittenOutputs.insert(item->roots.begin(), item->roots.end());
             item->apply(step.candidateIndex, valueToNodeMap, symbolToValueMap);
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
             llvm::errs() << "Applying solution for CS: "

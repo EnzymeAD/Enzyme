@@ -12,6 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -27,6 +29,7 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
+#include <optional>
 
 #include "CostModel.h"
 #include "Flags.h"
@@ -126,6 +129,9 @@ double FPNode::getUpperBound() const {
 
 Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
   Module *M = builder.GetInsertBlock()->getModule();
+  if (op == "array")
+    report_fatal_error("Poseidon: an array rewrite is lowered element by "
+                       "element at its outputs, never as one value");
   if (op == "if") {
     Value *condValue = operands[0]->getLLValue(builder, VMap);
     Value *trueValue = operands[1]->getLLValue(builder, VMap);
@@ -782,6 +788,84 @@ bool FPConst::classof(const FPNode *N) {
   return N->getType() == NodeType::Const;
 }
 
+SmallVector<Value *, 4>
+emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
+                   function_ref<IRBuilder<> &(size_t)> at,
+                   ValueToValueMapTy *VMap, const DominatorTree *DT) {
+  std::unordered_map<Value *, std::shared_ptr<FPNode>> noNodes;
+  SetVector<Value *> noInputs;
+  DenseMap<const FPNode *, std::string> keys;
+  std::function<const std::string &(const FPNode *)> key =
+      [&](const FPNode *N) -> const std::string & {
+    auto It = keys.find(N);
+    if (It != keys.end())
+      return It->second;
+    std::string k;
+    if (auto *LL = dyn_cast<FPLLValue>(N))
+      k = "%" + utohexstr((uintptr_t)LL->value);
+    else if (isa<FPConst>(N))
+      k = N->dtype + ":" +
+          const_cast<FPNode *>(N)->toFullExpression(noNodes, noInputs);
+    else {
+      k = N->op + "." + N->dtype + "(";
+      for (const auto &operand : N->operands)
+        k += key(operand.get()) + ",";
+      k += ")";
+    }
+    return keys[N] = std::move(k);
+  };
+  // Inputs lower to their own value and constants to themselves: only the
+  // operator nodes of a rewrite are emitted.
+  auto isLeaf = [](const FPNode *N) {
+    return N->getType() != FPNode::NodeType::Node;
+  };
+  StringMap<unsigned> counts;
+  std::function<void(const FPNode *)> count = [&](const FPNode *N) {
+    if (isLeaf(N))
+      return;
+    ++counts[key(N)];
+    for (const auto &operand : N->operands)
+      count(operand.get());
+  };
+  for (const auto &element : elements)
+    count(element.get());
+
+  StringMap<Value *> emitted;
+  auto placeholder = [&](Value *V, const std::string &dtype) {
+    if (VMap)
+      (*VMap)[V] = V;
+    return std::make_shared<FPLLValue>(V, "__shared", dtype);
+  };
+  SmallVector<Value *, 4> out;
+  for (auto [k, element] : llvm::enumerate(elements)) {
+    IRBuilder<> &B = at(k);
+    auto available = [&](Value *V) {
+      auto *I = dyn_cast<Instruction>(V);
+      if (!I || !DT)
+        return true;
+      return DT->dominates(I, &*B.GetInsertPoint());
+    };
+    std::function<std::shared_ptr<FPNode>(std::shared_ptr<FPNode>)> share =
+        [&](std::shared_ptr<FPNode> N) -> std::shared_ptr<FPNode> {
+      if (isLeaf(N.get()))
+        return N;
+      const std::string &k = key(N.get());
+      for (auto &operand : N->operands)
+        operand = share(operand);
+      if (counts[k] < 2)
+        return N;
+      auto It = emitted.find(k);
+      if (It != emitted.end() && available(It->second))
+        return placeholder(It->second, N->dtype);
+      Value *V = N->getLLValue(B, VMap);
+      emitted[k] = V;
+      return placeholder(V, N->dtype);
+    };
+    out.push_back(share(element)->getLLValue(B, VMap));
+  }
+  return out;
+}
+
 void CandidateOutput::apply(
     size_t candidateIndex,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -793,31 +877,64 @@ void CandidateOutput::apply(
                    << candidates.size() << "), skipping\n";
     return;
   }
-  auto *oldInst = dyn_cast<Instruction>(oldOutput);
-  if (!oldInst || !oldInst->getParent()) {
-    if (flags::Print)
-      llvm::errs() << "CandidateOutput::apply: oldOutput "
-                   << "is not in a basic block (already erased?), skipping\n";
-    return;
+  for (Value *root : roots) {
+    auto *oldInst = dyn_cast<Instruction>(root);
+    if (!oldInst || !oldInst->getParent()) {
+      if (flags::Print)
+        llvm::errs() << "CandidateOutput::apply: oldOutput "
+                     << "is not in a basic block (already erased?), skipping\n";
+      return;
+    }
   }
 
   auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
                                     valueToNodeMap, symbolToValueMap);
+  SmallVector<std::shared_ptr<FPNode>, 1> elements;
+  if (isArray()) {
+    if (parsedNode->op != "array" ||
+        parsedNode->operands.size() != roots.size())
+      report_fatal_error("Poseidon: an array rewrite does not have one element "
+                         "per output of its subgraph");
+    elements.append(parsedNode->operands.begin(), parsedNode->operands.end());
+  } else {
+    elements.push_back(parsedNode);
+  }
 
-  IRBuilder<> builder(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
-  builder.setFastMathFlags(oldInst->getFastMathFlags());
+  SmallVector<Value *, 4> newOutputs;
+  if (isArray()) {
+    DominatorTree DT(*cast<Instruction>(oldOutput)->getFunction());
+    std::optional<IRBuilder<>> builder;
+    newOutputs = emitSharedElements(
+        elements,
+        [&](size_t k) -> IRBuilder<> & {
+          auto *oldInst = cast<Instruction>(roots[k]);
+          builder.emplace(oldInst->getParent(),
+                          ++BasicBlock::iterator(oldInst));
+          builder->setFastMathFlags(oldInst->getFastMathFlags());
+          return *builder;
+        },
+        nullptr, &DT);
+  }
 
-  Value *newOutput = parsedNode->getLLValue(builder);
-  assert(newOutput && "Failed to get value from parsed node");
+  for (auto [k, root, element] : llvm::enumerate(roots, elements)) {
+    auto *oldInst = cast<Instruction>(root);
+    IRBuilder<> builder(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
+    builder.setFastMathFlags(oldInst->getFastMathFlags());
 
-  if (newOutput->getType() != oldOutput->getType())
-    newOutput =
-        builder.CreateFPCast(newOutput, oldOutput->getType(), "herbie.fpcast");
+    Value *newOutput = isArray() ? newOutputs[k] : element->getLLValue(builder);
+    assert(newOutput && "Failed to get value from parsed node");
+    if (isArray() && isa<Instruction>(newOutput))
+      builder.SetInsertPoint(cast<Instruction>(newOutput)->getNextNode());
 
-  oldOutput->replaceAllUsesWith(newOutput);
-  symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
-  valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
-      newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
+    if (newOutput->getType() != root->getType())
+      newOutput =
+          builder.CreateFPCast(newOutput, root->getType(), "herbie.fpcast");
+
+    root->replaceAllUsesWith(newOutput);
+    symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
+    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+        newOutput, "__no", valueToNodeMap[root]->dtype);
+  }
 
   for (auto *I : erasableInsts) {
     if (!I->use_empty())
@@ -827,7 +944,14 @@ void CandidateOutput::apply(
     cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
   }
 
-  subgraph->outputs_rewritten++;
+  subgraph->outputs_rewritten += roots.size();
+}
+
+bool CandidateOutput::sharesRoot(const CandidateOutput &other) const {
+  for (Value *root : roots)
+    if (llvm::is_contained(other.roots, root))
+      return true;
+  return false;
 }
 
 // Lower is better
@@ -848,7 +972,8 @@ InstructionCost CandidateOutput::getCompCostDelta(size_t candidateIndex) {
 void CandidateOutput::findErasableInstructions() {
   SmallPtrSet<Value *, 8> visited;
   SmallPtrSet<Instruction *, 8> exprInsts;
-  collectExprInsts(oldOutput, subgraph->inputs, exprInsts, visited);
+  for (Value *root : roots)
+    collectExprInsts(root, subgraph->inputs, exprInsts, visited);
   visited.clear();
 
   // Seeded in IR order, not in the order the pointers happened to hash: the
@@ -864,7 +989,8 @@ void CandidateOutput::findErasableInstructions() {
   reverseTopoSort(instsToProcess, instsToProcessSorted);
 
   erasableInsts.clear();
-  erasableInsts.insert(cast<Instruction>(oldOutput));
+  for (Value *root : roots)
+    erasableInsts.insert(cast<Instruction>(root));
 
   for (auto *I : instsToProcessSorted) {
     if (erasableInsts.contains(I))
@@ -954,7 +1080,8 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
       if (CO.subgraph == subgraph) {
         newSubgraph.operations.remove_if(
             [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
-        newSubgraph.outputs.remove(cast<Instruction>(CO.oldOutput));
+        for (Value *root : CO.roots)
+          newSubgraph.outputs.remove(cast<Instruction>(root));
       }
     }
   }
@@ -1015,9 +1142,11 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
       const auto &CO = **ptr;
       if (CO.subgraph == subgraph) {
-        auto it = valueToNodeMap.find(CO.oldOutput);
-        assert(it != valueToNodeMap.end() && it->second);
-        stepNodes.insert(it->second.get());
+        for (Value *root : CO.roots) {
+          auto it = valueToNodeMap.find(root);
+          assert(it != valueToNodeMap.end() && it->second);
+          stepNodes.insert(it->second.get());
+        }
       }
     }
   }
