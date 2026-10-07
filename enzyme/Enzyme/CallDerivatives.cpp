@@ -3062,9 +3062,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             auto I8Ptr = PointerType::getUnqual(C);
             auto I32 = Type::getInt32Ty(C);
             sizeFn = M.getOrInsertFunction(
-                "_FortranASize",
-                FunctionType::get(Type::getInt64Ty(C), {I8Ptr, I8Ptr, I32},
-                                  false));
+                "_FortranASize", FunctionType::get(Type::getInt64Ty(C),
+                                                   {I8Ptr, I8Ptr, I32}, false));
             initFn = M.getOrInsertFunction(
                 "_FortranAInitialize",
                 FunctionType::get(Type::getVoidTy(C), {I8Ptr, I8Ptr, I32},
@@ -3078,8 +3077,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   gutils->getWidth() > 1
                       ? gutils->extractMeta(Builder2, shadows[k], w)
                       : shadows[k];
-            auto dcall = Builder2.CreateCall(called->getFunctionType(),
-                                             called, args);
+            auto dcall =
+                Builder2.CreateCall(called->getFunctionType(), called, args);
             dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
             dcall->setCallingConv(call.getCallingConv());
 
@@ -3090,9 +3089,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               auto zero32 = ConstantInt::get(Type::getInt32Ty(C), 0);
               Value *count = Builder2.CreateCall(sizeFn, {desc, nullp, zero32});
               Value *elemLen = Builder2.CreateLoad(
-                  Type::getInt64Ty(C),
-                  Builder2.CreateConstInBoundsGEP1_64(Type::getInt8Ty(C), desc,
-                                                      8));
+                  Type::getInt64Ty(C), Builder2.CreateConstInBoundsGEP1_64(
+                                           Type::getInt8Ty(C), desc, 8));
               Value *base =
                   Builder2.CreateLoad(PointerType::getUnqual(C), desc);
               Builder2.CreateMemSet(base, Builder2.getInt8(0),
