@@ -403,14 +403,11 @@ static void emitFunctionCall(Sema &S, Stmt *St, std::string FunctionName,
   auto &AST = S.getASTContext();
   SourceLocation loc;
 
-  DeclContext *declCtx = S.getCurLexicalContext();
-  for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-    if (tmpCtx->isRecord()) {
-      declCtx = tmpCtx->getParent();
-    }
-  }
+  // Declared at translation unit level: a declaration local to a function
+  // template would be instantiated with it, and this one has no source to be
+  // instantiated from.
+  DeclContext *declCtx = AST.getTranslationUnitDecl();
 
-  // create global variable at translation unit level
   auto &Id = AST.Idents.get(FunctionName);
 
   std::vector<QualType> ParamTypes(argValues.size(), AST.getNSUIntegerType());

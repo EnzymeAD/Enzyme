@@ -60,6 +60,16 @@ double dflt(double x, long n) {
   return state[0] + state[1] * state[2];
 }
 
+#ifdef __cplusplus
+// In a function template, instantiated after the annotation is read.
+template<int M> double templated(double x, long n) {
+  for (int k = 0; k < N; k++)
+    state[k] = x * (k + M);
+  LOOP("binomial", 2)(long i = 0; i < n; i++) { BODY }
+  return state[0] + state[1] * state[2];
+}
+#endif
+
 double plain(double x, long n) {
   for (int k = 0; k < N; k++)
     state[k] = x * (k + 1);
@@ -94,6 +104,9 @@ int main(void) {
     CHECK(periodic, n, want);
     CHECK(store_all, n, want);
     CHECK(dflt, n, want);
+#ifdef __cplusplus
+    CHECK(templated<1>, n, want);
+#endif
   }
   if (failures)
     return 1;
