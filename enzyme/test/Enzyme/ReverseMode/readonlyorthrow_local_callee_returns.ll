@@ -2,10 +2,11 @@
 
 ; A local read-only-or-throw callee may write memory it allocates and hand it
 ; to its caller, through its return value or an sret-like argument. A caller
-; that can get such a pointer may hand it on in turn, so it is only local
-; read-only-or-throw too. Marking `wrap` fully read-only-or-throw would let
-; activity analysis treat a call to it as unable to propagate derivatives,
-; although the memory it returns was written from its arguments.
+; that lets that memory escape, directly or through a pointer loaded from it,
+; is only local read-only-or-throw too. Marking `wrap` fully
+; read-only-or-throw would let activity analysis treat a call to it as unable
+; to propagate derivatives, although the memory it returns was written from
+; its arguments.
 
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
 
@@ -22,6 +23,18 @@ define ptr addrspace(10) @wrap(ptr %task, ptr addrspace(11) nocapture %x) {
 top:
   %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
   ret ptr addrspace(10) %r
+}
+
+; A caller that only reads the memory a local callee returned does not let it
+; escape, so it writes no memory that outlives it and stays fully
+; read-only-or-throw.
+
+define double @use_only(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
+  %v = load double, ptr addrspace(11) %r11, align 8
+  ret double %v
 }
 
 ; The same through an sret holding a pointer.
@@ -67,9 +80,10 @@ top:
 
 ; CHECK: define ptr addrspace(10) @fresh({{.*}}) #[[LOCAL:[0-9]+]]
 ; CHECK: define ptr addrspace(10) @wrap({{.*}}) #[[LOCAL]]
+; CHECK: define double @use_only({{.*}}) #[[RO:[0-9]+]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_md({{.*}}) #[[LOCAL]]
-; CHECK: define i64 @wrap_md_int({{.*}}) #[[RO:[0-9]+]]
+; CHECK: define i64 @wrap_md_int({{.*}}) #[[RO]]
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
 ; CHECK-DAG: attributes #[[RO]] = { {{.*}}"enzyme_ReadOnlyOrThrow" }
