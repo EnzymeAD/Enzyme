@@ -274,6 +274,16 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     return arith::IndexCastOp::create(builder, loc, targetType, v);
   }
 
+  // Binds the original loop's induction variable, for a copy of its body, to
+  // `iv`: an iteration the scaffold computed in its own counting type (index,
+  // or tensor<i64> for stablehlo), which need not be the loop's (JAX counts in
+  // tensor<i32>).
+  static void mapInductionVar(OpBuilder &builder, Location loc,
+                              IRMapping &mapping, OpName loop, Value iv) {
+    Value orig = FinalClass::getInductionVar(loop);
+    mapping.map(orig, FinalClass::castToType(builder, loc, iv, orig.getType()));
+  }
+
   static MemRefType checkpointBufferType(int64_t budget, Type t) {
     if (auto mt = dyn_cast<MemRefType>(t)) {
       SmallVector<int64_t> shape;
@@ -826,7 +836,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     for (auto &&[oldArg, newArg] : llvm::zip_equal(
              newForOpBody->getArguments().drop_front(), innerFwd.args()))
       mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(newForOp), iv);
+    mapInductionVar(builder, loc, mapping, newForOp, iv);
 
     copyBlockWithoutTerminator(builder, newForOpBody, gutils, mapping);
 
@@ -932,7 +942,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
              FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
              state))
       mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(forOp), iv);
+    mapInductionVar(builder, forOp->getLoc(), mapping, forOp, iv);
 
     // Re-materialize primal ops of this step for the reverse visitor.
     copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
@@ -1270,7 +1280,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         for (auto &&[oldArg, newArg] : llvm::zip_equal(
                  origBodyBlock->getArguments().drop_front(), innerRemat.args()))
           mapping.map(oldArg, newArg);
-        mapping.map(FinalClass::getInductionVar(forOp), iv);
+        mapInductionVar(builder, loc, mapping, forOp, iv);
 
         copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
 
@@ -1627,7 +1637,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                                  innerFwdBody->getArguments()))
       mapping.map(oldArg, newArg);
 
-    mapping.map(FinalClass::getInductionVar(newForOp), currentIV);
+    mapInductionVar(cacheBuilder, loc, mapping, newForOp, currentIV);
 
     copyBlockWithoutTerminator(cacheBuilder, newForOpBody, gutils, mapping);
 
@@ -1766,7 +1776,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                                  revInnerBody->getArguments()))
       mapping.map(oldArg, newArg);
 
-    mapping.map(FinalClass::getInductionVar(forOp), currentIV);
+    mapInductionVar(builder, loc, mapping, forOp, currentIV);
 
     copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
     Operation *segTerm = origBodyBlock->getTerminator();
@@ -2055,7 +2065,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     for (auto &&[oldArg, newArg] :
          llvm::zip_equal(body->getArguments().drop_front(), replay.args()))
       mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(loop), iv);
+    mapInductionVar(b, loc, mapping, loop, iv);
     copyBlockWithoutTerminator(b, body, gutils, mapping);
     SmallVector<Value> yields;
     for (auto operand :
