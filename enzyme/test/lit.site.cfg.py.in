@@ -150,9 +150,12 @@ if "@ENZYME_MPI_FORTRAN_ENABLED@" == "1":
         config.environment['HOME'] = os.environ['HOME']
 
 # Built by ENZYME_FLANG=ON; lets flang run Enzyme itself instead of piping IR to opt.
+# -Xflang -load also registers Enzyme's options, so that -mllvm -enzyme-* parses.
+flangEnzyme = ('@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+               + config.llvm_ver + config.llvm_shlib_ext)
 config.substitutions.append(('%loadFlangEnzyme',
-                             ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
-                             + config.llvm_ver + config.llvm_shlib_ext))
+                             ' -fpass-plugin=' + flangEnzyme
+                             + ' -Xflang -load -Xflang ' + flangEnzyme))
 if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
     config.available_features.add('flangenzyme')
 
