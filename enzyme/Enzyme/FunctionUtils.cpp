@@ -2254,20 +2254,35 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
   return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
 }
 
-// Whether a value of type T may hold a pointer.
-static bool typeMayHoldPointer(Type *T) {
-  if (T->isPointerTy())
-    return true;
-  if (auto ST = dyn_cast<StructType>(T)) {
-    for (auto E : ST->elements())
-      if (typeMayHoldPointer(E))
-        return true;
-    return false;
+// Whether a value of type T may be a pointer to memory, or hold one.
+static bool mayBeOrHoldPointer(Type *T) {
+  return !T->isVoidTy() && !T->isIntOrIntVectorTy() && !T->isFPOrFPVectorTy();
+}
+
+// Whether a pointer loaded from Obj, memory local to this function, may escape
+// it.
+static bool loadedPointerMayEscape(Value *Obj, TargetLibraryInfo &TLI) {
+  SmallVector<Value *, 4> todo = {Obj};
+  SmallPtrSet<Value *, 4> seen;
+  while (!todo.empty()) {
+    auto V = todo.pop_back_val();
+    if (!seen.insert(V).second)
+      continue;
+    for (auto U : V->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        continue;
+      if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                  /*includebin*/ false)) {
+        todo.push_back(I);
+        continue;
+      }
+      if (auto LI = dyn_cast<LoadInst>(I))
+        if (LI->getPointerOperand() == V && mayBeOrHoldPointer(LI->getType()) &&
+            !notCaptured(LI, &TLI))
+          return true;
+    }
   }
-  if (auto AT = dyn_cast<ArrayType>(T))
-    return typeMayHoldPointer(AT->getElementType());
-  if (auto VT = dyn_cast<VectorType>(T))
-    return typeMayHoldPointer(VT->getElementType());
   return false;
 }
 
@@ -2381,11 +2396,13 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           // optimization), and anything else disqualifies us.
           if (!isReadOnlyOrThrow(CI)) {
             // Unlike a fully read-only-or-throw callee, a local one may also
-            // write memory it allocates and hand it to us, through its return
-            // value or its sret-like arguments. If a pointer to such memory
-            // can reach us that way, we may hand it on in turn, so we are
-            // only local read-only-or-throw too.
-            if (typeMayHoldPointer(CI->getType()))
+            // write memory it allocates and hand it to us, through its result
+            // or its sret-like arguments. Like an allocation of ours that was
+            // written to, if that memory, or memory a pointer loaded from it
+            // points to, may escape us, we are only local read-only-or-throw
+            // too.
+            if (mayBeOrHoldPointer(CI->getType()) &&
+                (!notCaptured(CI, &TLI) || loadedPointerMayEscape(CI, TLI)))
               local = true;
             auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
@@ -2413,29 +2430,15 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               }
               if (!sret && !roots && !unionBytes)
                 continue;
-              // Whether the callee may store a pointer to memory it allocated
-              // here.
-              bool mayHoldPointer = roots;
-              if (sret) {
-#if LLVM_VERSION_MAJOR >= 14
-                mayHoldPointer |=
-                    typeMayHoldPointer(CI->getParamStructRetType(i));
-#else
-                mayHoldPointer = true;
-#endif
-              }
               auto Obj = getBaseObject(arg);
               if (isa<AllocaInst>(Obj)) {
-                if (mayHoldPointer)
+                if (loadedPointerMayEscape(Obj, TLI))
                   local = true;
                 continue;
               }
               if (isAllocationCall(Obj, TLI)) {
-                if (local)
-                  continue;
-                if (notCaptured(Obj) && !mayHoldPointer)
-                  continue;
-                local = true;
+                if (!notCaptured(Obj) || loadedPointerMayEscape(Obj, TLI))
+                  local = true;
                 continue;
               }
               if (auto A = dyn_cast<Argument>(Obj)) {
