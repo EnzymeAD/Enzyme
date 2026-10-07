@@ -25,16 +25,18 @@
 ! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=UNB
 ! RUN: %fc -fc1 %flangFc1Directives -module-dir %t.mod -mmlir -enzyme-fir-arg-unbounded-types -mmlir -enzyme-fir-arg-descriptor-data-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NODATA
 ! NODATA-LABEL: define void @_QMmPdescr(
-! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, 
+! NODATA-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer,
 
 ! OFF-NOT: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}"
 
 module m
+  use, intrinsic :: iso_fortran_env, only: real32, real64
   implicit none
+  public
   type :: t
-    real(8) :: a
+    real(real64) :: a
     integer :: n
-  end type
+  end type t
 contains
 ! CHECK-LABEL: define void @_QMmPscalars(
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %0,
@@ -45,14 +47,14 @@ contains
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" %5,
 ! CHECK-SAME: i64 %6)
   subroutine scalars(x8, x4, i, l, c, z)
-    real(8) :: x8
-    real(4) :: x4
-    integer :: i
-    logical :: l
-    character(len=*) :: c
-    complex(8) :: z
+    real(real64), intent(out) :: x8
+    real(real32), intent(in) :: x4
+    integer, intent(in) :: i
+    logical, intent(in) :: l
+    character(len=*), intent(in) :: c
+    complex(real64), intent(in) :: z
     x8 = x4 + i
-  end subroutine
+  end subroutine scalars
 
 ! CHECK-LABEL: define void @_QMmParrays(
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Integer}" %0,
@@ -66,11 +68,13 @@ contains
 ! UNB-SAME: "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %2,
 ! UNB-SAME: "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@float}" %3)
   subroutine arrays(n, a, b, s)
-    integer :: n
-    real(8) :: a(n), b(*)
-    real(4) :: s(10, 3)
+    integer, intent(in) :: n
+    real(real64), intent(out) :: a(n)
+    ! allow(assumed-size)
+    real(real64), intent(in) :: b(*)
+    real(real32), intent(in) :: s(10, 3)
     a(1) = b(1) + s(1, 1)
-  end subroutine
+  end subroutine arrays
 
 ! UNB-LABEL: define void @_QMmPdescr(
 ! UNB-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Integer, [-1,16]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer, [-1,24]:Integer, [-1,32]:Integer, [-1,40]:Integer}" %0,
@@ -82,64 +86,70 @@ contains
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Integer, {{.*}}, [-1,64]:Integer}" %1,
 ! CHECK-SAME: ptr noalias %3)
   subroutine descr(a, p, q, u)
-    real(8) :: a(:)
-    real(8), allocatable :: p(:,:)
-    real(4), pointer :: q(:)
-    class(*) :: u
+    real(real64), intent(inout) :: a(:)
+    real(real64), allocatable, intent(in) :: p(:,:)
+    real(real32), pointer, intent(in) :: q(:)
+    class(*), intent(in) :: u
     a(1) = 1
-  end subroutine
+  end subroutine descr
 
 ! CHECK-LABEL: define void @_QMmPbyvalue(
 ! CHECK-SAME: double "enzyme_type"="{[-1]:Float@double}" %0,
 ! CHECK-SAME: i32 "enzyme_type"="{[-1]:Integer}" %1,
 ! CHECK-SAME: ptr noalias %2, ptr noalias %3)
   subroutine byvalue(x, n, tt, r)
-    real(8), value :: x
+    real(real64), value :: x
     integer, value :: n
-    type(t) :: tt
-    integer :: r(..)
+    type(t), intent(inout) :: tt
+    integer, intent(in) :: r(..)
     tt%a = x
-  end subroutine
+  end subroutine byvalue
 
 ! CHECK: define "enzyme_type"="{[-1]:Float@double}" double @_QMmPf(ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %0)
-  real(8) function f(x)
-    real(8) :: x
+  real(real64) function f(x)
+    real(real64), intent(in) :: x
     f = x
-  end function
-end module
+  end function f
+end module m
 
 ! CHECK-LABEL: define void @user_(
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %0)
 ! CHECK: alloca [64 x i8], i64 1, align 1, !enzyme_type ![[CHR:[0-9]+]]
 ! NOLOCAL-NOT: alloca [64 x i8], align 1, !enzyme_type
+! allow(procedure-not-in-module)
 subroutine user(y)
+  use, intrinsic :: iso_fortran_env, only: real64
   use m, only: t
-  real(8) :: y
+  implicit none
+  real(real64), intent(inout) :: y
   character(len=64) :: buf
   external :: ext
-  buf = 'x'
+  buf = "x"
   call ext(y, 1.0, buf)
-end subroutine
+end subroutine user
 ! A name that a local of another type has too is left out (here the second
 ! BLOCK's v):
 ! CHECK-LABEL: define void @collide_(
 ! CHECK: alloca [8 x i8], i64 1, align 1{{$}}
 ! CHECK: alloca [8 x i8], i64 1, align 1, !enzyme_type ![[CHR]]
+! allow(procedure-not-in-module)
 subroutine collide()
+  use, intrinsic :: iso_fortran_env, only: real64
+  implicit none
   character(len=8) :: w
-  w = 'b'
+  w = "b"
   print *, w
   block
     character(len=8) :: v
-    v = 'a'
+    v = "a"
     print *, v
   end block
   block
-    real(8) :: v(4)
+    real(real64) :: v(4)
     v = 1
     print *, v
   end block
-end subroutine
+end subroutine collide
 
 ! CHECK: declare void @ext_(ptr, ptr, ptr, i64)
 ! CHECK: ![[CHR]] = !{!"Unknown", i32 -1, ![[CHRP:[0-9]+]]}

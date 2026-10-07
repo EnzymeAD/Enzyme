@@ -9,11 +9,16 @@
 
 ! COMPILE-NOT: Cannot deduce type
 
+! allow(procedure-not-in-module)
 subroutine reset_and_step(x)
-  real(8), intent(in) :: x
-  real(8) :: a, b, c, d, e, f, g, h, p, q, r, s
+  use, intrinsic :: iso_fortran_env, only: real64
+  implicit none
+  real(real64), intent(in) :: x
+  real(real64) :: a, b, c, d, e, f, g, h, p, q, r, s
+  ! allow(common-block)
   common /state/ a, b, c, d, e, f, g, h, p, q, r, s
-  real(8) :: a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d
+  real(real64) :: a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d
+  ! allow(common-block)
   common /state_d/ a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d
   !dir$ enzyme shadow(/state/, shadow=/state_d/)
   b = 0.0d0
@@ -29,28 +34,35 @@ subroutine reset_and_step(x)
   s = 0.0d0
   b = a * x
   c = b * x
-end subroutine
+end subroutine reset_and_step
 
-real(8) function cost(x)
-  real(8), intent(in) :: x
-  real(8) :: a, b, c, d, e, f, g, h, p, q, r, s
+! allow(procedure-not-in-module)
+real(real64) function cost(x)
+  use, intrinsic :: iso_fortran_env, only: real64
+  implicit none
+  real(real64), intent(in) :: x
+  real(real64) :: a, b, c, d, e, f, g, h, p, q, r, s
+  ! allow(common-block)
   common /state/ a, b, c, d, e, f, g, h, p, q, r, s
   call reset_and_step(x)
   cost = c
-end function
+end function cost
 
 program main
+  use, intrinsic :: iso_fortran_env, only: real64
   implicit none
-  real(8) :: a, b, c, d, e, f, g, h, p, q, r, s, a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d, x, dx
+  real(real64) :: a, b, c, d, e, f, g, h, p, q, r, s, a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d, x, dx
+  ! allow(common-block)
   common /state/ a, b, c, d, e, f, g, h, p, q, r, s
+  ! allow(common-block)
   common /state_d/ a_d, b_d, c_d, d_d, e_d, f_d, g_d, h_d, p_d, q_d, r_d, s_d
-  real(8), external :: cost
+  real(real64), external :: cost
   a = 2.0d0
   x = 3.0d0
   dx = 0.0d0
   call f__enzyme_autodiff(cost, x, dx)
   ! d/dx (a x^2) = 2 a x = 12
-  print '(F6.2)', dx
-end program
+  print "(F6.2)", dx
+end program main
 
 ! CHECK: 12.00

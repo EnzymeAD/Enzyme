@@ -34,10 +34,16 @@
 //                            [control(proc)]
 //                                        __enzyme_set_fixed_point(r, n, proc,
 //                                        [&var, bytes]...) in its place
+//   !dir$ enzyme checkpoint[(var...)] [schedule(name)] [budget(k)]
+//                                        __enzyme_ptr_size_hint(&var, bytes)
+//                                        in front of the loop, and
+//                                        __enzyme_set_checkpointing(schedule,
+//                                        k) in its place
 //
 //===----------------------------------------------------------------------===//
 
 #include "FlangDirectives.h"
+#include "enzyme/checkpoint_schedule.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
@@ -54,6 +60,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "llvm/ADT/StringSwitch.h"
 
 using namespace mlir;
 
@@ -224,7 +231,8 @@ static LogicalResult lowerDirective(ModuleOp module, Operation *subject,
 static LogicalResult getStateRange(OpBuilder &b, Location loc, Value var,
                                    const DataLayout &dl,
                                    const fir::KindMapping &kindMap, Value &addr,
-                                   Value &bytes) {
+                                   Value &bytes,
+                                   StringRef what = "fixed_point") {
   Type ptrTy = LLVM::LLVMPointerType::get(b.getContext());
   Type i64 = b.getI64Type();
   Type ty = var.getType();
@@ -233,15 +241,15 @@ static LogicalResult getStateRange(OpBuilder &b, Location loc, Value var,
     auto size = fir::getTypeSizeAndAlignment(loc, eleTy, dl, kindMap);
     if (!size || fir::hasDynamicSize(eleTy))
       return emitError(loc)
-             << "enzyme fixed_point: the size of " << ty << " is not known";
+             << "enzyme " << what << ": the size of " << ty << " is not known";
     addr = fir::ConvertOp::create(b, loc, ptrTy, var);
     bytes = arith::ConstantIntOp::create(b, loc, i64, size->first);
     return success();
   }
   if (auto boxTy = dyn_cast<fir::BaseBoxType>(ty)) {
     if (boxTy.isAssumedRank())
-      return emitError(loc) << "enzyme fixed_point: an assumed-rank variable "
-                               "is not supported";
+      return emitError(loc) << "enzyme " << what
+                            << ": an assumed-rank variable is not supported";
     unsigned rank = fir::getBoxRank(boxTy);
     addr = fir::ConvertOp::create(
         b, loc, ptrTy,
@@ -256,7 +264,7 @@ static LogicalResult getStateRange(OpBuilder &b, Location loc, Value var,
     }
     return success();
   }
-  return emitError(loc) << "enzyme fixed_point: a variable of type " << ty
+  return emitError(loc) << "enzyme " << what << ": a variable of type " << ty
                         << " is not supported";
 }
 
@@ -341,6 +349,100 @@ static LogicalResult lowerFixedPoint(ModuleOp module, fir::CallOp marker,
   return success();
 }
 
+// The schedule of enzyme/checkpoint_schedule.h a checkpoint directive names,
+// or -1.
+static int64_t getCheckpointSchedule(StringRef name) {
+  return llvm::StringSwitch<int64_t>(name.lower())
+      .Case("binomial", ENZYME_CKPT_SCHEDULE_BINOMIAL)
+      .Case("revolve", ENZYME_CKPT_SCHEDULE_REVOLVE)
+      .Case("periodic", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("regular", ENZYME_CKPT_SCHEDULE_PERIODIC)
+      .Case("store_all", ENZYME_CKPT_SCHEDULE_STORE_ALL)
+      .Default(-1);
+}
+
+static LLVM::LLVMFuncOp getOrDeclare(ModuleOp module, Location loc,
+                                     StringRef name,
+                                     LLVM::LLVMFunctionType fnTy) {
+  auto callee = module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+  if (!callee) {
+    OpBuilder mb(module.getBodyRegion());
+    mb.setInsertionPointToEnd(module.getBody());
+    callee = LLVM::LLVMFuncOp::create(mb, loc, name, fnTy);
+  }
+  return callee;
+}
+
+// `!dir$ enzyme checkpoint`: replace the marker flang put at the start of
+// the loop body with __enzyme_set_checkpointing(schedule, budget), as the
+// Clang attribute emits it: the schedule by name (periodic by default), the
+// budget all ones for the schedule's default. The variables, which flang
+// evaluated in front of the loop, are memory the loop's snapshots hold:
+// each gets __enzyme_ptr_size_hint(data, bytes) there, which gives Enzyme
+// the extent of an allocatable or assumed-shape array the loop writes.
+static LogicalResult lowerCheckpoint(ModuleOp module, fir::CallOp marker,
+                                     DictionaryAttr args, DominanceInfo &dom) {
+  Location loc = marker.getLoc();
+  MLIRContext *ctx = module.getContext();
+  Type ptrTy = LLVM::LLVMPointerType::get(ctx);
+  OpBuilder b(ctx);
+  Type i64 = b.getI64Type();
+
+  int64_t schedule = ENZYME_CKPT_SCHEDULE_PERIODIC;
+  if (Attribute a = args ? args.get("schedule") : Attribute()) {
+    auto name = dyn_cast<StringAttr>(a);
+    schedule = name ? getCheckpointSchedule(name.getValue()) : -1;
+    if (schedule < 0)
+      return emitError(loc) << "enzyme checkpoint: unknown schedule " << a
+                            << ", expected binomial, revolve, periodic or "
+                               "store_all";
+  }
+  int64_t budget = -1;
+  if (Attribute a = args ? args.get("budget") : Attribute()) {
+    auto n = dyn_cast<IntegerAttr>(a);
+    if (!n || n.getInt() < 0)
+      return emitError(loc)
+             << "enzyme checkpoint: the budget must be a non-negative integer";
+    budget = n.getInt();
+  }
+
+  if (!marker.getArgs().empty()) {
+    std::optional<DataLayout> dl = fir::support::getOrSetMLIRDataLayout(
+        module, /*allowDefaultLayout=*/true);
+    fir::KindMapping kindMap = fir::getKindMapping(module);
+    Operation *last = nullptr;
+    for (Value v : marker.getArgs())
+      if (Operation *def = v.getDefiningOp())
+        if (!last || dom.properlyDominates(last, def))
+          last = def;
+    if (last)
+      b.setInsertionPointAfter(last);
+    else
+      b.setInsertionPointToStart(
+          &marker->getParentOfType<func::FuncOp>().getBody().front());
+    auto hint = getOrDeclare(module, loc, "__enzyme_ptr_size_hint",
+                             LLVM::LLVMFunctionType::get(
+                                 LLVM::LLVMVoidType::get(ctx), {ptrTy, i64}));
+    for (Value v : marker.getArgs()) {
+      Value addr, bytes;
+      if (failed(getStateRange(b, loc, v, *dl, kindMap, addr, bytes,
+                               "checkpoint")))
+        return failure();
+      LLVM::CallOp::create(b, loc, hint, ValueRange{addr, bytes});
+    }
+  }
+
+  auto set = getOrDeclare(
+      module, loc, "__enzyme_set_checkpointing",
+      LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(ctx), {i64, i64}));
+  b.setInsertionPoint(marker);
+  LLVM::CallOp::create(
+      b, loc, set,
+      ValueRange{arith::ConstantIntOp::create(b, loc, i64, schedule),
+                 arith::ConstantIntOp::create(b, loc, i64, budget)});
+  return success();
+}
+
 // The markers flang put in loops for the loop directives, replaced and
 // removed, with the declarations of their callees.
 static LogicalResult lowerLoopDirectives(ModuleOp module) {
@@ -355,12 +457,17 @@ static LogicalResult lowerLoopDirectives(ModuleOp module) {
   for (fir::CallOp marker : markers) {
     auto dict = marker->getAttrOfType<DictionaryAttr>("fir.directive");
     auto keyword = dict.getAs<StringAttr>("keyword");
-    if (keyword != "fixed_point")
+    auto args = dict.getAs<DictionaryAttr>("args");
+    if (keyword == "fixed_point") {
+      if (failed(lowerFixedPoint(module, marker, args, dom)))
+        return failure();
+    } else if (keyword == "checkpoint") {
+      if (failed(lowerCheckpoint(module, marker, args, dom)))
+        return failure();
+    } else {
       return emitError(marker.getLoc())
              << "unknown enzyme loop directive " << keyword;
-    if (failed(lowerFixedPoint(module, marker,
-                               dict.getAs<DictionaryAttr>("args"), dom)))
-      return failure();
+    }
     if (SymbolRefAttr sym = marker.getCalleeAttr())
       if (Operation *fn = module.lookupSymbol(sym))
         callees.insert(fn);
