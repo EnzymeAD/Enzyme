@@ -2989,7 +2989,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -3004,7 +3004,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
