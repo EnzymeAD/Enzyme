@@ -4,7 +4,8 @@
 ; For n == 0 Julia uses the empty Memory singleton instead of allocating, which
 ; Enzyme.jl marks enzymejl_empty_memory. The data pointer is loaded from the
 ; field after the length. Writing that data writes memory that did not exist
-; before the call, so @fill only writes local memory.
+; before the call. As @fill does not return it, @fill is fully
+; read-only-or-throw; @fill_ret, which returns the Memory, is only local.
 
 @memty = external addrspace(10) global i8
 @empty = external addrspace(10) global i8, !enzymejl_empty_memory !0
@@ -40,6 +41,17 @@ loop:
 
 exit:
   ret void
+}
+
+define ptr addrspace(10) @fill_ret(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  ret ptr addrspace(10) %m
 }
 
 ; Here the Memory is either a new one or the empty singleton.
@@ -142,6 +154,7 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 !0 = !{}
 
 ; CHECK: define void @fill({{.*}}) #[[FILL:[0-9]+]] {
+; CHECK: define ptr addrspace(10) @fill_ret({{.*}}) #[[LOCAL:[0-9]+]] {
 ; CHECK: define void @fill_or_empty({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_or_empty_select({{.*}}) #[[FILL]] {
 ; CHECK: define void @fill_or_other(
@@ -150,4 +163,5 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK: define void @fill_wrong_field(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {
-; CHECK: attributes #[[FILL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
+; CHECK-DAG: attributes #[[FILL]] = { {{.*}}"enzyme_ReadOnlyOrThrow"{{.*}} }
+; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
