@@ -2459,6 +2459,32 @@ static bool anyMayReachReturn(ArrayRef<Value *> objs, TargetLibraryInfo &TLI) {
   return false;
 }
 
+// Whether instruction I, which may write memory, may write data to it (see
+// isNoDataWrite), rather than only allocate memory, or synchronize with the
+// garbage collector.
+static bool mayWriteData(Instruction &I, Function &F, TargetLibraryInfo &TLI) {
+  if (isa<LoadInst>(&I) || isa<FenceInst>(&I))
+    return false;
+  auto CB = dyn_cast<CallBase>(&I);
+  if (!CB)
+    return true;
+  if (isAllocationCall(CB, TLI) || isNoDataWrite(CB))
+    return false;
+  if (CB->isLifetimeStartOrEnd())
+    return false;
+  if (auto F2 = CB->getCalledFunction()) {
+    // A recursive call writes data only if the rest of F does.
+    if (F2 == &F || isDebugFunction(F2))
+      return false;
+    auto name = F2->getName();
+    if (name == "julia.safepoint" || name == "julia.write_barrier" ||
+        name == "llvm.julia.gc_preserve_begin" ||
+        name == "llvm.julia.gc_preserve_end")
+      return false;
+  }
+  return true;
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2467,6 +2493,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     return false;
   if (F.empty())
     return false;
+  // Whether F may write data to memory at all, even memory of its own (see
+  // isNoDataWrite). A call to a callee not yet known to be read only or throw
+  // counts as one; F is checked again once its callees are known.
+  bool writesData = false;
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
     if (unreachable.find(&BB) != unreachable.end()) {
@@ -2475,6 +2505,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     for (auto &I : BB) {
       if (!I.mayWriteToMemory())
         continue;
+      if (!writesData && mayWriteData(I, F, TLI))
+        writesData = true;
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
       // A call marked local read-only-or-throw is handled like a call to a
@@ -2764,6 +2796,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
+    if (!writesData)
+      F.addFnAttr("enzyme_NoDataWrite");
     addReadOnlyOrThrowAttributes(F, local);
   }
   return true;
@@ -2887,15 +2921,11 @@ bool DetectReadonlyOrThrow(Module &M) {
   // prerequisite for being readonly. Inverse of `todo_map`
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
-  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
-
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
-      if (local)
-        LocalReadOnlyFunctions.insert(&F);
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2922,15 +2952,18 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        bool local = LocalReadOnlyFunctions.contains(F2);
-        if (local) {
-          F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        } else {
-          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
-        }
-        addReadOnlyOrThrowAttributes(*F2, local);
-        todo.push_back(F2);
-        todo_map.erase(F2);
+        todo_map.erase(found2);
+        // Check F2 again now that all its callees are known to be read only or
+        // throw. The first check treated them as unknown, so it could not
+        // tell whether a callee that turned out to be only local makes F2
+        // local too (e.g. by returning memory the callee wrote), or rules it
+        // out (e.g. by writing through an argument that is not ours).
+        SmallPtrSet<Function *, 1> calls_todo;
+        auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
+        bool local = false;
+        if (DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local) &&
+            calls_todo.size() == 0)
+          todo.push_back(F2);
       }
     }
 

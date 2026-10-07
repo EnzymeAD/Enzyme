@@ -2031,6 +2031,33 @@ static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
   return false;
 }
 
+// Whether the function, besides reading memory and throwing, writes no data
+// to memory at all: it may at most allocate memory, but not store into it,
+// nor into any other memory, and only call functions that do the same. Unlike
+// a read-only-or-throw function that writes memory of its own, a call to it
+// can thus not move active data anywhere, even into memory that does not
+// outlive the call. Inferred alongside read-only-or-throw.
+static inline bool isNoDataWrite(const llvm::Function *F) {
+  return isReadOnly(F) || F->hasFnAttribute("enzyme_NoDataWrite");
+}
+
+static inline bool isNoDataWrite(const llvm::CallBase *call) {
+  if (isReadOnly(call))
+    return true;
+
+  if (call->hasFnAttr("enzyme_NoDataWrite"))
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    // As for isReadOnlyOrThrow, do not use function attrs for a different
+    // calling convention.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isNoDataWrite(F))
+        return true;
+  }
+  return false;
+}
+
 static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 14
   if (F->onlyWritesMemory())
