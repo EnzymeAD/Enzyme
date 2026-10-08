@@ -21,6 +21,9 @@
 //   3. enzyme-fir-type-annotations: the types LLVM IR erases, for LLVM
 //      Enzyme's type analysis where Enzyme runs on LLVM IR (e.g. in the link).
 //
+// The LLVM pass plugin FlangEnzyme loads this object too, when no -load did,
+// for 3 alone (see FlangEnzymeMLIRLoader.cpp).
+//
 // Only the Enzyme code is carried here; MLIR/FIR/HLFIR and flang symbols
 // resolve from the host at load time.
 //
@@ -37,10 +40,16 @@
 #include "mlir/Pass/PassManager.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
 
 using namespace mlir;
 
 namespace {
+
+// Whether to add the differentiation passes (1, 2 above): not when the LLVM
+// pass plugin FlangEnzyme loaded this for the type annotations alone, where
+// Enzyme differentiates the LLVM IR (see FlangEnzymeMLIRLoader.cpp).
+bool differentiate = true;
 
 llvm::cl::opt<bool> typeAnnotations(
     "enzyme-fir-type-annotations", llvm::cl::init(true),
@@ -64,6 +73,8 @@ struct EnzymeFlangPipelineRegistration {
         [](MLIRToLLVMPassPipelineConfig &config) {
           config.registerHLFIROptEarlyEPCallbacks(
               [](mlir::PassManager &pm, llvm::OptimizationLevel) {
+                if (!differentiate)
+                  return;
                 appendEnzymeFortranInterfaces(*pm.getContext());
                 pm.addPass(mlir::enzyme::createHLFIRLowerEnzymeCallsPass());
                 pm.addPass(mlir::enzyme::createDifferentiatePass());
@@ -79,3 +90,9 @@ struct EnzymeFlangPipelineRegistration {
 // Runs when `flang -fc1 -load` dlopens this object.
 static EnzymeFlangPipelineRegistration enzymeFlangPipelineRegistration;
 } // namespace
+
+// For FlangEnzymeMLIRLoader.cpp, which loads this when no -load did.
+extern "C" LLVM_ATTRIBUTE_VISIBILITY_DEFAULT void
+enzymeFlangMLIRTypeAnnotationsOnly() {
+  differentiate = false;
+}

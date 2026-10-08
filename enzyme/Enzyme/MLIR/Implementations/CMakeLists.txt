@@ -174,4 +174,23 @@ if(ENZYME_FLANG_MLIR)
   target_link_options(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE -Wl,--allow-shlib-undefined)
+
+  # The LLVM pass plugin for flang loads FlangEnzymeMLIR when flang loads it,
+  # so that `flang -fpass-plugin=FlangEnzyme-<v>.so` alone brings in the
+  # HLFIR passes and the FIR type annotations too. See
+  # FlangEnzymeMLIRLoader.cpp.
+  if(TARGET FlangEnzyme-${LLVM_VERSION_MAJOR} AND NOT WIN32)
+    target_sources(
+      FlangEnzyme-${LLVM_VERSION_MAJOR}
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/FlangEnzymeMLIRLoader.cpp)
+    target_compile_definitions(
+      FlangEnzyme-${LLVM_VERSION_MAJOR}
+      PRIVATE
+        FLANG_ENZYME_MLIR_FILE="FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}${CMAKE_SHARED_MODULE_SUFFIX}")
+    target_link_libraries(
+      FlangEnzyme-${LLVM_VERSION_MAJOR}
+      PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(FlangEnzyme-${LLVM_VERSION_MAJOR}
+                     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR})
+  endif()
 endif()
