@@ -28,5 +28,5 @@ if(NOT DEFINED CMAKE_INSTALL_MODULEDIR)
 endif()
 install(
   FILES "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme.mod"
-        "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme_function_hooks.mod"
+  "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme_function_hooks.mod"
   DESTINATION "${CMAKE_INSTALL_MODULEDIR}")
