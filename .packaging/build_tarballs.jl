@@ -101,8 +101,9 @@ CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=Release)
 CMAKE_FLAGS+=(-DCMAKE_CXX_FLAGS=-g1)
 # Install things into $prefix
 CMAKE_FLAGS+=(-DCMAKE_INSTALL_PREFIX=${prefix})
-# Explicitly use our cmake toolchain file and tell CMake we're cross-compiling
-if [[ "${target}" == *mingw* && "${LLVM_MAJ_VER}" -ge "16" ]]; then
+# Explicitly use our cmake toolchain file and tell CMake we're cross-compiling.
+# Use clang on Linux too: it produces smaller libraries than GCC.
+if [[ "${target}" == *linux* ]] || [[ "${target}" == *mingw* && "${LLVM_MAJ_VER}" -ge "16" ]]; then
     CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN%.*}_clang.cmake)
 else
     CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN})
