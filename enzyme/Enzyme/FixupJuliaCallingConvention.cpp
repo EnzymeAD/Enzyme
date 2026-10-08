@@ -239,15 +239,22 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
       }
       if (!foundUse) {
         if (auto IVI = dyn_cast<InsertValueInst>(sv)) {
+          // An undef/poison/zeroinitializer base has no live pointer in any of
+          // its fields, so it needs no root regardless of which field the
+          // insertvalue overwrites.
+          bool trivialAggregate =
+              isa<UndefValue>(IVI->getAggregateOperand()) ||
+              isa<PoisonValue>(IVI->getAggregateOperand()) ||
+              isa<ConstantAggregateZero>(IVI->getAggregateOperand());
           CountTrackedPointers tracked(
               IVI->getInsertedValueOperand()->getType());
           if (tracked.count == 0) {
+            if (trivialAggregate)
+              continue;
             storedValues.push_back(IVI->getAggregateOperand());
             continue;
           }
-          if (isa<UndefValue>(IVI->getAggregateOperand()) ||
-              isa<PoisonValue>(IVI->getAggregateOperand()) ||
-              isa<ConstantAggregateZero>(IVI->getAggregateOperand())) {
+          if (trivialAggregate) {
             storedValues.push_back(IVI->getInsertedValueOperand());
             continue;
           }
