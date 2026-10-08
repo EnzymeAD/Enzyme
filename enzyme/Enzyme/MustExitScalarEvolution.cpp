@@ -984,7 +984,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       return getCouldNotCompute();
   }
 
-  // On all paths just preceeding, we established the following invariant:
+  // On all paths just preceding, we established the following invariant:
   //   IV can be assumed not to overflow up to and including the exiting
   //   iteration.  We proved this in one of two ways:
   //   1) We can show overflow doesn't occur before the exiting iteration
