@@ -259,20 +259,32 @@ struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
 // FIR types
 //===----------------------------------------------------------------------===//
 
-// The TypeTree name and size of a scalar Fortran type, if it has one.
+// The TypeTree name and size in bytes of a scalar Fortran type, if it has
+// one. The size is the distance between two array elements.
 static std::optional<std::pair<std::string, int64_t>>
 scalarType(Type ty, const DataLayout &dl) {
+  // REAL(2), REAL(3), REAL(4), REAL(8) and REAL(16): the names of
+  // ConcreteType(StringRef). REAL(10) (x87 extended precision) is left
+  // alone: its 10 bytes are padded to a size that depends on the target.
   if (auto ft = dyn_cast<FloatType>(ty)) {
-    std::string name = ft.isF32()   ? "float"
-                       : ft.isF64() ? "double"
-                       : ft.isF16() ? "half"
-                                    : "";
+    std::string name = ft.isF16()    ? "half"
+                       : ft.isBF16() ? "bf16"
+                       : ft.isF32()  ? "float"
+                       : ft.isF64()  ? "double"
+                       : ft.isF128() ? "fp128"
+                                     : "";
     if (name.empty())
       return std::nullopt;
     return std::make_pair("Float@" + name, (int64_t)ft.getWidth() / 8);
   }
+  // INTEGER of any kind is an iN of the kind's bytes. Enzyme's Integer has
+  // no width: it says that the bytes it covers are not a floating-point
+  // value or a pointer, so the width is only the size.
   if (auto it = dyn_cast<IntegerType>(ty))
     return std::make_pair(std::string("Integer"), (int64_t)it.getWidth() / 8);
+  // Enzyme's TypeTree has no boolean type: its concrete types are Integer,
+  // Float, Pointer and Anything. A LOGICAL is stored as an integer of its
+  // kind's bytes, and as such it is Integer.
   if (auto lt = dyn_cast<fir::LogicalType>(ty))
     return std::make_pair(std::string("Integer"), (int64_t)lt.getFKind());
   return std::nullopt;
@@ -393,26 +405,44 @@ static std::optional<std::string> dataType(Type ty, const DataLayout &dl) {
   return std::nullopt;
 }
 
+// The byte offsets of the fields of a descriptor (CFI_cdesc_t of
+// ISO_Fortran_binding.h, as flang lays it out for a 64-bit target):
+//   { ptr base_addr, i64 elem_len, i32 version, i8 rank, i8 type,
+//     i8 attribute, i8 extra, [rank x [3 x i64]] dim }
+// where each dim is { lower_bound, extent, sm (the stride in bytes) }. A
+// derived type's addendum after the dims is not typed.
+static constexpr int kDescBaseAddr = 0;
+static constexpr int kDescElemLen = 8;
+static constexpr int kDescVersion = 16;
+static constexpr int kDescRank = 20;
+static constexpr int kDescType = 21;
+static constexpr int kDescAttribute = 22;
+static constexpr int kDescExtra = 23;
+static constexpr int kDescDims = 24;
+static constexpr int kDescDimFieldSize = 8;
+static constexpr int kDescDimFields = 3;
+
 // The TypeTree of a pointer argument whose FIR type (before the conversions
 // for the call) is `ty`, or "" if there is nothing to add to the LLVM type.
-// A descriptor ({ptr base, i64 elem_len, i32 version, i8 rank, i8 type,
-// i8 attribute, i8 extra, [rank x [3 x i64]] dims}) is typed field by field,
-// with the type of the data its base address points to.
+// A descriptor is typed field by field (all of them Integer but the base
+// address), with the type of the data its base address points to.
 static std::string pointerArgType(Type ty, const DataLayout &dl,
                                   bool descriptorData = true) {
   Type pointee = fir::unwrapRefType(ty);
   TypePaths tree{{{-1}, "Pointer"}};
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
-    tree[{-1, 0}] = "Pointer";
+    tree[{-1, kDescBaseAddr}] = "Pointer";
     if (auto data = dataType(box, dl); data && descriptorData)
-      tree[{-1, 0, -1}] = *data;
-    for (int off : {8, 16, 20, 21, 22, 23})
+      tree[{-1, kDescBaseAddr, -1}] = *data;
+    for (int off : {kDescElemLen, kDescVersion, kDescRank, kDescType,
+                    kDescAttribute, kDescExtra})
       tree[{-1, off}] = "Integer";
+    // The dims, if the rank is known.
     if (auto seq =
             dyn_cast<fir::SequenceType>(fir::unwrapRefType(box.getEleTy())))
       if (!seq.hasUnknownShape())
-        for (unsigned i = 0; i < 3 * seq.getDimension(); ++i)
-          tree[{-1, (int)(24 + 8 * i)}] = "Integer";
+        for (unsigned i = 0; i < kDescDimFields * seq.getDimension(); ++i)
+          tree[{-1, (int)(kDescDims + kDescDimFieldSize * i)}] = "Integer";
     return printTypeTree(tree);
   }
   if (!fir::isa_ref_type(ty))
@@ -432,6 +462,9 @@ static std::string pointerArgType(Type ty, const DataLayout &dl,
 // stay unannotated.
 static constexpr int64_t kMaxTypeOffset = 500;
 
+// How many scalars the pointee of a scalar dummy argument may be laid out
+// as (a COMPLEX is two). Larger pointees (derived types are not laid out at
+// all) stay unannotated, which keeps the attributes short.
 static constexpr int64_t kMaxTypeOffsetForArgs = 16;
 
 // Enzyme's TypeTree has no extent: a type at offset -1 of what a pointer
@@ -498,15 +531,15 @@ static bool wholeObject(Value v) {
           mem);
     }
     if (auto op = dyn_cast<fir::ConvertOp>(def))
-      v = op.getValue();
+      v = op.getValue(); // the same address or descriptor, retyped
     else if (auto op = dyn_cast<fir::EmboxOp>(def))
-      v = op.getMemref();
+      v = op.getMemref(); // a descriptor made for this address
     else if (auto op = dyn_cast<fir::ReboxOp>(def))
-      v = op.getBox();
+      v = op.getBox(); // a descriptor made from another (e.g. a section)
     else if (auto op = dyn_cast<fir::BoxAddrOp>(def))
-      v = op.getVal();
+      v = op.getVal(); // the base address of a descriptor
     else if (auto op = dyn_cast<fir::ArrayCoorOp>(def))
-      v = op.getMemref();
+      v = op.getMemref(); // an element of an array: the same object
     else if (auto op = dyn_cast<fir::CoordinateOp>(def)) {
       // Into an array: still the same object; into a record: a component.
       if (isa<fir::RecordType>(fir::unwrapSequenceType(
@@ -516,9 +549,9 @@ static bool wholeObject(Value v) {
     } else if (auto op = dyn_cast<fir::LoadOp>(def))
       v = op.getMemref(); // the descriptor of an ALLOCATABLE or POINTER
     else if (isa<fir::AllocaOp, fir::AddrOfOp, fir::AllocMemOp>(def))
-      return true;
+      return true; // a variable or an allocation of its own
     else
-      return false;
+      return false; // anything else may be part of a larger object
   }
   return false;
 }
@@ -802,11 +835,15 @@ struct FIRTypeAnnotationsPass
           continue;
         FunctionType fty = fn.getFunctionType();
         for (auto [i, ty] : llvm::enumerate(fty.getInputs())) {
-          // A CHARACTER dummy: flang passes the address of the data (where
-          // the attribute moves with the argument) and its length after all
-          // other arguments. The length is left alone: typed Integer, it
-          // made Enzyme take `and len, 0x7fffffff` for possibly floating
-          // point and fail (MITgcm ILNBLNK).
+          // A CHARACTER dummy: flang passes the address of its data here
+          // (the fir.boxchar, which is typed as character data), and its
+          // length as an extra argument after all the others, which is left
+          // alone. With the length typed Integer, Enzyme's type analysis
+          // failed on a mask of it (`and len, 0x7fffffff`, from a loop over
+          // the characters of the dummy, e.g. in a function that finds its
+          // last nonblank character), which it took for a possibly
+          // floating-point operation. Untyped, the analysis infers Integer
+          // from how the length is used.
           std::string t =
               isa<fir::BoxCharType>(ty)
                   ? (annotateUnbounded

@@ -39,8 +39,12 @@ subroutine locs(n, x)
   do k = 1, n
     acc = acc + x(k)
   end do
-  buf = acc; big = acc; auto = acc
-  flag = acc > 0; z = acc; name = "x"
+  buf = acc
+  big = acc
+  auto = acc
+  flag = acc > 0
+  z = acc
+  name = "x"
   call use(buf, big, auto, flag, z, name, k)
 end subroutine locs
 

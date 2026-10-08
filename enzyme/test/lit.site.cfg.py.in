@@ -79,19 +79,24 @@ config.substitutions.append(('%fir_enzyme',
 if os.path.exists(fir_opt) and os.path.exists(fir_enzyme_plugin):
   config.available_features.add('fir_enzyme_plugin')
 
-# flang -fc1, for compiling Fortran to HLFIR. flang -fc1 has no intrinsic
-# module search path of its own (the driver adds it): give it the driver's, as
-# flang's own tests do, for `use iso_fortran_env`.
+# flang -fc1, for compiling Fortran to HLFIR. Since flang keeps its intrinsic
+# modules in the driver's resource directory (LLVM 23), flang -fc1 has no
+# search path for them of its own (the driver adds it): give it the driver's,
+# as flang's own tests do, for `use iso_fortran_env`. Older flangs reject
+# -print-file-name, and their flang -fc1 finds the modules next to the binary
+# by itself; one that knows the option but has no such file prints the bare
+# name. In both cases flang -fc1 needs nothing more.
 flang = config.llvm_tools_dir + "/flang"
 flang_fc1 = flang + " -fc1"
 if os.path.exists(flang):
   import subprocess
   try:
     builtins_mod = subprocess.check_output(
-        [flang, "-print-file-name=__fortran_builtins.mod"], text=True).strip()
+        [flang, "-print-file-name=__fortran_builtins.mod"], text=True,
+        stderr=subprocess.DEVNULL).strip()
     if os.path.isabs(builtins_mod):
       flang_fc1 += " -fintrinsic-modules-path=" + os.path.dirname(builtins_mod)
-  except (OSError, subprocess.CalledProcessError):
+  except subprocess.CalledProcessError:
     pass
 config.substitutions.append(('%flang_fc1', flang_fc1))
 

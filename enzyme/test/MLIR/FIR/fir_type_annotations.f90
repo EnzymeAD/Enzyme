@@ -8,21 +8,28 @@
 ! RUN: %flang_enzyme -module-dir %t.mod -O2 -emit-llvm %s -o - | FileCheck %s --check-prefix=CHECK
 ! RUN: %flang_enzyme -module-dir %t.mod -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=RT
 
-! COMMON blocks: the type at each member offset, if the declares lay out all
-! of the block and agree. /mixed/ is real at offset 0 in one subroutine and
-! integer in the other, and /bufs/ is larger than the offsets Enzyme's type
-! analysis keeps (500 bytes): they stay unknown (Enzyme would take REAL*8,
-! the type it keeps for /bufs/, for all of the block).
+! COMMON blocks: the type at each member offset, if the declarations lay out
+! all of the block and agree.
+!
+! /state/ is a REAL*8 and an INTEGER:
 ! CHECK-DAG: @state_ = {{.*}}global [12 x i8] {{.*}}!enzyme_type ![[STATE:[0-9]+]]
 ! CHECK-DAG: ![[STATE]] = !{!"Unknown", i32 -1, ![[STATEP:[0-9]+]]}
 ! CHECK-DAG: ![[STATEP]] = !{!"Pointer", i32 0, ![[DBL:[0-9]+]], i32 8, ![[INT:[0-9]+]]}
 ! CHECK-DAG: ![[DBL]] = !{!"Float@double"}
 ! CHECK-DAG: ![[INT]] = !{!"Integer"}
+!
+! /mixed/ is REAL at offset 0 in one subroutine and INTEGER in the other: it
+! stays unknown.
 ! CHECK-DAG: @mixed_ = {{.*}}global [8 x i8] zeroinitializer, align 4{{$}}
+!
+! /bufs/ is larger than the offsets Enzyme's type analysis keeps (500 bytes):
+! it stays unknown, else Enzyme would take REAL*8, the type it keeps for the
+! first 500 bytes, for all of the block.
 ! CHECK-DAG: @bufs_ = {{.*}}global [196608 x i8] zeroinitializer, align 8{{$}}
-! Blocks of a single scalar type are that type at every offset, whatever
-! their size, e.g. CHARACTER data (Integer bytes) and REAL*8 arrays:
-! (/names/ below, as the literals)
+!
+! A block of a single scalar type is that type at every offset, whatever its
+! size: here REAL*8 arrays, and CHARACTER data (Integer bytes, /names/ below,
+! with the literals).
 ! CHECK-DAG: @fields_ = {{.*}}global [16000 x i8] {{.*}}!enzyme_type ![[FIELDS:[0-9]+]]
 ! CHECK-DAG: ![[FIELDS]] = !{!"Unknown", i32 -1, ![[FIELDSP:[0-9]+]]}
 ! CHECK-DAG: ![[FIELDSP]] = !{!"Pointer", i32 -1, ![[DBL]]}
@@ -89,7 +96,9 @@ end subroutine other_view
 ! Runtime calls: what the conversions for the call erased. A descriptor is
 ! typed field by field, with the type of its data if that is a whole object
 ! (here a local ALLOCATABLE); character data is Integer; the I/O cookie (an
-! opaque pointer of its own type) is left alone.
+! opaque pointer of its own type) is left alone. `a = b` is an assignment to
+! a whole ALLOCATABLE, which allocates a here; flang calls _FortranAAssign for
+! it. `a(:) = b` would not allocate a, and a is not allocated.
 ! O0-DAG: call void @_FortranAAssign{{[A-Za-z]*}}(ptr "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@float, [-1,8]:Integer, [-1,16]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer, [-1,24]:Integer, [-1,32]:Integer, [-1,40]:Integer}"
 ! CHECK-DAG: call {{.*}}@_FortranAioOutputAscii(ptr %{{[0-9]+}}, ptr {{(nonnull )?}}"enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}"
 ! allow(procedure-not-in-module)
