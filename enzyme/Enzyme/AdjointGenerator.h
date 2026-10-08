@@ -6591,6 +6591,35 @@ public:
                                   const std::vector<bool> &overwritten_args,
                                   llvm::CallInst *const newCall);
 
+  /// In a pass split from the augmented forward pass, recover the tape that
+  /// the custom augmented call handler stored for call in that pass, or
+  /// return null if it stored none.
+  llvm::Value *recoverCustomHandlerTape(llvm::CallInst &call,
+                                        llvm::IRBuilder<> &BuilderZ) {
+    using namespace llvm;
+    assert(augmentedReturn);
+    if (augmentedReturn->tapeIndices.find(std::make_pair(
+            &call, CacheType::Tape)) == augmentedReturn->tapeIndices.end())
+      return nullptr;
+    auto fd = augmentedReturn->subaugmentations.find(&call);
+    assert(fd != augmentedReturn->subaugmentations.end());
+    // Note we are using the storage space here to persist
+    // the LLVM type, as storing a new augmentedReturn has issues
+    // regarding persisting the data structure, and when it will
+    // be freed, since it will no longer live in the map in
+    // EnzymeLogic.
+    Type *tapeType = (llvm::Type *)fd->second;
+#if LLVM_VERSION_MAJOR >= 18
+    auto It = BuilderZ.GetInsertPoint();
+    It.setHeadBit(true);
+    BuilderZ.SetInsertPoint(It);
+#endif
+    Value *tape = BuilderZ.CreatePHI(tapeType, 0);
+    return gutils->cacheForReverse(BuilderZ, tape,
+                                   getIndex(&call, CacheType::Tape, BuilderZ),
+                                   /*ignoreType*/ true);
+  }
+
   // Return
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
@@ -6678,21 +6707,18 @@ public:
          << call;
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
-      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
-      auto ifound = gutils->invertedPointers.find(&call);
-      if (ifound != gutils->invertedPointers.end()) {
-        auto placeholder = cast<PHINode>(&*ifound->second);
-        auto nullShadow =
-            Constant::getNullValue(gutils->getShadowType(call.getType()));
-        placeholder->replaceAllUsesWith(nullShadow);
-        gutils->invertedPointers.erase(ifound);
-        gutils->erase(placeholder);
-        gutils->invertedPointers.insert(std::make_pair(
-            (const Value *)&call, InvertedPointerVH(gutils, nullShadow)));
-      } else if (!gutils->isConstantValue(&call)) {
-        setDiffe(&call,
-                 Constant::getNullValue(gutils->getShadowType(call.getType())),
-                 Builder2);
+      Value *shadow = EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+      if (!call.getType()->isVoidTy()) {
+        // Use the shadow provided by a custom error handler, if any, and a
+        // zero shadow otherwise.
+        if (!shadow ||
+            shadow->getType() != gutils->getShadowType(call.getType()))
+          shadow =
+              Constant::getNullValue(gutils->getShadowType(call.getType()));
+        if (gutils->invertedPointers.count(&call))
+          resolveShadowPlaceholder(call, shadow);
+        else if (!gutils->isConstantValue(&call))
+          setDiffe(&call, shadow, Builder2);
       }
       eraseIfUnused(call);
       return;
@@ -6701,49 +6727,11 @@ public:
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
-      std::function<bool(Value *&, Value *&)> handler;
-      if (Mode == DerivativeMode::ForwardModeSplit) {
-        auto found = customFwdSplitCallHandlers.find(funcName);
-        if (found != customFwdSplitCallHandlers.end()) {
-          // Recover the tape stored by the custom augmented handler in the
-          // augmented forward pass.
-          Value *tape = nullptr;
-          assert(augmentedReturn);
-          if (augmentedReturn->tapeIndices.find(
-                  std::make_pair(&call, CacheType::Tape)) !=
-              augmentedReturn->tapeIndices.end()) {
-            auto fd = augmentedReturn->subaugmentations.find(&call);
-            assert(fd != augmentedReturn->subaugmentations.end());
-            // The augmented handler path stores the tape's LLVM type in
-            // place of an AugmentedReturn.
-            Type *tapeType = (llvm::Type *)fd->second;
-#if LLVM_VERSION_MAJOR >= 18
-            auto It = BuilderZ.GetInsertPoint();
-            It.setHeadBit(true);
-            BuilderZ.SetInsertPoint(It);
-#endif
-            tape = BuilderZ.CreatePHI(tapeType, 0);
-            tape = gutils->cacheForReverse(
-                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
-                /*ignoreType*/ true);
-          }
-          auto &fn = found->second;
-          handler = [&, tape](Value *&normalReturn,
-                              Value *&invertedReturn) -> bool {
-            return fn(BuilderZ, &call, *gutils, normalReturn, invertedReturn,
-                      tape);
-          };
-        }
-      } else {
-        auto found = customFwdCallHandlers.find(funcName);
-        if (found != customFwdCallHandlers.end()) {
-          auto &fn = found->second;
-          handler = [&](Value *&normalReturn, Value *&invertedReturn) -> bool {
-            return fn(BuilderZ, &call, *gutils, normalReturn, invertedReturn);
-          };
-        }
-      }
-      if (handler) {
+      const bool split = Mode == DerivativeMode::ForwardModeSplit;
+      auto splitFound = customFwdSplitCallHandlers.find(funcName);
+      auto fwdFound = customFwdCallHandlers.find(funcName);
+      if (split ? splitFound != customFwdSplitCallHandlers.end()
+                : fwdFound != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
@@ -6752,7 +6740,12 @@ public:
 
         Value *normalReturn = subretused ? newCall : nullptr;
 
-        bool noMod = handler(normalReturn, invertedReturn);
+        bool noMod =
+            split ? splitFound->second(BuilderZ, &call, *gutils, normalReturn,
+                                       invertedReturn,
+                                       recoverCustomHandlerTape(call, BuilderZ))
+                  : fwdFound->second(BuilderZ, &call, *gutils, normalReturn,
+                                     invertedReturn);
         if (noMod) {
           if (subretused)
             assert(normalReturn == newCall);
@@ -6847,33 +6840,8 @@ public:
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
-          if (Mode == DerivativeMode::ReverseModeGradient &&
-              augmentedReturn->tapeIndices.find(
-                  std::make_pair(&call, CacheType::Tape)) !=
-                  augmentedReturn->tapeIndices.end()) {
-            assert(augmentedReturn);
-            auto subaugmentations =
-                (std::map<const llvm::CallInst *, AugmentedReturn *>
-                     *)&augmentedReturn->subaugmentations;
-            auto fd = subaugmentations->find(&call);
-            assert(fd != subaugmentations->end());
-            // Note we are using the storage space here to persist
-            // the LLVM type, as storing a new augmentedReturn has issues
-            // regarding persisting the data structure, and when it will
-            // be freed, since it will no longer live in the map in
-            // EnzymeLogic.
-            tapeType = (llvm::Type *)fd->second;
-
-#if LLVM_VERSION_MAJOR >= 18
-            auto It = BuilderZ.GetInsertPoint();
-            It.setHeadBit(true);
-            BuilderZ.SetInsertPoint(It);
-#endif
-            tape = BuilderZ.CreatePHI(tapeType, 0);
-            tape = gutils->cacheForReverse(
-                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
-                /*ignoreType*/ true);
-          }
+          if (Mode == DerivativeMode::ReverseModeGradient)
+            tape = recoverCustomHandlerTape(call, BuilderZ);
           if (tape)
             tape = gutils->lookupM(tape, Builder2);
           found->second.second(Builder2, &call, *(DiffeGradientUtils *)gutils,
