@@ -2671,15 +2671,11 @@ bool DetectReadonlyOrThrow(Module &M) {
   // prerequisite for being readonly. Inverse of `todo_map`
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
-  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
-
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
-      if (local)
-        LocalReadOnlyFunctions.insert(&F);
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2700,25 +2696,40 @@ bool DetectReadonlyOrThrow(Module &M) {
     if (found == inverse_todo_map.end()) {
       continue;
     }
-    for (auto F2 : found->second) {
+    SmallPtrSet<Function *, 1> waiting = std::move(found->second);
+    inverse_todo_map.erase(found);
+
+    for (auto F2 : waiting) {
       auto found2 = todo_map.find(F2);
       assert(found2 != todo_map.end());
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
-      if (fwd_set.size() == 0) {
-        bool local = LocalReadOnlyFunctions.contains(F2);
-        if (local) {
-          F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        } else {
-          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
-        }
-        addReadOnlyOrThrowAttributes(*F2, local);
+      if (fwd_set.size() != 0)
+        continue;
+      todo_map.erase(found2);
+
+      // Every callee F2 was waiting on is now classified. When F2 was
+      // analyzed, calls to them could not be told apart from calls to fully
+      // read-only-or-throw functions, although a callee that turned out to be
+      // only local read-only-or-throw may hand F2 memory it wrote (through
+      // its result or an sret-like argument), which can make F2 local or not
+      // read-only-or-throw at all. Analyze F2 again now that all its callees
+      // are known; with no pending calls left this also adds its attributes.
+      SmallPtrSet<Function *, 1> calls_todo;
+      auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
+      bool local = false;
+      if (!DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local))
+        continue;
+      if (calls_todo.size() == 0) {
+        changed = true;
         todo.push_back(F2);
-        todo_map.erase(F2);
+      } else {
+        for (auto F3 : calls_todo) {
+          inverse_todo_map[F3].insert(F2);
+        }
+        todo_map[F2] = std::move(calls_todo);
       }
     }
-
-    inverse_todo_map.erase(found);
   }
   return changed;
 }
