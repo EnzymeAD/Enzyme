@@ -43,6 +43,12 @@ void registerEnzymeFortranInterfaces(DialectRegistry &registry);
 // path).
 std::unique_ptr<Pass> createHLFIRLowerEnzymeCallsPass();
 void registerHLFIRLowerEnzymeCallsPass();
+
+// Attach the Fortran types LLVM IR erases as `enzyme.type`, which become
+// !enzyme_type metadata and "enzyme_type" attributes for LLVM Enzyme's type
+// analysis (see FIRTypeAnnotations.cpp).
+std::unique_ptr<Pass> createFIRTypeAnnotationsPass();
+void registerFIRTypeAnnotationsPass();
 } // namespace enzyme
 } // namespace mlir
 
