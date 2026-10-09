@@ -93,7 +93,11 @@ extern llvm::StringMap<
 
 /// Handlers for the derivative pass of ForwardModeSplit. They are called like
 /// the forward handlers, plus the tape (or null) that the augmented handler in
-/// customCallHandlers stored for the call in the augmented forward pass.
+/// customCallHandlers stored for the call in the augmented forward pass. The
+/// primal call has already run in the augmented forward pass and is removed
+/// before the handler runs: the normal return is the primal value cached by
+/// that pass (or null if none was cached), and the handler must not change it.
+/// The return value is ignored.
 extern llvm::StringMap<
     std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&, llvm::Value *)>>

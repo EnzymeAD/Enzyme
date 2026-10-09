@@ -5238,6 +5238,21 @@ public:
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
 
+    if (Mode == DerivativeMode::ForwardModeSplit && called && called->empty() &&
+        !hasMetadata(called, "enzyme_splitderivative")) {
+      // A declaration has no body to differentiate and no custom split
+      // forward derivative, so report it here instead of asking
+      // CreateForwardDiff to differentiate it.
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "in Mode: " << to_string(Mode) << "\n";
+      ss << "No split forward mode derivative found for " << called->getName()
+         << "\n"
+         << call;
+      emitSplitNoDerivativeError(call, ss.str(), BuilderZ);
+      return;
+    }
+
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     Module &M = *call.getParent()->getParent()->getParent();
 
@@ -6620,6 +6635,50 @@ public:
                                    /*ignoreType*/ true);
   }
 
+  /// In ForwardModeSplit the augmented forward pass already ran call, so the
+  /// split derivative pass must not run it again. Replace the primal call with
+  /// the value the augmented pass cached for it and return that value, or, if
+  /// nothing was cached, erase the call (leaving a placeholder that must end
+  /// up unused) and return null.
+  llvm::Value *replaceSplitPrimalWithCache(llvm::CallInst &call,
+                                           llvm::IRBuilder<> &BuilderZ) {
+    using namespace llvm;
+    assert(Mode == DerivativeMode::ForwardModeSplit);
+    assert(augmentedReturn);
+    auto newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    if (augmentedReturn->tapeIndices.find(std::make_pair(
+            &call, CacheType::Self)) != augmentedReturn->tapeIndices.end())
+      return gutils->cacheForReverse(
+          BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
+    if (newCall == &*BuilderZ.GetInsertPoint())
+      BuilderZ.SetInsertPoint(newCall->getNextNode());
+    eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return nullptr;
+  }
+
+  /// In ForwardModeSplit, report that no split forward derivative can be
+  /// produced for call. Its shadow becomes the one a custom error handler
+  /// returns, or zero, so the IR stays valid when the error handler returns.
+  void emitSplitNoDerivativeError(llvm::CallInst &call,
+                                  const std::string &message,
+                                  llvm::IRBuilder<> &BuilderZ) {
+    using namespace llvm;
+    IRBuilder<> Builder2(&call);
+    getForwardBuilder(Builder2);
+    Value *shadow = EmitNoDerivativeError(message, call, gutils, Builder2);
+    if (!call.getType()->isVoidTy()) {
+      // Use the shadow provided by a custom error handler, if any, and a
+      // zero shadow otherwise.
+      if (!shadow || shadow->getType() != gutils->getShadowType(call.getType()))
+        shadow = Constant::getNullValue(gutils->getShadowType(call.getType()));
+      if (gutils->invertedPointers.count(&call))
+        resolveShadowPlaceholder(call, shadow);
+      else if (!gutils->isConstantValue(&call))
+        setDiffe(&call, shadow, Builder2);
+    }
+    replaceSplitPrimalWithCache(call, BuilderZ);
+  }
+
   // Return
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
@@ -6692,36 +6751,30 @@ public:
         customFwdSplitCallHandlers.find(funcName) ==
             customFwdSplitCallHandlers.end() &&
         (customCallHandlers.find(funcName) != customCallHandlers.end() ||
-         customFwdCallHandlers.find(funcName) != customFwdCallHandlers.end()) &&
-        !(gutils->isConstantInstruction(&call) &&
-          gutils->isConstantValue(&call))) {
-      // The augmented forward pass ran the custom augmented handler for this
-      // call, but there is no handler to produce its split forward
-      // derivative. Falling through would treat the declaration as a
-      // differentiable function.
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "in Mode: " << to_string(Mode) << "\n";
-      ss << "no split forward mode call handler registered for " << funcName
-         << "\n"
-         << call;
-      IRBuilder<> Builder2(&call);
-      getForwardBuilder(Builder2);
-      Value *shadow = EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
-      if (!call.getType()->isVoidTy()) {
-        // Use the shadow provided by a custom error handler, if any, and a
-        // zero shadow otherwise.
-        if (!shadow ||
-            shadow->getType() != gutils->getShadowType(call.getType()))
-          shadow =
-              Constant::getNullValue(gutils->getShadowType(call.getType()));
-        if (gutils->invertedPointers.count(&call))
-          resolveShadowPlaceholder(call, shadow);
-        else if (!gutils->isConstantValue(&call))
-          setDiffe(&call, shadow, Builder2);
+         customFwdCallHandlers.find(funcName) != customFwdCallHandlers.end())) {
+      // A handler is registered for this call, but none produces its split
+      // forward derivative. Falling through would differentiate the runtime
+      // declaration as a regular function. An inactive call can still fall
+      // through, unless the custom augmented handler stored a tape for it:
+      // only a split forward handler would consume that tape, so it would
+      // leak.
+      assert(augmentedReturn);
+      bool active = !(gutils->isConstantInstruction(&call) &&
+                      gutils->isConstantValue(&call));
+      bool storedTape = augmentedReturn->tapeIndices.find(
+                            std::make_pair(&call, CacheType::Tape)) !=
+                        augmentedReturn->tapeIndices.end();
+      if (active || storedTape) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "in Mode: " << to_string(Mode) << "\n";
+        ss << "no split forward mode call handler registered for " << funcName;
+        if (!active)
+          ss << " to consume the tape its augmented handler stored";
+        ss << "\n" << call;
+        emitSplitNoDerivativeError(call, ss.str(), BuilderZ);
+        return;
       }
-      eraseIfUnused(call);
-      return;
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
@@ -6738,18 +6791,26 @@ public:
           invertedReturn = cast<PHINode>(&*ifound->second);
         }
 
-        Value *normalReturn = subretused ? newCall : nullptr;
-
-        bool noMod =
-            split ? splitFound->second(BuilderZ, &call, *gutils, normalReturn,
-                                       invertedReturn,
-                                       recoverCustomHandlerTape(call, BuilderZ))
-                  : fwdFound->second(BuilderZ, &call, *gutils, normalReturn,
-                                     invertedReturn);
-        if (noMod) {
-          if (subretused)
-            assert(normalReturn == newCall);
-          eraseIfUnused(call);
+        Value *normalReturn = nullptr;
+        if (split) {
+          // The augmented forward pass already ran the call. The split
+          // handler receives the primal it cached, or null if none was
+          // cached, and must not replace it.
+          Value *tape = recoverCustomHandlerTape(call, BuilderZ);
+          Value *cachedReturn = replaceSplitPrimalWithCache(call, BuilderZ);
+          normalReturn = subretused ? cachedReturn : nullptr;
+          splitFound->second(BuilderZ, &call, *gutils, normalReturn,
+                             invertedReturn, tape);
+          assert(normalReturn == (subretused ? cachedReturn : nullptr));
+        } else {
+          normalReturn = subretused ? newCall : nullptr;
+          bool noMod = fwdFound->second(BuilderZ, &call, *gutils, normalReturn,
+                                        invertedReturn);
+          if (noMod) {
+            if (subretused)
+              assert(normalReturn == newCall);
+            eraseIfUnused(call);
+          }
         }
 
         ifound = gutils->invertedPointers.find(&call);
@@ -6764,8 +6825,11 @@ public:
               llvm::errs() << " irt: " << *invertedReturn->getType() << "\n";
               llvm::errs() << " p: " << *placeholder << "\n";
               llvm::errs() << " PT: " << *placeholder->getType() << "\n";
-              llvm::errs() << " newCall: " << *newCall << "\n";
-              llvm::errs() << " newCallT: " << *newCall->getType() << "\n";
+              // In split mode the primal call was already erased.
+              if (!split) {
+                llvm::errs() << " newCall: " << *newCall << "\n";
+                llvm::errs() << " newCallT: " << *newCall->getType() << "\n";
+              }
             }
             assert(invertedReturn->getType() ==
                    gutils->getShadowType(call.getType()));
@@ -6780,7 +6844,7 @@ public:
           }
         }
 
-        if (normalReturn && normalReturn != newCall) {
+        if (!split && normalReturn && normalReturn != newCall) {
           assert(normalReturn->getType() == newCall->getType());
           gutils->replaceAWithB(newCall, normalReturn);
           gutils->erase(newCall);
