@@ -322,6 +322,18 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
     /*retTy=*/"::mlir::Operation *",
     /*methodName=*/"createReturn",
     /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Location" : $loc, "::mlir::ValueRange" : $args)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+        Whether op, an operation directly in the function body, returns from the function.
+    }],
+    /*retTy=*/"bool",
+    /*methodName=*/"isReturn",
+    /*args=*/(ins "::mlir::Operation *" : $op),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return op->hasTrait<::mlir::OpTrait::ReturnLike>();
+    }]
     >
   ];
 }
