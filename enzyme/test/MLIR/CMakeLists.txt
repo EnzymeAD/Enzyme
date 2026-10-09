@@ -6,6 +6,9 @@ add_subdirectory(OptimizeAD)
 add_subdirectory(Passes)
 add_subdirectory(Impulse)
 add_subdirectory(ReverseMode)
+if(ENZYME_CLANG_HAS_CIR)
+  add_subdirectory(CIR)
+endif()
 
 # Run regression and unit tests
 add_lit_testsuite(
