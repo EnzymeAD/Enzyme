@@ -4,6 +4,10 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRTypes.h"
+#endif
+
 #include "../../TypeAnalysis/TypeAnalysis.h"
 #include "../../Utils.h"
 #include <functional>
@@ -37,6 +41,11 @@ public:
     if (isa<IntegerType, IndexType>(val.getType())) {
       return BaseType::Integer;
     }
+#ifdef ENZYME_CLANG_HAS_CIR
+    if (isa<cir::IntType, cir::BoolType>(val.getType())) {
+      return BaseType::Integer;
+    }
+#endif
     if (errIfNotFound) {
       llvm_unreachable("something happened");
     }

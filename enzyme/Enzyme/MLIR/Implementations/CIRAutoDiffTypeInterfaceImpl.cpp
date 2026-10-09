@@ -6,8 +6,10 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "clang/CIR/Dialect/IR/CIRTypes.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
@@ -45,7 +47,7 @@ public:
     if (width == 1)
       return self;
 
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    return cir::VectorType::get(self, static_cast<uint64_t>(width));
   }
 
   bool isMutable(Type self) const { return false; }
@@ -115,9 +117,8 @@ public:
   Type getShadowType(Type self, int64_t width) const {
     if (width == 1)
       return self;
-    assert(width > 0 && "batch width must be positive");
-
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    llvm_unreachable(
+        "batched shadows of CIR aggregate types are not supported");
   }
 
   bool isMutable(Type self) const { return false; }
@@ -194,7 +195,7 @@ public:
     if (width == 1)
       return self;
     assert(width > 0 && "batch width must be positive");
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    return cir::VectorType::get(self, static_cast<uint64_t>(width));
   }
 
   bool isMutable(Type self) const { return false; }
@@ -249,7 +250,7 @@ public:
     if (width == 1)
       return self;
     assert(width > 0 && "batch width must be positive");
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    return cir::VectorType::get(self, static_cast<uint64_t>(width));
   }
 
   bool isMutable(Type self) const { return false; }
@@ -305,8 +306,8 @@ public:
   Type getShadowType(Type self, int64_t width) const {
     if (width == 1)
       return self;
-    assert(width > 0 && "batch width must be positive");
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    llvm_unreachable(
+        "batched shadows of CIR aggregate types are not supported");
   }
 
   bool isMutable(Type self) const { return false; }
@@ -374,11 +375,10 @@ public:
   }
 
   Type getShadowType(Type self, int64_t width) const {
-    assert(width > 0 && "batch width must be positive");
     if (width == 1)
       return self;
-
-    return cir::ArrayType::get(self, static_cast<uint64_t>(width));
+    llvm_unreachable(
+        "batched shadows of CIR aggregate types are not supported");
   }
 
   bool isMutable(Type self) const { return false; }
@@ -451,6 +451,154 @@ public:
   }
 };
 
+class CIRPointerTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<CIRPointerTypeInterface,
+                                                  cir::PointerType> {
+public:
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    auto i64 = IntegerType::get(self.getContext(), 64);
+    return cir::ConstPtrAttr::get(self, IntegerAttr::get(i64, 0));
+  }
+
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
+    return cir::ConstantOp::create(builder, loc, self,
+                                   cast<TypedAttr>(createNullAttr(self)))
+        .getResult();
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    llvm_unreachable("createAddOp on a CIR pointer shadow");
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("createConjOp on a CIR pointer shadow");
+  }
+
+  Type getShadowType(Type self, int64_t width) const {
+    if (width == 1)
+      return self;
+    llvm_unreachable("batched pointer shadows are not supported for CIR");
+  }
+
+  bool isMutable(Type self) const { return true; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    auto allocaOp = val.getDefiningOp<cir::AllocaOp>();
+    if (!allocaOp)
+      return failure();
+    // A VLA needs a byte-sized memset; refuse for now.
+    if (allocaOp.getDynAllocSize())
+      return failure();
+    Type elemTy = allocaOp.getAllocaType();
+    Value zero;
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(elemTy)) {
+      zero = iface.createNullValue(builder, loc);
+    } else if (isa<cir::VPtrType>(elemTy)) {
+      zero = cir::ConstantOp::create(builder, loc, elemTy,
+                                     cir::ZeroAttr::get(elemTy));
+    } else {
+      return failure();
+    }
+    cir::StoreOp::create(builder, loc, zero, val);
+    return success();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
+};
+
+/*
+ * Handle shadow and union type
+ */
+template <typename ConcreteType>
+class CIRRecordTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<
+          CIRRecordTypeInterface<ConcreteType>, ConcreteType> {
+public:
+  Attribute createNullAttr(Type self) const { return cir::ZeroAttr::get(self); }
+
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    return cir::ConstantOp::create(builder, loc, self,
+                                   cast<TypedAttr>(createNullAttr(self)))
+        .getResult();
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto recTy = cast<cir::RecordType>(self);
+    if (recTy.isUnion())
+      llvm_unreachable("adding shadows of a CIR union is not supported");
+    Value result = createNullValue(self, builder, loc);
+    for (auto &&[i, elemTy] : llvm::enumerate(recTy.getMembers())) {
+      Value aElem = cir::ExtractMemberOp::create(builder, loc, a, i);
+      Value sum = aElem;
+      if (auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy)) {
+        Value bElem = cir::ExtractMemberOp::create(builder, loc, b, i);
+        sum = elemIface.createAddOp(builder, loc, aElem, bElem);
+      }
+      result = cir::InsertMemberOp::create(builder, loc, result, i, sum);
+    }
+    return result;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("batched shadows of CIR records are not supported");
+  }
+
+  Type getShadowType(Type self, int64_t width) const {
+    if (width == 1)
+      return self;
+    llvm_unreachable("batched shadows of CIR records are not supported");
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const {
+    auto constant = val.getDefiningOp<cir::ConstantOp>();
+    return constant && isZeroAttr(self, constant.getValue());
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    if (auto zero = dyn_cast<cir::ZeroAttr>(attr))
+      return zero.getType() == self;
+    auto rec = dyn_cast<cir::ConstRecordAttr>(attr);
+    if (!rec || rec.getType() != self)
+      return false;
+    auto recTy = cast<cir::RecordType>(self);
+    for (auto &&[elemTy, elem] :
+         llvm::zip(recTy.getMembers(), rec.getMembers())) {
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!elemIface || !elemIface.isZeroAttr(elem))
+        return false;
+    }
+    return true;
+  }
+
+  int64_t getApproxSize(Type self) const {
+    int64_t total = 0;
+    for (Type elemTy : cast<cir::RecordType>(self).getMembers()) {
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!elemIface)
+        return INT64_MAX;
+      int64_t sz = elemIface.getApproxSize();
+      if (sz == INT64_MAX)
+        return INT64_MAX;
+      total += sz;
+    }
+    return total;
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerCIRAutoDiffTypeInterfaces(MLIRContext *context) {
@@ -474,4 +622,9 @@ void mlir::enzyme::registerCIRAutoDiffTypeInterfaces(MLIRContext *context) {
   cir::VectorType::attachInterface<CIRVectorTypeInterface>(*context);
   cir::ComplexType::attachInterface<CIRComplexTypeInterface>(*context);
   cir::ArrayType::attachInterface<CIRArrayTypeInterface>(*context);
+  cir::PointerType::attachInterface<CIRPointerTypeInterface>(*context);
+  cir::StructType::attachInterface<CIRRecordTypeInterface<cir::StructType>>(
+      *context);
+  cir::UnionType::attachInterface<CIRRecordTypeInterface<cir::UnionType>>(
+      *context);
 }

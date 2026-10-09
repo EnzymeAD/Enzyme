@@ -16,6 +16,7 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
 
@@ -28,9 +29,35 @@ namespace {
 #include "Implementations/CIRDerivatives.inc"
 } // namespace
 
+namespace {
+struct SwitchFlatBranchOpInterface
+    : public BranchOpInterface::ExternalModel<SwitchFlatBranchOpInterface,
+                                              cir::SwitchFlatOp> {
+
+  SuccessorOperands getSuccessorOperands(Operation *op, unsigned index) const {
+    auto sw = cast<cir::SwitchFlatOp>(op);
+    assert(index < sw->getNumSuccessors() && "invalid successor index");
+    if (index == 0)
+      return SuccessorOperands(sw.getDefaultOperandsMutable());
+    return SuccessorOperands(sw.getCaseOperandsMutable()[index - 1]);
+  }
+
+  std::optional<BlockArgument>
+  getSuccessorBlockArgument(Operation *op, unsigned operandIndex) const {
+    for (unsigned i = 0, e = op->getNumSuccessors(); i != e; ++i) {
+      if (auto arg = mlir::detail::getBranchSuccessorArgument(
+              getSuccessorOperands(op, i), operandIndex, op->getSuccessor(i)))
+        return arg;
+    }
+    return std::nullopt;
+  }
+};
+} // namespace
+
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
+    cir::SwitchFlatOp::attachInterface<SwitchFlatBranchOpInterface>(*context);
     registerInterfaces(context);
     registerCIRAutoDiffTypeInterfaces(context);
   });
