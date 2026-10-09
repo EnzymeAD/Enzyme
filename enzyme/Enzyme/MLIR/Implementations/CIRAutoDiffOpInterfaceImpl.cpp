@@ -58,8 +58,21 @@ class AutoDiffCIRFuncOpFunctionInterface
     : public AutoDiffFunctionInterface::ExternalModel<
           AutoDiffCIRFuncOpFunctionInterface, cir::FuncOp> {
 public:
-  void transformResultTypes(Operation *, SmallVectorImpl<Type> &types) const {
-    assert(types.size() <= 1 && "TODO: pack multiple results into cir.record");
+  static Type packedType(MLIRContext *ctx, TypeRange types) {
+    SmallVector<Type> members(types.begin(), types.end());
+    SmallVector<cir::RecordMemberKind> kinds(members.size(),
+                                             cir::RecordMemberKind::Data);
+    return cir::StructType::get(ctx, members, /*packed=*/false,
+                                /*is_class=*/false, kinds);
+  }
+
+  void transformResultTypes(Operation *self,
+                            SmallVectorImpl<Type> &resultTypes) const {
+    if (resultTypes.size() <= 1)
+      return;
+    Type packed = packedType(self->getContext(), resultTypes);
+    resultTypes.clear();
+    resultTypes.push_back(packed);
   }
   void detachFromPrimalDefinition(Operation *self) const {
     // cir.func has comdat as a unit attr, not a symbol ref: nothing to
@@ -75,7 +88,18 @@ public:
   }
   Operation *createReturn(Operation *, OpBuilder &b, Location loc,
                           ValueRange args) const {
-    return cir::ReturnOp::create(b, loc, args);
+    if (args.size() <= 1)
+      return cir::ReturnOp::create(b, loc, args);
+    Type packed = packedType(b.getContext(), args.getTypes());
+    Value result =
+        cir::ConstantOp::create(b, loc, packed, cir::ZeroAttr::get(packed));
+    for (auto &&[i, v] : llvm::enumerate(args))
+      result = cir::InsertMemberOp::create(b, loc, result, i, v);
+    return cir::ReturnOp::create(b, loc, ValueRange{result});
+  }
+
+  bool isReturn(Operation *, Operation *op) const {
+    return isa<cir::ReturnOp>(op);
   }
 };
 
