@@ -13,6 +13,7 @@
 #include "Interfaces/CloneFunction.h"
 #include "Interfaces/Utils.h"
 
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -270,11 +271,20 @@ void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
 LogicalResult mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   // Validate active intermediate types before constructing their shadows.
   auto validate = [&](Value val) -> LogicalResult {
-    if (isConstantValue(val) || isa<AutoDiffTypeInterface>(val.getType()))
+    if (isConstantValue(val))
+      return success();
+    Type type = val.getType();
+    bool supported = isa<AutoDiffTypeInterface>(type);
+    if (auto vectorType = dyn_cast<VectorType>(type)) {
+      Type elementType = vectorType.getElementType();
+      supported &= isa<IntegerType, IndexType, FloatType>(elementType) &&
+                   isa<AutoDiffTypeInterface>(elementType);
+    }
+    if (supported)
       return success();
     return emitError(val.getLoc())
            << "AutoDiffTypeInterface not implemented for active type "
-           << val.getType();
+           << type;
   };
   auto checked = oldFunc.walk([&](Operation *op) -> WalkResult {
     for (Value val : op->getResults())
@@ -290,7 +300,6 @@ LogicalResult mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   if (checked.wasInterrupted())
     return failure();
 
-  // TODO also block arguments
   // assert(TR.getFunction() == oldFunc);
 
   // Don't create derivatives for code that results in termination

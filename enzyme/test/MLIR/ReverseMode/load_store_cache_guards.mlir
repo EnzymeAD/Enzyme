@@ -1,4 +1,5 @@
 // RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme %s | FileCheck %s --check-prefix=RAW
 
 // Verify that loading a mutable type (!llvm.ptr) from an active pointer does
 // not push a dangling address cache into the augmented forward pass.
@@ -41,6 +42,18 @@ func.func @dstore_vector(%m: memref<10xvector<4xf32>>, %dm: memref<10xvector<4xf
 // CHECK: memref.load
 // CHECK: return
 
+// RAW-LABEL: func.func private @diffestore_vector(
+// RAW: %[[MEMREF:.*]] = "enzyme.pop"{{.*}} -> memref<10xvector<4xf32>>
+// RAW: %[[INDEX:.*]] = "enzyme.pop"{{.*}} -> index
+// RAW: %[[LOADED:.*]] = memref.load %[[MEMREF]][%[[INDEX]]] : memref<10xvector<4xf32>>
+// RAW: %[[CURRENT:.*]] = "enzyme.get"{{.*}} -> vector<4xf32>
+// RAW: %[[ADDED:.*]] = arith.addf %[[CURRENT]], %[[LOADED]]{{.*}} : vector<4xf32>
+// RAW: "enzyme.set"{{.*}}, %[[ADDED]])
+// RAW: %[[ZERO:.*]] = arith.constant dense<0.000000e+00> : vector<4xf32>
+// RAW: memref.store %[[ZERO]], %[[MEMREF]][%[[INDEX]]] : memref<10xvector<4xf32>>
+// RAW: %[[RETURNED:.*]] = "enzyme.get"{{.*}} -> vector<4xf32>
+// RAW: return %[[RETURNED]] : vector<4xf32>
+
 // -----
 
 // Verify that storing a VectorType in LLVM dialect works in reverse mode.
@@ -58,3 +71,14 @@ func.func @dstore_vector_llvm(%p: !llvm.ptr, %dp: !llvm.ptr, %v: vector<4xf32>) 
 // CHECK-LABEL: llvm.func @diffestore_vector_llvm
 // CHECK: llvm.load
 // CHECK: llvm.return
+
+// RAW-LABEL: llvm.func @diffestore_vector_llvm(
+// RAW: %[[POINTER:.*]] = "enzyme.pop"{{.*}} -> !llvm.ptr
+// RAW: %[[LLVM_LOADED:.*]] = llvm.load %[[POINTER]] : !llvm.ptr -> vector<4xf32>
+// RAW: %[[LLVM_CURRENT:.*]] = "enzyme.get"{{.*}} -> vector<4xf32>
+// RAW: %[[LLVM_ADDED:.*]] = arith.addf %[[LLVM_CURRENT]], %[[LLVM_LOADED]]{{.*}} : vector<4xf32>
+// RAW: "enzyme.set"{{.*}}, %[[LLVM_ADDED]])
+// RAW: %[[LLVM_ZERO:.*]] = arith.constant dense<0.000000e+00> : vector<4xf32>
+// RAW: llvm.store %[[LLVM_ZERO]], %[[POINTER]] : vector<4xf32>, !llvm.ptr
+// RAW: %[[LLVM_RETURNED:.*]] = "enzyme.get"{{.*}} -> vector<4xf32>
+// RAW: llvm.return %[[LLVM_RETURNED]] : vector<4xf32>

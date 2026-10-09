@@ -159,6 +159,19 @@ config.substitutions.append(('%loadFlangEnzyme',
 if "@ENZYME_FLANG_ENABLED@" == "1" and os.path.basename(config.fc).startswith("flang"):
     config.available_features.add('flangenzyme')
 
+# The config file FlangEnzyme-XX.cfg next to the plugin loads Enzyme into flang
+# and, for -flto, into lld; the flangenzyme_lld feature needs an ld.lld beside
+# the Fortran compiler or on the PATH.
+config.substitutions.append(('%flangEnzymeConfig',
+                             ' --config=@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
+                             + config.llvm_ver + '.cfg'))
+if 'flangenzyme' in config.available_features:
+    import shutil
+    fc_dir = os.path.dirname(shutil.which(config.fc) or config.fc)
+    if (os.path.exists(os.path.join(fc_dir, 'ld.lld'))
+            or shutil.which('ld.lld') is not None):
+        config.available_features.add('flangenzyme_lld')
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:

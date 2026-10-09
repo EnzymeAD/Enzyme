@@ -478,6 +478,29 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
+  // The OpenMP runtime calls of worksharing loops and synchronization neither
+  // free memory of the program nor hand an allocation to it.
+  const char *OpenMPRuntimeCalls[] = {
+      "__kmpc_global_thread_num",
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u",
+      "__kmpc_for_static_fini",
+      "__kmpc_barrier",
+      "__kmpc_critical",
+      "__kmpc_end_critical",
+      "omp_get_thread_num",
+      "omp_get_num_threads",
+      "omp_get_max_threads",
+  };
+  if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
