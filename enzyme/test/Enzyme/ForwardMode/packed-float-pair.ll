@@ -9,7 +9,7 @@ entry:
   %bext = zext i32 %bi to i64
   %bshl = shl nuw i64 %bext, 32
   %aext = zext i32 %ai to i64
-  %pack = or disjoint i64 %bshl, %aext
+  %pack = or i64 %bshl, %aext
   %lo = trunc i64 %pack to i32
   %lof = bitcast i32 %lo to float
   %hish = lshr i64 %pack, 32
