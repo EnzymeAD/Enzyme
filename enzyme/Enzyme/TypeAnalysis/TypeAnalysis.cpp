@@ -4827,7 +4827,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         // arguments has been derived.
         bool unknown = false;
         for (size_t i = 0; i < LoadSize;) {
-          auto CT = Pointee[{(int)i}];
+          auto CT = Pointee.byteType({(int)i});
           if (auto flt = CT.isFloat()) {
             i += (DL.getTypeSizeInBits(flt) + 7) / 8;
           } else if (CT == BaseType::Pointer) {
@@ -6235,6 +6235,8 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
         chunk = dl.getTypeSizeInBits(flt) / 8;
       } else if (pair.second == BaseType::Pointer) {
         chunk = dl.getPointerSizeInBits() / 8;
+      } else if (pair.second == BaseType::Integer) {
+        chunk = TypeTree::intCover(pair.second);
       }
 
       for (size_t i = 0; i < chunk; i++) {
@@ -6604,7 +6606,7 @@ bool TypeResults::allFloat(Value *val) const {
   size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
-    dt = q[{(int)i}];
+    dt = q.byteType({(int)i});
     if (auto FT = dt.isFloat()) {
       i += (dl.getTypeSizeInBits(FT) + 7) / 8;
       continue;
@@ -6635,7 +6637,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
-    dt = q[{(int)i}];
+    dt = q.byteType({(int)i});
     if (dt == BaseType::Integer) {
       i++;
       continue;
@@ -6672,7 +6674,7 @@ bool TypeResults::anyPointer(Value *val) const {
   size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
-    dt = q[{(int)i}];
+    dt = q.byteType({(int)i});
     if (dt == BaseType::Integer) {
       i++;
       continue;
@@ -6699,7 +6701,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
   assert(val);
   assert(val->getType());
   const auto &q = query(val);
-  auto dt = q[{0}];
+  auto dt = q.byteType({0});
   /*
   size_t ObjSize = 1;
   if (val->getType()->isSized())
@@ -6708,7 +6710,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
   */
   dt.orIn(q[{-1}], pointerIntSame);
   for (size_t i = 1; i < num; ++i) {
-    dt.orIn(q[{(int)i}], pointerIntSame);
+    dt.orIn(q.byteType({(int)i}), pointerIntSame);
   }
 
   if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
@@ -6728,7 +6730,7 @@ Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
   const auto &q = query(val);
   Type *ty = q[{-1}].isFloat();
   for (size_t i = start; i < num; ++i) {
-    auto ty2 = q[{(int)i}].isFloat();
+    auto ty2 = q.byteType({(int)i}).isFloat();
     if (ty) {
       if (ty2)
         assert(ty == ty2);
@@ -6756,7 +6758,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   auto dt = q[{-1}];
   for (size_t i = 0; i < num; ++i) {
     bool Legal = true;
-    dt.checkedOrIn(q[{(int)i}], pointerIntSame, Legal);
+    dt.checkedOrIn(q.byteType({(int)i}), pointerIntSame, Legal);
     if (!Legal) {
       std::string str;
       raw_string_ostream ss(str);

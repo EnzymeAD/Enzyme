@@ -44,6 +44,10 @@ public:
   BaseType SubTypeEnum;
   /// Floating point type, if relevant, otherwise nullptr
   llvm::Type *SubType;
+  /// For an Integer at a given offset of a TypeTree: the number of bytes,
+  /// starting at that offset, that the integer covers. 0 (and 1) mean the
+  /// single byte at the offset. Equality and ordering ignore it.
+  unsigned IntBytes = 0;
 
   /// Construct a ConcreteType from an existing FloatingPoint Type
   ConcreteType(llvm::Type *SubType)
@@ -186,6 +190,7 @@ public:
     if (SubType != CT.SubType)
       changed = true;
     SubType = CT.SubType;
+    IntBytes = CT.IntBytes;
     return changed;
   }
 
@@ -230,6 +235,8 @@ public:
       return false;
     }
     assert(CT.SubType == SubType);
+    if (SubTypeEnum == BaseType::Integer && CT.IntBytes > IntBytes)
+      IntBytes = CT.IntBytes;
     return false;
   }
 
@@ -278,6 +285,8 @@ public:
     if (CT.SubType != SubType) {
       return *this = BaseType::Unknown;
     }
+    if (SubTypeEnum == BaseType::Integer && CT.IntBytes < IntBytes)
+      IntBytes = CT.IntBytes;
     return false;
   }
 

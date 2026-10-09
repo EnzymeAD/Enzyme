@@ -166,6 +166,7 @@ public:
       }
     }
 
+    Result.compactIntRuns();
     return Result;
   }
 
@@ -174,7 +175,72 @@ public:
 
   /// Lookup the underlying ConcreteType at a given offset sequence
   /// or Unknown if none exists
+  /// Number of bytes an Integer entry covers (see ConcreteType::IntBytes).
+  static unsigned intCover(const ConcreteType &CT) {
+    if (CT.SubTypeEnum != BaseType::Integer || CT.IntBytes <= 1)
+      return 1;
+    return CT.IntBytes;
+  }
+
+  /// Do the Integer entries at offsets `set` (with widths `widths`) cover
+  /// every byte of [0, len), no byte of which has another type in `group`?
+  static bool intCoversAll(const std::set<int> &set,
+                           const std::map<int, unsigned> &widths,
+                           const std::map<ConcreteType, std::set<int>> &group,
+                           ConcreteType dt, size_t len) {
+    std::vector<bool> cov(len, false);
+    for (auto e : set) {
+      if (e < 0)
+        continue;
+      unsigned w = 1;
+      auto f = widths.find(e);
+      if (f != widths.end() && f->second > 1)
+        w = f->second;
+      for (unsigned k = 0; k < w && (size_t)e + k < len; k++)
+        cov[e + k] = true;
+    }
+    for (const auto &o : group) {
+      if (o.first == dt)
+        continue;
+      for (auto e : o.second)
+        if (e >= 0 && (size_t)e < len)
+          cov[e] = false;
+    }
+    for (bool c : cov)
+      if (!c)
+        return false;
+    return true;
+  }
+
+  /// Lookup the type at `Seq`, the entry starting there (or through -1
+  /// indices). A byte covered by a sized integer that starts before it is
+  /// not found; use `byteType` to query individual bytes.
   ConcreteType operator[](const std::vector<int> Seq) const {
+    return lookupStart(Seq);
+  }
+
+  /// Type of the byte at `Seq`: like operator[], but also finding a sized
+  /// Integer that starts at most 7 bytes before the last index and covers it.
+  ConcreteType byteType(const std::vector<int> Seq) const {
+    auto CT = lookupStart(Seq);
+    if (CT != BaseType::Unknown || Seq.size() == 0 || Seq.back() <= 0)
+      return CT;
+    auto Prev = Seq;
+    for (int k = 1; k < 8 && Prev.back() > 0; k++) {
+      Prev.back()--;
+      auto PCT = lookupStart(Prev);
+      if (PCT == BaseType::Unknown)
+        continue;
+      if (PCT == BaseType::Integer && intCover(PCT) > (unsigned)k)
+        return ConcreteType(BaseType::Integer);
+      break;
+    }
+    return CT;
+  }
+
+  /// Lookup the type at `Seq` (exact or through -1 indices), not considering
+  /// sized integers that start before it.
+  ConcreteType lookupStart(const std::vector<int> Seq) const {
     auto Found0 = mapping.find(Seq);
     if (Found0 != mapping.end())
       return Found0->second;
@@ -235,6 +301,10 @@ public:
   /// Return if changed
   bool insert(const std::vector<int> Seq, ConcreteType CT,
               bool PointerIntSame = false) {
+    if (CT != BaseType::Integer && Seq.size() > 0 && Seq.back() > 0 &&
+        mapping.find(Seq) == mapping.end() &&
+        byteType(Seq) == BaseType::Integer)
+      splitSizedIntAt(Seq);
     size_t SeqSize = Seq.size();
     if (SeqSize > EnzymeMaxTypeDepth) {
       if (EnzymeTypeWarning) {
@@ -577,6 +647,22 @@ public:
           next[0] = i;
           Result.orIn(next, pair.second);
         }
+      } else if (pair.first.size() == 1 && intCover(pair.second) > 1) {
+        // Keep the bytes of a sized integer outside [start, end)
+        int o = pair.first[0];
+        int e = o + (int)intCover(pair.second);
+        if (o < (int)start) {
+          ConcreteType ct = pair.second;
+          ct.IntBytes = std::min(e, (int)start) - o;
+          Result.insert(pair.first, ct);
+        }
+        int s1 = std::max(o, (int)end);
+        int e1 = std::min(e, (int)len);
+        if (s1 < e1) {
+          ConcreteType ct = pair.second;
+          ct.IntBytes = e1 - s1;
+          Result.insert({s1}, ct);
+        }
       } else if ((size_t)pair.first[0] < start ||
                  ((size_t)pair.first[0] >= end &&
                   (size_t)pair.first[0] < len)) {
@@ -587,6 +673,7 @@ public:
     }
 
     // TODO canonicalize this
+    Result.compactIntRuns();
     return Result;
   }
 
@@ -596,6 +683,8 @@ public:
 
     // Map of indices[1:] => ( End => possible Index[0] )
     std::map<std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
+    // Bytes covered by the Integer leaves, by offset
+    std::map<int, unsigned> intWidths;
 
     for (const auto &pair : mapping) {
       assert(pair.first.size() != 0);
@@ -618,6 +707,11 @@ public:
 
       std::vector<int> next(pair.first.begin() + 2, pair.first.end());
 
+      if (next.size() == 0 && pair.second == BaseType::Integer &&
+          pair.first[1] != -1) {
+        auto &w = intWidths[pair.first[1]];
+        w = std::max(w, intCover(pair.second));
+      }
       staging[next][pair.second].insert(pair.first[1]);
     }
 
@@ -644,11 +738,15 @@ public:
             }
           }
 
-          legalCombine = true;
-          for (size_t i = 0; i < len; i += chunk) {
-            if (!set.count(i)) {
-              legalCombine = false;
-              break;
+          if (pnext.size() == 0 && dt == BaseType::Integer) {
+            legalCombine = intCoversAll(set, intWidths, pair.second, dt, len);
+          } else {
+            legalCombine = true;
+            for (size_t i = 0; i < len; i += chunk) {
+              if (!set.count(i)) {
+                legalCombine = false;
+                break;
+              }
             }
           }
         }
@@ -660,11 +758,20 @@ public:
           next.push_back(v);
 
         if (legalCombine) {
-          Result.insert(next, dt, /*intsAreLegalPointerSub*/ true);
+          ConcreteType cdt = dt;
+          // A -1 at the leaf covers every byte; deeper leaves keep their width
+          if (pnext.size() == 0)
+            cdt.IntBytes = 0;
+          Result.insert(next, cdt, /*intsAreLegalPointerSub*/ true);
         } else {
           for (auto e : set) {
             next[0] = e;
-            Result.insert(next, dt);
+            ConcreteType edt = dt;
+            if (pnext.size() == 0 && dt == BaseType::Integer) {
+              auto f = intWidths.find(e);
+              edt.IntBytes = f == intWidths.end() ? 0 : f->second;
+            }
+            Result.insert(next, edt);
           }
         }
       }
@@ -690,10 +797,17 @@ public:
     // Map of indices[1:] => ( End => possible Index[0] )
     std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>>
         staging;
+    // Bytes covered by the Integer leaves, by offset
+    std::map<int, unsigned> intWidths;
 
     for (const auto &pair : mapping) {
 
       std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+      if (next.size() == 0 && pair.second == BaseType::Integer &&
+          pair.first[0] != -1) {
+        auto &w = intWidths[pair.first[0]];
+        w = std::max(w, intCover(pair.second));
+      }
       if (pair.first[0] != -1) {
         if ((size_t)pair.first[0] >= len) {
           llvm::errs() << str() << "\n";
@@ -731,11 +845,15 @@ public:
             }
           }
 
-          legalCombine = true;
-          for (size_t i = 0; i < len; i += chunk) {
-            if (!set.count(i)) {
-              legalCombine = false;
-              break;
+          if (pnext.size() == 0 && dt == BaseType::Integer) {
+            legalCombine = intCoversAll(set, intWidths, pair.second, dt, len);
+          } else {
+            legalCombine = true;
+            for (size_t i = 0; i < len; i += chunk) {
+              if (!set.count(i)) {
+                legalCombine = false;
+                break;
+              }
             }
           }
         }
@@ -747,11 +865,20 @@ public:
           next.push_back(v);
 
         if (legalCombine) {
-          combinedToAdd.emplace(next, dt);
+          ConcreteType cdt = dt;
+          // A -1 at the leaf covers every byte; deeper leaves keep their width
+          if (pnext.size() == 0)
+            cdt.IntBytes = 0;
+          combinedToAdd.emplace(next, cdt);
         } else {
           for (auto e : set) {
             next[0] = e;
-            unCombinedToAdd.emplace(next, dt);
+            ConcreteType edt = dt;
+            if (pnext.size() == 0 && dt == BaseType::Integer) {
+              auto f = intWidths.find(e);
+              edt.IntBytes = f == intWidths.end() ? 0 : f->second;
+            }
+            unCombinedToAdd.emplace(next, edt);
           }
         }
       }
@@ -838,7 +965,7 @@ public:
     // walk bytewise until a concrete float type is found.
     size_t chunk = flt ? dl.getTypeSizeInBits(flt) / 8 : 1;
     for (size_t i = chunk; i < size; i += chunk) {
-      auto mx = TypeTree::operator[]({(int)i});
+      auto mx = byteType({(int)i});
       if (auto f2 = mx.isFloat()) {
         if (f2 != flt) {
           if (anythingIsFloat && !flt) {
@@ -869,7 +996,7 @@ public:
 
     size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
     for (size_t i = 0; i < ObjSize;) {
-      dt = operator[]({(int)i});
+      dt = byteType({(int)i});
       if (dt == BaseType::Integer) {
         i++;
         continue;
@@ -892,7 +1019,7 @@ public:
 
     size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
     for (size_t i = 0; i < ObjSize;) {
-      dt = operator[]({(int)i});
+      dt = byteType({(int)i});
       if (dt == BaseType::Integer) {
         i++;
         continue;
@@ -984,7 +1111,12 @@ public:
       } else {
         // Too small for range
         if (next0 < offset) {
-          continue;
+          // A sized integer starting before the range may still cover it
+          if (pair.first.size() == 1 && pair.second == BaseType::Integer &&
+              next0 + (int)intCover(pair.second) > offset)
+            next0 = offset;
+          else
+            continue;
         }
         next0 -= offset;
 
@@ -1030,7 +1162,12 @@ public:
       } else {
         // Too small for range
         if (next0 < offset) {
-          continue;
+          // A sized integer starting before the range may still cover it
+          if (pair.first.size() == 1 && pair.second == BaseType::Integer &&
+              next0 + (int)intCover(pair.second) > offset)
+            next0 = offset;
+          else
+            continue;
         }
         next0 -= offset;
 
@@ -1059,7 +1196,18 @@ public:
 
       std::vector<int> next(pair.first);
       next[0] = next0;
-      Result.mapping.emplace(next, pair.second);
+      ConcreteType ct = pair.second;
+      if (pair.first.size() == 1 && pair.first[0] != -1 &&
+          ct == BaseType::Integer && ct.IntBytes > 1) {
+        // Clip the bytes a sized integer covers to the range
+        int o = pair.first[0];
+        int s0 = std::max(o, offset);
+        int e = o + (int)ct.IntBytes;
+        if (maxSize != -1)
+          e = std::min(e, offset + maxSize);
+        ct.IntBytes = e - s0;
+      }
+      Result.mapping.emplace(next, ct);
       if (next.size() > maxInsertedDepth)
         maxInsertedDepth = next.size();
     }
@@ -1080,11 +1228,40 @@ public:
         } else if (op == BaseType::Pointer) {
           chunk = dl.getPointerSizeInBits() / 8;
         }
-        auto offincr = (chunk - offset % chunk) % chunk;
+        // An integer covering every byte: describe the range by sized
+        // integers of up to 8 bytes rather than one entry per byte.
+        bool compactInt = pair.first.size() == 1 && op == BaseType::Integer;
+        if (compactInt)
+          chunk = 8;
+        auto offincr = compactInt ? 0 : (chunk - offset % chunk) % chunk;
         bool inserted = false;
         for (int i = offincr; i < maxSize; i += chunk) {
           next[0] = i + addOffset;
           ConcreteType prev(pair.second);
+          if (compactInt) {
+            int w = std::min((int)chunk, maxSize - i);
+            // If another entry already describes a byte inside this chunk,
+            // describe the chunk byte by byte so that they merge as before.
+            auto lo = Result.mapping.lower_bound({next[0] + 1});
+            bool inner = lo != Result.mapping.end() && lo->first.size() > 0 &&
+                         lo->first[0] < next[0] + w;
+            if (inner) {
+              for (int j = 0; j < w; j++) {
+                std::vector<int> nb = {next[0] + j};
+                ConcreteType pb(pair.second);
+                auto fb = Result.mapping.find(nb);
+                if (fb != Result.mapping.end()) {
+                  if (pb.orIn(fb->second, /*pointerIntSame*/ false))
+                    fb->second = pb;
+                } else {
+                  Result.mapping.emplace(nb, pb);
+                }
+              }
+              inserted = true;
+              continue;
+            }
+            prev.IntBytes = w;
+          }
           // We can use faster checks here, since we know there can be no
           // -1's that we would conflict with, only conflicts from previous
           // fixed value insertions.
@@ -1094,8 +1271,11 @@ public:
             // with the new value.
             if (prev.orIn(found->second, /*pointerIntSame*/ false))
               found->second = prev;
+            else if (found->second == BaseType::Integer &&
+                     prev.IntBytes > found->second.IntBytes)
+              found->second.IntBytes = prev.IntBytes;
           } else {
-            Result.mapping.emplace(next, pair.second);
+            Result.mapping.emplace(next, prev);
           }
           inserted = true;
         }
@@ -1144,11 +1324,114 @@ public:
 
   /// Replace all integer subtypes with anything
   void ReplaceIntWithAnything() {
+    std::vector<std::pair<std::vector<int>, unsigned>> sized;
     for (auto &pair : mapping) {
       if (pair.second == BaseType::Integer) {
+        if (intCover(pair.second) > 1 && pair.first.size() > 0 &&
+            pair.first.back() >= 0)
+          sized.emplace_back(pair.first, intCover(pair.second));
         pair.second = BaseType::Anything;
       }
     }
+    // Anything has no width: describe the other bytes explicitly
+    for (auto &sz : sized) {
+      auto next = sz.first;
+      for (unsigned k = 1; k < sz.second; k++) {
+        next.back() = sz.first.back() + k;
+        mapping.emplace(next, ConcreteType(BaseType::Anything));
+      }
+    }
+  }
+
+  /// This tree with every sized integer replaced by one Integer per byte, the
+  /// form in which trees are printed and exported.
+  TypeTree expandSizedInts() const {
+    TypeTree Result;
+    std::vector<std::pair<std::vector<int>, unsigned>> sized;
+    for (const auto &pair : mapping) {
+      if (intCover(pair.second) > 1 && pair.first.size() > 0 &&
+          pair.first.back() >= 0)
+        sized.emplace_back(pair.first, intCover(pair.second));
+      ConcreteType ct = pair.second;
+      ct.IntBytes = 0;
+      Result.mapping.emplace(pair.first, ct);
+    }
+    for (auto &sz : sized) {
+      auto next = sz.first;
+      for (unsigned k = 1; k < sz.second; k++) {
+        next.back() = sz.first.back() + k;
+        Result.mapping.emplace(next, ConcreteType(BaseType::Integer));
+      }
+    }
+    Result.minIndices = minIndices;
+    return Result;
+  }
+
+  /// If the byte at `Seq` is covered by a sized integer starting before it,
+  /// describe that integer by one entry per byte again, so that a different
+  /// type can be merged into the byte at `Seq` exactly as before.
+  void splitSizedIntAt(const std::vector<int> &Seq) {
+    if (Seq.size() == 0 || Seq.back() <= 0)
+      return;
+    auto Prev = Seq;
+    for (int k = 1; k < 8 && Prev.back() > 0; k++) {
+      Prev.back()--;
+      auto F = mapping.find(Prev);
+      if (F == mapping.end())
+        continue;
+      if (F->second == BaseType::Integer && intCover(F->second) > (unsigned)k) {
+        unsigned w = intCover(F->second);
+        F->second.IntBytes = 0;
+        auto next = Prev;
+        for (unsigned j = 1; j < w; j++) {
+          next.back() = Prev.back() + j;
+          mapping.emplace(next, ConcreteType(BaseType::Integer));
+        }
+      }
+      return;
+    }
+  }
+
+  /// Describe runs of per-byte Integer leaves (as parsed from strings or
+  /// metadata) by sized integers of up to 8 bytes.
+  void compactIntRuns() {
+    std::map<std::vector<int>, std::vector<int>> groups;
+    for (const auto &pair : mapping) {
+      if (pair.first.empty() || pair.first.back() < 0)
+        continue;
+      if (pair.second != BaseType::Integer || intCover(pair.second) > 1)
+        continue;
+      std::vector<int> pre(pair.first.begin(), pair.first.end() - 1);
+      groups[pre].push_back(pair.first.back());
+    }
+    for (auto &g : groups) {
+      auto &offs = g.second;
+      size_t i = 0;
+      while (i < offs.size()) {
+        size_t j = i;
+        while (j + 1 < offs.size() && offs[j + 1] == offs[j] + 1 &&
+               offs[j + 1] - offs[i] < 8)
+          j++;
+        if (j > i) {
+          auto key = g.first;
+          key.push_back(offs[i]);
+          mapping.find(key)->second.IntBytes = offs[j] - offs[i] + 1;
+          for (size_t k = i + 1; k <= j; k++) {
+            auto kk = g.first;
+            kk.push_back(offs[k]);
+            mapping.erase(kk);
+          }
+        }
+        i = j + 1;
+      }
+    }
+  }
+
+  bool hasSizedInts() const {
+    for (const auto &pair : mapping)
+      if (intCover(pair.second) > 1)
+        return true;
+    return false;
   }
 
   /// Keep only mappings where the type is an `Anything`
@@ -1181,6 +1464,15 @@ public:
                    bool PointerIntSame, bool &LegalOr) {
     assert(RHS != BaseType::Unknown);
     ConcreteType CT = operator[](Seq);
+
+    if (CT == BaseType::Unknown && Seq.size() > 0 && Seq.back() > 0 &&
+        byteType(Seq) == BaseType::Integer) {
+      // A byte already covered by a sized integer
+      if (RHS == BaseType::Integer)
+        return false;
+      splitSizedIntAt(Seq);
+      CT = operator[](Seq);
+    }
 
     bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr);
     if (!subchanged)
@@ -1364,6 +1656,16 @@ public:
   /// value changed If this and RHS are incompatible at an index, the result
   /// will be BaseType::Unknown
   bool andIn(const TypeTree &RHS) {
+    if (hasSizedInts() || RHS.hasSizedInts()) {
+      // Intersect byte by byte
+      TypeTree L = expandSizedInts();
+      TypeTree Before = L;
+      L.andIn(RHS.expandSizedInts());
+      bool changed = !(L == Before);
+      mapping = std::move(L.mapping);
+      minIndices = std::move(L.minIndices);
+      return changed;
+    }
     bool changed = false;
 
     for (auto &pair : llvm::make_early_inc_range(mapping)) {
@@ -1391,6 +1693,16 @@ public:
   /// This function will error on an invalid type combination
   bool binopIn(bool &Legal, const TypeTree &RHS,
                llvm::BinaryOperator::BinaryOps Op) {
+    if (hasSizedInts() || RHS.hasSizedInts()) {
+      // Combine byte by byte
+      TypeTree L = expandSizedInts();
+      TypeTree Before = L;
+      L.binopIn(Legal, RHS.expandSizedInts(), Op);
+      bool changed = !(L == Before);
+      mapping = std::move(L.mapping);
+      minIndices = std::move(L.minIndices);
+      return changed;
+    }
     bool changed = false;
 
     for (auto &pair : llvm::make_early_inc_range(mapping)) {
@@ -1453,6 +1765,8 @@ public:
 
   /// Returns a string representation of this TypeTree
   std::string str() const {
+    if (hasSizedInts())
+      return expandSizedInts().str();
     std::string out = "{";
     bool first = true;
     for (auto &pair : mapping) {
@@ -1473,6 +1787,8 @@ public:
   }
 
   llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
+    if (hasSizedInts())
+      return expandSizedInts().toMD(ctx);
     llvm::SmallVector<llvm::Metadata *, 1> subMD;
     std::map<int, TypeTree> todo;
     ConcreteType base(BaseType::Unknown);
@@ -1517,6 +1833,7 @@ public:
     TypeTree ret;
     std::vector<int> off;
     ret.insertFromMD(md, off);
+    ret.compactIntRuns();
     return ret;
   }
 };

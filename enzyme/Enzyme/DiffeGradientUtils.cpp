@@ -1307,7 +1307,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
     auto dt = vd[{-1}];
     for (size_t i = start; i < size; ++i) {
       bool Legal = true;
-      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+      dt.checkedOrIn(vd.byteType({(int)i}), /*PointerIntSame*/ true, Legal);
       if (!Legal) {
         nextStart = i;
         break;

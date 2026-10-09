@@ -3540,12 +3540,13 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     Type *PNfloatType = PNtype.isFloat();
     if (!PNfloatType) {
       // Try to use the 0-th elem for all elems
-      PNtype = PNtypeT[{0}];
+      PNtype = PNtypeT.byteType({0});
       bool legal = true;
       for (size_t i = 1; i < size; i++) {
-        if (!PNtypeT[{(int)i}].isFloat())
+        if (!PNtypeT.byteType({(int)i}).isFloat())
           continue;
-        PNtype.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true, legal);
+        PNtype.checkedOrIn(PNtypeT.byteType({(int)i}), /*pointerIntSame*/ true,
+                           legal);
         if (!legal) {
           break;
         }
