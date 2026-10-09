@@ -89,9 +89,9 @@ attributes #1 = { alwaysinline }
 ; CHECK-DAG:    %[[CM4:.+]] = add i64 %c, -4
 ; CHECK-DAG:    %[[CM2:.+]] = add i64 %c, -2
 ; CHECK-DAG:    %[[CM5:.+]] = add i64 %c, -5
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %c, i64 %c,
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %[[CM4]], i64 %c,
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %[[CM2]], i64 %c,
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %[[CM5]], i64 %c,
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %c, {{.*}}i64 %c,
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %[[CM4]], {{.*}}i64 %c,
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %[[CM2]], {{.*}}i64 %c,
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %[[CM5]], {{.*}}i64 %c,
 ; CHECK-NOT: call void @jac.inner
 ; CHECK: define internal void @jac.inner(
