@@ -75,10 +75,10 @@ declare double @__enzyme_fwddiff2(i8*, double*, double*, i64)
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"gep'ipg"
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %[[i1:.+]] = fdiv fast double %reduce, %ld
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %[[i1]]
-; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %[[dreduce]], %[[i2]]
-; CHECK-NEXT:   %[[i5]] = fdiv fast double %[[i3]], %ld
+; CHECK-NEXT:   %[[i1:.+]] = fdiv nnan ninf nsz arcp contract afn double %reduce, %ld
+; CHECK-NEXT:   %[[i2:.+]] = fmul nnan ninf nsz arcp contract afn double %[[i0]], %[[i1]]
+; CHECK-NEXT:   %[[i3:.+]] = fsub nnan ninf nsz arcp contract afn double %[[dreduce]], %[[i2]]
+; CHECK-NEXT:   %[[i5]] = fdiv nnan ninf nsz arcp contract afn double %[[i3]], %ld
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 
@@ -101,10 +101,10 @@ declare double @__enzyme_fwddiff2(i8*, double*, double*, i64)
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"gep'ipg"
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %[[i1:.+]] = fdiv fast double %reduce, %ld
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %[[i1]]
-; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %[[dreduce]], %[[i2]]
-; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i3]], %ld
+; CHECK-NEXT:   %[[i1:.+]] = fdiv nnan ninf nsz arcp contract afn double %reduce, %ld
+; CHECK-NEXT:   %[[i2:.+]] = fmul nnan ninf nsz arcp contract afn double %[[i0]], %[[i1]]
+; CHECK-NEXT:   %[[i3:.+]] = fsub nnan ninf nsz arcp contract afn double %[[dreduce]], %[[i2]]
+; CHECK-NEXT:   %[[i5:.+]] = fdiv nnan ninf nsz arcp contract afn double %[[i3]], %ld
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 

@@ -21,10 +21,10 @@ declare x86_fp80 @__enzyme_autodiff(x86_fp80 (x86_fp80, x86_fp80)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ x86_fp80, x86_fp80 } @diffetester(x86_fp80 %x, x86_fp80 %y, x86_fp80 %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[diffex:.+]] = fdiv fast x86_fp80 %[[differet]], %y
-; CHECK-NEXT:   %[[xdivy:.+]] = fdiv fast x86_fp80 %x, %y
-; CHECK-NEXT:   %[[xdivydret:.+]] = fmul fast x86_fp80 %[[diffex]], %[[xdivy]]
-; CHECK-NEXT:   %[[mxdivy2:.+]] = {{(fsub fast x86_fp80 0.000000e\+00,|fneg fast x86_fp80)}} %[[xdivydret]]
+; CHECK-NEXT:   %[[diffex:.+]] = fdiv nnan ninf nsz arcp contract afn x86_fp80 %[[differet]], %y
+; CHECK-NEXT:   %[[xdivy:.+]] = fdiv nnan ninf nsz arcp contract afn x86_fp80 %x, %y
+; CHECK-NEXT:   %[[xdivydret:.+]] = fmul nnan ninf nsz arcp contract afn x86_fp80 %[[diffex]], %[[xdivy]]
+; CHECK-NEXT:   %[[mxdivy2:.+]] = {{(fsub nnan ninf nsz arcp contract afn x86_fp80 0.000000e\+00,|fneg nnan ninf nsz arcp contract afn x86_fp80)}} %[[xdivydret]]
 ; CHECK-NEXT:   %[[res1:.+]] = insertvalue { x86_fp80, x86_fp80 } undef, x86_fp80 %[[diffex]], 0
 ; CHECK-NEXT:   %[[res2:.+]] = insertvalue { x86_fp80, x86_fp80 } %[[res1:.+]], x86_fp80 %[[mxdivy2]], 1
 ; CHECK-NEXT:   ret { x86_fp80, x86_fp80 } %[[res2]]
