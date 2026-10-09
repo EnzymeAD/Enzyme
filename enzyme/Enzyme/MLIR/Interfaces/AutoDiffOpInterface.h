@@ -37,11 +37,8 @@ class MGradientUtilsReverse;
 namespace mlir {
 namespace enzyme {
 inline bool isFunctionReturnLike(Operation *op) {
-  if (op->hasTrait<OpTrait::ReturnLike>())
-    return true;
-  if (auto fn = dyn_cast_or_null<AutoDiffFunctionInterface>(op->getParentOp()))
-    return fn.isReturn(op);
-  return false;
+  return op->hasTrait<OpTrait::ReturnLike>() ||
+         isa<FunctionReturnOpInterface>(op);
 }
 } // namespace enzyme
 } // namespace mlir
