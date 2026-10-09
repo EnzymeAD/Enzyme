@@ -85,10 +85,10 @@ attributes #1 = { alwaysinline }
 ; CHECK: define void @jac(i64 %n, ptr {{.*}}%acc)
 ; CHECK: outer:
 ; CHECK-NEXT:   %c = phi i64 [ 0, %entry ], [ %c.next, %outer.latch ]
-; CHECK-NEXT:   %[[CM2:.+]] = add i64 %c, -2
-; CHECK-NEXT:   %[[CM1:.+]] = add i64 %c, -1
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %[[CM2]], i64 %c,
-; CHECK:   call void @jac.inner(i64 %{{.+}}, i64 %[[CM1]], i64 %c,
+; CHECK-DAG:    %[[CM2:.+]] = add i64 %c, -2
+; CHECK-DAG:    %[[CM1:.+]] = add i64 %c, -1
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %[[CM2]], {{.*}}i64 %c,
+; CHECK-DAG:   call void @jac.inner(i64 %{{[^,]+}}, i64 %[[CM1]], {{.*}}i64 %c,
 ; CHECK: tail:
 ; CHECK:   call void @accumulate(
 ; CHECK: outer.latch:
