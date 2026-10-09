@@ -327,6 +327,7 @@ void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
 void registerGPUDialectAutoDiffInterface(DialectRegistry &registry);
 void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCIRDialectAutoDiffInterface(DialectRegistry &registry);
+void registerCIRAutoDiffTypeInterfaces(MLIRContext *context);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 

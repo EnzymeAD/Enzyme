@@ -24,6 +24,10 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRAttrs.h"
+#include "clang/CIR/Interfaces/CIRTypeInterfaces.h"
+#endif
 #include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
@@ -70,7 +74,12 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                    << " of type " << type << "\n";
       llvm_unreachable("unsupported eltype");
     }
-  } else if (auto T = cast<FloatType>(type)) {
+  }
+#ifdef ENZYME_CLANG_HAS_CIR
+  else if (auto fp = dyn_cast<cir::FPTypeInterface>(type))
+    return cir::FPAttr::get(type, APFloat(fp.getFloatSemantics(), value));
+#endif
+  else if (auto T = cast<FloatType>(type)) {
     APFloat apvalue(T.getFloatSemantics(), value);
     return FloatAttr::get(T, apvalue);
     // NOTE `complex::ConstantOp` doesn't accept `TypedAttr`, only `ArrayAttr`

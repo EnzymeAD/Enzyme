@@ -23,6 +23,10 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRTypes.h"
+#endif
+
 #define DEBUG_TYPE "enzyme"
 
 using namespace mlir;
@@ -72,6 +76,12 @@ struct DifferentiatePass
         retTypes.push_back(DIFFE_TYPE::CONSTANT);
         continue;
       }
+#ifdef ENZYME_CLANG_HAS_CIR
+      if (isa<cir::IntType, cir::BoolType>(ty)) {
+        retTypes.push_back(DIFFE_TYPE::CONSTANT);
+        continue;
+      }
+#endif
 
       if (mode == DerivativeMode::ReverseModeCombined)
         retTypes.push_back(DIFFE_TYPE::OUT_DIFF);
