@@ -2,6 +2,10 @@
 
 #include "mlir/IR/BuiltinTypes.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRTypes.h"
+#endif
+
 #include "CloneFunction.h"
 
 using namespace mlir;
@@ -22,17 +26,29 @@ getFunctionTypeForClone(T FTy, DerivativeMode mode, unsigned width,
                         const std::vector<bool> &returnShadows,
                         llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
                         llvm::ArrayRef<DIFFE_TYPE> ArgActivity) {
+#ifdef ENZYME_CLANG_HAS_CIR
+  static_assert(llvm::is_one_of<T, FunctionType, LLVM::LLVMFunctionType,
+                                cir::FuncType>::value,
+                "Expected FunctionType, LLVMFunctionType or cir::FuncType");
+#else
   static_assert(llvm::is_one_of<T, FunctionType, LLVM::LLVMFunctionType>::value,
                 "Expected FunctionType or LLVMFunctionType");
+#endif
   SmallVector<mlir::Type, 4> RetTypes;
   ArrayRef<Type> origInputTypes, origResultTypes;
   if constexpr (std::is_same<T, LLVM::LLVMFunctionType>::value) {
     origInputTypes = FTy.getParams();
     origResultTypes = FTy.getReturnTypes();
-  } else {
+  } else if constexpr (std::is_same<T, mlir::FunctionType>::value) {
     origInputTypes = FTy.getInputs();
     origResultTypes = FTy.getResults();
   }
+#ifdef ENZYME_CLANG_HAS_CIR
+  else if constexpr (std::is_same<T, cir::FuncType>::value) {
+    origInputTypes = FTy.getInputs();
+    origResultTypes = FTy.getReturnTypes();
+  }
+#endif
 
   for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
            origResultTypes, returnPrimals, returnShadows, ReturnActivity)) {
@@ -218,10 +234,21 @@ FunctionOpInterface CloneFunctionWithReturns(
     FTy = getFunctionTypeForClone(llFTy, mode, width, additionalArg,
                                   returnPrimals, returnShadows, RetActivity,
                                   ArgActivity);
-  } else {
-    FTy = getFunctionTypeForClone(cast<mlir::FunctionType>(F.getFunctionType()),
-                                  mode, width, additionalArg, returnPrimals,
-                                  returnShadows, RetActivity, ArgActivity);
+  } else if (auto mlFTy = dyn_cast<mlir::FunctionType>(F.getFunctionType())) {
+    FTy = getFunctionTypeForClone(mlFTy, mode, width, additionalArg,
+                                  returnPrimals, returnShadows, RetActivity,
+                                  ArgActivity);
+  }
+#ifdef ENZYME_CLANG_HAS_CIR
+  else if (auto ciFTy = dyn_cast<cir::FuncType>(F.getFunctionType())) {
+    FTy = getFunctionTypeForClone(ciFTy, mode, width, additionalArg,
+                                  returnPrimals, returnShadows, RetActivity,
+                                  ArgActivity);
+  }
+#endif
+  else {
+    llvm::errs() << F << "unsupported function type for differentiation\n";
+    return nullptr;
   }
 
   /*
@@ -293,8 +320,12 @@ FunctionOpInterface CloneFunctionWithReturns(
     ArrayRef<Type> resultTypes;
     if (auto llFTy = dyn_cast<LLVM::LLVMFunctionType>(F.getFunctionType()))
       resultTypes = llFTy.getReturnTypes();
-    else
-      resultTypes = cast<mlir::FunctionType>(F.getFunctionType()).getResults();
+    else if (auto mlFTy = dyn_cast<mlir::FunctionType>(F.getFunctionType()))
+      resultTypes = mlFTy.getResults();
+#ifdef ENZYME_CLANG_HAS_CIR
+    else if (auto ciFTy = dyn_cast<cir::FuncType>(F.getFunctionType()))
+      resultTypes = ciFTy.getReturnTypes();
+#endif
 
     for (auto &&[Ty, activity] : llvm::zip(resultTypes, RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {

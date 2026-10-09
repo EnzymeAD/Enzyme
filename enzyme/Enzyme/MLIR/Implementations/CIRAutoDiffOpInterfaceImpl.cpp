@@ -54,11 +54,63 @@ struct SwitchFlatBranchOpInterface
 };
 } // namespace
 
+class AutoDiffCIRFuncOpFunctionInterface
+    : public AutoDiffFunctionInterface::ExternalModel<
+          AutoDiffCIRFuncOpFunctionInterface, cir::FuncOp> {
+public:
+  static Type packedType(MLIRContext *ctx, TypeRange types) {
+    SmallVector<Type> members(types.begin(), types.end());
+    SmallVector<cir::RecordMemberKind> kinds(members.size(),
+                                             cir::RecordMemberKind::Data);
+    return cir::StructType::get(ctx, members, /*packed=*/false,
+                                /*is_class=*/false, kinds);
+  }
+
+  void transformResultTypes(Operation *self,
+                            SmallVectorImpl<Type> &resultTypes) const {
+    if (resultTypes.size() <= 1)
+      return;
+    Type packed = packedType(self->getContext(), resultTypes);
+    resultTypes.clear();
+    resultTypes.push_back(packed);
+  }
+  void detachFromPrimalDefinition(Operation *self) const {
+    // cir.func has comdat as a unit attr, not a symbol ref: nothing to
+    // retarget.
+  }
+  Operation *createCall(Operation *self, OpBuilder &b, Location loc,
+                        ValueRange args) const {
+    auto fn = cast<cir::FuncOp>(self);
+    Type res = fn.getFunctionType().getReturnTypes().empty()
+                   ? Type()
+                   : fn.getFunctionType().getReturnType();
+    return cir::CallOp::create(b, loc, SymbolRefAttr::get(fn), res, args);
+  }
+  Operation *createReturn(Operation *, OpBuilder &b, Location loc,
+                          ValueRange args) const {
+    if (args.size() <= 1)
+      return cir::ReturnOp::create(b, loc, args);
+    Type packed = packedType(b.getContext(), args.getTypes());
+    Value result =
+        cir::ConstantOp::create(b, loc, packed, cir::ZeroAttr::get(packed));
+    for (auto &&[i, v] : llvm::enumerate(args))
+      result = cir::InsertMemberOp::create(b, loc, result, i, v);
+    return cir::ReturnOp::create(b, loc, ValueRange{result});
+  }
+};
+
+struct CIRReturnOpFunctionReturnInterface
+    : public FunctionReturnOpInterface::ExternalModel<
+          CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
+
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
     cir::SwitchFlatOp::attachInterface<SwitchFlatBranchOpInterface>(*context);
     registerInterfaces(context);
     registerCIRAutoDiffTypeInterfaces(context);
+    cir::FuncOp::attachInterface<AutoDiffCIRFuncOpFunctionInterface>(*context);
+    cir::ReturnOp::attachInterface<CIRReturnOpFunctionReturnInterface>(
+        *context);
   });
 }
