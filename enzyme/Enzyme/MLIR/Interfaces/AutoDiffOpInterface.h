@@ -34,4 +34,16 @@ class MGradientUtilsReverse;
 
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
 
+namespace mlir {
+namespace enzyme {
+inline bool isFunctionReturnLike(Operation *op) {
+  if (op->hasTrait<OpTrait::ReturnLike>())
+    return true;
+  if (auto fn = dyn_cast_or_null<AutoDiffFunctionInterface>(op->getParentOp()))
+    return fn.isReturn(op);
+  return false;
+}
+} // namespace enzyme
+} // namespace mlir
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H

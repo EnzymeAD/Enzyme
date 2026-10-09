@@ -47,7 +47,7 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
   }
 
   // In forward mode we only need to update the return value
-  if (!inst->hasTrait<OpTrait::ReturnLike>())
+  if (!mlir::enzyme::isFunctionReturnLike(inst))
     return;
 
   SmallVector<mlir::Value, 2> retargs;
