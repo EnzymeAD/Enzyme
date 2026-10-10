@@ -180,8 +180,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i13]], %[[i9]]
 ; CHECK-NEXT:   store double %[[i14]], double* %[[i12]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %p2 to double**
-; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %"p2'mi" to double**
-; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
+; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** {{(undef|poison)}})
 ; CHECK-NEXT:   %[[i15:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i15]], label %invertentry, label %incinvertloop
 

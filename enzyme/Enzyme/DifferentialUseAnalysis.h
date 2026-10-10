@@ -176,27 +176,6 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-      // A call whose result is active is differentiated if the shadow of its
-      // result is used at all, even if only in the forward pass, as for a
-      // constant instruction returning a pointer. Its reverse call is then
-      // passed the shadows of its active arguments, which the callee's
-      // reverse may use. In the primal and combined passes the sub-need above
-      // already asks whether that shadow is used; the gradient pass has to ask
-      // the primal pass.
-      if (VT == QueryType::Shadow && recursiveUse && !OneLevel &&
-          mode == DerivativeMode::ReverseModeGradient && isa<CallBase>(user)) {
-        std::map<UsageKey, bool> primalSeen;
-        if (is_value_needed_in_reverse<QueryType::Shadow>(
-                gutils, user, DerivativeMode::ReverseModePrimal, primalSeen,
-                oldUnreachable)) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow arg of differentiated call "
-                         << *user << "\n";
-          return seen[idx] = true;
-        }
-      }
-
       if (!TR.allFloat(const_cast<Value *>(inst)))
         if (auto IVI = dyn_cast<Instruction>(user)) {
           bool inserted = false;

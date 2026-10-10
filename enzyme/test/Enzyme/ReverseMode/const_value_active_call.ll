@@ -52,8 +52,7 @@ entry:
 
 ; CHECK: define internal void @diffef(double** %a0, double** %"a0'", double* %tapeArg)
 ; CHECK-NEXT: invert:
-; CHECK-NEXT:   %"a3'ipl" = load double*, double** %"a0'", align 8
 ; CHECK-NEXT:   %a3 = load double*, double** %a0, align 8
-; CHECK-NEXT:   call void @diffeg(double* %a3, double* %"a3'ipl")
+; CHECK-NEXT:   call void @diffeg(double* %a3, double* {{(undef|poison)}})
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

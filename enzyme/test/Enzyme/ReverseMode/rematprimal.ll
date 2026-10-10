@@ -121,7 +121,7 @@ attributes #4 = { nounwind willreturn "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:   br i1 %i5, label %remat_enter, label %bb3
 
 ; CHECK: invertbb:                                         ; preds = %invertbb12_phimerge
-; CHECK-NEXT:   call void @diffef({} addrspace(10)* %arg1, {} addrspace(10)* %"arg1'")
+; CHECK-NEXT:   call void @diffef({} addrspace(10)* %arg1, {} addrspace(10)* {{(undef|poison)}})
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret void
 
