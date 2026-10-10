@@ -1,4 +1,4 @@
-// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math --cse %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme --cse %s | FileCheck %s
 
 func.func @both(%x : f64) -> (f64, f64) {
   %s, %c = math.sincos %x : f64
