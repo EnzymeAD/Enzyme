@@ -5540,6 +5540,9 @@ public:
     bool modifyPrimal = shouldAugmentCall(&call, gutils);
 
     SmallVector<Value *, 8> args;
+    // Positions in args of the shadows of active arguments to a call that is
+    // a constant instruction, which its reverse may not need.
+    SmallVector<size_t, 2> constantCallShadowArgs;
     SmallVector<Value *, 8> pre_args;
     std::vector<DIFFE_TYPE> argsInverted;
     SmallVector<Instruction *, 4> postCreate;
@@ -5710,13 +5713,14 @@ public:
 
           Value *darg = nullptr;
 
-          if (((writeOnlyNoCapture && TR.query(call.getArgOperand(
-                                          i))[{-1, -1}] == BaseType::Pointer) ||
-               gutils->isConstantInstruction(&call)) &&
+          if (writeOnlyNoCapture &&
+              TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer &&
               !replaceFunction) {
             darg = getUndefinedValueForType(
                 M, gutils->getShadowType(argi->getType()));
           } else {
+            if (gutils->isConstantInstruction(&call) && !replaceFunction)
+              constantCallShadowArgs.push_back(args.size());
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
                                                    : ValueType::Both;
@@ -6341,6 +6345,17 @@ public:
       if (!newcalled)
         return;
       FT = cast<Function>(newcalled)->getFunctionType();
+
+      // A call that is a constant instruction propagates no derivative, but
+      // if its result is active it is still differentiated, and the callee's
+      // reverse may still use the shadows of its arguments (e.g. to propagate
+      // a copy into memory of its own, adding zero). Pass those shadows, except
+      // the ones the generated reverse function provably does not use.
+      auto NF = cast<Function>(newcalled);
+      if (!NF->empty() && !hasMetadata(NF, "enzyme_placeholder"))
+        for (auto idx : constantCallShadowArgs)
+          if (idx < NF->arg_size() && NF->getArg(idx)->use_empty())
+            args[idx] = getUndefinedValueForType(M, args[idx]->getType());
     } else {
 
       assert(subMode != DerivativeMode::ReverseModeCombined);
