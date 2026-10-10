@@ -2293,6 +2293,19 @@ static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
              TypeTree::parse(attr.getValueAsString(), T->getContext()), T, DL);
 }
 
+// Whether a value of type T cannot be or hold a pointer: void and token
+// values, floating-point values, and integers narrower than a pointer.
+// Integers as wide as a pointer can hold one (ptrtoint, Julia's Ptr).
+static bool typeCannotHoldPointer(Type *T, const DataLayout &DL) {
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  if (T->isFPOrFPVectorTy())
+    return true;
+  if (auto IT = dyn_cast<IntegerType>(T))
+    return IT->getBitWidth() < DL.getPointerSizeInBits();
+  return false;
+}
+
 // Whether value V cannot be or hold a pointer by its type, or by the
 // enzyme_type info given for it.
 static bool cannotHoldPointer(Value *V) {
@@ -2303,6 +2316,8 @@ static bool cannotHoldPointer(Value *V) {
   if (!I)
     return false;
   auto &DL = I->getModule()->getDataLayout();
+  if (typeCannotHoldPointer(T, DL))
+    return true;
   if (auto MD = I->getMetadata("enzyme_type"))
     if (typeTreeRulesOutPointer(TypeTree::fromMD(MD), T, DL))
       return true;
@@ -2444,6 +2459,17 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         }
         return true;
       }
+      // Integer arithmetic on a value that may hold a pointer may compute
+      // another one; anything else that neither writes memory nor produces a
+      // value able to hold a pointer (e.g. a conversion to floating point)
+      // cannot pass the pointer on.
+      if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        todo.emplace_back(I, Holds);
+        continue;
+      }
+      if (!I->mayWriteToMemory() && cannotHoldPointer(I))
+        continue;
       return true;
     }
   }

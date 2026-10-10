@@ -37,11 +37,29 @@ top:
   ret void
 }
 
-; Returning a value loaded through that memory may return a pointer to it
-; unless type info rules that out: here the return value is only known to be a
-; double by the function's enzyme_type, without which the caller is local.
+; Returning a value loaded through that memory may return a pointer to it if
+; the value can hold one: an integer as wide as a pointer can (ptrtoint,
+; Julia's Ptr), unless type info rules that out, here the function's
+; enzyme_type. A floating-point value cannot, and neither can computing with
+; it.
 
-define double @use_ret(ptr %task, ptr addrspace(11) nocapture %x) {
+define i64 @use_ret(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
+  %v = load i64, ptr addrspace(11) %r11, align 8
+  ret i64 %v
+}
+
+define "enzyme_type"="{[-1]:Integer}" i64 @use_ret_typed(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
+  %v = load i64, ptr addrspace(11) %r11, align 8
+  ret i64 %v
+}
+
+define double @use_ret_double(ptr %task, ptr addrspace(11) nocapture %x) {
 top:
   %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
   %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
@@ -49,12 +67,14 @@ top:
   ret double %v
 }
 
-define "enzyme_type"="{[-1]:Float@double}" double @use_ret_typed(ptr %task, ptr addrspace(11) nocapture %x) {
+define void @use_compute(ptr %task, ptr addrspace(11) nocapture %x) {
 top:
   %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
   %r11 = addrspacecast ptr addrspace(10) %r to ptr addrspace(11)
   %v = load double, ptr addrspace(11) %r11, align 8
-  ret double %v
+  %w = fmul double %v, 2.000000e+00
+  %c = fcmp ogt double %w, 0.000000e+00
+  ret void
 }
 
 ; The same through an sret holding a pointer.
@@ -115,8 +135,10 @@ top:
 ; CHECK: define ptr addrspace(10) @fresh({{.*}}) #[[LOCAL:[0-9]+]]
 ; CHECK: define ptr addrspace(10) @wrap({{.*}}) #[[LOCAL]]
 ; CHECK: define void @use_only({{.*}}) #[[RO:[0-9]+]]
-; CHECK: define double @use_ret({{.*}}) #[[LOCAL]]
-; CHECK: define "enzyme_type"="{[-1]:Float@double}" double @use_ret_typed({{.*}}) #[[RO]]
+; CHECK: define i64 @use_ret({{.*}}) #[[LOCAL]]
+; CHECK: define "enzyme_type"="{[-1]:Integer}" i64 @use_ret_typed({{.*}}) #[[RO]]
+; CHECK: define double @use_ret_double({{.*}}) #[[RO]]
+; CHECK: define void @use_compute({{.*}}) #[[RO]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_md({{.*}}) #[[LOCAL]]
