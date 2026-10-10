@@ -2099,9 +2099,11 @@ static bool isJuliaArrayAllocation(Value *V) {
 }
 
 using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
+// Objects with the offset of a field of theirs holding fresh data.
+using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
 
 static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
-                        SmallVectorImpl<Value *> *bases);
+                        FreshFields *bases);
 
 // Whether the field at offset Field of Obj, an object allocated in its
 // function, only ever holds fresh data (see isFreshData) while the function
@@ -2111,8 +2113,8 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
 // the field. Returning Obj is fine: the field may then change only after the
 // function returns.
 static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
-                                    TargetLibraryInfo &TLI,
-                                    FreshFieldSet &seen) {
+                                    TargetLibraryInfo &TLI, FreshFieldSet &seen,
+                                    FreshFields *bases) {
   auto &DL = Obj->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   // Pointers derived from Obj, with their offset from it if constant.
@@ -2166,7 +2168,7 @@ static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
         auto val = getBaseObject(SI->getValueOperand());
         if (isa<ConstantPointerNull>(val) || isa<UndefValue>(val))
           continue;
-        if (!isFreshData(val, TLI, seen, nullptr))
+        if (!isFreshData(val, TLI, seen, bases))
           return false;
         continue;
       }
@@ -2216,7 +2218,7 @@ static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
 //    Julia 1.11+ array), provided that every write to the field in the
 //    function sets it to fresh data (see fieldOnlyHoldsFreshData).
 static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
-                         FreshFieldSet &seen) {
+                         FreshFieldSet &seen, FreshFields *bases) {
   // A field we are already checking, reached again through a store to such a
   // field: it holds fresh data if everything else does.
   if (!seen.insert(std::make_pair(V, Field)).second)
@@ -2232,19 +2234,21 @@ static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
   if (isJuliaMemoryAllocation(V))
     return Field == I->getModule()->getDataLayout().getPointerSize();
   if (isJuliaArrayAllocation(V))
-    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, TLI, seen);
+    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
   // Other allocations leave the fields uninitialized.
   if (isAllocationCall(V, TLI))
-    return fieldOnlyHoldsFreshData(I, Field, TLI, seen);
+    return fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
   return false;
 }
 
 // Whether Obj, the base object of a written pointer, is data that did not
 // exist before this function: a pointer loaded from a field holding only
 // fresh data (see isFreshField) of an object, or of a phi or select of
-// objects. If so, appends those objects to bases.
+// objects. If so, appends those objects with the field's offset to bases,
+// along with the objects whose fields the fresh data stored into those fields
+// was itself loaded from.
 static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
-                        SmallVectorImpl<Value *> *bases) {
+                        FreshFields *bases) {
   if (!EnzymeJuliaAddrLoad)
     return false;
   auto LI = dyn_cast<LoadInst>(Obj);
@@ -2258,16 +2262,16 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
   if (offset.isNegative())
     return false;
   for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
-    if (!isFreshField(base, offset.getSExtValue(), TLI, seen))
+    if (!isFreshField(base, offset.getSExtValue(), TLI, seen, bases))
       return false;
     if (bases)
-      bases->push_back(base);
+      bases->emplace_back(base, offset.getSExtValue());
   }
   return true;
 }
 
 static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI,
-                        SmallVectorImpl<Value *> &bases) {
+                        FreshFields &bases) {
   FreshFieldSet seen;
   return isFreshData(Obj, TLI, seen, &bases);
 }
@@ -2435,11 +2439,11 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         // Memory of ours now holds the pointer: anything loaded from it, or
         // reached from an object whose fresh data it is, may be the pointer.
         todo.emplace_back(Dst, true, /*Deep*/ true);
-        SmallVector<Value *, 2> owners;
+        SmallVector<std::pair<Value *, int64_t>, 2> owners;
         if (isFreshData(Dst, TLI, owners))
           for (auto owner : owners)
-            if (!isa<GlobalVariable>(owner))
-              todo.emplace_back(owner, true, /*Deep*/ true);
+            if (!isa<GlobalVariable>(owner.first))
+              todo.emplace_back(owner.first, true, /*Deep*/ true);
         continue;
       }
       if (auto MTI = dyn_cast<MemTransferInst>(I)) {
@@ -2491,11 +2495,91 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
   return false;
 }
 
-// Whether any of the objects, allocated in this function (or the empty Julia
-// Memory singleton), may reach its return value (see mayReachReturn).
-static bool anyMayReachReturn(ArrayRef<Value *> objs, TargetLibraryInfo &TLI) {
-  for (auto obj : objs)
-    if (!isa<GlobalVariable>(obj) && mayReachReturn(obj, TLI, /*Deep*/ false))
+// Whether written fresh data, held in the field at offset Field of Base (an
+// object allocated in this function, or the empty Julia Memory singleton), may
+// reach the function's return value: with Base itself, or through a load of
+// that field (any load of it yields the written data), a copy of it, or a call
+// that may hand back what it loads from Base.
+static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
+                                     TargetLibraryInfo &TLI) {
+  if (isa<GlobalVariable>(Base))
+    return false;
+  if (mayReachReturn(Base, TLI, /*Deep*/ false))
+    return true;
+  auto &DL = cast<Instruction>(Base)->getModule()->getDataLayout();
+  int64_t fieldSize = DL.getPointerSize();
+  auto overlaps = [&](std::optional<int64_t> off, uint64_t size) {
+    return !off || (*off<Field + fieldSize && * off + (int64_t)size> Field);
+  };
+  // Pointers derived from Base, with their offset from it if constant.
+  SmallVector<std::pair<Value *, std::optional<int64_t>>, 4> todo;
+  SmallPtrSet<Value *, 8> visited;
+  todo.emplace_back(Base, 0);
+  while (!todo.empty()) {
+    auto [V, off] = todo.pop_back_val();
+    if (!visited.insert(V).second)
+      continue;
+    for (auto U : V->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        return true;
+      if (auto LI = dyn_cast<LoadInst>(I)) {
+        if (overlaps(off, DL.getTypeStoreSize(LI->getType())) &&
+            !cannotHoldPointer(LI) && mayReachReturn(LI, TLI, /*Deep*/ false))
+          return true;
+        continue;
+      }
+      if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
+        if (GEP->getPointerOperand() != V)
+          continue;
+        std::optional<int64_t> gepOff;
+        APInt gepOffset(DL.getIndexSizeInBits(GEP->getPointerAddressSpace()),
+                        0);
+        if (off && GEP->accumulateConstantOffset(DL, gepOffset))
+          gepOff = *off + gepOffset.getSExtValue();
+        todo.emplace_back(GEP, gepOff);
+        continue;
+      }
+      if (isa<CastInst>(I) || isa<PHINode>(I) || isa<SelectInst>(I)) {
+        if (auto SI = dyn_cast<SelectInst>(I))
+          if (SI->getCondition() == V)
+            continue;
+        if (I->getType()->isPointerTy())
+          todo.emplace_back(I, off);
+        continue;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        if (MTI->getRawSource() != V)
+          continue;
+        auto len = dyn_cast<ConstantInt>(MTI->getLength());
+        if (!len || overlaps(off, len->getZExtValue()))
+          return true;
+        continue;
+      }
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
+          continue;
+        if (getFuncNameFromCall(CB) == "julia.write_barrier")
+          continue;
+        if (mayHandBackPointer(CB))
+          return true;
+        continue;
+      }
+      // Stores into Base, comparisons, and the like do not read the field.
+      // Storing a pointer to Base elsewhere is followed by mayReachReturn
+      // above.
+    }
+  }
+  return false;
+}
+
+// Whether any of the fresh fields may reach the return value (see
+// freshFieldMayReachReturn).
+static bool
+anyFreshFieldMayReachReturn(ArrayRef<std::pair<Value *, int64_t>> fields,
+                            TargetLibraryInfo &TLI) {
+  for (auto [base, field] : fields)
+    if (freshFieldMayReachReturn(base, field, TLI))
       return true;
   return false;
 }
@@ -2529,10 +2613,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<Value *, 2> freshBases;
+        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
         if (isFreshData(Obj, TLI, freshBases)) {
           if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyMayReachReturn(freshBases, TLI)))
+                         anyFreshFieldMayReachReturn(freshBases, TLI)))
             local = true;
           continue;
         }
@@ -2566,10 +2650,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(MSI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<Value *, 2> freshBases;
+        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
         if (isFreshData(Obj, TLI, freshBases)) {
           if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyMayReachReturn(freshBases, TLI)))
+                         anyFreshFieldMayReachReturn(freshBases, TLI)))
             local = true;
           continue;
         }
@@ -2739,10 +2823,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(SI->getPointerOperand());
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<Value *, 2> freshBases;
+        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
         if (isFreshData(Obj, TLI, freshBases)) {
           if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyMayReachReturn(freshBases, TLI)))
+                         anyFreshFieldMayReachReturn(freshBases, TLI)))
             local = true;
           continue;
         }
