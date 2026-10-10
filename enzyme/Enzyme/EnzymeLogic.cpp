@@ -4911,12 +4911,14 @@ Function *EnzymeLogic::CreateForwardDiff(
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
     auto foundcalled = cast<Function>(gvemd->getValue());
 
-    if ((foundcalled->getReturnType()->isVoidTy() ||
+    if (width == 1 &&
+        (foundcalled->getReturnType()->isVoidTy() ||
          retType != DIFFE_TYPE::CONSTANT) &&
         !hasconstant && returnUsed)
       return foundcalled;
 
-    if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant) {
+    if (width == 1 && !foundcalled->getReturnType()->isVoidTy() &&
+        !hasconstant) {
       if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
       }
       if (!returnUsed && retType != DIFFE_TYPE::CONSTANT && !hasconstant) {
@@ -4944,25 +4946,25 @@ Function *EnzymeLogic::CreateForwardDiff(
       assert(returnUsed);
     }
 
+    // The custom derivative takes every argument followed by its shadow, and
+    // returns {primal, shadow} unless void. Otherwise (constant arguments, or
+    // vector mode), a wrapper passes the shadows of constant arguments: zero
+    // for floats, the primal value for integers, and a null pointer for
+    // pointers (a Fortran OPTIONAL dummy then appears absent). At width > 1
+    // it calls the custom derivative once per lane, with that lane's shadows
+    // (so the primal computation of the rule runs once per lane).
     SmallVector<Type *, 2> curTypes;
     bool legal = true;
-    SmallVector<DIFFE_TYPE, 4> nextConstantArgs;
     for (auto tup : llvm::zip(todiff->args(), constant_args)) {
       auto &arg = std::get<0>(tup);
       curTypes.push_back(arg.getType());
       if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
-        curTypes.push_back(arg.getType());
-        nextConstantArgs.push_back(std::get<1>(tup));
+        curTypes.push_back(GradientUtils::getShadowType(arg.getType(), width));
         continue;
       }
       auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-      if (TT.isFloat()) {
-        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-        continue;
-      } else if (TT == BaseType::Integer) {
-        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-        continue;
-      } else {
+      if (!TT.isFloat() && TT != BaseType::Integer &&
+          !arg.getType()->isPointerTy()) {
         legal = false;
         break;
       }
@@ -4974,66 +4976,92 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
     if (legal) {
       Type *RT = todiff->getReturnType();
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
-        RT = StructType::get(RT->getContext(), {RT, RT});
-      }
-      if (!returnUsed && retType == DIFFE_TYPE::CONSTANT) {
-        RT = Type::getVoidTy(RT->getContext());
-      }
+      Type *ST = RT->isVoidTy() ? RT : GradientUtils::getShadowType(RT, width);
+      bool retActive = retType != DIFFE_TYPE::CONSTANT;
+      Type *NRT = Type::getVoidTy(RT->getContext());
+      if (returnUsed && retActive)
+        NRT = StructType::get(RT->getContext(), {RT, ST});
+      else if (returnUsed)
+        NRT = RT;
+      else if (retActive)
+        NRT = ST;
 
       FunctionType *FTy = FunctionType::get(
-          RT, curTypes, todiff->getFunctionType()->isVarArg());
+          NRT, curTypes, todiff->getFunctionType()->isVarArg());
 
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixderivative_" + todiff->getName(), todiff->getParent());
 
+      SmallVector<std::pair<Value *, Value *>, 4> argPairs;
       auto foundArg = NewF->arg_begin();
-      SmallVector<Value *, 2> nextArgs;
       for (auto tup : llvm::zip(todiff->args(), constant_args)) {
-        nextArgs.push_back(foundArg);
         auto &arg = std::get<0>(tup);
-        foundArg->setName(arg.getName());
+        Value *P = &*foundArg;
+        P->setName(arg.getName());
         foundArg++;
+        Value *S = nullptr;
         if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
-          foundArg->setName(arg.getName() + "'");
-          nextConstantArgs.push_back(std::get<1>(tup));
-          nextArgs.push_back(foundArg);
+          S = &*foundArg;
+          S->setName(arg.getName() + "'");
           foundArg++;
-          continue;
         }
-        auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-        if (TT.isFloat()) {
-          nextArgs.push_back(Constant::getNullValue(arg.getType()));
-          nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-          continue;
-        } else if (TT == BaseType::Integer) {
-          nextArgs.push_back(nextArgs.back());
-          nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-          continue;
-        } else {
-          legal = false;
-          break;
-        }
+        argPairs.push_back({P, S});
       }
+      Value *tapeArg = nullptr;
       if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
                                augmenteddata->returns.end()) {
         foundArg->setName("tapeArg");
-        nextArgs.push_back(foundArg);
+        tapeArg = &*foundArg;
         foundArg++;
       }
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
-      auto cal = bb.CreateCall(foundcalled, nextArgs);
-      cal->setCallingConv(foundcalled->getCallingConv());
+      SmallVector<CallInst *, 3> calls;
+      for (unsigned l = 0; l < width; l++) {
+        SmallVector<Value *, 8> nextArgs;
+        size_t i = 0;
+        for (auto &arg : todiff->args()) {
+          auto [P, S] = argPairs[i++];
+          nextArgs.push_back(P);
+          if (S) {
+            nextArgs.push_back(width == 1 ? S : bb.CreateExtractValue(S, {l}));
+            continue;
+          }
+          auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
+          if (TT == BaseType::Integer)
+            nextArgs.push_back(P);
+          else
+            nextArgs.push_back(Constant::getNullValue(arg.getType()));
+        }
+        if (tapeArg)
+          nextArgs.push_back(tapeArg);
+        auto cal = bb.CreateCall(foundcalled, nextArgs);
+        cal->setCallingConv(foundcalled->getCallingConv());
+        calls.push_back(cal);
+      }
 
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
-        bb.CreateRet(cal);
+      Value *shadow = nullptr;
+      if (retActive) {
+        if (width == 1) {
+          shadow = bb.CreateExtractValue(calls[0], 1);
+        } else {
+          shadow = UndefValue::get(ST);
+          for (unsigned l = 0; l < width; l++)
+            shadow = bb.CreateInsertValue(
+                shadow, bb.CreateExtractValue(calls[l], 1), {l});
+        }
+      }
+      if (returnUsed && retActive) {
+        Value *res = UndefValue::get(NRT);
+        res = bb.CreateInsertValue(res, bb.CreateExtractValue(calls[0], 0), 0);
+        res = bb.CreateInsertValue(res, shadow, 1);
+        bb.CreateRet(res);
       } else if (returnUsed) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 0));
-      } else if (retType != DIFFE_TYPE::CONSTANT) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 1));
+        bb.CreateRet(bb.CreateExtractValue(calls[0], 0));
+      } else if (retActive) {
+        bb.CreateRet(shadow);
       } else {
         bb.CreateRetVoid();
       }
