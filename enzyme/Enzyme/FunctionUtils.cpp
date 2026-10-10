@@ -24,6 +24,8 @@
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
 
+#include "llvm/ADT/DepthFirstIterator.h"
+
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
@@ -129,6 +131,11 @@ cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
 
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                            cl::desc("Force inlining of autodiff"));
+
+cl::opt<bool> EnzymeDedupLoads(
+    "enzyme-dedup-loads", cl::init(true), cl::Hidden,
+    cl::desc("Before differentiation, replace a load in a loop with an "
+             "equivalent dominating load so both share one cache"));
 
 cl::opt<int> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(0),
                                  cl::Hidden,
@@ -1575,6 +1582,85 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   PA.preserve<TypeBasedAA>();
   PA.preserve<BasicAA>();
   PA.preserve<ScopedNoAliasAA>();
+  FAM.invalidate(*F, PA);
+}
+
+/// Replace each load with an earlier load of the same address and type that
+/// dominates it, provided no instruction in between may write the memory it
+/// reads. Such duplicates (e.g. the two loads of `x[i] * x[i]` in IR that was
+/// not CSE'd) otherwise each get their own cache in the reverse pass, which
+/// inside a loop doubles the tape memory for that value.
+static void RemoveRedundantLoads(Function *F, FunctionAnalysisManager &FAM) {
+  auto &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
+  auto &LI = FAM.getResult<LoopAnalysis>(*F);
+  auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(*F);
+  auto &AA = FAM.getResult<AAManager>(*F);
+  auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
+
+  // Loads kept so far, grouped by the SCEV of their address. Blocks are
+  // visited in dominator-tree preorder, so any dominating load of the same
+  // address has already been seen.
+  DenseMap<const SCEV *, SmallVector<LoadInst *, 1>> Kept;
+  SmallVector<std::pair<LoadInst *, LoadInst *>, 4> Replacements;
+  for (auto *Node : depth_first(DT.getRootNode())) {
+    for (auto &I : *Node->getBlock()) {
+      auto *L = dyn_cast<LoadInst>(&I);
+      if (!L || !L->isSimple())
+        continue;
+      // Only loads in loops are cached per iteration; elsewhere a duplicate
+      // costs a single value, so leave the IR untouched.
+      if (!LI.getLoopFor(L->getParent()))
+        continue;
+      auto &Candidates = Kept[SE.getSCEV(L->getPointerOperand())];
+      LoadInst *Rep = nullptr;
+      for (auto *L0 : Candidates) {
+        if (L0->getType() != L->getType() || !DT.dominates(L0, L))
+          continue;
+        // Do not use a value defined in a loop outside of it.
+        if (auto *Lp = LI.getLoopFor(L0->getParent()))
+          if (!Lp->contains(L->getParent()))
+            continue;
+        // Require identical metadata so that neither the facts attached to
+        // the kept load (e.g. !range, !nonnull) nor Enzyme-specific
+        // annotations change meaning for the users of the removed one.
+        SmallVector<std::pair<unsigned, MDNode *>, 4> MD0, MD1;
+        L0->getAllMetadataOtherThanDebugLoc(MD0);
+        L->getAllMetadataOtherThanDebugLoc(MD1);
+        if (MD0 != MD1)
+          continue;
+        bool Clobbered = false;
+        allInstructionsBetween(LI, L0, L, [&](Instruction *M) -> bool {
+          if (!M->mayWriteToMemory())
+            return /*earlyBreak*/ false;
+          if (isa<FenceInst>(M) ||
+              (isa<CallBase>(M) && cast<CallBase>(M)->isConvergent()) ||
+              writesToMemoryReadBy(nullptr, AA, TLI, /*maybeReader*/ L,
+                                   /*maybeWriter*/ M)) {
+            Clobbered = true;
+            return /*earlyBreak*/ true;
+          }
+          return /*earlyBreak*/ false;
+        });
+        if (!Clobbered) {
+          Rep = L0;
+          break;
+        }
+      }
+      if (Rep)
+        Replacements.emplace_back(L, Rep);
+      else
+        Candidates.push_back(L);
+    }
+  }
+
+  if (Replacements.empty())
+    return;
+  for (auto &[L, Rep] : Replacements) {
+    L->replaceAllUsesWith(Rep);
+    L->eraseFromParent();
+  }
+  PreservedAnalyses PA;
+  PA.preserveSet<CFGAnalyses>();
   FAM.invalidate(*F, PA);
 }
 
@@ -3597,6 +3683,13 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     auto PA = LoopSimplifyPass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
   }
+
+  // Only reverse modes cache values (ForwardModeSplit shares the
+  // ReverseModePrimal clone, see above).
+  if (EnzymeDedupLoads && (mode == DerivativeMode::ReverseModePrimal ||
+                           mode == DerivativeMode::ReverseModeGradient ||
+                           mode == DerivativeMode::ReverseModeCombined))
+    RemoveRedundantLoads(NewF, FAM);
 
   {
     for (auto &BB : *NewF) {
