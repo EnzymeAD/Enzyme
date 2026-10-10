@@ -335,6 +335,23 @@ if(ENZYME_ENABLE_PLUGINS)
       TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
       EXPORT EnzymeTargets
       LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
+
+    # flang --config=FlangEnzyme-XX.cfg loads Enzyme into flang's optimization
+    # pipeline and, for -flto, into lld's link-time pipeline, which the LTO
+    # pre-link run defers to. <CFGDIR> is the directory holding the config
+    # file, so the same file works from the build tree and the install tree.
+    set(FLANG_ENZYME_CFG
+        "$<TARGET_FILE_DIR:FlangEnzyme-${LLVM_VERSION_MAJOR}>/FlangEnzyme-${LLVM_VERSION_MAJOR}.cfg")
+    file(
+      GENERATE
+      OUTPUT "${FLANG_ENZYME_CFG}"
+      CONTENT
+        "-fpass-plugin=<CFGDIR>/$<TARGET_FILE_NAME:FlangEnzyme-${LLVM_VERSION_MAJOR}>
+-fuse-ld=lld
+-Wl,-mllvm,-load=<CFGDIR>/$<TARGET_FILE_NAME:LLDEnzyme-${LLVM_VERSION_MAJOR}>
+-Wl,--load-pass-plugin=<CFGDIR>/$<TARGET_FILE_NAME:LLDEnzyme-${LLVM_VERSION_MAJOR}>
+")
+    install(FILES "${FLANG_ENZYME_CFG}" DESTINATION lib COMPONENT shlib)
   endif()
   install(
     TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}

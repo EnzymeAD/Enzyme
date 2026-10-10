@@ -31,6 +31,8 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 
+#include <type_traits>
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
@@ -465,7 +467,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
   case ICmpInst::ICMP_UGT:
   case ICmpInst::ICMP_SGE:
   case ICmpInst::ICMP_UGE: { // while (X > Y)
-    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE;
+    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SGE;
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
@@ -480,8 +482,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
       else
         RHS = getAddExpr(sv, SCEV::FlagNUW);
     }
+#if LLVM_VERSION_MAJOR >= 24
+    ExitLimit EL = ScalarEvolution::howManyLessThans(
+        LHS, RHS, L, IsSigned, /*Invert=*/true, ControlsExit, AllowPredicates);
+#else
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
+#endif
     if (EL.hasAnyInfo())
       return EL;
     break;
@@ -526,6 +533,12 @@ static const SCEV *getUnsignedOverflowLimitForStep(const SCEV *Step,
                          SE->getUnsignedRangeMax(Step));
 }
 
+// The type of SCEV's wrap flags: SCEVWrapFlags, SCEVNoWrapFlags or
+// SCEVFlags, depending on the LLVM version. Taken from a flag constant, which
+// all versions provide, rather than from an LLVM version check, as the type
+// was renamed several times during LLVM 24's development.
+using WrapFlagsTy = std::remove_cv_t<decltype(SCEV::FlagNSW)>;
+
 namespace {
 
 struct ExtendOpTraitsBase {
@@ -542,7 +555,7 @@ struct ExtendOpTraitsBase {
 template <typename ExtendOp> struct ExtendOpTraits {
   // Members present:
   //
-  // static const SCEV::NoWrapFlags WrapType;
+  // static const WrapFlagsTy WrapType;
   //
   // static const ExtendOpTraitsBase::GetExtendExprTy GetExtendExpr;
   //
@@ -553,7 +566,7 @@ template <typename ExtendOp> struct ExtendOpTraits {
 
 template <>
 struct ExtendOpTraits<SCEVSignExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNSW;
+  static const WrapFlagsTy WrapType = SCEV::FlagNSW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -570,7 +583,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 template <>
 struct ExtendOpTraits<SCEVZeroExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNUW;
+  static const WrapFlagsTy WrapType = SCEV::FlagNUW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -587,7 +600,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 } // end anonymous namespace
 
-static bool hasFlags(SCEV::NoWrapFlags Flags, SCEV::NoWrapFlags TestFlags) {
+static bool hasFlags(WrapFlagsTy Flags, WrapFlagsTy TestFlags) {
   return TestFlags == ScalarEvolution::maskFlags(Flags, TestFlags);
 };
 
@@ -625,7 +638,11 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       ScalarEvolution::maskFlags(SA->getNoWrapFlags(), SCEV::FlagNUW);
   const SCEV *PreStart = SE->getAddExpr(DiffOps, PreStartFlags);
   const SCEVAddRecExpr *PreAR = dyn_cast<SCEVAddRecExpr>(
+#if LLVM_VERSION_MAJOR >= 24
+      SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagNone));
+#else
       SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagAnyWrap));
+#endif
 
   // "{S,+,X} is <nsw>/<nuw>" and "the backedge is taken at least once" implies
   // "S+X does not sign/unsign-overflow".
@@ -689,10 +706,9 @@ static const SCEV *getExtendAddRecStart(const SCEVAddRecExpr *AR, Type *Ty,
       (SE->*GetExtendExpr)(PreStart, Ty, Depth));
 }
 
-static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
-                                               SCEVTypes Type,
-                                               const ArrayRef<const SCEV *> Ops,
-                                               SCEV::NoWrapFlags Flags) {
+static WrapFlagsTy StrengthenNoWrapFlags(ScalarEvolution *SE, SCEVTypes Type,
+                                         const ArrayRef<const SCEV *> Ops,
+                                         WrapFlagsTy Flags) {
   using namespace std::placeholders;
 
   using OBO = OverflowingBinaryOperator;
@@ -703,7 +719,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   assert(CanAnalyze && "don't call from other places!");
 
   auto SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
-  SCEV::NoWrapFlags SignOrUnsignWrap =
+  WrapFlagsTy SignOrUnsignWrap =
       ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
   // If FlagNSW is true and all the operands are non-negative, infer FlagNUW.
@@ -712,8 +728,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   };
 
   if (SignOrUnsignWrap == SCEV::FlagNSW && all_of(Ops, IsKnownNonNegative))
-    Flags =
-        ScalarEvolution::setFlags(Flags, (SCEV::NoWrapFlags)SignOrUnsignMask);
+    Flags = ScalarEvolution::setFlags(Flags, (WrapFlagsTy)SignOrUnsignMask);
 
   SignOrUnsignWrap = ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
@@ -969,7 +984,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       return getCouldNotCompute();
   }
 
-  // On all paths just preceeding, we established the following invariant:
+  // On all paths just preceding, we established the following invariant:
   //   IV can be assumed not to overflow up to and including the exiting
   //   iteration.  We proved this in one of two ways:
   //   1) We can show overflow doesn't occur before the exiting iteration
@@ -1016,8 +1031,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // bound of the loop (RHS), and the fact that IV does not overflow (which is
   // checked above).
   if (!isLoopInvariant(RHS, L)) {
+#if LLVM_VERSION_MAJOR >= 24
+    const SCEV *MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
 #if LLVM_VERSION_MAJOR >= 16
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      MaxBECount, false /*MaxOrZero*/, Predicates);
@@ -1200,8 +1221,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     MaxBECount = BECountIfBackedgeTaken;
     MaxOrZero = true;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
   }
 
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&

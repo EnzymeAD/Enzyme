@@ -1157,18 +1157,24 @@ public:
       // Only need the full type in forward mode, if storing a constant
       // and therefore may need to zero some floats.
       if (constantval) {
+        // Bytes of the destination that nothing else types (e.g. the zero
+        // lanes of a constant vector, which type analysis leaves as Anything
+        // and does not propagate to memory) take the stored value's own type.
+        TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          if (auto flt = vd[{(int)i}].isFloat()) {
+          ConcreteType ct = vd[{(int)i}];
+          if (!ct.isKnown())
+            ct = valTT[{(int)i}];
+          if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Pointer) {
+          if (ct == BaseType::Pointer) {
             anyPointer = true;
             i += DL.getPointerSizeInBits() / 8;
             continue;
           }
-          if (vd[{(int)i}] == BaseType::Integer ||
-              vd[{(int)i}] == BaseType::Anything) {
+          if (ct == BaseType::Integer || ct == BaseType::Anything) {
             i++;
             continue;
           }
@@ -1202,6 +1208,13 @@ public:
                                 MixedActivityHint);
           }
         }
+      }
+
+      // The shadow of integer-only memory mirrors the primal.
+      if (!diff && vd.isKnown() && !vd.anyPointer(orig_val, DL) &&
+          !vd.anyFloat(orig_val, DL)) {
+        auto rule = [&val]() { return val; };
+        diff = applyChainRule(valType, BuilderZ, rule);
       }
 
       // TODO type analyze
@@ -3206,6 +3219,8 @@ public:
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
+            if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+              cal->setMetadata("enzyme_truetype", m);
 
             if (startsWith(funcName, "memset_pattern") ||
                 startsWith(funcName, "llvm.experimental.memset")) {
@@ -3305,6 +3320,11 @@ public:
                   break;
                 }
                 cur = cur->getPrevNode();
+                // We've hit the start of the block, assume written to by a
+                // previous block.
+                if (cur == nullptr) {
+                  writtenTo = true;
+                }
               }
 
               if (!writtenTo) {
@@ -3519,6 +3539,9 @@ public:
           ToCopy2.push_back(LLVMContext::MD_noalias);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3564,6 +3587,9 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
+          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+              cal->setMetadata("enzyme_truetype", sliced);
 
           if (startsWith(funcName, "memset_pattern") ||
               startsWith(funcName, "llvm.experimental.memset")) {
@@ -3904,25 +3930,52 @@ public:
               Type::getInt8Ty(ddst->getContext()), ddst, seg_start);
         }
         CallInst *call;
-        // TODO add gutils->runtimeActivity (correctness)
         if (floatTy && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, dalign, isVolatile);
+              length, dalign, cast<ConstantInt>(isVolatile)->isOne());
         } else {
-          if (dsrc->getType()->isIntegerTy())
-            dsrc =
-                BuilderZ.CreateIntToPtr(dsrc, getInt8PtrTy(dsrc->getContext()));
-          if (seg_start != 0) {
-            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
-                Type::getInt8Ty(ddst->getContext()), dsrc, seg_start);
+          auto toPtr = [&](Value *ptr) {
+            if (ptr->getType()->isIntegerTy())
+              ptr =
+                  BuilderZ.CreateIntToPtr(ptr, getInt8PtrTy(ptr->getContext()));
+            if (seg_start != 0) {
+              ptr = BuilderZ.CreateConstInBoundsGEP1_64(
+                  Type::getInt8Ty(ptr->getContext()), ptr, seg_start);
+            }
+            return ptr;
+          };
+          dsrc = toPtr(dsrc);
+
+          // With runtime activity, a source that is inactive at runtime has
+          // its primal as its shadow. Its float data has a zero derivative, so
+          // zero the shadow instead of copying the primal into it.
+          Value *copyLength = length;
+          Value *zeroLength = nullptr;
+          if (floatTy && gutils->runtimeActivity) {
+            Value *src = toPtr(gutils->getNewFromOriginal(orig_src));
+            if (src->getType() != dsrc->getType())
+              src = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                  src, dsrc->getType());
+            Value *inactive = BuilderZ.CreateICmpEQ(dsrc, src);
+            Value *zero = ConstantInt::get(length->getType(), 0);
+            copyLength = BuilderZ.CreateSelect(inactive, zero, length);
+            zeroLength = BuilderZ.CreateSelect(inactive, length, zero);
           }
+
           if (ID == Intrinsic::memmove) {
-            call = BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, length);
+            call =
+                BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, copyLength);
           } else {
-            call = BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, length);
+            call =
+                BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, copyLength);
           }
           call->setAttributes(MTI.getAttributes());
+
+          if (zeroLength)
+            BuilderZ.CreateMemSet(
+                ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
+                zeroLength, dalign);
         }
         // TODO shadow scope/noalias (performance)
         call->setMetadata(LLVMContext::MD_alias_scope,
@@ -3935,6 +3988,9 @@ public:
                           MTI.getMetadata(LLVMContext::MD_tbaa_struct));
         call->setMetadata(LLVMContext::MD_invariant_group,
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
+        if (auto m = hasMetadata(&MTI, "enzyme_truetype"))
+          if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+            call->setMetadata("enzyme_truetype", sliced);
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
@@ -4184,6 +4240,7 @@ public:
       {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
+        args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(
                 M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
@@ -4211,7 +4268,16 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
+        SmallVector<Value *, 2> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        if (ID == Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+            ID == Intrinsic::nvvm_barrier_cta_sync_aligned_count) {
+          auto *CB = cast<CallBase>(&I);
+          for (Use &arg : CB->args())
+            args.push_back(
+                lookup(gutils->getNewFromOriginal(arg.get()), Builder2));
+        }
+#endif
         auto cal = cast<CallInst>(
             Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
@@ -5932,7 +5998,10 @@ public:
                                     augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
-            gutils->erase(cast<Instruction>(tape));
+            // If the tape is returned directly, it is the augmented call
+            // itself, which must be kept for its side effects.
+            if (tape != augmentcall)
+              gutils->erase(cast<Instruction>(tape));
             tape = UndefValue::get(tt);
           } else {
             gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));

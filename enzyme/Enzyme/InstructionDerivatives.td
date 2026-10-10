@@ -13,6 +13,10 @@ class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
 
+// pi, created in the type of its operand (e.g. `(Pi $x)`) and rounded to that
+// type's precision.
+def Pi : ConstantFP<"3.14159265358979323846264338327950288">;
+
 class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/0> {
   string condition = condition_;
 }
@@ -574,7 +578,7 @@ def : CallPattern<(Op $x),
                   [
                     (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
                         (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> (FMul (Pi $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -625,8 +629,8 @@ def : CallPattern<(Op $x),
                   ["sincospi", "sincospif", "sincospil"],
                   [
                   (
-                   ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
-                            (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
+                   ArrayRet (FMul (Pi $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
+                            (FMul (Pi $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -685,7 +689,7 @@ def : CallPattern<(Op $x),
                   ["sinpi", "sinpif", "sinpil", "cospi", "cospif", "cospil"],
                   [
                   (
-                   FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet) )
+                   FMul (Pi $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet) )
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -1016,6 +1020,18 @@ def : IntrPattern<(Op $x),
 def : IntrPattern<(Op $x),
                   [["cosh", "19", ""]],
                   [(FMul (DiffeRet), (Intrinsic<"sinh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+// llvm.sincos(x) = {sin(x), cos(x)}
+def : IntrPattern<(Op $x),
+                  [["sincos", "20", ""]],
+                  [
+                  (
+                   ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc)> $x):$callset), (DiffeRet)),
+                            (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet)))
+                  )
+                  ],
                   (ForwardFromSummedReverse)
                   >;
 

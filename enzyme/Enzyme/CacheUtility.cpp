@@ -25,7 +25,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "CacheUtility.h"
+
+#include "llvm/IR/PatternMatch.h"
+
 #include "FunctionUtils.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include <utility>
 
 using namespace llvm;
 
@@ -47,6 +52,11 @@ llvm::cl::opt<bool> EfficientMaxCache(
     "enzyme-max-cache", cl::init(false), cl::Hidden,
     cl::desc(
         "Avoid reallocs when possible by potentially overallocating cache"));
+
+llvm::cl::opt<bool> EnzymeRewriteAccumulators(
+    "enzyme-rewrite-accumulators", cl::init(true), cl::Hidden,
+    cl::desc("Rewrite a loop-carried counter whose step is an inner loop's "
+             "trip count into a closed form of the induction variable"));
 }
 
 CacheUtility::~CacheUtility() {}
@@ -203,13 +213,322 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
   return std::pair<PHINode *, Instruction *>(nullptr, nullptr);
 }
 
+/// Replace every non-affine recurrence (of degree at most three) inside an
+/// expression by its closed form in the canonical induction variable of its
+/// loop, treated as an opaque value.
+///
+/// SCEVExpander expands a recurrence with more than two operands literally,
+/// as nested loop-carried phis (it would otherwise need a canonical IV one bit
+/// wider than the value). Such a phi is as impossible to recompute in the
+/// reverse pass as the accumulator it came from, so e.g. the start value
+/// i*(2*d-i-1)/2 of an inner index, expanded while rewriting the inner phi,
+/// would leave `acc += 2*d-1-2*i` in the outer loop and get cached once per
+/// iteration. evaluateAtIterationWithoutExt needs no wider type, so it can
+/// take the case the expander declines.
+struct NonAffineClosedFormRewriter
+    : public SCEVRewriteVisitor<NonAffineClosedFormRewriter> {
+  NonAffineClosedFormRewriter(ScalarEvolution &SE) : SCEVRewriteVisitor(SE) {}
+
+  const SCEV *visitAddRecExpr(const SCEVAddRecExpr *AR) {
+    // Let the base visitor rewrite the operands (it also copes with the
+    // operand representation of the LLVM version at hand).
+    const SCEV *R =
+        SCEVRewriteVisitor<NonAffineClosedFormRewriter>::visitAddRecExpr(AR);
+    auto AR2 = dyn_cast<SCEVAddRecExpr>(R);
+    // Beyond degree three the closed form would widen again.
+    if (!AR2 || AR2->isAffine() || AR2->getNumOperands() > 4)
+      return R;
+    if (!AR2->getType()->isIntegerTy())
+      return R;
+    PHINode *IV = AR2->getLoop()->getCanonicalInductionVariable();
+    if (!IV)
+      return R;
+    return evaluateAtIterationWithoutExt(AR2, SE.getUnknown(IV), SE);
+  }
+};
+
+// The no-wrap flag type of an add recurrence, named without reference to any
+// enumerator (FlagAnyWrap became FlagNone in LLVM 24); its zero value means
+// "no flags" in every version.
+using NoWrapFlagsTy =
+    decltype(std::declval<const SCEVAddRecExpr &>().getNoWrapFlags());
+
+/// PN is a header phi of L that is negated on every iteration, x_{i+1} = -x_i,
+/// such as the alternating sign of a cofactor expansion. Scalar evolution
+/// cannot express this recurrence, so without a closed form the reverse pass
+/// caches its value once per iteration. At iteration I it is x_0 when I is
+/// even and -x_0 when I is odd, i.e. x_0 * (1 - 2 * (I mod 2)), with the
+/// parity formed as I - 2 * (I / 2) (truncating I keeps its parity).
+static const SCEV *closedFormOfNegatingRecurrence(PHINode *PN, Loop *L,
+                                                  const SCEV *IterationNumber,
+                                                  ScalarEvolution &SE) {
+  using namespace llvm::PatternMatch;
+  if (!EnzymeRewriteAccumulators)
+    return nullptr;
+  auto Ty = dyn_cast<IntegerType>(PN->getType());
+  if (!Ty || Ty->getBitWidth() < 2 || PN->getNumIncomingValues() != 2)
+    return nullptr;
+  BasicBlock *Preheader = L->getLoopPreheader();
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Preheader || !Latch)
+    return nullptr;
+  Value *Next = PN->getIncomingValueForBlock(Latch);
+  if (!match(Next, m_Neg(m_Specific(PN))) &&
+      !match(Next, m_Mul(m_Specific(PN), m_AllOnes())))
+    return nullptr;
+  const SCEV *Init = SE.getSCEV(PN->getIncomingValueForBlock(Preheader));
+  if (!SE.isAvailableAtLoopEntry(Init, L))
+    return nullptr;
+  const SCEV *I = SE.getTruncateOrZeroExtend(IterationNumber, Ty);
+  const SCEV *Two = SE.getConstant(Ty, 2);
+  const SCEV *Parity =
+      SE.getMinusSCEV(I, SE.getMulExpr(Two, SE.getUDivExpr(I, Two)));
+  const SCEV *Factor =
+      SE.getMinusSCEV(SE.getOne(Ty), SE.getMulExpr(Two, Parity));
+  return SE.getMulExpr(Init, Factor);
+}
+
+/// PN is a header phi of L that scalar evolution could not classify. Recognize
+/// an accumulator whose per-iteration step is the trip count of an inner loop,
+/// as in
+///
+///   int idx = 0;
+///   for (i = 0; i < d; i++)
+///     for (j = i + 1; j < d; j++)
+///       ... l[idx++] ...
+///
+/// After loop rotation the latch value of idx reaches PN through a phi that
+/// merges "inner loop skipped" with the inner loop's exit value, which SCEV
+/// does not see through, so PN stays an unknown and would be cached once per
+/// iteration in the reverse pass. Derive the step from that exit value, check
+/// that a skipped inner loop contributes exactly zero, and return PN as a
+/// closed form in the iteration number (a polynomial, quadratic here), or
+/// nullptr when the shape does not match or the proofs fail.
+static const SCEV *closedFormOfCountedAccumulator(PHINode *PN, Loop *L,
+                                                  const SCEV *IterationNumber,
+                                                  ScalarEvolution &SE) {
+  if (!EnzymeRewriteAccumulators)
+    return nullptr;
+  // Integer counters only: a pointer recurrence has no closed form to expand.
+  if (!PN->getType()->isIntegerTy() || PN->getNumIncomingValues() != 2)
+    return nullptr;
+  BasicBlock *Preheader = L->getLoopPreheader();
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Preheader || !Latch)
+    return nullptr;
+  Value *Init = PN->getIncomingValueForBlock(Preheader);
+  Value *Next = PN->getIncomingValueForBlock(Latch);
+  const SCEV *InitS = SE.getSCEV(Init);
+  if (!SE.isAvailableAtLoopEntry(InitS, L))
+    return nullptr;
+  const SCEV *PNS = SE.getSCEV(PN);
+
+  // The arms the latch value can take, each with the block it comes from.
+  SmallVector<std::pair<Value *, BasicBlock *>, 2> Arms;
+  // The block that merges the arms, i.e. where each arm's edge leads.
+  BasicBlock *Merge = Latch;
+  if (auto NP = dyn_cast<PHINode>(Next); NP && NP != PN &&
+                                         NP->getParent() != L->getHeader() &&
+                                         L->contains(NP->getParent())) {
+    Merge = NP->getParent();
+    for (unsigned i = 0; i < NP->getNumIncomingValues(); i++)
+      Arms.emplace_back(NP->getIncomingValue(i), NP->getIncomingBlock(i));
+  } else {
+    Arms.emplace_back(Next, Latch);
+  }
+
+  // The recurrence may be carried in a wider type than PN (e.g. an i32 index
+  // sign-extended to i64 for addressing, then truncated back). Work in that
+  // type, where trunc(ext(PN) + step) - PN cancels exactly.
+  Type *WideTy = PN->getType();
+  bool Signed = true;
+  const SCEV *Step = nullptr;
+  SmallVector<BasicBlock *, 2> ZeroArms;
+  for (auto &Arm : Arms) {
+    Value *V = Arm.first;
+    if (V == PN) {
+      ZeroArms.push_back(Arm.second);
+      continue;
+    }
+    Value *Wide = V;
+    if (auto TI = dyn_cast<TruncInst>(V))
+      Wide = TI->getOperand(0);
+    Type *Ty = Wide->getType();
+    if (!Ty->isIntegerTy())
+      return nullptr;
+    // At the scope of L, a value from an inner loop is its exit value.
+    const SCEV *WS = SE.getSCEVAtScope(Wide, L);
+    if (WS == SE.getCouldNotCompute())
+      return nullptr;
+    const SCEV *D = nullptr;
+    bool Sgn = true;
+    for (bool S : {true, false}) {
+      const SCEV *Ext =
+          S ? SE.getNoopOrSignExtend(PNS, Ty) : SE.getNoopOrZeroExtend(PNS, Ty);
+      const SCEV *Cand = SE.getMinusSCEV(WS, Ext);
+      if (isa<SCEVCouldNotCompute>(Cand))
+        continue;
+      if (!SCEVExprContains(Cand, [&](const SCEV *X) { return X == PNS; })) {
+        D = Cand;
+        Sgn = S;
+        break;
+      }
+    }
+    if (!D)
+      return nullptr;
+    if (Step) {
+      if (D != Step || Ty != WideTy || Sgn != Signed)
+        return nullptr;
+    } else {
+      Step = D;
+      WideTy = Ty;
+      Signed = Sgn;
+    }
+  }
+  if (!Step)
+    return nullptr;
+
+  // The step must be invariant or affine in L's own counter, with nothing
+  // from an inner loop left over.
+  if (SCEVExprContains(Step, [&](const SCEV *X) {
+        auto AR = dyn_cast<SCEVAddRecExpr>(X);
+        return AR && AR->getLoop() != L && !AR->getLoop()->contains(L);
+      }))
+    return nullptr;
+  auto Disp = SE.getLoopDisposition(Step, L);
+  if (Disp == ScalarEvolution::LoopVariant)
+    return nullptr;
+  if (auto AR = dyn_cast<SCEVAddRecExpr>(Step)) {
+    if (AR->getLoop() != L || !AR->isAffine())
+      return nullptr;
+  } else if (Disp != ScalarEvolution::LoopInvariant) {
+    return nullptr;
+  }
+
+  // The closed form adds Step on every iteration, including those where the
+  // inner loop was skipped and PN was carried unchanged, so on those the step
+  // must be exactly zero. Show that in two halves: Step is never negative on
+  // any iteration, and Step is non-positive wherever a skipping edge is taken.
+  if (!ZeroArms.empty()) {
+    auto AR = dyn_cast<SCEVAddRecExpr>(Step);
+    if (!AR)
+      return nullptr;
+    const SCEV *Zero = SE.getZero(WideTy);
+
+    // Step >= 0 everywhere. Ask SCEV first; failing that, an affine step with
+    // a constant increment is monotone, so it suffices to check it at the
+    // first or the last iteration.
+    bool NonNegative = SE.isKnownOnEveryIteration(ICmpInst::ICMP_SGE, AR, Zero);
+    if (!NonNegative) {
+      auto C = dyn_cast<SCEVConstant>(AR->getStepRecurrence(SE));
+      if (!C)
+        return nullptr;
+      if (C->getAPInt().isNonNegative()) {
+        NonNegative = SE.isKnownNonNegative(AR->getStart()) ||
+                      SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SGE,
+                                                  AR->getStart(), Zero);
+      } else {
+        const SCEV *BTC = SE.getBackedgeTakenCount(L);
+        if (BTC == SE.getCouldNotCompute())
+          return nullptr;
+        NonNegative = SE.isKnownNonNegative(AR->evaluateAtIteration(BTC, SE));
+      }
+    }
+    if (!NonNegative)
+      return nullptr;
+
+    // Step <= 0 on each skipping edge. The edge B -> Merge is taken on one
+    // outcome of a branch on `icmp P A, B`: the conditional branch that ends
+    // B, or, when B is a block that exists only to carry the edge, the one
+    // that ends B's single predecessor. Orient the predicate that holds on
+    // the edge as X >= Y, X > Y or X == Y and require Step == (Y - X) + k for
+    // a constant k that then makes Step non-positive. Both X and Y must be
+    // known non-negative so that Y - X cannot wrap.
+    for (auto B : ZeroArms) {
+      BasicBlock *Dest = Merge;
+      Instruction *TI = B->getTerminator();
+      if (!isConditionalBranch(TI)) {
+        if (TI->getNumSuccessors() != 1)
+          return nullptr;
+        BasicBlock *Pred = B->getSinglePredecessor();
+        if (!Pred)
+          return nullptr;
+        Dest = B;
+        TI = Pred->getTerminator();
+        if (!isConditionalBranch(TI))
+          return nullptr;
+      }
+      if (TI->getSuccessor(0) == TI->getSuccessor(1) ||
+          (TI->getSuccessor(0) != Dest && TI->getSuccessor(1) != Dest))
+        return nullptr;
+      auto Cmp = dyn_cast<ICmpInst>(getBranchCondition(TI));
+      if (!Cmp)
+        return nullptr;
+      ICmpInst::Predicate Q = Cmp->getPredicate();
+      if (TI->getSuccessor(1) == Dest)
+        Q = ICmpInst::getInversePredicate(Q);
+      Value *X = Cmp->getOperand(0), *Y = Cmp->getOperand(1);
+      bool Strict = false, Equal = false;
+      switch (Q) {
+      case ICmpInst::ICMP_UGE:
+      case ICmpInst::ICMP_SGE:
+        break;
+      case ICmpInst::ICMP_ULE:
+      case ICmpInst::ICMP_SLE:
+        std::swap(X, Y);
+        break;
+      case ICmpInst::ICMP_UGT:
+      case ICmpInst::ICMP_SGT:
+        Strict = true;
+        break;
+      case ICmpInst::ICMP_ULT:
+      case ICmpInst::ICMP_SLT:
+        std::swap(X, Y);
+        Strict = true;
+        break;
+      case ICmpInst::ICMP_EQ:
+        Equal = true;
+        break;
+      default:
+        return nullptr;
+      }
+      if (!SE.isSCEVable(X->getType()) || X->getType() != WideTy)
+        return nullptr;
+      const SCEV *XS = SE.getSCEV(X), *YS = SE.getSCEV(Y);
+      auto NonNeg = [&](const SCEV *V) {
+        return SE.isKnownNonNegative(V) ||
+               SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_SGE, V, Zero);
+      };
+      if (!Equal && !(NonNeg(XS) && NonNeg(YS)))
+        return nullptr;
+      auto K = dyn_cast<SCEVConstant>(
+          SE.getMinusSCEV(Step, SE.getMinusSCEV(YS, XS)));
+      if (!K)
+        return nullptr;
+      // On the edge, Y - X is 0 (Equal), <= 0 (non-strict) or <= -1 (Strict).
+      if (Equal ? !K->getAPInt().isZero() : K->getAPInt().sgt(Strict ? 1 : 0))
+        return nullptr;
+    }
+  }
+
+  const SCEV *WideInit = Signed ? SE.getNoopOrSignExtend(InitS, WideTy)
+                                : SE.getNoopOrZeroExtend(InitS, WideTy);
+  auto AR = dyn_cast<SCEVAddRecExpr>(
+      SE.getAddRecExpr(WideInit, Step, L, NoWrapFlagsTy(0)));
+  if (!AR)
+    return nullptr;
+  return SE.getTruncateOrNoop(
+      evaluateAtIterationWithoutExt(AR, IterationNumber, SE), PN->getType());
+}
+
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
-    BasicBlock *Header, PHINode *CanonicalIV, Instruction *Increment,
+    Loop *L, PHINode *CanonicalIV, Instruction *Increment,
     MustExitScalarEvolution &SE,
     llvm::function_ref<void(Instruction *, Value *)> replacer,
     llvm::function_ref<void(Instruction *)> eraser) {
+  BasicBlock *Header = L->getHeader();
   assert(Header);
   assert(CanonicalIV);
   SmallVector<Instruction *, 8> IVsToRemove;
@@ -224,8 +543,20 @@ void RemoveRedundantIVs(
     if (!SE.isSCEVable(PN->getType()))
       continue;
     const SCEV *S = SE.getSCEV(PN);
-    if (SE.getCouldNotCompute() == S || isa<SCEVUnknown>(S))
-      continue;
+    if (SE.getCouldNotCompute() == S || isa<SCEVUnknown>(S)) {
+      // Evaluate at the canonical IV as an opaque value rather than as its
+      // add-recurrence: otherwise SCEV folds the polynomial back into a
+      // higher-degree recurrence, which the expander would materialize as a
+      // fresh loop-carried phi, defeating the purpose.
+      const SCEV *IterationNumber = SE.getUnknown(CanonicalIV);
+      S = closedFormOfNegatingRecurrence(PN, L, IterationNumber, SE);
+      if (!S)
+        S = closedFormOfCountedAccumulator(PN, L, IterationNumber, SE);
+      if (!S)
+        continue;
+    } else if (EnzymeRewriteAccumulators) {
+      S = NonAffineClosedFormRewriter(SE).visit(S);
+    }
     // we may expand code for phi where not legal (computing with
     // subloop expressions). Check that this isn't the case
     if (!SE.dominates(S, Header))
@@ -488,6 +819,91 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
   return LimitVar;
 }
 
+/// Compute the exact backedge-taken count of L (CouldNotCompute if it is not
+/// statically known) and the maximum number of iterations, ignoring exits that
+/// are guaranteed to reach unreachable.
+std::pair<const SCEV *, const SCEV *> CacheUtility::computeLoopLimit(Loop *L) {
+  const SCEV *MaxIterations = nullptr;
+  const SCEV *MayExitMaxBECount = nullptr;
+
+  SmallVector<BasicBlock *, 8> ExitingBlocks;
+  L->getExitingBlocks(ExitingBlocks);
+
+  // Remove all exiting blocks that are guaranteed
+  // to result in unreachable
+  for (auto &ExitingBlock : ExitingBlocks) {
+    BasicBlock *Exit = nullptr;
+    for (auto *SBB : successors(ExitingBlock)) {
+      if (!L->contains(SBB)) {
+        if (SE.GuaranteedUnreachable.count(SBB))
+          continue;
+        Exit = SBB;
+        break;
+      }
+    }
+    if (!Exit)
+      ExitingBlock = nullptr;
+  }
+  ExitingBlocks.erase(
+      std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
+      ExitingBlocks.end());
+
+  // Compute the exit in the scenarios where an unreachable
+  // is not hit
+  for (BasicBlock *ExitingBlock : ExitingBlocks) {
+    assert(L->contains(ExitingBlock));
+
+    ScalarEvolution::ExitLimit EL =
+        SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
+
+    bool seenHeaders = false;
+    SmallPtrSet<BasicBlock *, 4> Seen;
+    std::deque<BasicBlock *> Todo = {ExitingBlock};
+    while (Todo.size()) {
+      auto cur = Todo.front();
+      Todo.pop_front();
+      if (Seen.count(cur))
+        continue;
+      if (!L->contains(cur))
+        continue;
+      if (cur == L->getHeader()) {
+        seenHeaders = true;
+        break;
+      }
+      for (auto S : successors(cur)) {
+        Todo.push_back(S);
+      }
+    }
+    if (seenHeaders) {
+      if (MaxIterations == nullptr ||
+          MaxIterations == SE.getCouldNotCompute()) {
+        MaxIterations = EL.ExactNotTaken;
+      }
+      if (MaxIterations != SE.getCouldNotCompute()) {
+        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+          MaxIterations =
+              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+        }
+      }
+
+      if (MayExitMaxBECount == nullptr ||
+          EL.ExactNotTaken == SE.getCouldNotCompute())
+        MayExitMaxBECount = EL.ExactNotTaken;
+
+      if (EL.ExactNotTaken != MayExitMaxBECount) {
+        MayExitMaxBECount = SE.getCouldNotCompute();
+      }
+    }
+  }
+  if (MayExitMaxBECount == nullptr) {
+    MayExitMaxBECount = SE.getCouldNotCompute();
+  }
+  if (MaxIterations == nullptr) {
+    MaxIterations = SE.getCouldNotCompute();
+  }
+  return std::make_pair(MayExitMaxBECount, MaxIterations);
+}
+
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
   assert(BB->getParent() == newFunc);
@@ -538,86 +954,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
 
   const SCEV *Limit = nullptr;
   const SCEV *MaxIterations = nullptr;
-  {
-    const SCEV *MayExitMaxBECount = nullptr;
-
-    SmallVector<BasicBlock *, 8> ExitingBlocks;
-    L->getExitingBlocks(ExitingBlocks);
-
-    // Remove all exiting blocks that are guaranteed
-    // to result in unreachable
-    for (auto &ExitingBlock : ExitingBlocks) {
-      BasicBlock *Exit = nullptr;
-      for (auto *SBB : successors(ExitingBlock)) {
-        if (!L->contains(SBB)) {
-          if (SE.GuaranteedUnreachable.count(SBB))
-            continue;
-          Exit = SBB;
-          break;
-        }
-      }
-      if (!Exit)
-        ExitingBlock = nullptr;
-    }
-    ExitingBlocks.erase(
-        std::remove(ExitingBlocks.begin(), ExitingBlocks.end(), nullptr),
-        ExitingBlocks.end());
-
-    // Compute the exit in the scenarios where an unreachable
-    // is not hit
-    for (BasicBlock *ExitingBlock : ExitingBlocks) {
-      assert(L->contains(ExitingBlock));
-
-      ScalarEvolution::ExitLimit EL =
-          SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
-
-      bool seenHeaders = false;
-      SmallPtrSet<BasicBlock *, 4> Seen;
-      std::deque<BasicBlock *> Todo = {ExitingBlock};
-      while (Todo.size()) {
-        auto cur = Todo.front();
-        Todo.pop_front();
-        if (Seen.count(cur))
-          continue;
-        if (!L->contains(cur))
-          continue;
-        if (cur == loopContexts[L].header) {
-          seenHeaders = true;
-          break;
-        }
-        for (auto S : successors(cur)) {
-          Todo.push_back(S);
-        }
-      }
-      if (seenHeaders) {
-        if (MaxIterations == nullptr ||
-            MaxIterations == SE.getCouldNotCompute()) {
-          MaxIterations = EL.ExactNotTaken;
-        }
-        if (MaxIterations != SE.getCouldNotCompute()) {
-          if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
-            MaxIterations =
-                SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
-          }
-        }
-
-        if (MayExitMaxBECount == nullptr ||
-            EL.ExactNotTaken == SE.getCouldNotCompute())
-          MayExitMaxBECount = EL.ExactNotTaken;
-
-        if (EL.ExactNotTaken != MayExitMaxBECount) {
-          MayExitMaxBECount = SE.getCouldNotCompute();
-        }
-      }
-    }
-    if (MayExitMaxBECount == nullptr) {
-      MayExitMaxBECount = SE.getCouldNotCompute();
-    }
-    if (MaxIterations == nullptr) {
-      MaxIterations = SE.getCouldNotCompute();
-    }
-    Limit = MayExitMaxBECount;
-  }
+  std::tie(Limit, MaxIterations) = computeLoopLimit(L);
   assert(Limit);
   Value *LimitVar = nullptr;
 
@@ -627,98 +964,98 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       report_fatal_error("Couldn't get canonical IV.");
     }
 
-    SmallPtrSet<const SCEV *, 2> PotentialMins;
-    SmallVector<const SCEV *, 2> Todo = {Limit};
-    while (Todo.size()) {
-      auto S = Todo.back();
-      Todo.pop_back();
-      if (auto SA = dyn_cast<SCEVSMaxExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else if (auto SA = dyn_cast<SCEVUMaxExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else if (auto SA = dyn_cast<SCEVAddExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else
-        PotentialMins.insert(S);
-    }
-    for (auto op : PotentialMins) {
-      auto SM = dyn_cast<SCEVMulExpr>(op);
-      if (!SM)
-        continue;
-      if (SM->getNumOperands() != 2)
-        continue;
-      for (int i = 0; i < 2; i++)
-        if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
-          // is minus 1
-#if LLVM_VERSION_MAJOR > 16
-          if (C->getAPInt().isAllOnes())
-#else
-          if (C->getAPInt().isAllOnesValue())
-#endif
-          {
-            const SCEV *prev = SM->getOperand(1 - i);
-            while (true) {
-              if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
-                prev = ext->getOperand();
-                continue;
-              }
-              if (auto ext = dyn_cast<SCEVSignExtendExpr>(prev)) {
-                prev = ext->getOperand();
-                continue;
-              }
-              break;
-            }
-            if (auto V = dyn_cast<SCEVUnknown>(prev)) {
-              if (auto omp_lb_post = dyn_cast<LoadInst>(V->getValue())) {
-                auto AI =
-                    dyn_cast<AllocaInst>(omp_lb_post->getPointerOperand());
-                if (AI) {
-                  for (auto u : AI->users()) {
-                    CallInst *call = dyn_cast<CallInst>(u);
-                    if (!call)
-                      continue;
-                    Function *F = call->getCalledFunction();
-                    if (!F)
-                      continue;
-                    if (F->getName() == "__kmpc_for_static_init_4" ||
-                        F->getName() == "__kmpc_for_static_init_4u" ||
-                        F->getName() == "__kmpc_for_static_init_8" ||
-                        F->getName() == "__kmpc_for_static_init_8u") {
-                      Value *lb = nullptr;
-                      for (auto u : call->getArgOperand(4)->users()) {
-                        if (auto si = dyn_cast<StoreInst>(u)) {
-                          lb = si->getValueOperand();
-                          break;
-                        }
-                      }
-                      assert(lb);
-                      Value *ub = nullptr;
-                      for (auto u : call->getArgOperand(5)->users()) {
-                        if (auto si = dyn_cast<StoreInst>(u)) {
-                          ub = si->getValueOperand();
-                          break;
-                        }
-                      }
-                      assert(ub);
-                      IRBuilder<> post(omp_lb_post->getNextNode());
-                      loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
-                          post.CreateSub(ub, lb), CanonicalIV->getType());
-                      loopContexts[L].offset = post.CreateZExtOrTrunc(
-                          post.CreateSub(omp_lb_post, lb, "", true, true),
-                          CanonicalIV->getType());
-                      goto endOMP;
-                    }
-                  }
-                }
-              }
-            }
+    // A loop over the chunk of an OpenMP worksharing loop assigned to this
+    // thread runs from the lower to the upper bound __kmpc_for_static_init
+    // stored for it. Size its cache for the iterations of all threads, as
+    // computable before the parallel region, and offset each thread's part
+    // by where its chunk starts. A loop whose limit was derived from these
+    // bounds otherwise (e.g. vectorized, or the remainder of a vectorized
+    // loop) runs at most as many iterations as its chunk has, so the same
+    // offset keeps the parts of different threads disjoint.
+    {
+      SmallVector<const SCEV *, 4> Todo = {Limit};
+      SmallPtrSet<const SCEV *, 8> Seen;
+      CallInst *ompInit = nullptr;
+      LoadInst *boundLoad = nullptr;
+      while (Todo.size() && !ompInit) {
+        auto S = Todo.pop_back_val();
+        if (!Seen.insert(S).second)
+          continue;
+        auto U = dyn_cast<SCEVUnknown>(S);
+        if (!U) {
+          // SCEV::operands() needs LLVM 16.
+          if (auto N = dyn_cast<SCEVNAryExpr>(S))
+            for (auto op : N->operands())
+              Todo.push_back(op);
+          else if (auto C = dyn_cast<SCEVCastExpr>(S))
+            Todo.push_back(C->getOperand());
+          else if (auto D = dyn_cast<SCEVUDivExpr>(S)) {
+            Todo.push_back(D->getLHS());
+            Todo.push_back(D->getRHS());
+          }
+          continue;
+        }
+        auto LI = dyn_cast<LoadInst>(U->getValue());
+        if (!LI)
+          continue;
+        auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand());
+        if (!AI)
+          continue;
+        for (auto u : AI->users()) {
+          auto call = dyn_cast<CallInst>(u);
+          if (!call)
+            continue;
+          Function *F = call->getCalledFunction();
+          if (!F)
+            continue;
+          if ((F->getName() == "__kmpc_for_static_init_4" ||
+               F->getName() == "__kmpc_for_static_init_4u" ||
+               F->getName() == "__kmpc_for_static_init_8" ||
+               F->getName() == "__kmpc_for_static_init_8u") &&
+              (call->getArgOperand(4) == AI || call->getArgOperand(5) == AI)) {
+            ompInit = call;
+            boundLoad = LI;
+            break;
           }
         }
+      }
+      if (ompInit) {
+        auto storedValue = [](Value *ptr) -> Value * {
+          for (auto u : ptr->users())
+            if (auto si = dyn_cast<StoreInst>(u))
+              if (si->getPointerOperand() == ptr)
+                return si->getValueOperand();
+          return nullptr;
+        };
+        Value *lb = storedValue(ompInit->getArgOperand(4));
+        Value *ub = storedValue(ompInit->getArgOperand(5));
+        assert(lb);
+        assert(ub);
+        // The lower bound of this thread's chunk, as loaded after the call.
+        Value *omp_lb_post = nullptr;
+        if (boundLoad->getPointerOperand() == ompInit->getArgOperand(4))
+          omp_lb_post = boundLoad;
+        else
+          for (auto u : ompInit->getArgOperand(4)->users())
+            if (auto LI = dyn_cast<LoadInst>(u))
+              if (LI->getParent() == ompInit->getParent() &&
+                  ompInit->comesBefore(LI)) {
+                omp_lb_post = LI;
+                break;
+              }
+        IRBuilder<> post(ompInit->getNextNode());
+        if (omp_lb_post)
+          post.SetInsertPoint(cast<Instruction>(omp_lb_post)->getNextNode());
+        else
+          omp_lb_post = post.CreateLoad(
+              lb->getType(), ompInit->getArgOperand(4), "omp_lb_post");
+        loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
+            post.CreateSub(ub, lb), CanonicalIV->getType());
+        loopContexts[L].offset = post.CreateZExtOrTrunc(
+            post.CreateSub(omp_lb_post, lb, "", true, true),
+            CanonicalIV->getType());
+      }
     }
-  endOMP:;
 
     if (Limit->getType() != CanonicalIV->getType()) {
       const SCEV *Zero = SE.getZero(Limit->getType());

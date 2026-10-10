@@ -23,7 +23,7 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %[[a0:.+]] = fmul fast double 0x400921FB54442D1F, %x
+; CHECK-NEXT:   %[[a0:.+]] = fmul fast double 0x400921FB54442D18, %x
 ; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.cos.f64(double %[[a0]])
 ; CHECK-NEXT:   %[[i1:.+]] = call fast double @sincn(double %x)
 ; CHECK-NEXT:   %[[i2:.+]] = fsub fast double %[[i0]], %[[i1]]

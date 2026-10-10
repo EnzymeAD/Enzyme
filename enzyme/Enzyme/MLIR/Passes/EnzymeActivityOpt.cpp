@@ -9,6 +9,7 @@
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
 #include "PassDetails.h"
@@ -102,7 +103,7 @@ static FailureOr<ActivityOptimization> computeClassicalActivityOptimization(
   // walk thru all return ops and set activity
   SmallVector<bool> isRetValueConstant(resultActivity.size(), true);
   callee.walk([&](Operation *op) {
-    if (!op->hasTrait<OpTrait::ReturnLike>() ||
+    if (!mlir::enzyme::isFunctionReturnLike(op) ||
         op->getParentOp() != callee.getOperation())
       return;
 
@@ -176,7 +177,7 @@ static FailureOr<ActivityOptimization> computeDataFlowActivityOptimization(
   bool invalidReturn = false;
   callee->walk(
       [&](Operation *op) {
-        if (!op->hasTrait<OpTrait::ReturnLike>() ||
+        if (!mlir::enzyme::isFunctionReturnLike(op) ||
             op->getParentOp() != callee.getOperation())
           return;
 

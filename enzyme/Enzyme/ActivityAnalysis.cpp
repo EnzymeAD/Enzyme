@@ -242,6 +242,31 @@ static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 static const StringSet<> KnownInactiveFunctions = {
+    // LLVM flang runtime: inquiries, character operations and termination
+    "_FortranASize",
+    "_FortranASizeDim",
+    "_FortranAIsContiguous",
+    "_FortranAPointerIsAssociated",
+    "_FortranAPointerIsAssociatedWith",
+    "_FortranAAllocatableCheckAllocated",
+    "_FortranAAllocatableCheckLengthParameter",
+    "_FortranAPointerCheckLengthParameter",
+    "_FortranAClassIs",
+    "_FortranASameTypeAs",
+    "_FortranAExtendsTypeOf",
+    "_FortranATrim",
+    "_FortranAIndex1",
+    "_FortranAScan1",
+    "_FortranAVerify1",
+    "_FortranAAdjustl",
+    "_FortranAAdjustr",
+    "_FortranACharacterCompareScalar1",
+    "_FortranAStopStatement",
+    "_FortranAStopStatementText",
+    "_FortranAReportFatalUserError",
+    "_FortranAExit",
+    "_FortranAAbort",
+    "_FortranAFlush",
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -374,6 +399,24 @@ static const StringSet<> KnownInactiveFunctions = {
     "__cudaPushCallConfiguration",
     "__cudaPopCallConfiguration",
     "cudaGetLastError",
+    // LLVM flang runtime: time
+    "_FortranACpuTime",
+    "_FortranADateAndTime",
+    // _FortranAEtime overwrites active memory, see CallDerivatives.cpp
+    "_FortranASystemClockCount",
+    "_FortranASystemClockCountRate",
+    "_FortranASystemClockCountMax",
+    "_FortranATimef",
+    // LLVM flang runtime: command line and environment
+    "_FortranAArgumentCount",
+    "_FortranAGetCommand",
+    "_FortranAGetCommandArgument",
+    "_FortranAGetEnvVariable",
+    "_FortranAGetCwd",
+    "_FortranAHostnm",
+    "_FortranAGetPID",
+    "_FortranAGetUID",
+    "_FortranAGetGID",
 };
 
 static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -952,7 +995,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 
   if (auto II = dyn_cast<IntrinsicInst>(I)) {
     if (isIntelSubscriptIntrinsic(*II)) {
-      // The intrinsic "llvm.intel.subscript" does not propogate deriviative
+      // The intrinsic "llvm.intel.subscript" does not propagate derivative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
       return true;
@@ -1126,6 +1169,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             }
             Value *obj = getBaseObject(CB->getArgOperand(i));
             if (ConstantValues.find(obj) != ConstantValues.end()) {
+              continue;
+            }
+            // Memory that is not local to this function (an sret-like
+            // argument of ours passed straight through, a global, a pointer
+            // loaded from elsewhere) is read by whoever owns it once we
+            // return, so its users here say nothing about its activity: go by
+            // the value's own activity instead. Only a local alloca or
+            // allocation can be shown inactive from a lack of active users.
+            if (!isa<AllocaInst>(obj) && !isAllocationCall(obj, TLI)) {
+              if (!isConstantValue(TR, obj)) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " possible active sret-like value not local "
+                                  "to the function ["
+                               << (int)directions << "] from instruction " << *I
+                               << " obj: " << *obj << "\n";
+                legal = false;
+                break;
+              }
               continue;
             }
             if (directions != 3) {
@@ -2397,7 +2458,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     if (auto VI = dyn_cast<AllocaInst>(Val)) {

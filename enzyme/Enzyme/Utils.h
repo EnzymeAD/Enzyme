@@ -82,6 +82,20 @@ static inline bool isUnconditionalBranch(const llvm::Value *V) {
 #endif
 }
 
+// LLVM 23 persists every function's GUID as `!guid` metadata and
+// CloneFunctionInto copies it, so a derivative clone would share its primal's
+// GUID. LTO keys per-function state by GUID and then mishandles the pair; a
+// definition that is reachable only through the clone (e.g. a registered
+// custom rule) is dropped to a declaration and the link fails. Give a fresh
+// clone a GUID derived from its own name. No-op before LLVM 23.
+static inline void resetClonedGUID(llvm::Function *F) {
+#if LLVM_VERSION_MAJOR >= 23
+  F->reassignGUID();
+#else
+  (void)F;
+#endif
+}
+
 /// The condition of a branch isConditionalBranch says yes to.
 static inline llvm::Value *getBranchCondition(llvm::Value *V) {
 #if LLVM_VERSION_MAJOR >= 24
@@ -168,7 +182,9 @@ class TypeResults;
 
 namespace llvm {
 class ScalarEvolution;
-}
+class SCEV;
+class SCEVAddRecExpr;
+} // namespace llvm
 
 enum class ErrorType {
   NoDerivative = 0,
@@ -878,6 +894,12 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
+
+/// Restrict an `enzyme_truetype` annotation describing a memory region to the
+/// byte range [start, start + length), rebasing its offsets to that range.
+/// Returns nullptr if no type information covers the range.
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length);
 
 bool isAtomic(llvm::Value *origptr, bool AtomicAdd, llvm::Function *newFunc);
 
@@ -1599,19 +1621,22 @@ llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
 
+// Whether a custom derivative was registered for the function or call through
+// metadata (__enzyme_register_derivative and friends).
+template <typename T> static inline bool hasCustomRuleMetadata(const T *V) {
+  return hasMetadata(V, "enzyme_augment") ||
+         hasMetadata(V, "enzyme_gradient") ||
+         hasMetadata(V, "enzyme_derivative") ||
+         hasMetadata(V, "enzyme_splitderivative");
+}
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
 
-  if (CI->hasFnAttr("enzyme_preserve_primal") ||
-      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
-      hasMetadata(CI, "enzyme_derivative") ||
-      hasMetadata(CI, "enzyme_splitderivative") ||
-      (F &&
-       (F->hasFnAttribute("enzyme_preserve_primal") ||
-        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
-        hasMetadata(F, "enzyme_derivative") ||
-        hasMetadata(F, "enzyme_splitderivative"))) ||
+  if (CI->hasFnAttr("enzyme_preserve_primal") || hasCustomRuleMetadata(CI) ||
+      (F && (F->hasFnAttribute("enzyme_preserve_primal") ||
+             hasCustomRuleMetadata(F))) ||
       !F) {
     return true;
   }
@@ -1835,6 +1860,12 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
       for (auto &x : PN->incoming_values()) {
         todo.push_back(x);
       }
+      continue;
+    }
+
+    if (auto SI = llvm::dyn_cast<llvm::SelectInst>(obj)) {
+      todo.push_back(SI->getTrueValue());
+      todo.push_back(SI->getFalseValue());
       continue;
     }
 
@@ -2108,6 +2139,13 @@ static inline bool isNoAlias(const llvm::Value *val) {
     return true;
   return false;
 }
+
+/// LLVM flang runtime functions that neither free memory of the program nor
+/// return or store an allocation into it: I/O (which frees only the I/O
+/// statement state that _FortranAioBegin* allocated and
+/// _FortranAioEndIoStatement releases), FLUSH, the scalar character
+/// inquiries and comparison, and MOD/MODULO.
+bool isFlangRuntimeNoFree(llvm::StringRef name);
 
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
@@ -2647,13 +2685,15 @@ bool isNVLoad(const llvm::Value *V);
 
 //! Check if value if b captured after definition before executing inst.
 //! If checkLoadCaptured != 0, also consider catpures of any loads of the value
-//! as a capture (for the number of loads set).
+//! as a capture (for the number of loads set). With TLI, passing the value to
+//! a deallocation function is not a capture.
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured,
-                       llvm::Instruction *startinst = nullptr);
+                       llvm::Instruction *startinst = nullptr,
+                       llvm::TargetLibraryInfo *TLI = nullptr);
 
 //! Check if value if b captured
-bool notCaptured(llvm::Value *V);
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI = nullptr);
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
@@ -2939,5 +2979,18 @@ static bool hasTerminator(llvm::BasicBlock *BB) {
   return BB->getTerminator();
 #endif
 }
+
+/// The value of the add recurrence AR at iteration It, like
+/// SCEVAddRecExpr::evaluateAtIteration, but without the widening that its
+/// BinomialCoefficient performs: LLVM computes I*(I-1)/2 in a type one bit
+/// wider than AR so that the halving is exact, and SCEVExpander then has to
+/// materialize a canonical induction variable of that wider type, a new
+/// loop-carried phi. Here the halving is done on whichever of I and I-1 is
+/// even, in the wider of AR's and It's own types, so that every product is of
+/// exact integers and no new type appears. Recurrences of degree at most
+/// three are handled this way; higher degrees fall back to LLVM's version.
+const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
+                                                const llvm::SCEV *It,
+                                                llvm::ScalarEvolution &SE);
 
 #endif // ENZYME_UTILS_H

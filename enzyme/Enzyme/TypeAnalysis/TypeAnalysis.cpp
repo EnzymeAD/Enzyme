@@ -972,6 +972,33 @@ static bool AllJuliaTypes(Type *T) {
   return false;
 }
 
+/// Type of a pointer to an LLVM flang descriptor (CFI_cdesc_t). All fields
+/// but base_addr are integral; dims are included only when the rank is known
+/// from the allocation type, as a pointer may follow them.
+static TypeTree fortranDescriptorTree(Value *desc, const DataLayout &DL) {
+  TypeTree TT;
+  TT.insert({-1}, BaseType::Pointer);
+  TT.insert({-1, 0}, BaseType::Pointer);
+  const int HeaderSize = 24;
+  int end = HeaderSize;
+
+  Type *T = nullptr;
+  auto base = getBaseObject(desc);
+  if (auto AI = dyn_cast<AllocaInst>(base))
+    T = AI->getAllocatedType();
+  else if (auto GV = dyn_cast<GlobalVariable>(base))
+    T = GV->getValueType();
+  if (auto ST = dyn_cast_or_null<StructType>(T))
+    if (ST->getNumElements() >= 8 &&
+        DL.getStructLayout(ST)->getElementOffset(7) == HeaderSize)
+      if (auto dims = dyn_cast<ArrayType>(ST->getElementType(7)))
+        end += DL.getTypeAllocSize(dims);
+
+  for (int i = DL.getPointerSize(); i < end; i++)
+    TT.insert({-1, i}, BaseType::Integer);
+  return TT;
+}
+
 static bool AnyJuliaTypes(Type *T) {
   if (auto PT = dyn_cast<PointerType>(T)) {
     unsigned AS = PT->getPointerAddressSpace();
@@ -1377,6 +1404,27 @@ void TypeAnalyzer::prepareArgs() {
   }
 }
 
+// An enzyme_type annotation may only name offsets within the value it
+// annotates. A violation is reported through the error handler when one is
+// installed, so that the frontend can turn it into a catchable error, and
+// otherwise stops the analysis with a diagnostic.
+static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
+                                  size_t RegSize, Instruction &I, Value *Val) {
+  for (const auto &pair : TT.getMapping()) {
+    if (pair.first[0] == -1 || (size_t)pair.first[0] < RegSize)
+      continue;
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "enzyme_type " << TT.str() << " names offset " << pair.first[0]
+       << " beyond the " << RegSize << " bytes of " << *Val << " in " << I;
+    if (CustomErrorHandler)
+      CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::IllegalTypeAnalysis,
+                         (void *)TA, wrap(Val), nullptr);
+    EmitFailure("BadEnzymeType", I.getDebugLoc(), &I, ss.str());
+    llvm::report_fatal_error("Canonicalization failed");
+  }
+}
+
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
@@ -1389,15 +1437,7 @@ void TypeAnalyzer::considerTBAA() {
         auto TT = TypeTree::fromMD(MD);
 
         auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-        for (const auto &pair : TT.getMapping()) {
-          if (pair.first[0] != -1) {
-            if ((size_t)pair.first[0] >= RegSize) {
-              llvm::errs() << " bad enzyme_type " << TT.str()
-                           << " RegSize=" << RegSize << " I:" << I << "\n";
-              llvm::report_fatal_error("Canonicalization failed");
-            }
-          }
-        }
+        checkEnzymeTypeExtent(this, TT, RegSize, I, &I);
         updateAnalysis(&I, TT, &I);
       }
 
@@ -1418,15 +1458,7 @@ void TypeAnalyzer::considerTBAA() {
           auto RegSize = I.getType()->isVoidTy()
                              ? 0
                              : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-          for (const auto &pair : TT.getMapping()) {
-            if (pair.first[0] != -1) {
-              if ((size_t)pair.first[0] >= RegSize) {
-                llvm::errs() << " bad enzyme_type " << TT.str()
-                             << " RegSize=" << RegSize << " I:" << I << "\n";
-                llvm::report_fatal_error("Canonicalization failed");
-              }
-            }
-          }
+          checkEnzymeTypeExtent(this, TT, RegSize, I, call);
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1436,15 +1468,7 @@ void TypeAnalyzer::considerTBAA() {
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
             auto argTy = call->getArgOperand(i)->getType();
             auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call->getArgOperand(i));
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1461,15 +1485,7 @@ void TypeAnalyzer::considerTBAA() {
             auto RegSize = I.getType()->isVoidTy()
                                ? 0
                                : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-            for (const auto &pair : TT.getMapping()) {
-              if (pair.first[0] != -1) {
-                if ((size_t)pair.first[0] >= RegSize) {
-                  llvm::errs() << " bad enzyme_type " << TT.str()
-                               << " RegSize=" << RegSize << " I:" << I << "\n";
-                  llvm::report_fatal_error("Canonicalization failed");
-                }
-              }
-            }
+            checkEnzymeTypeExtent(this, TT, RegSize, I, call);
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1478,19 +1494,10 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
-              auto RegSize = I.getType()->isVoidTy()
-                                 ? 0
-                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
-              for (const auto &pair : TT.getMapping()) {
-                if (pair.first[0] != -1) {
-                  if ((size_t)pair.first[0] >= RegSize) {
-                    llvm::errs()
-                        << " bad enzyme_type " << TT.str()
-                        << " RegSize=" << RegSize << " I:" << I << "\n";
-                    llvm::report_fatal_error("Canonicalization failed");
-                  }
-                }
-              }
+              auto argTy = call->getArgOperand(i)->getType();
+              auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
+              checkEnzymeTypeExtent(this, TT, RegSize, I,
+                                    call->getArgOperand(i));
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
@@ -4097,6 +4104,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::sinh:
   case Intrinsic::cosh:
   case Intrinsic::tanh:
+  case Intrinsic::tan:
+  case Intrinsic::asin:
+  case Intrinsic::acos:
+  case Intrinsic::atan:
 #endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
@@ -4118,6 +4129,45 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     updateAnalysis(
         &I, TypeTree(ConcreteType(I.getType()->getScalarType())).Only(-1, &I),
         &I);
+    // No direction check as always valid
+    updateAnalysis(
+        I.getOperand(0),
+        TypeTree(ConcreteType(I.getOperand(0)->getType()->getScalarType()))
+            .Only(-1, &I),
+        &I);
+    return;
+
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::sincos: {
+    // {sin(x), cos(x)}: two values of the type of x.
+    // No direction check as always valid
+    Type *T = I.getOperand(0)->getType()->getScalarType();
+    updateAnalysis(I.getOperand(0), TypeTree(ConcreteType(T)).Only(-1, &I), &I);
+    if (!I.getOperand(0)->getType()->isVectorTy()) {
+      auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
+      auto *ST = cast<StructType>(I.getType());
+      auto *SL = DL.getStructLayout(ST);
+      TypeTree res;
+      for (unsigned i = 0; i < 2; i++)
+        res |= TypeTree(ConcreteType(T))
+                   .Only((int)(size_t)SL->getElementOffset(i), &I);
+      updateAnalysis(&I, res, &I);
+    }
+    return;
+  }
+#endif
+
+  case Intrinsic::lround:
+  case Intrinsic::llround:
+  case Intrinsic::lrint:
+  case Intrinsic::llrint:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::fptosi_sat:
+  case Intrinsic::fptoui_sat:
+#endif
+    // A floating point value converted to an integer, as with fptosi.
+    // No direction check as always valid
+    updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     // No direction check as always valid
     updateAnalysis(
         I.getOperand(0),
@@ -4193,6 +4243,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nvvm_fmin_d:
   case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::atan2:
+#endif
     // No direction check as always valid
     updateAnalysis(
         &I, TypeTree(ConcreteType(I.getType()->getScalarType())).Only(-1, &I),
@@ -5574,6 +5627,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // void _FortranAAssign(Descriptor &to, const Descriptor &from,
+    //                      const char *sourceFile, int sourceLine)
+    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; i++) {
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
@@ -5685,7 +5753,21 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         Idx++;
       }
       assert(ci->getReturnType()->isPointerTy());
-      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      auto ptr = TypeTree(BaseType::Pointer);
+      if (shadowHandlers.find(funcName) == shadowHandlers.end() &&
+          funcName != "swift_allocObject") {
+        // aligned_alloc(alignment, size) takes the size second.
+        if (auto CI = dyn_cast<ConstantInt>(
+                call.getOperand(funcName == "aligned_alloc" ? 1 : 0))) {
+          auto &DL =
+              call.getParent()->getParent()->getParent()->getDataLayout();
+          auto LoadSize = CI->getZExtValue();
+          // Only propagate mappings in range that aren't "Anything" into the
+          // pointer
+          ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+        }
+      }
+      updateAnalysis(&call, ptr.Only(-1, &call), &call);
       return;
     }
     if (funcName == "malloc_usable_size" || funcName == "malloc_size" ||
@@ -6635,9 +6717,6 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
-
     EmitNoTypeError(str, *I, nullptr, *BuilderIfShouldErr);
   }
   return dt;
@@ -6697,9 +6776,6 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     raw_string_ostream ss(str);
     ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
        << "\n  num:" << num << " q:" << q.str() << " \n";
-
-    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump(ss);
 
     EmitNoTypeError(str, *I, gutils, *BuilderIfShouldErr);
   }

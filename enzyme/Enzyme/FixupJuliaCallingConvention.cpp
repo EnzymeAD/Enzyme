@@ -239,15 +239,22 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
       }
       if (!foundUse) {
         if (auto IVI = dyn_cast<InsertValueInst>(sv)) {
+          // An undef/poison/zeroinitializer base has no live pointer in any of
+          // its fields, so it needs no root regardless of which field the
+          // insertvalue overwrites.
+          bool trivialAggregate =
+              isa<UndefValue>(IVI->getAggregateOperand()) ||
+              isa<PoisonValue>(IVI->getAggregateOperand()) ||
+              isa<ConstantAggregateZero>(IVI->getAggregateOperand());
           CountTrackedPointers tracked(
               IVI->getInsertedValueOperand()->getType());
           if (tracked.count == 0) {
+            if (trivialAggregate)
+              continue;
             storedValues.push_back(IVI->getAggregateOperand());
             continue;
           }
-          if (isa<UndefValue>(IVI->getAggregateOperand()) ||
-              isa<PoisonValue>(IVI->getAggregateOperand()) ||
-              isa<ConstantAggregateZero>(IVI->getAggregateOperand())) {
+          if (trivialAggregate) {
             storedValues.push_back(IVI->getInsertedValueOperand());
             continue;
           }
@@ -471,6 +478,35 @@ static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges,
   }
   ranges = std::move(nextRanges);
 }
+// A function that gains an sret (or roots) parameter now writes argument
+// memory, so memory attributes that rule out writes no longer hold for it or
+// for its call sites: LLVM would otherwise forward the caller's initialization
+// of the sret buffer past the call. Reads are unchanged: a shadow carried in
+// through an enzyme_sret was already read as argument memory.
+static AttributeList allowArgumentMemoryWrites(LLVMContext &Ctx,
+                                               AttributeList Attrs) {
+#if LLVM_VERSION_MAJOR >= 16
+  if (Attrs.hasFnAttr(Attribute::Memory)) {
+    auto ME =
+        Attrs.getMemoryEffects() | MemoryEffects::argMemOnly(ModRefInfo::Mod);
+    Attrs = Attrs.removeFnAttribute(Ctx, Attribute::Memory);
+    Attrs = Attrs.addFnAttribute(Ctx, Attribute::getWithMemoryEffects(Ctx, ME));
+  }
+#else
+  for (auto Kind : {Attribute::ReadNone, Attribute::ReadOnly,
+                    Attribute::InaccessibleMemOnly})
+    Attrs = Attrs.removeFnAttribute(Ctx, Kind);
+#endif
+  // enzyme_ReadOnlyOrThrow rules out writes to memory visible to the caller,
+  // which an sret is; its local variant explicitly allows writing an sret or
+  // returnRoots parameter.
+  if (Attrs.hasFnAttr("enzyme_ReadOnlyOrThrow")) {
+    Attrs = Attrs.removeFnAttribute(Ctx, "enzyme_ReadOnlyOrThrow");
+    Attrs = Attrs.addFnAttribute(Ctx, "enzyme_LocalReadOnlyOrThrow");
+  }
+  return Attrs;
+}
+
 static bool isReadOnlyNoCapture(Function *F, unsigned argNo) {
   return F->hasParamAttribute(argNo, Attribute::ReadOnly) &&
          F->getArg(argNo)->hasNoCaptureAttr();
@@ -897,6 +933,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FunctionIndex, attr);
+  if (sretTy || roots_AT)
+    NewAttrs = allowArgumentMemoryWrites(F->getContext(), NewAttrs);
 
   FunctionType *FTy = FunctionType::get(Type::getVoidTy(F->getContext()), types,
                                         FT->isVarArg());
@@ -941,6 +979,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   SmallVector<CallInst *, 1> callers;
   for (auto U : F->users()) {
@@ -1127,6 +1166,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
       NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                        AttributeList::FunctionIndex, attr);
+    if (sretTy || roots_AT)
+      NewAttrs = allowArgumentMemoryWrites(F->getContext(), NewAttrs);
 
     SmallVector<std::tuple<Value *, Value *, Type *>> preCallReplacements;
     SmallVector<std::tuple<Value *, Value *, Type *, bool>>
@@ -1508,6 +1549,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   {
     IRBuilder<> EB(&*NewF->getEntryBlock().begin());

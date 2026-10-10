@@ -125,7 +125,86 @@ cl::opt<bool> EnzymeAssumeUnknownNoFree(
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
+/// Whether obj is an alloca, an allocation made in this function, or a noalias
+/// argument, whose address is never captured. No pointer loaded from memory
+/// can reach such memory while this function runs: a local object's address
+/// was never stored, and accessing a noalias argument's memory through a
+/// pointer not derived from it while it is modified would be undefined.
+static bool isUncapturedLocalOrNoaliasArgMemory(Value *obj,
+                                                TargetLibraryInfo &TLI) {
+  if (isa<AllocaInst>(obj) || isAllocationCall(obj, TLI))
+    return notCaptured(obj, &TLI);
+  if (auto arg = dyn_cast<Argument>(obj))
+    return arg->hasNoAliasAttr() && notCaptured(arg, &TLI);
+  return false;
+}
+
+/// Whether I writes only to uncaptured local or noalias argument memory (see
+/// isUncapturedLocalOrNoaliasArgMemory), or does not write at all (a lifetime
+/// marker).
+///
+/// A call that, unless it throws, writes only memory it allocated and its
+/// sret-like arguments (LocalReadOnlyOrThrow) qualifies, provided each such
+/// argument is uncaptured local or noalias argument memory.
+static bool
+writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
+                                            TargetLibraryInfo &TLI) {
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (!isLocalReadOnlyOrThrow(CB))
+      return false;
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy())
+        continue;
+      if (CB->onlyReadsMemory(i))
+        continue;
+      if (!isUncapturedLocalOrNoaliasArgMemory(getBaseObject(arg), TLI))
+        return false;
+    }
+    return true;
+  }
+  Value *ptr = nullptr;
+  if (auto SI = dyn_cast<StoreInst>(I)) {
+    ptr = SI->getPointerOperand();
+  } else if (auto II = dyn_cast<IntrinsicInst>(I)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+      // Marks the memory's lifetime without writing anything into it.
+      return true;
+    case Intrinsic::memset:
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+      ptr = II->getArgOperand(0);
+      break;
+    default:
+      break;
+    }
+  }
+  if (!ptr)
+    return false;
+  return isUncapturedLocalOrNoaliasArgMemory(getBaseObject(ptr), TLI);
+}
+
 struct CacheAnalysis {
+
+  /// Whether I may modify the memory at loc. Unless it throws, a
+  /// LocalReadOnlyOrThrow call writes only memory it allocated, which cannot
+  /// be loc, and its sret-like arguments.
+  static bool mayModify(AAResults &AA, Instruction *I,
+                        const MemoryLocation &loc) {
+    auto CB = dyn_cast<CallBase>(I);
+    if (!CB || !isLocalReadOnlyOrThrow(CB))
+      return isModSet(AA.getModRefInfo(I, loc));
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
+        continue;
+      if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
+        return true;
+    }
+    return false;
+  }
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
@@ -160,6 +239,41 @@ struct CacheAnalysis {
         TLI(TLI), unnecessaryBlocks(unnecessaryBlocks),
         subsequent_calls_may_write(subsequent_calls_may_write),
         overwritten_args(overwritten_args), mode(mode), omp(omp) {}
+
+  /// Whether the memory at obj may be overwritten after this function
+  /// returns. Unknown writes (subsequent_calls_may_write) may overwrite any
+  /// memory not local to this function. Otherwise the caller only wrote to
+  /// its own uncaptured memory, which this function can only reach through an
+  /// argument, so only an argument marked overwritten can be.
+  bool is_origin_overwritten(Value *obj) {
+    if (subsequent_calls_may_write)
+      return is_value_mustcache_from_origin(obj);
+    return is_overwritten_argument(obj);
+  }
+
+  std::map<Value *, bool> seen_argument;
+  bool is_overwritten_argument(Value *obj) {
+    if (auto arg = dyn_cast<Argument>(obj))
+      return arg->getArgNo() < overwritten_args.size() &&
+             overwritten_args[arg->getArgNo()];
+    auto found = seen_argument.find(obj);
+    if (found != seen_argument.end())
+      return found->second;
+    seen_argument[obj] = false;
+    bool overwritten = false;
+    if (auto pn = dyn_cast<PHINode>(obj)) {
+      for (auto &val : pn->incoming_values())
+        if (is_overwritten_argument(getBaseObject(val))) {
+          overwritten = true;
+          break;
+        }
+    } else if (auto si = dyn_cast<SelectInst>(obj)) {
+      overwritten =
+          is_overwritten_argument(getBaseObject(si->getTrueValue())) ||
+          is_overwritten_argument(getBaseObject(si->getFalseValue()));
+    }
+    return seen_argument[obj] = overwritten;
+  }
 
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
@@ -289,10 +403,12 @@ struct CacheAnalysis {
     // may change from a caller.
     bool checkFunction = true;
     if (li.hasMetadata(LLVMContext::MD_invariant_load)) {
-      if (!EnzymeJuliaAddrLoad || !subsequent_calls_may_write)
+      if (!EnzymeJuliaAddrLoad)
         return false;
-      else
-        checkFunction = false;
+      if (!subsequent_calls_may_write &&
+          !is_overwritten_argument(getBaseObject(li.getOperand(0))))
+        return false;
+      checkFunction = false;
     }
 
     // Find the underlying object for the pointer operand of the load
@@ -331,11 +447,8 @@ struct CacheAnalysis {
     if (rematerializableAllocations.count(obj))
       return false;
 
-    // If not running combined, check if pointer operand is overwritten
-    // by a subsequent call (i.e. not this function).
-    bool can_modref = false;
-    if (subsequent_calls_may_write)
-      can_modref = is_value_mustcache_from_origin(obj);
+    // Check if pointer operand is overwritten after this function returns.
+    bool can_modref = is_origin_overwritten(obj);
 
     if (!can_modref && checkFunction) {
       allFollowersOf(&li, [&](Instruction *inst2) {
@@ -523,7 +636,7 @@ struct CacheAnalysis {
 
       objs.push_back(obj);
 
-      bool init_safe = !is_value_mustcache_from_origin(obj);
+      bool init_safe = !is_origin_overwritten(obj);
       if (!init_safe) {
         auto CD = TR.query(obj)[{-1}];
         if (CD == BaseType::Integer || CD.isFloat())
@@ -577,7 +690,19 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
-      next_subsequent_inst_may_write = true;
+      // A call that writes memory existing before it only on paths that throw
+      // cannot overwrite anything the callee read: if it throws, the reverse
+      // pass never runs.
+      if (auto CB = dyn_cast<CallBase>(inst2))
+        if (isReadOnlyOrThrow(CB))
+          return false;
+
+      // A write to uncaptured local or noalias argument memory is not an
+      // unknown write: the callee can only reach that memory through an
+      // argument, which is marked overwritten below.
+      if (!writesOnlyUncapturedLocalOrNoaliasArgMemory(inst2, TLI))
+        next_subsequent_inst_may_write = true;
+
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -592,8 +717,8 @@ struct CacheAnalysis {
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            llvm::isModSet(AA.getModRefInfo(
-                inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
+            mayModify(AA, inst2,
+                      MemoryLocation::getForArgument(callsite_op, i, TLI))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
@@ -2916,6 +3041,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   SmallVector<ReturnInst *, 4> Returns;
   CloneFunctionInto(NewF, nf, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   IRBuilder<> ib(getFirstNonPHI(&NewF->getEntryBlock()));
 
@@ -3168,6 +3294,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
   if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
+  AugmentedCachedFunctions.find(tup)->second.primalUnnecessaryValues.insert(
+      unnecessaryValues.begin(), unnecessaryValues.end());
+  AugmentedCachedFunctions.find(tup)->second.primalKnownRecomputeHeuristic =
+      gutils->knownRecomputeHeuristic;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
   for (auto pair : gfnusers) {
@@ -4343,6 +4473,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                   key.mode, gutils, TLI, key.constant_args,
                                   guaranteedUnreachable);
   gutils->unnecessaryValuesP = &unnecessaryValues;
+  if (augmenteddata && key.mode == DerivativeMode::ReverseModeGradient) {
+    gutils->primalUnnecessaryValuesP = &augmenteddata->primalUnnecessaryValues;
+    gutils->primalKnownRecomputeHeuristicP =
+        &augmenteddata->primalKnownRecomputeHeuristic;
+  }
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -4619,9 +4754,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
 #endif
+      SmallVector<Value *, 1> BarrierArgs = {};
+#if LLVM_VERSION_MAJOR > 20
+      if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
+        BarrierArgs.push_back(ConstantInt::get(
+            Type::getInt32Ty(gutils->newFunc->getContext()), 0));
+#endif
       instbuilder.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          {});
+          BarrierArgs);
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
       IRBuilder<> sbuilder(sharedBlock);
@@ -5810,6 +5951,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   CloneFunctionInto(NewF, totrunc, originalToNewFn,
                     CloneFunctionChangeType::LocalChangesOnly, Returns, "",
                     nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -5917,6 +6059,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   CloneFunctionInto(NewF, tobatch, vmap,
                     CloneFunctionChangeType::LocalChangesOnly, Returns, "",
                     nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -6604,6 +6747,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::read",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
+      "void std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
       "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",
@@ -6685,6 +6829,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     if (startsWith(demangledName, Name))
       return F;
 
+  // These LLVM flang runtime functions do not free memory of the program.
+  // They are not marked nofree, since the I/O runtime frees its own I/O
+  // statement state.
+  if (isFlangRuntimeNoFree(F->getName()))
+    return F;
+
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
   case Intrinsic::lifetime_end:
@@ -6758,6 +6908,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   SmallVector<ReturnInst *, 4> Returns;
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
   NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
