@@ -283,8 +283,7 @@ LogicalResult mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
     if (supported)
       return success();
     return emitError(val.getLoc())
-           << "AutoDiffTypeInterface not implemented for active type "
-           << type;
+           << "AutoDiffTypeInterface not implemented for active type " << type;
   };
   auto checked = oldFunc.walk([&](Operation *op) -> WalkResult {
     for (Value val : op->getResults())

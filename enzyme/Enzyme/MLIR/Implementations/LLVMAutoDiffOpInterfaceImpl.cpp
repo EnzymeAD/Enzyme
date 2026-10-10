@@ -578,8 +578,8 @@ struct StoreOpInterfaceReverse
     auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
     if (!iface) {
       if (!gutils->isConstantValue(val))
-        return op->emitError() << "AutoDiffTypeInterface not implemented for "
-                               << val.getType();
+        return op->emitError()
+               << "AutoDiffTypeInterface not implemented for " << val.getType();
       return success();
     }
 
