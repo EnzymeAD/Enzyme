@@ -104,7 +104,7 @@ public:
     return getDiffeTypeOfBase(ptr) == DIFFE_TYPE::DUP_NONEED;
   }
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
-  void forceAugmentedReturns();
+  LogicalResult forceAugmentedReturns();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
 
