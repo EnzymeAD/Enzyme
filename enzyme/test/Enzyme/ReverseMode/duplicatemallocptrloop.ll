@@ -75,9 +75,9 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a10'ipg" = getelementptr inbounds double, double* %"a0'", i32 %0
 ; CHECK-NEXT:   %a10 = getelementptr inbounds double, double* %a0, i32 %0
 ; CHECK-NEXT:   store double* %"a10'ipg", double** %"p3'ipc", align 8
-; CHECK-NEXT:   store double* %a10, double** %p3, align 8
 ; CHECK-NEXT:   %1 = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %iv
 ; CHECK-NEXT:   store i8* %"p2'mi", i8** %1, align 8, !invariant.group ![[ig5:[0-9]+]]
+; CHECK-NEXT:   store double* %a10, double** %p3, align 8
 ; CHECK-NEXT:   %a4_augmented = call { double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
 ; CHECK-NEXT:   %a4 = extractvalue { double*, double* } %a4_augmented, 0
 ; CHECK-NEXT:   %"a4'ac" = extractvalue { double*, double* } %a4_augmented, 1
@@ -126,10 +126,9 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i11]], %[[i8]]
 ; CHECK-NEXT:   store double %[[i12]], double* %[[i10]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %remat_p2 to double**
+; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** {{(undef|poison)}})
 ; CHECK-NEXT:   %[[i13:.+]] = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[i14:.+]] = load i8*, i8** %[[i13]], align 8, !invariant.group ![[ig5]]
-; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %[[i14]] to double**
-; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
 ; CHECK-NEXT:   call void @free(i8* nonnull %[[i14]])
 ; CHECK-NEXT:   call void @free(i8* %remat_p2)
 ; CHECK-NEXT:   %[[i15:.+]] = icmp eq i64 %"iv'ac.0", 0

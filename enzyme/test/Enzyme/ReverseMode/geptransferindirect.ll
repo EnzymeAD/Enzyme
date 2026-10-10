@@ -62,12 +62,12 @@ declare double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   store double %4, double* %1
 ; CHECK-NEXT:   %[[a6:.+]] = load i64, i64* %"ptr3'ac"
 ; CHECK-NEXT:   store i64 0, i64* %"ptr3'ac"
-; CHECK-NEXT:   call void @diffegep(i64* %ptr, i64* %"ptr'", i64 3)
+; CHECK-NEXT:   call void @diffegep(i64* %ptr, i64* {{(undef|poison)}}, i64 3)
 ; CHECK-NEXT:   %[[a7:.+]] = bitcast i64* %"ptr2'ac" to double*
 ; CHECK-DAG:    %[[sadd1:.+]] = bitcast i64 %[[a6]] to double
 ; CHECK-DAG:    %[[sadd2:.+]] = load double, double* %[[a7]]
 ; CHECK-NEXT:   %[[a10:.+]] = fadd fast double %[[sadd2]], %[[sadd1]]
 ; CHECK-NEXT:   store double %[[a10]], double* %[[a7]]
-; CHECK-NEXT:   call void @diffegep.2(i64* %ptr, i64* %"ptr'", i64 2)
+; CHECK-NEXT:   call void @diffegep.2(i64* %ptr, i64* {{(undef|poison)}}, i64 2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

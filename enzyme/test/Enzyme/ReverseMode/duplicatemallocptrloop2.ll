@@ -131,8 +131,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[i7]]
 ; CHECK-NEXT:   store double %[[i11]], double* %[[i9]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %p2 to double**
-; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %"p2'mi" to double**
-; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
+; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** {{(undef|poison)}})
 ; CHECK-NEXT:   %[[i12:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i12]], label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

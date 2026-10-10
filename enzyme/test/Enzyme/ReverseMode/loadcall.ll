@@ -84,6 +84,6 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[ligep:.+]] = load double, double* %[[callp]], align 8
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[ligep]], %[[loadde]]
 ; CHECK-NEXT:   store double %[[add]], double* %[[callp]], align 8
-; CHECK-NEXT:   call void @diffegep(double* %a, double* %"a'")
+; CHECK-NEXT:   call void @diffegep(double* %a, double* {{(undef|poison)}})
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
