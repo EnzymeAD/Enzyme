@@ -2378,10 +2378,32 @@ static bool returnCannotHoldPointer(ReturnInst *RI) {
       V->getType(), F->getParent()->getDataLayout());
 }
 
+// Whether call CB has an sret-like argument (sret, returnRoots or
+// sret_union_bytes), marked on the call or on the called function.
+static bool hasSRetLikeArgument(CallBase *CB) {
+  if (hasSRetRRootsOrUnionSRet(CB))
+    return true;
+  auto F = getFunctionFromCall(CB);
+  for (unsigned i = 0; i < CB->arg_size(); ++i) {
+    // Checks the called function too.
+    if (CB->paramHasAttr(i, Attribute::StructRet))
+      return true;
+    if (F && i < F->arg_size() &&
+        (F->getAttribute(i + AttributeList::FirstArgIndex,
+                         "enzymejl_returnRoots")
+             .isValid() ||
+         F->getAttribute(i + AttributeList::FirstArgIndex,
+                         "enzymejl_sret_union_bytes")
+             .isValid()))
+      return true;
+  }
+  return false;
+}
+
 // Whether call CB may hand a pointer back to its caller, through its result or
 // an sret-like argument.
 static bool mayHandBackPointer(CallBase *CB) {
-  return !cannotHoldPointer(CB) || hasSRetRRootsOrUnionSRet(CB);
+  return !cannotHoldPointer(CB) || hasSRetLikeArgument(CB);
 }
 
 // Values that may be a pointer to written memory (Holds false), or that point
