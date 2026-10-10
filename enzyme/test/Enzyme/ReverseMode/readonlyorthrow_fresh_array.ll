@@ -15,6 +15,7 @@ declare noalias nonnull ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10)) #0
 declare noalias nonnull ptr addrspace(10) @jl_alloc_array_1d(ptr addrspace(10), i64) #0
 declare void @jl_array_grow_end(ptr addrspace(10), i64)
+declare noalias ptr @swift_allocObject(ptr, i64, i64)
 
 ; Julia 1.11+: the array is allocated like any object and pointed at the data
 ; of a new Memory.
@@ -149,6 +150,18 @@ top:
   ret void
 }
 
+; swift_allocObject initializes the object's first field to its metadata, which
+; existed before the call: writing through it is not writing fresh data.
+
+define void @fill_swift_metadata(ptr %meta, ptr addrspace(11) nocapture readonly %x) {
+top:
+  %o = call noalias ptr @swift_allocObject(ptr %meta, i64 16, i64 7)
+  %md = load ptr, ptr %o, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %md, align 8
+  ret void
+}
+
 attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 
 ; CHECK: define void @fill_array({{.*}}) #[[FILL:[0-9]+]] {
@@ -168,5 +181,6 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK: define void @fill_array_wrong_field(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {
+; CHECK: define void @fill_swift_metadata(ptr %meta, ptr addrspace(11) {{.*}}%x) {
 ; CHECK-DAG: attributes #[[FILL]] = { {{.*}}"enzyme_ReadOnlyOrThrow"{{.*}} }
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }

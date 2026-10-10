@@ -2098,6 +2098,27 @@ static bool isJuliaArrayAllocation(Value *V) {
          name == "jl_new_array" || name == "ijl_new_array";
 }
 
+// Whether allocation call CB returns memory whose fields it leaves
+// uninitialized (or zeroed): the C and C++ allocators and Julia's object
+// allocators. Allocators that initialize fields themselves (swift_allocObject
+// sets a metadata pointer, custom enzyme_allocator and registered allocation
+// handlers may do anything) do not qualify, as a field may then point to
+// memory that existed before the call.
+static bool allocatorLeavesFieldsUninitialized(CallBase *CB,
+                                               TargetLibraryInfo &TLI) {
+  auto name = getFuncNameFromCall(CB);
+  if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
+      name == "ijl_gc_alloc_typed")
+    return true;
+  if (name == "swift_allocObject" || name == "enzyme_allocator" ||
+      name == "__size_returning_new_experiment" ||
+      name == "_mlir_memref_to_llvm_alloc")
+    return false;
+  if (shadowHandlers.find(name) != shadowHandlers.end())
+    return false;
+  return isAllocationFunction(name, TLI);
+}
+
 using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
 // Objects with the offset of a field of theirs holding fresh data.
 using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
@@ -2214,9 +2235,11 @@ static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
 //    set when the object is allocated and never changed.
 //  * the data field, at offset 0, of a Julia 1.10 array allocated here by
 //    jl_alloc_array_*, which sets it to data it allocates, or any field of an
-//    object allocated here that leaves its fields uninitialized (such as a
-//    Julia 1.11+ array), provided that every write to the field in the
-//    function sets it to fresh data (see fieldOnlyHoldsFreshData).
+//    object allocated here by an allocator that leaves its fields
+//    uninitialized (such as a Julia 1.11+ array; see
+//    allocatorLeavesFieldsUninitialized), provided that every write to the
+//    field in the function sets it to fresh data (see
+//    fieldOnlyHoldsFreshData).
 static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
                          FreshFieldSet &seen, FreshFields *bases) {
   // A field we are already checking, reached again through a store to such a
@@ -2235,8 +2258,9 @@ static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
     return Field == I->getModule()->getDataLayout().getPointerSize();
   if (isJuliaArrayAllocation(V))
     return Field == 0 && fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
-  // Other allocations leave the fields uninitialized.
-  if (isAllocationCall(V, TLI))
+  // Other allocators may leave the fields uninitialized.
+  if (isAllocationCall(V, TLI) &&
+      allocatorLeavesFieldsUninitialized(cast<CallBase>(V), TLI))
     return fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
   return false;
 }
