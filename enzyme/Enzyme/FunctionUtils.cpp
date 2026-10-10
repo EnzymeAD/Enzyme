@@ -5652,6 +5652,32 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
         //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if
         //  C2 divides C1
+        //  (lshr exact (shl a, C1), C2) is handled as (mul a, 1 << C1)
+        if (mul->getOpcode() == Instruction::Shl)
+          if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(1))) {
+            APInt lhs = APInt(C1->getValue().getBitWidth(), 1)
+                        << C1->getValue();
+            APInt rhs = C2->getValue();
+            if (cur->getOpcode() == Instruction::LShr)
+              rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+            APInt div, rem;
+            if (cur->getOpcode() == Instruction::LShr ||
+                cur->getOpcode() == Instruction::UDiv)
+              APInt::udivrem(lhs, rhs, div, rem);
+            else
+              APInt::sdivrem(lhs, rhs, div, rem);
+            if (rem == 0 && (cur->getOpcode() == Instruction::SDiv
+                                 ? mul->hasNoSignedWrap()
+                                 : mul->hasNoUnsignedWrap())) {
+              auto res = pushcse(B.CreateMul(
+                  mul->getOperand(0), ConstantInt::get(cur->getType(), div),
+                  "shldiv." + cur->getName(), mul->hasNoUnsignedWrap(),
+                  mul->hasNoSignedWrap()));
+              push(mul);
+              replaceAndErase(cur, res);
+              return "IShlDivConst";
+            }
+          }
         if (mul->getOpcode() == Instruction::Mul)
           for (int i0 = 0; i0 < 2; i0++)
             if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
@@ -5701,9 +5727,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                                (mul->hasNoSignedWrap() &&
                                 (cur->getOpcode() == Instruction::AShr ||
                                  cur->getOpcode() == Instruction::SDiv)))) {
+                // (a + C1) /exact C2 == (a /exact C2) + C1 / C2 when the
+                // add does not wrap: a must be divided as well.
+                auto adivI = BinaryOperator::Create(
+                    (Instruction::BinaryOps)cur->getOpcode(),
+                    mul->getOperand(1 - i0), C2, "adiv." + cur->getName());
+                adivI->setIsExact(true);
+                B.Insert(adivI);
+                Value *adiv = pushcse(adivI);
                 auto res = pushcse(B.CreateAdd(
-                    mul->getOperand(1 - i0),
-                    ConstantInt::get(cur->getType(), div),
+                    adiv, ConstantInt::get(cur->getType(), div),
                     "madd." + cur->getName(), mul->hasNoUnsignedWrap(),
                     mul->hasNoSignedWrap()));
                 push(mul);
@@ -6003,6 +6036,52 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               }
         }
     }
+    // (x /exact C) == y  ->  x == y * C  if y * C cannot wrap
+    if (fcmp->isEquality())
+      for (int i = 0; i < 2; i++)
+        if (auto div = dyn_cast<BinaryOperator>(fcmp->getOperand(i)))
+          if ((div->getOpcode() == Instruction::LShr ||
+               div->getOpcode() == Instruction::UDiv) &&
+              div->isExact())
+            if (auto C = dyn_cast<ConstantInt>(div->getOperand(1))) {
+              unsigned bw = C->getValue().getBitWidth();
+              APInt mulC = C->getValue();
+              if (div->getOpcode() == Instruction::LShr) {
+                if (mulC.uge(bw))
+                  continue;
+                mulC = APInt(bw, 1) << mulC;
+              }
+              if (mulC.isZero())
+                continue;
+              Value *other = fcmp->getOperand(1 - i);
+              APInt limit = APInt::getMaxValue(bw).udiv(mulC);
+              bool inRange =
+                  SE.isKnownPredicateAt(ICmpInst::ICMP_ULE, SE.getSCEV(other),
+                                        SE.getConstant(limit), cur);
+              if (!inRange && !mulC.isPowerOf2())
+                continue;
+              auto scaled = pushcse(
+                  B.CreateMul(other, ConstantInt::get(other->getType(), mulC),
+                              "scaled." + other->getName(), /*NUW*/ inRange));
+              Value *ncmp = pushcse(B.CreateICmp(fcmp->getPredicate(),
+                                                 div->getOperand(0), scaled));
+              if (!inRange) {
+                // y * 2^k only equals x /exact 2^k if y < 2^(bw - k):
+                //   x == y << k && (y >> (bw - k)) == 0
+                auto hi = pushcse(B.CreateLShr(
+                    other,
+                    ConstantInt::get(other->getType(), bw - mulC.logBase2())));
+                auto zero = ConstantInt::get(other->getType(), 0);
+                if (fcmp->getPredicate() == ICmpInst::ICMP_EQ)
+                  ncmp = pushcse(
+                      B.CreateAnd(ncmp, pushcse(B.CreateICmpEQ(hi, zero))));
+                else
+                  ncmp = pushcse(
+                      B.CreateOr(ncmp, pushcse(B.CreateICmpNE(hi, zero))));
+              }
+              replaceAndErase(cur, ncmp);
+              return "CmpExactDivToMul";
+            }
     if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
       for (int i = 0; i < 2; i++) {
         if (auto C = dyn_cast<ConstantInt>(fcmp->getOperand(i))) {
@@ -9668,14 +9747,19 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
 #endif
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
-      SmallVector<Value *, 1> prevSols;
+      SmallVector<std::pair<Value *, Value *>, 1> prevSols;
       for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
         args[induct_idx] = sol;
-        for (auto sol2 : prevSols)
-          condition = B.CreateAnd(condition, B.CreateICmpNE(sol, sol2));
-        prevSols.push_back(sol);
+        Value *origCond = condition;
+        // Skip a solution only if an earlier one with the same value was
+        // actually taken (its own condition held).
+        for (auto [sol2, cond2] : prevSols)
+          condition = B.CreateAnd(
+              condition,
+              B.CreateNot(B.CreateAnd(cond2, B.CreateICmpEQ(sol, sol2))));
+        prevSols.emplace_back(sol, origCond);
         auto BB = B.GetInsertBlock();
         auto B2 = BB->splitBasicBlock(B.GetInsertPoint(), "poststore");
         B2->moveAfter(BB);
