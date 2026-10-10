@@ -246,6 +246,75 @@ EnzymeLogicRef EnzymeTypeAnalyzerGetLogic(void *analyzer);
 EnzymeLogicRef EnzymeGradientUtilsGetLogic(GradientUtils *gutils);
 uint8_t EnzymeGradientUtilsGetAtomicAdd(GradientUtils *gutils);
 
+//===----------------------------------------------------------------------===//
+// Function summaries (EnzymeSummary.h): what a function does to
+// floating-point data, computed from its body alone without changing it.
+//===----------------------------------------------------------------------===//
+
+struct EnzymeOpaqueFunctionSummary;
+typedef struct EnzymeOpaqueFunctionSummary *EnzymeFunctionSummaryRef;
+
+/// Bits of EnzymeFunctionSummaryArgEffects.
+enum {
+  ENZYME_SUMMARY_ARG_READ_FP = 1 << 0,
+  ENZYME_SUMMARY_ARG_WRITE_FP = 1 << 1,
+  ENZYME_SUMMARY_ARG_WRITE_ANY = 1 << 2,
+  ENZYME_SUMMARY_ARG_ESCAPE = 1 << 3,
+};
+
+/// Bits of EnzymeFunctionSummaryFlags.
+enum {
+  ENZYME_SUMMARY_UNKNOWN = 1 << 0,
+  ENZYME_SUMMARY_UNKNOWN_WRITE = 1 << 1,
+  ENZYME_SUMMARY_FREES = 1 << 2,
+  ENZYME_SUMMARY_RETURNS_FP = 1 << 3,
+  ENZYME_SUMMARY_RETURNS_POINTER = 1 << 4,
+  ENZYME_SUMMARY_TOUCHES_FP = 1 << 5,
+  ENZYME_SUMMARY_ALLOCATES = 1 << 6,
+  ENZYME_SUMMARY_MEMTRANSFER = 1 << 7,
+  ENZYME_SUMMARY_INACTIVE = 1 << 8,
+  ENZYME_SUMMARY_NOFREE = 1 << 9,
+  ENZYME_SUMMARY_NO_ESCAPING_ALLOCATION = 1 << 10,
+};
+
+/// Sets of globals in a summary, for EnzymeFunctionSummaryNumGlobals.
+typedef enum {
+  ENZYME_SUMMARY_GLOBALS_READ_FP = 0,
+  ENZYME_SUMMARY_GLOBALS_WRITE_FP = 1,
+  ENZYME_SUMMARY_GLOBALS_WRITE_ANY = 2,
+} EnzymeSummaryGlobals;
+
+/// Summarize a function with a body. Free with EnzymeFreeFunctionSummary.
+EnzymeFunctionSummaryRef EnzymeComputeFunctionSummary(LLVMValueRef F);
+void EnzymeFreeFunctionSummary(EnzymeFunctionSummaryRef S);
+
+size_t EnzymeFunctionSummaryNumArgs(EnzymeFunctionSummaryRef S);
+/// ENZYME_SUMMARY_ARG_* bits for argument i.
+uint8_t EnzymeFunctionSummaryArgEffects(EnzymeFunctionSummaryRef S, size_t i);
+/// ENZYME_SUMMARY_* bits.
+uint32_t EnzymeFunctionSummaryFlags(EnzymeFunctionSummaryRef S);
+/// The flow matrix, row-major into out, which holds (n + 1) * (n + 2) bytes
+/// for n = EnzymeFunctionSummaryNumArgs: out[s * (n + 2) + t] is 1 if data
+/// from source s (argument s, or any global for s = n) may reach sink t
+/// (memory of argument t, the return value for t = n, any global for
+/// t = n + 1).
+void EnzymeFunctionSummaryFlow(EnzymeFunctionSummaryRef S, uint8_t *out);
+/// The points-to matrix, laid out as the flow matrix: out[s * (n + 2) + t]
+/// is 1 if memory reachable from source s may become reachable from sink t.
+void EnzymeFunctionSummaryPointsTo(EnzymeFunctionSummaryRef S, uint8_t *out);
+size_t EnzymeFunctionSummaryNumGlobals(EnzymeFunctionSummaryRef S,
+                                       EnzymeSummaryGlobals kind);
+/// Name of the i-th global of a set, owned by the summary.
+const char *EnzymeFunctionSummaryGlobal(EnzymeFunctionSummaryRef S,
+                                        EnzymeSummaryGlobals kind, size_t i);
+/// The summary as JSON (the enzyme-summary pass's per-function entry).
+/// Free with EnzymeStringFree.
+const char *EnzymeFunctionSummaryToJSON(EnzymeFunctionSummaryRef S);
+/// The enzyme-summary pass's output for a module, without running a pass
+/// manager. Free with EnzymeStringFree.
+const char *EnzymeModuleSummaryToJSON(LLVMModuleRef M);
+void EnzymeStringFree(const char *cstr);
+
 #ifdef __cplusplus
 }
 #endif
