@@ -35,9 +35,9 @@ def : MLIRDerivative<"math", "SinOp", (Op $x),
                       (CheckedMulF (DiffeRet), (CosF $x))
                     ]
                   >;
-let forwardOnly = 1 in
+
 def : MLIRDerivative<"math", "SincosOp", (Op $x),
-                    [],
+                    [(AssertingInactiveArg)],
                     (ArrayRet
                       (MulF (Shadow $x),
                             (SelectIfBothResultsActive (SincosCosF $x), (CosF $x))),

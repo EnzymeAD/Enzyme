@@ -1753,7 +1753,15 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                            MGradientUtilsReverse *gutils,\n";
   os << "                            SmallVector<Value> caches) const {\n";
   os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
-  os << "        mlir::Value dif = nullptr;\n";
+  bool allInactive = llvm::all_of(*argOps, [](const llvm::Init *arg) {
+    auto dag = dyn_cast<DagInit>(arg);
+    if (!dag)
+      return false;
+    auto def = dyn_cast<DefInit>(dag->getOperator());
+    return def && def->getDef()->isSubClassOf("InactiveArgSpec");
+  });
+  if (!allInactive)
+    os << "        mlir::Value dif = nullptr;\n";
 }
 
 static void emitReverseCommon(raw_ostream &os, const Record *pattern,
@@ -1992,13 +2000,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     // Emit RewritePattern for Pattern.
     auto argOps = pattern->getValueAsListInit("ArgDerivatives");
 
-    bool forwardOnly =
-        intrinsic == MLIRDerivatives && pattern->getValueAsBit("forwardOnly");
-    if (forwardOnly) {
-      if (!argOps->empty())
-        PrintFatalError(pattern->getLoc(),
-                        "Forward-only rule must not define reverse rules");
-    } else if (tree->getNumArgs() != argOps->size()) {
+    if (tree->getNumArgs() != argOps->size()) {
       PrintFatalError(pattern->getLoc(),
                       Twine("Defined rule pattern to have ") +
                           Twine(tree->getNumArgs()) +
@@ -2631,8 +2633,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Value *dif = nullptr;\n";
     } else {
       os << "};\n";
-      if (forwardOnly)
-        continue;
       emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
     }
 
@@ -2850,9 +2850,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "FwdDerivative>(*context);\n";
-      if (!pattern->getValueAsBit("forwardOnly"))
-        os << "  " << dialect << "::" << opName << "::attachInterface<"
-           << opName << "RevDerivative>(*context);\n";
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "RevDerivative>(*context);\n";
       if (act)
         os << "  " << dialect << "::" << opName << "::attachInterface<"
            << opName << "Activity>(*context);\n";

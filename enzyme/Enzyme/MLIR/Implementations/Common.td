@@ -78,9 +78,6 @@ class MLIRDerivative<string dialect_, string opName_, dag patternToMatch, list<d
   dag PatternToMatch = patternToMatch;
   list<dag> ArgDerivatives = resultOps;
   dag ArgDuals = forwardOps;
-  // If set, only the forward mode derivative is emitted and no reverse mode
-  // interface is attached. ArgDerivatives must be empty.
-  bit forwardOnly = 0;
 }
 
 class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
