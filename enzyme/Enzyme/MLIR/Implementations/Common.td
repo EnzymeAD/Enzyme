@@ -125,6 +125,9 @@ class SubRoutine<dag patternToMatch, dag insts_> : Operation</*primal*/1,/*shado
 
 def SelectIfStrongZero : StaticSelect<"gutils->strongZero">;
 def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
+def SelectIfAllResultsActive : StaticSelect<[{
+  llvm::all_of(op->getResults(), [&](Value v) { return !gutils->isConstantValue(v); });
+}]>;
 
 def SelectIfComplex : StaticSelect<[{
   auto ty = imVal.getType();
@@ -205,5 +208,7 @@ def LogF : MathInst<"LogOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def SincosSinF : Inst<"SincosOp", "math", ".getSin()">;
+def SincosCosF : Inst<"SincosOp", "math", ".getCos()">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

@@ -395,6 +395,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (retidx_cur.size() == 0) {
         os << "dif";
+      } else if (intrinsic == MLIRDerivatives) {
+        if (retidx_cur.size() != 1)
+          PrintFatalError(pattern->getLoc(),
+                          "MLIR DiffeRetIndex takes exactly one index, the "
+                          "result number");
+        os << "difs[" << retidx_cur[0] << "]";
       } else {
         os << "({\n";
         os << curIndent << INDENT
@@ -1586,8 +1592,9 @@ void printDiffUse(
 
       if (foundDiffRet) {
         if (intrinsic == MLIRDerivatives)
-          os << " && !gutils->isConstantValue(" << origName
-             << "->getResult(0))";
+          os << " && llvm::any_of(" << origName
+             << "->getResults(), [&](Value v) { "
+                "return !gutils->isConstantValue(v); })";
         else
           os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
              << origName << "))";
@@ -1729,7 +1736,8 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                                 MGradientUtilsReverse *gutils) "
         "const {\n";
   os << "          if (gutils->isConstantInstruction(op) || "
-        "gutils->isConstantValue(op->getResult(0))) return {};\n";
+        "llvm::all_of(op->getResults(), [&](Value v) { "
+        "return gutils->isConstantValue(v); })) return {};\n";
   os << "          auto neededArgs = cachedArguments(op, gutils);\n";
   os << "          SmallVector<Value> toret;\n";
   os << "          OpBuilder builder(gutils->getNewFromOriginal(op));\n";
@@ -1754,6 +1762,7 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                            SmallVector<Value> caches) const {\n";
   os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
   os << "        mlir::Value dif = nullptr;\n";
+  os << "        SmallVector<mlir::Value> difs(op->getNumResults());\n";
 }
 
 static void emitReverseCommon(raw_ostream &os, const Record *pattern,
@@ -1802,11 +1811,22 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     auto resultTree = cast<DagInit>(argOpEn.value());
     if (hasDiffeRet(resultTree)) {
       if (intrinsic == MLIRDerivatives) {
-        os << "          dif = gutils->diffe(" << origName << ", builder);\n";
-        os << "          dif = "
-              "cast<AutoDiffTypeInterface>(dif.getType()).createConjOp(builder,"
-              " dif.getLoc(), dif);\n";
-        os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
+        os << "          for (auto [i, r] : llvm::enumerate(" << origName
+           << "->getResults())) {\n";
+        os << "            if (gutils->isConstantValue(r)) {\n";
+        os << "              if (isa<AutoDiffTypeInterface>(r.getType()))\n";
+        os << "               difs[i] = cast<AutoDiffTypeInterface>("
+              "gutils->getShadowType(r.getType()))"
+              ".createNullValue(builder, r.getLoc());\n";
+        os << "              continue;\n";
+        os << "            }\n";
+        os << "            difs[i] = gutils->diffe(r, builder);\n";
+        os << "            difs[i] = "
+              "cast<AutoDiffTypeInterface>(difs[i].getType())"
+              ".createConjOp(builder, difs[i].getLoc(), difs[i]);\n";
+        os << "            gutils->zeroDiffe(r, builder);\n";
+        os << "          }\n";
+        os << "          if (!difs.empty()) dif = difs[0];\n";
       } else {
         os << "          dif = diffe(&" << origName << ", Builder2);\n";
         os << "          setDiffe(&" << origName
@@ -1823,7 +1843,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
 
   if (intrinsic == MLIRDerivatives) {
     os << "          if (gutils->isConstantInstruction(op) || "
-          "gutils->isConstantValue(op->getResult(0))) return success();\n";
+          "llvm::all_of(op->getResults(), [&](Value v) { "
+          "return gutils->isConstantValue(v); })) return success();\n";
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";
@@ -2193,7 +2214,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        getForwardBuilder(Builder2);\n";
     }
     // TODO
-
+    if (intrinsic == MLIRDerivatives) {
+      os << "     for (unsigned resIdx = 0; resIdx < " << origName
+         << "->getNumResults(); ++resIdx) {\n";
+      os << "      if (gutils->isConstantValue(" << origName
+         << "->getResult(resIdx))) continue;\n";
+    }
     if (duals->getOperator()->getAsString() ==
             "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
@@ -2231,6 +2257,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "->getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "auto dif = gutils->invertPointerM("
              << origName << "->getOperand(" << argIdx << "), builder);\n";
+          os << curIndent << INDENT << "SmallVector<mlir::Value> difs("
+             << origName << "->getNumResults());\n";
+          os << curIndent << INDENT << "for (auto [i, r] : llvm::enumerate("
+             << origName << "->getResults())) {\n";
+          os << curIndent << INDENT << INDENT << "if (i == resIdx)\n";
+          os << curIndent << INDENT << INDENT << INDENT << "difs[i] = dif;\n";
+          os << curIndent << INDENT << INDENT
+             << "else if (isa<AutoDiffTypeInterface>(r.getType()))\n";
+          os << curIndent << INDENT << INDENT << INDENT
+             << "difs[i] = cast<AutoDiffTypeInterface>(gutils->getShadowType("
+                "r.getType())).createNullValue(builder, r.getLoc());\n";
+          os << curIndent << INDENT << "}\n";
         } else {
           os << curIndent << "if (!gutils->isConstantValue(" << origName
              << ".getOperand(" << argIdx << "))) {\n";
@@ -2340,7 +2378,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "        assert(res);\n";
     if (intrinsic == MLIRDerivatives) {
       os << "        gutils->setDiffe(" << origName
-         << "->getResult(0), res, builder);\n";
+         << "->getResult(resIdx), res, builder);\n";
+      os << "     }\n";
       os << "        return success();\n";
     } else {
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
