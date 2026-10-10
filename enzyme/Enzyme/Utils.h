@@ -202,6 +202,9 @@ enum class ErrorType {
   NaNError = 12,
   ShowInternalError = 12,
   NoAccumulate = 13,
+  // An unsupported state found at runtime. The handler is given a builder
+  // positioned where it was found, to emit the error that is raised there.
+  RuntimeError = 14,
 };
 
 extern "C" {
@@ -1613,6 +1616,11 @@ getOrInsertDifferentialWaitallSave(llvm::Module &M,
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
+
+/// Emit a check that the cuBLAS handle `handle` of the call `orig` to `called`
+/// is in host pointer mode, and an error at runtime if it is not.
+void emitCuBLASPointerModeCheck(llvm::IRBuilder<> &B, llvm::Value *handle,
+                                llvm::Function *called, llvm::CallInst &orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
