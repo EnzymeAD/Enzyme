@@ -2299,13 +2299,15 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       else
         bb.CreateRet(cal);
 
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
-                                 aug.returns, aug.overwritten_args_map,
-                                 aug.can_modref_map, next_constant_args,
-                                 shadowReturnUsed))
-          ->second;
+      auto &res =
+          insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+              AugmentedCachedFunctions, tup,
+              AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices, aug.returns,
+                              aug.overwritten_args_map, aug.can_modref_map,
+                              next_constant_args, shadowReturnUsed))
+              ->second;
+      res.lastIterationCached = aug.lastIterationCached;
+      return res;
     }
 
     if (foundcalled->hasStructRetAttr() && !todiff->hasStructRetAttr()) {
@@ -2644,6 +2646,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    overwritten_args_map, can_modref_map,
                                    constant_args, shadowReturnUsed));
+  AugmentedCachedFunctions.find(tup)->second.lastIterationCached.insert(
+      gutils->cacheOnlyLastIteration.begin(),
+      gutils->cacheOnlyLastIteration.end());
 
   auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
@@ -4461,6 +4466,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // requires is_value_needed_in_reverse, that needs unnecessaryValues
   // sets knownRecomputeHeuristic
   gutils->computeMinCache();
+  if (augmenteddata)
+    gutils->cacheOnlyLastIteration.insert(
+        augmenteddata->lastIterationCached.begin(),
+        augmenteddata->lastIterationCached.end());
 
   // Requires knownRecomputeCache to be set as call to getContext
   // itself calls createCacheForScope
@@ -5144,6 +5153,10 @@ Function *EnzymeLogic::CreateForwardDiff(
     // requires is_value_needed_in_reverse, that needs unnecessaryValues
     // sets knownRecomputeHeuristic
     gutils->computeMinCache();
+    if (augmenteddata)
+      gutils->cacheOnlyLastIteration.insert(
+          augmenteddata->lastIterationCached.begin(),
+          augmenteddata->lastIterationCached.end());
 
     // Requires knownRecomputeCache to be set as call to getContext
     // itself calls createCacheForScope
