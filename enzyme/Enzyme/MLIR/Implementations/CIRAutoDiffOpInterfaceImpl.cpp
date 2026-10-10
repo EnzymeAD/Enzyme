@@ -305,6 +305,101 @@ struct CIRCastOpReverse
   }
 };
 
+struct CIRCopyOpForward
+    : public AutoDiffOpInterface::ExternalModel<CIRCopyOpForward, cir::CopyOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto copyOp = cast<cir::CopyOp>(op);
+    Value dst = copyOp.getDst();
+    Value src = copyOp.getSrc();
+    if (gutils->isConstantValue(dst))
+      return success();
+    Value dstShadow = gutils->invertPointerM(dst, builder);
+    auto newOp = cast<cir::CopyOp>(gutils->getNewFromOriginal(op));
+    if (gutils->isConstantValue(src)) {
+      Type elemTy = cast<cir::PointerType>(dst.getType()).getPointee();
+      auto iface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!iface)
+        return op->emitError() << "could not compute the tangent of a copy "
+                                  "from an undifferentiated source of type "
+                               << elemTy << " " << *op;
+      Value zero = iface.createNullValue(builder, op->getLoc());
+      cir::StoreOp::create(builder, op->getLoc(), zero, dstShadow);
+    } else {
+      Value srcShadow = gutils->invertPointerM(src, builder);
+      auto shadowOp = cast<cir::CopyOp>(builder.clone(*newOp));
+      shadowOp.getDstMutable().assign(dstShadow);
+      shadowOp.getSrcMutable().assign(srcShadow);
+    }
+    if (gutils->primalStoreElidable(dst))
+      gutils->erase(newOp);
+    return success();
+  }
+};
+
+struct CIRCopyOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRCopyOpReverse,
+                                                       cir::CopyOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto copyOp = cast<cir::CopyOp>(op);
+    Value dst = copyOp.getDst();
+    Value src = copyOp.getSrc();
+    if (gutils->isConstantValue(dst))
+      return success();
+    Type elemTy = cast<cir::PointerType>(dst.getType()).getPointee();
+    auto iface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    if (!iface)
+      return op->emitError() << "could not compute the adjoint of a copy of "
+                             << elemTy << " " << *op;
+    Location loc = op->getLoc();
+    Value dstShadow = gutils->popCache(caches[0], builder);
+    Value dstAdj = cir::LoadOp::create(builder, loc, elemTy, dstShadow);
+    if (!gutils->isConstantValue(src)) {
+      Value srcShadow = gutils->popCache(caches[1], builder);
+      Value srcAdj = cir::LoadOp::create(builder, loc, elemTy, srcShadow);
+      Value sum = iface.createAddOp(builder, loc, srcAdj, dstAdj);
+      cir::StoreOp::create(builder, loc, sum, srcShadow);
+    }
+    Value zero = iface.createNullValue(builder, loc);
+    cir::StoreOp::create(builder, loc, zero, dstShadow);
+    if (gutils->primalStoreElidable(dst))
+      gutils->erase(gutils->getNewFromOriginal(op));
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto copyOp = cast<cir::CopyOp>(op);
+    Value dst = copyOp.getDst();
+    Value src = copyOp.getSrc();
+    if (gutils->isConstantValue(dst))
+      return {};
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    SmallVector<Value> caches{gutils->initAndPushCache(
+        gutils->invertPointerM(dst, cacheBuilder), cacheBuilder)};
+    if (!gutils->isConstantValue(src))
+      caches.push_back(gutils->initAndPushCache(
+          gutils->invertPointerM(src, cacheBuilder), cacheBuilder));
+    return caches;
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto copyOp = cast<cir::CopyOp>(op);
+    Value dst = copyOp.getDst();
+    Value src = copyOp.getSrc();
+    if (gutils->isConstantValue(dst) || gutils->isConstantValue(src))
+      return success();
+    auto newOp = cast<cir::CopyOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<cir::CopyOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(gutils->invertPointerM(dst, builder));
+    shadowOp.getSrcMutable().assign(gutils->invertPointerM(src, builder));
+    return success();
+  }
+};
+
 } // namespace
 
 class AutoDiffCIRFuncOpFunctionInterface
@@ -366,6 +461,8 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::CastOp::attachInterface<CIRCastOpActivity>(*context);
     cir::CastOp::attachInterface<CIRCastOpForward>(*context);
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
+    cir::CopyOp::attachInterface<CIRCopyOpForward>(*context);
+    cir::CopyOp::attachInterface<CIRCopyOpReverse>(*context);
     cir::PtrStrideOp::attachInterface<
         CIRPointerArithmeticReverse<cir::PtrStrideOp>>(*context);
     cir::GetMemberOp::attachInterface<
