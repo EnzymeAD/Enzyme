@@ -1753,15 +1753,23 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                            MGradientUtilsReverse *gutils,\n";
   os << "                            SmallVector<Value> caches) const {\n";
   os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
-  bool allInactive = llvm::all_of(*argOps, [](const llvm::Init *arg) {
+  bool allInactive = true;
+  for (auto arg : *argOps) {
     auto dag = dyn_cast<DagInit>(arg);
-    if (!dag)
-      return false;
+    if (!dag) {
+      allInactive = false;
+      break;
+    }
     auto def = dyn_cast<DefInit>(dag->getOperator());
-    return def && def->getDef()->isSubClassOf("InactiveArgSpec");
-  });
-  if (!allInactive)
-    os << "        mlir::Value dif = nullptr;\n";
+
+    if (!def || !def->getDef()->isSubClassOf("InactiveArgSpec")) {
+      allInactive = false;
+      break;
+    }
+  }
+  os << "        mlir::Value dif = nullptr;\n";
+  if (allInactive)
+    os << "        (void)dif;\n";
 }
 
 static void emitReverseCommon(raw_ostream &os, const Record *pattern,
