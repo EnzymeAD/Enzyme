@@ -2606,7 +2606,14 @@ static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
       if (auto CB = dyn_cast<CallBase>(I)) {
         if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
           continue;
-        if (getFuncNameFromCall(CB) == "julia.write_barrier")
+        auto name = getFuncNameFromCall(CB);
+        if (name == "julia.write_barrier")
+          continue;
+        // julia.gc_loaded(obj, ptr) returns ptr, keeping obj alive: passing
+        // Base as the object hands back nothing loaded from it (a load of the
+        // field passed as ptr is checked as a load above).
+        if (name == "julia.gc_loaded" && CB->getArgOperand(0) == V &&
+            CB->getArgOperand(1) != V)
           continue;
         if (mayHandBackPointer(CB))
           return true;
