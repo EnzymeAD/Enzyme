@@ -9634,11 +9634,18 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       toErase.clear();
     }
 
-    auto guard = L2->getLoopLatch()->getTerminator();
+    auto latch = L2->getLoopLatch();
+    auto guard = latch->getTerminator();
     assert(guard);
     IRBuilder<> G(guard);
     G.CreateRetVoid();
     guard->eraseFromParent();
+    // Each call runs a single iteration, so the header no longer has the back
+    // edge: loop-carried values (e.g. the partial sums of a reduction) start
+    // from their initial value.
+    for (auto &PN : L2Header->phis())
+      if (PN.getBasicBlockIndex(latch) >= 0)
+        PN.removeIncomingValue(latch, /*DeletePHIIfEmpty*/ false);
     new_lidx->replaceAllUsesWith(new_idx);
     new_lidx->eraseFromParent();
 
