@@ -1,0 +1,7 @@
+services:
+  poseidon-explorer:
+    build: .
+    image: poseidon-explorer
+    ports:
+      - "${POSEIDON_EXPLORER_PORT:-10240}:10240"
+    restart: unless-stopped
