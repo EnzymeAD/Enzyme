@@ -7935,6 +7935,64 @@ struct ConstraintContext {
   bool contains(InnerTy x) const { return seen.count(x) != 0; }
 };
 
+// The exact quotient X / Y, for a constant Y that divides every term of X, or
+// nullptr. Dividing term by term keeps the quotient exact for negative values
+// of X too, unlike X /u Y.
+static const SCEV *exactDivide(ScalarEvolution &SE, const SCEV *X,
+                               const SCEV *Y) {
+  auto CY = dyn_cast<SCEVConstant>(Y);
+  if (!CY)
+    return nullptr;
+  const APInt &D = CY->getAPInt();
+  if (D.isOne())
+    return X;
+  if (D.isZero())
+    return nullptr;
+  if (auto CX = dyn_cast<SCEVConstant>(X)) {
+    const APInt &N = CX->getAPInt();
+    if (!N.srem(D).isZero())
+      return nullptr;
+    return SE.getConstant(N.sdiv(D));
+  }
+  if (auto M = dyn_cast<SCEVMulExpr>(X)) {
+    // Constants come first in a SCEVMulExpr.
+    if (auto C = dyn_cast<SCEVConstant>(M->getOperand(0))) {
+      const SCEV *Res = exactDivide(SE, C, Y);
+      if (!Res)
+        return nullptr;
+      for (auto Op : llvm::drop_begin(M->operands()))
+        Res = SE.getMulExpr(Res, Op);
+      return Res;
+    }
+    return nullptr;
+  }
+  if (auto A = dyn_cast<SCEVAddExpr>(X)) {
+    const SCEV *Res = nullptr;
+    for (auto Op : A->operands()) {
+      auto Q = exactDivide(SE, Op, Y);
+      if (!Q)
+        return nullptr;
+      if (Res)
+        Res = SE.getAddExpr(Res, Q);
+      else
+        Res = Q;
+    }
+    return Res;
+  }
+  if (auto AR = dyn_cast<SCEVAddRecExpr>(X)) {
+    if (!AR->isAffine())
+      return nullptr;
+    auto Start = exactDivide(SE, AR->getStart(), Y);
+    auto Step = exactDivide(SE, AR->getStepRecurrence(SE), Y);
+    if (!Start || !Step)
+      return nullptr;
+    // No wrap flags; the enumerator for that was renamed in LLVM 24.
+    return SE.getAddRecExpr(Start, Step, AR->getLoop(),
+                            decltype(AR->getNoWrapFlags())(0));
+  }
+  return nullptr;
+}
+
 bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
   assert(L);
   if (isa<SCEVConstant>(S))
@@ -8318,12 +8376,9 @@ return true;
               else
                 MinusX = ctx.SE.getNegativeSCEV(X);
 
-              auto div = ctx.SE.getUDivExpr(MinusX, Y);
-              auto div_e = ctx.SE.getUDivExactExpr(MinusX, Y);
-              // in case of inexact division, check that these exactly equal
-              // for replacement
-
-              if (div == div_e) {
+              // Only replace when Y exactly divides -X (see the icmp case of
+              // getSparseConditions).
+              if (auto div = exactDivide(ctx.SE, MinusX, Y)) {
                 if (isEqual) {
                   auto res = make_compare(div, /*isEqual*/ rhs->isEqual,
                                           addrec->getLoop(), ctx);
@@ -8952,9 +9007,23 @@ getSparseConditions(bool &legal, Value *val,
                 B = cast<SCEVConstant>(ctx.SE.getNegativeSCEV(B));
               else
                 MA = ctx.SE.getNegativeSCEV(A);
-              auto div = ctx.SE.getUDivExpr(MA, B);
-              auto div_e = ctx.SE.getUDivExactExpr(MA, B);
-              if (div == div_e) {
+              // Prefer the exact quotient of -A by B. (SCEV returns the same
+              // expression from getUDivExpr and getUDivExactExpr whenever it
+              // cannot simplify either, which is no proof of exactness, and
+              // MA /u B is not the quotient when MA is negative.)
+              //
+              // Otherwise MA /u B is still the only candidate: a solution in
+              // the loop's range needs a non-negative multiple of B, for which
+              // the division is exact. Visiting a candidate that is not a
+              // solution only accumulates a zero, but skipping a solution drops
+              // an entry, so use the candidate only where this
+              // over-approximates the indices that reach the sparse block: for
+              // `==` in positive polarity, and `!=` in negative polarity.
+              bool isEq = icmp->getPredicate() == ICmpInst::ICMP_EQ;
+              auto div = exactDivide(ctx.SE, MA, B);
+              if (!div && isEq == (conservative == Constraints::all()))
+                div = ctx.SE.getUDivExpr(MA, B);
+              if (div) {
                 auto res = Constraints::make_compare(
                     div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
                     add->getLoop(), ctx);
