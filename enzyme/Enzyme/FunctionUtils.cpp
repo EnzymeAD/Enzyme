@@ -2482,41 +2482,12 @@ static bool anyMayReachReturn(ArrayRef<Value *> objs, TargetLibraryInfo &TLI) {
   return false;
 }
 
-// Whether instruction I, which may write memory, may write data to it (see
-// isNoDataWrite), rather than only allocate memory, or synchronize with the
-// garbage collector.
-static bool mayWriteData(Instruction &I, Function &F, TargetLibraryInfo &TLI) {
-  if (isa<LoadInst>(&I) || isa<FenceInst>(&I))
-    return false;
-  auto CB = dyn_cast<CallBase>(&I);
-  if (!CB)
-    return true;
-  if (isAllocationCall(CB, TLI) || isNoDataWrite(CB))
-    return false;
-  if (CB->isLifetimeStartOrEnd())
-    return false;
-  if (auto F2 = CB->getCalledFunction()) {
-    // A recursive call writes data only if the rest of F does.
-    if (F2 == &F || isDebugFunction(F2))
-      return false;
-    auto name = F2->getName();
-    if (name == "julia.safepoint" || name == "julia.write_barrier" ||
-        name == "llvm.julia.gc_preserve_begin" ||
-        name == "llvm.julia.gc_preserve_end")
-      return false;
-  }
-  return true;
-}
 
 bool ReadOnlyOrThrowDetector::run() {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
     return false;
-  // Whether F may write data to memory at all, even memory of its own (see
-  // isNoDataWrite). A call to a callee not yet known to be read only or throw
-  // counts as one; F is checked again once its callees are known.
-  bool writesData = false;
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
     if (unreachable.find(&BB) != unreachable.end()) {
@@ -2525,8 +2496,6 @@ bool ReadOnlyOrThrowDetector::run() {
     for (auto &I : BB) {
       if (!I.mayWriteToMemory())
         continue;
-      if (!writesData && mayWriteData(I, F, TLI))
-        writesData = true;
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
       // A call marked local read-only-or-throw is handled like a call to a
@@ -2816,8 +2785,6 @@ bool ReadOnlyOrThrowDetector::run() {
       F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
-    if (!writesData)
-      F.addFnAttr("enzyme_NoDataWrite");
     addReadOnlyOrThrowAttributes();
   }
   return true;

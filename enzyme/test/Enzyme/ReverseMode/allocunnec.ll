@@ -150,7 +150,7 @@ attributes #12 = { nounwind memory(readwrite) "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:   %1 = load double, ptr addrspace(13) %0, align 8
 ; CHECK-NEXT:   %2 = fadd fast double %1, %differeturn
 ; CHECK-NEXT:   store double %2, ptr addrspace(13) %0, align 8
-; CHECK-NEXT:   call void @diffefakecopy(ptr addrspace(10) %arg1, ptr addrspace(10) undef)
+; CHECK-NEXT:   call void @diffefakecopy(ptr addrspace(10) %arg1, ptr addrspace(10) %"arg1'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

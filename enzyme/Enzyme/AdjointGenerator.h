@@ -5710,9 +5710,8 @@ public:
 
           Value *darg = nullptr;
 
-          if (((writeOnlyNoCapture && TR.query(call.getArgOperand(
-                                          i))[{-1, -1}] == BaseType::Pointer) ||
-               gutils->isConstantInstruction(&call)) &&
+          if (writeOnlyNoCapture &&
+              TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer &&
               !replaceFunction) {
             darg = getUndefinedValueForType(
                 M, gutils->getShadowType(argi->getType()));
