@@ -1,10 +1,11 @@
 ; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify)" -S | FileCheck %s; fi
 
 ; Like retptr.ll, but @sub also copies active data it loads into memory of its
-; own. It is still read-only-or-throw, as that memory does not outlive it, but
-; the copy makes the call active: the reverse pass of @sub accumulates into the
-; shadow of %this, so the call must be passed that shadow rather than undef,
-; unlike a call to a function that writes no data at all (see retptr.ll).
+; own. It is still fully read-only-or-throw, as that memory does not outlive
+; it, so the call is a constant instruction. Its result is active, though, so
+; the call is still differentiated, and its reverse call must be passed the
+; shadow of %this, as its augmented call is, rather than undef: the reverse of
+; @sub may use it.
 
 define float @f(ptr %this) {
 entry:

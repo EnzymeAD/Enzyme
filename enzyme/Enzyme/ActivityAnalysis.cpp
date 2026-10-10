@@ -1081,16 +1081,11 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   // TODO the "doesn't write to active memory" can be made more aggressive than
   // doesn't write to any memory
   bool noActiveWrite = false;
-  // Whether the instruction may still write memory that does not outlive it.
-  bool mayWriteLocal = false;
   if (!I->mayWriteToMemory())
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallInst>(I)) {
-    if (AA.onlyReadsMemory(CI)) {
+    if (AA.onlyReadsMemory(CI) || isReadOnlyOrThrow(CI)) {
       noActiveWrite = true;
-    } else if (isReadOnlyOrThrow(CI)) {
-      noActiveWrite = true;
-      mayWriteLocal = !isNoDataWrite(CI) && !isAllocationCall(CI, TLI);
     } else {
       StringRef funcName = getFuncNameFromCall(CI);
       if (isMemFreeLibMFunction(funcName)) {
@@ -1104,17 +1099,10 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   }
   if (noActiveWrite) {
     bool possibleFloat = TR.anyFloat(I);
-    // Even if returning a pointer, an instruction that writes no memory is
-    // considered inactive since the instruction doesn't prop gradients. Thus,
-    // so long as we don't return an object containing a float, this
-    // instruction is inactive. A read-only-or-throw call, however, may still
-    // move active data into memory of its own (e.g. copying an active argument
-    // into a temporary), which makes it active even though no derivative
-    // outlives it. If it returns a pointer, its value may be active and need a
-    // shadow, so the call is only inactive if its value is (checked below); a
-    // call returning neither a float nor a pointer is inactive outright, as
-    // its value is.
-    if (!possibleFloat && !(mayWriteLocal && TR.anyPointer(I))) {
+    // Even if returning a pointer, this instruction is considered inactive
+    // since the instruction doesn't prop gradients. Thus, so long as we don't
+    // return an object containing a float, this instruction is inactive
+    if (!possibleFloat) {
       if (EnzymePrintActivity)
         llvm::errs()
             << " constant instruction from known non-float non-writing "

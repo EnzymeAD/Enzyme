@@ -1,13 +1,13 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
-define double* @f(double** %a0) "enzyme_ReadOnlyOrThrow"="" "enzyme_NoDataWrite"="" {
+define double* @f(double** %a0) "enzyme_ReadOnlyOrThrow"="" {
   %a3 = load double*, double** %a0, align 8
   %a5 = call double* @g(double* %a3)
   ret double* %a5
 }
 
-define double* @g(double* %0) "enzyme_ReadOnlyOrThrow"="" "enzyme_NoDataWrite"="" {
+define double* @g(double* %0) "enzyme_ReadOnlyOrThrow"="" {
   ret double* %0
 }
 
@@ -52,7 +52,8 @@ entry:
 
 ; CHECK: define internal void @diffef(double** %a0, double** %"a0'", double* %tapeArg)
 ; CHECK-NEXT: invert:
+; CHECK-NEXT:   %"a3'ipl" = load double*, double** %"a0'", align 8
 ; CHECK-NEXT:   %a3 = load double*, double** %a0, align 8
-; CHECK-NEXT:   call void @diffeg(double* %a3, double* {{(undef|poison)}})
+; CHECK-NEXT:   call void @diffeg(double* %a3, double* %"a3'ipl")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

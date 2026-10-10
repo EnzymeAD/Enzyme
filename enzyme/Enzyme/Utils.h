@@ -1995,13 +1995,12 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 //  3) Write to memory whose lifetime is entirely contained within the call to
 //     F (including a local alloca, or a malloc call locally freed), but not
 //     to memory it returns or otherwise lets escape, even if allocated within
-//     it. The exception is initializing an object it allocates and returns
-//     (e.g. a Julia allocation writing the object's type tag), which must not
-//     store anything derived from what F reads.
-// A call to F thus never returns memory holding data it wrote: if it returns a
-// pointer, derivatives can only flow through the memory it points to, not
-// through the call. A function that may return memory it wrote, including
-// memory a callee wrote and returned to it, is only local read-only-or-throw.
+//     it.
+// Allocating memory, even memory F returns, is not a write. A call to F thus
+// never returns memory it wrote: if it returns a pointer, derivatives can only
+// flow through the memory it points to, not through the call. A function that
+// may return memory it wrote, including memory a callee wrote and returned to
+// it, is only local read-only-or-throw.
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -2026,33 +2025,6 @@ static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
     // array) may not be.
     if (F->getCallingConv() == call->getCallingConv())
       if (isReadOnlyOrThrow(F))
-        return true;
-  }
-  return false;
-}
-
-// Whether the function, besides reading memory and throwing, writes no data
-// to memory at all: it may at most allocate memory, but not store into it,
-// nor into any other memory, and only call functions that do the same. Unlike
-// a read-only-or-throw function that writes memory of its own, a call to it
-// can thus not move active data anywhere, even into memory that does not
-// outlive the call. Inferred alongside read-only-or-throw.
-static inline bool isNoDataWrite(const llvm::Function *F) {
-  return isReadOnly(F) || F->hasFnAttribute("enzyme_NoDataWrite");
-}
-
-static inline bool isNoDataWrite(const llvm::CallBase *call) {
-  if (isReadOnly(call))
-    return true;
-
-  if (call->hasFnAttr("enzyme_NoDataWrite"))
-    return true;
-
-  if (auto F = getFunctionFromCall(call)) {
-    // As for isReadOnlyOrThrow, do not use function attrs for a different
-    // calling convention.
-    if (F->getCallingConv() == call->getCallingConv())
-      if (isNoDataWrite(F))
         return true;
   }
   return false;
