@@ -729,7 +729,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 
   // The return instruction doesn't impact activity (handled specifically
   // during adjoint generation)
-  if (I->hasTrait<OpTrait::ReturnLike>())
+  if (mlir::enzyme::isFunctionReturnLike(I))
     return true;
 
   if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(I)) {
@@ -1042,7 +1042,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 }
 
 static bool isFunctionReturn(Operation *op) {
-  if (!op->hasTrait<OpTrait::ReturnLike>())
+  if (!mlir::enzyme::isFunctionReturnLike(op))
     return false;
   return dyn_cast<FunctionOpInterface>(op->getParentOp());
 }
