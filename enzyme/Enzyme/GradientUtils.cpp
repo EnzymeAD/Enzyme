@@ -9790,6 +9790,40 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       }
     }
   }
+
+  // A store-like operation that is not in `stores` (a call that writes to
+  // the allocation) is not replayed in the reverse pass. A load or load-like
+  // call that may read what such a call wrote (e.g. a Fortran READ into a
+  // local, or a local filled in by a subroutine and then passed to a custom
+  // derivative) would thus see different memory if the allocation were
+  // rematerialized. Keep the allocation, so that it or the loaded values are
+  // cached instead.
+  {
+    SetVector<Instruction *> readers;
+    for (auto LI : loads)
+      readers.insert(LI);
+    for (auto &LLC : loadLikeCalls)
+      readers.insert(LLC.loadCall);
+    for (auto WC : storingOps) {
+      if (stores.count(WC))
+        continue;
+      SmallVector<Instruction *, 2> results;
+      mayExecuteAfter(results, WC, readers, outer);
+      for (auto res : results) {
+        if (res == WC)
+          continue;
+        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI,
+                                     *OrigDT, res, WC, outer)) {
+          EmitWarning("NotPromotable", *res, " Could not promote allocation ",
+                      *V, " due to ", *res,
+                      " which may read memory written by non-repeatable call ",
+                      *WC);
+          return;
+        }
+      }
+    }
+  }
+
   rematerializableAllocations[V] = Rematerializer(
       loads, loadLikeCalls, stores, frees, outer, nonRepeatableWritingCall);
 }
