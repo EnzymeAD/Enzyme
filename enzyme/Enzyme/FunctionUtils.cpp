@@ -111,6 +111,7 @@
 
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
+#include <map>
 #include <optional>
 
 #include "CacheUtility.h"
@@ -2642,23 +2643,63 @@ static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
   return false;
 }
 
-// Whether any of the fresh fields may reach the return value (see
-// freshFieldMayReachReturn).
-static bool
-anyFreshFieldMayReachReturn(ArrayRef<std::pair<Value *, int64_t>> fields,
-                            TargetLibraryInfo &TLI) {
-  for (auto [base, field] : fields)
-    if (freshFieldMayReachReturn(base, field, TLI))
-      return true;
-  return false;
-}
-
 
 bool ReadOnlyOrThrowDetector::run() {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
     return false;
+
+  // Whether F is local only matters once all its callees are known: with a
+  // callee pending, F is checked again later, so the escape queries deciding
+  // it are skipped. They are cached per written object, as a function often
+  // writes the same object many times.
+  auto needLocal = [&]() { return !local && calls_todo.empty(); };
+  std::map<std::tuple<Value *, bool, Instruction *>, bool> reachCache;
+  auto reaches = [&](Value *Obj, bool Deep,
+                     Instruction *Ignore = nullptr) -> bool {
+    auto key = std::make_tuple(Obj, Deep, Ignore);
+    auto found = reachCache.find(key);
+    if (found != reachCache.end())
+      return found->second;
+    bool res = mayReachReturn(Obj, TLI, Deep, Ignore);
+    reachCache[key] = res;
+    return res;
+  };
+  // For written data that is fresh (see isFreshData), the fields holding it.
+  std::map<Value *, std::optional<SmallVector<std::pair<Value *, int64_t>, 2>>>
+      freshCache;
+  auto freshFields =
+      [&](Value *Obj) -> const SmallVector<std::pair<Value *, int64_t>, 2> * {
+    auto found = freshCache.find(Obj);
+    if (found == freshCache.end()) {
+      SmallVector<std::pair<Value *, int64_t>, 2> bases;
+      std::optional<SmallVector<std::pair<Value *, int64_t>, 2>> entry;
+      if (isFreshData(Obj, TLI, bases))
+        entry = std::move(bases);
+      found = freshCache.emplace(Obj, std::move(entry)).first;
+    }
+    return found->second ? &*found->second : nullptr;
+  };
+  std::map<std::pair<Value *, int64_t>, bool> fieldCache;
+  auto freshReaches =
+      [&](Value *Obj,
+          const SmallVector<std::pair<Value *, int64_t>, 2> &fields) -> bool {
+    if (reaches(Obj, /*Deep*/ false))
+      return true;
+    for (auto field : fields) {
+      auto found = fieldCache.find(field);
+      if (found == fieldCache.end())
+        found = fieldCache
+                    .emplace(field, freshFieldMayReachReturn(field.first,
+                                                             field.second, TLI))
+                    .first;
+      if (found->second)
+        return true;
+    }
+    return false;
+  };
+
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
     if (unreachable.find(&BB) != unreachable.end()) {
@@ -2680,10 +2721,8 @@ bool ReadOnlyOrThrowDetector::run() {
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
-        if (isFreshData(Obj, TLI, freshBases)) {
-          if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyFreshFieldMayReachReturn(freshBases, TLI)))
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
             local = true;
           continue;
         }
@@ -2694,7 +2733,7 @@ bool ReadOnlyOrThrowDetector::run() {
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (!local && mayReachReturn(Obj, TLI, /*Deep*/ false))
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
             local = true;
           continue;
         }
@@ -2717,10 +2756,8 @@ bool ReadOnlyOrThrowDetector::run() {
         auto Obj = getBaseObject(MSI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
-        if (isFreshData(Obj, TLI, freshBases)) {
-          if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyFreshFieldMayReachReturn(freshBases, TLI)))
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
             local = true;
           continue;
         }
@@ -2731,7 +2768,7 @@ bool ReadOnlyOrThrowDetector::run() {
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (!local && mayReachReturn(Obj, TLI, /*Deep*/ false))
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
             local = true;
           continue;
         }
@@ -2766,8 +2803,8 @@ bool ReadOnlyOrThrowDetector::run() {
             // written to, if that memory, or memory a pointer loaded from it
             // points to, may escape us, we are only local read-only-or-throw
             // too.
-            if (!local && !cannotHoldPointer(CI) &&
-                mayReachReturn(CI, TLI, /*Deep*/ true))
+            if (needLocal() && !cannotHoldPointer(CI) &&
+                reaches(CI, /*Deep*/ true))
               local = true;
             auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
@@ -2797,7 +2834,7 @@ bool ReadOnlyOrThrowDetector::run() {
                 continue;
               auto Obj = getBaseObject(arg);
               if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI)) {
-                if (!local && mayReachReturn(Obj, TLI, /*Deep*/ true, CI))
+                if (needLocal() && reaches(Obj, /*Deep*/ true, CI))
                   local = true;
                 continue;
               }
@@ -2841,7 +2878,7 @@ bool ReadOnlyOrThrowDetector::run() {
           if (isa<AllocaInst>(Obj))
             continue;
           if (isAllocationCall(Obj, TLI)) {
-            if (!local && mayReachReturn(Obj, TLI, /*Deep*/ false))
+            if (needLocal() && reaches(Obj, /*Deep*/ false))
               local = true;
             continue;
           }
@@ -2890,10 +2927,8 @@ bool ReadOnlyOrThrowDetector::run() {
         auto Obj = getBaseObject(SI->getPointerOperand());
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        SmallVector<std::pair<Value *, int64_t>, 2> freshBases;
-        if (isFreshData(Obj, TLI, freshBases)) {
-          if (!local && (mayReachReturn(Obj, TLI, /*Deep*/ false) ||
-                         anyFreshFieldMayReachReturn(freshBases, TLI)))
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
             local = true;
           continue;
         }
@@ -2904,7 +2939,7 @@ bool ReadOnlyOrThrowDetector::run() {
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (!local && mayReachReturn(Obj, TLI, /*Deep*/ false))
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
             local = true;
           continue;
         }
