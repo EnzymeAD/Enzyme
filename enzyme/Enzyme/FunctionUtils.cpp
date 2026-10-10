@@ -44,6 +44,7 @@
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -110,6 +111,7 @@
 
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
+#include <map>
 #include <optional>
 
 #include "CacheUtility.h"
@@ -2073,36 +2075,68 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
   }
 }
 
-// Whether the base object V is a Julia Memory object that did not exist
-// before this function: one allocated here by jl_alloc_genericmemory, or the
-// empty Memory singleton (a global Enzyme.jl marks enzymejl_empty_memory),
-// which no in-bounds access writes.
-static bool isFreshJuliaMemory(Value *V) {
-  if (auto CB = dyn_cast<CallBase>(V)) {
-    auto name = getFuncNameFromCall(CB);
-    return name == "jl_alloc_genericmemory" ||
-           name == "ijl_alloc_genericmemory" ||
-           name == "jl_alloc_genericmemory_unchecked" ||
-           name == "ijl_alloc_genericmemory_unchecked";
-  }
-  if (auto GV = dyn_cast<GlobalVariable>(V))
-    return GV->getMetadata("enzymejl_empty_memory") != nullptr;
-  return false;
+// Whether V is allocated by Julia's allocator of Memory objects, or of arrays
+// on Julia 1.10. These are recognized by name, as Enzyme.jl may not have
+// registered them as allocation functions.
+static bool isJuliaMemoryAllocation(Value *V) {
+  auto CB = dyn_cast<CallBase>(V);
+  if (!CB)
+    return false;
+  auto name = getFuncNameFromCall(CB);
+  return name == "jl_alloc_genericmemory" ||
+         name == "ijl_alloc_genericmemory" ||
+         name == "jl_alloc_genericmemory_unchecked" ||
+         name == "ijl_alloc_genericmemory_unchecked";
+}
+static bool isJuliaArrayAllocation(Value *V) {
+  auto CB = dyn_cast<CallBase>(V);
+  if (!CB)
+    return false;
+  auto name = getFuncNameFromCall(CB);
+  return name == "jl_alloc_array_1d" || name == "ijl_alloc_array_1d" ||
+         name == "jl_alloc_array_2d" || name == "ijl_alloc_array_2d" ||
+         name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
+         name == "jl_new_array" || name == "ijl_new_array";
 }
 
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
-                                          SmallPtrSetImpl<Value *> &seen);
+// Whether allocation call CB returns memory whose fields it leaves
+// uninitialized (or zeroed): the C and C++ allocators and Julia's object
+// allocators. Allocators that initialize fields themselves (swift_allocObject
+// sets a metadata pointer, custom enzyme_allocator and registered allocation
+// handlers may do anything) do not qualify, as a field may then point to
+// memory that existed before the call.
+static bool allocatorLeavesFieldsUninitialized(CallBase *CB,
+                                               TargetLibraryInfo &TLI) {
+  auto name = getFuncNameFromCall(CB);
+  if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
+      name == "ijl_gc_alloc_typed")
+    return true;
+  if (name == "swift_allocObject" || name == "enzyme_allocator" ||
+      name == "__size_returning_new_experiment" ||
+      name == "_mlir_memref_to_llvm_alloc")
+    return false;
+  if (shadowHandlers.find(name) != shadowHandlers.end())
+    return false;
+  return isAllocationFunction(name, TLI);
+}
 
-// Whether the data field, at offset 0, of Obj, an object allocated in its
-// function, only ever holds fresh data (see isFreshJuliaMemoryOrArrayData)
-// while the function runs. Every write to the field must store such data (or
-// null, through which nothing is written), and Obj's address must not be
-// stored or passed to a call that may capture or write through it, so that no
-// other code can write the field. Returning Obj is fine: the field may then
-// change only after the function returns.
-static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
-                                        TargetLibraryInfo &TLI,
-                                        SmallPtrSetImpl<Value *> &seen) {
+using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
+// Objects with the offset of a field of theirs holding fresh data.
+using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
+
+static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
+                        FreshFields *bases);
+
+// Whether the field at offset Field of Obj, an object allocated in its
+// function, only ever holds fresh data (see isFreshData) while the function
+// runs. Every write to the field must store such data (or null, through which
+// nothing is written), and Obj's address must not be stored or passed to a
+// call that may capture or write through it, so that no other code can write
+// the field. Returning Obj is fine: the field may then change only after the
+// function returns.
+static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
+                                    TargetLibraryInfo &TLI, FreshFieldSet &seen,
+                                    FreshFields *bases) {
   auto &DL = Obj->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   // Pointers derived from Obj, with their offset from it if constant.
@@ -2149,14 +2183,14 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
         if (!off)
           return false;
         int64_t size = DL.getTypeStoreSize(SI->getValueOperand()->getType());
-        if (*off + size <= 0 || *off >= fieldSize)
+        if (*off + size <= Field || *off >= Field + fieldSize)
           continue;
-        if (*off != 0 || size != fieldSize)
+        if (*off != Field || size != fieldSize)
           return false;
         auto val = getBaseObject(SI->getValueOperand());
         if (isa<ConstantPointerNull>(val) || isa<UndefValue>(val))
           continue;
-        if (!isFreshJuliaMemoryOrArrayData(val, TLI, seen))
+        if (!isFreshData(val, TLI, seen, bases))
           return false;
         continue;
       }
@@ -2166,7 +2200,8 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
         auto len = dyn_cast<ConstantInt>(MI->getLength());
         if (!off || !len)
           return false;
-        if (*off + (int64_t)len->getZExtValue() <= 0 || *off >= fieldSize)
+        if (*off + (int64_t)len->getZExtValue() <= Field ||
+            *off >= Field + fieldSize)
           continue;
         return false;
       }
@@ -2192,42 +2227,53 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
   return true;
 }
 
-// Whether the base object V is a Julia array object that did not exist before
-// this function, whose data field, at offset 0, only ever holds fresh data
-// while it runs (see dataFieldOnlyHoldsFreshData). On Julia 1.10,
-// jl_alloc_array_* and jl_new_array allocate it with fresh data. From Julia
-// 1.11 on it is allocated like any other object, and the function stores the
-// data of a fresh Memory into the field.
-static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
-                              SmallPtrSetImpl<Value *> &seen) {
-  // An array whose data field we are already checking, reached again through
-  // a store to a data field: it holds fresh data if everything else does.
-  if (!seen.insert(V).second)
+// Whether the field at offset Field of the base object V, which did not exist
+// before this function, only ever holds fresh data (see isFreshData) while the
+// function runs:
+//  * the data field, which follows the length, of a Julia Memory allocated
+//    here, or of the empty Memory singleton (a global Enzyme.jl marks
+//    enzymejl_empty_memory), which no in-bounds access writes. The field is
+//    set when the object is allocated and never changed.
+//  * the data field, at offset 0, of a Julia 1.10 array allocated here by
+//    jl_alloc_array_*, which sets it to data it allocates, or any field of an
+//    object allocated here by an allocator that leaves its fields
+//    uninitialized (such as a Julia 1.11+ array; see
+//    allocatorLeavesFieldsUninitialized), provided that every write to the
+//    field in the function sets it to fresh data (see
+//    fieldOnlyHoldsFreshData).
+static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
+                         FreshFieldSet &seen, FreshFields *bases) {
+  // A field we are already checking, reached again through a store to such a
+  // field: it holds fresh data if everything else does.
+  if (!seen.insert(std::make_pair(V, Field)).second)
     return true;
-  auto CB = dyn_cast<CallBase>(V);
-  if (!CB)
+  if (auto GV = dyn_cast<GlobalVariable>(V))
+    return GV->getMetadata("enzymejl_empty_memory") &&
+           Field == GV->getParent()->getDataLayout().getPointerSize();
+  auto I = dyn_cast<Instruction>(V);
+  if (!I)
     return false;
-  auto name = getFuncNameFromCall(CB);
-  if (name.contains("alloc_genericmemory"))
-    return false;
-  if (name == "jl_alloc_array_1d" || name == "ijl_alloc_array_1d" ||
-      name == "jl_alloc_array_2d" || name == "ijl_alloc_array_2d" ||
-      name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
-      name == "jl_new_array" || name == "ijl_new_array" ||
-      isAllocationCall(CB, TLI))
-    return dataFieldOnlyHoldsFreshData(CB, TLI, seen);
+  // Julia's runtime allocators initialize the other fields of the objects they
+  // allocate themselves, possibly to memory that existed before the call.
+  if (isJuliaMemoryAllocation(V))
+    return Field == I->getModule()->getDataLayout().getPointerSize();
+  if (isJuliaArrayAllocation(V))
+    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
+  // Other allocators may leave the fields uninitialized.
+  if (isAllocationCall(V, TLI) &&
+      allocatorLeavesFieldsUninitialized(cast<CallBase>(V), TLI))
+    return fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
   return false;
 }
 
 // Whether Obj, the base object of a written pointer, is data that did not
-// exist before this function: a pointer loaded from the data field of
-//  * a fresh Julia Memory (see isFreshJuliaMemory), which follows the length.
-//    The field is set when the object is allocated and never changed, so the
-//    data is as fresh as the object.
-//  * a fresh Julia array (see isFreshJuliaArray), at offset 0.
-// The pointer may be loaded from a phi or select of such objects.
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
-                                          SmallPtrSetImpl<Value *> &seen) {
+// exist before this function: a pointer loaded from a field holding only
+// fresh data (see isFreshField) of an object, or of a phi or select of
+// objects. If so, appends those objects with the field's offset to bases,
+// along with the objects whose fields the fresh data stored into those fields
+// was itself loaded from.
+static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
+                        FreshFields *bases) {
   if (!EnzymeJuliaAddrLoad)
     return false;
   auto LI = dyn_cast<LoadInst>(Obj);
@@ -2238,20 +2284,347 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
   APInt offset(DL.getIndexTypeSizeInBits(ptr->getType()), 0);
   ptr = ptr->stripAndAccumulateConstantOffsets(DL, offset,
                                                /*AllowNonInbounds*/ true);
-  bool memoryField = offset == DL.getPointerSize();
-  if (!memoryField && offset != 0)
+  if (offset.isNegative())
     return false;
   for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
-    if (memoryField ? !isFreshJuliaMemory(base)
-                    : !isFreshJuliaArray(base, TLI, seen))
+    if (!isFreshField(base, offset.getSExtValue(), TLI, seen, bases))
+      return false;
+    if (bases)
+      bases->emplace_back(base, offset.getSExtValue());
+  }
+  return true;
+}
+
+static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI,
+                        FreshFields &bases) {
+  FreshFieldSet seen;
+  return isFreshData(Obj, TLI, seen, &bases);
+}
+
+// Whether type info TT for a value of type T says every byte of it is an
+// integer or a float, so that it cannot be or hold a pointer.
+static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
+                                    const DataLayout &DL) {
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  for (int i = 0, size = DL.getTypeStoreSize(T); i < size; ++i) {
+    auto CT = TT[{i}];
+    if (CT != BaseType::Integer && !CT.isFloat())
       return false;
   }
   return true;
 }
 
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
-  SmallPtrSet<Value *, 4> seen;
-  return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
+static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
+                                      const DataLayout &DL) {
+  return attr.isValid() &&
+         typeTreeRulesOutPointer(
+             TypeTree::parse(attr.getValueAsString(), T->getContext()), T, DL);
+}
+
+// Whether a value of type T cannot be or hold a pointer: void and token
+// values, floating-point values, and integers narrower than a pointer.
+// Integers as wide as a pointer can hold one (ptrtoint, Julia's Ptr).
+static bool typeCannotHoldPointer(Type *T, const DataLayout &DL) {
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  if (T->isFPOrFPVectorTy())
+    return true;
+  if (auto IT = dyn_cast<IntegerType>(T))
+    return IT->getBitWidth() < DL.getPointerSizeInBits();
+  return false;
+}
+
+// Whether value V cannot be or hold a pointer by its type, or by the
+// enzyme_type info given for it.
+static bool cannotHoldPointer(Value *V) {
+  auto T = V->getType();
+  if (T->isVoidTy() || T->isTokenTy())
+    return true;
+  auto I = dyn_cast<Instruction>(V);
+  if (!I)
+    return false;
+  auto &DL = I->getModule()->getDataLayout();
+  if (typeCannotHoldPointer(T, DL))
+    return true;
+  if (auto MD = I->getMetadata("enzyme_type"))
+    if (typeTreeRulesOutPointer(TypeTree::fromMD(MD), T, DL))
+      return true;
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (enzymeTypeRulesOutPointer(
+            CB->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                             "enzyme_type"),
+            T, DL))
+      return true;
+    if (auto F = CB->getCalledFunction())
+      if (enzymeTypeRulesOutPointer(
+              F->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                              "enzyme_type"),
+              T, DL))
+        return true;
+  }
+  return false;
+}
+
+// Whether returning V from its function cannot return a pointer, by the
+// enzyme_type info given for V or for the function's return value.
+static bool returnCannotHoldPointer(ReturnInst *RI) {
+  auto V = RI->getReturnValue();
+  if (!V || cannotHoldPointer(V))
+    return true;
+  auto F = RI->getParent()->getParent();
+  return enzymeTypeRulesOutPointer(
+      F->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                      "enzyme_type"),
+      V->getType(), F->getParent()->getDataLayout());
+}
+
+// Whether call CB has an sret-like argument (sret, returnRoots or
+// sret_union_bytes), marked on the call or on the called function.
+static bool hasSRetLikeArgument(CallBase *CB) {
+  if (hasSRetRRootsOrUnionSRet(CB))
+    return true;
+  auto F = getFunctionFromCall(CB);
+  for (unsigned i = 0; i < CB->arg_size(); ++i) {
+    // Checks the called function too.
+    if (CB->paramHasAttr(i, Attribute::StructRet))
+      return true;
+    if (F && i < F->arg_size() &&
+        (F->getAttribute(i + AttributeList::FirstArgIndex,
+                         "enzymejl_returnRoots")
+             .isValid() ||
+         F->getAttribute(i + AttributeList::FirstArgIndex,
+                         "enzymejl_sret_union_bytes")
+             .isValid()))
+      return true;
+  }
+  return false;
+}
+
+// Whether call CB may hand a pointer back to its caller, through its result or
+// an sret-like argument.
+static bool mayHandBackPointer(CallBase *CB) {
+  return !cannotHoldPointer(CB) || hasSRetLikeArgument(CB);
+}
+
+// Values that may be a pointer to written memory (Holds false), or that point
+// to memory that may hold such a pointer (Holds true). With Deep, memory
+// reachable through pointers loaded from the value was written too.
+using EscapeEntry = std::tuple<Value *, bool, bool>;
+using EscapeWorklist = SmallVector<EscapeEntry, 4>;
+
+static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep) {
+  todo.emplace_back(V, false, Deep);
+  // Memory reachable through pointers loaded from it was written too.
+  if (Deep)
+    todo.emplace_back(V, true, Deep);
+}
+
+// Whether Obj, memory written within this function, may reach its return
+// value, so that the function returns memory holding data it wrote. With
+// Deep, memory reachable from Obj through pointers loaded from it was written
+// too (e.g. by a callee that handed Obj to us), and counts as well. Ignore is
+// a use of Obj not to consider (e.g. the call that wrote it).
+//
+// Storing a pointer to written memory into memory that existed before the
+// call hands it to the caller (or is a write that disqualifies the function
+// anyway). Storing it into memory of the function (an alloca, an allocation,
+// or data of one) makes that memory hold it, which is followed through what
+// is loaded or copied from that memory, and from any object owning it.
+static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
+                           Instruction *Ignore = nullptr) {
+  EscapeWorklist todo;
+  SmallSet<EscapeEntry, 8> seen;
+  pushMayBePointer(todo, Obj, Deep);
+  while (!todo.empty()) {
+    auto Entry = todo.pop_back_val();
+    if (!seen.insert(Entry).second)
+      continue;
+    auto [V, Holds, Deep] = Entry;
+    for (auto U : V->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        return true;
+      if (I == Ignore)
+        continue;
+      if (auto RI = dyn_cast<ReturnInst>(I)) {
+        if (returnCannotHoldPointer(RI))
+          continue;
+        return true;
+      }
+      if (isa<ICmpInst>(I))
+        continue;
+      if (auto SI = dyn_cast<SelectInst>(I)) {
+        if (SI->getCondition() != V)
+          todo.emplace_back(SI, Holds, Deep);
+        continue;
+      }
+      if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                  /*includebin*/ false) ||
+          isa<InsertValueInst>(I) || isa<ExtractValueInst>(I)) {
+        todo.emplace_back(I, Holds, Deep);
+        continue;
+      }
+      if (auto LI = dyn_cast<LoadInst>(I)) {
+        if (Holds && !cannotHoldPointer(LI))
+          pushMayBePointer(todo, LI, Deep);
+        continue;
+      }
+      if (auto SI = dyn_cast<StoreInst>(I)) {
+        if (SI->getValueOperand() != V)
+          continue;
+        // The address of memory holding a written pointer escapes.
+        if (Holds)
+          return true;
+        auto Dst = getBaseObject(SI->getPointerOperand());
+        if (isa<Argument>(Dst) || isa<GlobalValue>(Dst))
+          return true;
+        if (isa<AllocaInst>(Dst)) {
+          todo.emplace_back(Dst, true, Deep);
+          continue;
+        }
+        // Memory of ours now holds the pointer: anything loaded from it, or
+        // reached from an object whose fresh data it is, may be the pointer.
+        todo.emplace_back(Dst, true, /*Deep*/ true);
+        SmallVector<std::pair<Value *, int64_t>, 2> owners;
+        if (isFreshData(Dst, TLI, owners))
+          for (auto owner : owners)
+            if (!isa<GlobalVariable>(owner.first))
+              todo.emplace_back(owner.first, true, /*Deep*/ true);
+        continue;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        if (Holds && MTI->getRawSource() == V) {
+          auto Dst = getBaseObject(MTI->getRawDest());
+          if (!isa<AllocaInst>(Dst))
+            return true;
+          todo.emplace_back(Dst, true, Deep);
+        }
+        continue;
+      }
+      if (isa<MemSetInst>(I))
+        continue;
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        if (CB->getCalledOperand() == V)
+          return true;
+        if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
+          continue;
+        if (getFuncNameFromCall(CB) == "julia.write_barrier")
+          continue;
+        if (!mayHandBackPointer(CB))
+          continue;
+        // A call may hand back a pointer it was passed unless it does not
+        // capture it, but may hand back any pointer it loads.
+        if (!Holds) {
+          bool noCapture = true;
+          for (unsigned i = 0; i < CB->arg_size(); ++i)
+            if (CB->getArgOperand(i) == V && !isNoCapture(CB, i))
+              noCapture = false;
+          if (noCapture)
+            continue;
+        }
+        return true;
+      }
+      // Integer arithmetic on a value that may hold a pointer may compute
+      // another one; anything else that neither writes memory nor produces a
+      // value able to hold a pointer (e.g. a conversion to floating point)
+      // cannot pass the pointer on.
+      if (isPointerArithmeticInst(I, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        todo.emplace_back(I, Holds, Deep);
+        continue;
+      }
+      if (!I->mayWriteToMemory() && cannotHoldPointer(I))
+        continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether written fresh data, held in the field at offset Field of Base (an
+// object allocated in this function, or the empty Julia Memory singleton), may
+// reach the function's return value: with Base itself, or through a load of
+// that field (any load of it yields the written data), a copy of it, or a call
+// that may hand back what it loads from Base.
+static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
+                                     TargetLibraryInfo &TLI) {
+  if (isa<GlobalVariable>(Base))
+    return false;
+  if (mayReachReturn(Base, TLI, /*Deep*/ false))
+    return true;
+  auto &DL = cast<Instruction>(Base)->getModule()->getDataLayout();
+  int64_t fieldSize = DL.getPointerSize();
+  auto overlaps = [&](std::optional<int64_t> off, uint64_t size) {
+    return !off || (*off<Field + fieldSize && * off + (int64_t)size> Field);
+  };
+  // Pointers derived from Base, with their offset from it if constant.
+  SmallVector<std::pair<Value *, std::optional<int64_t>>, 4> todo;
+  SmallPtrSet<Value *, 8> visited;
+  todo.emplace_back(Base, 0);
+  while (!todo.empty()) {
+    auto [V, off] = todo.pop_back_val();
+    if (!visited.insert(V).second)
+      continue;
+    for (auto U : V->users()) {
+      auto I = dyn_cast<Instruction>(U);
+      if (!I)
+        return true;
+      if (auto LI = dyn_cast<LoadInst>(I)) {
+        if (overlaps(off, DL.getTypeStoreSize(LI->getType())) &&
+            !cannotHoldPointer(LI) && mayReachReturn(LI, TLI, /*Deep*/ false))
+          return true;
+        continue;
+      }
+      if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
+        if (GEP->getPointerOperand() != V)
+          continue;
+        std::optional<int64_t> gepOff;
+        APInt gepOffset(DL.getIndexSizeInBits(GEP->getPointerAddressSpace()),
+                        0);
+        if (off && GEP->accumulateConstantOffset(DL, gepOffset))
+          gepOff = *off + gepOffset.getSExtValue();
+        todo.emplace_back(GEP, gepOff);
+        continue;
+      }
+      if (isa<CastInst>(I) || isa<PHINode>(I) || isa<SelectInst>(I)) {
+        if (auto SI = dyn_cast<SelectInst>(I))
+          if (SI->getCondition() == V)
+            continue;
+        if (I->getType()->isPointerTy())
+          todo.emplace_back(I, off);
+        continue;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+        if (MTI->getRawSource() != V)
+          continue;
+        auto len = dyn_cast<ConstantInt>(MTI->getLength());
+        if (!len || overlaps(off, len->getZExtValue()))
+          return true;
+        continue;
+      }
+      if (auto CB = dyn_cast<CallBase>(I)) {
+        if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
+          continue;
+        auto name = getFuncNameFromCall(CB);
+        if (name == "julia.write_barrier")
+          continue;
+        // julia.gc_loaded(obj, ptr) returns ptr, keeping obj alive: passing
+        // Base as the object hands back nothing loaded from it (a load of the
+        // field passed as ptr is checked as a load above).
+        if (name == "julia.gc_loaded" && CB->getArgOperand(0) == V &&
+            CB->getArgOperand(1) != V)
+          continue;
+        if (mayHandBackPointer(CB))
+          return true;
+        continue;
+      }
+      // Stores into Base, comparisons, and the like do not read the field.
+      // Storing a pointer to Base elsewhere is followed by mayReachReturn
+      // above.
+    }
+  }
+  return false;
 }
 
 // returns if newly legal, subject to the pending calls
@@ -2262,6 +2635,57 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     return false;
   if (F.empty())
     return false;
+
+  // Whether F is local only matters once all its callees are known: with a
+  // callee pending, F is checked again later, so the escape queries deciding
+  // it are skipped. They are cached per written object, as a function often
+  // writes the same object many times.
+  auto needLocal = [&]() { return !local && calls_todo.empty(); };
+  std::map<std::tuple<Value *, bool, Instruction *>, bool> reachCache;
+  auto reaches = [&](Value *Obj, bool Deep,
+                     Instruction *Ignore = nullptr) -> bool {
+    auto key = std::make_tuple(Obj, Deep, Ignore);
+    auto found = reachCache.find(key);
+    if (found != reachCache.end())
+      return found->second;
+    bool res = mayReachReturn(Obj, TLI, Deep, Ignore);
+    reachCache[key] = res;
+    return res;
+  };
+  // For written data that is fresh (see isFreshData), the fields holding it.
+  std::map<Value *, std::optional<SmallVector<std::pair<Value *, int64_t>, 2>>>
+      freshCache;
+  auto freshFields =
+      [&](Value *Obj) -> const SmallVector<std::pair<Value *, int64_t>, 2> * {
+    auto found = freshCache.find(Obj);
+    if (found == freshCache.end()) {
+      SmallVector<std::pair<Value *, int64_t>, 2> bases;
+      std::optional<SmallVector<std::pair<Value *, int64_t>, 2>> entry;
+      if (isFreshData(Obj, TLI, bases))
+        entry = std::move(bases);
+      found = freshCache.emplace(Obj, std::move(entry)).first;
+    }
+    return found->second ? &*found->second : nullptr;
+  };
+  std::map<std::pair<Value *, int64_t>, bool> fieldCache;
+  auto freshReaches =
+      [&](Value *Obj,
+          const SmallVector<std::pair<Value *, int64_t>, 2> &fields) -> bool {
+    if (reaches(Obj, /*Deep*/ false))
+      return true;
+    for (auto field : fields) {
+      auto found = fieldCache.find(field);
+      if (found == fieldCache.end())
+        found = fieldCache
+                    .emplace(field, freshFieldMayReachReturn(field.first,
+                                                             field.second, TLI))
+                    .first;
+      if (found->second)
+        return true;
+    }
+    return false;
+  };
+
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
     if (unreachable.find(&BB) != unreachable.end()) {
@@ -2272,15 +2696,20 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         continue;
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
-      if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
+      // A call marked local read-only-or-throw is handled like a call to a
+      // local read-only-or-throw function below, as it may hand us memory it
+      // wrote.
+      bool localMD = hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow");
+      if (localMD && !isa<CallBase>(&I))
         continue;
 
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
-          local = true;
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
+            local = true;
           continue;
         }
         // Storing into local memory is fine since it definitionally will not be
@@ -2290,11 +2719,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (local)
-            continue;
-          if (notCaptured(Obj))
-            continue;
-          local = true;
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
+            local = true;
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
@@ -2316,8 +2742,9 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(MSI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
-          local = true;
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
+            local = true;
           continue;
         }
         // Storing into local memory is fine since it definitionally will not be
@@ -2327,11 +2754,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (local)
-            continue;
-          if (notCaptured(Obj))
-            continue;
-          local = true;
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
+            local = true;
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
@@ -2351,7 +2775,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (isLocalReadOnlyOrThrow(CI)) {
+        if (localMD || isLocalReadOnlyOrThrow(CI)) {
           // A local read-only-or-throw callee may still write through its
           // sret-like arguments, and those writes land in memory of ours.
           // Classify them as we would a store of our own: memory local to us
@@ -2359,6 +2783,15 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           // sret passed straight through to the callee after call-slot
           // optimization), and anything else disqualifies us.
           if (!isReadOnlyOrThrow(CI)) {
+            // Unlike a fully read-only-or-throw callee, a local one may also
+            // write memory it allocates and hand it to us, through its result
+            // or its sret-like arguments. Like an allocation of ours that was
+            // written to, if that memory, or memory a pointer loaded from it
+            // points to, may escape us, we are only local read-only-or-throw
+            // too.
+            if (needLocal() && !cannotHoldPointer(CI) &&
+                reaches(CI, /*Deep*/ true))
+              local = true;
             auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
             size_t nargs = CI->arg_size();
@@ -2369,28 +2802,26 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               Value *arg = CI->getArgOperand(i);
               if (!arg->getType()->isPointerTy())
                 continue;
-              bool sretLike = CI->paramHasAttr(i, Attribute::StructRet);
-              if (!sretLike && Callee && i < Callee->arg_size()) {
-                sretLike = Callee
-                               ->getAttribute(i + AttributeList::FirstArgIndex,
-                                              "enzymejl_returnRoots")
-                               .isValid() ||
-                           Callee
-                               ->getAttribute(i + AttributeList::FirstArgIndex,
-                                              "enzymejl_sret_union_bytes")
-                               .isValid();
+              bool sret = CI->paramHasAttr(i, Attribute::StructRet);
+              bool roots = false;
+              bool unionBytes = false;
+              if (Callee && i < Callee->arg_size()) {
+                roots = Callee
+                            ->getAttribute(i + AttributeList::FirstArgIndex,
+                                           "enzymejl_returnRoots")
+                            .isValid();
+                unionBytes =
+                    Callee
+                        ->getAttribute(i + AttributeList::FirstArgIndex,
+                                       "enzymejl_sret_union_bytes")
+                        .isValid();
               }
-              if (!sretLike)
+              if (!sret && !roots && !unionBytes)
                 continue;
               auto Obj = getBaseObject(arg);
-              if (isa<AllocaInst>(Obj))
-                continue;
-              if (isAllocationCall(Obj, TLI)) {
-                if (local)
-                  continue;
-                if (notCaptured(Obj))
-                  continue;
-                local = true;
+              if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI)) {
+                if (needLocal() && reaches(Obj, /*Deep*/ true, CI))
+                  local = true;
                 continue;
               }
               if (auto A = dyn_cast<Argument>(Obj)) {
@@ -2433,11 +2864,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           if (isa<AllocaInst>(Obj))
             continue;
           if (isAllocationCall(Obj, TLI)) {
-            if (local)
-              continue;
-            if (notCaptured(Obj))
-              continue;
-            local = true;
+            if (needLocal() && reaches(Obj, /*Deep*/ false))
+              local = true;
             continue;
           }
           if (auto arg = dyn_cast<Argument>(Obj)) {
@@ -2485,8 +2913,9 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(SI->getPointerOperand());
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
-          local = true;
+        if (auto fields = freshFields(Obj)) {
+          if (needLocal() && freshReaches(Obj, *fields))
+            local = true;
           continue;
         }
         // Storing into local memory is fine since it definitionally will not be
@@ -2496,11 +2925,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         if (isa<AllocaInst>(Obj))
           continue;
         if (isAllocationCall(Obj, TLI)) {
-          if (local)
-            continue;
-          if (notCaptured(Obj))
-            continue;
-          local = true;
+          if (needLocal() && reaches(Obj, /*Deep*/ false))
+            local = true;
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
@@ -2674,15 +3100,11 @@ bool DetectReadonlyOrThrow(Module &M) {
   // prerequisite for being readonly. Inverse of `todo_map`
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
-  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
-
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
-      if (local)
-        LocalReadOnlyFunctions.insert(&F);
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2709,15 +3131,18 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        bool local = LocalReadOnlyFunctions.contains(F2);
-        if (local) {
-          F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        } else {
-          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
-        }
-        addReadOnlyOrThrowAttributes(*F2, local);
-        todo.push_back(F2);
-        todo_map.erase(F2);
+        todo_map.erase(found2);
+        // Check F2 again now that all its callees are known to be read only or
+        // throw. The first check treated them as unknown, so it could not
+        // tell whether a callee that turned out to be only local makes F2
+        // local too (e.g. by returning memory the callee wrote), or rules it
+        // out (e.g. by writing through an argument that is not ours).
+        SmallPtrSet<Function *, 1> calls_todo;
+        auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
+        bool local = false;
+        if (DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local) &&
+            calls_todo.size() == 0)
+          todo.push_back(F2);
       }
     }
 
