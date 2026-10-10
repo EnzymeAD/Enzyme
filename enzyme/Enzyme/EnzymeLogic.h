@@ -700,6 +700,18 @@ public:
 
   std::map<ForwardCacheKey, llvm::Function *> ForwardCachedFunctions;
 
+  /// How a pass of a checkpointed loop (a function with the
+  /// `enzyme_checkpoint_pass` attribute) was made, to differentiate it again.
+  struct CheckpointPass {
+    enum Kind { Augmented, Combined, Reverse } kind;
+    llvm::Function *loop;
+    std::vector<DIFFE_TYPE> constant_args;
+    FnTypeInfo typeInfo;
+    unsigned width;
+    bool runtimeActivity, strongZero, AtomicAdd;
+  };
+  std::map<llvm::Function *, CheckpointPass> CheckpointPasses;
+
   using BatchCacheKey = std::tuple<llvm::Function *, unsigned,
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;

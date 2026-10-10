@@ -98,7 +98,9 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; outlives it.
 ; CHECK: define internal void @diffestep(i64 %i, ptr {{.*}}%x, ptr {{.*}}%"x'")
 
-; CHECK: define internal ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
+; The schedule's arguments and the handle stay inactive when the pass is
+; differentiated again.
+; CHECK: define internal "enzyme_inactive" ptr @augmented_enzyme.ckpt.for.step(i64 "enzyme_inactive" %0, i64 "enzyme_inactive" %1, ptr "enzyme_inactive" %2, ptr "enzyme_inactive" %3, ptr %4, i64 "enzyme_inactive" %5, ptr %6, ptr %7) #[[PASSATTR:[0-9]+]]
 ; The step reads and writes all of what x points to.
 ; CHECK:   %handle = call ptr @__enzyme_ckpt_fwd(ptr %2, ptr %3, i64 %0, i64 %1, ptr %regions, i64 2, i64 %{{.*}}, ptr %env, ptr @enzyme.ckpt.primal.enzyme.ckpt.for.step.d, ptr @enzyme.ckpt.paths.step, i64 3, ptr null)
 ; CHECK-NEXT:   ret ptr %handle
@@ -107,7 +109,7 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK:   call void @step(i64 %1, ptr %{{.*}})
 
 ; The reverse pass takes the step's arguments from its own.
-; CHECK: define internal void @diffeenzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
+; CHECK: define internal void @diffeenzyme.ckpt.for.step(i64 "enzyme_inactive" %0, i64 "enzyme_inactive" %1, ptr "enzyme_inactive" %2, ptr "enzyme_inactive" %3, ptr %4, i64 "enzyme_inactive" %5, ptr %6, ptr %7) #[[PASSATTR]]
 ; CHECK:   %handle = call ptr @augmented_enzyme.ckpt.for.step(i64 %0, i64 %1, ptr %2, ptr %3, ptr %4, i64 %5, ptr %6, ptr %7)
 ; CHECK:   %env = alloca { ptr, ptr }
 ; CHECK:   store ptr %6, ptr
@@ -119,3 +121,4 @@ declare void @__enzyme_autodiff(ptr, ...)
 ; CHECK:   call void @diffestep(i64 %1, ptr %{{.*}}, ptr %{{.*}})
 
 ; CHECK: attributes #[[LOOPATTR]] = { noinline "enzyme_checkpoint"="for" "enzyme_checkpoint_nregions"="1" }
+; CHECK: attributes #[[PASSATTR]] = { noinline "enzyme_checkpoint_pass" }

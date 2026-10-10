@@ -4889,13 +4889,16 @@ Function *EnzymeLogic::CreateForwardDiff(
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   if (todiff->hasFnAttribute("enzyme_checkpoint_pass")) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Forward mode over the reverse pass of a checkpointed loop ("
-       << todiff->getName()
-       << ") is not supported yet; differentiate reverse over forward "
-          "instead";
-    EmitNoDerivativeError(ss.str(), todiff, context);
+    if (mode == DerivativeMode::ForwardModeSplit) {
+      EmitNoDerivativeError(
+          "Split forward mode over a pass of a checkpointed loop (" +
+              todiff->getName().str() + ") is not supported",
+          todiff, context);
+      return ForwardCachedFunctions[tup] = nullptr;
+    }
+    return ForwardCachedFunctions[tup] = createCheckpointForward(
+               *this, context, todiff, retType, constant_args, TA, returnUsed,
+               runtimeActivity, strongZero, width);
   }
 
   // TODO change this to go by default function type assumptions
@@ -7001,5 +7004,6 @@ void EnzymeLogic::clear() {
   ReverseCachedFunctions.clear();
   NoFreeCachedFunctions.clear();
   ForwardCachedFunctions.clear();
+  CheckpointPasses.clear();
   BatchCachedFunctions.clear();
 }
