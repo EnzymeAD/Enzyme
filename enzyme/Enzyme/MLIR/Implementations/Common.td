@@ -112,9 +112,8 @@ class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*
   string condition = condition_;
 }
 
-def SelectIfBothResultsActive : StaticSelect<
-  "!gutils->isConstantValue(op->getResult(0)) && "
-  "!gutils->isConstantValue(op->getResult(1))">;
+def SelectIfAllResultsActive : StaticSelect<
+  "mlir::enzyme::allResultsActive(op, gutils)">;
 
 class Inst<string mnemonic, string dialect_, string postop_="", string preop_="">  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;

@@ -40,9 +40,9 @@ def : MLIRDerivative<"math", "SincosOp", (Op $x),
                     [(AssertingInactiveArg)],
                     (ArrayRet
                       (MulF (Shadow $x),
-                            (SelectIfBothResultsActive (SincosCosF $x), (CosF $x))),
+                            (SelectIfAllResultsActive (SincosCosF $x), (CosF $x))),
                       (NegF (MulF (Shadow $x),
-                                  (SelectIfBothResultsActive (SincosSinF $x), (SinF $x)))))
+                                  (SelectIfAllResultsActive (SincosSinF $x), (SinF $x)))))
                   >;
 def : MLIRDerivative<"math", "SqrtOp", (Op $x),
                     [
