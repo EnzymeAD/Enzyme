@@ -13,6 +13,7 @@
 
 declare noalias nonnull ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10), i64) #0
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
+declare ptr addrspace(13) @julia.gc_loaded(ptr addrspace(10), ptr) #1
 
 define void @fill(ptr addrspace(11) nocapture readonly %x, i64 %n) {
 top:
@@ -183,7 +184,36 @@ top:
   ret ptr addrspace(10) %m
 }
 
+; As Julia 1.11+ emits it, the data pointer is rooted with julia.gc_loaded,
+; which takes the Memory only to keep it alive. Not returning the data keeps
+; the function fully read-only-or-throw; returning the rooted pointer does not.
+
+define void @fill_gc_loaded(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %rooted = call ptr addrspace(13) @julia.gc_loaded(ptr addrspace(10) %m, ptr %data)
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr addrspace(13) %rooted, align 8
+  ret void
+}
+
+define ptr addrspace(13) @fill_gc_loaded_ret(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %rooted = call ptr addrspace(13) @julia.gc_loaded(ptr addrspace(10) %m, ptr %data)
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr addrspace(13) %rooted, align 8
+  ret ptr addrspace(13) %rooted
+}
+
 attributes #0 = { "enzyme_ReadOnlyOrThrow" }
+attributes #1 = { nounwind memory(none) }
 
 !0 = !{}
 
@@ -199,5 +229,7 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK-SAME: {
 ; CHECK: define ptr @fill_ret_data({{.*}}) #[[LOCAL]] {
 ; CHECK: define ptr addrspace(10) @fill_ret_through_box({{.*}}) #[[LOCAL]] {
+; CHECK: define void @fill_gc_loaded({{.*}}) #[[FILL]] {
+; CHECK: define ptr addrspace(13) @fill_gc_loaded_ret({{.*}}) #[[LOCAL]] {
 ; CHECK-DAG: attributes #[[FILL]] = { {{.*}}"enzyme_ReadOnlyOrThrow"{{.*}} }
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
