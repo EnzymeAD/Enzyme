@@ -58,11 +58,66 @@ entry:
 }
 
 ; CHECK: define internal void @diffef(ptr %x, ptr %"x'", float %differeturn)
-; CHECK:   call void @diffesub(ptr %x, ptr %"x'", float %subcache)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %call_augmented = call { float, ptr } @augmented_sub(ptr %x, ptr %"x'")
+; CHECK-NEXT:   %subcache = extractvalue { float, ptr } %call_augmented, 0
+; CHECK-NEXT:   %"call'ac" = extractvalue { float, ptr } %call_augmented, 1
+; CHECK-NEXT:   %0 = load float, ptr %"call'ac", align 4
+; CHECK-NEXT:   %1 = fadd fast float %0, %differeturn
+; CHECK-NEXT:   store float %1, ptr %"call'ac", align 4
+; CHECK-NEXT:   call void @diffesub(ptr %x, ptr %"x'", float %subcache)
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+; CHECK: define internal float @augmented_square_into(ptr {{.*}}%dst, ptr {{.*}}%src, ptr {{.*}}%"src'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %v = load float, ptr %src, align 4
+; CHECK-NEXT:   %d = fmul float %v, %v
+; CHECK-NEXT:   store float %d, ptr %dst, align 4
+; CHECK-NEXT:   ret float %v
+; CHECK-NEXT: }
+
+; CHECK: define internal { float, ptr } @augmented_sub(ptr %x, ptr %"x'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = alloca { float, ptr }, align 8
+; CHECK-NEXT:   %malloccall = alloca float, i64 1, align 4
+; CHECK-NEXT:   %_augmented = call fast float @augmented_square_into(ptr %malloccall, ptr %x, ptr %"x'")
+; CHECK-NEXT:   store float %_augmented, ptr %0, align 4
+; CHECK-NEXT:   %1 = getelementptr inbounds { float, ptr }, ptr %0, i32 0, i32 1
+; CHECK-NEXT:   store ptr %"x'", ptr %1, align 8
+; CHECK-NEXT:   %2 = load { float, ptr }, ptr %0, align 8
+; CHECK-NEXT:   ret { float, ptr } %2
+; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffesub(ptr %x, ptr %"x'", float %tapeArg1)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @diffesquare_into(ptr {{(undef|poison)}}, ptr %x, ptr %"x'", float %tapeArg1)
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+; CHECK: define internal void @diffesquare_into(ptr {{.*}}%dst, ptr {{.*}}%src, ptr {{.*}}%"src'", float %v)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = load float, ptr %"src'", align 4
+; CHECK-NEXT:   store float %0, ptr %"src'", align 4
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffeh(ptr %x, ptr %"x'", float %differeturn)
-; CHECK:   call void @diffeid(ptr %x, ptr {{(undef|poison)}})
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %call_augmented = call ptr @augmented_id(ptr %x, ptr %"x'")
+; CHECK-NEXT:   %0 = load float, ptr %call_augmented, align 4
+; CHECK-NEXT:   %1 = fadd fast float %0, %differeturn
+; CHECK-NEXT:   store float %1, ptr %call_augmented, align 4
+; CHECK-NEXT:   call void @diffeid(ptr %x, ptr {{(undef|poison)}})
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+; CHECK: define internal ptr @augmented_id(ptr %x, ptr %"x'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   ret ptr %"x'"
+; CHECK-NEXT: }
+
+; CHECK: define internal void @diffeid(ptr %x, ptr %"x'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
