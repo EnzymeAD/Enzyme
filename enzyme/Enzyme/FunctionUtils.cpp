@@ -2356,15 +2356,17 @@ static bool mayHandBackPointer(CallBase *CB) {
   return !cannotHoldPointer(CB) || hasSRetRRootsOrUnionSRet(CB);
 }
 
-// Values that may be a pointer to written memory (false), or that point to
-// memory that may hold such a pointer (true).
-using EscapeWorklist = SmallVector<std::pair<Value *, bool>, 4>;
+// Values that may be a pointer to written memory (Holds false), or that point
+// to memory that may hold such a pointer (Holds true). With Deep, memory
+// reachable through pointers loaded from the value was written too.
+using EscapeEntry = std::tuple<Value *, bool, bool>;
+using EscapeWorklist = SmallVector<EscapeEntry, 4>;
 
 static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep) {
-  todo.emplace_back(V, false);
+  todo.emplace_back(V, false, Deep);
   // Memory reachable through pointers loaded from it was written too.
   if (Deep)
-    todo.emplace_back(V, true);
+    todo.emplace_back(V, true, Deep);
 }
 
 // Whether Obj, memory written within this function, may reach its return
@@ -2373,20 +2375,21 @@ static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep) {
 // too (e.g. by a callee that handed Obj to us), and counts as well. Ignore is
 // a use of Obj not to consider (e.g. the call that wrote it).
 //
-// Obj escaping in other ways does not matter: storing it into memory that
-// existed before the call is itself a write that disqualifies the function,
-// and storing it into another allocation makes that allocation hold it, which
-// is checked when that allocation is written to. Storing it into an alloca is
-// followed through what is loaded or copied from the alloca.
+// Storing a pointer to written memory into memory that existed before the
+// call hands it to the caller (or is a write that disqualifies the function
+// anyway). Storing it into memory of the function (an alloca, an allocation,
+// or data of one) makes that memory hold it, which is followed through what
+// is loaded or copied from that memory, and from any object owning it.
 static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
                            Instruction *Ignore = nullptr) {
   EscapeWorklist todo;
-  SmallSet<std::pair<Value *, bool>, 8> seen;
+  SmallSet<EscapeEntry, 8> seen;
   pushMayBePointer(todo, Obj, Deep);
   while (!todo.empty()) {
-    auto [V, Holds] = todo.pop_back_val();
-    if (!seen.insert(std::make_pair(V, Holds)).second)
+    auto Entry = todo.pop_back_val();
+    if (!seen.insert(Entry).second)
       continue;
+    auto [V, Holds, Deep] = Entry;
     for (auto U : V->users()) {
       auto I = dyn_cast<Instruction>(U);
       if (!I)
@@ -2402,13 +2405,13 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         continue;
       if (auto SI = dyn_cast<SelectInst>(I)) {
         if (SI->getCondition() != V)
-          todo.emplace_back(SI, Holds);
+          todo.emplace_back(SI, Holds, Deep);
         continue;
       }
       if (isPointerArithmeticInst(I, /*includephi*/ true,
                                   /*includebin*/ false) ||
           isa<InsertValueInst>(I) || isa<ExtractValueInst>(I)) {
-        todo.emplace_back(I, Holds);
+        todo.emplace_back(I, Holds, Deep);
         continue;
       }
       if (auto LI = dyn_cast<LoadInst>(I)) {
@@ -2423,8 +2426,20 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         if (Holds)
           return true;
         auto Dst = getBaseObject(SI->getPointerOperand());
-        if (isa<AllocaInst>(Dst))
-          todo.emplace_back(Dst, true);
+        if (isa<Argument>(Dst) || isa<GlobalValue>(Dst))
+          return true;
+        if (isa<AllocaInst>(Dst)) {
+          todo.emplace_back(Dst, true, Deep);
+          continue;
+        }
+        // Memory of ours now holds the pointer: anything loaded from it, or
+        // reached from an object whose fresh data it is, may be the pointer.
+        todo.emplace_back(Dst, true, /*Deep*/ true);
+        SmallVector<Value *, 2> owners;
+        if (isFreshData(Dst, TLI, owners))
+          for (auto owner : owners)
+            if (!isa<GlobalVariable>(owner))
+              todo.emplace_back(owner, true, /*Deep*/ true);
         continue;
       }
       if (auto MTI = dyn_cast<MemTransferInst>(I)) {
@@ -2432,7 +2447,7 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
           auto Dst = getBaseObject(MTI->getRawDest());
           if (!isa<AllocaInst>(Dst))
             return true;
-          todo.emplace_back(Dst, true);
+          todo.emplace_back(Dst, true, Deep);
         }
         continue;
       }
@@ -2465,7 +2480,7 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
       // cannot pass the pointer on.
       if (isPointerArithmeticInst(I, /*includephi*/ true,
                                   /*includebin*/ true)) {
-        todo.emplace_back(I, Holds);
+        todo.emplace_back(I, Holds, Deep);
         continue;
       }
       if (!I->mayWriteToMemory() && cannotHoldPointer(I))
