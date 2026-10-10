@@ -2546,6 +2546,9 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     if (local) {
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
     } else {
+      // A function is either local or fully read-only-or-throw, never both:
+      // an earlier run, e.g. on less optimized IR, may have marked it local.
+      F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
     addReadOnlyOrThrowAttributes(F, local);
