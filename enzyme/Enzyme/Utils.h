@@ -2318,9 +2318,9 @@ static inline llvm::Value *checkedDiv(bool strongZero,
 
 /// Bits of the integer value V that are zero by construction, whatever the
 /// values of its operands: the high bits of a zext and the low bits of a shl by
-/// a constant. The shadow of V is computed by the same zext or shl of the shadow
-/// of the operand, so these bits are zero in the shadow as well. Returns an
-/// empty mask otherwise.
+/// a constant. The shadow of V is computed by the same zext or shl of the
+/// shadow of the operand, so these bits are zero in the shadow as well. Returns
+/// an empty mask otherwise.
 static inline llvm::APInt structurallyZeroBits(const llvm::Value *V) {
   auto IT = llvm::dyn_cast<llvm::IntegerType>(V->getType());
   if (!IT)
