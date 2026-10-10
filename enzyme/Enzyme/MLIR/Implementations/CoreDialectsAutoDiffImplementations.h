@@ -331,6 +331,8 @@ void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
 mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);
 
+bool allResultsActive(Operation *op, const MGradientUtils *gutils);
+
 /// Give an operation built for a derivative the fast-math flags the LLVM path
 /// gives everything it builds (Utils.cpp's getFast()). A gradient is only as
 /// fast as the arithmetic it is allowed to reassociate, and one built without

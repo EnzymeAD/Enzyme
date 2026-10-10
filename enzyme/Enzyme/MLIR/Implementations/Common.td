@@ -94,6 +94,10 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
+class MultiReturn : Operation</*primal*/1, /*shadow*/0>;
+
+def ArrayRet : MultiReturn;
+
 class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow> {
   string value = val;
 }
@@ -107,6 +111,9 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
 class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*/0, /*usesCustom*/0> {
   string condition = condition_;
 }
+
+def SelectIfAllResultsActive : StaticSelect<
+  "mlir::enzyme::allResultsActive(op, gutils)">;
 
 class Inst<string mnemonic, string dialect_, string postop_="", string preop_="">  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
@@ -205,5 +212,7 @@ def LogF : MathInst<"LogOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def SincosSinF : Inst<"SincosOp", "math", ".getSin()">;
+def SincosCosF : Inst<"SincosOp", "math", ".getCos()">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
