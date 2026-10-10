@@ -12,6 +12,7 @@
 @other = external addrspace(10) global i8
 
 declare noalias nonnull ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10), i64) #0
+declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
 
 define void @fill(ptr addrspace(11) nocapture readonly %x, i64 %n) {
 top:
@@ -149,6 +150,39 @@ top:
   ret void
 }
 
+; The data is written through one load of the data field and returned through
+; another: any load of the field yields the written data.
+
+define ptr @fill_ret_data(ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data, align 8
+  %data2 = load ptr, ptr addrspace(11) %datap, align 8
+  ret ptr %data2
+}
+
+; The data pointer of the Memory is kept in an object of the function and
+; written through what is loaded back from it; the Memory is returned.
+
+define ptr addrspace(10) @fill_ret_through_box(ptr %task, ptr addrspace(11) nocapture readonly %x, i64 %n) {
+top:
+  %m = call ptr addrspace(10) @jl_alloc_genericmemory(ptr addrspace(10) @memty, i64 %n)
+  %mem11 = addrspacecast ptr addrspace(10) %m to ptr addrspace(11)
+  %datap = getelementptr inbounds i8, ptr addrspace(11) %mem11, i64 8
+  %data = load ptr, ptr addrspace(11) %datap, align 8
+  %box = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr %task, i64 8, ptr addrspace(10) null)
+  %box11 = addrspacecast ptr addrspace(10) %box to ptr addrspace(11)
+  store ptr %data, ptr addrspace(11) %box11, align 8
+  %data2 = load ptr, ptr addrspace(11) %box11, align 8
+  %xi = load double, ptr addrspace(11) %x, align 8
+  store double %xi, ptr %data2, align 8
+  ret ptr addrspace(10) %m
+}
+
 attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 
 !0 = !{}
@@ -163,5 +197,7 @@ attributes #0 = { "enzyme_ReadOnlyOrThrow" }
 ; CHECK: define void @fill_wrong_field(
 ; CHECK-NOT: #[[FILL]]
 ; CHECK-SAME: {
+; CHECK: define ptr @fill_ret_data({{.*}}) #[[LOCAL]] {
+; CHECK: define ptr addrspace(10) @fill_ret_through_box({{.*}}) #[[LOCAL]] {
 ; CHECK-DAG: attributes #[[FILL]] = { {{.*}}"enzyme_ReadOnlyOrThrow"{{.*}} }
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow"{{.*}} }
