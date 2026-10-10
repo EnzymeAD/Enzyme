@@ -2270,11 +2270,6 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
     for (auto &I : BB) {
       if (!I.mayWriteToMemory())
         continue;
-      if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
-        continue;
-      if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
-        continue;
-
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
