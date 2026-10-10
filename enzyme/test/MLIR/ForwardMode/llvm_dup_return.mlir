@@ -7,7 +7,7 @@ module {
     llvm.return %0 : f64
   }
   llvm.func @df(%x: f64, %dx: f64, %y: f64, %dy: f64) -> f64 {
-    %res = enzyme.fwddiff @f(%x, %dx, %y, %dy) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dup>] } : (f64, f64, f64, f64) -> !llvm.struct<(f64, f64)>
+    %res = enzyme.fwddiff @f(%x, %dx, %y, %dy) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dup>] }> : (f64, f64, f64, f64) -> !llvm.struct<(f64, f64)>
     %p = llvm.extractvalue %res[0] : !llvm.struct<(f64, f64)>
     %t = llvm.extractvalue %res[1] : !llvm.struct<(f64, f64)>
     %s = arith.addf %p, %t : f64
