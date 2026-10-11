@@ -1051,14 +1051,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
-        BuilderM.CreateStore(
+        auto SI = BuilderM.CreateStore(
             dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
+        if (align) {
+          Al->setAlignment(*align);
+          SI->setAlignment(*align);
+        }
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
         auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs, "gep.ptr");
-        dif = BuilderM.CreateLoad(addingType, difp, "gep.load");
+        auto LI = BuilderM.CreateLoad(addingType, difp, "gep.load");
+        LI->setAlignment(commonAlignment(Al->getAlign(), start));
+        dif = LI;
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -1075,9 +1081,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           IRBuilder<> A(inversionAllocs);
           auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
           BuilderM.CreateStore(dif, Al);
-          dif = BuilderM.CreateLoad(
+          auto LI = BuilderM.CreateLoad(
               addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
               "cast.load");
+          LI->setAlignment(Al->getAlign());
+          dif = LI;
         }
       }
       return dif;
