@@ -50,7 +50,7 @@ jobs:
       with:
         persist-credentials: false
         repository: 'Ringo-Leo/llvm-project'
-        ref: '018a9e4a74ba5d383351bda907a8b116bc5d8c47'
+        ref: 'f6fcdedcbf20eed4891ec4bd1709f5012cb7fae6'
         path: 'llvm-project'
 
     - name: Set BASE_DIR
