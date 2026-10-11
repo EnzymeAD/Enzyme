@@ -2674,15 +2674,11 @@ bool DetectReadonlyOrThrow(Module &M) {
   // prerequisite for being readonly. Inverse of `todo_map`
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
-  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
-
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
-      if (local)
-        LocalReadOnlyFunctions.insert(&F);
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2709,15 +2705,20 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        bool local = LocalReadOnlyFunctions.contains(F2);
-        if (local) {
-          F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        } else {
-          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        todo_map.erase(found2);
+        // Check F2 again now that all its callees are known to be read only or
+        // throw. The first check treated them as unknown, so it could not
+        // tell whether a callee that turned out to be only local makes F2
+        // local too (e.g. by passing its sret through), or rules it out
+        // (e.g. by passing an argument that is not its sret as the callee's).
+        SmallPtrSet<Function *, 1> calls_todo;
+        auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
+        bool local = false;
+        if (DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local) &&
+            calls_todo.size() == 0) {
+          changed = true;
+          todo.push_back(F2);
         }
-        addReadOnlyOrThrowAttributes(*F2, local);
-        todo.push_back(F2);
-        todo_map.erase(F2);
       }
     }
 
