@@ -81,6 +81,17 @@ def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "TanhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SubF (ConstantFP<"1.0","arith","ConstantOp"> $x), (MulF (TanhF $x):$t, $t)))
+                    ]
+                  >;
+def : MLIRDerivative<"math", "CbrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (DivF (CbrtF $x), (MulF (ConstantFP<"3.0","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
 def : MLIRDerivative<"math", "Log1pOp", (Op $x),
                     [
                       (CheckedDivF
