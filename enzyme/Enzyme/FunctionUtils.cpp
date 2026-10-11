@@ -2254,10 +2254,28 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
   return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
 }
 
-// returns if newly legal, subject to the pending calls
-bool DetectReadonlyOrThrowFn(llvm::Function &F,
-                             SmallPtrSetImpl<Function *> &calls_todo,
-                             llvm::TargetLibraryInfo &TLI, bool &local) {
+// Checks whether a function is read only or throw, and whether only locally
+// (see `enzyme_LocalReadOnlyOrThrow`). Calls to functions not yet known to be
+// read only or throw are collected in `calls_todo`, and the function is only
+// marked once there are none.
+class ReadOnlyOrThrowDetector {
+public:
+  ReadOnlyOrThrowDetector(llvm::Function &F,
+                          SmallPtrSetImpl<Function *> &calls_todo,
+                          llvm::TargetLibraryInfo &TLI, bool &local)
+      : F(F), calls_todo(calls_todo), TLI(TLI), local(local) {}
+
+  // Returns if newly legal, subject to the pending calls.
+  bool run();
+
+private:
+  llvm::Function &F;
+  SmallPtrSetImpl<Function *> &calls_todo;
+  llvm::TargetLibraryInfo &TLI;
+  bool &local;
+};
+
+bool ReadOnlyOrThrowDetector::run() {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
@@ -2678,7 +2696,7 @@ bool DetectReadonlyOrThrow(Module &M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
-    if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
+    if (ReadOnlyOrThrowDetector(F, calls_todo, TLI, local).run()) {
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2714,7 +2732,7 @@ bool DetectReadonlyOrThrow(Module &M) {
         SmallPtrSet<Function *, 1> calls_todo;
         auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
         bool local = false;
-        if (DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local) &&
+        if (ReadOnlyOrThrowDetector(*F2, calls_todo, TLI, local).run() &&
             calls_todo.size() == 0) {
           changed = true;
           todo.push_back(F2);
@@ -3778,8 +3796,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   {
     SmallPtrSet<Function *, 1> calls_todo;
     bool local = false;
-    DetectReadonlyOrThrowFn(*NewF, calls_todo,
-                            FAM.getResult<TargetLibraryAnalysis>(*NewF), local);
+    ReadOnlyOrThrowDetector(*NewF, calls_todo,
+                            FAM.getResult<TargetLibraryAnalysis>(*NewF), local)
+        .run();
   }
 
   if (EnzymePrint)
