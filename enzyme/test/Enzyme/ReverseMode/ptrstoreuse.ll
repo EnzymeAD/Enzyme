@@ -753,4 +753,7 @@ attributes #6 = { nounwind }
 !50 = !{!38, !7, i64 32}
 !51 = !{!38, !7, i64 16}
 
-; CHECK: define internal { double } @diffe_ZN5Eigen8internal29general_matrix_matrix_productIldLi0ELb0EdLi0ELb0ELi0EE3runElllPKdlS4_lPdldRNS0_15level3_blockingIddEEPNS0_16GemmParallelInfoIlEE(i64 %rows, i64 %cols, i64 %depth, double* %_lhs, double* %"_lhs'", i64 %lhsStride, double* nocapture readnone %_rhs, double* nocapture readnone %"_rhs'", i64 %rhsStride, double* nocapture readnone %_res, double* nocapture readnone %"_res'", i64 %resStride, double %alpha, %"class.Eigen::internal::level3_blocking"* nocapture readonly %blocking, %"class.Eigen::internal::level3_blocking"* nocapture %"blocking'", %"struct.Eigen::internal::GemmParallelInfo"* nocapture readnone %info, { i1, i1*, i1** } %tapeArg)
+; The blocking helpers only write on paths that throw, so the reverse pass
+; recomputes the loop guards from reloaded values instead of taping them; the
+; tape keeps the two promoted allocations and one block size.
+; CHECK: define internal { double } @diffe_ZN5Eigen8internal29general_matrix_matrix_productIldLi0ELb0EdLi0ELb0ELi0EE3runElllPKdlS4_lPdldRNS0_15level3_blockingIddEEPNS0_16GemmParallelInfoIlEE(i64 %rows, i64 %cols, i64 %depth, double* %_lhs, double* %"_lhs'", i64 %lhsStride, double* nocapture readnone %_rhs, double* nocapture readnone %"_rhs'", i64 %rhsStride, double* nocapture readnone %_res, double* nocapture readnone %"_res'", i64 %resStride, double %alpha, %"class.Eigen::internal::level3_blocking"* nocapture readonly %blocking, %"class.Eigen::internal::level3_blocking"* nocapture %"blocking'", %"struct.Eigen::internal::GemmParallelInfo"* nocapture readnone %info, { i8*, i8*, i64 } %tapeArg)

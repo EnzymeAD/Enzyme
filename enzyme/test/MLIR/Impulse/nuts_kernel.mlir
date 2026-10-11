@@ -5,7 +5,7 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
@@ -14,8 +14,8 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-        name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
+        name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -47,7 +47,7 @@ module {
 // CHECK: func.call @test.generate
 // CHECK: arith.negf
 // CHECK: enzyme.yield
-// CHECK: } attributes {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]}
+// CHECK: } <activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]>
 //
 // --- Sampling loop ---
 // CHECK: %[[SLOOP:.+]]:7 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>)
@@ -56,10 +56,10 @@ module {
 // CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %[[S_Q:.+]]: tensor<1x1xf64>, %[[S_GRAD:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x2xi1>, %{{.+}}: tensor<1xf64>):
 //
 // --- Momentum sampling ---
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK: impulse.random {{.*}} <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Kinetic energy ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 //
 // ============================================================
 // Main NUTS tree building loop (outer while)
@@ -74,7 +74,7 @@ module {
 // CHECK: } body {
 //
 // --- Direction sampling ---
-// CHECK: impulse.random {{.*}} {rng_distribution = #impulse.rng_distribution<UNIFORM>}
+// CHECK: impulse.random {{.*}} <rng_distribution = UNIFORM>
 // CHECK: arith.cmpf olt, {{.*}} : tensor<f64>
 // CHECK: impulse.randomSplit {{.*}} : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 //
@@ -106,7 +106,7 @@ module {
 // CHECK: arith.subf {{.*}} : tensor<1x1xf64>
 //
 // --- Kinetic energy ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 //
 // --- Delta energy and divergence check ---
 // CHECK: arith.subf {{.*}} : tensor<f64>
@@ -132,9 +132,9 @@ module {
 // CHECK: impulse.while({{.*}} : tensor<i64>, tensor<i1>) -> tensor<i64>, tensor<i1> condition {
 // CHECK: impulse.yield
 // CHECK: } body {
-// CHECK: impulse.dynamic_slice {{.*}} {slice_sizes = array<i64: 1, 1>}
+// CHECK: impulse.dynamic_slice {{.*}} <slice_sizes = [1, 1]>
 // --- Dynamic termination criterion ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 // CHECK: arith.cmpf ole, {{.*}} : tensor<f64>
 // CHECK: arith.ori {{.*}} : tensor<i1>
 // CHECK: impulse.yield
@@ -167,7 +167,7 @@ module {
 // CHECK: arith.addf {{.*}} : tensor<1x1xf64>
 // CHECK: arith.mulf {{.*}} : tensor<1x1xf64>
 // CHECK: arith.subf {{.*}} : tensor<1x1xf64>
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
 // CHECK: arith.cmpf ole, {{.*}} : tensor<f64>
 // CHECK: arith.ori {{.*}} : tensor<i1>
 //
@@ -198,6 +198,6 @@ module {
 // --- Generated function: test.generate ---
 // CHECK-LABEL: func.func @test.generate
 // CHECK-SAME: (%{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
-// CHECK: impulse.slice %{{.+}} {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>
+// CHECK: impulse.slice %{{.+}} <start_indices = [0, 0], limit_indices = [1, 1]
 // CHECK: call @logpdf
 // CHECK: return {{.*}} : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>

@@ -17,6 +17,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
@@ -126,13 +127,26 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
   return getConcatValue(builder, orig->getLoc(), batched);
 }
 
-Value getBaseObject(Value v) {
+Value getBaseObject(Value v, bool offsetAllowed) {
   while (Operation *def = v.getDefiningOp()) {
-    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
-      v = view.getViewSource();
-      continue;
-    }
+    // Handle LLVM operations before their generic view interfaces.
     if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
+      if (!offsetAllowed) {
+        bool isZero = true;
+        for (auto index : gep.getIndices()) {
+          if (auto attr = dyn_cast<IntegerAttr>(index))
+            isZero = attr.getValue().isZero();
+          else
+            isZero = matchPattern(cast<Value>(index), m_Zero());
+
+          if (!isZero)
+            break;
+        }
+
+        if (!isZero) {
+          break;
+        }
+      }
       v = gep.getBase();
       continue;
     }
@@ -142,6 +156,25 @@ Value getBaseObject(Value v) {
     }
     if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
       v = asc.getArg();
+      continue;
+    }
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      if (!offsetAllowed) {
+        if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+          if (!subview.hasZeroOffset())
+            break;
+        } else if (auto byteView = dyn_cast<memref::ViewOp>(def)) {
+          if (!matchPattern(byteView.getByteShift(), m_Zero()))
+            break;
+        } else if (!isa<memref::CastOp, memref::MemorySpaceCastOp,
+                        memref::ReshapeOp, memref::ExpandShapeOp,
+                        memref::CollapseShapeOp, memref::TransposeOp>(def)) {
+          // Other views can change the address. In particular, reinterpret_cast
+          // sets an absolute offset instead of adding to the source offset.
+          break;
+        }
+      }
+      v = view.getViewSource();
       continue;
     }
     break;
