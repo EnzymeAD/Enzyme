@@ -86,6 +86,13 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
   }
 }
 
+bool mlir::enzyme::allResultsActive(Operation *op,
+                                    const MGradientUtils *gutils) {
+  for (Value result : op->getResults())
+    if (gutils->isConstantValue(result))
+      return false;
+  return true;
+}
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
                                                    OpBuilder &builder,
                                                    MGradientUtils *gutils) {

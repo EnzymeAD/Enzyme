@@ -1753,7 +1753,23 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                            MGradientUtilsReverse *gutils,\n";
   os << "                            SmallVector<Value> caches) const {\n";
   os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
+  bool allInactive = true;
+  for (auto arg : *argOps) {
+    auto dag = dyn_cast<DagInit>(arg);
+    if (!dag) {
+      allInactive = false;
+      break;
+    }
+    auto def = dyn_cast<DefInit>(dag->getOperator());
+
+    if (!def || !def->getDef()->isSubClassOf("InactiveArgSpec")) {
+      allInactive = false;
+      break;
+    }
+  }
   os << "        mlir::Value dif = nullptr;\n";
+  if (allInactive)
+    os << "        (void)dif;\n";
 }
 
 static void emitReverseCommon(raw_ostream &os, const Record *pattern,
@@ -2193,7 +2209,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        getForwardBuilder(Builder2);\n";
     }
     // TODO
-
+    bool multiResult = false;
     if (duals->getOperator()->getAsString() ==
             "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
@@ -2201,6 +2217,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             ->isSubClassOf("ForwardFromSummedReverseInternal")) {
 
       if (intrinsic == MLIRDerivatives) {
+        for (auto arg : *argOps) {
+          auto dag = dyn_cast<DagInit>(arg);
+          if (!dag)
+            continue;
+          auto def = dyn_cast<DefInit>(dag->getOperator());
+          if (def && def->getDef()->isSubClassOf("MultiReturn"))
+            PrintFatalError(pattern->getLoc(),
+                            "ForwardFromSummedReverse does not support "
+                            "multiple results; use an explicit ArrayRet "
+                            "forward rule");
+        }
         os << "     mlir::Value res = nullptr;\n";
       } else {
         os << "        Value *res = "
@@ -2320,6 +2347,34 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         }
         os << "        }\n";
       }
+    } else if (intrinsic == MLIRDerivatives &&
+               isa<DefInit>(duals->getOperator()) &&
+               cast<DefInit>(duals->getOperator())
+                   ->getDef()
+                   ->isSubClassOf("MultiReturn")) {
+      multiResult = true;
+      os << "        assert(" << origName
+         << "->getNumResults() == " << duals->getNumArgs()
+         << " && \"ArrayRet needs one entry per result\");\n";
+      for (unsigned i = 0; i < duals->getNumArgs(); ++i) {
+        auto dag = dyn_cast<DagInit>(duals->getArg(i));
+        if (dag && dag->getOperator()->getAsString() == "InactiveArg")
+          continue;
+        os << "        if (!gutils->isConstantValue(" << origName
+           << "->getResult(" << i << "))) {\n";
+        os << "          mlir::Value res = ";
+        ArrayRef<unsigned> retidx{};
+        bool vectorValued =
+            handle("          ", "fwdnsrarg" + std::to_string(i), os, pattern,
+                   duals->getArg(i), "builder", nameToOrdinal, /*lookup*/ false,
+                   retidx, origName, /*newFromOriginal*/ true, intrinsic);
+        (void)vectorValued;
+        assert(vectorValued);
+        os << ";\n";
+        os << "          gutils->setDiffe(" << origName << "->getResult(" << i
+           << "), res, builder);\n";
+        os << "        }\n";
+      }
     } else {
 
       if (intrinsic == MLIRDerivatives) {
@@ -2337,10 +2392,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       assert(vectorValued);
       os << ";\n";
     }
-    os << "        assert(res);\n";
+    if (!multiResult)
+      os << "        assert(res);\n";
     if (intrinsic == MLIRDerivatives) {
-      os << "        gutils->setDiffe(" << origName
-         << "->getResult(0), res, builder);\n";
+      if (!multiResult) {
+        os << "        gutils->setDiffe(" << origName
+           << "->getResult(0), res, builder);\n";
+      }
       os << "        return success();\n";
     } else {
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
