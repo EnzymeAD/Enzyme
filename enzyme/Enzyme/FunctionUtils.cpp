@@ -2579,7 +2579,11 @@ static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
   auto &DL = cast<Instruction>(Base)->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   auto overlaps = [&](std::optional<int64_t> off, uint64_t size) {
-    return !off || (*off<Field + fieldSize && * off + (int64_t)size> Field);
+    if (!off)
+      return true;
+    int64_t start = *off;
+    int64_t end = start + (int64_t)size;
+    return start < Field + fieldSize && end > Field;
   };
   // Pointers derived from Base, with their offset from it if constant.
   SmallVector<std::pair<Value *, std::optional<int64_t>>, 4> todo;
