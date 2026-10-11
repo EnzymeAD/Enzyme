@@ -2026,18 +2026,107 @@ public:
   ReadOnlyOrThrowDetector(llvm::Function &F,
                           SmallPtrSetImpl<Function *> &calls_todo,
                           llvm::TargetLibraryInfo &TLI, bool &local)
-      : F(F), calls_todo(calls_todo), TLI(TLI), local(local) {}
+      : F(F), calls_todo(calls_todo), TLI(TLI), local(local),
+        canHandBack(!cannotHandBackPointer(F)) {}
 
   // Returns if newly legal, subject to the pending calls.
   bool run();
 
 private:
+  using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
+  // Objects with the offset of a field of theirs holding fresh data.
+  using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
+  using Fields = SmallVector<std::pair<Value *, int64_t>, 2>;
+  // Values that may be a pointer to written memory (Holds false), or that point
+  // to memory that may hold such a pointer (Holds true). With Deep, memory
+  // reachable through pointers loaded from the value was written too.
+  using EscapeEntry = std::tuple<Value *, bool, bool>;
+  using EscapeWorklist = SmallVector<EscapeEntry, 4>;
+
   llvm::Function &F;
   SmallPtrSetImpl<Function *> &calls_todo;
   llvm::TargetLibraryInfo &TLI;
   bool &local;
+  const bool canHandBack;
+
+  // The escape queries are cached per written object, as a function often
+  // writes the same object many times.
+  std::map<std::tuple<Value *, bool, Instruction *>, bool> reachCache;
+  std::map<Value *, std::optional<Fields>> freshCache;
+  std::map<std::pair<Value *, int64_t>, bool> fieldCache;
+
+  // Whether F is local only matters once all its callees are known: with a
+  // callee pending, F is checked again later, so the escape queries deciding
+  // it are skipped. They are also skipped if F cannot hand back a pointer at
+  // all.
+  bool needLocal() const { return canHandBack && !local && calls_todo.empty(); }
+
+  // Whether Obj may reach the return value (see mayReachReturn).
+  bool reaches(Value *Obj, bool Deep, Instruction *Ignore = nullptr) {
+    auto key = std::make_tuple(Obj, Deep, Ignore);
+    auto found = reachCache.find(key);
+    if (found != reachCache.end())
+      return found->second;
+    bool res = mayReachReturn(Obj, Deep, Ignore);
+    reachCache[key] = res;
+    return res;
+  }
+
+  // For written data that is fresh (see isFreshData), the fields holding it;
+  // null if it is not fresh.
+  const Fields *freshFields(Value *Obj) {
+    auto found = freshCache.find(Obj);
+    if (found == freshCache.end()) {
+      Fields bases;
+      std::optional<Fields> entry;
+      if (isFreshData(Obj, bases))
+        entry = std::move(bases);
+      found = freshCache.emplace(Obj, std::move(entry)).first;
+    }
+    return found->second ? &*found->second : nullptr;
+  }
+
+  // Whether written fresh data Obj, held in fields, may reach the return
+  // value: by itself, or through one of those fields.
+  bool freshReaches(Value *Obj, const Fields &fields) {
+    if (reaches(Obj, /*Deep*/ false))
+      return true;
+    for (auto field : fields) {
+      auto found = fieldCache.find(field);
+      if (found == fieldCache.end())
+        found = fieldCache
+                    .emplace(field, freshFieldMayReachReturn(field.first,
+                                                             field.second))
+                    .first;
+      if (found->second)
+        return true;
+    }
+    return false;
+  }
 
   void addReadOnlyOrThrowAttributes();
+  static bool isJuliaMemoryAllocation(Value *V);
+  static bool isJuliaArrayAllocation(Value *V);
+  bool allocatorLeavesFieldsUninitialized(CallBase *CB);
+  bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
+                               FreshFieldSet &seen, FreshFields *bases);
+  bool isFreshField(Value *V, int64_t Field, FreshFieldSet &seen,
+                    FreshFields *bases);
+  bool isFreshData(Value *Obj, FreshFieldSet &seen, FreshFields *bases);
+  bool isFreshData(Value *Obj, FreshFields &bases);
+  static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
+                                      const DataLayout &DL);
+  static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
+                                        const DataLayout &DL);
+  static bool typeCannotHoldPointer(Type *T, const DataLayout &DL);
+  static bool cannotHoldPointer(Value *V);
+  static bool returnCannotHoldPointer(ReturnInst *RI);
+  static bool cannotHandBackPointer(Function &F);
+  static bool hasSRetLikeArgument(CallBase *CB);
+  static bool mayHandBackPointer(CallBase *CB);
+  static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep);
+  bool mayReachReturn(Value *Obj, bool Deep, Instruction *Ignore = nullptr);
+  bool freshFieldMayReachReturn(Value *Base, int64_t Field);
 };
 
 // Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
@@ -2101,7 +2190,7 @@ void ReadOnlyOrThrowDetector::addReadOnlyOrThrowAttributes() {
 // Whether V is allocated by Julia's allocator of Memory objects, or of arrays
 // on Julia 1.10. These are recognized by name, as Enzyme.jl may not have
 // registered them as allocation functions.
-static bool isJuliaMemoryAllocation(Value *V) {
+bool ReadOnlyOrThrowDetector::isJuliaMemoryAllocation(Value *V) {
   auto CB = dyn_cast<CallBase>(V);
   if (!CB)
     return false;
@@ -2111,7 +2200,7 @@ static bool isJuliaMemoryAllocation(Value *V) {
          name == "jl_alloc_genericmemory_unchecked" ||
          name == "ijl_alloc_genericmemory_unchecked";
 }
-static bool isJuliaArrayAllocation(Value *V) {
+bool ReadOnlyOrThrowDetector::isJuliaArrayAllocation(Value *V) {
   auto CB = dyn_cast<CallBase>(V);
   if (!CB)
     return false;
@@ -2128,8 +2217,7 @@ static bool isJuliaArrayAllocation(Value *V) {
 // sets a metadata pointer, custom enzyme_allocator and registered allocation
 // handlers may do anything) do not qualify, as a field may then point to
 // memory that existed before the call.
-static bool allocatorLeavesFieldsUninitialized(CallBase *CB,
-                                               TargetLibraryInfo &TLI) {
+bool ReadOnlyOrThrowDetector::allocatorLeavesFieldsUninitialized(CallBase *CB) {
   auto name = getFuncNameFromCall(CB);
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
@@ -2143,13 +2231,6 @@ static bool allocatorLeavesFieldsUninitialized(CallBase *CB,
   return isAllocationFunction(name, TLI);
 }
 
-using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
-// Objects with the offset of a field of theirs holding fresh data.
-using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
-
-static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
-                        FreshFields *bases);
-
 // Whether the field at offset Field of Obj, an object allocated in its
 // function, only ever holds fresh data (see isFreshData) while the function
 // runs. Every write to the field must store such data (or null, through which
@@ -2157,9 +2238,10 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
 // call that may capture or write through it, so that no other code can write
 // the field. Returning Obj is fine: the field may then change only after the
 // function returns.
-static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
-                                    TargetLibraryInfo &TLI, FreshFieldSet &seen,
-                                    FreshFields *bases) {
+bool ReadOnlyOrThrowDetector::fieldOnlyHoldsFreshData(Instruction *Obj,
+                                                      int64_t Field,
+                                                      FreshFieldSet &seen,
+                                                      FreshFields *bases) {
   auto &DL = Obj->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   // Pointers derived from Obj, with their offset from it if constant.
@@ -2213,7 +2295,7 @@ static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
         auto val = getBaseObject(SI->getValueOperand());
         if (isa<ConstantPointerNull>(val) || isa<UndefValue>(val))
           continue;
-        if (!isFreshData(val, TLI, seen, bases))
+        if (!isFreshData(val, seen, bases))
           return false;
         continue;
       }
@@ -2264,8 +2346,9 @@ static bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
 //    allocatorLeavesFieldsUninitialized), provided that every write to the
 //    field in the function sets it to fresh data (see
 //    fieldOnlyHoldsFreshData).
-static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
-                         FreshFieldSet &seen, FreshFields *bases) {
+bool ReadOnlyOrThrowDetector::isFreshField(Value *V, int64_t Field,
+                                           FreshFieldSet &seen,
+                                           FreshFields *bases) {
   // A field we are already checking, reached again through a store to such a
   // field: it holds fresh data if everything else does.
   if (!seen.insert(std::make_pair(V, Field)).second)
@@ -2281,11 +2364,11 @@ static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
   if (isJuliaMemoryAllocation(V))
     return Field == I->getModule()->getDataLayout().getPointerSize();
   if (isJuliaArrayAllocation(V))
-    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
+    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, seen, bases);
   // Other allocators may leave the fields uninitialized.
   if (isAllocationCall(V, TLI) &&
-      allocatorLeavesFieldsUninitialized(cast<CallBase>(V), TLI))
-    return fieldOnlyHoldsFreshData(I, Field, TLI, seen, bases);
+      allocatorLeavesFieldsUninitialized(cast<CallBase>(V)))
+    return fieldOnlyHoldsFreshData(I, Field, seen, bases);
   return false;
 }
 
@@ -2295,8 +2378,8 @@ static bool isFreshField(Value *V, int64_t Field, TargetLibraryInfo &TLI,
 // objects. If so, appends those objects with the field's offset to bases,
 // along with the objects whose fields the fresh data stored into those fields
 // was itself loaded from.
-static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
-                        FreshFields *bases) {
+bool ReadOnlyOrThrowDetector::isFreshData(Value *Obj, FreshFieldSet &seen,
+                                          FreshFields *bases) {
   if (!EnzymeJuliaAddrLoad)
     return false;
   auto LI = dyn_cast<LoadInst>(Obj);
@@ -2310,7 +2393,7 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
   if (offset.isNegative())
     return false;
   for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
-    if (!isFreshField(base, offset.getSExtValue(), TLI, seen, bases))
+    if (!isFreshField(base, offset.getSExtValue(), seen, bases))
       return false;
     if (bases)
       bases->emplace_back(base, offset.getSExtValue());
@@ -2318,16 +2401,16 @@ static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI, FreshFieldSet &seen,
   return true;
 }
 
-static bool isFreshData(Value *Obj, TargetLibraryInfo &TLI,
-                        FreshFields &bases) {
+bool ReadOnlyOrThrowDetector::isFreshData(Value *Obj, FreshFields &bases) {
   FreshFieldSet seen;
-  return isFreshData(Obj, TLI, seen, &bases);
+  return isFreshData(Obj, seen, &bases);
 }
 
 // Whether type info TT for a value of type T says every byte of it is an
 // integer or a float, so that it cannot be or hold a pointer.
-static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
-                                    const DataLayout &DL) {
+bool ReadOnlyOrThrowDetector::typeTreeRulesOutPointer(const TypeTree &TT,
+                                                      Type *T,
+                                                      const DataLayout &DL) {
   if (T->isVoidTy() || T->isTokenTy())
     return true;
   for (int i = 0, size = DL.getTypeStoreSize(T); i < size; ++i) {
@@ -2338,8 +2421,8 @@ static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
   return true;
 }
 
-static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
-                                      const DataLayout &DL) {
+bool ReadOnlyOrThrowDetector::enzymeTypeRulesOutPointer(Attribute attr, Type *T,
+                                                        const DataLayout &DL) {
   return attr.isValid() &&
          typeTreeRulesOutPointer(
              TypeTree::parse(attr.getValueAsString(), T->getContext()), T, DL);
@@ -2348,7 +2431,8 @@ static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
 // Whether a value of type T cannot be or hold a pointer: void and token
 // values, floating-point values, and integers narrower than a pointer.
 // Integers as wide as a pointer can hold one (ptrtoint, Julia's Ptr).
-static bool typeCannotHoldPointer(Type *T, const DataLayout &DL) {
+bool ReadOnlyOrThrowDetector::typeCannotHoldPointer(Type *T,
+                                                    const DataLayout &DL) {
   if (T->isVoidTy() || T->isTokenTy())
     return true;
   if (T->isFPOrFPVectorTy())
@@ -2360,7 +2444,7 @@ static bool typeCannotHoldPointer(Type *T, const DataLayout &DL) {
 
 // Whether value V cannot be or hold a pointer by its type, or by the
 // enzyme_type info given for it.
-static bool cannotHoldPointer(Value *V) {
+bool ReadOnlyOrThrowDetector::cannotHoldPointer(Value *V) {
   auto T = V->getType();
   if (T->isVoidTy() || T->isTokenTy())
     return true;
@@ -2391,7 +2475,7 @@ static bool cannotHoldPointer(Value *V) {
 
 // Whether returning V from its function cannot return a pointer, by the
 // enzyme_type info given for V or for the function's return value.
-static bool returnCannotHoldPointer(ReturnInst *RI) {
+bool ReadOnlyOrThrowDetector::returnCannotHoldPointer(ReturnInst *RI) {
   auto V = RI->getReturnValue();
   if (!V || cannotHoldPointer(V))
     return true;
@@ -2406,7 +2490,7 @@ static bool returnCannotHoldPointer(ReturnInst *RI) {
 // cannot hold one, by its type or enzyme_type info, and it has no sret-like
 // argument (sret, returnRoots or sret_union_bytes). Then no memory it writes
 // can reach its caller other than by a write that disqualifies it anyway.
-static bool cannotHandBackPointer(Function &F) {
+bool ReadOnlyOrThrowDetector::cannotHandBackPointer(Function &F) {
   auto T = F.getReturnType();
   auto &DL = F.getParent()->getDataLayout();
   if (!T->isVoidTy() && !typeCannotHoldPointer(T, DL) &&
@@ -2428,7 +2512,7 @@ static bool cannotHandBackPointer(Function &F) {
 
 // Whether call CB has an sret-like argument (sret, returnRoots or
 // sret_union_bytes), marked on the call or on the called function.
-static bool hasSRetLikeArgument(CallBase *CB) {
+bool ReadOnlyOrThrowDetector::hasSRetLikeArgument(CallBase *CB) {
   if (hasSRetRRootsOrUnionSRet(CB))
     return true;
   auto F = getFunctionFromCall(CB);
@@ -2450,17 +2534,12 @@ static bool hasSRetLikeArgument(CallBase *CB) {
 
 // Whether call CB may hand a pointer back to its caller, through its result or
 // an sret-like argument.
-static bool mayHandBackPointer(CallBase *CB) {
+bool ReadOnlyOrThrowDetector::mayHandBackPointer(CallBase *CB) {
   return !cannotHoldPointer(CB) || hasSRetLikeArgument(CB);
 }
 
-// Values that may be a pointer to written memory (Holds false), or that point
-// to memory that may hold such a pointer (Holds true). With Deep, memory
-// reachable through pointers loaded from the value was written too.
-using EscapeEntry = std::tuple<Value *, bool, bool>;
-using EscapeWorklist = SmallVector<EscapeEntry, 4>;
-
-static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep) {
+void ReadOnlyOrThrowDetector::pushMayBePointer(EscapeWorklist &todo, Value *V,
+                                               bool Deep) {
   todo.emplace_back(V, false, Deep);
   // Memory reachable through pointers loaded from it was written too.
   if (Deep)
@@ -2478,8 +2557,8 @@ static void pushMayBePointer(EscapeWorklist &todo, Value *V, bool Deep) {
 // anyway). Storing it into memory of the function (an alloca, an allocation,
 // or data of one) makes that memory hold it, which is followed through what
 // is loaded or copied from that memory, and from any object owning it.
-static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
-                           Instruction *Ignore = nullptr) {
+bool ReadOnlyOrThrowDetector::mayReachReturn(Value *Obj, bool Deep,
+                                             Instruction *Ignore) {
   EscapeWorklist todo;
   SmallSet<EscapeEntry, 8> seen;
   pushMayBePointer(todo, Obj, Deep);
@@ -2534,7 +2613,7 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
         // reached from an object whose fresh data it is, may be the pointer.
         todo.emplace_back(Dst, true, /*Deep*/ true);
         SmallVector<std::pair<Value *, int64_t>, 2> owners;
-        if (isFreshData(Dst, TLI, owners))
+        if (isFreshData(Dst, owners))
           for (auto owner : owners)
             if (!isa<GlobalVariable>(owner.first))
               todo.emplace_back(owner.first, true, /*Deep*/ true);
@@ -2594,11 +2673,11 @@ static bool mayReachReturn(Value *Obj, TargetLibraryInfo &TLI, bool Deep,
 // reach the function's return value: with Base itself, or through a load of
 // that field (any load of it yields the written data), a copy of it, or a call
 // that may hand back what it loads from Base.
-static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
-                                     TargetLibraryInfo &TLI) {
+bool ReadOnlyOrThrowDetector::freshFieldMayReachReturn(Value *Base,
+                                                       int64_t Field) {
   if (isa<GlobalVariable>(Base))
     return false;
-  if (mayReachReturn(Base, TLI, /*Deep*/ false))
+  if (mayReachReturn(Base, /*Deep*/ false))
     return true;
   auto &DL = cast<Instruction>(Base)->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
@@ -2623,7 +2702,7 @@ static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
         return true;
       if (auto LI = dyn_cast<LoadInst>(I)) {
         if (overlaps(off, DL.getTypeStoreSize(LI->getType())) &&
-            !cannotHoldPointer(LI) && mayReachReturn(LI, TLI, /*Deep*/ false))
+            !cannotHoldPointer(LI) && mayReachReturn(LI, /*Deep*/ false))
           return true;
         continue;
       }
@@ -2678,66 +2757,11 @@ static bool freshFieldMayReachReturn(Value *Base, int64_t Field,
   return false;
 }
 
-
 bool ReadOnlyOrThrowDetector::run() {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
     return false;
-
-  // Whether F is local only matters once all its callees are known: with a
-  // callee pending, F is checked again later, so the escape queries deciding
-  // it are skipped. They are also skipped if F cannot hand back a pointer at
-  // all. They are cached per written object, as a function often writes the
-  // same object many times.
-  const bool canHandBack = !cannotHandBackPointer(F);
-  auto needLocal = [&]() {
-    return canHandBack && !local && calls_todo.empty();
-  };
-  std::map<std::tuple<Value *, bool, Instruction *>, bool> reachCache;
-  auto reaches = [&](Value *Obj, bool Deep,
-                     Instruction *Ignore = nullptr) -> bool {
-    auto key = std::make_tuple(Obj, Deep, Ignore);
-    auto found = reachCache.find(key);
-    if (found != reachCache.end())
-      return found->second;
-    bool res = mayReachReturn(Obj, TLI, Deep, Ignore);
-    reachCache[key] = res;
-    return res;
-  };
-  // For written data that is fresh (see isFreshData), the fields holding it.
-  std::map<Value *, std::optional<SmallVector<std::pair<Value *, int64_t>, 2>>>
-      freshCache;
-  auto freshFields =
-      [&](Value *Obj) -> const SmallVector<std::pair<Value *, int64_t>, 2> * {
-    auto found = freshCache.find(Obj);
-    if (found == freshCache.end()) {
-      SmallVector<std::pair<Value *, int64_t>, 2> bases;
-      std::optional<SmallVector<std::pair<Value *, int64_t>, 2>> entry;
-      if (isFreshData(Obj, TLI, bases))
-        entry = std::move(bases);
-      found = freshCache.emplace(Obj, std::move(entry)).first;
-    }
-    return found->second ? &*found->second : nullptr;
-  };
-  std::map<std::pair<Value *, int64_t>, bool> fieldCache;
-  auto freshReaches =
-      [&](Value *Obj,
-          const SmallVector<std::pair<Value *, int64_t>, 2> &fields) -> bool {
-    if (reaches(Obj, /*Deep*/ false))
-      return true;
-    for (auto field : fields) {
-      auto found = fieldCache.find(field);
-      if (found == fieldCache.end())
-        found = fieldCache
-                    .emplace(field, freshFieldMayReachReturn(field.first,
-                                                             field.second, TLI))
-                    .first;
-      if (found->second)
-        return true;
-    }
-    return false;
-  };
 
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
