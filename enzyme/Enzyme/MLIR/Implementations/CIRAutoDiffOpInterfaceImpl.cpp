@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -465,6 +466,54 @@ struct CIRLifetimeForward
   }
 };
 
+static bool cirIsZeroInt(Value v) {
+  if (auto c = v.getDefiningOp<cir::ConstantOp>())
+    if (auto ia = dyn_cast<cir::IntAttr>(c.getValue()))
+      return ia.getValue().isZero();
+  return false;
+}
+
+static bool cirZeroOffset(cir::GetElementOp op) {
+  return cirIsZeroInt(op.getIndex());
+}
+static bool cirZeroOffset(cir::PtrStrideOp op) {
+  return cirIsZeroInt(op.getStride());
+}
+
+static bool cirZeroOffset(cir::GetMemberOp op) { return op.getIndex() == 0; }
+static bool cirZeroOffset(cir::BaseClassAddrOp op) {
+  return op.getOffset().isZero();
+}
+static bool cirZeroOffset(cir::DerivedClassAddrOp op) {
+  return op.getOffset().isZero();
+}
+static bool cirZeroOffset(cir::ComplexRealPtrOp) { return true; }
+static bool cirZeroOffset(cir::ComplexImagPtrOp) { return false; }
+static bool cirZeroOffset(cir::PtrMaskOp) { return false; }
+static bool cirZeroOffset(cir::GetRuntimeMemberOp) { return false; }
+static bool cirZeroOffset(cir::CastOp op) {
+  return isPointerCast(op.getKind());
+}
+
+template <typename OpTy>
+struct CIRAddressView
+    : public ViewLikeOpInterface::ExternalModel<CIRAddressView<OpTy>, OpTy> {
+  Value getViewSource(Operation *op) const { return op->getOperand(0); }
+};
+
+template <typename OpTy>
+struct CIRAddressOffset
+    : public OffsetViewInterface::ExternalModel<CIRAddressOffset<OpTy>, OpTy> {
+  bool isZeroOffset(Operation *op) const {
+    return cirZeroOffset(cast<OpTy>(op));
+  }
+};
+
+template <typename OpTy> static void registerCIRAddressView(MLIRContext &ctx) {
+  OpTy::template attachInterface<CIRAddressView<OpTy>>(ctx);
+  OpTy::template attachInterface<CIRAddressOffset<OpTy>>(ctx);
+}
+
 struct CIRReturnOpFunctionReturnInterface
     : public FunctionReturnOpInterface::ExternalModel<
           CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
@@ -490,6 +539,17 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     // activity tables alone do not cover.
     cir::UnreachableOp::attachInterface<
         detail::NoopRevAutoDiffInterface<cir::UnreachableOp>>(*context);
+    registerCIRAddressView<cir::GetElementOp>(*context);
+    registerCIRAddressView<cir::GetMemberOp>(*context);
+    registerCIRAddressView<cir::PtrStrideOp>(*context);
+    registerCIRAddressView<cir::BaseClassAddrOp>(*context);
+    registerCIRAddressView<cir::DerivedClassAddrOp>(*context);
+    registerCIRAddressView<cir::ComplexRealPtrOp>(*context);
+    registerCIRAddressView<cir::ComplexImagPtrOp>(*context);
+    registerCIRAddressView<cir::PtrMaskOp>(*context);
+    registerCIRAddressView<cir::GetRuntimeMemberOp>(*context);
+    // TODO: it might be wrong as CastOp create new View.
+    registerCIRAddressView<cir::CastOp>(*context);
     cir::PtrStrideOp::attachInterface<
         CIRPointerArithmeticReverse<cir::PtrStrideOp>>(*context);
     cir::GetMemberOp::attachInterface<
