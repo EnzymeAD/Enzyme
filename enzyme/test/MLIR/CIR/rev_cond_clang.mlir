@@ -30,7 +30,7 @@ module {
     cir.return %12 : !cir.double
   }
   cir.func @dcond(%x: !cir.double, %dr: !cir.double) -> !cir.double {
-    %r = enzyme.autodiff @cond(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.double, !cir.double) -> !cir.double
+    %r = enzyme.autodiff @cond(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.double, !cir.double) -> !cir.double
     cir.return %r : !cir.double
   }
 }

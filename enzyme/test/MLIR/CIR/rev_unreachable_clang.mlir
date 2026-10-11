@@ -49,7 +49,7 @@ module {
     cir.unreachable
   }
   cir.func @rev(%x: !cir.double, %y: !cir.double, %dr: !cir.double) -> !rec {
-    %res = enzyme.autodiff @poly(%x, %y, %dr) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.double, !cir.double, !cir.double) -> !rec
+    %res = enzyme.autodiff @poly(%x, %y, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.double, !cir.double, !cir.double) -> !rec
     cir.return %res : !rec
   }
 }

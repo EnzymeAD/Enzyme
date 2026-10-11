@@ -8,7 +8,7 @@ module {
     cir.return %0 : !cir.double
   }
   cir.func @df(%x: !cir.double, %dx: !cir.double, %y: !cir.double, %dy: !cir.double) -> !cir.double {
-    %res = enzyme.fwddiff @f(%x, %dx, %y, %dy) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dup>] } : (!cir.double, !cir.double, !cir.double, !cir.double) -> !rec
+    %res = enzyme.fwddiff @f(%x, %dx, %y, %dy) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dup>] }> : (!cir.double, !cir.double, !cir.double, !cir.double) -> !rec
     %p = cir.extract_member %res[0] : !rec -> !cir.double
     %t = cir.extract_member %res[1] : !rec -> !cir.double
     %s = cir.fadd %p, %t : !cir.double

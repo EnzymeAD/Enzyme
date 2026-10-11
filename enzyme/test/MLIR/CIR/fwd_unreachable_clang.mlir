@@ -44,7 +44,7 @@ module {
     cir.unreachable
   }
   cir.func @fwd(%x: !cir.double, %dx: !cir.double, %y: !cir.double, %dy: !cir.double) -> !cir.double {
-    %r = enzyme.fwddiff @poly(%x, %dx, %y, %dy) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (!cir.double, !cir.double, !cir.double, !cir.double) -> !cir.double
+    %r = enzyme.fwddiff @poly(%x, %dx, %y, %dy) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!cir.double, !cir.double, !cir.double, !cir.double) -> !cir.double
     cir.return %r : !cir.double
   }
 }

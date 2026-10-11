@@ -22,7 +22,7 @@ module {
     cir.return %9 : !cir.float
   }
   cir.func @dcastf(%x: !cir.float, %dr: !cir.float) -> !cir.float {
-    %r = enzyme.autodiff @castf(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.float, !cir.float) -> !cir.float
+    %r = enzyme.autodiff @castf(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.float, !cir.float) -> !cir.float
     cir.return %r : !cir.float
   }
 }

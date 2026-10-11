@@ -50,7 +50,7 @@ module {
     cir.return %25 : !cir.double
   }
   cir.func @dloop(%a: !cir.ptr<!cir.double>, %da: !cir.ptr<!cir.double>, %n: !s32i, %dr: !cir.double) {
-    enzyme.autodiff @loop(%a, %da, %n, %dr) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.ptr<!cir.double>, !cir.ptr<!cir.double>, !s32i, !cir.double) -> ()
+    enzyme.autodiff @loop(%a, %da, %n, %dr) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.ptr<!cir.double>, !cir.ptr<!cir.double>, !s32i, !cir.double) -> ()
     cir.return
   }
 }

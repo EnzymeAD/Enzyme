@@ -37,7 +37,7 @@ module {
     cir.return %19 : !cir.double
   }
   cir.func @dnorm2(%x: !cir.double, %dx: !cir.double, %y: !cir.double, %dy: !cir.double) -> !cir.double {
-    %r = enzyme.fwddiff @norm2(%x, %dx, %y, %dy) { activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (!cir.double, !cir.double, !cir.double, !cir.double) -> !cir.double
+    %r = enzyme.fwddiff @norm2(%x, %dx, %y, %dy) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!cir.double, !cir.double, !cir.double, !cir.double) -> !cir.double
     cir.return %r : !cir.double
   }
 }
