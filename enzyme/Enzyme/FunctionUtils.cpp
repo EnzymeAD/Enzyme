@@ -2402,6 +2402,30 @@ static bool returnCannotHoldPointer(ReturnInst *RI) {
       V->getType(), F->getParent()->getDataLayout());
 }
 
+// Whether F cannot hand a pointer back to its caller at all: its return value
+// cannot hold one, by its type or enzyme_type info, and it has no sret-like
+// argument (sret, returnRoots or sret_union_bytes). Then no memory it writes
+// can reach its caller other than by a write that disqualifies it anyway.
+static bool cannotHandBackPointer(Function &F) {
+  auto T = F.getReturnType();
+  auto &DL = F.getParent()->getDataLayout();
+  if (!T->isVoidTy() && !typeCannotHoldPointer(T, DL) &&
+      !enzymeTypeRulesOutPointer(
+          F.getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                         "enzyme_type"),
+          T, DL))
+    return false;
+  for (auto &A : F.args()) {
+    if (A.hasStructRetAttr())
+      return false;
+    auto idx = A.getArgNo() + AttributeList::FirstArgIndex;
+    if (F.getAttribute(idx, "enzymejl_returnRoots").isValid() ||
+        F.getAttribute(idx, "enzymejl_sret_union_bytes").isValid())
+      return false;
+  }
+  return true;
+}
+
 // Whether call CB has an sret-like argument (sret, returnRoots or
 // sret_union_bytes), marked on the call or on the called function.
 static bool hasSRetLikeArgument(CallBase *CB) {
@@ -2663,9 +2687,13 @@ bool ReadOnlyOrThrowDetector::run() {
 
   // Whether F is local only matters once all its callees are known: with a
   // callee pending, F is checked again later, so the escape queries deciding
-  // it are skipped. They are cached per written object, as a function often
-  // writes the same object many times.
-  auto needLocal = [&]() { return !local && calls_todo.empty(); };
+  // it are skipped. They are also skipped if F cannot hand back a pointer at
+  // all. They are cached per written object, as a function often writes the
+  // same object many times.
+  const bool canHandBack = !cannotHandBackPointer(F);
+  auto needLocal = [&]() {
+    return canHandBack && !local && calls_todo.empty();
+  };
   std::map<std::tuple<Value *, bool, Instruction *>, bool> reachCache;
   auto reaches = [&](Value *Obj, bool Deep,
                      Instruction *Ignore = nullptr) -> bool {

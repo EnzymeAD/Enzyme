@@ -77,6 +77,22 @@ top:
   ret void
 }
 
+; A caller that cannot hand back a pointer at all, returning nothing and with
+; no sret-like argument, stays fully read-only-or-throw whatever it does with
+; that memory, e.g. passing it to a call that may return it.
+
+define ptr addrspace(10) @peek(ptr addrspace(10) %p) {
+top:
+  ret ptr addrspace(10) %p
+}
+
+define void @use_peek(ptr %task, ptr addrspace(11) nocapture %x) {
+top:
+  %r = call ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) %x)
+  %p = call ptr addrspace(10) @peek(ptr addrspace(10) %r)
+  ret void
+}
+
 ; The same through an sret holding a pointer.
 
 define void @fresh_sret(ptr noalias nocapture noundef sret({ ptr addrspace(10) }) %out, ptr %task, ptr addrspace(11) nocapture %x) {
@@ -139,6 +155,8 @@ top:
 ; CHECK: define "enzyme_type"="{[-1]:Integer}" i64 @use_ret_typed({{.*}}) #[[RO]]
 ; CHECK: define double @use_ret_double({{.*}}) #[[RO]]
 ; CHECK: define void @use_compute({{.*}}) #[[RO]]
+; CHECK: define ptr addrspace(10) @peek(
+; CHECK: define void @use_peek({{.*}}) #[[RO]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_sret({{.*}}) #[[LOCAL]]
 ; CHECK: define ptr addrspace(10) @wrap_md({{.*}}) #[[LOCAL]]
