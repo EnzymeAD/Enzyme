@@ -2494,10 +2494,9 @@ bool ReadOnlyOrThrowDetector::cannotHandBackPointer(Function &F) {
   auto T = F.getReturnType();
   auto &DL = F.getParent()->getDataLayout();
   if (!T->isVoidTy() && !typeCannotHoldPointer(T, DL) &&
-      !enzymeTypeRulesOutPointer(
-          F.getAttributes().getAttribute(AttributeList::ReturnIndex,
-                                         "enzyme_type"),
-          T, DL))
+      !enzymeTypeRulesOutPointer(F.getAttributes().getAttribute(
+                                     AttributeList::ReturnIndex, "enzyme_type"),
+                                 T, DL))
     return false;
   for (auto &A : F.args()) {
     if (A.hasStructRetAttr())
