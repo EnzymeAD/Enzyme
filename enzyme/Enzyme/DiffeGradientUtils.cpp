@@ -970,6 +970,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto &DL = oldFunc->getParent()->getDataLayout();
 
   auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
+  // The alignment of the original pointer, if one is actually known.
+  MaybeAlign knownAlign = align;
   // Without a known alignment, the pointer is only known to be aligned for
   // the element type. Do not let the loads and stores below take the larger
   // ABI alignment of the vector type built from it.
@@ -1056,12 +1058,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
-        // The alloca mirrors the memory at the original pointer, so give it
-        // the same alignment as that memory.
-        Al->setAlignment(*align);
-        BuilderM.CreateAlignedStore(
-            dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())),
-            *align);
+        auto AlCast = BuilderM.CreatePointerCast(Al, getUnqual(dif->getType()));
+        if (knownAlign) {
+          // The alloca mirrors the memory at the original pointer, so give it
+          // the same alignment as that memory.
+          Al->setAlignment(*knownAlign);
+          BuilderM.CreateAlignedStore(dif, AlCast, *knownAlign);
+        } else {
+          BuilderM.CreateStore(dif, AlCast);
+        }
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
