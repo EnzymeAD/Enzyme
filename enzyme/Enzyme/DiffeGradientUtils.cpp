@@ -970,13 +970,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto &DL = oldFunc->getParent()->getDataLayout();
 
   auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
-  // The alignment of the original pointer, if one is actually known.
-  MaybeAlign knownAlign = align;
-  // Without a known alignment, the pointer is only known to be aligned for
-  // the element type. Do not let the loads and stores below take the larger
-  // ABI alignment of the vector type built from it.
-  if (!align)
-    align = DL.getABITypeAlign(addingType);
   if (addingSize != size) {
     assert(size > addingSize);
     addingType =
@@ -1059,11 +1052,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
         auto AlCast = BuilderM.CreatePointerCast(Al, getUnqual(dif->getType()));
-        if (knownAlign) {
+        if (align) {
           // The alloca mirrors the memory at the original pointer, so give it
           // the same alignment as that memory.
-          Al->setAlignment(*knownAlign);
-          BuilderM.CreateAlignedStore(dif, AlCast, *knownAlign);
+          Al->setAlignment(*align);
+          BuilderM.CreateAlignedStore(dif, AlCast, *align);
         } else {
           BuilderM.CreateStore(dif, AlCast);
         }
@@ -1270,6 +1263,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           LI->setAlignment(Align(alignv));
           st->setAlignment(Align(alignv));
         }
+      } else {
+        // Without a known alignment, the pointer is only known to be aligned
+        // for the element type, not for the vector type built from it.
+        auto elemAlign = DL.getABITypeAlign(addingType->getScalarType());
+        LI->setAlignment(elemAlign);
+        st->setAlignment(elemAlign);
       }
     };
     applyChainRule(BuilderM, rule, ptr, dif);
@@ -1279,7 +1278,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                                       Intrinsic::masked_load, tys);
     auto SF = getIntrinsicDeclaration(oldFunc->getParent(),
                                       Intrinsic::masked_store, tys);
-    unsigned aligni = align ? align->value() : 0;
+    // Without a known alignment, the pointer is only known to be aligned for
+    // the element type, not for the vector type built from it.
+    unsigned aligni =
+        align ? align->value()
+              : DL.getABITypeAlign(addingType->getScalarType()).value();
 
     if (aligni != 0)
       if (start != 0) {
