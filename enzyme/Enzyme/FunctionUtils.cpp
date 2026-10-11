@@ -2015,6 +2015,36 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
   return true;
 }
 
+// Checks whether a function is read only or throw, and whether only locally
+// (see `enzyme_LocalReadOnlyOrThrow`). Calls to functions not yet known to be
+// read only or throw are collected in `calls_todo`, and the function is only
+// marked once there are none.
+class ReadOnlyOrThrowDetector {
+public:
+  ReadOnlyOrThrowDetector(llvm::Function &F,
+                          SmallPtrSetImpl<Function *> &calls_todo,
+                          llvm::TargetLibraryInfo &TLI, bool &local)
+      : F(F), calls_todo(calls_todo), TLI(TLI), local(local) {}
+
+  // Returns if newly legal, subject to the pending calls.
+  bool run();
+
+private:
+  llvm::Function &F;
+  SmallPtrSetImpl<Function *> &calls_todo;
+  llvm::TargetLibraryInfo &TLI;
+  bool &local;
+
+  void addReadOnlyOrThrowAttributes();
+  static bool isFreshJuliaMemory(Value *V);
+  bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
+                                   SmallPtrSetImpl<Value *> &seen);
+  bool isFreshJuliaArray(Value *V, SmallPtrSetImpl<Value *> &seen);
+  bool isFreshJuliaMemoryOrArrayData(Value *Obj,
+                                     SmallPtrSetImpl<Value *> &seen);
+  bool isFreshJuliaMemoryOrArrayData(Value *Obj);
+};
+
 // Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
 // attributes LLVM's alias analysis understands: the function reads any memory,
 // writes only inaccessible memory (the exception it may allocate, GC
@@ -2030,7 +2060,7 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
 // LLVM already treats as clobbering all memory. With `invoke`/landingpad
 // exception handling the landing pad succeeds the throwing call itself, so
 // the attributes would be wrong.
-static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
+void ReadOnlyOrThrowDetector::addReadOnlyOrThrowAttributes() {
   if (!EnzymeJuliaAddrLoad)
     return;
 #if LLVM_VERSION_MAJOR >= 16
@@ -2077,7 +2107,7 @@ static void addReadOnlyOrThrowAttributes(llvm::Function &F, bool local) {
 // before this function: one allocated here by jl_alloc_genericmemory, or the
 // empty Memory singleton (a global Enzyme.jl marks enzymejl_empty_memory),
 // which no in-bounds access writes.
-static bool isFreshJuliaMemory(Value *V) {
+bool ReadOnlyOrThrowDetector::isFreshJuliaMemory(Value *V) {
   if (auto CB = dyn_cast<CallBase>(V)) {
     auto name = getFuncNameFromCall(CB);
     return name == "jl_alloc_genericmemory" ||
@@ -2090,9 +2120,6 @@ static bool isFreshJuliaMemory(Value *V) {
   return false;
 }
 
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
-                                          SmallPtrSetImpl<Value *> &seen);
-
 // Whether the data field, at offset 0, of Obj, an object allocated in its
 // function, only ever holds fresh data (see isFreshJuliaMemoryOrArrayData)
 // while the function runs. Every write to the field must store such data (or
@@ -2100,9 +2127,8 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
 // stored or passed to a call that may capture or write through it, so that no
 // other code can write the field. Returning Obj is fine: the field may then
 // change only after the function returns.
-static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
-                                        TargetLibraryInfo &TLI,
-                                        SmallPtrSetImpl<Value *> &seen) {
+bool ReadOnlyOrThrowDetector::dataFieldOnlyHoldsFreshData(
+    Instruction *Obj, SmallPtrSetImpl<Value *> &seen) {
   auto &DL = Obj->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   // Pointers derived from Obj, with their offset from it if constant.
@@ -2156,7 +2182,7 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
         auto val = getBaseObject(SI->getValueOperand());
         if (isa<ConstantPointerNull>(val) || isa<UndefValue>(val))
           continue;
-        if (!isFreshJuliaMemoryOrArrayData(val, TLI, seen))
+        if (!isFreshJuliaMemoryOrArrayData(val, seen))
           return false;
         continue;
       }
@@ -2198,8 +2224,8 @@ static bool dataFieldOnlyHoldsFreshData(Instruction *Obj,
 // jl_alloc_array_* and jl_new_array allocate it with fresh data. From Julia
 // 1.11 on it is allocated like any other object, and the function stores the
 // data of a fresh Memory into the field.
-static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
-                              SmallPtrSetImpl<Value *> &seen) {
+bool ReadOnlyOrThrowDetector::isFreshJuliaArray(
+    Value *V, SmallPtrSetImpl<Value *> &seen) {
   // An array whose data field we are already checking, reached again through
   // a store to a data field: it holds fresh data if everything else does.
   if (!seen.insert(V).second)
@@ -2215,7 +2241,7 @@ static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
       name == "jl_alloc_array_3d" || name == "ijl_alloc_array_3d" ||
       name == "jl_new_array" || name == "ijl_new_array" ||
       isAllocationCall(CB, TLI))
-    return dataFieldOnlyHoldsFreshData(CB, TLI, seen);
+    return dataFieldOnlyHoldsFreshData(CB, seen);
   return false;
 }
 
@@ -2226,8 +2252,8 @@ static bool isFreshJuliaArray(Value *V, TargetLibraryInfo &TLI,
 //    data is as fresh as the object.
 //  * a fresh Julia array (see isFreshJuliaArray), at offset 0.
 // The pointer may be loaded from a phi or select of such objects.
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
-                                          SmallPtrSetImpl<Value *> &seen) {
+bool ReadOnlyOrThrowDetector::isFreshJuliaMemoryOrArrayData(
+    Value *Obj, SmallPtrSetImpl<Value *> &seen) {
   if (!EnzymeJuliaAddrLoad)
     return false;
   auto LI = dyn_cast<LoadInst>(Obj);
@@ -2243,21 +2269,18 @@ static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI,
     return false;
   for (auto base : getBaseObjects(ptr, /*offsetAllowed*/ false)) {
     if (memoryField ? !isFreshJuliaMemory(base)
-                    : !isFreshJuliaArray(base, TLI, seen))
+                    : !isFreshJuliaArray(base, seen))
       return false;
   }
   return true;
 }
 
-static bool isFreshJuliaMemoryOrArrayData(Value *Obj, TargetLibraryInfo &TLI) {
+bool ReadOnlyOrThrowDetector::isFreshJuliaMemoryOrArrayData(Value *Obj) {
   SmallPtrSet<Value *, 4> seen;
-  return isFreshJuliaMemoryOrArrayData(Obj, TLI, seen);
+  return isFreshJuliaMemoryOrArrayData(Obj, seen);
 }
 
-// returns if newly legal, subject to the pending calls
-bool DetectReadonlyOrThrowFn(llvm::Function &F,
-                             SmallPtrSetImpl<Function *> &calls_todo,
-                             llvm::TargetLibraryInfo &TLI, bool &local) {
+bool ReadOnlyOrThrowDetector::run() {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
@@ -2279,7 +2302,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+        if (isFreshJuliaMemoryOrArrayData(Obj)) {
           local = true;
           continue;
         }
@@ -2316,7 +2339,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(MSI->getOperand(0));
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+        if (isFreshJuliaMemoryOrArrayData(Obj)) {
           local = true;
           continue;
         }
@@ -2485,7 +2508,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         auto Obj = getBaseObject(SI->getPointerOperand());
         // Writing the data of a fresh Julia Memory or array writes memory
         // that did not exist before the call.
-        if (isFreshJuliaMemoryOrArrayData(Obj, TLI)) {
+        if (isFreshJuliaMemoryOrArrayData(Obj)) {
           local = true;
           continue;
         }
@@ -2551,7 +2574,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
-    addReadOnlyOrThrowAttributes(F, local);
+    addReadOnlyOrThrowAttributes();
   }
   return true;
 }
@@ -2678,7 +2701,7 @@ bool DetectReadonlyOrThrow(Module &M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     bool local = false;
-    if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
+    if (ReadOnlyOrThrowDetector(F, calls_todo, TLI, local).run()) {
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -2714,7 +2737,7 @@ bool DetectReadonlyOrThrow(Module &M) {
         SmallPtrSet<Function *, 1> calls_todo;
         auto &TLI = FAM.getResult<TargetLibraryAnalysis>(*F2);
         bool local = false;
-        if (DetectReadonlyOrThrowFn(*F2, calls_todo, TLI, local) &&
+        if (ReadOnlyOrThrowDetector(*F2, calls_todo, TLI, local).run() &&
             calls_todo.size() == 0) {
           changed = true;
           todo.push_back(F2);
@@ -3778,8 +3801,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   {
     SmallPtrSet<Function *, 1> calls_todo;
     bool local = false;
-    DetectReadonlyOrThrowFn(*NewF, calls_todo,
-                            FAM.getResult<TargetLibraryAnalysis>(*NewF), local);
+    ReadOnlyOrThrowDetector(*NewF, calls_todo,
+                            FAM.getResult<TargetLibraryAnalysis>(*NewF), local)
+        .run();
   }
 
   if (EnzymePrint)
