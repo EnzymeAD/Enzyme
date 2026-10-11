@@ -202,6 +202,8 @@ def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
 def PowF : MathInst<"PowFOp">;
 def LogF : MathInst<"LogOp">;
+def TanhF : MathInst<"TanhOp">;
+def CbrtF : MathInst<"CbrtOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;

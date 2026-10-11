@@ -126,3 +126,45 @@ func.func @dlog1p(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dr]], %[[xp1]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @tanh(%x: f64) -> f64 {
+  %res = math.tanh %x : f64
+  return %res : f64
+}
+
+func.func @dtanh(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @tanh(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffetanh(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[t:.+]] = math.tanh %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[tsq:.+]] = arith.mulf %[[t]], %[[t]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[d:.+]] = arith.subf %[[one]], %[[tsq]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[d]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @cbrt(%x: f64) -> f64 {
+  %res = math.cbrt %x : f64
+  return %res : f64
+}
+
+func.func @dcbrt(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @cbrt(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffecbrt(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[three:.+]] = arith.constant 3.000000e+00 : f64
+// CHECK-NEXT:    %[[c:.+]] = math.cbrt %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[x3:.+]] = arith.mulf %[[x]], %[[three]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[d:.+]] = arith.divf %[[c]], %[[x3]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[d]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
