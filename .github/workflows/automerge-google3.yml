@@ -1,0 +1,146 @@
+# Rebase and auto-merge pull requests exported from google3.
+#
+# Copybara (`default_upstream` in the project's google3 copy.bara.sky) exports
+# pending CLs to `cl_<n>` branches with `--nogit-destination-rebase`, so the
+# pushed commit is always parented on the last imported commit (`baseline`).
+#
+# 1. `rebase-google3-pr` (on push to `cl_*` by `copybara-service[bot]`):
+#    Rebases `cl_<n>` onto `origin/main`. If `.github/workflows/enzyme-mlir.yml`
+#    (Enzyme) or `workspace.bzl` (Enzyme-JAX) conflicts because `main` updated
+#    its dependency pins since the last import, the google3 PR's pins overwrite
+#    `main`'s. If any other file conflicts with `main`, the rebase is aborted
+#    and `cl_<n>` is left parented on the last imported commit so the PR can
+#    still be reviewed externally on GitHub. When a rebase succeeds, a
+#    `Copybara-Original-Commit: <sha>` trailer is added so Copybara's
+#    `github_ci_to_critique` workflow links the rebased commit's check runs
+#    back to the CL's presubmit.
+#
+# 2. `enable-auto-merge` (on `google3-submitted` label):
+#    Copybara's `github_pr_automerge_on_submit` workflow adds the
+#    `google3-submitted` label once the CL is submitted in google3; this job
+#    enables squash auto-merge so the PR merges as soon as required checks pass.
+name: Rebase and auto-merge google3 PRs
+
+on:
+  push:
+    branches:
+      - 'cl_*'
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  workflows: write
+
+jobs:
+  rebase-google3-pr:
+    if: >-
+      github.event_name == 'push' &&
+      github.actor == 'copybara-service[bot]' &&
+      startsWith(github.ref_name, 'cl_')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate bot token (if configured)
+        id: app_token
+        if: ${{ secrets.ENZYMEAD_BOT_ID != '' && secrets.ENZYMEAD_BOT_PRIVATE_KEY != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: "${{ secrets.ENZYMEAD_BOT_ID }}"
+          private-key: "${{ secrets.ENZYMEAD_BOT_PRIVATE_KEY }}"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token || secrets.GOOGLE3_AUTOMERGE_TOKEN || github.token }}
+
+      - name: Rebase onto main (overwriting dependency pins, keeping non-dep conflicts on baseline)
+        run: |
+          set -euo pipefail
+          ORIG_SHA="$(git rev-parse HEAD)"
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "Branch ${GITHUB_REF_NAME} (${ORIG_SHA}) is already up to date with origin/main."
+            exit 0
+          fi
+
+          git config user.name "copybara-service[bot]"
+          git config user.email "56741989+copybara-service[bot]@users.noreply.github.com"
+
+          if ! git rebase origin/main; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+            echo "Conflicts during rebase onto origin/main:"
+            echo "${CONFLICTS}"
+            for f in ${CONFLICTS}; do
+              if [[ "$f" != ".github/workflows/enzyme-mlir.yml" && "$f" != "workspace.bzl" ]]; then
+                echo "Non-pin conflict in $f; aborting rebase and leaving ${GITHUB_REF_NAME} at baseline commit ${ORIG_SHA}."
+                git rebase --abort
+                exit 0
+              fi
+            done
+            for f in ${CONFLICTS}; do
+              echo "Overwriting dependency pins in $f with google3 PR version from ${ORIG_SHA}."
+              git checkout --ours -- "$f"
+              ORIG_FILE="$(mktemp)"
+              git show "${ORIG_SHA}:$f" > "${ORIG_FILE}"
+              python3 - "$f" "${ORIG_FILE}" <<'PY'
+          import re, sys
+          path, orig_path = sys.argv[1], sys.argv[2]
+          main_text = open(path).read()
+          orig_text = open(orig_path).read()
+          if path == ".github/workflows/enzyme-mlir.yml":
+              m = re.search(r"(repository:\s*'llvm/llvm-project'[\s\S]*?ref:\s*')([0-9a-fA-F]{40})(')", orig_text)
+              if m:
+                  sha = m.group(2)
+                  main_text = re.sub(
+                      r"(repository:\s*'llvm/llvm-project'[\s\S]*?ref:\s*')([0-9a-fA-F]{40})(')",
+                      r"\g<1>" + sha + r"\g<3>",
+                      main_text,
+                      count=1,
+                  )
+          elif path == "workspace.bzl":
+              for var in ("JAX_COMMIT", "JAX_SHA256", "XLA_COMMIT_OVERRIDE", "ENZYME_COMMIT", "ENZYME_SHA256"):
+                  m = re.search(rf'^{var}\s*=\s*"([^"]*)"', orig_text, re.M)
+                  if m:
+                      val = m.group(1)
+                      main_text = re.sub(rf'^({var}\s*=\s*)"[^"]*"', rf'\1"{val}"', main_text, flags=re.M)
+          open(path, "w").write(main_text)
+          PY
+              rm -f "${ORIG_FILE}"
+              git add "$f"
+            done
+            if ! GIT_EDITOR=true git rebase --continue; then
+              echo "Rebase could not continue cleanly; aborting and leaving ${GITHUB_REF_NAME} at ${ORIG_SHA}."
+              git rebase --abort
+              exit 0
+            fi
+          fi
+
+          MSG="$(git log -1 --format=%B HEAD)"
+          if ! grep -q "^Copybara-Original-Commit:" <<<"${MSG}"; then
+            git commit --amend -m "${MSG}"$'\n'"Copybara-Original-Commit: ${ORIG_SHA}"
+          fi
+          git push --force-with-lease=refs/heads/${GITHUB_REF_NAME}:${ORIG_SHA} origin HEAD:refs/heads/${GITHUB_REF_NAME}
+
+  enable-auto-merge:
+    # Only Copybara's own export branches, from this repository (never forks),
+    # and only for the label Copybara adds after google3 submission.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.label.name == 'google3-submitted' &&
+      github.event.pull_request.user.login == 'copybara-service[bot]' &&
+      startsWith(github.event.pull_request.head.ref, 'cl_') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GOOGLE3_AUTOMERGE_TOKEN || github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        # --auto: merge when all required checks pass; if the PR is already
+        # mergeable it merges immediately. The default branch's status checks
+        # (not reviews) are what gate the merge.
+        run: gh pr merge --squash --auto "$PR_URL"
