@@ -38,7 +38,7 @@ contains
     real :: s
     integer :: i
     ! TODO: Use the `sum` intrinsic. Requires accounting for `_FortranASumReal4`
-    !       for this to work at -O0
+    !       with forward mode for this to work at -O0
     ! y(:) = x / sum(x)
     s = 0.0
     do i = 1, n
