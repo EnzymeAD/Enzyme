@@ -6747,6 +6747,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::read",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
+      "void std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
       "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",
