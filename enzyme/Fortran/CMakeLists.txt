@@ -20,11 +20,13 @@ install(
   PRIVATE_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/EnzymeFortran)
 
-# Install Fortran module file
+# Install Fortran module files: enzyme.mod uses enzyme_function_hooks, so
+# both are needed to `use enzyme`
 if(NOT DEFINED CMAKE_INSTALL_MODULEDIR)
   set(CMAKE_INSTALL_MODULEDIR "${CMAKE_INSTALL_INCLUDEDIR}/EnzymeFortran"
       CACHE STRING "Directory in prefix to install generated module files")
 endif()
 install(
   FILES "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme.mod"
+  "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme_function_hooks.mod"
   DESTINATION "${CMAKE_INSTALL_MODULEDIR}")

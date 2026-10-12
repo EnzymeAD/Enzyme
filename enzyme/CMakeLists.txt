@@ -250,7 +250,10 @@ endif()
 message("found MLIR ${MLIR_FOUND}")
 # include(AddClang)
 
-add_definitions(${LLVM_DEFINITIONS})
+# LLVM_DEFINITIONS is a single space-separated string; split it so each flag is
+# its own definition (since LLVM 22 it starts with -D_GLIBCXX_USE_CXX11_ABI=1).
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
 include_directories(${LLVM_INCLUDE_DIRS})
 message("LLVM_INSTALL_PREFIX: ${LLVM_INSTALL_PREFIX}")
 message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")

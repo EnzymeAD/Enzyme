@@ -30,6 +30,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -43,6 +44,7 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 
@@ -1149,6 +1151,7 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
 #endif
+  SmallPtrSet<Constant *, 4> compilerUsed;
   for (auto &F : M) {
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {
@@ -1190,6 +1193,10 @@ bool preserveNVVM(bool Begin, Module &M,
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
       changed = true;
+      if (F.hasFnAttribute("prev_compiler_used")) {
+        F.removeFnAttr("prev_compiler_used");
+        compilerUsed.insert(&F);
+      }
       F.removeFnAttr("prev_fixup");
       if (F.hasFnAttribute("prev_always_inline")) {
         F.addFnAttr(Attribute::AlwaysInline);
@@ -1204,6 +1211,43 @@ bool preserveNVVM(bool Begin, Module &M,
       F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
       F.setLinkage((Function::LinkageTypes)val);
     }
+  }
+#if LLVM_VERSION_MAJOR >= 20
+  // Only the LTO pre-link end pass, used from LLVM 20, adds these entries.
+  if (!compilerUsed.empty())
+    removeFromUsedLists(M, [&](Constant *C) { return compilerUsed.count(C); });
+#endif
+  return changed;
+}
+
+// The end of an LTO pre-link pipeline that deferred differentiation. Every
+// function Begin made external goes back to its original linkage: otherwise
+// each object file would define a strong copy of the static and inline
+// functions a rule names, and linking two of them fails on duplicate symbols.
+// Those that could now be dropped as unused are kept alive through
+// llvm.compiler.used until the post-link end pass, which also restores the
+// inlining attributes left in place here.
+static bool preserveNVVMLTOPreLinkEnd(Module &M) {
+  bool changed = false;
+  SmallVector<GlobalValue *, 4> keep;
+  for (auto &F : M) {
+    if (!F.hasFnAttribute("prev_fixup") ||
+        F.hasFnAttribute("prev_compiler_used"))
+      continue;
+    int64_t val;
+    F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+    auto L = (Function::LinkageTypes)val;
+    changed |= F.getLinkage() != L;
+    F.setLinkage(L);
+    if (GlobalValue::isDiscardableIfUnused(L) &&
+        !GlobalValue::isAvailableExternallyLinkage(L)) {
+      F.addFnAttr("prev_compiler_used");
+      keep.push_back(&F);
+    }
+  }
+  if (!keep.empty()) {
+    appendToCompilerUsed(M, keep);
+    changed = true;
   }
   return changed;
 }
@@ -1262,7 +1306,9 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = preserveNVVM(Begin, M, PreserveCustomRuleLinkage);
+  bool changed = (!Begin && LTOPreLink)
+                     ? preserveNVVMLTOPreLinkEnd(M)
+                     : preserveNVVM(Begin, M, PreserveCustomRuleLinkage);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;

@@ -6,8 +6,10 @@
 
 module {
   func.func @inner(%x: f64) -> f64 {
+    %lo = arith.constant 0.0 : f64
+    %hi = arith.constant 1.0 : f64
     // expected-error @below {{could not compute the adjoint for this operation}}
-    %s, %c = math.sincos %x : f64
+    %s = math.clampf %x to [%lo, %hi] : f64
     return %s : f64
   }
   func.func @outer(%x: f64) -> f64 {
@@ -16,7 +18,7 @@ module {
     return %r : f64
   }
   func.func @d_outer(%x: f64, %dr: f64) -> f64 {
-    %g = enzyme.autodiff @outer(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (f64, f64) -> f64
+    %g = enzyme.autodiff @outer(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
     return %g : f64
   }
 }

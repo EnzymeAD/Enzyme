@@ -6,7 +6,7 @@ func.func @sinh(%x: f64) -> f64 {
 }
 
 func.func @dsinh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @sinh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @sinh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -25,7 +25,7 @@ func.func @cosh(%x: f64) -> f64 {
 }
 
 func.func @dcosh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @cosh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @cosh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -44,14 +44,16 @@ func.func @tanh(%x: f64) -> f64 {
 }
 
 func.func @dtanh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @tanh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @tanh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
 // CHECK: func.func private @fwddiffetanh(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
-// CHECK-NEXT:    %[[cosh:.+]] = math.cosh %[[x]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[cosh2:.+]] = arith.mulf %[[cosh]], %[[cosh]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[dx]], %[[cosh2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[t:.+]] = math.tanh %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[tsq:.+]] = arith.mulf %[[t]], %[[t]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[d:.+]] = arith.subf %[[one]], %[[tsq]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[d]] fastmath<fast> : f64
 // CHECK-NEXT:    %{{.+}} = math.tanh %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
@@ -64,7 +66,7 @@ func.func @tan(%x: f64) -> f64 {
 }
 
 func.func @dtan(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @tan(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @tan(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -84,7 +86,7 @@ func.func @asin(%x: f64) -> f64 {
 }
 
 func.func @dasin(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @asin(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @asin(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -106,7 +108,7 @@ func.func @acos(%x: f64) -> f64 {
 }
 
 func.func @dacos(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @acos(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @acos(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -129,7 +131,7 @@ func.func @asinh(%x: f64) -> f64 {
 }
 
 func.func @dasinh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @asinh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @asinh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -151,7 +153,7 @@ func.func @acosh(%x: f64) -> f64 {
 }
 
 func.func @dacosh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @acosh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @acosh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -173,7 +175,7 @@ func.func @atanh(%x: f64) -> f64 {
 }
 
 func.func @datanh(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @atanh(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @atanh(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -194,7 +196,7 @@ func.func @expm1(%x: f64) -> f64 {
 }
 
 func.func @dexpm1(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @expm1(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @expm1(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -213,7 +215,7 @@ func.func @log10(%x: f64) -> f64 {
 }
 
 func.func @dlog10(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @log10(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @log10(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -233,7 +235,7 @@ func.func @rsqrt(%x: f64) -> f64 {
 }
 
 func.func @drsqrt(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @rsqrt(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @rsqrt(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -256,16 +258,16 @@ func.func @cbrt(%x: f64) -> f64 {
 }
 
 func.func @dcbrt(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @cbrt(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @cbrt(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
 // CHECK: func.func private @fwddiffecbrt(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
 // CHECK-NEXT:    %[[cbrt:.+]] = math.cbrt %[[x]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[num:.+]] = arith.mulf %[[dx]], %[[cbrt]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[three:.+]] = arith.constant 3.000000e+00 : f64
 // CHECK-NEXT:    %[[threex:.+]] = arith.mulf %[[three]], %[[x]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[res:.+]] = arith.divf %[[num]], %[[threex]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[d:.+]] = arith.divf %[[cbrt]], %[[threex]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[d]] fastmath<fast> : f64
 // CHECK-NEXT:    %{{.+}} = math.cbrt %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
@@ -278,7 +280,7 @@ func.func @erf(%x: f64) -> f64 {
 }
 
 func.func @derf(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @erf(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @erf(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
@@ -301,7 +303,7 @@ func.func @erfc(%x: f64) -> f64 {
 }
 
 func.func @derfc(%x: f64, %dx: f64) -> f64 {
-  %0 = enzyme.fwddiff @erfc(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (f64, f64) -> f64
+  %0 = enzyme.fwddiff @erfc(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
   return %0 : f64
 }
 
