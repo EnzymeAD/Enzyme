@@ -203,6 +203,8 @@ def ComplexIm : ComplexInst<"ImOp">;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
+def CoshF : MathInst<"CoshOp">;
+def SinhF : MathInst<"SinhOp">;
 def ExpF : MathInst<"ExpOp">;
 def Exp2F : MathInst<"Exp2Op">;
 def SqrtF : MathInst<"SqrtOp">;
@@ -214,6 +216,7 @@ def CbrtF : MathInst<"CbrtOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def RsqrtF : MathInst<"RsqrtOp">;
 def SincosSinF : Inst<"SincosOp", "math", ".getSin()">;
 def SincosCosF : Inst<"SincosOp", "math", ".getCos()">;
 
