@@ -9,4 +9,6 @@ add_lit_testsuite(
   ARGS
   -v)
 
-set_target_properties(check-enzyme-fortran-forward-intrinsics PROPERTIES FOLDER "Tests")
+set_target_properties(
+  check-enzyme-fortran-forward-intrinsics
+  PROPERTIES FOLDER "Tests")
