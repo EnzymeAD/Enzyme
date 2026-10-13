@@ -59,10 +59,9 @@ module {
 // CHECK-SAME:      %[[ARG1:[a-zA-Z0-9$._-]+]]: !cir.double,
 // CHECK-SAME:      %[[ARG2:[a-zA-Z0-9$._-]+]]: !cir.double) -> !rec_anon_struct {
 // CHECK:           %[[CONST_0:.*]] = cir.const #cir.zero : !rec_anon_struct
-// CHECK:           %[[CONST_1:.*]] = cir.const #cir.int<0> : !s32i
-// CHECK:           %[[CONST_2:.*]] = cir.const #cir.fp<2.000000e+00> : !cir.double
-// CHECK:           %[[CONST_3:.*]] = cir.const #cir.int<1> : !s32i
-// CHECK:           %[[CONST_4:.*]] = cir.const #cir.fp<0.000000e+00> : !cir.double
+// CHECK:           %[[CONST_1:.*]] = cir.const #cir.fp<2.000000e+00> : !cir.double
+// CHECK:           %[[CONST_2:.*]] = cir.const #cir.int<1> : !s32i
+// CHECK:           %[[CONST_3:.*]] = cir.const #cir.fp<0.000000e+00> : !cir.double
 // CHECK:           %[[VAL_0:.*]] = "enzyme.init"() : () -> !enzyme.Cache<!cir.ptr<!cir.double>>
 // CHECK:           %[[VAL_1:.*]] = "enzyme.init"() : () -> !enzyme.Cache<!cir.ptr<!cir.double>>
 // CHECK:           %[[VAL_2:.*]] = "enzyme.init"() : () -> !enzyme.Cache<!cir.ptr<!cir.double>>
@@ -77,80 +76,78 @@ module {
 // CHECK:           %[[VAL_11:.*]] = "enzyme.init"() : () -> !enzyme.Cache<!cir.double>
 // CHECK:           %[[VAL_12:.*]] = "enzyme.init"() : () -> !enzyme.Cache<!cir.ptr<!cir.double>>
 // CHECK:           %[[ALLOCA_0:.*]] = cir.alloca "__cleanup_dest_slot" align(4) cleanup_dest_slot : !cir.ptr<!s32i>
-// CHECK:           cir.store %[[CONST_1]], %[[ALLOCA_0]] : !s32i, !cir.ptr<!s32i>
-// CHECK:           %[[ALLOCA_1:.*]] = cir.alloca "__cleanup_dest_slot" align(4) cleanup_dest_slot : !cir.ptr<!s32i>
+// CHECK:           %[[ALLOCA_1:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[CONST_3]], %[[ALLOCA_1]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_2:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[CONST_4]], %[[ALLOCA_2]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_3:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_3:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[CONST_3]], %[[ALLOCA_3]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_4:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[CONST_4]], %[[ALLOCA_4]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_5:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_5:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[CONST_3]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_6:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[CONST_4]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_7:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_7:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[CONST_3]], %[[ALLOCA_7]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_8:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[CONST_4]], %[[ALLOCA_8]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_9:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           "enzyme.push"(%[[VAL_0]], %[[ALLOCA_2]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           cir.store %[[ARG0]], %[[ALLOCA_3]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           "enzyme.push"(%[[VAL_1]], %[[ALLOCA_4]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           cir.store %[[ARG1]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.lifetime.start %[[ALLOCA_9]] : !cir.ptr<!cir.double>
-// CHECK:           "enzyme.push"(%[[VAL_2]], %[[ALLOCA_2]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           %[[LOAD_0:.*]] = cir.load align(8) %[[ALLOCA_3]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           "enzyme.push"(%[[VAL_3]], %[[ALLOCA_4]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           %[[LOAD_1:.*]] = cir.load align(8) %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           "enzyme.push"(%[[VAL_0]], %[[ALLOCA_1]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           cir.store %[[ARG0]], %[[ALLOCA_2]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           "enzyme.push"(%[[VAL_1]], %[[ALLOCA_3]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           cir.store %[[ARG1]], %[[ALLOCA_4]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.lifetime.start %[[ALLOCA_8]] : !cir.ptr<!cir.double>
+// CHECK:           "enzyme.push"(%[[VAL_2]], %[[ALLOCA_1]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           %[[LOAD_0:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           "enzyme.push"(%[[VAL_3]], %[[ALLOCA_3]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           %[[LOAD_1:.*]] = cir.load align(8) %[[ALLOCA_4]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           "enzyme.push"(%[[VAL_5]], %[[LOAD_0]]) : (!enzyme.Cache<!cir.double>, !cir.double) -> ()
 // CHECK:           "enzyme.push"(%[[VAL_4]], %[[LOAD_1]]) : (!enzyme.Cache<!cir.double>, !cir.double) -> ()
-// CHECK:           %[[FMULADD_0:.*]] = cir.fmuladd %[[LOAD_0]], %[[LOAD_1]], %[[CONST_2]] : !cir.double
-// CHECK:           "enzyme.push"(%[[VAL_6]], %[[ALLOCA_8]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           cir.store align(8) %[[FMULADD_0]], %[[ALLOCA_9]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           "enzyme.push"(%[[VAL_7]], %[[ALLOCA_8]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           %[[LOAD_2:.*]] = cir.load align(8) %[[ALLOCA_9]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[FMULADD_0:.*]] = cir.fmuladd %[[LOAD_0]], %[[LOAD_1]], %[[CONST_1]] : !cir.double
+// CHECK:           "enzyme.push"(%[[VAL_6]], %[[ALLOCA_7]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           cir.store align(8) %[[FMULADD_0]], %[[ALLOCA_8]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           "enzyme.push"(%[[VAL_7]], %[[ALLOCA_7]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           %[[LOAD_2:.*]] = cir.load align(8) %[[ALLOCA_8]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           "enzyme.push"(%[[VAL_8]], %[[LOAD_2]]) : (!enzyme.Cache<!cir.double>, !cir.double) -> ()
 // CHECK:           %[[SIN_0:.*]] = cir.sin %[[LOAD_2]] : !cir.double
-// CHECK:           "enzyme.push"(%[[VAL_9]], %[[ALLOCA_2]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           %[[LOAD_3:.*]] = cir.load align(8) %[[ALLOCA_3]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           "enzyme.push"(%[[VAL_9]], %[[ALLOCA_1]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           %[[LOAD_3:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           "enzyme.push"(%[[VAL_11]], %[[SIN_0]]) : (!enzyme.Cache<!cir.double>, !cir.double) -> ()
 // CHECK:           "enzyme.push"(%[[VAL_10]], %[[LOAD_3]]) : (!enzyme.Cache<!cir.double>, !cir.double) -> ()
 // CHECK:           %[[FDIV_0:.*]] = cir.fdiv %[[SIN_0]], %[[LOAD_3]] : !cir.double
-// CHECK:           "enzyme.push"(%[[VAL_12]], %[[ALLOCA_6]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
-// CHECK:           cir.store %[[FDIV_0]], %[[ALLOCA_7]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[CONST_3]], %[[ALLOCA_1]] : !s32i, !cir.ptr<!s32i>
-// CHECK:           cir.lifetime.end %[[ALLOCA_9]] : !cir.ptr<!cir.double>
-// CHECK:           %[[LOAD_4:.*]] = cir.load %[[ALLOCA_1]] : !cir.ptr<!s32i>, !s32i
+// CHECK:           "enzyme.push"(%[[VAL_12]], %[[ALLOCA_5]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>, !cir.ptr<!cir.double>) -> ()
+// CHECK:           cir.store %[[FDIV_0]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[CONST_2]], %[[ALLOCA_0]] : !s32i, !cir.ptr<!s32i>
+// CHECK:           cir.lifetime.end %[[ALLOCA_8]] : !cir.ptr<!cir.double>
+// CHECK:           %[[LOAD_4:.*]] = cir.load %[[ALLOCA_0]] : !cir.ptr<!s32i>, !s32i
 // CHECK:           cir.switch.flat %[[LOAD_4]] : !s32i, ^bb3 [
 // CHECK:             0: ^bb1,
 // CHECK:             1: ^bb2
 // CHECK:           ]
 // CHECK:         ^bb1:
-// CHECK:           %[[FADD_0:.*]] = cir.fadd %[[CONST_4]], %[[ARG2]] : !cir.double
-// CHECK:           %[[LOAD_5:.*]] = cir.load %[[ALLOCA_6]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[FADD_0:.*]] = cir.fadd %[[CONST_3]], %[[ARG2]] : !cir.double
+// CHECK:           %[[LOAD_5:.*]] = cir.load %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_1:.*]] = cir.fadd %[[LOAD_5]], %[[FADD_0]] : !cir.double
-// CHECK:           cir.store %[[FADD_1]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[FADD_1]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           cf.br ^bb4
 // CHECK:         ^bb2:
-// CHECK:           %[[FADD_2:.*]] = cir.fadd %[[CONST_4]], %[[ARG2]] : !cir.double
-// CHECK:           %[[LOAD_6:.*]] = cir.load %[[ALLOCA_6]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[FADD_2:.*]] = cir.fadd %[[CONST_3]], %[[ARG2]] : !cir.double
+// CHECK:           %[[LOAD_6:.*]] = cir.load %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_3:.*]] = cir.fadd %[[LOAD_6]], %[[FADD_2]] : !cir.double
-// CHECK:           cir.store %[[FADD_3]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[FADD_3]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           cf.br ^bb4
 // CHECK:         ^bb3:
 // CHECK:           cf.br ^bb4
 // CHECK:         ^bb4:
 // CHECK:           %[[VAL_13:.*]] = "enzyme.pop"(%[[VAL_12]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_7:.*]] = cir.load %[[VAL_13]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[FADD_4:.*]] = cir.fadd %[[CONST_4]], %[[LOAD_7]] : !cir.double
-// CHECK:           cir.store %[[CONST_4]], %[[VAL_13]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           %[[FADD_4:.*]] = cir.fadd %[[CONST_3]], %[[LOAD_7]] : !cir.double
+// CHECK:           cir.store %[[CONST_3]], %[[VAL_13]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[VAL_14:.*]] = "enzyme.pop"(%[[VAL_11]]) : (!enzyme.Cache<!cir.double>) -> !cir.double
 // CHECK:           %[[VAL_15:.*]] = "enzyme.pop"(%[[VAL_10]]) : (!enzyme.Cache<!cir.double>) -> !cir.double
 // CHECK:           %[[FDIV_1:.*]] = cir.fdiv %[[FADD_4]], %[[VAL_15]] : !cir.double
-// CHECK:           %[[FADD_5:.*]] = cir.fadd %[[CONST_4]], %[[FDIV_1]] : !cir.double
+// CHECK:           %[[FADD_5:.*]] = cir.fadd %[[CONST_3]], %[[FDIV_1]] : !cir.double
 // CHECK:           %[[FDIV_2:.*]] = cir.fdiv %[[FADD_4]], %[[VAL_15]] : !cir.double
 // CHECK:           %[[FDIV_3:.*]] = cir.fdiv %[[VAL_14]], %[[VAL_15]] : !cir.double
 // CHECK:           %[[FMUL_0:.*]] = cir.fmul %[[FDIV_2]], %[[FDIV_3]] : !cir.double
 // CHECK:           %[[FNEG_0:.*]] = cir.fneg %[[FMUL_0]] : !cir.double
-// CHECK:           %[[FADD_6:.*]] = cir.fadd %[[CONST_4]], %[[FNEG_0]] : !cir.double
+// CHECK:           %[[FADD_6:.*]] = cir.fadd %[[CONST_3]], %[[FNEG_0]] : !cir.double
 // CHECK:           %[[VAL_16:.*]] = "enzyme.pop"(%[[VAL_9]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_8:.*]] = cir.load %[[VAL_16]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_7:.*]] = cir.fadd %[[LOAD_8]], %[[FADD_6]] : !cir.double
@@ -158,21 +155,21 @@ module {
 // CHECK:           %[[VAL_17:.*]] = "enzyme.pop"(%[[VAL_8]]) : (!enzyme.Cache<!cir.double>) -> !cir.double
 // CHECK:           %[[COS_0:.*]] = cir.cos %[[VAL_17]] : !cir.double
 // CHECK:           %[[FMUL_1:.*]] = cir.fmul %[[FADD_5]], %[[COS_0]] : !cir.double
-// CHECK:           %[[FADD_8:.*]] = cir.fadd %[[CONST_4]], %[[FMUL_1]] : !cir.double
+// CHECK:           %[[FADD_8:.*]] = cir.fadd %[[CONST_3]], %[[FMUL_1]] : !cir.double
 // CHECK:           %[[VAL_18:.*]] = "enzyme.pop"(%[[VAL_7]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_9:.*]] = cir.load %[[VAL_18]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_9:.*]] = cir.fadd %[[LOAD_9]], %[[FADD_8]] : !cir.double
 // CHECK:           cir.store %[[FADD_9]], %[[VAL_18]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[VAL_19:.*]] = "enzyme.pop"(%[[VAL_6]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_10:.*]] = cir.load %[[VAL_19]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[FADD_10:.*]] = cir.fadd %[[CONST_4]], %[[LOAD_10]] : !cir.double
-// CHECK:           cir.store %[[CONST_4]], %[[VAL_19]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           %[[FADD_10:.*]] = cir.fadd %[[CONST_3]], %[[LOAD_10]] : !cir.double
+// CHECK:           cir.store %[[CONST_3]], %[[VAL_19]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[VAL_20:.*]] = "enzyme.pop"(%[[VAL_5]]) : (!enzyme.Cache<!cir.double>) -> !cir.double
 // CHECK:           %[[VAL_21:.*]] = "enzyme.pop"(%[[VAL_4]]) : (!enzyme.Cache<!cir.double>) -> !cir.double
 // CHECK:           %[[FMUL_2:.*]] = cir.fmul %[[FADD_10]], %[[VAL_21]] : !cir.double
-// CHECK:           %[[FADD_11:.*]] = cir.fadd %[[CONST_4]], %[[FMUL_2]] : !cir.double
+// CHECK:           %[[FADD_11:.*]] = cir.fadd %[[CONST_3]], %[[FMUL_2]] : !cir.double
 // CHECK:           %[[FMUL_3:.*]] = cir.fmul %[[FADD_10]], %[[VAL_20]] : !cir.double
-// CHECK:           %[[FADD_12:.*]] = cir.fadd %[[CONST_4]], %[[FMUL_3]] : !cir.double
+// CHECK:           %[[FADD_12:.*]] = cir.fadd %[[CONST_3]], %[[FMUL_3]] : !cir.double
 // CHECK:           %[[VAL_22:.*]] = "enzyme.pop"(%[[VAL_3]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_11:.*]] = cir.load %[[VAL_22]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_13:.*]] = cir.fadd %[[LOAD_11]], %[[FADD_12]] : !cir.double
@@ -183,12 +180,12 @@ module {
 // CHECK:           cir.store %[[FADD_14]], %[[VAL_23]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[VAL_24:.*]] = "enzyme.pop"(%[[VAL_1]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_13:.*]] = cir.load %[[VAL_24]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[FADD_15:.*]] = cir.fadd %[[CONST_4]], %[[LOAD_13]] : !cir.double
-// CHECK:           cir.store %[[CONST_4]], %[[VAL_24]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           %[[FADD_15:.*]] = cir.fadd %[[CONST_3]], %[[LOAD_13]] : !cir.double
+// CHECK:           cir.store %[[CONST_3]], %[[VAL_24]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[VAL_25:.*]] = "enzyme.pop"(%[[VAL_0]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_14:.*]] = cir.load %[[VAL_25]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[FADD_16:.*]] = cir.fadd %[[CONST_4]], %[[LOAD_14]] : !cir.double
-// CHECK:           cir.store %[[CONST_4]], %[[VAL_25]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           %[[FADD_16:.*]] = cir.fadd %[[CONST_3]], %[[LOAD_14]] : !cir.double
+// CHECK:           cir.store %[[CONST_3]], %[[VAL_25]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           %[[INSERT_MEMBER_0:.*]] = cir.insert_member %[[CONST_0]][0], %[[FADD_16]] : !rec_anon_struct, !cir.double
 // CHECK:           %[[INSERT_MEMBER_1:.*]] = cir.insert_member %[[INSERT_MEMBER_0]][1], %[[FADD_15]] : !rec_anon_struct, !cir.double
 // CHECK:           cir.return %[[INSERT_MEMBER_1]] : !rec_anon_struct
