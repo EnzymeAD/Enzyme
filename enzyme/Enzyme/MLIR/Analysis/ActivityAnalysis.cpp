@@ -934,15 +934,17 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
     // Even if returning a pointer, this instruction is considered inactive
     // since the instruction doesn't prop gradients. Thus, so long as we don't
     // return an object containing a float, this instruction is inactive
-    // if (!TR.intType(1, I, /*errifNotFound*/ false).isPossibleFloat()) {
-    //   if (EnzymePrintActivity)
-    //     llvm::errs()
-    //         << " constant instruction from known non-float non-writing "
-    //            "instruction "
-    //         << *I << "\n";
-    //   InsertConstantInstruction(TR, I);
-    //   return true;
-    // }
+    if (I->getNumResults() != 0 && llvm::all_of(I->getResults(), [&](Value v) {
+          return !TR.intType(1, v, /*errIfNotFound*/ false).isPossibleFloat();
+        })) {
+      if (EnzymePrintActivity)
+        llvm::errs()
+            << " constant instruction from known non-float non-writing "
+               "instruction "
+            << *I << "\n";
+      InsertConstantOperation(TR, I);
+      return true;
+    }
 
     // If all returned values constant otherwise, the operation is inactive
     if (llvm::all_of(I->getResults(),
@@ -1598,20 +1600,15 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     return true;
   }
 
-#if 0
-  // This value is certainly a pointer to an integer (and only and integer, not
+  // This value is certainly a pointer to an integer (and only an integer, not
   // a pointer or float). Therefore its value is constant
-  // TODO use typeInfo for more aggressive activity analysis
-  if (val->getType()->isPointerTy() &&
-      cast<PointerType>(val->getType())->isIntOrIntVectorTy() &&
-      TR.firstPointer(1, val, /*errifnotfound*/ false).isIntegral()) {
+  if (TR.firstPointer(1, Val, /*errIfNotFound*/ false).isIntegral()) {
     if (EnzymePrintActivity)
       llvm::errs() << " Value const as integral pointer" << (int)directions
-                   << " " << *val << "\n";
+                   << " " << Val << "\n";
     InsertConstantValue(TR, Val);
     return true;
   }
-#endif
 
   // TODO: since in MLIR globals are operations like others, this should be
   // handled via interfaces.
