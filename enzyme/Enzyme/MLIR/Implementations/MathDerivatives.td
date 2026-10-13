@@ -81,11 +81,11 @@ def : MLIRDerivative<"math", "AtanOp", (Op $x),
 def : MLIRDerivative<"math", "Atan2Op", (Op $y, $x),
                     [
                       // d/dy = x / (x² + y²)
-                      (CheckedDivF (CheckedMulF (DiffeRet), $x),
-                                   (AddF (MulF $x, $x), (MulF $y, $y))),
+                      (CheckedMulF (DiffeRet),
+                        (DivF $x, (AddF (MulF $x, $x), (MulF $y, $y)))),
                       // d/dx = -y / (x² + y²)
-                      (CheckedDivF (NegF (CheckedMulF (DiffeRet), $y)),
-                                   (AddF (MulF $x, $x), (MulF $y, $y)))
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF $y), (AddF (MulF $x, $x), (MulF $y, $y))))
                     ]
                   >;
 

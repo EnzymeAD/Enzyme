@@ -445,16 +445,16 @@ func.func @datan2(%y: f64, %x: f64, %dr: f64) -> (f64, f64) {
 }
 
 // CHECK: func.func private @diffeatan2(%[[y:.+]]: f64, %[[x:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64) {
-// CHECK-NEXT:    %[[drx:.+]] = arith.mulf %[[dr]], %[[x]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[ysqr:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[den:.+]] = arith.addf %[[xsqr]], %[[ysqr]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[dy:.+]] = arith.divf %[[drx]], %[[den]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[dry:.+]] = arith.mulf %[[dr]], %[[y]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[negdry:.+]] = arith.negf %[[dry]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fy:.+]] = arith.divf %[[x]], %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[gy:.+]] = arith.mulf %[[dr]], %[[fy]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negy:.+]] = arith.negf %[[y]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[xsqr2:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[ysqr2:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[den2:.+]] = arith.addf %[[xsqr2]], %[[ysqr2]] fastmath<fast> : f64
-// CHECK-NEXT:    %[[dx:.+]] = arith.divf %[[negdry]], %[[den2]] fastmath<fast> : f64
-// CHECK-NEXT:    return %[[dy]], %[[dx]] : f64, f64
+// CHECK-NEXT:    %[[fx:.+]] = arith.divf %[[negy]], %[[den2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[gx:.+]] = arith.mulf %[[dr]], %[[fx]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[gy]], %[[gx]] : f64, f64
 // CHECK-NEXT:  }
