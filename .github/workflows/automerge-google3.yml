@@ -25,39 +25,42 @@ on:
   push:
     branches:
       - 'cl_*'
-  pull_request_target:
+  pull_request:
     types: [labeled]
 
-permissions:
-  contents: write
-  pull-requests: write
-  workflows: write
+permissions: {}
 
 jobs:
   rebase-google3-pr:
     if: >-
       github.event_name == 'push' &&
-      github.actor == 'copybara-service[bot]' &&
+      github.event.sender.login == 'copybara-service[bot]' &&
       startsWith(github.ref_name, 'cl_')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Generate bot token (if configured)
         id: app_token
         if: ${{ secrets.ENZYMEAD_BOT_ID != '' && secrets.ENZYMEAD_BOT_PRIVATE_KEY != '' }}
         continue-on-error: true
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "${{ secrets.ENZYMEAD_BOT_ID }}"
+          client-id: "${{ secrets.ENZYMEAD_BOT_ID }}"
           private-key: "${{ secrets.ENZYMEAD_BOT_PRIVATE_KEY }}"
+          permission-contents: write
+          permission-workflows: write
 
       - name: Checkout PR branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token || secrets.GOOGLE3_AUTOMERGE_TOKEN || github.token }}
+          persist-credentials: false
 
       - name: Rebase onto main (overwriting dependency pins, keeping non-dep conflicts on baseline)
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || secrets.GOOGLE3_AUTOMERGE_TOKEN || github.token }}
         run: |
           set -euo pipefail
           ORIG_SHA="$(git rev-parse HEAD)"
@@ -122,19 +125,25 @@ jobs:
           if ! grep -q "^Copybara-Original-Commit:" <<<"${MSG}"; then
             git commit --amend -m "${MSG}"$'\n'"Copybara-Original-Commit: ${ORIG_SHA}"
           fi
-          git push --force-with-lease=refs/heads/${GITHUB_REF_NAME}:${ORIG_SHA} origin HEAD:refs/heads/${GITHUB_REF_NAME}
+          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=${AUTH_HEADER}" \
+            push --force-with-lease="refs/heads/${GITHUB_REF_NAME}:${ORIG_SHA}" \
+            origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
 
   enable-auto-merge:
     # Only Copybara's own export branches, from this repository (never forks),
     # and only for the label Copybara adds after google3 submission.
     if: >-
-      github.event_name == 'pull_request_target' &&
+      github.event_name == 'pull_request' &&
       github.event.label.name == 'google3-submitted' &&
       github.event.pull_request.user.login == 'copybara-service[bot]' &&
       startsWith(github.event.pull_request.head.ref, 'cl_') &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Enable squash auto-merge
         env:
