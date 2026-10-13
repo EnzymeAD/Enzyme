@@ -287,6 +287,20 @@ private:
            llvm::Value *>
       SizeCache;
 
+  /// Internal data structure used by getSubLimits to avoid expanding the
+  /// maximum of the same loop limit at the same block multiple times.
+  std::map<std::pair<llvm::Value *, llvm::BasicBlock *>, llvm::WeakTrackingVH>
+      MaxLimitCache;
+
+  /// Return the maximum of limit (the limit of loop contexts[i]) over all
+  /// iterations of the enclosing loops that allocate their cache at
+  /// allocationPreheader, computed at allocationPreheader, or nullptr if it
+  /// cannot be computed there.
+  llvm::Value *computeMaxLimitOverChunk(llvm::Value *limit,
+                                        llvm::ArrayRef<LoopContext> contexts,
+                                        unsigned i,
+                                        llvm::BasicBlock *allocationPreheader);
+
   /// Given a loop context, compute the corresponding index into said loop at
   /// the IRBuilder<>
   llvm::Value *computeIndexOfChunk(

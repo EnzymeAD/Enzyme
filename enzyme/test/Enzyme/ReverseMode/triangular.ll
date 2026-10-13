@@ -55,70 +55,57 @@ declare dso_local double @__enzyme_autodiff(i8*, double*, double*, i64) local_un
 attributes #0 = { noinline norecurse nounwind uwtable }
 attributes #1 = { noinline nounwind uwtable }
 
+; The inner trip count depends on the outer induction variable, so the cache
+; is sized by the maximum inner trip count and allocated once.
+
 ; CHECK: define internal void @diffef(double* nocapture %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[np1:.+]] = add nsw i64 %n, 1
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[np1]], 8
+; CHECK-NEXT:   %[[smax:.+]] = call i64 @llvm.smax.i64(i64 %n, i64 0)
+; CHECK-NEXT:   %[[inner:.+]] = add nuw nsw i64 %[[smax]], 1
+; CHECK-NEXT:   %[[total:.+]] = mul nuw nsw i64 %[[inner]], %[[np1]]
+; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[total]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; CHECK-NEXT:   %call_malloccache = bitcast i8* %malloccall to double**
+; CHECK-NEXT:   %call_malloccache = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   br label %for.cond3.preheader
 
-; CHECK: for.cond3.preheader:                              ; preds = %for.cond.cleanup6, %entry
+; CHECK: for.cond3.preheader:
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup6 ], [ 0, %entry ]
-; CHECK-NEXT:   %iv.next = add nsw i64 %iv, 1
-; CHECK-NEXT:   %[[mallocgep1:.+]] = getelementptr inbounds double*, double** %call_malloccache, i64 %iv
-; CHECK-NEXT:   %[[mallocsize1:.+]] = mul nuw nsw i64 %iv.next, 8
-; CHECK-NEXT:   %[[malloccall2:.+]] = tail call noalias nonnull i8* @malloc(i64 %[[mallocsize1]])
-; CHECK-NEXT:   %[[call_malloccache3:.+]] = bitcast i8* %[[malloccall2]] to double*
-; CHECK-NEXT:   store double* %[[call_malloccache3]], double** %[[mallocgep1]], align 8, !invariant.group ![[ig0:[0-9]+]]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   br label %for.body7
 
-; CHECK: for.body7:                                        ; preds = %for.body7, %for.cond3.preheader
+; CHECK: for.body7:
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body7 ], [ 0, %for.cond3.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %[[augmented:.+]] = call fast double @augmented_get(double* %x, double* %"x'", i64 undef, i64 %iv1)
-; CHECK-NEXT:   %[[call_malloccache3_2:.+]] = load double*, double** %[[mallocgep1]]
-; CHECK-NEXT:   %[[mallocgep2:.+]] = getelementptr inbounds double, double* %[[call_malloccache3_2]], i64 %iv1
-; CHECK-NEXT:   store double %[[augmented]], double* %[[mallocgep2]], align 8, !invariant.group ![[ig1:[0-9]+]]
+; CHECK-NEXT:   %[[off:.+]] = mul nuw nsw i64 %iv, %[[inner]]
+; CHECK-NEXT:   %[[idx:.+]] = add nuw nsw i64 %iv1, %[[off]]
+; CHECK-NEXT:   %[[gep:.+]] = getelementptr inbounds double, double* %call_malloccache, i64 %[[idx]]
+; CHECK-NEXT:   store double %[[augmented]], double* %[[gep]], align 8, !invariant.group ![[ig:[0-9]+]]
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv1, %iv
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup6, label %for.body7
 
-; CHECK: for.cond.cleanup6:                                ; preds = %for.body7
-; CHECK-NEXT:   %cmp1 = icmp eq i64 %iv, %n
-; CHECK-NEXT:   br i1 %cmp1, label %invertfor.cond.cleanup6, label %for.cond3.preheader
-
-; CHECK: invertentry:                                      ; preds = %invertfor.cond3.preheader
+; CHECK: invertentry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.cond3.preheader:
 ; CHECK-NEXT:   %[[done1:.+]] = icmp eq i64 %[[iv:.+]], 0
-; CHECK-NEXT:   %[[innerdata_7:.+]] = load double*, double** %[[invertedgep1:.+]], align 8
-; CHECK-NEXT:   %[[innerdatai8:.+]] = bitcast double* %[[innerdata_7]] to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[innerdatai8]])
 ; CHECK-NEXT:   br i1 %[[done1]], label %invertentry, label %incinvertfor.cond3.preheader
-
-; CHECK: incinvertfor.cond3.preheader:
-; CHECK-NEXT:   %[[subouter:.+]] = add nsw i64 %[[iv]], -1
-; CHECK-NEXT:   br label %invertfor.cond.cleanup6
 
 ; CHECK: invertfor.body7:
 ; CHECK-NEXT:   %[[iv1:.+]] = phi i64 [ %[[iv]], %invertfor.cond.cleanup6 ], [ %[[subinner:.+]], %incinvertfor.body7 ]
-; CHECK-NEXT:   %[[invertedgep1]] = getelementptr inbounds double*, double** %call_malloccache, i64 %[[iv]]
-; CHECK-NEXT:   %[[innerdata:.+]] = load double*, double** %[[invertedgep1]], align 8
-; CHECK-NEXT:   %[[invertedgep2:.+]] = getelementptr inbounds double, double* %[[innerdata]], i64 %[[iv1]]
-; CHECK-NEXT:   %[[cached:.+]] = load double, double* %[[invertedgep2]], align 8, !invariant.group ![[ig1]]
+; CHECK-NEXT:   %[[roff:.+]] = mul nuw nsw i64 %[[iv]], %[[inner]]
+; CHECK-NEXT:   %[[ridx:.+]] = add nuw nsw i64 %[[iv1]], %[[roff]]
+; CHECK-NEXT:   %[[rgep:.+]] = getelementptr inbounds double, double* %call_malloccache, i64 %[[ridx]]
+; CHECK-NEXT:   %[[cached:.+]] = load double, double* %[[rgep]], align 8, !invariant.group ![[ig]]
 ; CHECK-NEXT:   %[[m0diffecall:.+]] = fmul fast double %differeturn, %[[cached]]
 ; CHECK-NEXT:   %[[innerdiffe:.+]] = fadd fast double %[[m0diffecall]], %[[m0diffecall]]
 ; CHECK-NEXT:   call void @diffeget(double* %x, double* %"x'", i64 undef, i64 %[[iv1]], double %[[innerdiffe]])
 ; CHECK-NEXT:   %[[done2:.+]] = icmp eq i64 %[[iv1]], 0
 ; CHECK-NEXT:   br i1 %[[done2]], label %invertfor.cond3.preheader, label %incinvertfor.body7
 
-; CHECK: incinvertfor.body7:
-; CHECK-NEXT:   %[[subinner]] = add nsw i64 %[[iv1]], -1
-; CHECK-NEXT:   br label %invertfor.body7
-
 ; CHECK: invertfor.cond.cleanup6:
-; CHECK-NEXT:   %[[iv]] = phi i64 [ %[[subouter]], %incinvertfor.cond3.preheader ], [ %n, %for.cond.cleanup6 ]
+; CHECK-NEXT:   %[[iv]] = phi i64 [ %{{.+}}, %incinvertfor.cond3.preheader ], [ %n, %for.cond.cleanup6 ]
 ; CHECK-NEXT:   br label %invertfor.body7
 ; CHECK-NEXT: }
