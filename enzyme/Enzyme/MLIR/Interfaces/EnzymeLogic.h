@@ -4,11 +4,10 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
-#ifdef ENZYME_CLANG_HAS_CIR
-#include "clang/CIR/Dialect/IR/CIRTypes.h"
-#endif
 
-#include "../../TypeAnalysis/TypeAnalysis.h"
+#include <map>
+#include <string>
+#include <vector>
 #include "../../Utils.h"
 #include <functional>
 
@@ -31,26 +30,59 @@ public:
   }
 };
 
+enum class MBaseType { Integer, Float, Pointer, Anything, Unknown };
+
+class MConcreteType {
+  MBaseType kind;
+  mlir::Type floatType;
+
+public:
+  MConcreteType(MBaseType kind = MBaseType::Unknown) : kind(kind) {}
+  static MConcreteType getFloat(mlir::Type t) {
+    MConcreteType ct(MBaseType::Float);
+    ct.floatType = t;
+    return ct;
+  }
+
+  bool isKnown() const { return kind != MBaseType::Unknown; }
+  bool isIntegral() const { return kind == MBaseType::Integer; }
+  bool isPossiblePointer() const {
+    return kind == MBaseType::Pointer || kind == MBaseType::Anything ||
+           kind == MBaseType::Unknown;
+  }
+  bool isPossibleFloat() const {
+    return kind == MBaseType::Float || kind == MBaseType::Anything ||
+           kind == MBaseType::Unknown;
+  }
+  mlir::Type isFloat() const { return floatType; }
+
+  bool operator==(const MConcreteType &o) const {
+    return kind == o.kind && floatType == o.floatType;
+  }
+  bool operator!=(const MConcreteType &o) const { return !(*this == o); }
+
+  std::string str() const;
+};
+
+class MTypeTree {
+  std::map<std::vector<int>, MConcreteType> mapping;
+
+public:
+  void insert(const std::vector<int> &seq, MConcreteType ct);
+  MConcreteType operator[](const std::vector<int> &seq) const;
+};
+
+// The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {
 public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
-  TypeTree query(Value) const { return TypeTree(); }
-  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
-                       bool pointerIntSame = false) const {
-    if (isa<IntegerType, IndexType>(val.getType())) {
-      return BaseType::Integer;
-    }
-#ifdef ENZYME_CLANG_HAS_CIR
-    if (isa<cir::IntType, cir::BoolType>(val.getType())) {
-      return BaseType::Integer;
-    }
-#endif
-    if (errIfNotFound) {
-      llvm_unreachable("something happened");
-    }
-    return BaseType::Unknown;
-  }
+  MTypeTree query(Value val) const;
+
+  /// What the value itself is.
+  MConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
+                        bool pointerIntSame = false) const;
+
+  MConcreteType firstPointer(size_t num, Value val, bool errIfNotFound = true,
+                             bool pointerIntSame = false) const;
 };
 
 class MEnzymeLogic {
