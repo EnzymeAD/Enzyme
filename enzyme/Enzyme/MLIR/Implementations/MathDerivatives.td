@@ -77,6 +77,18 @@ def : MLIRDerivative<"math", "AtanOp", (Op $x),
                       (CheckedMulF (DiffeRet), (DivF (ConstantFP<"1.0","arith","ConstantOp"> $x):$one, (AddF (MulF $x, $x), $one)))
                     ]
                   >;
+// atan2(y, x) = atan(y / x)
+def : MLIRDerivative<"math", "Atan2Op", (Op $y, $x),
+                    [
+                      // d/dy = x / (x² + y²)
+                      (CheckedMulF (DiffeRet),
+                        (DivF $x, (AddF (MulF $x, $x), (MulF $y, $y)))),
+                      // d/dx = -y / (x² + y²)
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF $y), (AddF (MulF $x, $x), (MulF $y, $y))))
+                    ]
+                  >;
+
 def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                     [
                       (SelectIfComplex $x,

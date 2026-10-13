@@ -317,3 +317,34 @@ func.func @derfc(%x: f64, %dx: f64) -> f64 {
 // CHECK-NEXT:    %{{.+}} = math.erfc %[[x]] : f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @atan2(%y: f64, %x: f64) -> f64 {
+  %res = math.atan2 %y, %x : f64
+  return %res : f64
+}
+
+func.func @datan2(%y: f64, %dy: f64, %x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @atan2(%y, %dy, %x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64, f64, f64) -> f64
+  return %0 : f64
+}
+
+// The tangent is dy * x / (x^2 + y^2) - dx * y / (x^2 + y^2).
+
+// CHECK: func.func private @fwddiffeatan2(%[[y:.+]]: f64, %[[dy:.+]]: f64, %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[xsqr:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[ysqr:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den:.+]] = arith.addf %[[xsqr]], %[[ysqr]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fy:.+]] = arith.divf %[[x]], %[[den]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[gy:.+]] = arith.mulf %[[dy]], %[[fy]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[negy:.+]] = arith.negf %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[xsqr2:.+]] = arith.mulf %[[x]], %[[x]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[ysqr2:.+]] = arith.mulf %[[y]], %[[y]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[den2:.+]] = arith.addf %[[xsqr2]], %[[ysqr2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[fx:.+]] = arith.divf %[[negy]], %[[den2]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[gx:.+]] = arith.mulf %[[dx]], %[[fx]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.addf %[[gy]], %[[gx]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = math.atan2 %[[y]], %[[x]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
