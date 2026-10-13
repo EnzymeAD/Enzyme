@@ -7917,8 +7917,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   // be changed by a write inside the loop.
   // The load and cache store remain at the original execution point, so a
   // conditional or zero-trip loop never performs a speculative load.
-  if (mode == DerivativeMode::ReverseModeCombined &&
-      EnzymeLoopInvariantCache) {
+  if (mode == DerivativeMode::ReverseModeCombined && EnzymeLoopInvariantCache) {
     if (auto *load = dyn_cast<LoadInst>(inst)) {
       auto *original = dyn_cast_or_null<LoadInst>(hasUninverted(load));
       auto *loop = LI.getLoopFor(load->getParent());
@@ -7936,8 +7935,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           for (auto &candidate : *block) {
             if (&candidate == original || !candidate.mayWriteToMemory())
               continue;
-            if (writesToMemoryReadBy(&TR, *OrigAA, TLI, original,
-                                     &candidate)) {
+            if (writesToMemoryReadBy(&TR, *OrigAA, TLI, original, &candidate)) {
               modifiedInLoop = true;
               break;
             }
