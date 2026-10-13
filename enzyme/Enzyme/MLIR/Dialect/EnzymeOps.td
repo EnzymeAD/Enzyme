@@ -544,6 +544,7 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 
   let extraClassDeclaration = [{
     MemRefType getMemRefType() {
@@ -576,6 +577,7 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 }
 
 #endif // ENZYME_OPS

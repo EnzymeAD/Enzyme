@@ -995,7 +995,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 
   if (auto II = dyn_cast<IntrinsicInst>(I)) {
     if (isIntelSubscriptIntrinsic(*II)) {
-      // The intrinsic "llvm.intel.subscript" does not propogate deriviative
+      // The intrinsic "llvm.intel.subscript" does not propagate derivative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
       return true;
@@ -2458,7 +2458,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     if (auto VI = dyn_cast<AllocaInst>(Val)) {

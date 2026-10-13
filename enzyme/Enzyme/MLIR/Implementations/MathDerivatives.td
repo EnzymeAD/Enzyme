@@ -35,6 +35,15 @@ def : MLIRDerivative<"math", "SinOp", (Op $x),
                       (CheckedMulF (DiffeRet), (CosF $x))
                     ]
                   >;
+
+def : MLIRDerivative<"math", "SincosOp", (Op $x),
+                    [(AssertingInactiveArg)],
+                    (ArrayRet
+                      (MulF (Shadow $x),
+                            (SelectIfAllResultsActive (SincosCosF $x), (CosF $x))),
+                      (NegF (MulF (Shadow $x),
+                                  (SelectIfAllResultsActive (SincosSinF $x), (SinF $x)))))
+                  >;
 def : MLIRDerivative<"math", "SqrtOp", (Op $x),
                     [
                       (Arith_Select (CmpF (Arith_OEQ), $x, (ConstantFP<"0","arith","ConstantOp"> $x):$zero), $zero, (DivF (DiffeRet), (MulF (ConstantFP<"2.0","arith","ConstantOp"> $x), (SqrtF $x))))
@@ -81,6 +90,17 @@ def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                     ]
                   >;
 
+def : MLIRDerivative<"math", "TanhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SubF (ConstantFP<"1.0","arith","ConstantOp"> $x), (MulF (TanhF $x):$t, $t)))
+                    ]
+                  >;
+def : MLIRDerivative<"math", "CbrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (DivF (CbrtF $x), (MulF (ConstantFP<"3.0","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
 def : MLIRDerivative<"math", "Log1pOp", (Op $x),
                     [
                       (CheckedDivF
@@ -100,5 +120,108 @@ def : MLIRDerivative<"math", "CopySignOp", (Op $x, $y),
                     ]
                   >;
 
+// d/dx cosh(x) = sinh(x)
+def : MLIRDerivative<"math", "CoshOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SinhF $x))
+                    ]
+                  >;
+
+// d/dx sinh(x) = cosh(x)
+def : MLIRDerivative<"math", "SinhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (CoshF $x))
+                    ]
+                  >;
+
+// d/dx tan(x) = 1 / cos²(x)
+def : MLIRDerivative<"math", "TanOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), (MulF (CosF $x):$c, $c))
+                    ]
+                  >;
+
+// d/dx asin(x) = 1 / sqrt(1 - x²)
+def : MLIRDerivative<"math", "AsinOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx acos(x) = -1 / sqrt(1 - x²)
+def : MLIRDerivative<"math", "AcosOp", (Op $x),
+                    [
+                      (CheckedDivF (NegF (DiffeRet)),
+                        (SqrtF (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx asinh(x) = 1 / sqrt(1 + x²)
+def : MLIRDerivative<"math", "AsinhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (AddF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx acosh(x) = 1 / sqrt(x² - 1)
+def : MLIRDerivative<"math", "AcoshOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (SubF (MulF $x, $x), (ConstantFP<"1","arith","ConstantOp"> $x))))
+                    ]
+                  >;
+
+// d/dx atanh(x) = 1 / (1 - x²)
+def : MLIRDerivative<"math", "AtanhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x)))
+                    ]
+                  >;
+
+// d/dx expm1(x) = exp(x)
+def : MLIRDerivative<"math", "ExpM1Op", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (ExpF $x))
+                    ]
+                  >;
+
+// d/dx log10(x) = 1 / (x · ln(10))
+def : MLIRDerivative<"math", "Log10Op", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (MulF $x, (ConstantFP<"2.302585092994046","arith","ConstantOp"> $x)))
+                    ]
+                  >;
+
+// d/dx rsqrt(x) = -1/2 · x^(-3/2) = -rsqrt(x) / (2x)
+def : MLIRDerivative<"math", "RsqrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF (RsqrtF $x)),
+                              (MulF (ConstantFP<"2","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
+
+// d/dx erf(x) = 2/sqrt(pi) · exp(-x²)
+def : MLIRDerivative<"math", "ErfOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
+
+// d/dx erfc(x) = -2/sqrt(pi) · exp(-x²)
+def : MLIRDerivative<"math", "ErfcOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"-1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
