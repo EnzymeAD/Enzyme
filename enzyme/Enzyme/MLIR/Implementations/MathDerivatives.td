@@ -237,3 +237,6 @@ def : MLIRDerivative<"math", "ErfcOp", (Op $x),
                   >;
 def : MathInactiveOp<"CeilOp">;
 def : MathInactiveOp<"FloorOp">;
+def : MathInactiveOp<"RoundOp">;
+def : MathInactiveOp<"RoundEvenOp">;
+def : MathInactiveOp<"TruncOp">;

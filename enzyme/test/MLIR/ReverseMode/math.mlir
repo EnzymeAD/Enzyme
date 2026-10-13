@@ -64,6 +64,63 @@ func.func @dabsf(%x: f64, %dr: f64) -> f64 {
 
 // -----
 
+func.func @round(%x: f64) -> f64 {
+  %r = math.round %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @dround(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @round(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @differound(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.round %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @roundeven(%x: f64) -> f64 {
+  %r = math.roundeven %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @droundeven(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @roundeven(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @differoundeven(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.roundeven %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @trunc(%x: f64) -> f64 {
+  %r = math.trunc %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @dtrunc(%x: f64, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @trunc(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @diffetrunc(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.trunc %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dr]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
 func.func @fma(%x: f64, %y: f64, %z: f64) -> f64 {
   %res = math.fma %x, %y, %z : f64
   return %res : f64

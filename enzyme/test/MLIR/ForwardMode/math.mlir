@@ -274,6 +274,66 @@ func.func @dcbrt(%x: f64, %dx: f64) -> f64 {
 
 // -----
 
+func.func @round(%x: f64) -> f64 {
+  %r = math.round %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @dround(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @round(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddifferound(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.round %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = arith.mulf %[[x]], %[[r]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @roundeven(%x: f64) -> f64 {
+  %r = math.roundeven %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @droundeven(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @roundeven(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddifferoundeven(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.roundeven %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = arith.mulf %[[x]], %[[r]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @trunc(%x: f64) -> f64 {
+  %r = math.trunc %x : f64
+  %y = arith.mulf %x, %r : f64
+  return %y : f64
+}
+
+func.func @dtrunc(%x: f64, %dx: f64) -> f64 {
+  %0 = enzyme.fwddiff @trunc(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+  return %0 : f64
+}
+
+// CHECK: func.func private @fwddiffetrunc(%[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[r:.+]] = math.trunc %[[x]] : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.mulf %[[dx]], %[[r]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = arith.mulf %[[x]], %[[r]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
 func.func @erf(%x: f64) -> f64 {
   %res = math.erf %x : f64
   return %res : f64
