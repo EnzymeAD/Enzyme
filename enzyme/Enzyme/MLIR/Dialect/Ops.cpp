@@ -13,6 +13,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -681,6 +682,488 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
            << getFn() << "' does not reference a valid global funcOp";
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModePrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  auto argActivity = getActivity();
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int argIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (argIdx >= getNumOperands()) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_active) {
+      auto AT = getOperand(argIdx).getType();
+
+      if (AT != IT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    if (val == Activity::enzyme_dup) {
+      auto AT = getOperand(argIdx).getType();
+      auto AST = cast<AutoDiffTypeInterface>(AT).getShadowType(/*width=*/1);
+
+      if (AT != IT || argIdx >= getNumOperands() - 1 ||
+          getOperand(argIdx + 1).getType() != AST) {
+        anyError = true;
+        break;
+      }
+
+      argIdx += 2;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError()
+           << "invalid arguments provided for function type and activity.";
+  }
+
+  int resIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_constnoneed ||
+        val == Activity::enzyme_activenoneed)
+      continue;
+
+    if (resIdx >= getNumResults() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_active || val == Activity::enzyme_const) {
+      auto RT = getResult(resIdx).getType();
+
+      if (OT != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModeReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  auto argActivity = getActivity();
+  auto retActivity = getRetActivity();
+
+  auto calleeFunctionType = global.getFunctionType();
+
+  bool anyError = false;
+
+  int argIdx = 0;
+  for (auto [OT, act] :
+       llvm::zip_equal(calleeFunctionType.getResults(), retActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (argIdx >= getNumOperands() - 1) {
+      anyError = true;
+      break;
+    }
+
+    if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed ||
+        val == Activity::enzyme_const || val == Activity::enzyme_constnoneed)
+      continue;
+
+    if (val == Activity::enzyme_active ||
+        val == Activity::enzyme_activenoneed) {
+      auto OST = cast<AutoDiffTypeInterface>(OT).getShadowType(/*width=*/1);
+      auto AT = getOperand(argIdx).getType();
+
+      if (OST != AT) {
+        anyError = true;
+        break;
+      }
+
+      argIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid operand types for retActivity.";
+  }
+
+  int resIdx = 0;
+  for (auto [IT, act] :
+       llvm::zip_equal(calleeFunctionType.getInputs(), argActivity)) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+
+    if (val == Activity::enzyme_const || val == Activity::enzyme_dup ||
+        val == Activity::enzyme_dupnoneed)
+      continue;
+
+    if (val == Activity::enzyme_active) {
+      auto OST = cast<AutoDiffTypeInterface>(IT).getShadowType(/*width=*/1);
+      auto RT = getResult(resIdx).getType();
+
+      if (OST != RT) {
+        anyError = true;
+        break;
+      }
+
+      resIdx++;
+      continue;
+    }
+
+    return emitError() << "unsupported activity " << val;
+  }
+
+  if (anyError) {
+    return emitError() << "invalid return types provided for function type and "
+                          "return activities.";
+  }
+
+  return success();
+}
+
+static ParseResult parseAugmentedFn(OpAsmParser &parser,
+                                    OperationState &result) {
+  SmallVector<Type> argTys, resTys;
+  SmallVector<DictionaryAttr> resAttrs;
+
+  bool isVariadic = false;
+  SmallVector<OpAsmParser::Argument> arguments;
+  if (failed(function_interface_impl::parseFunctionSignatureWithArguments(
+          parser, /*allowVariadic*/ false, arguments, isVariadic, resTys,
+          resAttrs)))
+    return failure();
+
+  for (const auto &arg : arguments)
+    argTys.push_back(arg.type);
+
+  auto *body = result.addRegion();
+  if (failed(
+          parser.parseRegion(*body, arguments, /*enableNameShadowing*/ false)))
+    return failure();
+
+  result.addAttribute(
+      "function_type",
+      TypeAttr::get(FunctionType::get(result.getContext(), argTys, resTys)));
+
+  return success();
+}
+
+static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
+                             Region &body) {
+  p << ' ';
+
+  call_interface_impl::printFunctionSignature(
+      p, fnType.getInputs(), /*argAttrs*/ nullptr, /*isVariadic*/ false,
+      fnType.getResults(), /*resultAttrs*/ nullptr, &body,
+      /*printEmptyResult*/ false);
+
+  p << ' ';
+  p.printRegion(body, /*printEntryBlockArgs*/ false,
+                /*printBlockTerminators*/ true);
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleOp
+//===----------------------------------------------------------------------===//
+
+// Whether a rule argument or result of activity `rule` can serve a call value
+// of activity `call`. A const one needs a constant value and a dup one a
+// duplicated value. An active one also serves a constant value: the cotangent
+// the rule computes for a constant operand is dropped, and a constant result
+// is seeded with zero, so one all-active rule serves every activity pattern.
+static bool activityServes(Activity rule, Activity call) {
+  auto isConst = [](Activity a) {
+    return a == Activity::enzyme_const || a == Activity::enzyme_constnoneed;
+  };
+  auto isActive = [](Activity a) {
+    return a == Activity::enzyme_active || a == Activity::enzyme_activenoneed;
+  };
+  auto isDup = [](Activity a) {
+    return a == Activity::enzyme_dup || a == Activity::enzyme_dupnoneed;
+  };
+  if (isConst(rule))
+    return isConst(call);
+  if (isActive(rule))
+    return isActive(call) || isConst(call);
+  if (isDup(rule))
+    return isDup(call);
+  return false;
+}
+
+llvm::LogicalResult CustomReverseRuleOp::activityMatch(
+    llvm::ArrayRef<enzyme::Activity> argActivity,
+    llvm::ArrayRef<enzyme::Activity> retActivity) {
+  auto selfArgActivity = getActivity();
+  auto selfRetActivity = getRetActivity();
+
+  if (selfArgActivity.size() != argActivity.size() ||
+      selfRetActivity.size() != retActivity.size())
+    return failure();
+
+  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity))
+    if (!activityServes(cast<ActivityAttr>(attr).getValue(), act))
+      return failure();
+
+  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity))
+    if (!activityServes(cast<ActivityAttr>(attr).getValue(), act))
+      return failure();
+
+  return success();
+}
+
+bool CustomReverseRuleOp::activityEquals(
+    llvm::ArrayRef<enzyme::Activity> argActivity,
+    llvm::ArrayRef<enzyme::Activity> retActivity) {
+  auto selfArgActivity = getActivity();
+  auto selfRetActivity = getRetActivity();
+
+  if (selfArgActivity.size() != argActivity.size() ||
+      selfRetActivity.size() != retActivity.size())
+    return false;
+
+  for (auto [attr, act] : llvm::zip_equal(selfArgActivity, argActivity))
+    if (cast<ActivityAttr>(attr).getValue() != act)
+      return false;
+
+  for (auto [attr, act] : llvm::zip_equal(selfRetActivity, retActivity))
+    if (cast<ActivityAttr>(attr).getValue() != act)
+      return false;
+
+  return true;
+}
+
+unsigned CustomReverseRuleOp::numDifferentiated() {
+  unsigned count = 0;
+  for (auto attrs : {getActivity(), getRetActivity()})
+    for (auto attr : attrs) {
+      auto val = cast<ActivityAttr>(attr).getValue();
+      if (val != Activity::enzyme_const && val != Activity::enzyme_constnoneed)
+        count++;
+    }
+  return count;
+}
+
+llvm::FailureOr<llvm::SmallVector<CustomReverseRuleOp>>
+mlir::enzyme::lookupCustomReverseRules(Operation *op,
+                                       llvm::StringRef attrName) {
+  llvm::SmallVector<CustomReverseRuleOp> rules;
+  Attribute attr = op->getAttr(attrName);
+  if (!attr)
+    return rules;
+
+  llvm::SmallVector<Attribute> refs;
+  if (auto arr = dyn_cast<ArrayAttr>(attr))
+    refs.assign(arr.begin(), arr.end());
+  else
+    refs.push_back(attr);
+
+  for (Attribute ref : refs) {
+    auto symbol = dyn_cast<FlatSymbolRefAttr>(ref);
+    if (!symbol)
+      return failure();
+    auto rule = dyn_cast_or_null<CustomReverseRuleOp>(
+        SymbolTable::lookupNearestSymbolFrom(op, symbol));
+    if (!rule)
+      return failure();
+    rules.push_back(rule);
+  }
+  return rules;
+}
+
+void mlir::enzyme::appendCustomReverseRule(Operation *op,
+                                           llvm::StringRef attrName,
+                                           FlatSymbolRefAttr rule) {
+  llvm::SmallVector<Attribute> refs;
+  if (Attribute attr = op->getAttr(attrName)) {
+    if (auto arr = dyn_cast<ArrayAttr>(attr))
+      refs.assign(arr.begin(), arr.end());
+    else
+      refs.push_back(attr);
+  }
+  refs.push_back(rule);
+  op->setAttr(attrName, ArrayAttr::get(op->getContext(), refs));
+}
+
+void mlir::enzyme::removeCustomReverseRule(Operation *op,
+                                           llvm::StringRef attrName,
+                                           llvm::StringRef rule) {
+  Attribute attr = op->getAttr(attrName);
+  if (!attr)
+    return;
+
+  llvm::SmallVector<Attribute> refs;
+  if (auto arr = dyn_cast<ArrayAttr>(attr))
+    refs.assign(arr.begin(), arr.end());
+  else
+    refs.push_back(attr);
+
+  llvm::SmallVector<Attribute> kept;
+  for (Attribute ref : refs) {
+    auto symbol = dyn_cast<FlatSymbolRefAttr>(ref);
+    if (!symbol || symbol.getValue() != rule)
+      kept.push_back(ref);
+  }
+
+  if (kept.size() == refs.size())
+    return;
+  if (kept.empty())
+    op->removeAttr(attrName);
+  else if (kept.size() == 1 && !isa<ArrayAttr>(attr))
+    op->setAttr(attrName, kept.front());
+  else
+    op->setAttr(attrName, ArrayAttr::get(op->getContext(), kept));
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult
+CustomReverseRuleAugmentedPrimalOp::parse(OpAsmParser &parser,
+                                          OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleAugmentedPrimalOp::print(OpAsmPrinter &p) {
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleReverseOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult CustomReverseRuleReverseOp::parse(OpAsmParser &parser,
+                                                    OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleReverseOp::print(OpAsmPrinter &p) {
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CallAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+SmallVector<InitOp>
+mlir::enzyme::getCustomReverseRuleCacheInits(CustomReverseRuleOp rule) {
+  SmallVector<InitOp> inits;
+  if (rule.getBody().empty())
+    return inits;
+  for (Operation &op : rule.getBody().front())
+    if (auto init = dyn_cast<InitOp>(op))
+      if (isa<CacheType>(init.getType()))
+        inits.push_back(init);
+  return inits;
+}
+
+SmallVector<Type>
+mlir::enzyme::getCustomReverseRuleCacheTypes(CustomReverseRuleOp rule) {
+  return llvm::map_to_vector(getCustomReverseRuleCacheInits(rule),
+                             [](InitOp init) -> Type {
+                               return cast<CacheType>(init.getType()).getType();
+                             });
+}
+
+// The values a call hands between a rule's augmented primal and its reverse
+// must be the rule's caches, in order.
+static LogicalResult verifyRuleCaches(Operation *op, StringRef fn,
+                                      CustomReverseRuleOp rule,
+                                      TypeRange cacheTypes) {
+  auto expected = getCustomReverseRuleCacheTypes(rule);
+  if (!llvm::equal(expected, cacheTypes))
+    return op->emitOpError("caches of '")
+           << fn << "' have types " << TypeRange(expected) << ", got "
+           << cacheTypes;
+  return success();
+}
+
+LogicalResult
+CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  if (!llvm::equal(global.getFunctionType().getResults(),
+                   getOutputs().getTypes()))
+    return emitOpError("results of '") << getFn() << "' have types "
+                                       << global.getFunctionType().getResults()
+                                       << ", got " << getOutputs().getTypes();
+
+  return verifyRuleCaches(*this, getFn(), global, getCaches().getTypes());
+}
+
+//===----------------------------------------------------------------------===//
+// CallCustomReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CallCustomReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  return verifyRuleCaches(*this, getFn(), global, getCaches().getTypes());
 }
 
 //===----------------------------------------------------------------------===//

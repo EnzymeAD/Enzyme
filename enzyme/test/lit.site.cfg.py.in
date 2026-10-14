@@ -6,7 +6,8 @@ import os
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_obj_root = "@LLVM_BINARY_DIR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
-if len("@ENZYME_BINARY_DIR@") == 0:
+# Bazel may substitute an absolute tools path; only prefix relative paths.
+if len("@ENZYME_BINARY_DIR@") == 0 and not os.path.isabs(config.llvm_tools_dir):
   config.llvm_tools_dir = os.getcwd() + "/" + config.llvm_tools_dir
 config.llvm_libs_dir = "@LLVM_LIBS_DIR@"
 config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
