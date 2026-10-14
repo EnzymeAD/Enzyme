@@ -1479,15 +1479,28 @@ boundOverLoops(ScalarEvolution &SE, const SCEV *S, bool Upper,
       }))
     return S;
 
-  auto boundOps = [&](const SCEVNAryExpr *N, bool U,
-                      SmallVectorImpl<const SCEV *> &Ops) {
-    for (auto Op : N->operands()) {
+  // Bound every operand of N and fold the bounds with Combine. The binary
+  // ScalarEvolution builders are used since the n-ary ones changed their
+  // operand type across LLVM versions.
+  auto boundOps =
+      [&](const SCEVNAryExpr *N, bool U,
+          function_ref<const SCEV *(const SCEV *, const SCEV *)> Combine)
+      -> const SCEV * {
+    const SCEV *Res = nullptr;
+    for (const SCEV *Op : N->operands()) {
       auto B = boundOverLoops(SE, Op, U, Loops, Depth + 1);
       if (!B)
-        return false;
-      Ops.push_back(B);
+        return nullptr;
+      Res = Res ? Combine(Res, B) : B;
     }
-    return true;
+    return Res;
+  };
+  auto Add = [&](const SCEV *L, const SCEV *R) { return SE.getAddExpr(L, R); };
+  auto SMax = [&](const SCEV *L, const SCEV *R) {
+    return SE.getSMaxExpr(L, R);
+  };
+  auto SMin = [&](const SCEV *L, const SCEV *R) {
+    return SE.getSMinExpr(L, R);
   };
 
   if (auto AR = dyn_cast<SCEVAddRecExpr>(S)) {
@@ -1533,10 +1546,7 @@ boundOverLoops(ScalarEvolution &SE, const SCEV *S, bool Upper,
   }
 
   if (auto A = dyn_cast<SCEVAddExpr>(S)) {
-    SmallVector<const SCEV *, 4> Ops;
-    if (!boundOps(A, Upper, Ops))
-      return nullptr;
-    return SE.getAddExpr(Ops);
+    return boundOps(A, Upper, Add);
   }
 
   if (auto M = dyn_cast<SCEVMulExpr>(S)) {
@@ -1563,12 +1573,9 @@ boundOverLoops(ScalarEvolution &SE, const SCEV *S, bool Upper,
           return SE.isKnownNonNegative(Op);
         }))
       return nullptr;
-    SmallVector<const SCEV *, 4> Ops;
-    if (!boundOps(N, Upper, Ops))
-      return nullptr;
     if (isa<SCEVSMaxExpr>(S) || isa<SCEVUMaxExpr>(S))
-      return SE.getSMaxExpr(Ops);
-    return SE.getSMinExpr(Ops);
+      return boundOps(N, Upper, SMax);
+    return boundOps(N, Upper, SMin);
   }
 
   if (auto C = dyn_cast<SCEVCastExpr>(S)) {
@@ -1588,14 +1595,15 @@ boundOverLoops(ScalarEvolution &SE, const SCEV *S, bool Upper,
   // bounds of both of its values.
   if (auto U = dyn_cast<SCEVUnknown>(S))
     if (auto SI = dyn_cast<SelectInst>(U->getValue())) {
-      SmallVector<const SCEV *, 2> Ops;
-      for (auto V : {SI->getTrueValue(), SI->getFalseValue()}) {
-        auto B = boundOverLoops(SE, SE.getSCEV(V), Upper, Loops, Depth + 1);
-        if (!B)
-          return nullptr;
-        Ops.push_back(B);
-      }
-      return Upper ? SE.getSMaxExpr(Ops) : SE.getSMinExpr(Ops);
+      auto T = boundOverLoops(SE, SE.getSCEV(SI->getTrueValue()), Upper, Loops,
+                              Depth + 1);
+      if (!T)
+        return nullptr;
+      auto F = boundOverLoops(SE, SE.getSCEV(SI->getFalseValue()), Upper, Loops,
+                              Depth + 1);
+      if (!F)
+        return nullptr;
+      return Upper ? SE.getSMaxExpr(T, F) : SE.getSMinExpr(T, F);
     }
 
   return nullptr;
