@@ -58,6 +58,17 @@ def : MLIRDerivative<"math", "PowFOp", (Op $x, $y),
                       (CheckedMulF (DiffeRet), (Arith_Select (CmpF (Arith_OEQ), $x, (ConstantFP<"0","arith","ConstantOp"> $x):$pzero), $pzero, (MulF (PowF $x, $y), (LogF $x))))
                     ]
                   >;
+def : MLIRDerivative<"math", "FPowIOp", (Op $x, $y),
+                    [
+                      (Arith_Select
+                        (CmpI (Arith_EQ), $y, (ConstantInt<"0","arith","ConstantOp"> $y)),
+                        (ConstantFP<"0","arith","ConstantOp"> $x),
+                        (CheckedMulF (DiffeRet),
+                          (MulF (SItoF (TypeOf $x), $y),
+                                (FPowI $x, (SubI $y, (ConstantInt<"1","arith","ConstantOp"> $y)))))),
+                      (InactiveArg)
+                    ]
+                  >;
 def : MLIRDerivative<"math", "LogOp", (Op $x),
                     [
                       (CheckedDivF (DiffeRet), $x)

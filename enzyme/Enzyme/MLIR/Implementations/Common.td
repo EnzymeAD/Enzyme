@@ -147,6 +147,12 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
   string type = type_;
 }
 
+// Integer constant with the type of the given operand. Generated exactly
+// like ConstantFP, because getConstantAttr picks the attribute from the type.
+// But communicates the intention of the rule better.
+class ConstantInt<string val, string dialect_, string op_, string type_="">
+    : ConstantFP<val, dialect_, op_, type_>;
+
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
 def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   SmallVector<Type> shadowTypes(op->getResultTypes());
@@ -165,20 +171,26 @@ class MathInst<string m> : Inst<m, "math">;
 
 def AddF : ArithInst<"AddFOp">;
 def SubF : ArithInst<"SubFOp">;
+def SubI : ArithInst<"SubIOp">;
 def NegF : ArithInst<"NegFOp">;
 def MulF : ArithInst<"MulFOp">;
 def DivF : ArithInst<"DivFOp">;
 def RemF : ArithInst<"RemFOp">;
 def CmpF : ArithInst<"CmpFOp">;
+def CmpI : ArithInst<"CmpIOp">;
 def Arith_Select : ArithInst<"SelectOp">;
 def Llvm_Select : LlvmInst<"SelectOp">;
 
 def AndI : ArithInst<"AndIOp">;
 def OrI : ArithInst<"OrIOp">;
 
+
+def SItoF : ArithInst<"SIToFPOp">;
+
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
 def Arith_OLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OLT">;
+def Arith_EQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpIPredicate::eq">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
                   (
@@ -219,5 +231,6 @@ def FloorF : MathInst<"FloorOp">;
 def RsqrtF : MathInst<"RsqrtOp">;
 def SincosSinF : Inst<"SincosOp", "math", ".getSin()">;
 def SincosCosF : Inst<"SincosOp", "math", ".getCos()">;
+def FPowI : MathInst<"FPowIOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
