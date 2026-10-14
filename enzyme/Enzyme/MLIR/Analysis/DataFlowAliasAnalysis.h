@@ -69,6 +69,19 @@ public:
     return aliasClass;
   }
 
+  /// Alias class of the storage designated by a symbol, e.g. an
+  /// `llvm.mlir.global`. Keyed on the symbol operation rather than on a value
+  /// so that every reference to the same symbol gets the same class.
+  DistinctAttr getSymbolClass(Operation *symbol, Attribute referenced) {
+    DistinctAttr &aliasClass = symbolClasses[symbol];
+    if (!aliasClass) {
+      if (!referenced)
+        referenced = UnitAttr::get(symbol->getContext());
+      aliasClass = DistinctAttr::create(referenced);
+    }
+    return aliasClass;
+  }
+
   DistinctAttr getSameOriginalClass(ValueRange values, StringRef debugLabel) {
     if (values.empty())
       return nullptr;
@@ -94,6 +107,7 @@ public:
 
 private:
   DenseMap<Value, DistinctAttr> originalClasses;
+  DenseMap<Operation *, DistinctAttr> symbolClasses;
 };
 
 //===----------------------------------------------------------------------===//
