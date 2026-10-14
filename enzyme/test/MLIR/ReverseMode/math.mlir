@@ -23,6 +23,35 @@ func.func @dsq(%x: f64, %dr: f64) -> f64 {
 
 // -----
 
+func.func @fpowi(%x: f64, %n: i32) -> f64 {
+  %res = math.fpowi %x, %n : f64, i32
+  return %res : f64
+}
+
+func.func @dfpowi(%x: f64, %n: i32, %dr: f64) -> f64 {
+  %0 = enzyme.autodiff @fpowi(%x, %n, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, i32, f64) -> f64
+  return %0 : f64
+}
+
+// The exponent is an integer and inactive: d/dx x^n = n * x^(n - 1), and 0 for
+// n == 0 so that x == 0 does not give 0 * inf = NaN.
+
+// CHECK: func.func private @diffefpowi(%[[x:.+]]: f64, %[[n:.+]]: i32, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1 : i32
+// CHECK-NEXT:    %[[zi:.+]] = arith.constant 0 : i32
+// CHECK-NEXT:    %[[zf:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[isz:.+]] = arith.cmpi eq, %[[n]], %[[zi]] : i32
+// CHECK-NEXT:    %[[nf:.+]] = arith.sitofp %[[n]] : i32 to f64
+// CHECK-NEXT:    %[[nm1:.+]] = arith.subi %[[n]], %[[one]] : i32
+// CHECK-NEXT:    %[[pow:.+]] = math.fpowi %[[x]], %[[nm1]] fastmath<fast> : f64, i32
+// CHECK-NEXT:    %[[dd:.+]] = arith.mulf %[[nf]], %[[pow]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[prod:.+]] = arith.mulf %[[dr]], %[[dd]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.select %[[isz]], %[[zf]], %[[prod]] : f64
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
 func.func @atan(%x: f64) -> f64 {
   %res = math.atan %x : f64
   return %res : f64

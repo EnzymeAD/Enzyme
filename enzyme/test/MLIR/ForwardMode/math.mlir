@@ -229,6 +229,65 @@ func.func @dlog10(%x: f64, %dx: f64) -> f64 {
 
 // -----
 
+func.func @fpowi(%x: f64, %n: i32) -> f64 {
+  %res = math.fpowi %x, %n : f64, i32
+  return %res : f64
+}
+
+func.func @dfpowi(%x: f64, %dx: f64, %n: i32) -> f64 {
+  %0 = enzyme.fwddiff @fpowi(%x, %dx, %n) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64, i32) -> f64
+  return %0 : f64
+}
+
+// The exponent is an integer and inactive: d/dx x^n = n * x^(n - 1), and 0 for
+// n == 0 so that x == 0 does not give 0 * inf = NaN.
+
+// CHECK: func.func private @fwddiffefpowi(%[[x:.+]]: f64, %[[dx:.+]]: f64, %[[n:.+]]: i32) -> f64 {
+// CHECK-NEXT:    %[[zi:.+]] = arith.constant 0 : i32
+// CHECK-NEXT:    %[[isz:.+]] = arith.cmpi eq, %[[n]], %[[zi]] : i32
+// CHECK-NEXT:    %[[zf:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[nf:.+]] = arith.sitofp %[[n]] : i32 to f64
+// CHECK-NEXT:    %[[one:.+]] = arith.constant 1 : i32
+// CHECK-NEXT:    %[[nm1:.+]] = arith.subi %[[n]], %[[one]] : i32
+// CHECK-NEXT:    %[[pow:.+]] = math.fpowi %[[x]], %[[nm1]] fastmath<fast> : f64, i32
+// CHECK-NEXT:    %[[dd:.+]] = arith.mulf %[[nf]], %[[pow]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[prod:.+]] = arith.mulf %[[dx]], %[[dd]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[res:.+]] = arith.select %[[isz]], %[[zf]], %[[prod]] : f64
+// CHECK-NEXT:    %{{.+}} = math.fpowi %[[x]], %[[n]] : f64, i32
+// CHECK-NEXT:    return %[[res]] : f64
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @fpowi_tensor(%x: tensor<2xf32>, %n: tensor<2xi32>) -> tensor<2xf32> {
+  %res = math.fpowi %x, %n : tensor<2xf32>, tensor<2xi32>
+  return %res : tensor<2xf32>
+}
+
+func.func @dfpowi_tensor(%x: tensor<2xf32>, %dx: tensor<2xf32>, %n: tensor<2xi32>) -> tensor<2xf32> {
+  %0 = enzyme.fwddiff @fpowi_tensor(%x, %dx, %n) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (tensor<2xf32>, tensor<2xf32>, tensor<2xi32>) -> tensor<2xf32>
+  return %0 : tensor<2xf32>
+}
+
+// The constant 1 for the exponent is a splat of the integer element type.
+
+// CHECK: func.func private @fwddiffefpowi_tensor(%[[x:.+]]: tensor<2xf32>, %[[dx:.+]]: tensor<2xf32>, %[[n:.+]]: tensor<2xi32>) -> tensor<2xf32> {
+// CHECK-NEXT:    %[[zi:.+]] = arith.constant dense<0> : tensor<2xi32>
+// CHECK-NEXT:    %[[isz:.+]] = arith.cmpi eq, %[[n]], %[[zi]] : tensor<2xi32>
+// CHECK-NEXT:    %[[zf:.+]] = arith.constant dense<0.000000e+00> : tensor<2xf32>
+// CHECK-NEXT:    %[[nf:.+]] = arith.sitofp %[[n]] : tensor<2xi32> to tensor<2xf32>
+// CHECK-NEXT:    %[[one:.+]] = arith.constant dense<1> : tensor<2xi32>
+// CHECK-NEXT:    %[[nm1:.+]] = arith.subi %[[n]], %[[one]] : tensor<2xi32>
+// CHECK-NEXT:    %[[pow:.+]] = math.fpowi %[[x]], %[[nm1]] fastmath<fast> : tensor<2xf32>, tensor<2xi32>
+// CHECK-NEXT:    %[[dd:.+]] = arith.mulf %[[nf]], %[[pow]] fastmath<fast> : tensor<2xf32>
+// CHECK-NEXT:    %[[prod:.+]] = arith.mulf %[[dx]], %[[dd]] fastmath<fast> : tensor<2xf32>
+// CHECK-NEXT:    %[[res:.+]] = arith.select %[[isz]], %[[zf]], %[[prod]] : tensor<2xi1>, tensor<2xf32>
+// CHECK-NEXT:    %{{.+}} = math.fpowi %[[x]], %[[n]] : tensor<2xf32>, tensor<2xi32>
+// CHECK-NEXT:    return %[[res]] : tensor<2xf32>
+// CHECK-NEXT:  }
+
+// -----
+
 func.func @rsqrt(%x: f64) -> f64 {
   %res = math.rsqrt %x : f64
   return %res : f64
