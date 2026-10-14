@@ -2,7 +2,7 @@
 
 module {
   func.func @logpdf(%x : tensor<2xf64>) -> tensor<f64> {
-    %sum_sq = impulse.dot %x, %x {lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+    %sum_sq = impulse.dot %x, %x <{lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
     %neg_half = arith.constant dense<-5.000000e-01> : tensor<f64>
     %result = arith.mulf %neg_half, %sum_sq : tensor<f64>
     return %result : tensor<f64>
@@ -67,7 +67,7 @@ module {
 
   func.func @shifted_logpdf(%x : tensor<2xf64>, %mu : tensor<2xf64>) -> tensor<f64> {
     %diff = arith.subf %x, %mu : tensor<2xf64>
-    %sum_sq = impulse.dot %diff, %diff {lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+    %sum_sq = impulse.dot %diff, %diff <{lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
     %neg_half = arith.constant dense<-5.000000e-01> : tensor<f64>
     %result = arith.mulf %neg_half, %sum_sq : tensor<f64>
     return %result : tensor<f64>
@@ -134,7 +134,7 @@ module {
     %diff_sq = arith.mulf %diff, %diff : tensor<2xf64>
     %weighted = arith.mulf %precision, %diff_sq : tensor<2xf64>
     %ones = arith.constant dense<1.0> : tensor<2xf64>
-    %sum = impulse.dot %ones, %weighted {lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+    %sum = impulse.dot %ones, %weighted <{lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
     %neg_half = arith.constant dense<-5.000000e-01> : tensor<f64>
     %result = arith.mulf %neg_half, %sum : tensor<f64>
     return %result : tensor<f64>

@@ -111,6 +111,31 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
+
+bool isFlangRuntimeNoFree(llvm::StringRef name) {
+  for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
+                      "_FortranAModuloInteger", "_FortranAModuloReal"})
+    if (startsWith(name, prefix))
+      return true;
+  static const char *Names[] = {
+      "_FortranAFlush",
+      "_FortranAIndex1",
+      "_FortranAIndex2",
+      "_FortranAIndex4",
+      "_FortranAScan1",
+      "_FortranAScan2",
+      "_FortranAScan4",
+      "_FortranAVerify1",
+      "_FortranAVerify2",
+      "_FortranAVerify4",
+      "_FortranACharacterCompareScalar",
+      "_FortranACharacterCompareScalar1",
+      "_FortranACharacterCompareScalar2",
+      "_FortranACharacterCompareScalar4",
+  };
+  return llvm::is_contained(Names, name);
+}
+
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
@@ -193,7 +218,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     // OpenMPI vs MPICH
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
@@ -410,6 +435,72 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // With -enzyme-global-activity a call to a function without body may free
+  // memory or return an allocation needed in the reverse pass, and Enzyme
+  // then differentiates even an inactive call to it.
+  // These LLVM flang runtime queries are also in KnownInactiveFunctions.
+  const char *FlangRuntimeQueries[] = {
+      // LLVM flang runtime: time
+      "_FortranACpuTime",
+      "_FortranADateAndTime",
+      "_FortranAEtime",
+      "_FortranASystemClockCount",
+      "_FortranASystemClockCountRate",
+      "_FortranASystemClockCountMax",
+      "_FortranATimef",
+      // LLVM flang runtime: command line and environment
+      "_FortranAArgumentCount",
+      "_FortranAGetCommand",
+      "_FortranAGetCommandArgument",
+      "_FortranAGetEnvVariable",
+      "_FortranAGetCwd",
+      "_FortranAHostnm",
+      "_FortranAGetPID",
+      "_FortranAGetUID",
+      "_FortranAGetGID",
+  };
+  if (llvm::is_contained(FlangRuntimeQueries, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions do not free memory of the program
+  // (see isFlangRuntimeNoFree, used by CreateNoFree) and, like the
+  // termination calls, do not return or store an allocation into it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // The OpenMP runtime calls of worksharing loops and synchronization neither
+  // free memory of the program nor hand an allocation to it.
+  const char *OpenMPRuntimeCalls[] = {
+      "__kmpc_global_thread_num",
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u",
+      "__kmpc_for_static_fini",
+      "__kmpc_barrier",
+      "__kmpc_critical",
+      "__kmpc_end_critical",
+      "omp_get_thread_num",
+      "omp_get_num_threads",
+      "omp_get_max_threads",
+  };
+  if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
@@ -2921,7 +3012,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -2936,7 +3027,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -4606,10 +4697,15 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
     std::string str;
     raw_string_ostream ss(str);
     ss << message << "\n";
-    gutils->TR.dump(ss);
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
 }

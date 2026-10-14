@@ -3132,7 +3132,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
         if (auto inst = dyn_cast<Instruction>(malloc)) {
-          entryBuilder.SetInsertPoint(inst->getNextNode());
+          // Store after all phis of the block when caching a phi.
+          entryBuilder.SetInsertPoint(isa<PHINode>(inst)
+                                          ? getFirstNonPHI(inst->getParent())
+                                          : inst->getNextNode());
         }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;
@@ -4582,6 +4585,25 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   if (shadowReturnUsedP)
     *shadowReturnUsedP = shadowReturnUsed;
   return subretType;
+}
+
+bool GradientUtils::augmentedPrimalReturnUsed(llvm::Value *orig) const {
+  // In the reverse pass of split mode, answer as the augmented pass did. Its
+  // own analysis can differ, e.g. when only the augmented function returns the
+  // primal, and callers use this to rebuild how a call was augmented.
+  if (mode == DerivativeMode::ReverseModeGradient && primalUnnecessaryValuesP) {
+    bool used = !primalUnnecessaryValuesP->count(orig);
+    auto found = primalKnownRecomputeHeuristicP->find(orig);
+    if (found != primalKnownRecomputeHeuristicP->end() && !found->second)
+      used = true;
+    return used;
+  }
+  bool used = false;
+  getReturnDiffeType(orig, &used, nullptr,
+                     mode == DerivativeMode::ReverseModeGradient
+                         ? DerivativeMode::ReverseModePrimal
+                         : mode);
+  return used;
 }
 
 DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
@@ -6035,15 +6057,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
     } else if (arg->getOpcode() == Instruction::GetElementPtr) {
-      if (auto C = dyn_cast<Constant>(ip)) {
-        auto rule = [&arg, &C]() {
+      if (isa<Constant>(ip)) {
+        // ip holds one shadow per lane at width > 1 (an array constant)
+        auto rule = [&arg](Value *ip) {
           SmallVector<Constant *, 8> NewOps;
           for (unsigned i = 0, e = arg->getNumOperands(); i != e; ++i)
-            NewOps.push_back(i == 0 ? C : arg->getOperand(i));
+            NewOps.push_back(i == 0 ? cast<Constant>(ip) : arg->getOperand(i));
           return cast<Value>(arg->getWithOperands(NewOps));
         };
 
-        return applyChainRule(arg->getType(), bb, rule);
+        return applyChainRule(arg->getType(), bb, rule, ip);
       } else {
         SmallVector<Value *, 4> invertargs;
         for (unsigned i = 0; i < arg->getNumOperands() - 1; ++i) {
@@ -9495,6 +9518,12 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         shadowPointerLoads.push_back(cur);
       }
       loads.push_back(load);
+
+      if (EnzymeJuliaAddrLoad && load->getType()->isPointerTy() &&
+          load->getType()->getPointerAddressSpace() == 13)
+        for (auto u : load->users())
+          if (auto I = dyn_cast<Instruction>(u))
+            todo.push_back(std::make_pair(I, (Value *)load));
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
       // TODO only add store to shadow iff non float type
       if (store->getValueOperand() == prev) {

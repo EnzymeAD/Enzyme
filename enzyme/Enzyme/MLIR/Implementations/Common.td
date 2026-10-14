@@ -94,6 +94,10 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
+class MultiReturn : Operation</*primal*/1, /*shadow*/0>;
+
+def ArrayRet : MultiReturn;
+
 class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow> {
   string value = val;
 }
@@ -107,6 +111,9 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
 class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*/0, /*usesCustom*/0> {
   string condition = condition_;
 }
+
+def SelectIfAllResultsActive : StaticSelect<
+  "mlir::enzyme::allResultsActive(op, gutils)">;
 
 class Inst<string mnemonic, string dialect_, string postop_="", string preop_="">  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
@@ -140,6 +147,12 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
   string type = type_;
 }
 
+// Integer constant with the type of the given operand. Generated exactly
+// like ConstantFP, because getConstantAttr picks the attribute from the type.
+// But communicates the intention of the rule better.
+class ConstantInt<string val, string dialect_, string op_, string type_="">
+    : ConstantFP<val, dialect_, op_, type_>;
+
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
 def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   SmallVector<Type> shadowTypes(op->getResultTypes());
@@ -158,20 +171,26 @@ class MathInst<string m> : Inst<m, "math">;
 
 def AddF : ArithInst<"AddFOp">;
 def SubF : ArithInst<"SubFOp">;
+def SubI : ArithInst<"SubIOp">;
 def NegF : ArithInst<"NegFOp">;
 def MulF : ArithInst<"MulFOp">;
 def DivF : ArithInst<"DivFOp">;
 def RemF : ArithInst<"RemFOp">;
 def CmpF : ArithInst<"CmpFOp">;
+def CmpI : ArithInst<"CmpIOp">;
 def Arith_Select : ArithInst<"SelectOp">;
 def Llvm_Select : LlvmInst<"SelectOp">;
 
 def AndI : ArithInst<"AndIOp">;
 def OrI : ArithInst<"OrIOp">;
 
+
+def SItoF : ArithInst<"SIToFPOp">;
+
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
 def Arith_OLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OLT">;
+def Arith_EQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpIPredicate::eq">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
                   (
@@ -196,14 +215,22 @@ def ComplexIm : ComplexInst<"ImOp">;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
+def CoshF : MathInst<"CoshOp">;
+def SinhF : MathInst<"SinhOp">;
 def ExpF : MathInst<"ExpOp">;
 def Exp2F : MathInst<"Exp2Op">;
 def SqrtF : MathInst<"SqrtOp">;
 def AbsF : MathInst<"AbsFOp">;
 def PowF : MathInst<"PowFOp">;
 def LogF : MathInst<"LogOp">;
+def TanhF : MathInst<"TanhOp">;
+def CbrtF : MathInst<"CbrtOp">;
 def CopySignF : MathInst<"CopySignOp">;
 def IsNanF : MathInst<"IsNaNOp">;
 def FloorF : MathInst<"FloorOp">;
+def RsqrtF : MathInst<"RsqrtOp">;
+def SincosSinF : Inst<"SincosOp", "math", ".getSin()">;
+def SincosCosF : Inst<"SincosOp", "math", ".getCos()">;
+def FPowI : MathInst<"FPowIOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

@@ -326,6 +326,13 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
   ];
 }
 
+def FunctionReturnOpInterface : OpInterface<"FunctionReturnOpInterface"> {
+  let description = [{
+    Marks an operation that returns from its enclosing function.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+}
+
 def MultidimensionalAllocInterface : OpInterface<"MultidimensionalAllocInterface"> {
   let description = [{
     An operation interface for allocation operations that support multi-dimensional allocations.
