@@ -53,7 +53,8 @@ attributes #3 = { nounwind }
 ; CHECK: define internal { double } @diffesqrelu(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp = fcmp fast ogt double %x, 0.000000e+00
-; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %cmp, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %0 = fadd double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %cmp, double %0, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp, label %invertcond.true, label %invertentry
 
 ; CHECK: invertentry: 
@@ -67,7 +68,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[sqrtzero:.+]] = fcmp fast ueq double %[[mul]], 0.000000e+00
 ; CHECK-NEXT:   %[[sqrt:.+]] = call fast double @llvm.sqrt.f64(double %[[mul]])
 ; CHECK-NEXT:   %[[tsq:.+]] = fmul fast double 2.000000e+00, %[[sqrt]]
-; CHECK-NEXT:   %[[div:.+]] = fdiv fast double %0, %[[tsq]]
+; CHECK-NEXT:   %[[div:.+]] = fdiv fast double %1, %[[tsq]]
 ; CHECK-NEXT:   %[[dsqrt:.+]] = select{{( fast)?}} i1 %[[sqrtzero]], double 0.000000e+00, double %[[div]]
 ; CHECK-NEXT:   %[[dmul0:.+]] = fmul fast double %[[dsqrt]], %x
 ; CHECK-NEXT:   %[[dmul1:.+]] = fmul fast double %[[dsqrt]], %[[dsin]]

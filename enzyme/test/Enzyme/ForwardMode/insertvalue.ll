@@ -24,8 +24,8 @@ declare double @__enzyme_fwddiff(double (double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
-; CHECK-NEXT:   %1 = fmul fast double %"x'", %x
-; CHECK-NEXT:   %2 = fadd fast double %0, %1
+; CHECK-NEXT:   %0 = fmul double %"x'", %x
+; CHECK-NEXT:   %1 = fmul double %"x'", %x
+; CHECK-NEXT:   %2 = fadd double %0, %1
 ; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }

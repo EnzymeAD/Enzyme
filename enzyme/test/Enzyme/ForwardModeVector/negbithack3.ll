@@ -28,11 +28,11 @@ declare %struct.Gradients @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK-NEXT:    %0 = extractvalue [3 x <2 x double>] %"x'", 0
 ; CHECK-NEXT:    %1 = extractvalue [3 x <2 x double>] %"x'", 1
 ; CHECK-NEXT:    %2 = extractvalue [3 x <2 x double>] %"x'", 2
-; CHECK-NEXT:    %3 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %0
+; CHECK-NEXT:    %3 = {{(fsub <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg <2 x double>)}} %0
 ; CHECK-NEXT:    %4 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %0, <2 x double> %3
-; CHECK-NEXT:    %5 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %1
+; CHECK-NEXT:    %5 = {{(fsub <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg <2 x double>)}} %1
 ; CHECK-NEXT:    %6 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %1, <2 x double> %5
-; CHECK-NEXT:    %7 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %2
+; CHECK-NEXT:    %7 = {{(fsub <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg <2 x double>)}} %2
 ; CHECK-NEXT:    %8 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %2, <2 x double> %7
 ; CHECK-NEXT:    %9 = insertvalue [3 x <2 x double>] undef, <2 x double> %4, 0
 ; CHECK-NEXT:    %10 = insertvalue [3 x <2 x double>] %9, <2 x double> %6, 1

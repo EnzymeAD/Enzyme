@@ -22,10 +22,10 @@ declare %struct.Gradients @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i0]], %[[i1]]
+; CHECK-NEXT:   %[[i2:.+]] = fadd double %[[i0]], %[[i1]]
 ; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %[[i2]], 0
 ; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i4]], %[[i5]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd double %[[i4]], %[[i5]]
 ; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x double] %[[i3]], double %[[i6]], 1
 ; CHECK-NEXT:   ret [2 x double] %[[i7]]
 ; CHECK-NEXT: }

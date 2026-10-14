@@ -23,9 +23,11 @@ attributes #2 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffemuldd(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %differeturn, %y
-; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %[[i0:.+]] = insertvalue { double, double } undef, double %[[m0diffex]], 0
-; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double, double } %[[i0]], double %[[m1diffey]], 1
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul double %differeturn, %y
+; CHECK-NEXT:   %[[a0diffex:.+]] = fadd double 0.000000e+00, %[[m0diffex]]
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul double %differeturn, %x
+; CHECK-NEXT:   %[[a1diffey:.+]] = fadd double 0.000000e+00, %[[m1diffey]]
+; CHECK-NEXT:   %[[i0:.+]] = insertvalue { double, double } undef, double %[[a0diffex]], 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double, double } %[[i0]], double %[[a1diffey]], 1
 ; CHECK-NEXT:   ret { double, double } %[[i1]]
 ; CHECK-NEXT: }

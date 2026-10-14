@@ -21,13 +21,15 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 
 ; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %differeturn) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fdiv fast double %x, %y
-; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.fabs.f64(double %[[i0]])
-; CHECK-NEXT:   %[[i2:.+]] = call fast double @llvm.floor.f64(double %[[i1]])
-; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.copysign.f64(double %[[i2]], double %[[i0]])
-; CHECK-NEXT:   %[[i4:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[i3]]
-; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %differeturn, %[[i4]]
-; CHECK-NEXT:   %[[i6:.+]] = insertvalue { double, double } undef, double %differeturn, 0
-; CHECK-NEXT:   %[[i7:.+]] = insertvalue { double, double } %[[i6]], double %[[i5]], 1
-; CHECK-NEXT:   ret { double, double } %[[i7]]
+; CHECK-NEXT:   %[[i0:.+]] = fadd double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %[[i1:.+]] = fdiv double %x, %y
+; CHECK-NEXT:   %[[i2:.+]] = call double @llvm.fabs.f64(double %[[i1]])
+; CHECK-NEXT:   %[[i3:.+]] = call double @llvm.floor.f64(double %[[i2]])
+; CHECK-NEXT:   %[[i4:.+]] = call double @llvm.copysign.f64(double %[[i3]], double %[[i1]])
+; CHECK-NEXT:   %[[i5:.+]] = {{(fsub double \-?0.000000e\+00,|fneg double)}} %[[i4]]
+; CHECK-NEXT:   %[[i6:.+]] = fmul double %differeturn, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fadd double 0.000000e+00, %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue { double, double } undef, double %[[i0]], 0
+; CHECK-NEXT:   %[[i9:.+]] = insertvalue { double, double } %[[i8]], double %[[i7]], 1
+; CHECK-NEXT:   ret { double, double } %[[i9]]
 ; CHECK-NEXT: }
