@@ -102,6 +102,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       auto name = attr.getName();
       if (name != FinalClass::enableCheckpointingAttrName() &&
           name != FinalClass::binomialCheckpointingAttrName() &&
+          name != FinalClass::onlineCheckpointingAttrName() &&
           name != FinalClass::checkpointPeriodAttrName())
         newOp->setAttr(name, attr.getValue());
     }
@@ -141,6 +142,15 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   static bool needsBinomialCheckpointing(OpName forOp) {
     return FinalClass::checkpointingEnabled(forOp) &&
            FinalClass::hasBinomialAttr(forOp);
+  }
+
+  static StringRef onlineCheckpointingAttrName() {
+    return "enzyme.online_checkpointing";
+  }
+
+  static bool needsOnlineCheckpointing(OpName forOp) {
+    return FinalClass::checkpointingEnabled(forOp) &&
+           forOp->hasAttr(FinalClass::onlineCheckpointingAttrName());
   }
 
   static std::optional<int64_t> getCheckpointBudget(OpName forOp) {
@@ -1311,6 +1321,742 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     return success(valid);
   }
+//===--------------------------------------------------------------------===//
+// Online (Stumm-Walther) checkpointing: when the primal trip count is
+// unknown at compile time, OnlineProgressOp drives checkpoint placement
+// step-by-step. The forward pass is a scf.while; the reverse pass reuses
+// the Revolve reconstruction loop from reverseBinomial with a dynamically-
+// determined budget (the actual sp stored during the forward pass).
+//===--------------------------------------------------------------------===//
+
+// Cache layout for online checkpointing.
+// Same structure as BinomialCacheLayout, but:
+//  - start/step are always present (trip count is always dynamic)
+//  - two extra trailing entries: numFwdBuf (= numIters for reverse) and
+//    spBuf (= effective budget = actual checkpoints stored)
+struct OnlineCacheLayout {
+  size_t numIterArgs = 0;
+  SmallVector<bool> mutableActive;
+  size_t numImmutable = 0;
+
+  static OnlineCacheLayout get(OpName forOp, ArrayRef<Value> mutableRefs,
+                               ArrayRef<Value> immutableRefs,
+                               MGradientUtilsReverse *gutils) {
+    OnlineCacheLayout l;
+    l.numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+    for (auto ref : mutableRefs)
+      l.mutableActive.push_back(!gutils->isConstantValue(ref));
+    l.numImmutable = immutableRefs.size();
+    return l;
+  }
+
+  size_t ckptBuf(size_t i) const { return i; }
+  size_t idxBuf() const { return numIterArgs; }
+  size_t mutableBegin() const { return numIterArgs + 1; }
+  size_t mutableWidth() const {
+    size_t w = 0;
+    for (bool active : mutableActive)
+      w += 1 + active;
+    return w;
+  }
+  size_t cloneBuf(size_t r) const {
+    size_t idx = mutableBegin();
+    for (size_t i = 0; i < r; ++i)
+      idx += 1 + mutableActive[i];
+    return idx;
+  }
+  size_t shadow(size_t r) const {
+    assert(mutableActive[r] && "inactive ref has no shadow cache");
+    return cloneBuf(r) + 1;
+  }
+  size_t immutable(size_t i) const {
+    return mutableBegin() + mutableWidth() + i;
+  }
+  // Online: start/step/numFwd/sp are always present (no static fallback).
+  size_t start() const { return immutable(numImmutable); }
+  size_t step() const { return immutable(numImmutable) + 1; }
+  size_t numFwdBuf() const { return immutable(numImmutable) + 2; }
+  size_t spBuf() const { return immutable(numImmutable) + 3; }
+  size_t size() const { return immutable(numImmutable) + 4; }
+};
+
+// Forward augmentation for online (Stumm-Walther Online_r2) checkpointing.
+// The trip count is unknown at compile time, so the outer loop is a
+// scf.while. OnlineProgressOp is queried in the before block each iteration
+// and returns an action (STORE=1, FORWARD=2) plus updated scalar SM state.
+// The after block dispatches via scf.if: STORE snapshots state into slot
+// `sp` without advancing the primal; FORWARD runs one body step.
+//
+// Cache layout: same as cacheBinomial (isDynamic=true) plus two trailing
+// entries: numFwd (total primal steps = numIters for the reverse pass) and
+// sp (effective budget = actual checkpoints stored).
+static SmallVector<Value> cacheOnline(OpName forOp, int64_t budget,
+                                      MGradientUtilsReverse *gutils) {
+  Location loc = forOp.getLoc();
+  auto newForOp = cast<OpName>(gutils->getNewFromOriginal(forOp));
+  OpBuilder builder(newForOp);
+  Type idxTy = FinalClass::getIndexLikeType(builder);
+
+  Value c0 = FinalClass::emitConst(builder, loc, 0);
+  Value c1 = FinalClass::emitConst(builder, loc, 1);
+  Value budgetV = FinalClass::emitConst(builder, loc, budget);
+
+  // Online checkpointing: bounds are always dynamic.
+  Value startV = FinalClass::materializeLowerBound(builder, loc, forOp, gutils);
+  Value stepV  = FinalClass::materializeStep(builder, loc, forOp, gutils);
+  Value numItersV = FinalClass::castToType(
+      builder, loc,
+      FinalClass::getNumIterationsValue(builder, loc, forOp, gutils), idxTy);
+
+  SmallVector<Value> immutableRefs, mutableRefs;
+  FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+  auto layout = OnlineCacheLayout::get(forOp, mutableRefs, immutableRefs, gutils);
+
+  IRMapping mapping;
+  SmallVector<Value> caches;
+
+  size_t numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+  SmallVector<Value> stores;
+  for (auto arg : FinalClass::getInits(newForOp))
+    stores.push_back(FinalClass::createStore(builder, loc, budget, arg.getType()));
+  stores.push_back(FinalClass::createStore(builder, loc, budget, idxTy));
+  const size_t idxStore = stores.size() - 1;
+
+  SmallVector<Value> mutBufs;
+  for (auto ref : mutableRefs) {
+    auto iface = cast<ClonableTypeInterface>(ref.getType());
+    mutBufs.push_back(allocCloneSlots(builder, loc, budget,
+                                      gutils->getNewFromOriginal(ref), iface));
+  }
+
+  // Online SM array state (size `budget`): written in-place by the op.
+  // These are memrefs, not carried through the while loop.
+  auto smArrTy = MemRefType::get({budget}, idxTy);
+  Value chBuf     = memref::AllocOp::create(builder, loc, smArrTy);
+  Value ordChBuf  = memref::AllocOp::create(builder, loc, smArrTy);
+  Value numRepBuf = memref::AllocOp::create(builder, loc, smArrTy);
+
+  // Before-block carried types:
+  //   (sp, numFwd, check, capo, oldcapo_o, t, incr, iter, oldind, ind, old_f, offset,
+  //    primalState...)
+  // After-block arg types (what scf.condition passes to the after block):
+  //   (sp, numFwd, action,
+  //    new_check, new_capo, new_oldcapo_o, new_t, new_incr, new_iter,
+  //    new_oldind, new_ind, new_old_f, new_offset,
+  //    primalState...)
+  // action is inserted at position 2; the 10 updated SM scalars follow it.
+  auto newForOpInits = FinalClass::getInits(newForOp);
+  // SM scalar initial values: check=-1 (no shots taken yet), everything else 0.
+  Value smCheckInit = FinalClass::emitConst(builder, loc, -1);
+  SmallVector<Value> whileInit;
+  whileInit.push_back(c0);          // sp          (sequential checkpoint count)
+  whileInit.push_back(c0);          // numFwd      (primal steps taken)
+  whileInit.push_back(smCheckInit); // check       = -1 (Online_r2 slot index)
+  whileInit.push_back(c0);          // capo
+  whileInit.push_back(c0);          // oldcapo_o
+  whileInit.push_back(c0);          // t
+  whileInit.push_back(c0);          // incr
+  whileInit.push_back(c0);          // iter
+  whileInit.push_back(c0);          // oldind
+  whileInit.push_back(c0);          // ind
+  whileInit.push_back(c0);          // old_f
+  whileInit.push_back(c0);          // offset
+  whileInit.append(newForOpInits.begin(), newForOpInits.end());
+
+  SmallVector<Type> beforeTypes;
+  for (Value v : whileInit)
+    beforeTypes.push_back(v.getType());
+
+  // After-block types: sp, numFwd, action, then 10 updated SM scalar fields.
+  SmallVector<Type> afterTypes;
+  afterTypes.push_back(idxTy); // sp
+  afterTypes.push_back(idxTy); // numFwd
+  afterTypes.push_back(idxTy); // action
+  for (int i = 0; i < 10; ++i) // 10 updated SM scalar state fields
+    afterTypes.push_back(idxTy);
+  for (auto arg : newForOpInits)
+    afterTypes.push_back(arg.getType()); // primalState
+
+  SmallVector<Location> locs(beforeTypes.size(), loc);
+  SmallVector<Location> afterLocs(afterTypes.size(), loc);
+
+  // The while op's result types must match what scf.condition passes on exit
+  // (= afterTypes, 14 values), not the before-block carry types (= beforeTypes,
+  // 13 values).  The before block is typed by whileInit; the after block and
+  // the op's results are typed by afterTypes.
+  auto fwdWhile = scf::WhileOp::create(builder, loc, afterTypes, whileInit);
+
+  // ── before block ────────────────────────────────────────────────────────
+  {
+    OpBuilder::InsertionGuard g(builder);
+    Block *before = builder.createBlock(&fwdWhile.getBefore(), {}, beforeTypes, locs);
+    builder.setInsertionPointToEnd(before);
+    auto ba = before->getArguments();
+    Value sp = ba[0], numFwd = ba[1];
+    // Full Online_r2 SM scalar state (indices 2..11).
+    Value smCheck  = ba[2],  smCapo   = ba[3],  smOldcapoO = ba[4];
+    Value smT      = ba[5],  smIncr   = ba[6],  smIter     = ba[7];
+    Value smOldind = ba[8],  smInd    = ba[9],  smOldF     = ba[10];
+    Value smOffset = ba[11];
+    auto primalState = ba.drop_front(12);
+
+    // OnlineProgressOp: one step of Online_r2::revolve().
+    // Returns action (0=terminate, 1=takeshot/store, 2=advance/forward) plus
+    // all 10 updated SM scalar state fields.
+    auto prog = enzyme::OnlineProgressOp::create(
+        builder, loc,
+        smCheck, smCapo, smOldcapoO, smT, smIncr, smIter,
+        smOldind, smInd, smOldF, smOffset, budgetV,
+        chBuf, ordChBuf, numRepBuf);
+    Value action      = prog.getAction();
+    Value newCheck    = prog.getNewCheck();
+    Value newCapo     = prog.getNewCapo();
+    Value newOldcapoO = prog.getNewOldcapoO();
+    Value newT        = prog.getNewT();
+    Value newIncr     = prog.getNewIncr();
+    Value newIter     = prog.getNewIter();
+    Value newOldind   = prog.getNewOldind();
+    Value newInd      = prog.getNewInd();
+    Value newOldF     = prog.getNewOldF();
+    Value newOffset   = prog.getNewOffset();
+
+    // Loop condition: the primal has more steps to take.
+    Value cond = FinalClass::emitCmpLT(builder, loc, numFwd, numItersV);
+
+    // Pass (sp, numFwd, action, 10 updated SM scalars, primalState) to after.
+    SmallVector<Value> condVals;
+    condVals.push_back(sp);
+    condVals.push_back(numFwd);
+    condVals.push_back(action);
+    condVals.push_back(newCheck);
+    condVals.push_back(newCapo);
+    condVals.push_back(newOldcapoO);
+    condVals.push_back(newT);
+    condVals.push_back(newIncr);
+    condVals.push_back(newIter);
+    condVals.push_back(newOldind);
+    condVals.push_back(newInd);
+    condVals.push_back(newOldF);
+    condVals.push_back(newOffset);
+    condVals.append(primalState.begin(), primalState.end());
+    scf::ConditionOp::create(builder, loc, cond, condVals);
+  }
+
+  // ── after block ─────────────────────────────────────────────────────────
+  {
+    OpBuilder::InsertionGuard g(builder);
+    Block *after = builder.createBlock(&fwdWhile.getAfter(), {}, afterTypes,
+                                       afterLocs);
+    builder.setInsertionPointToEnd(after);
+    auto aa = after->getArguments();
+    Value sp = aa[0], numFwd = aa[1], action = aa[2];
+    // Updated SM scalars from the before block (indices 3..12).
+    Value newCheck    = aa[3],  newCapo   = aa[4],  newOldcapoO = aa[5];
+    Value newT        = aa[6],  newIncr   = aa[7],  newIter     = aa[8];
+    Value newOldind   = aa[9],  newInd    = aa[10], newOldF     = aa[11];
+    Value newOffset   = aa[12];
+    auto primalState = aa.drop_front(13);
+
+    // Dispatch: STORE (action == 1) vs FORWARD (action == 2).
+    Value storeVal = FinalClass::emitConst(builder, loc, 1);
+    Value isStore  = arith::CmpIOp::create(builder, loc,
+                                            arith::CmpIPredicate::eq,
+                                            action, storeVal);
+
+    // Branch result types: (new_sp, new_numFwd, new_primalState...)
+    SmallVector<Type> branchTys;
+    branchTys.push_back(idxTy);
+    branchTys.push_back(idxTy);
+    for (auto arg : primalState)
+      branchTys.push_back(arg.getType());
+
+    auto dispatch = scf::IfOp::create(builder, loc, branchTys, isStore,
+                                      /*withElseRegion=*/true);
+
+    // ── STORE branch ──────────────────────────────────────────────────────
+    {
+      OpBuilder::InsertionGuard g2(builder);
+      builder.setInsertionPointToStart(dispatch.thenBlock());
+
+      for (size_t i = 0; i < numIterArgs; ++i)
+        FinalClass::storeSlot(builder, loc, stores[i], sp, primalState[i]);
+      FinalClass::storeSlot(builder, loc, stores[idxStore], sp, numFwd);
+      for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        iface.copyValue(builder,
+                        cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                  mutBufs[r], sp, budget),
+                        gutils->getNewFromOriginal(ref));
+      }
+
+      SmallVector<Value> thenYields;
+      thenYields.push_back(FinalClass::emitAdd(builder, loc, sp, c1)); // sp+1
+      thenYields.push_back(numFwd);                                     // unchanged
+      thenYields.append(primalState.begin(), primalState.end());
+      scf::YieldOp::create(builder, loc, thenYields);
+    }
+
+    // ── FORWARD branch: advance primal one step ───────────────────────────
+    {
+      OpBuilder::InsertionGuard g2(builder);
+      builder.setInsertionPointToStart(dispatch.elseBlock());
+
+      Value numFwdC = FinalClass::castToType(builder, loc, numFwd, stepV.getType());
+      Value iv = FinalClass::emitAdd(
+          builder, loc, startV,
+          FinalClass::emitMul(builder, loc, stepV, numFwdC));
+
+      Block *newForOpBody = FinalClass::getBodyBlock(newForOp);
+      IRMapping stepMapping;
+      for (auto &&[oldArg, newArg] :
+           llvm::zip_equal(newForOpBody->getArguments().drop_front(), primalState))
+        stepMapping.map(oldArg, newArg);
+      stepMapping.map(FinalClass::getInductionVar(newForOp), iv);
+      copyBlockWithoutTerminator(builder, newForOpBody, gutils, stepMapping);
+
+      SmallVector<Value> elseYields;
+      elseYields.push_back(sp);                                          // unchanged
+      elseYields.push_back(FinalClass::emitAdd(builder, loc, numFwd, c1));
+      for (auto operand : FinalClass::getCarriedTerminatorOperands(
+               newForOpBody->getTerminator()))
+        elseYields.push_back(stepMapping.lookupOrDefault(operand));
+      scf::YieldOp::create(builder, loc, elseYields);
+    }
+
+    // Yield updated carry back to the before block.
+    // before-block arg types:
+    //   (sp, numFwd, check, capo, oldcapo_o, t, incr, iter, oldind, ind, old_f, offset,
+    //    primalState...)
+    // The 10 SM scalars pass straight through from the before block (the
+    // after block dispatches on action but does not re-run the SM).
+    auto dr = dispatch.getResults();
+    Value newSp = dr[0], newNumFwd = dr[1];
+    auto newPrimalState = dr.drop_front(2);
+
+    SmallVector<Value> whileYields;
+    whileYields.push_back(newSp);
+    whileYields.push_back(newNumFwd);
+    whileYields.push_back(newCheck);    // SM scalars from before block
+    whileYields.push_back(newCapo);
+    whileYields.push_back(newOldcapoO);
+    whileYields.push_back(newT);
+    whileYields.push_back(newIncr);
+    whileYields.push_back(newIter);
+    whileYields.push_back(newOldind);
+    whileYields.push_back(newInd);
+    whileYields.push_back(newOldF);
+    whileYields.push_back(newOffset);
+    whileYields.append(newPrimalState.begin(), newPrimalState.end());
+    scf::YieldOp::create(builder, loc, whileYields);
+  }
+
+  builder.setInsertionPointAfter(fwdWhile);
+  auto wr = fwdWhile.getResults();
+  Value finalSp     = wr[0];
+  Value finalNumFwd = wr[1];
+  // wr[2]: action; wr[3..12]: 10 SM scalars — none needed after the forward pass.
+  auto finalPrimalState = wr.drop_front(13);
+
+  // SM array buffers no longer needed after the forward pass.
+  memref::DeallocOp::create(builder, loc, chBuf);
+  memref::DeallocOp::create(builder, loc, ordChBuf);
+  memref::DeallocOp::create(builder, loc, numRepBuf);
+
+  // Cache stores + outside refs (same order as cacheBinomial).
+  for (auto store : stores)
+    caches.push_back(gutils->initAndPushCache(store, builder));
+  for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+    caches.push_back(gutils->initAndPushCache(mutBufs[r], builder));
+    if (layout.mutableActive[r])
+      caches.push_back(gutils->initAndPushCache(
+          gutils->invertPointerM(ref, builder), builder));
+  }
+  for (auto ref : immutableRefs)
+    caches.push_back(
+        gutils->initAndPushCache(gutils->getNewFromOriginal(ref), builder));
+  // Online: always cache start/step (no static-bounds fallback).
+  caches.push_back(gutils->initAndPushCache(startV, builder));
+  caches.push_back(gutils->initAndPushCache(stepV, builder));
+  // Online-specific trailing entries: numFwd and sp.
+  caches.push_back(gutils->initAndPushCache(finalNumFwd, builder));
+  caches.push_back(gutils->initAndPushCache(finalSp, builder));
+  assert(caches.size() == layout.size() && "online cache layout mismatch");
+
+  gutils->replaceOrigOpWith(
+      forOp, FinalClass::getPrimalResults(builder, loc, forOp,
+                                          finalPrimalState, gutils));
+  gutils->erase(newForOp);
+  gutils->originalToNewFnOps[forOp] = fwdWhile;
+  return caches;
+}
+
+// Reverse pass for online checkpointing.
+//
+// The key insight: once the forward pass has finished, the total step count
+// (numFwd) and the actual number of checkpoints stored (sp) are both known.
+// The reverse reconstruction is therefore IDENTICAL to reverseBinomial --
+// BinomialProgressOp (offline Revolve) remains the optimal reconstruction
+// oracle regardless of how the forward checkpoints were placed by the online
+// algorithm. The only structural difference is that numItersV and budgetV
+// are both always dynamic (popped from the extra OnlineCacheLayout entries).
+//
+// The static `budget` parameter is still required for buffer-sizing calls
+// (cloneSlot / freeCloneSlots), which depend on the allocation shape from
+// cacheOnline.
+static LogicalResult
+reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
+              MGradientUtilsReverse *gutils, SmallVector<Value> caches,
+              ArrayRef<bool> operandsActive,
+              ArrayRef<Value> incomingGradients) {
+  Location loc = forOp.getLoc();
+  auto numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+
+  SmallVector<Value> immutableRefs, mutableRefs;
+  FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+  auto layout = OnlineCacheLayout::get(forOp, mutableRefs, immutableRefs, gutils);
+  assert(caches.size() == layout.size() && "online cache layout mismatch");
+
+  // ── Pop caches in layout order (mirrors reverseBinomial) ────────────────
+  IRMapping mapping;
+
+  SmallVector<Value> stores;
+  for (size_t j = 0; j < numIterArgs; ++j)
+    stores.push_back(gutils->popCache(caches[layout.ckptBuf(j)], builder));
+  stores.push_back(gutils->popCache(caches[layout.idxBuf()], builder));
+  const size_t idxStore = stores.size() - 1;
+  const bool carriedStores = FinalClass::storesAreLoopCarried();
+
+  SmallVector<Value> immutableRefsCaches;
+  for (auto &&[i, ref] : llvm::enumerate(immutableRefs)) {
+    Value cached = gutils->popCache(caches[layout.immutable(i)], builder);
+    mapping.map(ref, cached);
+    immutableRefsCaches.push_back(cached);
+  }
+
+  // Online: start/step/numIters/sp are all popped from cache.
+  Value startV   = gutils->popCache(caches[layout.start()], builder);
+  Value stepV    = gutils->popCache(caches[layout.step()], builder);
+  Value numItersV = gutils->popCache(caches[layout.numFwdBuf()], builder);
+  // sp = actual checkpoints stored = effective budget for reconstruction.
+  Value budgetV  = gutils->popCache(caches[layout.spBuf()], builder);
+
+  // From here the code is identical to reverseBinomial with isDynamic=true
+  // and the above dynamic numItersV / budgetV substituted in.
+  // (In practice this would be a shared helper; written out in full here to
+  //  show the structural equivalence.)
+
+  Value c0 = FinalClass::emitConst(builder, loc, 0);
+  Value c1 = FinalClass::emitConst(builder, loc, 1);
+
+  SmallVector<std::pair<Value, Value>> savedMutableShadows;
+  for (auto ref : mutableRefs)
+    savedMutableShadows.emplace_back(
+        ref, gutils->invertedPointers.lookupOrNull(ref));
+  auto restoreMutableShadows = llvm::scope_exit([&]() {
+    for (auto &[ref, prev] : savedMutableShadows) {
+      if (prev)
+        gutils->invertedPointers.map(ref, prev);
+      else
+        gutils->invertedPointers.erase(ref);
+    }
+  });
+
+  SmallVector<Value> mutBufs, workClones;
+  for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+    auto iface = cast<ClonableTypeInterface>(ref.getType());
+    mutBufs.push_back(gutils->popCache(caches[layout.cloneBuf(r)], builder));
+    workClones.push_back(
+        iface.cloneValue(builder, gutils->getNewFromOriginal(ref)));
+    mapping.map(ref, workClones.back());
+    if (layout.mutableActive[r])
+      gutils->invertedPointers.map(
+          ref, gutils->popCache(caches[layout.shadow(r)], builder));
+  }
+
+  // Outer reverse for loop: same as reverseBinomial.
+  // (budgetV here is sp -- the actual effective budget from the forward pass)
+  SmallVector<Value> outerInit;
+  outerInit.push_back(budgetV);
+  outerInit.append(incomingGradients.begin(), incomingGradients.end());
+  if (carriedStores)
+    outerInit.append(stores.begin(), stores.end());
+
+  auto revOuter = FinalClass::createScaffoldForLoop(builder, loc, c0,
+                                                    numItersV, c1, outerInit);
+  FinalClass::preserveAttributesButCheckpointing(revOuter.op, forOp);
+
+  // ── Inner body: identical to reverseBinomial from its line 1001 onward ──
+  // numItersV, startV, stepV, budgetV are already set above (all dynamic).
+  // budget (static) still sizes cloneSlot / freeCloneSlots calls.
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(revOuter.body);
+
+    Value ivO = revOuter.getIV();
+    auto revOuterArgs = revOuter.args();
+    Value sp = revOuterArgs[0];
+    auto adjArgs = revOuterArgs.slice(1, incomingGradients.size());
+
+    SmallVector<Value> liveStores(stores);
+    if (carriedStores)
+      for (auto &&[i, arg] : llvm::enumerate(
+               revOuterArgs.slice(1 + incomingGradients.size(), stores.size())))
+        liveStores[i] = arg;
+
+    Value capo = FinalClass::emitSub(builder, loc, sp, c1);
+    Value currentRevStep = FinalClass::emitSub(builder, loc, numItersV, ivO);
+
+    // Load the top checkpoint state + its forward step.
+    SmallVector<Value> ckptState;
+    for (auto &&[store, arg] : llvm::zip_equal(
+             ArrayRef<Value>(liveStores).drop_back(),
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front()))
+      ckptState.push_back(
+          FinalClass::loadSlot(builder, loc, store, capo, arg.getType()));
+    Value ckptStep =
+        FinalClass::loadSlot(builder, loc, liveStores[idxStore], capo,
+                             FinalClass::getIndexLikeType(builder));
+
+    // Re-prime each working clone from the snapshot paired with slot `capo`.
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      iface.copyValue(builder, workClones[r],
+                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                mutBufs[r], capo, budget));
+    }
+
+    // Inner remat loop: reconstruct state at (currentRevStep - 1).
+    SmallVector<Value> whileInit;
+    whileInit.push_back(ckptStep);
+    whileInit.push_back(capo);
+    whileInit.append(ckptState.begin(), ckptState.end());
+    if (carriedStores)
+      whileInit.append(liveStores.begin(), liveStores.end());
+
+    auto revWhile = FinalClass::createScaffoldWhileLoop(
+        builder, loc, whileInit,
+        [&](OpBuilder &b, Location l, ValueRange args) {
+          Value posPlus1 = FinalClass::emitAdd(b, l, args[0], c1);
+          return FinalClass::emitCmpLT(b, l, posPlus1, currentRevStep);
+        });
+    {
+      FinalClass::setInsertionPointToBodyEnd(builder, revWhile.body);
+      auto wargs = revWhile.args();
+      Value pos = wargs[0];
+      Value acapo = wargs[1];
+      auto astate = wargs.slice(2, numIterArgs);
+
+      SmallVector<Value> wStores(liveStores);
+      if (carriedStores)
+        for (auto &&[i, arg] :
+             llvm::enumerate(wargs.slice(2 + numIterArgs, stores.size())))
+          wStores[i] = arg;
+
+      Value remaining = FinalClass::emitSub(builder, loc, currentRevStep, pos);
+      Value budgetRem = FinalClass::emitSub(builder, loc, budgetV, acapo);
+      budgetRem = FinalClass::emitMin(builder, loc, budgetRem, remaining);
+      Value split = enzyme::BinomialProgressOp::create(
+          builder, loc, FinalClass::getIndexLikeType(builder), remaining,
+          budgetRem);
+
+      for (auto &&[i, val] : llvm::enumerate(astate))
+        wStores[i] =
+            FinalClass::storeSlot(builder, loc, wStores[i], acapo, val);
+      wStores[idxStore] =
+          FinalClass::storeSlot(builder, loc, wStores[idxStore], acapo, pos);
+
+      for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        iface.copyValue(builder,
+                        cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
+                                  mutBufs[r], acapo, budget),
+                        workClones[r]);
+      }
+
+      Value posPlusSplit = FinalClass::emitAdd(builder, loc, pos, split);
+      Value isLast =
+          FinalClass::emitCmpEQ(builder, loc, posPlusSplit, currentRevStep);
+      Value rematUB = FinalClass::emitSelect(
+          builder, loc, isLast,
+          FinalClass::emitSub(builder, loc, posPlusSplit, c1), posPlusSplit);
+
+      auto innerRemat = FinalClass::createScaffoldForLoop(
+          builder, loc, pos, rematUB, c1,
+          SmallVector<Value>(astate.begin(), astate.end()));
+      FinalClass::preserveAttributesButCheckpointing(innerRemat.op, forOp);
+
+      {
+        OpBuilder::InsertionGuard g2(builder);
+        builder.setInsertionPointToStart(innerRemat.body);
+        Value idx = FinalClass::castToType(builder, loc, innerRemat.getIV(),
+                                           stepV.getType());
+        Value iv =
+            FinalClass::emitAdd(builder, loc, startV,
+                                FinalClass::emitMul(builder, loc, stepV, idx));
+
+        Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
+        for (auto &&[oldArg, newArg] : llvm::zip_equal(
+                 origBodyBlock->getArguments().drop_front(), innerRemat.args()))
+          mapping.map(oldArg, newArg);
+        mapping.map(FinalClass::getInductionVar(forOp), iv);
+
+        copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
+
+        SmallVector<Value> yields;
+        for (auto operand : FinalClass::getCarriedTerminatorOperands(
+                 origBodyBlock->getTerminator()))
+          yields.push_back(mapping.lookupOrDefault(operand));
+        FinalClass::finalizeScaffoldLoop(builder, loc, innerRemat, yields);
+      }
+
+      Value newCapo = FinalClass::emitAdd(builder, loc, acapo, c1);
+      SmallVector<Value> afterYields;
+      afterYields.push_back(posPlusSplit);
+      afterYields.push_back(newCapo);
+      auto rematResults = innerRemat.results();
+      afterYields.append(rematResults.begin(), rematResults.end());
+      if (carriedStores)
+        afterYields.append(wStores.begin(), wStores.end());
+      FinalClass::finalizeScaffoldLoop(builder, loc, revWhile, afterYields);
+    }
+
+    FinalClass::setInsertionPointToBodyEnd(builder, revOuter.body);
+    auto whileResults = revWhile.results();
+    Value newSp = whileResults[1];
+    auto reconState = whileResults.slice(2, numIterArgs);
+    if (carriedStores)
+      for (auto &&[i, res] :
+           llvm::enumerate(whileResults.slice(2 + numIterArgs, stores.size())))
+        liveStores[i] = res;
+
+    Value stepAdj = FinalClass::emitSub(builder, loc, currentRevStep, c1);
+    Value stepAdjC =
+        FinalClass::castToType(builder, loc, stepAdj, stepV.getType());
+    Value ivAdj =
+        FinalClass::emitAdd(builder, loc, startV,
+                            FinalClass::emitMul(builder, loc, stepV, stepAdjC));
+
+    mapping = IRMapping();
+
+    for (auto [ref, cached] :
+         llvm::zip_equal(immutableRefs, immutableRefsCaches))
+      mapping.map(ref, cached);
+
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
+      mapping.map(ref, workClones[r]);
+
+    for (auto &&[oldArg, newArg] : llvm::zip_equal(
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
+             reconState))
+      mapping.map(oldArg, newArg);
+    mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
+
+    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
+                               mapping);
+
+    SmallVector<Value> reseededShadowKeys;
+    {
+      OpBuilder::InsertionGuard g4(builder);
+      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
+        for (Value res : inner->getResults()) {
+          if (gutils->isConstantValue(res))
+            continue;
+          Type shadowTy = gutils->getShadowType(res.getType());
+          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
+          if (!iface || !iface.isMutable())
+            continue;
+          Value newRes = mapping.lookupOrNull(res);
+          if (!newRes)
+            continue;
+          if (Operation *defOp = newRes.getDefiningOp())
+            builder.setInsertionPointAfter(defOp);
+          else
+            continue;
+          auto ph =
+              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
+          gutils->invertedPointers.map(res, ph);
+          reseededShadowKeys.push_back(res);
+        }
+      });
+    }
+
+    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
+    FinalClass::primeStepGradients(builder, gutils,
+                                   FinalClass::getBodyBlock(forOp),
+                                   revOuter.body, operandsActive);
+
+    unsigned revIdx = 0;
+    for (auto &&[active, operand] : llvm::zip_equal(
+             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
+      if (active) {
+        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    bool valid = true;
+    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
+    first++;
+    auto last = FinalClass::getBodyBlock(forOp)->rend();
+    {
+      SegmentCacheCreatorGuard cacheGuard(gutils, revWhile.op);
+      for (auto it = first; it != last; ++it)
+        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+    }
+
+    for (Value orig : reseededShadowKeys) {
+      Value cur = gutils->invertedPointers.lookupOrNull(orig);
+      if (!cur)
+        continue;
+      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
+      if (ph && ph->use_empty()) {
+        gutils->invertedPointers.erase(orig);
+        ph->erase();
+      }
+    }
+
+    SmallVector<Value> newAdjoints;
+    for (auto &&[active, arg] : llvm::zip_equal(
+             operandsActive,
+             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
+      if (active) {
+        newAdjoints.push_back(gutils->diffe(arg, builder));
+        if (!gutils->isConstantValue(arg))
+          gutils->zeroDiffe(arg, builder);
+      }
+    }
+
+    SmallVector<Value> outerYields;
+    outerYields.push_back(newSp);
+    outerYields.append(newAdjoints.begin(), newAdjoints.end());
+    if (carriedStores)
+      outerYields.append(liveStores.begin(), liveStores.end());
+    FinalClass::finalizeScaffoldLoop(builder, loc, revOuter, outerYields);
+
+    builder.setInsertionPointAfter(revOuter.op);
+
+    revIdx = 0;
+    auto revOuterResults = revOuter.results();
+    auto forOpInits = FinalClass::getInits(forOp);
+    for (auto &&[active, arg] : llvm::zip_equal(operandsActive, forOpInits)) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, revOuterResults[revIdx + 1], builder);
+        revIdx++;
+      }
+    }
+
+    for (auto store : stores)
+      FinalClass::destroyStore(builder, loc, store);
+    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
+      auto iface = cast<ClonableTypeInterface>(ref.getType());
+      iface.freeClonedValue(builder, workClones[r]);
+      freeCloneSlots(builder, ref, mutBufs[r], budget);
+    }
+
+    return success(valid);
+  }
+}
 
   //===--------------------------------------------------------------------===//
   // Periodic (sqrt-decomposition) checkpointing: decompose the N-iteration
@@ -1829,7 +2575,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   static std::optional<SmallVector<Value>>
   tryCacheValues(OpName forOp, Operation *op, MGradientUtilsReverse *gutils) {
     if (!FinalClass::needsBinomialCheckpointing(forOp) &&
-        !FinalClass::needsCheckpointing(forOp))
+        !FinalClass::needsCheckpointing(forOp) &&
+        !FinalClass::needsOnlineCheckpointing(forOp))
       return std::nullopt;
 
     // Both schemes build their bookkeeping scaffold (budget/recompute loops,
@@ -1873,6 +2620,27 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       return cacheBinomial(forOp, *budget, gutils);
     }
 
+    if (FinalClass::needsOnlineCheckpointing(forOp)) {
+      auto budget = FinalClass::getCheckpointBudget(forOp);
+      if (!budget || *budget <= 1) {
+        Operation *newOp = gutils->getNewFromOriginal(op);
+        OpBuilder cacheBuilder(newOp);
+        Location loc = forOp.getLoc();
+        SmallVector<Value> dummyCaches;
+        dummyCaches.push_back(gutils->initAndPushCache(
+            FinalClass::materializeLowerBound(cacheBuilder, loc, forOp, gutils),
+            cacheBuilder));
+        dummyCaches.push_back(gutils->initAndPushCache(
+            FinalClass::materializeUpperBound(cacheBuilder, loc, forOp, gutils),
+            cacheBuilder));
+        dummyCaches.push_back(gutils->initAndPushCache(
+            FinalClass::materializeStep(cacheBuilder, loc, forOp, gutils),
+            cacheBuilder));
+        return dummyCaches;
+      }
+      return cacheOnline(forOp, *budget, gutils);
+    }
+
     if (FinalClass::needsCheckpointing(forOp))
       return cachePeriodic(forOp, op, gutils);
 
@@ -1884,7 +2652,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       MGradientUtilsReverse *gutils, SmallVector<Value> caches,
       ArrayRef<bool> operandsActive, ArrayRef<Value> incomingGradients) {
     if (!FinalClass::needsBinomialCheckpointing(forOp) &&
-        !FinalClass::needsCheckpointing(forOp))
+        !FinalClass::needsCheckpointing(forOp) &&
+        !FinalClass::needsOnlineCheckpointing(forOp))
       return std::nullopt;
 
     // Mirrors the guard in tryCacheValues; already reported there, but
@@ -1904,6 +2673,18 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       }
       return reverseBinomial(forOp, *budget, builder, gutils, caches,
                              operandsActive, incomingGradients);
+    }
+
+    if (FinalClass::needsOnlineCheckpointing(forOp)) {
+      auto budget = FinalClass::getCheckpointBudget(forOp);
+      if (!budget || *budget <= 1) {
+        op->emitError() << "online checkpointing requires a "
+                        << FinalClass::checkpointPeriodAttrName()
+                        << " attribute greater than 1";
+        return failure();
+      }
+      return reverseOnline(forOp, *budget, builder, gutils, caches,
+                           operandsActive, incomingGradients);
     }
 
     if (FinalClass::needsCheckpointing(forOp))
