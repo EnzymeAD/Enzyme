@@ -22,7 +22,7 @@
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
-MLIR_CAPI_EXPORTED void enzymeRegisterPasses(void) {
+void enzymeRegisterPasses(void) {
   mlir::enzyme::registerDifferentiatePass();
   mlir::enzyme::registerExpandImpulsePass();
   mlir::enzyme::registerBatchPass();
@@ -35,41 +35,39 @@ MLIR_CAPI_EXPORTED void enzymeRegisterPasses(void) {
   mlir::enzyme::registerRemoveUnusedEnzymeOpsPass();
 }
 
-MLIR_CAPI_EXPORTED void
-enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
+void enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
   mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePass(void) {
+MlirPass enzymeCreateDifferentiatePass(void) {
   return wrap(mlir::enzyme::createDifferentiatePass().release());
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePassWithOptions(
-    MlirStringRef postpasses, bool verifyPostPasses) {
+MlirPass enzymeCreateDifferentiatePassWithOptions(MlirStringRef postpasses,
+                                                  bool verifyPostPasses) {
   mlir::enzyme::DifferentiatePassOptions opts;
   opts.postpasses = std::string(postpasses.data, postpasses.length);
   opts.verifyPostPasses = verifyPostPasses;
   return wrap(mlir::enzyme::createDifferentiatePass(opts).release());
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateConvertEnzymeToMemRefPass(void) {
+MlirPass enzymeCreateConvertEnzymeToMemRefPass(void) {
   return wrap(mlir::enzyme::createEnzymeOpsToMemRefPass().release());
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchPass(void) {
+MlirPass enzymeCreateBatchPass(void) {
   return wrap(mlir::enzyme::createBatchPass().release());
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchDiffPass(void) {
+MlirPass enzymeCreateBatchDiffPass(void) {
   return wrap(mlir::enzyme::createBatchDiffPass().release());
 }
 
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
+MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
   return wrap(mlir::enzyme::createRemoveUnusedEnzymeOpsPass().release());
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeActivityAttrGet(MlirContext ctx,
-                                                       uint32_t activity) {
+MlirAttribute enzymeActivityAttrGet(MlirContext ctx, uint32_t activity) {
   return wrap(mlir::enzyme::ActivityAttr::get(
       unwrap(ctx), (mlir::enzyme::Activity)activity));
 }
@@ -81,12 +79,13 @@ activityArrayAttr(MlirContext ctx, const MlirAttribute *activity, intptr_t n) {
                        reinterpret_cast<const mlir::Attribute *>(activity), n));
 }
 
-MLIR_CAPI_EXPORTED MlirOperation enzymeAutoDiffOpCreate(
-    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
-    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
-    const MlirAttribute *activity, intptr_t nActivity,
-    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
-    bool strongZero, MlirLocation loc) {
+MlirOperation
+enzymeAutoDiffOpCreate(MlirContext ctx, MlirStringRef fn,
+                       const MlirType *resultTypes, intptr_t nResults,
+                       const MlirValue *inputs, intptr_t nInputs,
+                       const MlirAttribute *activity, intptr_t nActivity,
+                       const MlirAttribute *retActivity, intptr_t nRetActivity,
+                       int64_t width, bool strongZero, MlirLocation loc) {
   auto op =
       mlir::OpBuilder(unwrap(ctx))
           .create<mlir::enzyme::AutoDiffOp>(
@@ -102,7 +101,7 @@ MLIR_CAPI_EXPORTED MlirOperation enzymeAutoDiffOpCreate(
   return wrap(op.getOperation());
 }
 
-MLIR_CAPI_EXPORTED MlirOperation enzymeForwardDiffOpCreate(
+MlirOperation enzymeForwardDiffOpCreate(
     MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
     intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
     const MlirAttribute *activity, intptr_t nActivity,
@@ -123,12 +122,13 @@ MLIR_CAPI_EXPORTED MlirOperation enzymeForwardDiffOpCreate(
   return wrap(op.getOperation());
 }
 
-MLIR_CAPI_EXPORTED MlirOperation enzymeJacobianOpCreate(
-    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
-    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
-    const MlirAttribute *activity, intptr_t nActivity,
-    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
-    bool strongZero, MlirLocation loc) {
+MlirOperation
+enzymeJacobianOpCreate(MlirContext ctx, MlirStringRef fn,
+                       const MlirType *resultTypes, intptr_t nResults,
+                       const MlirValue *inputs, intptr_t nInputs,
+                       const MlirAttribute *activity, intptr_t nActivity,
+                       const MlirAttribute *retActivity, intptr_t nRetActivity,
+                       int64_t width, bool strongZero, MlirLocation loc) {
   auto op =
       mlir::OpBuilder(unwrap(ctx))
           .create<mlir::enzyme::JacobianOp>(
@@ -144,10 +144,11 @@ MLIR_CAPI_EXPORTED MlirOperation enzymeJacobianOpCreate(
   return wrap(op.getOperation());
 }
 
-MLIR_CAPI_EXPORTED MlirOperation enzymeBatchOpCreate(
-    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
-    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
-    const int64_t *batchShape, intptr_t nBatchShape, MlirLocation loc) {
+MlirOperation enzymeBatchOpCreate(MlirContext ctx, MlirStringRef fn,
+                                  const MlirType *resultTypes,
+                                  intptr_t nResults, const MlirValue *inputs,
+                                  intptr_t nInputs, const int64_t *batchShape,
+                                  intptr_t nBatchShape, MlirLocation loc) {
   auto op =
       mlir::OpBuilder(unwrap(ctx))
           .create<mlir::enzyme::BatchOp>(
@@ -161,8 +162,8 @@ MLIR_CAPI_EXPORTED MlirOperation enzymeBatchOpCreate(
   return wrap(op.getOperation());
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute
-enzymeRngDistributionAttrGet(MlirContext ctx, EnzymeRngDistribution dist) {
+MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
+                                           EnzymeRngDistribution dist) {
   mlir::impulse::RngDistribution rngDist;
   switch (dist) {
   case EnzymeRngDistribution_Uniform:
@@ -178,9 +179,9 @@ enzymeRngDistributionAttrGet(MlirContext ctx, EnzymeRngDistribution dist) {
   return wrap(mlir::impulse::RngDistributionAttr::get(unwrap(ctx), rngDist));
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeSupportAttrGet(
-    MlirContext ctx, EnzymeSupportKind kind, bool hasLowerBound,
-    double lowerBound, bool hasUpperBound, double upperBound) {
+MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
+                                   bool hasLowerBound, double lowerBound,
+                                   bool hasUpperBound, double upperBound) {
   auto *mlirCtx = unwrap(ctx);
 
   mlir::impulse::SupportKind supportKind;
@@ -219,10 +220,8 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeSupportAttrGet(
                                               upperAttr));
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
-                                                        double trajectoryLength,
-                                                        bool adaptStepSize,
-                                                        bool adaptMassMatrix) {
+MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
+                                     bool adaptStepSize, bool adaptMassMatrix) {
   auto *mlirCtx = unwrap(ctx);
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
@@ -231,9 +230,10 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
       mlirCtx, trajectoryLengthAttr, adaptStepSize, adaptMassMatrix));
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
-    MlirContext ctx, int64_t maxTreeDepth, bool hasMaxDeltaEnergy,
-    double maxDeltaEnergy, bool adaptStepSize, bool adaptMassMatrix) {
+MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
+                                      bool hasMaxDeltaEnergy,
+                                      double maxDeltaEnergy, bool adaptStepSize,
+                                      bool adaptMassMatrix) {
   auto *mlirCtx = unwrap(ctx);
 
   mlir::FloatAttr maxDeltaEnergyAttr;
@@ -246,7 +246,6 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
       adaptMassMatrix));
 }
 
-MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
-                                                     uint64_t ptr) {
+MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
   return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
 }
