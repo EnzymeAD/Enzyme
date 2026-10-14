@@ -305,7 +305,13 @@ void RecursivelyReplaceAddressSpace(
     if (auto ASC = dyn_cast<AddrSpaceCastInst>(inst)) {
       auto AS = cast<PointerType>(rep->getType())->getAddressSpace();
       if (AS == ASC->getDestAddressSpace()) {
-        ASC->replaceAllUsesWith(rep);
+        // With typed pointers, the cast may also change the pointee type.
+        Value *nrep = rep;
+        if (rep->getType() != ASC->getType()) {
+          IRBuilder<> B(ASC);
+          nrep = B.CreatePointerCast(rep, ASC->getType());
+        }
+        ASC->replaceAllUsesWith(nrep);
         assert(ASC);
         toErase.push_back(ASC);
         continue;
