@@ -83,6 +83,20 @@ module {
   }
 }
 
+// All four schemes must compute the same adjoint formula per iteration step.
+// The body is cos(s*s), so the chain rule gives:
+//
+//   d(cos(s²))/ds = -sin(s²) · 2s
+//
+// and the per-step adjoint (with incoming gradient dG) is:
+//
+//   new_dG = dG · (-sin(s²)) · 2s
+//          = dG · negf(sin(mulf(s,s))) · addf(mulf(·,s), mulf(·,s))
+//
+// Each scheme recovers s differently (load/pop/reconstruct) then applies this
+// formula identically.  The checks below pin down that exact sequence in every
+// scheme so that all four are verified to compute the same result.
+
 // ------------ f_plain: scf.for, full-tape -----------------------------------
 // Full tape allocates a runtime-sized memref sized by the trip count %n.
 // PLAIN-LABEL: func.func @f_plain(
@@ -91,11 +105,16 @@ module {
 // PLAIN:         memref.alloc(%{{.*}}) : memref<?xf32>
 // PLAIN:         scf.for
 // PLAIN:         enzyme.store
-// Reverse loop loads stored values in reverse order and applies the adjoint.
+// Reverse loop: recover s from tape, then apply the adjoint formula.
 // PLAIN:         scf.for
-// PLAIN:         enzyme.load
-// PLAIN:         math.sin
-// PLAIN:         arith.negf
+// PLAIN:         %[[S_PLAIN:.+]] = enzyme.load %{{.*}} : memref<?xf32>
+// PLAIN:         %[[SQ_PLAIN:.+]] = arith.mulf %[[S_PLAIN]], %[[S_PLAIN]]
+// PLAIN:         %[[SIN_PLAIN:.+]] = math.sin %[[SQ_PLAIN]]
+// PLAIN-NEXT:    %[[NEG_PLAIN:.+]] = arith.negf %[[SIN_PLAIN]]
+// PLAIN:         %[[SCALED_PLAIN:.+]] = arith.mulf %{{.*}}, %[[NEG_PLAIN]]
+// PLAIN:         arith.mulf %[[SCALED_PLAIN]], %[[S_PLAIN]]
+// PLAIN:         arith.mulf %[[SCALED_PLAIN]], %[[S_PLAIN]]
+// PLAIN:         arith.addf
 // PLAIN:         memref.dealloc {{.*}} : memref<?xf32>
 // PLAIN:         return
 
@@ -108,11 +127,18 @@ module {
 // Forward scf.for checkpoints carried values into the static buffers.
 // BINOM:         scf.for
 // Outer reverse scf.for drives one adjoint step per primal step; inner
-// scf.while runs the offline Revolve reconstruction.
+// scf.while runs the offline Revolve reconstruction that delivers s.
 // BINOM:         scf.for
 // BINOM:         scf.while
-// BINOM:         math.sin
-// BINOM:         arith.negf
+// Adjoint formula — anchored to math.sin rather than to the preceding mulf
+// because the inner Revolve reconstruction loop also contains mulf ops (for
+// the primal remat step); math.sin appears exactly once, in the adjoint.
+// BINOM:         %[[SIN_BINOM:.+]] = math.sin
+// BINOM-NEXT:    %[[NEG_BINOM:.+]] = arith.negf %[[SIN_BINOM]]
+// BINOM:         %[[SCALED_BINOM:.+]] = arith.mulf %{{.*}}, %[[NEG_BINOM]]
+// BINOM:         arith.mulf %[[SCALED_BINOM]], %{{.*}}
+// BINOM:         arith.mulf %[[SCALED_BINOM]], %{{.*}}
+// BINOM:         arith.addf
 // BINOM:         memref.dealloc {{.*}} : memref<3xf32>
 // BINOM:         memref.dealloc {{.*}} : memref<3xindex>
 // BINOM:         return
@@ -127,11 +153,18 @@ module {
 // WTAPE:         !enzyme.Cache<f32>
 // WTAPE:         scf.while
 // WTAPE:         enzyme.push
-// Reverse scf.for iterates numIters times, popping primal state each step.
+// Reverse scf.for: pop s from the LIFO tape, then apply the adjoint formula.
+// enzyme.pop stays in generic form "enzyme.pop"(...) after canonicalize, so
+// the check uses {{.*}} to match both custom and generic assembly formats.
 // WTAPE:         scf.for
-// WTAPE:         enzyme.pop
-// WTAPE:         math.sin
-// WTAPE:         arith.negf
+// WTAPE:         %[[S_WTAPE:.+]] = {{.*}}enzyme.pop
+// WTAPE:         %[[SQ_WTAPE:.+]] = arith.mulf %[[S_WTAPE]], %[[S_WTAPE]]
+// WTAPE:         %[[SIN_WTAPE:.+]] = math.sin %[[SQ_WTAPE]]
+// WTAPE-NEXT:    %[[NEG_WTAPE:.+]] = arith.negf %[[SIN_WTAPE]]
+// WTAPE:         %[[SCALED_WTAPE:.+]] = arith.mulf %{{.*}}, %[[NEG_WTAPE]]
+// WTAPE:         arith.mulf %[[SCALED_WTAPE]], %[[S_WTAPE]]
+// WTAPE:         arith.mulf %[[SCALED_WTAPE]], %[[S_WTAPE]]
+// WTAPE:         arith.addf
 // WTAPE:         return
 
 // ------------ f_while_online: scf.while, online (Stumm-Walther) -------------
@@ -148,11 +181,17 @@ module {
 // WONLINE:        scf.while
 // Online_r2 state arrays freed before the reverse pass.
 // WONLINE:        memref.dealloc {{.*}} : memref<3xindex>
-// Outer reverse scf.for + inner scf.while (offline Revolve reconstruction).
+// Outer reverse scf.for + inner scf.while reconstructs s via offline Revolve.
 // WONLINE:        scf.for
 // WONLINE:        scf.while
-// WONLINE:        math.sin
-// WONLINE:        arith.negf
+// Adjoint formula — anchored to math.sin (appears exactly once, in the
+// adjoint step; the inner remat loop only contains math.cos for the primal).
+// WONLINE:        %[[SIN_WONLINE:.+]] = math.sin
+// WONLINE-NEXT:   %[[NEG_WONLINE:.+]] = arith.negf %[[SIN_WONLINE]]
+// WONLINE:        %[[SCALED_WONLINE:.+]] = arith.mulf %{{.*}}, %[[NEG_WONLINE]]
+// WONLINE:        arith.mulf %[[SCALED_WONLINE]], %{{.*}}
+// WONLINE:        arith.mulf %[[SCALED_WONLINE]], %{{.*}}
+// WONLINE:        arith.addf
 // WONLINE:        memref.dealloc {{.*}} : memref<3xf32>
 // WONLINE:        memref.dealloc {{.*}} : memref<3xindex>
 // WONLINE:        return
