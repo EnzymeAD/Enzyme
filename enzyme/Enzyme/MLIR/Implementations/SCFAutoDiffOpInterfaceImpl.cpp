@@ -1261,8 +1261,7 @@ struct WhileOpInterfaceReverse
     size_t idxBuf() const { return numCarried; }
     size_t immutable(size_t i) const { return numCarried + 1 + i; }
     size_t numFwdBuf() const { return immutable(numImmutable); }
-    size_t spBuf() const { return immutable(numImmutable) + 1; }
-    size_t size() const { return immutable(numImmutable) + 2; }
+    size_t size() const { return immutable(numImmutable) + 1; }
   };
 
   // ── Helper: copy a block's ops (without terminator) into the builder ──────
@@ -1322,12 +1321,18 @@ struct WhileOpInterfaceReverse
     size_t numCarried = primalInits.size();
 
     // Checkpoint stores: one per carried value + one index store.
+    // Allocate budget+1 slots (not budget) so the inner Revolve reconstruction
+    // in the reverse pass can safely use slot `budget` as a scratch slot.
+    // The forward pass only ever writes to slots 0..budget-1 (via new_check),
+    // but the inner Revolve increments acapo past budget-1 before checking the
+    // while exit condition, potentially storing at slot budget.  The extra slot
+    // absorbs that write without a buffer overflow.
     SmallVector<Value> stores;
     for (auto init : primalInits)
       stores.push_back(memref::AllocOp::create(
-          builder, loc, MemRefType::get({budget}, init.getType())));
+          builder, loc, MemRefType::get({budget + 1}, init.getType())));
     stores.push_back(memref::AllocOp::create(
-        builder, loc, MemRefType::get({budget}, idxTy)));
+        builder, loc, MemRefType::get({budget + 1}, idxTy)));
     const size_t idxStore = stores.size() - 1;
 
     // Online_r2 SM arrays (freed after the forward pass).
@@ -1336,16 +1341,14 @@ struct WhileOpInterfaceReverse
     Value ordChBuf  = memref::AllocOp::create(builder, loc, smArrTy);
     Value numRepBuf = memref::AllocOp::create(builder, loc, smArrTy);
 
-    // Scaffold init: (sp=0, numFwd=0, smCheck=-1, 9×smScalar=0, primalInit...)
-    // Note: 'done' is NOT a loop-carried value.  Instead, the before-block
-    // detects primal termination by running the primal's condition check on the
-    // current carried state, which avoids the canonicalize bug that removes
-    // unused while results (done was always 1 at loop exit, so its result was
-    // dead outside the while and canonicalize eliminated it, corrupting the
-    // condition check).
+    // Scaffold init: (numFwd=0, smCheck=-1, 9×smScalar=0, primalInit...)
+    // sp is deliberately OMITTED from the before-block carry.  The reverse
+    // pass uses a slot-scan (Julia's storemap) and the constant `budget` to
+    // find the top checkpoint, so it never needs sp.  Carrying sp caused
+    // --canonicalize to drop it as a trivial pass-through in the outer reverse
+    // for loop, leaving the scaffold while result for numFwd at the wrong index.
     Value smCheckInit = arith::ConstantIndexOp::create(builder, loc, -1);
     SmallVector<Value> whileInit;
-    whileInit.push_back(c0);           // sp
     whileInit.push_back(c0);           // numFwd
     whileInit.push_back(smCheckInit);  // check = -1
     for (int i = 0; i < 9; ++i)       // capo..offset (9 more SM scalars)
@@ -1357,12 +1360,9 @@ struct WhileOpInterfaceReverse
     for (Value v : whileInit)
       beforeTypes.push_back(v.getType());
 
-    // After-block types: sp, numFwd, action, 10 SM scalars, primalCarried
-    // (no 'done' — it was never needed in the after-block either; the
-    // FORWARD branch updates primalCarried, which the next before-block
-    // iteration inspects directly for the termination check)
+    // After-block types: numFwd, action, 10 SM scalars, primalCarried
+    // (sp and done both omitted; the reverse uses budget constant + scan)
     SmallVector<Type> afterTypes;
-    afterTypes.push_back(idxTy); // sp
     afterTypes.push_back(idxTy); // numFwd
     afterTypes.push_back(idxTy); // action
     for (int i = 0; i < 10; ++i)
@@ -1384,12 +1384,12 @@ struct WhileOpInterfaceReverse
                                           beforeTypes, befLocs);
       builder.setInsertionPointToEnd(before);
       auto ba = before->getArguments();
-      Value sp = ba[0], numFwd = ba[1];
-      // SM scalars at positions 2..11; primalCarried at 12+  (no 'done')
-      Value smCheck = ba[2], smCapo = ba[3], smOldcapoO = ba[4];
-      Value smT = ba[5], smIncr = ba[6], smIter = ba[7];
-      Value smOldind = ba[8], smInd = ba[9], smOldF = ba[10], smOffset = ba[11];
-      auto primalCarried = ba.drop_front(12);
+      Value numFwd = ba[0];
+      // SM scalars at positions 1..10; primalCarried at 11+  (no sp, no done)
+      Value smCheck = ba[1], smCapo = ba[2], smOldcapoO = ba[3];
+      Value smT = ba[4], smIncr = ba[5], smIter = ba[6];
+      Value smOldind = ba[7], smInd = ba[8], smOldF = ba[9], smOffset = ba[10];
+      auto primalCarried = ba.drop_front(11);
 
       auto prog = enzyme::OnlineProgressOp::create(
           builder, loc,
@@ -1397,13 +1397,13 @@ struct WhileOpInterfaceReverse
           smOldind, smInd, smOldF, smOffset, budgetV,
           chBuf, ordChBuf, numRepBuf);
 
-      // Loop continues while the Online_r2 algorithm wants to continue AND
-      // the primal while loop hasn't terminated.  Both checks are performed
-      // locally (not via a loop-carried 'done' flag), so canonicalize cannot
-      // remove them from the before-block's argument list.
-      Value notTerminate = arith::CmpIOp::create(
-          builder, loc, arith::CmpIPredicate::ne,
-          prog.getAction(), c0);  // action != 0 → algorithm not done
+      // Loop terminates when the PRIMAL while terminates (primalCond=false).
+      // We do NOT check action != 0 here: when Online_r2 transitions from the
+      // online phase to the offline Revolve it returns action=0 (TERMINATE),
+      // but the primal may still have unrun steps.  Gating on action would exit
+      // the scaffold early and under-count numFwd.  When action=0 in the
+      // after-block, isStore=false so we fall through to the FORWARD branch
+      // and continue advancing the primal.
 
       // Run the primal's condition check on the CURRENT carried state.
       Block *primalBeforeBlk = &newWhileOp.getBefore().front();
@@ -1417,11 +1417,9 @@ struct WhileOpInterfaceReverse
       Value primalCond =
           condCheckMap.lookupOrDefault(primalCondOp.getCondition());
 
-      Value shouldContinue = arith::AndIOp::create(
-          builder, loc, notTerminate, primalCond);
+      Value shouldContinue = primalCond;  // exit only when primal terminates
 
       SmallVector<Value> condVals;
-      condVals.push_back(sp);
       condVals.push_back(numFwd);
       condVals.push_back(prog.getAction());
       condVals.push_back(prog.getNewCheck());
@@ -1446,18 +1444,17 @@ struct WhileOpInterfaceReverse
                                          afterTypes, aftLocs);
       builder.setInsertionPointToEnd(after);
       auto aa = after->getArguments();
-      Value sp = aa[0], numFwd = aa[1], action = aa[2];
-      // aa[3..12]: updated SM scalars; aa[13+]: primalCarried  (no 'done')
-      auto primalCarried = aa.drop_front(13);
+      Value numFwd = aa[0], action = aa[1];
+      // aa[2..11]: updated SM scalars (new_check..new_offset); aa[12+]: primalCarried
+      auto primalCarried = aa.drop_front(12);
 
       // Dispatch on action == 1 (STORE) vs action == 2 (FORWARD).
       Value storeVal = arith::ConstantIndexOp::create(builder, loc, 1);
       Value isStore = arith::CmpIOp::create(
           builder, loc, arith::CmpIPredicate::eq, action, storeVal);
 
-      // Branch result types: (newSp, newNumFwd, newPrimalCarried...)
-      // (no 'done' — the before-block now detects termination directly)
-      SmallVector<Type> brTys = {idxTy, idxTy};
+      // Branch result types: (newNumFwd, newPrimalCarried...)
+      SmallVector<Type> brTys = {idxTy};
       for (auto init : primalInits)
         brTys.push_back(init.getType());
 
@@ -1477,14 +1474,13 @@ struct WhileOpInterfaceReverse
       {
         OpBuilder::InsertionGuard g2(builder);
         builder.setInsertionPointToStart(dispatch.thenBlock());
-        Value checkSlot = aa[3]; // new_check: algorithm's chosen storage slot
+        Value checkSlot = aa[2]; // new_check at aa[2] (aa[0]=numFwd, aa[1]=action)
         for (size_t i = 0; i < numCarried; ++i)
           memref::StoreOp::create(builder, loc, primalCarried[i],
                                   stores[i], ValueRange{checkSlot});
         memref::StoreOp::create(builder, loc, numFwd, stores[idxStore],
                                 ValueRange{checkSlot});
         SmallVector<Value> thenY;
-        thenY.push_back(arith::AddIOp::create(builder, loc, checkSlot, c1));
         thenY.push_back(numFwd); // unchanged
         thenY.append(primalCarried.begin(), primalCarried.end());
         scf::YieldOp::create(builder, loc, thenY);
@@ -1553,24 +1549,21 @@ struct WhileOpInterfaceReverse
         Value newNumFwd  = arith::AddIOp::create(builder, loc, numFwd, stepTaken);
 
         SmallVector<Value> elseY;
-        elseY.push_back(sp);        // sp unchanged
         elseY.push_back(newNumFwd);
         elseY.append(newCarried.begin(), newCarried.end());
         scf::YieldOp::create(builder, loc, elseY);
       }
 
       // Yield updated carry back to the before block.
-      // before-block order: sp, numFwd, SM(2..11), primalCarried  (no 'done')
+      // before-block order: numFwd, SM(1..10), primalCarried  (no sp, no done)
       auto dr = dispatch.getResults();
-      Value newSp      = dr[0];
-      Value newNumFwd  = dr[1];
-      auto  newCarried = dr.drop_front(2);
+      Value newNumFwd  = dr[0];
+      auto  newCarried = dr.drop_front(1);
 
       SmallVector<Value> whileY;
-      whileY.push_back(newSp);
       whileY.push_back(newNumFwd);
-      // SM scalars: pass through from the after-block args (aa[3..12]).
-      for (int i = 3; i <= 12; ++i)
+      // SM scalars: pass through from the after-block args (aa[2..11]).
+      for (int i = 2; i <= 11; ++i)
         whileY.push_back(aa[i]);
       whileY.append(newCarried.begin(), newCarried.end());
       scf::YieldOp::create(builder, loc, whileY);
@@ -1578,11 +1571,10 @@ struct WhileOpInterfaceReverse
 
     builder.setInsertionPointAfter(scaffoldWhile);
     auto wr = scaffoldWhile.getResults();
-    Value finalSp     = wr[0];
-    Value finalNumFwd = wr[1];
-    // wr[2]=action, wr[3..12]=SM scalars — all unneeded post-loop.
-    // wr[13+] = finalPrimalState (no 'done' — it was removed from the design).
-    auto finalPrimalState = wr.drop_front(13);
+    // wr[0]=numFwd, wr[1]=action, wr[2..11]=SM scalars — all unneeded post-loop
+    // except numFwd.  wr[12+] = finalPrimalState.
+    Value finalNumFwd = wr[0];
+    auto finalPrimalState = wr.drop_front(12);
 
     // Free SM arrays (their job is done after the forward pass).
     memref::DeallocOp::create(builder, loc, chBuf);
@@ -1606,9 +1598,8 @@ struct WhileOpInterfaceReverse
     for (auto ref : immutableRefs)
       caches.push_back(
           gutils->initAndPushCache(gutils->getNewFromOriginal(ref), builder));
-    // Online-specific: total primal steps and checkpoints stored.
+    // Online-specific: total primal steps (sp is gone, reverse uses budget constant).
     caches.push_back(gutils->initAndPushCache(finalNumFwd, builder));
-    caches.push_back(gutils->initAndPushCache(finalSp, builder));
 
     // Replace the primal while op with the scaffold's final primal state.
     gutils->replaceOrigOpWith(whileOp,
@@ -1944,14 +1935,16 @@ struct WhileOpInterfaceReverse
     }
 
     Value numItersV = gutils->popCache(caches[layout.numFwdBuf()], builder);
-    Value budgetV   = gutils->popCache(caches[layout.spBuf()], builder);
+    // sp was removed from the scaffold while entirely, so there is no spBuf.
+    // The reverse uses the constant `budget` for slot scans and budgetRem.
 
     Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
     Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value totalBudget = arith::ConstantIndexOp::create(builder, loc, budget);
+    Value negOne = arith::ConstantIndexOp::create(builder, loc, -1);
 
-    // Outer reverse loop: numItersV steps (ivO from 0 to numItersV-1, reverse).
+    // Outer reverse loop: carries only the gradient adjoints (no sp).
     SmallVector<Value> outerInit;
-    outerInit.push_back(budgetV);
     outerInit.append(incomingGradients.begin(), incomingGradients.end());
 
     auto revOuter = H::createScaffoldForLoop(builder, loc, c0, numItersV, c1,
@@ -1963,14 +1956,46 @@ struct WhileOpInterfaceReverse
       builder.setInsertionPointToStart(revOuter.body);
 
       Value ivO = revOuter.getIV();
-      auto revOuterArgs = revOuter.args();
-      Value sp = revOuterArgs[0];
-      auto adjArgs = revOuterArgs.slice(1, incomingGradients.size());
+      auto adjArgs = revOuter.args();  // all iter-args = gradients
 
       SmallVector<Value> liveStores(stores);
 
-      Value capo           = H::emitSub(builder, loc, sp, c1);
       Value currentRevStep = H::emitSub(builder, loc, numItersV, ivO);
+      // targetStep = currentRevStep - 1: the step we need state just BEFORE.
+      Value targetStep = H::emitSub(builder, loc, currentRevStep, c1);
+
+      // ── Step→slot lookup (Julia's storemap) ─────────────────────────────
+      // Find the checkpoint slot whose stored step is the HIGHEST value
+      // ≤ targetStep.  This is the slot from which Revolve reconstruction
+      // should start — the equivalent of Julia's
+      //   storemap[next_action.iteration - 1]
+      // The scan costs O(budget) per outer iteration; for small budgets
+      // (2–10) this is negligible.
+      //
+      //   bestCapo = argmax{ liveStores[idxStore][s]
+      //                      | s in 0..budget-1, step[s] ≤ targetStep }
+      auto scanLoop = scf::ForOp::create(builder, loc, c0, totalBudget, c1,
+                                         SmallVector<Value>{c0, negOne});
+      if (!scanLoop.getBody()->empty())
+        scanLoop.getBody()->front().erase();
+      {
+        OpBuilder::InsertionGuard sg(builder);
+        builder.setInsertionPointToStart(scanLoop.getBody());
+        Value slot     = scanLoop.getInductionVar();
+        Value bestCapo = scanLoop.getRegionIterArgs()[0];
+        Value bestStep = scanLoop.getRegionIterArgs()[1];
+        Value stepAtSlot = H::loadSlot(builder, loc, liveStores[idxStore],
+                                       slot, builder.getIndexType());
+        Value withinTarget = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sle, stepAtSlot, targetStep);
+        Value isBetter = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sgt, stepAtSlot, bestStep);
+        Value update = arith::AndIOp::create(builder, loc, withinTarget, isBetter);
+        Value newBestCapo = arith::SelectOp::create(builder, loc, update, slot, bestCapo);
+        Value newBestStep = arith::SelectOp::create(builder, loc, update, stepAtSlot, bestStep);
+        scf::YieldOp::create(builder, loc, ValueRange{newBestCapo, newBestStep});
+      }
+      Value capo = scanLoop.getResult(0);  // slot of the best checkpoint
 
       // Load top checkpoint: carried state + the primal step it was taken at.
       SmallVector<Value> ckptState;
@@ -2074,7 +2099,7 @@ struct WhileOpInterfaceReverse
 
       H::setInsertionPointToBodyEnd(builder, revOuter.body);
       auto whileResults = revWhile.results();
-      Value newSp      = whileResults[1];
+      // whileResults[0]=finalPos, [1]=finalCapo (not used), [2+]=reconState
       auto reconState  = whileResults.slice(2, numCarried);
 
       // Adjoint of one primal step at (currentRevStep - 1).
@@ -2135,7 +2160,6 @@ struct WhileOpInterfaceReverse
       }
 
       SmallVector<Value> outerYields;
-      outerYields.push_back(newSp);
       outerYields.append(newAdjoints.begin(), newAdjoints.end());
       H::finalizeScaffoldLoop(builder, loc, revOuter, outerYields);
 
@@ -2149,7 +2173,7 @@ struct WhileOpInterfaceReverse
            llvm::zip_equal(operandsActive, whileOpInits)) {
         if (active) {
           if (!gutils->isConstantValue(initArg))
-            gutils->addToDiffe(initArg, revOuterResults[revIdx + 1], builder);
+            gutils->addToDiffe(initArg, revOuterResults[revIdx], builder);
           revIdx++;
         }
       }

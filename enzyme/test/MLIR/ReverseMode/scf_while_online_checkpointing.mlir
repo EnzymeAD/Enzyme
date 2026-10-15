@@ -35,11 +35,12 @@ module {
 // CHECK-SAME:    %{{.*}}: f32, %{{.*}}: index, %{{.*}}: f32
 
 // ── Forward pass ─────────────────────────────────────────────────────────────
-// Checkpoint buffers: carried f32 state, carried index state, step-index log.
-// CHECK-DAG:     memref.alloc() : memref<3xf32>
-// CHECK-DAG:     memref.alloc() : memref<3xindex>
+// Checkpoint buffers allocated with budget+1 slots so the inner Revolve
+// reconstruction has a scratch slot without overflow.
+// CHECK-DAG:     memref.alloc() : memref<4xf32>
+// CHECK-DAG:     memref.alloc() : memref<4xindex>
 
-// Online_r2 state arrays.
+// Online_r2 state arrays (size = budget = 3).
 // CHECK-DAG:     memref.alloc() : memref<3xindex>
 
 // The forward scaffold is an scf.while driven by the Online_r2 state machine;
@@ -63,7 +64,7 @@ module {
 // CHECK:         arith.negf
 
 // Checkpoint buffers freed.
-// CHECK-DAG:     memref.dealloc {{.*}} : memref<3xf32>
-// CHECK-DAG:     memref.dealloc {{.*}} : memref<3xindex>
+// CHECK-DAG:     memref.dealloc {{.*}} : memref<4xf32>
+// CHECK-DAG:     memref.dealloc {{.*}} : memref<4xindex>
 
 // CHECK:         return
