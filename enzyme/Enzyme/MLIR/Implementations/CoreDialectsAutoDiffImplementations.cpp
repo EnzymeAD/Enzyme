@@ -22,8 +22,10 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
@@ -65,12 +67,16 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                  APFloat(ET.getFloatSemantics(), "0"))};
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<mlir::Complex<APFloat>>(values));
+    } else if (auto IET = dyn_cast<IntegerType>(T.getElementType())) {
+      APInt values[] = {APInt(IET.getWidth(), value, /*radix=*/10)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<APInt>(values));
     } else {
       llvm::errs() << " unsupported eltype: " << T.getElementType()
                    << " of type " << type << "\n";
       llvm_unreachable("unsupported eltype");
     }
-  } else if (auto T = cast<FloatType>(type)) {
+  } else if (auto T = dyn_cast<FloatType>(type)) {
     APFloat apvalue(T.getFloatSemantics(), value);
     return FloatAttr::get(T, apvalue);
     // NOTE `complex::ConstantOp` doesn't accept `TypedAttr`, only `ArrayAttr`
@@ -80,12 +86,22 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), value)),
     //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), "0"));
     //   });
+  } else if (auto T = dyn_cast<IntegerType>(type)) {
+    APInt apvalue(T.getWidth(), value, /*radix=*/10);
+    return IntegerAttr::get(T, apvalue);
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
     llvm_unreachable("unsupported eltype");
   }
 }
 
+bool mlir::enzyme::allResultsActive(Operation *op,
+                                    const MGradientUtils *gutils) {
+  for (Value result : op->getResults())
+    if (gutils->isConstantValue(result))
+      return false;
+  return true;
+}
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
                                                    OpBuilder &builder,
                                                    MGradientUtils *gutils) {

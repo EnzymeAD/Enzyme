@@ -105,7 +105,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 
   let hasCanonicalizer = 1;
@@ -134,7 +134,7 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 
   let hasCanonicalizer = 1;
@@ -169,7 +169,7 @@ def JacobianOp : Enzyme_Op<"jacobian",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -180,7 +180,7 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+    `(` $inputs `)` $body prop-dict attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
 
   let hasCanonicalizer=1;
@@ -217,7 +217,7 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+    `(` $inputs `)` $body prop-dict attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
   
   let hasCanonicalizer = 1;
@@ -255,7 +255,7 @@ def BatchOp : Enzyme_Op<"batch",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -517,7 +517,7 @@ def DumpOp : Enzyme_Op<"dump"> {
   let results = (outs AnyType:$output);
 
   let assemblyFormat = [{
-    $value attr-dict `:` functional-type($value, results)
+    $value prop-dict attr-dict `:` functional-type($value, results)
   }];
 }
 
@@ -546,11 +546,12 @@ def AtomicRMWOp : Enzyme_Op<"atomic_rmw", [
 
   let assemblyFormat = [{
     $kind $value `,` $memref `[` $indices `]` $ordering
-    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
+    (`fastmath` `` $fastmath^)? prop-dict attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 
   let extraClassDeclaration = [{
     MemRefType getMemRefType() {
@@ -578,11 +579,12 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw", [
 
   let assemblyFormat = [{
     $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` $ordering
-    (`fastmath` `` $fastmath^)? attr-dict `:` `(` type($value) `,`
+    (`fastmath` `` $fastmath^)? prop-dict attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
   }];
 
   let hasCanonicalizeMethod = 1;
+  let hasFolder = 1;
 }
 
 #endif // ENZYME_OPS

@@ -467,7 +467,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
   case ICmpInst::ICMP_UGT:
   case ICmpInst::ICMP_SGE:
   case ICmpInst::ICMP_UGE: { // while (X > Y)
-    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE;
+    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SGE;
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
@@ -482,8 +482,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
       else
         RHS = getAddExpr(sv, SCEV::FlagNUW);
     }
+#if LLVM_VERSION_MAJOR >= 24
+    ExitLimit EL = ScalarEvolution::howManyLessThans(
+        LHS, RHS, L, IsSigned, /*Invert=*/true, ControlsExit, AllowPredicates);
+#else
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
+#endif
     if (EL.hasAnyInfo())
       return EL;
     break;
@@ -979,7 +984,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       return getCouldNotCompute();
   }
 
-  // On all paths just preceeding, we established the following invariant:
+  // On all paths just preceding, we established the following invariant:
   //   IV can be assumed not to overflow up to and including the exiting
   //   iteration.  We proved this in one of two ways:
   //   1) We can show overflow doesn't occur before the exiting iteration
