@@ -172,9 +172,9 @@ module {
 // both checkpoint data and the Online_r2 state arrays.
 // WONLINE-LABEL: func.func @f_while_online(
 // WONLINE-SAME:   %{{.*}}: f32, %{{.*}}: index, %{{.*}}: f32
-// Checkpoint storage for loop-carried f32 and step-index values.
-// WONLINE-DAG:    memref.alloc() : memref<3xf32>
-// WONLINE-DAG:    memref.alloc() : memref<3xindex>
+// Checkpoint storage with budget+1 slots (extra slot for inner Revolve scratch).
+// WONLINE-DAG:    memref.alloc() : memref<4xf32>
+// WONLINE-DAG:    memref.alloc() : memref<4xindex>
 // Online_r2 internal state arrays (freed after the forward pass).
 // WONLINE-DAG:    memref.alloc() : memref<3xindex>
 // Forward scf.while driven by the Online_r2 state machine (STORE/FORWARD).
@@ -192,6 +192,6 @@ module {
 // WONLINE:        arith.mulf %[[SCALED_WONLINE]], %{{.*}}
 // WONLINE:        arith.mulf %[[SCALED_WONLINE]], %{{.*}}
 // WONLINE:        arith.addf
-// WONLINE:        memref.dealloc {{.*}} : memref<3xf32>
-// WONLINE:        memref.dealloc {{.*}} : memref<3xindex>
+// WONLINE:        memref.dealloc {{.*}} : memref<4xf32>
+// WONLINE:        memref.dealloc {{.*}} : memref<4xindex>
 // WONLINE:        return
