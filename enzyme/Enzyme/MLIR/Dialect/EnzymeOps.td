@@ -326,7 +326,7 @@ def BinomialProgressOp : Enzyme_Op<"binomial_progress",
                        OptionalAttr<I64Attr>:$max_num_steps,
                        OptionalAttr<I64Attr>:$max_budget);
   let results = (outs BinomialProgressScalarOrTensor:$result);
-  let assemblyFormat = "$num_steps `,` $budget prop-dict `:` type($result)";
+  let assemblyFormat = "$num_steps `,` $budget prop-dict attr-dict `:` type($result)";
   let hasFolder = 1;
 }
 
