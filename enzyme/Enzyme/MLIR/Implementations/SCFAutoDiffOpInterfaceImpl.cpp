@@ -1465,16 +1465,26 @@ struct WhileOpInterfaceReverse
                                         /*withElse=*/true);
 
       // ── STORE branch ───────────────────────────────────────────────────
+      // Mirror Julia's checkpoint_struct_while:
+      //   check = next_action.cpnum + 1   (1-indexed)
+      //   model_check[check] = deepcopy(model)
+      //
+      // Here aa[3] = new_check = prog.getNewCheck(), which is the 0-indexed
+      // equivalent of Julia's cpnum.  The algorithm keeps new_check in
+      // [0, budget-1], so the fixed-size buffer never overflows.
+      // sp is set to new_check + 1 so the reverse finds the top checkpoint
+      // at capo = sp - 1 = new_check.
       {
         OpBuilder::InsertionGuard g2(builder);
         builder.setInsertionPointToStart(dispatch.thenBlock());
+        Value checkSlot = aa[3]; // new_check: algorithm's chosen storage slot
         for (size_t i = 0; i < numCarried; ++i)
           memref::StoreOp::create(builder, loc, primalCarried[i],
-                                  stores[i], ValueRange{sp});
+                                  stores[i], ValueRange{checkSlot});
         memref::StoreOp::create(builder, loc, numFwd, stores[idxStore],
-                                ValueRange{sp});
+                                ValueRange{checkSlot});
         SmallVector<Value> thenY;
-        thenY.push_back(arith::AddIOp::create(builder, loc, sp, c1));
+        thenY.push_back(arith::AddIOp::create(builder, loc, checkSlot, c1));
         thenY.push_back(numFwd); // unchanged
         thenY.append(primalCarried.begin(), primalCarried.end());
         scf::YieldOp::create(builder, loc, thenY);
