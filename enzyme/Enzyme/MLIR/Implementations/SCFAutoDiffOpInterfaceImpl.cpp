@@ -2006,7 +2006,11 @@ struct WhileOpInterfaceReverse
         auto astate  = wargs.slice(2, numCarried);
 
         Value remaining = H::emitSub(builder, loc, currentRevStep, pos);
-        Value budgetRem = H::emitSub(builder, loc, budgetV, acapo);
+        // Use the constant budget (not budgetV=sp which may be < budget after
+        // r=2 STORE reuses a lower slot) so Revolve knows how many checkpoint
+        // slots the buffer actually holds.
+        Value totalBudget = arith::ConstantIndexOp::create(builder, loc, budget);
+        Value budgetRem = H::emitSub(builder, loc, totalBudget, acapo);
         budgetRem = H::emitMin(builder, loc, budgetRem, remaining);
         Value split = enzyme::BinomialProgressOp::create(
             builder, loc, builder.getIndexType(), remaining, budgetRem);
