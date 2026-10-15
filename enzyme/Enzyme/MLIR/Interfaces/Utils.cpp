@@ -6,9 +6,9 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/OffsetViewInterface.h"
@@ -46,7 +46,8 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<memref::LoadOp, LLVM::LoadOp, affine::AffineLoadOp>(u))
+      if (isa<memref::LoadOp, enzyme::LoadLikeInterface, affine::AffineLoadOp>(
+              u))
         continue;
       if (auto s = dyn_cast<memref::StoreOp>(u)) {
         if (s.getValue() == v)
@@ -139,7 +140,7 @@ Value getBaseObject(Value v, bool offsetAllowed) {
 static bool isStackAlloca(Value v) {
   return v.getDefiningOp<memref::AllocaOp>() ||
          v.getDefiningOp<memref::AllocOp>() ||
-         v.getDefiningOp<LLVM::AllocaOp>();
+         v.getDefiningOp<enzyme::AllocaLikeInterface>();
 }
 
 bool mayAlias(Value v1, Value v2) {

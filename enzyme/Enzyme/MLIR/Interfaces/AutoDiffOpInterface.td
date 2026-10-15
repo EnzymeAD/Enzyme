@@ -148,6 +148,29 @@ def StoreLikeInterface : OpInterface<"StoreLikeInterface"> {
                      /*methodName=*/"getStoredPointer">];
 }
 
+def LoadLikeInterface : OpInterface<"LoadLikeInterface"> {
+  let description = [{
+    A load-like operation that reads through a pointer or reference.
+  }];
+
+  let cppNamespace = "::mlir::enzyme";
+  let methods = [InterfaceMethod<
+      /*desc=*/"Returns the base pointer/reference this load reads through "
+               "(before any potential offsets within the op are applied).",
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getLoadedPointer">];
+}
+
+def AllocaLikeInterface : OpInterface<"AllocaLikeInterface"> {
+  let description = [{
+    An operation that allocates stack memory and returns a single
+    pointer or reference to it.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [];
+}
+
 def ActivityOpInterface
     : OpInterface<"ActivityOpInterface"> {
   let cppNamespace = "::mlir::enzyme";
