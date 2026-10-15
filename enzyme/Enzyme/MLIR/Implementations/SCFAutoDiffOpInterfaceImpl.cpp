@@ -1336,8 +1336,13 @@ struct WhileOpInterfaceReverse
     Value ordChBuf  = memref::AllocOp::create(builder, loc, smArrTy);
     Value numRepBuf = memref::AllocOp::create(builder, loc, smArrTy);
 
-    // Scaffold init: (sp=0, numFwd=0, smCheck=-1, 9×smScalar=0, done=0,
-    //                 primalInit...)
+    // Scaffold init: (sp=0, numFwd=0, smCheck=-1, 9×smScalar=0, primalInit...)
+    // Note: 'done' is NOT a loop-carried value.  Instead, the before-block
+    // detects primal termination by running the primal's condition check on the
+    // current carried state, which avoids the canonicalize bug that removes
+    // unused while results (done was always 1 at loop exit, so its result was
+    // dead outside the while and canonicalize eliminated it, corrupting the
+    // condition check).
     Value smCheckInit = arith::ConstantIndexOp::create(builder, loc, -1);
     SmallVector<Value> whileInit;
     whileInit.push_back(c0);           // sp
@@ -1345,21 +1350,23 @@ struct WhileOpInterfaceReverse
     whileInit.push_back(smCheckInit);  // check = -1
     for (int i = 0; i < 9; ++i)       // capo..offset (9 more SM scalars)
       whileInit.push_back(c0);
-    whileInit.push_back(c0);           // done = 0
+    // (no 'done' — primal termination is detected locally in the before-block)
     whileInit.append(primalInits.begin(), primalInits.end());
 
     SmallVector<Type> beforeTypes;
     for (Value v : whileInit)
       beforeTypes.push_back(v.getType());
 
-    // After-block types: sp, numFwd, action, 10 SM scalars, done, primalCarried
+    // After-block types: sp, numFwd, action, 10 SM scalars, primalCarried
+    // (no 'done' — it was never needed in the after-block either; the
+    // FORWARD branch updates primalCarried, which the next before-block
+    // iteration inspects directly for the termination check)
     SmallVector<Type> afterTypes;
     afterTypes.push_back(idxTy); // sp
     afterTypes.push_back(idxTy); // numFwd
     afterTypes.push_back(idxTy); // action
     for (int i = 0; i < 10; ++i)
       afterTypes.push_back(idxTy); // SM scalars
-    afterTypes.push_back(idxTy);   // done
     for (auto init : primalInits)
       afterTypes.push_back(init.getType()); // primalCarried
 
@@ -1378,12 +1385,11 @@ struct WhileOpInterfaceReverse
       builder.setInsertionPointToEnd(before);
       auto ba = before->getArguments();
       Value sp = ba[0], numFwd = ba[1];
-      // SM scalars at positions 2..11; done at 12; primalCarried at 13+
+      // SM scalars at positions 2..11; primalCarried at 12+  (no 'done')
       Value smCheck = ba[2], smCapo = ba[3], smOldcapoO = ba[4];
       Value smT = ba[5], smIncr = ba[6], smIter = ba[7];
       Value smOldind = ba[8], smInd = ba[9], smOldF = ba[10], smOffset = ba[11];
-      Value done = ba[12];
-      auto primalCarried = ba.drop_front(13);
+      auto primalCarried = ba.drop_front(12);
 
       auto prog = enzyme::OnlineProgressOp::create(
           builder, loc,
@@ -1391,9 +1397,28 @@ struct WhileOpInterfaceReverse
           smOldind, smInd, smOldF, smOffset, budgetV,
           chBuf, ordChBuf, numRepBuf);
 
-      // Loop continues while !done.
-      Value notDone = arith::CmpIOp::create(
-          builder, loc, arith::CmpIPredicate::eq, done, c0);
+      // Loop continues while the Online_r2 algorithm wants to continue AND
+      // the primal while loop hasn't terminated.  Both checks are performed
+      // locally (not via a loop-carried 'done' flag), so canonicalize cannot
+      // remove them from the before-block's argument list.
+      Value notTerminate = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::ne,
+          prog.getAction(), c0);  // action != 0 → algorithm not done
+
+      // Run the primal's condition check on the CURRENT carried state.
+      Block *primalBeforeBlk = &newWhileOp.getBefore().front();
+      IRMapping condCheckMap;
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalBeforeBlk->getArguments(), primalCarried))
+        condCheckMap.map(old, nw);
+      copyWhileBlock(builder, primalBeforeBlk, gutils, condCheckMap);
+      auto primalCondOp =
+          cast<scf::ConditionOp>(primalBeforeBlk->getTerminator());
+      Value primalCond =
+          condCheckMap.lookupOrDefault(primalCondOp.getCondition());
+
+      Value shouldContinue = arith::AndIOp::create(
+          builder, loc, notTerminate, primalCond);
 
       SmallVector<Value> condVals;
       condVals.push_back(sp);
@@ -1409,9 +1434,9 @@ struct WhileOpInterfaceReverse
       condVals.push_back(prog.getNewInd());
       condVals.push_back(prog.getNewOldF());
       condVals.push_back(prog.getNewOffset());
-      condVals.push_back(done);
+      // (no 'done' in condVals — it was the source of the canonicalize bug)
       condVals.append(primalCarried.begin(), primalCarried.end());
-      scf::ConditionOp::create(builder, loc, notDone, condVals);
+      scf::ConditionOp::create(builder, loc, shouldContinue, condVals);
     }
 
     // ── After block ─────────────────────────────────────────────────────────
@@ -1422,17 +1447,17 @@ struct WhileOpInterfaceReverse
       builder.setInsertionPointToEnd(after);
       auto aa = after->getArguments();
       Value sp = aa[0], numFwd = aa[1], action = aa[2];
-      // aa[3..12]: updated SM scalars; aa[13]: done; aa[14+]: primalCarried
-      Value done = aa[13];
-      auto primalCarried = aa.drop_front(14);
+      // aa[3..12]: updated SM scalars; aa[13+]: primalCarried  (no 'done')
+      auto primalCarried = aa.drop_front(13);
 
       // Dispatch on action == 1 (STORE) vs action == 2 (FORWARD).
       Value storeVal = arith::ConstantIndexOp::create(builder, loc, 1);
       Value isStore = arith::CmpIOp::create(
           builder, loc, arith::CmpIPredicate::eq, action, storeVal);
 
-      // Branch result types: (newSp, newNumFwd, newDone, newPrimalCarried...)
-      SmallVector<Type> brTys = {idxTy, idxTy, idxTy};
+      // Branch result types: (newSp, newNumFwd, newPrimalCarried...)
+      // (no 'done' — the before-block now detects termination directly)
+      SmallVector<Type> brTys = {idxTy, idxTy};
       for (auto init : primalInits)
         brTys.push_back(init.getType());
 
@@ -1451,7 +1476,6 @@ struct WhileOpInterfaceReverse
         SmallVector<Value> thenY;
         thenY.push_back(arith::AddIOp::create(builder, loc, sp, c1));
         thenY.push_back(numFwd); // unchanged
-        thenY.push_back(done);   // unchanged
         thenY.append(primalCarried.begin(), primalCarried.end());
         scf::YieldOp::create(builder, loc, thenY);
       }
@@ -1477,18 +1501,18 @@ struct WhileOpInterfaceReverse
         for (auto arg : condOp.getArgs())
           mappedCondVals.push_back(beforeMap.lookupOrDefault(arg));
 
-        // Conditionally run primal after block.
-        // Branch types: (newCarried..., newDone, stepTaken)
+        // Run primal after block (we know primal_cond is true here because
+        // the before-block only passes action=FORWARD when primalCond holds).
+        // Branch types: (newCarried..., stepTaken)
         SmallVector<Type> cBrTys;
         for (auto init : primalInits)
           cBrTys.push_back(init.getType());
-        cBrTys.push_back(idxTy); // newDone
-        cBrTys.push_back(idxTy); // stepTaken (1 if primal advanced, 0 if done)
+        cBrTys.push_back(idxTy); // stepTaken = 1
 
         auto condBranch = scf::IfOp::create(builder, loc, cBrTys, primalCond,
                                             /*withElse=*/true);
         {
-          // Primal continues.
+          // Primal continues: run one step.
           OpBuilder::InsertionGuard g3(builder);
           builder.setInsertionPointToStart(condBranch.thenBlock());
           IRMapping afterMap;
@@ -1500,41 +1524,37 @@ struct WhileOpInterfaceReverse
           SmallVector<Value> thenY2;
           for (auto op : yieldOp.getOperands())
             thenY2.push_back(afterMap.lookupOrDefault(op));
-          thenY2.push_back(c0); // newDone = 0
           thenY2.push_back(c1); // stepTaken = 1
           scf::YieldOp::create(builder, loc, thenY2);
         }
         {
-          // Primal terminated.
+          // Primal terminated (fallback; shouldn't fire since the before-block
+          // condition prevents FORWARD when primal is done, but safe to have).
           OpBuilder::InsertionGuard g3(builder);
           builder.setInsertionPointToStart(condBranch.elseBlock());
           SmallVector<Value> elseY2(primalCarried.begin(), primalCarried.end());
-          elseY2.push_back(c1); // newDone = 1
           elseY2.push_back(c0); // stepTaken = 0
           scf::YieldOp::create(builder, loc, elseY2);
         }
 
         auto cbRes       = condBranch.getResults();
-        auto newCarried  = cbRes.drop_back(2);
-        Value newDone    = cbRes[cbRes.size() - 2];
-        Value stepTaken  = cbRes[cbRes.size() - 1];
+        auto newCarried  = cbRes.drop_back(1);
+        Value stepTaken  = cbRes.back();
         Value newNumFwd  = arith::AddIOp::create(builder, loc, numFwd, stepTaken);
 
         SmallVector<Value> elseY;
         elseY.push_back(sp);        // sp unchanged
         elseY.push_back(newNumFwd);
-        elseY.push_back(newDone);
         elseY.append(newCarried.begin(), newCarried.end());
         scf::YieldOp::create(builder, loc, elseY);
       }
 
       // Yield updated carry back to the before block.
-      // before-block order: sp, numFwd, SM(2..11), done, primalCarried
+      // before-block order: sp, numFwd, SM(2..11), primalCarried  (no 'done')
       auto dr = dispatch.getResults();
       Value newSp      = dr[0];
       Value newNumFwd  = dr[1];
-      Value newDone    = dr[2];
-      auto  newCarried = dr.drop_front(3);
+      auto  newCarried = dr.drop_front(2);
 
       SmallVector<Value> whileY;
       whileY.push_back(newSp);
@@ -1542,7 +1562,6 @@ struct WhileOpInterfaceReverse
       // SM scalars: pass through from the after-block args (aa[3..12]).
       for (int i = 3; i <= 12; ++i)
         whileY.push_back(aa[i]);
-      whileY.push_back(newDone);
       whileY.append(newCarried.begin(), newCarried.end());
       scf::YieldOp::create(builder, loc, whileY);
     }
@@ -1551,8 +1570,9 @@ struct WhileOpInterfaceReverse
     auto wr = scaffoldWhile.getResults();
     Value finalSp     = wr[0];
     Value finalNumFwd = wr[1];
-    // wr[2]=action, wr[3..12]=SM scalars, wr[13]=done — all unneeded post-loop.
-    auto finalPrimalState = wr.drop_front(14);
+    // wr[2]=action, wr[3..12]=SM scalars — all unneeded post-loop.
+    // wr[13+] = finalPrimalState (no 'done' — it was removed from the design).
+    auto finalPrimalState = wr.drop_front(13);
 
     // Free SM arrays (their job is done after the forward pass).
     memref::DeallocOp::create(builder, loc, chBuf);
