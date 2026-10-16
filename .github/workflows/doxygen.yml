@@ -1,9 +1,19 @@
 name: Build and deploy Doxygen to Scripts
 
 on:
+  # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
       - main
+  # Triggers the workflow on pushes to open pull requests with documentation changes
+  pull_request:
+    paths:
+      - '.github/workflows/doxygen.yml'
+      - '**/*.md'
+      - 'enzyme/doxygen.cfg'
+      - 'enzyme/Enzyme/**'
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 concurrency:
   # Skip intermediate builds: always.
@@ -11,9 +21,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
+
 jobs:
   build-docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Enzyme repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -43,7 +57,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     needs: build-docs
+    # Only deploy the docs upon merging into main
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

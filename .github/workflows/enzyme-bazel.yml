@@ -1,7 +1,9 @@
 name: Bazel
 
-# TODO: Fix and re-enable this workflow
-# on:
+# TODO: Fix and re-enable this workflow's automatic triggers
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 #   push:
 #     branches:
 #       - main
@@ -31,6 +33,9 @@ concurrency:
   # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
 
 jobs:
   build:
