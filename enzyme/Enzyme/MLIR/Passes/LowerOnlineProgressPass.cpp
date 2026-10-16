@@ -645,7 +645,16 @@ static void lowerOnlineProgress(enzyme::OnlineProgressOp op) {
 
         // Merge case 2 / case 3 / default results.
         // Priority: is3 > is2 > isDefault.  (is2 and is3 are mutually exclusive.)
-        Value tsAction = sel(isDefault, defIf.getResult(0), actTakeshot);
+        //
+        // Special case snaps==1: in r=2 TAKESHOT the only checkpoint slot is
+        // already occupied by the r=1 checkpoint.  There is no free slot to
+        // store into, so overwriting it (as the rotation2 default path would do)
+        // corrupts the only checkpoint available for reconstruction.  Return
+        // FORWARD instead — the primal just advances, and the offline Revolve
+        // in the reverse reconstructs from the existing checkpoint.
+        Value is1 = cmpEQ(snaps, one);
+        Value tsAction = sel(is1, actAdvance,
+                          sel(isDefault, defIf.getResult(0), actTakeshot));
         Value tsCheck  = sel(is3, case3Check,
                           sel(isDefault, defIf.getResult(1), check));
         Value tsIncr   = sel(is2, case2Incr,
