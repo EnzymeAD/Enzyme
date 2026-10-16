@@ -37,14 +37,13 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode_, unsigned width, bool omp, StringRef postpasses,
-    bool verifyPostPasses, bool strongZero)
+    DerivativeMode mode_, unsigned width, bool omp, PostPasses postpasses,
+    bool strongZero)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
                           invertedPointers_, returnPrimals, returnShadows,
                           constantvalues_, activevals_, ReturnActivity,
                           ArgDiffeTypes_, originalToNewFn_, originalToNewFnOps_,
-                          mode_, width, omp, postpasses, verifyPostPasses,
-                          strongZero) {}
+                          mode_, width, omp, postpasses, strongZero) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -147,8 +146,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
     const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
     ArrayRef<DIFFE_TYPE> retType, ArrayRef<DIFFE_TYPE> constant_args,
-    mlir::Type additionalArg, bool omp, llvm::StringRef postpasses,
-    bool verifyPostPasses, bool strongZero) {
+    mlir::Type additionalArg, bool omp, PostPasses postpasses,
+    bool strongZero) {
   std::string prefix;
 
   switch (mode_) {
@@ -185,5 +184,5 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
       Logic, newFunc, todiff, TA, invertedPointers, returnPrimals,
       returnShadows, constant_values, nonconstant_values, retType,
       constant_args, originalToNew, originalToNewOps, mode_, width, omp,
-      postpasses, verifyPostPasses, strongZero);
+      postpasses, strongZero);
 }

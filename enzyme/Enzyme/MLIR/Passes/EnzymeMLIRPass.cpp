@@ -43,6 +43,15 @@ struct DifferentiatePass
 
   void runOnOperation() override;
 
+  LogicalResult initialize(MLIRContext *) override {
+    postPipeline.clear();
+    return mlir::parsePassPipeline(postpasses, postPipeline);
+  }
+
+  // The postpasses option, parsed. It is run on each generated function
+  // through runPipeline, nested under this pass.
+  mlir::OpPassManager postPipeline;
+
   void getDependentDialects(DialectRegistry &registry) const override {
     mlir::OpPassManager pm;
     mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
@@ -183,11 +192,14 @@ struct DifferentiatePass
           !(mode == DerivativeMode::ReverseModeCombined));
     }
 
+    auto runPostPasses = [&](Operation *op) {
+      return runPipeline(postPipeline, op);
+    };
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, overwritten_args,
-        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
-        CI.getStrongZero());
+        /*augmented*/ nullptr, omp,
+        postpasses.empty() ? PostPasses() : runPostPasses, CI.getStrongZero());
     if (!newFunc)
       return failure();
 
@@ -350,12 +362,16 @@ struct DifferentiatePass
           !(mode == DerivativeMode::ReverseModeCombined));
     }
 
+    auto runPostPasses = [&](Operation *op) {
+      return runPipeline(postPipeline, op);
+    };
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(
         fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
         freeMemory, CI.getAtomicAdd(), width,
         /*addedType*/ nullptr, type_args, overwritten_args,
-        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
-        CI.getStrongZero(), markReadonly);
+        /*augmented*/ nullptr, omp,
+        postpasses.empty() ? PostPasses() : runPostPasses, CI.getStrongZero(),
+        markReadonly);
     if (!newFunc)
       return failure();
 
