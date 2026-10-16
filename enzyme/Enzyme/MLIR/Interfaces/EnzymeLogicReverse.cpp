@@ -270,7 +270,12 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     return;
   };
 
-  gutils->forceAugmentedReturns();
+  if (failed(gutils->forceAugmentedReturns())) {
+    ReverseCachedFunctions.erase(tup);
+    gutils->newFunc.erase();
+    delete gutils;
+    return nullptr;
+  }
 
   auto res =
       differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
