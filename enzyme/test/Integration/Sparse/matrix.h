@@ -16,7 +16,7 @@ struct Triple {
 };
 
 __attribute__((enzyme_sparse_accumulate))
-static void inner_storeflt(int64_t row, int64_t col, float val, std::vector<Triple<float>> &triplets) {
+static void inner_storeflt(size_t row, size_t col, float val, std::vector<Triple<float>> &triplets) {
 #ifdef BENCHMARK
     if (val == 0.0) return;
 #else
@@ -26,9 +26,9 @@ static void inner_storeflt(int64_t row, int64_t col, float val, std::vector<Trip
 }
 
 __attribute__((enzyme_sparse_accumulate))
-static void inner_storedbl(int64_t row, int64_t col, double val, std::vector<Triple<double>> &triplets) {
+static void inner_storedbl(size_t row, size_t col, double val, std::vector<Triple<double>> &triplets) {
 #ifdef BENCHMARK
-    if (val == 0.0) return;
+    if (val > -1e-10 && val < 1e-10) return;
 #else
 #warning "Compiling for debug/verfication, performance may be slowed"
 #endif
@@ -37,7 +37,7 @@ static void inner_storedbl(int64_t row, int64_t col, double val, std::vector<Tri
 
 template<typename T>
 __attribute__((always_inline))
-static void sparse_store(T val, int64_t idx, size_t i, std::vector<Triple<T>> &triplets) {
+static void sparse_store(T val, size_t idx, size_t i, std::vector<Triple<T>> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(T);
     if constexpr (sizeof(T) == 4)
@@ -48,19 +48,57 @@ static void sparse_store(T val, int64_t idx, size_t i, std::vector<Triple<T>> &t
 
 template<typename T>
 __attribute__((always_inline))
-static T sparse_load(int64_t idx, size_t i, std::vector<Triple<T>> &triplets) {
+static T sparse_load(size_t idx, size_t i, std::vector<Triple<T>> &triplets) {
+    return 0.0;
+}
+
+
+__attribute__((enzyme_sparse_accumulate))
+static void inner_storeflt_modn(size_t row, size_t col, float val, size_t N, std::vector<Triple<float>> &triplets) {
+#ifdef BENCHMARK
+    if (val == 0.0) return;
+#else
+#warning "Compiling for debug/verfication, performance may be slowed"
+#endif
+    triplets.emplace_back(row, col % N, val);
+}
+
+__attribute__((enzyme_sparse_accumulate))
+static void inner_storedbl_modn(size_t row, size_t col, double val, size_t N, std::vector<Triple<double>> &triplets) {
+#ifdef BENCHMARK
+    if (val > -1e-10 && val < 1e-10) return;
+#else
+#warning "Compiling for debug/verfication, performance may be slowed"
+#endif
+    triplets.emplace_back(row, col % N, val);
+}
+
+template<typename T>
+__attribute__((always_inline))
+static void sparse_store_modn(T val, size_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
+    if (val == 0.0) return;
+    idx /= sizeof(T);
+    if constexpr (sizeof(T) == 4)
+      inner_storeflt_modn(i, idx, val, N, triplets);
+    else
+      inner_storedbl_modn(i, idx, val, N, triplets);
+}
+
+template<typename T>
+__attribute__((always_inline))
+static T sparse_load_modn(int64_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
     return 0.0;
 }
 
 template<typename T>
 __attribute__((always_inline))
-static void ident_store(T, int64_t idx, size_t i) {
+static void ident_store(T, size_t idx, size_t i) {
     assert(0 && "should never load");
 }
 
 template<typename T>
 __attribute__((always_inline))
-static T ident_load(int64_t idx, size_t i) {
+static T ident_load(size_t idx, size_t i) {
     idx /= sizeof(T);
     return (T)(idx == i);// ? 1.0 : 0.0;
 }
