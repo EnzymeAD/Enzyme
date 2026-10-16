@@ -197,7 +197,9 @@ static void lowerOnlineProgress(enzyme::OnlineProgressOp op) {
     auto initIf = scf::IfOp::create(b, loc, TypeRange{idxTy, idxTy, idxTy, idxTy},
                                     snapsLt4, /*withElse=*/true);
     {
-      // snaps < 4: num_rep[i] = 2; incr=2, iter=1, oldind=snaps-1
+      // snaps < 4: num_rep[i]=2; ord_ch[i]=i; incr=2, iter=1, oldind=snaps-1
+      // ord_ch must be initialized for snaps<4 too — the rotation2 path reads
+      // ord_ch[snaps-1] and an uninitialized value produces wrong checkSlot.
       OpBuilder::InsertionGuard g2(b);
       b.setInsertionPointToStart(initIf.thenBlock());
       auto fillLoop = scf::ForOp::create(b, loc, zero, snaps, one, ValueRange{});
@@ -206,7 +208,9 @@ static void lowerOnlineProgress(enzyme::OnlineProgressOp op) {
       {
         OpBuilder::InsertionGuard gf(b);
         b.setInsertionPointToStart(fillLoop.getBody());
-        st(two, num_rep, fillLoop.getInductionVar());
+        Value iv = fillLoop.getInductionVar();
+        st(two, num_rep, iv);
+        st(iv,  ord_ch,  iv);   // ord_ch[i] = i  (same as snaps>=4 branch)
         scf::YieldOp::create(b, loc);
       }
       scf::YieldOp::create(b, loc, ValueRange{two, one, snapsM1, offset /*unchanged*/});

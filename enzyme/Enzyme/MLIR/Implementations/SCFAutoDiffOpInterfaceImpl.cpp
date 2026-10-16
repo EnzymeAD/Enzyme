@@ -1337,7 +1337,12 @@ struct WhileOpInterfaceReverse
     const size_t idxStore = stores.size() - 1;
 
     // Online_r2 SM arrays (freed after the forward pass).
-    auto smArrTy = MemRefType::get({budget}, idxTy);
+    // Allocate at least 3 elements: the lowered OnlineProgressOp speculatively
+    // evaluates ch[1] and ch[ind] (where ind can be 2 for snaps=1) via
+    // arith.select even when snaps < 3, causing unconditional out-of-bounds
+    // loads at runtime for small budgets.
+    int64_t smSize = std::max(budget, (int64_t)3);
+    auto smArrTy = MemRefType::get({smSize}, idxTy);
     Value chBuf     = memref::AllocOp::create(builder, loc, smArrTy);
     Value ordChBuf  = memref::AllocOp::create(builder, loc, smArrTy);
     Value numRepBuf = memref::AllocOp::create(builder, loc, smArrTy);
@@ -2228,10 +2233,9 @@ struct WhileOpInterfaceReverse
     auto whileOp = cast<scf::WhileOp>(op);
     if (needsOnlineCheckpointing(whileOp)) {
       auto budget = getCheckpointBudget(whileOp);
-      if (budget && *budget > 1)
+      if (budget && *budget >= 1)
         return cacheWhileOnline(whileOp, *budget, gutils);
-      op->emitError()
-          << "online checkpointing requires enzyme.checkpoint_period > 1";
+      op->emitError() << "online checkpointing requires enzyme.checkpoint_period >= 1";
       return {};
     }
     // No checkpointing annotation: full-tape mode.
@@ -2260,9 +2264,9 @@ struct WhileOpInterfaceReverse
 
     if (needsOnlineCheckpointing(whileOp)) {
       auto budget = getCheckpointBudget(whileOp);
-      if (!budget || *budget <= 1)
+      if (!budget || *budget < 1)
         return op->emitError()
-               << "online checkpointing requires enzyme.checkpoint_period > 1";
+               << "online checkpointing requires enzyme.checkpoint_period >= 1";
       return reverseWhileOnline(whileOp, *budget, builder, gutils, caches,
                                 operandsActive, incomingGradients);
     }
