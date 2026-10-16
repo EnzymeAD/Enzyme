@@ -20,6 +20,7 @@
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
@@ -1417,6 +1418,40 @@ struct WhileOpInterfaceReverse
       Value primalCond =
           condCheckMap.lookupOrDefault(primalCondOp.getCondition());
 
+      // Loop terminates when the primal while terminates (primalCond=false).
+      //
+      // When the Online_r2 online phase completes (action=0), Julia's
+      // next_action! transparently hands off to offline Revolve and keeps
+      // returning STORE/FORWARD; the forward loop only exits when condition()
+      // is false.  We match that by using primalCond as the sole termination
+      // criterion — the remaining advance steps after action=0 are handled
+      // by the offline Revolve reconstruction in the reverse pass.
+      //
+      // However, Online_r2 with `snaps` checkpoints can only handle loops of
+      // at most β(snaps) = (snaps+2)*(snaps+1)/2 - 1 iterations.  Beyond
+      // that the repetition counters in num_rep are exhausted and the
+      // reconstruction is invalid.  Julia raises an explicit error in that
+      // case.  We assert at runtime so the error is surfaced clearly rather
+      // than silently producing wrong gradients.
+      {
+        int64_t beta = (int64_t)(budget + 2) * (budget + 1) / 2 - 1;
+        Value betaV  = arith::ConstantIndexOp::create(builder, loc, beta);
+        // Assert: action==0 implies numFwd < beta  (i.e. within capacity).
+        // Fires only when action is TERMINATE and we've already exceeded the
+        // algorithm's supported range, matching Julia's error condition.
+        Value actionIsZero = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::eq, prog.getAction(), c0);
+        Value belowBeta = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sle, numFwd, betaV);
+        // valid = !actionIsZero || belowBeta
+        Value notActionZero = arith::XOrIOp::create(
+            builder, loc, actionIsZero,
+            arith::ConstantIntOp::create(builder, loc, 1, 1));
+        Value capacityOk = arith::OrIOp::create(builder, loc, notActionZero, belowBeta);
+        cf::AssertOp::create(builder, loc, capacityOk,
+            "Online_r2: loop exceeds maximum supported iterations for this "
+            "checkpoint budget.  Increase enzyme.checkpoint_period.");
+      }
       Value shouldContinue = primalCond;  // exit only when primal terminates
 
       SmallVector<Value> condVals;
