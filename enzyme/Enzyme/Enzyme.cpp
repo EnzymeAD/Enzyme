@@ -3107,8 +3107,20 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
+#if LLVM_VERSION_MAJOR >= 24
+// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors.
+static unsigned EnzymeLicmMssaOptCap() { return getLicmMssaOptCap(); }
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return getLicmMssaNoAccForPromotionCap();
+}
+#else
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;
 extern cl::opt<unsigned> SetLicmMssaOptCap;
+static unsigned EnzymeLicmMssaOptCap() { return SetLicmMssaOptCap; }
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return SetLicmMssaNoAccForPromotionCap;
+}
+#endif
 #define EnableLoopFlatten false
 #define EagerlyInvalidateAnalyses false
 #define RunNewGVN false
@@ -3457,12 +3469,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     FunctionPassManager MainFPM;
 #if LLVM_VERSION_MAJOR >= 22
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true));
 #else
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
 #endif
