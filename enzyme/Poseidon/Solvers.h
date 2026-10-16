@@ -26,6 +26,8 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -35,6 +37,18 @@
 #include "Types.h"
 
 namespace poseidon {
+
+struct SolveRecord {
+  std::string selector;
+  bool fromCache = false;
+  std::map<llvm::InstructionCost, double> table;
+  std::map<llvm::InstructionCost, llvm::SmallVector<SolutionStep>> solutions;
+  double baseline = std::numeric_limits<double>::quiet_NaN();
+  double accScale = 0.0;
+  double tau = 0.0;
+  bool siteTarget = false;
+  std::optional<int64_t> selected;
+};
 
 // The DP cache holds one table per function, keyed by function identity as
 // well as the cost-model fingerprint: with several annotated sites in one
@@ -53,7 +67,8 @@ llvm::SmallVector<SolutionStep> accuracyDPSolver(
     llvm::SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    double errorTol = 0.0, double accScale = 0.0);
+    double errorTol = 0.0, double accScale = 0.0,
+    SolveRecord *record = nullptr);
 
 // Per matmul, pick the cheapest candidate whose estimated relative domain error
 // is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
@@ -111,8 +126,8 @@ bool materializeFPSolution(llvm::Function &F, FunctionFPState &st,
                            llvm::ArrayRef<SolutionStep> steps);
 
 llvm::SmallVector<SolutionStep>
-jointAccuracyDPSolver(llvm::ArrayRef<FunctionFPState *> states,
-                      double errorTol);
+jointAccuracyDPSolver(llvm::ArrayRef<FunctionFPState *> states, double errorTol,
+                      SolveRecord *record = nullptr);
 
 llvm::SmallVector<SolutionStep>
 parseManualRewrites(llvm::StringRef spec,

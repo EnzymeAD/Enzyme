@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libmpfr6 tini \
 COPY config/ /app/etc/config/
 COPY examples/c++/ /app/examples/c++/
 COPY examples/c++/Poseidon_cancellation.cpp /app/examples/c++/default.cpp
-RUN sed -i "s/@LLVM@/$LLVM_VERSION/g" /app/etc/config/c++.poseidon.properties
+RUN sed -i "s/@LLVM@/$LLVM_VERSION/g" /app/etc/config/c++.poseidon.properties /app/etc/config/site-templates.yaml
+ENV POSEIDON_CE_EXPLAIN=1
 EXPOSE 10240
 ENTRYPOINT ["tini", "--", "node", "./out/dist/app.js", "--static", "./out/webpack/static", "--env", "poseidon", "--language", "c++"]

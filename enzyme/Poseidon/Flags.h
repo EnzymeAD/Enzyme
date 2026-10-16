@@ -111,6 +111,7 @@ extern llvm::cl::opt<bool> InKernelCalibration;
 extern llvm::cl::opt<bool> Print;
 extern llvm::cl::opt<bool> ShowTable;
 extern llvm::cl::opt<std::string> ReportPath;
+extern llvm::cl::opt<std::string> Explain;
 
 } // namespace flags
 } // namespace poseidon

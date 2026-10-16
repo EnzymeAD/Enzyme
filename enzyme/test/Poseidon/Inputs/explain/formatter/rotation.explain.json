@@ -1,0 +1,551 @@
+{
+  "function": {
+    "ir": "preprocess__Z8rotationPKdPdi",
+    "loc": {
+      "col": 0,
+      "file": "explain_formatter_rotation.cpp",
+      "line": 9
+    },
+    "name": "rotation(double const*, double*, int)",
+    "site": {
+      "col": 3,
+      "file": "explain_formatter_rotation.cpp",
+      "line": 32
+    },
+    "symbol": "_Z8rotationPKdPdi"
+  },
+  "pareto": [
+    {
+      "applied": [
+        "PT0_10"
+      ],
+      "budget": -5325000,
+      "cost": 1831000,
+      "modelled_rel_error": 1.3241097083711176e-08,
+      "selected": true
+    },
+    {
+      "applied": [
+        "PT0_11"
+      ],
+      "budget": -2578000,
+      "cost": 4578000,
+      "modelled_rel_error": 5.48378996558033e-09
+    },
+    {
+      "applied": [],
+      "budget": 0,
+      "cost": 7156000,
+      "modelled_rel_error": 1.0087777130359326e-17
+    },
+    {
+      "applied": [
+        "R4_0"
+      ],
+      "budget": 3721000,
+      "cost": 10877000,
+      "modelled_rel_error": 1.0081022676304851e-17
+    }
+  ],
+  "result": {
+    "applied": [
+      "PT0_10"
+    ],
+    "cost_after": 1831000,
+    "cost_before": 7156000,
+    "modelled_rel_error": 1.3241097083711176e-08,
+    "modelled_rel_error_as_written": 1.0087777130359326e-17
+  },
+  "schema": "poseidon-explain/1",
+  "subgraphs": [
+    {
+      "alternatives": [
+        {
+          "approx": false,
+          "c": "x * (sin(sqrt(fma(z, z, fma(x, x, y * y))) * 0.5) / sqrt(fma(z, z, fma(x, x, y * y))))",
+          "cost_delta": 3721000,
+          "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v1 v1 (*.f64 v0 v0)))) #s(literal 1/2 binary64))) (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v1 v1 (*.f64 v0 v0))))))",
+          "herbie_error_bits": {
+            "after": 0.30100000000000193,
+            "before": 0.30100000000000193
+          },
+          "id": "R0_0",
+          "kind": "algebraic",
+          "modelled_error": 1.0087777130359326e-17,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "neither cheaper nor more accurate than as written",
+          "status": "rejected",
+          "summary": "Herbie rewrite searched at binary64"
+        },
+        {
+          "approx": false,
+          "c": "x * (sin(0.5 * sqrt(fma(fmin(z, y), fmin(z, y), fma(fmax(z, y), fmax(z, y), x * x)))) / sqrt(fma(fmin(z, y), fmin(z, y), fma(x, x, fmax(z, y) * fmax(z, y)))))",
+          "cost_delta": 4238000,
+          "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 #s(literal 1/2 binary64) (sqrt.f64 (fma.f64 (fmin.f64 v2 v0) (fmin.f64 v2 v0) (fma.f64 (fmax.f64 v2 v0) (fmax.f64 v2 v0) (*.f64 v1 v1)))))) (sqrt.f64 (fma.f64 (fmin.f64 v2 v0) (fmin.f64 v2 v0) (fma.f64 v1 v1 (*.f64 (fmax.f64 v2 v0) (fmax.f64 v2 v0)))))))",
+          "herbie_error_bits": {
+            "after": 0.3290000000000006,
+            "before": 0.30100000000000193
+          },
+          "id": "R0_1",
+          "kind": "algebraic",
+          "modelled_error": 1.1965515357503547e-17,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "neither cheaper nor more accurate than as written",
+          "status": "rejected",
+          "summary": "Herbie rewrite searched at binary64"
+        },
+        {
+          "approx": false,
+          "c": "x * (sin(0.5 * sqrt(fma(z, z, fma(y, y, x * x)))) / sqrt(fma(x, x, fma(y, y, z * z))))",
+          "cost_delta": 4118000,
+          "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 #s(literal 1/2 binary64) (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v0 v0 (*.f64 v1 v1)))))) (sqrt.f64 (fma.f64 v1 v1 (fma.f64 v0 v0 (*.f64 v2 v2))))))",
+          "herbie_error_bits": {
+            "after": 0.40800000000000125,
+            "before": 0.30100000000000193
+          },
+          "id": "R0_2",
+          "kind": "algebraic",
+          "modelled_error": 1.2816576568367473e-17,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "neither cheaper nor more accurate than as written",
+          "status": "rejected",
+          "summary": "Herbie rewrite searched at binary64"
+        },
+        {
+          "approx": true,
+          "approx_note": "series approximation of z * z + (x * x + y * y)",
+          "c": "z * (sin(sqrt(fma(y, y, fma(x, x, z * z))) * 0.5) / sqrt(fma(y, y, fma(x, x, z * z))))",
+          "cost_delta": 3721000,
+          "fpcore": "(*.f64 v2 (/.f64 (sin.f64 (*.f64 (sqrt.f64 #s(approx (+ (* v2 v2) (+ (* v1 v1) (* v0 v0))) (fma.f64 v0 v0 (fma.f64 v1 v1 (*.f64 v2 v2))))) #s(literal 1/2 binary64))) (sqrt.f64 #s(approx (+ (* v2 v2) (+ (* v1 v1) (* v0 v0))) (fma.f64 v0 v0 (fma.f64 v1 v1 (*.f64 v2 v2)))))))",
+          "herbie_error_bits": {
+            "after": 0.3160000000000025,
+            "before": 0.31700000000000017
+          },
+          "id": "R4_0",
+          "kind": "algebraic",
+          "modelled_error": 1.0081022676304851e-17,
+          "outputs": [
+            2
+          ],
+          "precision": "binary64",
+          "reason": "on the Pareto frontier; -poseidon-apply-rewrites=R4_0 applies it",
+          "status": "pareto",
+          "summary": "Herbie rewrite searched at binary64, series approximation"
+        },
+        {
+          "c": [
+            "x * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "y * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "z * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "(double)cosf((float)(sqrt(z * z + (x * x + y * y)) * 0.5))"
+          ],
+          "changes": [
+            {
+              "from": "FP64",
+              "ops": [
+                5,
+                7
+              ],
+              "to": "FP32"
+            }
+          ],
+          "cost_delta": -5325000,
+          "id": "PT0_10",
+          "kind": "precision",
+          "modelled_error": 1.3241097083711176e-08,
+          "outputs": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "reason": "part of the cheapest solution that meets the target",
+          "status": "applied",
+          "summary": "Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations)"
+        },
+        {
+          "c": [
+            "x * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "y * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "z * ((double)sinf((float)(sqrt(z * z + (x * x + y * y)) * 0.5)) / sqrt(z * z + (x * x + y * y)))",
+            "cos(sqrt(z * z + (x * x + y * y)) * 0.5)"
+          ],
+          "changes": [
+            {
+              "from": "FP64",
+              "ops": [
+                5
+              ],
+              "to": "FP32"
+            }
+          ],
+          "cost_delta": -2578000,
+          "id": "PT0_11",
+          "kind": "precision",
+          "modelled_error": 5.48378996558033e-09,
+          "outputs": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "reason": "on the Pareto frontier; -poseidon-apply-rewrites=PT0_11 applies it",
+          "status": "pareto",
+          "summary": "Funcs FP64(50%) + FP32(50%): sin (13:16) in float (1 of 11 operations)"
+        }
+      ],
+      "cost": 7156000,
+      "executions": 1000,
+      "herbie": [
+        {
+          "candidates": 14,
+          "error_bits": 0.30100000000000193,
+          "id": "R0",
+          "precision": "binary64",
+          "status": "ex-start"
+        },
+        {
+          "candidates": 19,
+          "error_bits": 0.31200000000000117,
+          "id": "R1",
+          "precision": "binary32",
+          "status": "ex-start"
+        }
+      ],
+      "id": "S0",
+      "inputs": [
+        {
+          "loc": {
+            "col": 30,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 11
+          },
+          "max": -0.05,
+          "min": -0.5,
+          "name": "y",
+          "type": "double",
+          "var": "v0"
+        },
+        {
+          "loc": {
+            "col": 16,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 11
+          },
+          "max": 1,
+          "min": 0.001,
+          "name": "x",
+          "type": "double",
+          "var": "v1"
+        },
+        {
+          "loc": {
+            "col": 48,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 11
+          },
+          "max": 0.06,
+          "min": 0.02,
+          "name": "z",
+          "type": "double",
+          "var": "v2"
+        }
+      ],
+      "kind": "subgraph",
+      "loc": {
+        "col": 22,
+        "file": "explain_formatter_rotation.cpp",
+        "line": 15
+      },
+      "ops": [
+        {
+          "executions": 1000,
+          "gradient": -128.20292362142317,
+          "loc": {
+            "col": 40,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 12
+          },
+          "max": 0.25,
+          "min": 0.0025000000000000005,
+          "opcode": "*",
+          "sensitivity": 12.074663123704493,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": -128.20292362142317,
+          "loc": {
+            "col": 36,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 12
+          },
+          "max": 1.25,
+          "min": 0.0025010000000000006,
+          "opcode": "fma",
+          "sensitivity": 56.10696114489237,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": -128.20292362142317,
+          "loc": {
+            "col": 44,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 12
+          },
+          "max": 1.2504,
+          "min": 0.002901000000000001,
+          "opcode": "fma",
+          "sensitivity": 56.3465191595137,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": -157.3309354854258,
+          "loc": {
+            "col": 20,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 12
+          },
+          "max": 1.118212859879549,
+          "min": 0.05386093203798093,
+          "opcode": "sqrt",
+          "sensitivity": 112.6930383190274,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 21.6198112213412,
+          "loc": {
+            "col": 29,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 13
+          },
+          "max": 0.5591064299397746,
+          "min": 0.026930466018990466,
+          "opcode": "*",
+          "sensitivity": 91.77096157655933,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 345.28821250130517,
+          "loc": {
+            "col": 16,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 13
+          },
+          "max": 0.5304289041536286,
+          "min": 0.0269272109169508,
+          "opcode": "sin",
+          "sensitivity": 166.11512810798092,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 265.48000000000013,
+          "loc": {
+            "col": 38,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 13
+          },
+          "max": 0.499939564691577,
+          "min": 0.47435414417498745,
+          "opcode": "/",
+          "sensitivity": 166.1151281079809,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 1000,
+          "loc": {
+            "col": 16,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 14
+          },
+          "max": 0.9996373969156186,
+          "min": 0.847729424780325,
+          "opcode": "cos",
+          "sensitivity": 946.7376956840707,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 1000,
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 15
+          },
+          "max": 0.47597491948871645,
+          "min": 0.000499939564691577,
+          "opcode": "*",
+          "sensitivity": 244.06174055097296,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 1000,
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 16
+          },
+          "max": -0.02398653696339209,
+          "min": -0.24739878343310298,
+          "opcode": "*",
+          "sensitivity": 134.80327083513714,
+          "type": "double"
+        },
+        {
+          "executions": 1000,
+          "gradient": 1000,
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 17
+          },
+          "max": 0.029991824418484612,
+          "min": 0.00948708288349975,
+          "opcode": "*",
+          "sensitivity": 19.632713188146727,
+          "type": "double"
+        }
+      ],
+      "original": {
+        "c": [
+          "x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "z * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "cos(sqrt(z * z + (x * x + y * y)) * 0.5)"
+        ],
+        "fpcore": [
+          "(* v1 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "(* v0 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "(* v2 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "(cos (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5))"
+        ]
+      },
+      "outputs": [
+        {
+          "c": "x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "fpcore": "(* v1 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "inputs": [
+            0,
+            1,
+            2
+          ],
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 15
+          },
+          "name": "q[4 * i + 1]",
+          "ops": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            8
+          ],
+          "type": "double"
+        },
+        {
+          "c": "y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "fpcore": "(* v0 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "inputs": [
+            0,
+            1,
+            2
+          ],
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 16
+          },
+          "name": "q[4 * i + 2]",
+          "ops": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            9
+          ],
+          "type": "double"
+        },
+        {
+          "c": "z * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))",
+          "fpcore": "(* v2 (/ (sin (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5)) (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0))))))",
+          "inputs": [
+            0,
+            1,
+            2
+          ],
+          "loc": {
+            "col": 22,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 17
+          },
+          "name": "q[4 * i + 3]",
+          "ops": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            10
+          ],
+          "type": "double"
+        },
+        {
+          "c": "cos(sqrt(z * z + (x * x + y * y)) * 0.5)",
+          "fpcore": "(cos (* (sqrt (fma v2 v2 (fma v1 v1 (* v0 v0)))) 0.5))",
+          "inputs": [
+            0,
+            1,
+            2
+          ],
+          "loc": {
+            "col": 16,
+            "file": "explain_formatter_rotation.cpp",
+            "line": 14
+          },
+          "name": "q[4 * i]",
+          "ops": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            7
+          ],
+          "type": "double"
+        }
+      ]
+    }
+  ],
+  "target": {
+    "cost_model": "cm_x86-64_explorer.csv",
+    "selector": "dp",
+    "tau": 1e-06,
+    "tau_from": "flag"
+  }
+}

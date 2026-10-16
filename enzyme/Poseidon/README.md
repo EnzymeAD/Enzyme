@@ -22,7 +22,8 @@ tree with `-DENZYME_POSEIDON=ON`:
 ```
 enzyme/Poseidon/            the pass (Plugin.cpp and the sources beside it)
   runtime/                  profiler and GEMM dispatch runtimes the driver links
-  tools/                    poseidon-clang driver, poseidon-calibrate, Herbie platform
+  tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
+                            Herbie platform
   cost_models/              the paper's RTX 5090 model and its Herbie platform
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integration
@@ -120,6 +121,58 @@ module's target-cpu, in `~/.cache/poseidon` and then in what the installation
 ships; zero or several matches abort naming the tool. `cost_models/README.md`
 describes the row families and what each calibration arm measures.
 
+## What a compile decided
+
+Poseidon reports through LLVM's optimization remarks under the pass name
+`poseidon`, at the source location of the code concerned:
+
+- `-Rpass=poseidon`: each applied rewrite, as C, with the technique (series
+  approximation and the profiled range it was validated on, regime split,
+  operations moved to another precision, matrix-product scheme), the change of
+  the modelled error and of the modelled cost, and its id.
+- `-Rpass-missed=poseidon`: each subgraph left as written and why, and at most
+  three rejected alternatives per subgraph with the reason (modelled error
+  above the target, dominated, not cheaper, Herbie returned nothing, ...).
+- `-Rpass-analysis=poseidon`: the site's target, modelled error and cost
+  before and after, and each subgraph's profile (input ranges, executions,
+  sensitivity).
+
+`-fsave-optimization-record` writes the same remarks as YAML, with the
+expression, rewrite, error and cost as separate arguments.
+
+`-poseidon-explain=<dir>` (also implied by `-poseidon-report-path`) writes
+`<func>.explain.json` per site, schema `poseidon-explain/1`. Every number in it
+is the solver's own; a field the solve did not compute (for example a modelled
+error when the DP table came from the cache) is omitted.
+
+| field | content |
+|---|---|
+| `function` | `name` (demangled), `symbol`, `ir` (the solved clone), `site` and `loc` locations |
+| `target` | `tau` and `tau_from` (`site` or `flag`), or `budget`; `cost_model`, `selector` |
+| `result` | `cost_before`, `cost_after`, `modelled_rel_error_as_written`, `modelled_rel_error`, `applied` (ids) |
+| `subgraphs[]` | `id`, `kind` (`subgraph` or `matmul`), `loc`, `cost`, `executions`, `ops[]` (`opcode`, `type`, `loc`, `executions`, `sensitivity`, `gradient`, `min`, `max`), `inputs[]` (`var`, `name`, `loc`, `type`, `min`, `max`), `outputs[]` (`name`, `loc`, `fpcore`, `c`, the `ops` and `inputs` it depends on), `original` (`fpcore`, `c`), `herbie[]` (per core: precision, status), `left_as_written` |
+| `subgraphs[].alternatives[]` | `id` (what `-poseidon-apply-rewrites` takes), `kind` (`algebraic`, `precision`, `expansion`, `matmul`), `summary`, `fpcore`, `c`, `approx`, `approx_note`, `changes`, `cost_delta`, `modelled_error`, `herbie_error_bits` (`before`, `after`), `status` (`applied`, `pareto`, `rejected`), `reason` |
+| `pareto[]` | `budget` (what `-poseidon-comp-cost-budget` takes), `cost`, `modelled_rel_error`, `applied`, `selected` |
+
+Locations are `{file, line, col}`; modelled errors are relative and in the
+unit `-poseidon-tau` is given in. An applied algebraic alternative reads
+
+```json
+{"id": "R0_1", "kind": "algebraic", "precision": "binary64", "status": "applied",
+ "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
+ "c": "0.5", "approx": true,
+ "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+ "cost_delta": -3576832, "modelled_error": 1.16e-16,
+ "reason": "part of the cheapest solution that meets the target"}
+```
+
+`tools/explain/poseidon-explain <file|dir> --format F` (Python 3, installed in
+`bin/`) presents these files: `report` (a table per source location with the
+alternatives, the profile and the Pareto points with the flag that selects
+each), `source` (the source with each rewrite spliced in as C, using clang's
+AST to find the expression), `diff`, `remarks` (`file:line:col: note:` lines),
+`fpcore` (before and after, for Herbie) and `json`.
+
 ## Compiler Explorer
 
 `tools/explorer/` puts Poseidon in Compiler Explorer. `poseidon-ce.sh` is the
@@ -152,6 +205,19 @@ Compile with `-O1` or higher. Herbie results are kept in `POSEIDON_CE_CACHE`
 ships the examples' results so their first compile does not search.
 `test-explorer.py --url http://localhost:10240` checks a running explorer
 through its REST API.
+
+The explorer calls the wrapper as `clang++`, so the Poseidon compiler has every
+view plain clang has: LLVM IR, optimization remarks, the optimization pipeline
+(Poseidon's own passes included), control flow graph, AST, preprocessor output,
+stack usage and the linked binary. Flags that only shape that output reach the
+final compile, not the profiling build. The compiler output keeps the solver's
+decisions and the remarks (`-Rpass=poseidon -Rpass-analysis=poseidon` are on),
+which the editor marks as notes; `-poseidon-print` shows everything. With
+`POSEIDON_CE_EXPLAIN` set (the image sets it) the wrapper leaves the compile's
+`<func>.explain.json` next to its output, and the tools Poseidon report, Poseidon
+source, Poseidon diff and Poseidon FPCore show it through `poseidon-explain`.
+`llvm-mca` and `nm` are available for both compilers, and the Templates menu has
+an assembly diff of plain clang against clang + Poseidon.
 
 ## Artifacts
 

@@ -15,10 +15,13 @@
 #ifndef POSEIDON_HERBIE_H
 #define POSEIDON_HERBIE_H
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -30,7 +33,32 @@ namespace poseidon {
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
+        nullptr);
+
+std::string dtypeOfType(llvm::Type *T);
+
+struct CRendering {
+  const llvm::SetVector<llvm::Value *> *inputs = nullptr;
+  std::function<std::string(llvm::Value *)> leafName;
+  const llvm::DenseMap<const FPNode *, std::string> *dtypes = nullptr;
+};
+
+std::string renderC(const FPNode &node, const CRendering &how,
+                    llvm::StringRef resultDtype = "");
+
+bool isRenderableFPCore(
+    llvm::StringRef expr,
+    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+
+llvm::SmallVector<std::string, 1> fpcoreToC(
+    const std::string &expr,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    const CRendering &how, llvm::StringRef resultDtype = "",
+    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
+        nullptr);
 
 bool improveViaHerbie(
     const std::vector<std::string> &inputExprs,

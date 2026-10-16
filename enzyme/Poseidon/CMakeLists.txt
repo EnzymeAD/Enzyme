@@ -37,6 +37,7 @@ set(POSEIDON_SRC
     Driver.cpp
     Evaluators.cpp
     Expansion.cpp
+    Explain.cpp
     Flags.cpp
     Herbie.cpp
     HostDispatch.cpp
@@ -227,6 +228,8 @@ install(
 install(DIRECTORY runtime DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(DIRECTORY cost_models DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(DIRECTORY tools DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
+install(PROGRAMS tools/explain/poseidon-explain
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(
   EXPORT PoseidonTargets
   NAMESPACE Poseidon::

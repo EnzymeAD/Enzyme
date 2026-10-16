@@ -1373,7 +1373,7 @@ SmallVector<SolutionStep> accuracyDPSolver(
     SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap, double errorTol,
-    double accScale) {
+    double accScale, SolveRecord *record) {
   llvm::errs() << "Starting accuracy DP solver with computation budget: "
                << flags::CompCostBudget << "\n";
   if (errorTol > 0.0) {
@@ -1468,6 +1468,19 @@ SmallVector<SolutionStep> accuracyDPSolver(
 
   if (!loadedFromCache)
     emitReport(F.getName(), costToAccuracyMap, costToSolutionMap, COs, CSs);
+
+  if (record) {
+    record->selector = "dp";
+    record->fromCache = loadedFromCache;
+    record->table = costToAccuracyMap;
+    record->solutions = costToSolutionMap;
+    record->accScale = accScale;
+    record->tau = errorTol;
+    record->baseline =
+        loadedFromCache
+            ? cachedBaseline.value_or(std::numeric_limits<double>::quiet_NaN())
+            : baselineAccCost(COs, CSs);
+  }
 
   llvm::errs() << "Critical computation cost range: ["
                << costToAccuracyMap.begin()->first << ", "
@@ -1595,12 +1608,15 @@ SmallVector<SolutionStep> accuracyDPSolver(
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "[poseidon] DP solver: expected a solution!");
 
+  if (record)
+    record->selected = GET_INSTRUCTION_COST(bestCompCost);
   return SmallVector<SolutionStep>(costToSolutionMap[bestCompCost].begin(),
                                    costToSolutionMap[bestCompCost].end());
 }
 
 SmallVector<SolutionStep>
-jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol) {
+jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
+                      SolveRecord *record) {
   llvm::errs() << "Starting JOINT accuracy DP solver over " << states.size()
                << " function(s) with shared computation budget: "
                << flags::CompCostBudget << "\n";
@@ -1654,6 +1670,19 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol) {
                << ", " << costToAccuracyMap.rbegin()->first << "]\n";
 
   writeBudgetsFileOnce(costToAccuracyMap);
+
+  if (record) {
+    record->selector = "joint";
+    record->table = costToAccuracyMap;
+    record->solutions = costToSolutionMap;
+    record->tau = errorTol;
+    record->baseline = 0.0;
+    record->accScale = 0.0;
+    for (auto *st : states) {
+      record->baseline += baselineAccCost(st->COs, st->CSs);
+      record->accScale += st->accScale;
+    }
+  }
 
   if (costToSolutionMap.count(0) && costToSolutionMap[0].empty())
     llvm::errs() << "WARNING: No-op solution (budget = 0) is Pareto-optimal.\n";
@@ -1743,6 +1772,8 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol) {
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "joint DP solver: expected a solution!");
+  if (record)
+    record->selected = GET_INSTRUCTION_COST(bestCompCost);
   return SmallVector<SolutionStep>(costToSolutionMap[bestCompCost].begin(),
                                    costToSolutionMap[bestCompCost].end());
 }
