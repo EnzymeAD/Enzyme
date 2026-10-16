@@ -13,10 +13,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
@@ -150,7 +153,8 @@ const HerbiePlatform &getHerbiePlatform() {
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
   std::string trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
   trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
@@ -214,7 +218,10 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     std::string resultPart = inner.substr(splitPos + 1);
     resultPart.erase(0, resultPart.find_first_not_of(" "));
     resultPart.erase(resultPart.find_last_not_of(" ") + 1);
-    return parseHerbieExpr(resultPart, valueToNodeMap, symbolToValueMap);
+    if (approxSpecs)
+      approxSpecs->push_back({inner.substr(0, splitPos), resultPart});
+    return parseHerbieExpr(resultPart, valueToNodeMap, symbolToValueMap,
+                           approxSpecs);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -254,12 +261,13 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       if (start < body.size())
         elems.push_back(body.substr(start));
       if (head == "array" && idx < elems.size())
-        return parseHerbieExpr(elems[idx], valueToNodeMap, symbolToValueMap);
+        return parseHerbieExpr(elems[idx], valueToNodeMap, symbolToValueMap,
+                               approxSpecs);
       if (head.rfind("sincos.", 0) == 0 && elems.size() == 1 && idx < 2) {
         auto node =
             std::make_shared<FPNode>(idx == 0 ? "sin" : "cos", head.substr(7));
-        node->addOperand(
-            parseHerbieExpr(elems[0], valueToNodeMap, symbolToValueMap));
+        node->addOperand(parseHerbieExpr(elems[0], valueToNodeMap,
+                                         symbolToValueMap, approxSpecs));
         return node;
       }
     }
@@ -303,16 +311,382 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       depth--;
     if (depth == 0 && trimmedExpr[curr] == ' ') {
       node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
-                                       valueToNodeMap, symbolToValueMap));
+                                       valueToNodeMap, symbolToValueMap,
+                                       approxSpecs));
       start = curr + 1;
     }
   }
   if (start < curr) {
     node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
-                                     valueToNodeMap, symbolToValueMap));
+                                     valueToNodeMap, symbolToValueMap,
+                                     approxSpecs));
   }
 
   return node;
+}
+
+std::string dtypeOfType(Type *T) {
+  if (T->isHalfTy())
+    return "f16";
+  if (T->isBFloatTy())
+    return "bf16";
+  if (T->isFloatTy())
+    return "f32";
+  if (T->isDoubleTy())
+    return "f64";
+  if (T->isX86_FP80Ty())
+    return "f80";
+  if (T->isFP128Ty())
+    return "f128";
+  return "";
+}
+
+namespace {
+
+struct CExpr {
+  std::string text;
+  int prec;
+  std::string dtype;
+};
+
+enum : int {
+  kPrecTernary = 1,
+  kPrecOr,
+  kPrecAnd,
+  kPrecEq,
+  kPrecRel,
+  kPrecAdd,
+  kPrecMul,
+  kPrecUnary,
+  kPrecPrimary
+};
+
+bool isFPDtype(StringRef d) {
+  return d == "f16" || d == "bf16" || d == "f32" || d == "f64" || d == "f80" ||
+         d == "f128";
+}
+
+StringRef cTypeName(StringRef d) {
+  return StringSwitch<StringRef>(d)
+      .Case("f16", "_Float16")
+      .Case("bf16", "__bf16")
+      .Case("f32", "float")
+      .Case("f64", "double")
+      .Case("f80", "long double")
+      .Case("f128", "__float128")
+      .Default("double");
+}
+
+std::string cLiteral(double v, StringRef dtype) {
+  if (std::isnan(v))
+    return "NAN";
+  if (std::isinf(v))
+    return v > 0 ? "INFINITY" : "-INFINITY";
+  char buf[64];
+  if (dtype == "f32") {
+    float f = (float)v;
+    for (int p = 1; p <= 9; ++p) {
+      snprintf(buf, sizeof(buf), "%.*g", p, (double)f);
+      if (strtof(buf, nullptr) == f)
+        break;
+    }
+  } else {
+    for (int p = 1; p <= 17; ++p) {
+      snprintf(buf, sizeof(buf), "%.*g", p, v);
+      if (strtod(buf, nullptr) == v)
+        break;
+    }
+  }
+  std::string s = buf;
+  if (s.find_first_of(".e") == std::string::npos)
+    s += ".0";
+  if (dtype == "f32")
+    s += "f";
+  return s;
+}
+
+std::string paren(const CExpr &e, int minPrec) {
+  return e.prec < minPrec ? "(" + e.text + ")" : e.text;
+}
+
+CExpr castTo(const CExpr &e, StringRef dtype) {
+  return {"(" + cTypeName(dtype).str() + ")" + paren(e, kPrecUnary), kPrecUnary,
+          dtype.str()};
+}
+
+bool isLibmName(StringRef op) {
+  static const StringSet<> names = {
+      "sin",  "cos",   "tan",   "asin",   "acos",   "atan",     "atan2",
+      "sinh", "cosh",  "tanh",  "asinh",  "acosh",  "atanh",    "exp",
+      "exp2", "expm1", "log",   "log2",   "log10",  "log1p",    "pow",
+      "cbrt", "sqrt",  "fabs",  "fma",    "fmin",   "fmax",     "hypot",
+      "ceil", "floor", "trunc", "round",  "rint",   "fmod",     "remainder",
+      "fdim", "erf",   "erfc",  "lgamma", "tgamma", "copysign", "nearbyint"};
+  return names.contains(op);
+}
+
+constexpr unsigned kMaxRenderedNodes = 512;
+
+class CRenderer {
+  const CRendering &how;
+  unsigned budget = kMaxRenderedNodes;
+
+  std::string dtypeOf(const FPNode &N) const {
+    if (how.dtypes) {
+      auto it = how.dtypes->find(&N);
+      if (it != how.dtypes->end())
+        return it->second;
+    }
+    if (auto *LL = dyn_cast<FPLLValue>(&N))
+      if (LL->value)
+        return dtypeOfType(LL->value->getType());
+    return N.dtype;
+  }
+
+  bool isLeaf(const FPNode &N) const {
+    auto *LL = dyn_cast<FPLLValue>(&N);
+    if (!LL)
+      return false;
+    return N.operands.empty() ||
+           (how.inputs && how.inputs->contains(LL->value));
+  }
+
+  static bool isFMulAdd(const FPNode &N) {
+    auto *LL = dyn_cast<FPLLValue>(&N);
+    auto *II = LL ? dyn_cast_or_null<IntrinsicInst>(LL->value) : nullptr;
+    return II && II->getIntrinsicID() == Intrinsic::fmuladd;
+  }
+
+  CExpr literal(const FPConst &C, StringRef dtype) {
+    std::string t = cLiteral(C.getLowerBound(), dtype);
+    return {t, t[0] == '-' ? (int)kPrecUnary : (int)kPrecPrimary, dtype.str()};
+  }
+
+  CExpr operand(const FPNode &N, StringRef want) {
+    if (auto *C = dyn_cast<FPConst>(&N))
+      if (isFPDtype(want))
+        return literal(*C, want);
+    CExpr e = render(N);
+    if (isFPDtype(want) && isFPDtype(e.dtype) && e.dtype != want)
+      return castTo(e, want);
+    return e;
+  }
+
+  SmallVector<CExpr, 3> operands(const FPNode &N, StringRef want) {
+    SmallVector<CExpr, 3> out;
+    for (const auto &op : N.operands)
+      out.push_back(operand(*op, want));
+    return out;
+  }
+
+  static std::string firstFP(ArrayRef<CExpr> es) {
+    for (const CExpr &e : es)
+      if (isFPDtype(e.dtype))
+        return e.dtype;
+    return "";
+  }
+
+public:
+  explicit CRenderer(const CRendering &how) : how(how) {}
+
+  bool exhausted() const { return budget == 0; }
+
+  CExpr render(const FPNode &N) {
+    if (budget == 0)
+      return {"", kPrecPrimary, ""};
+    --budget;
+    if (auto *C = dyn_cast<FPConst>(&N))
+      return literal(*C, C->dtype.empty() ? StringRef("f64") : C->dtype);
+    if (isLeaf(N)) {
+      auto *LL = cast<FPLLValue>(&N);
+      std::string name =
+          how.leafName && LL->value ? how.leafName(LL->value) : "";
+      if (name.empty())
+        name = N.symbol.empty() ? "?" : N.symbol;
+      return {name, kPrecPrimary, dtypeOf(N)};
+    }
+
+    const std::string &op = N.op;
+    std::string dt = dtypeOf(N);
+    const std::string want = isFPDtype(dt) ? dt : "";
+
+    if (op == "binary64->binary32" || op == "binary32->binary64") {
+      CExpr inner = render(*N.operands[0]);
+      std::string target = op == "binary64->binary32" ? "f32" : "f64";
+      return inner.dtype == target ? inner : castTo(inner, target);
+    }
+    if (op == "if" && N.operands.size() == 3) {
+      CExpr cond = render(*N.operands[0]);
+      CExpr a = operand(*N.operands[1], want);
+      CExpr b = operand(*N.operands[2], want.empty() ? a.dtype : want);
+      return {paren(cond, kPrecOr) + " ? " + paren(a, kPrecOr) + " : " +
+                  paren(b, kPrecTernary),
+              kPrecTernary, want.empty() ? a.dtype : want};
+    }
+    static const StringMap<int> infix = {
+        {"<", kPrecRel}, {"<=", kPrecRel}, {">", kPrecRel},   {">=", kPrecRel},
+        {"==", kPrecEq}, {"!=", kPrecEq},  {"and", kPrecAnd}, {"or", kPrecOr}};
+    auto inf = infix.find(op);
+    if (inf != infix.end() && N.operands.size() >= 2) {
+      SmallVector<CExpr, 3> es = operands(N, want);
+      StringRef sym = op == "and" ? "&&" : op == "or" ? "||" : StringRef(op);
+      std::string t;
+      for (auto [k, e] : llvm::enumerate(es))
+        t += (k ? " " + sym.str() + " " : "") + paren(e, inf->second + 1);
+      return {t, inf->second, "bool"};
+    }
+    if (op == "not" && N.operands.size() == 1)
+      return {"!" + paren(render(*N.operands[0]), kPrecUnary), kPrecUnary,
+              "bool"};
+    if (N.operands.empty()) {
+      std::string t = StringSwitch<std::string>(op)
+                          .Case("PI", "M_PI")
+                          .Case("E", "M_E")
+                          .Case("INFINITY", "INFINITY")
+                          .Case("NAN", "NAN")
+                          .Case("NaN", "NAN")
+                          .Case("TRUE", "true")
+                          .Case("FALSE", "false")
+                          .Default(op);
+      bool isBool = op == "TRUE" || op == "FALSE";
+      CExpr e{t, kPrecPrimary, isBool ? "bool" : "f64"};
+      if (!isBool && !want.empty() && want != "f64")
+        e = castTo(e, want);
+      return e;
+    }
+    if (op == "neg" || (op == "-" && N.operands.size() == 1)) {
+      CExpr e = operand(*N.operands[0], want);
+      std::string t = paren(e, kPrecUnary);
+      if (t[0] == '-')
+        t = "(" + t + ")";
+      return {"-" + t, kPrecUnary, want.empty() ? e.dtype : want};
+    }
+    if (op == "fma" && N.operands.size() == 3 && isFMulAdd(N)) {
+      SmallVector<CExpr, 3> es = operands(N, want);
+      CExpr m{paren(es[0], kPrecMul) + " * " + paren(es[1], kPrecMul + 1),
+              kPrecMul, firstFP(es)};
+      return {paren(m, kPrecAdd) + " + " + paren(es[2], kPrecAdd + 1), kPrecAdd,
+              want.empty() ? firstFP(es) : want};
+    }
+    if ((op == "+" || op == "-") && N.operands.size() == 2)
+      if (auto *C = dyn_cast<FPConst>(N.operands[1].get()))
+        if (C->getLowerBound() < 0.0) {
+          CExpr a = operand(*N.operands[0], want);
+          std::string rdt = want.empty() ? a.dtype : want;
+          std::string lit = cLiteral(-C->getLowerBound(),
+                                     rdt.empty() ? StringRef("f64") : rdt);
+          return {paren(a, kPrecAdd) + (op == "+" ? " - " : " + ") + lit,
+                  kPrecAdd, rdt};
+        }
+    if ((op == "+" || op == "-" || op == "*" || op == "/") &&
+        N.operands.size() >= 2) {
+      int P = (op == "+" || op == "-") ? kPrecAdd : kPrecMul;
+      SmallVector<CExpr, 3> es = operands(N, want);
+      std::string rdt = want.empty() ? firstFP(es) : want;
+      CExpr acc = es[0];
+      for (size_t k = 1; k < es.size(); ++k)
+        acc = {paren(acc, P) + " " + op + " " + paren(es[k], P + 1), P, rdt};
+      return acc;
+    }
+    if (op == "array") {
+      std::string t = "{";
+      for (auto [k, e] : llvm::enumerate(N.operands))
+        t += (k ? ", " : "") + render(*e).text;
+      return {t + "}", kPrecPrimary, ""};
+    }
+    SmallVector<CExpr, 3> es = operands(N, want);
+    std::string rdt = want.empty() ? firstFP(es) : want;
+    std::string name = op == "rem" ? "fmod" : op;
+    if (isLibmName(name) && rdt == "f32")
+      name += "f";
+    std::string t = name + "(";
+    for (auto [k, e] : llvm::enumerate(es))
+      t += (k ? ", " : "") + e.text;
+    return {t + ")", kPrecPrimary, rdt};
+  }
+};
+
+} // namespace
+
+std::string renderC(const FPNode &node, const CRendering &how,
+                    StringRef resultDtype) {
+  CRenderer R(how);
+  CExpr e = R.render(node);
+  if (R.exhausted())
+    return "";
+  if (isFPDtype(resultDtype) && isFPDtype(e.dtype) && e.dtype != resultDtype)
+    e = castTo(e, resultDtype);
+  return e.text;
+}
+
+bool isRenderableFPCore(
+    StringRef expr,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  static const std::regex number(R"(^[-+]?(\d+(\.\d+)?(/\d+)?|inf\.0)$)");
+  SmallVector<std::pair<bool, bool>, 8> groups;
+  bool expectHead = false;
+  size_t i = 0;
+  while (i < expr.size()) {
+    char c = expr[i];
+    if (std::isspace((unsigned char)c)) {
+      ++i;
+      continue;
+    }
+    if (c == '(' || expr.substr(i).starts_with("#s(")) {
+      i += c == '(' ? 1 : 3;
+      groups.push_back({false, !groups.empty() && groups.back().first});
+      expectHead = true;
+      continue;
+    }
+    if (c == ')') {
+      if (groups.empty())
+        return false;
+      groups.pop_back();
+      expectHead = false;
+      ++i;
+      continue;
+    }
+    size_t j = i;
+    while (j < expr.size() && !std::isspace((unsigned char)expr[j]) &&
+           expr[j] != '(' && expr[j] != ')')
+      ++j;
+    std::string atom = expr.substr(i, j - i).str();
+    i = j;
+    if (expectHead) {
+      expectHead = false;
+      if (atom == "literal" && !groups.empty())
+        groups.back().first = true;
+      continue;
+    }
+    bool inLiteral =
+        !groups.empty() && (groups.back().first || groups.back().second);
+    if (inLiteral || symbolToValueMap.count(atom) ||
+        std::regex_match(atom, number))
+      continue;
+    return false;
+  }
+  return groups.empty();
+}
+
+SmallVector<std::string, 1>
+fpcoreToC(const std::string &expr,
+          std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+          std::unordered_map<std::string, Value *> &symbolToValueMap,
+          const CRendering &how, StringRef resultDtype,
+          SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
+  SmallVector<std::string, 1> out;
+  if (!isRenderableFPCore(expr, symbolToValueMap))
+    return out;
+  std::shared_ptr<FPNode> node =
+      parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap, approxSpecs);
+  if (!node)
+    return out;
+  if (node->op == "array")
+    for (const auto &element : node->operands)
+      out.push_back(renderC(*element, how, resultDtype));
+  else
+    out.push_back(renderC(*node, how, resultDtype));
+  return out;
 }
 
 bool improveViaHerbie(
@@ -424,6 +798,9 @@ bool improveViaHerbie(
         llvm::errs() << "[poseidon] Herbie core \"" << testName
                      << "\": no output expression (status " << status
                      << ") -- no algebraic candidate from this core.\n";
+        size_t noOutput;
+        if (!testName.getAsInteger(10, noOutput) && noOutput < COs.size())
+          COs[noOutput].herbieStatus = status.str();
         continue;
       }
 
@@ -436,9 +813,11 @@ bool improveViaHerbie(
 
       CandidateOutput &CO = COs[index];
       CO.herbieAnswered = true;
+      CO.herbieStatus = status.str();
       auto &seenExprSet = seenExprs[index];
 
       double bits = test.getNumber("bits").value();
+      CO.herbieBits = bits;
       json::Array &costAccuracy = *test.getArray("cost-accuracy");
 
       json::Array &initial = *costAccuracy[0].getAsArray();
@@ -654,6 +1033,8 @@ bool improveViaHerbie(
                 << "). No algebraic candidates for this subgraph. Raise "
                    "-poseidon-herbie-subgraph-timeout above "
                 << spentBudget << " to retry it.\n";
+            for (CandidateOutput &CO : COs)
+              CO.herbieStatus = "timeout";
             continue;
           }
         }
@@ -776,6 +1157,8 @@ bool improveViaHerbie(
              "other candidate families are unaffected. Raise "
              "-poseidon-herbie-subgraph-timeout to spend more, or set it "
              "to 0 for the historical unbounded behaviour.\n";
+      for (CandidateOutput &CO : COs)
+        CO.herbieStatus = "timeout";
       removeShardFiles();
       if (!timeoutMarkerPath.empty()) {
         if (auto EC = llvm::sys::fs::create_directories(flags::Cache, true))
@@ -1086,7 +1469,8 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
           const std::string &exprForLog, const Subgraph &subgraph,
           ArrayRef<MapVector<Value *, double>> sampledPoints,
           std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-          std::unordered_map<std::string, Value *> &symbolToValueMap) {
+          std::unordered_map<std::string, Value *> &symbolToValueMap,
+          std::string &why) {
   bool discardCandidate = false;
   double candCost = 0.0;
 
@@ -1119,6 +1503,8 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
 
     if (std::isfinite(goldVal) && !std::isfinite(realVal)) {
       discardCandidate = true;
+      why = "it returns a non-finite value at a sampled input where the "
+            "exact result is finite";
       break;
     }
 
@@ -1139,6 +1525,7 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
   if (!discardCandidate) {
     if (count == 0) {
       discardCandidate = true;
+      why = "every sample of it scored NaN";
     } else {
       candCost = sum / count;
     }
@@ -1150,6 +1537,9 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
                    << broken << " of " << sampledPoints.size()
                    << " samples: " << exprForLog.substr(0, 120) << "\n";
     discardCandidate = true;
+    why = formatv("its relative error is 1 or more on {0} of {1} samples",
+                  broken, sampledPoints.size())
+              .str();
   }
 
   // Uniform marginal sampling weights each regime by its share of the
@@ -1217,6 +1607,10 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
              << format("%.3e", st.origSum / st.count);
         if (st.count < flags::MinArmSamples) {
           discardCandidate = true;
+          why = formatv("a regime-split arm is reached by fewer than {0} "
+                        "samples",
+                        (unsigned)flags::MinArmSamples)
+                    .str();
           continue;
         }
         worst =
@@ -1269,6 +1663,7 @@ void setUnifiedAccuracyCost(
   // No usable sample means the output cannot be priced: drop its candidates and
   // keep the original body, without inventing a bound or an accuracy number.
   auto unpriceable = [&](const char *why) {
+    CO.unpricedReason = why;
     llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
                  << "); discarding its " << CO.candidates.size()
                  << " Herbie candidate(s) and keeping the original body. "
@@ -1329,6 +1724,8 @@ void setUnifiedAccuracyCost(
         llvm::errs() << "[poseidon] dropping array candidate with "
                      << parsedNode->operands.size() << " element(s) for "
                      << CO.roots.size() << " outputs\n";
+        CO.dropped.push_back(
+            {candidate.expr, "it does not have one element per output"});
         continue;
       }
       elements.append(parsedNode->operands.begin(), parsedNode->operands.end());
@@ -1350,14 +1747,21 @@ void setUnifiedAccuracyCost(
             llvm::errs() << "[poseidon] dropping array candidate: element " << k
                          << " reads an input its output does not\n";
           discardCandidate = true;
+          CO.dropped.push_back(
+              {candidate.expr, formatv("its element {0} reads an input that "
+                                       "output does not",
+                                       k)
+                                   .str()});
           break;
         }
       }
+      std::string why;
       std::optional<double> cost =
           priceRoot(rootSamples[k], element, candidate.expr, *CO.subgraph,
-                    sampledPoints, valueToNodeMap, symbolToValueMap);
+                    sampledPoints, valueToNodeMap, symbolToValueMap, why);
       if (!cost) {
         discardCandidate = true;
+        CO.dropped.push_back({candidate.expr, why});
         break;
       }
       total += *cost * std::fabs(rootSamples[k].grad);

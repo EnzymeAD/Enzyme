@@ -199,6 +199,11 @@ public:
   llvm::SmallVector<llvm::Value *, 1> roots;
   llvm::SmallVector<double, 1> rootGrads;
   bool herbieAnswered = false;
+  std::string herbiePrecision;
+  std::string herbieStatus;
+  double herbieBits = std::numeric_limits<double>::quiet_NaN();
+  std::string unpricedReason;
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   explicit CandidateOutput(Subgraph &subgraph, llvm::Value *oldOutput,
                            std::string expr, double grad, unsigned executions)
@@ -246,6 +251,7 @@ public:
   unsigned executions = 0;
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
   llvm::SmallVector<PTCandidate, 8> candidates;
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   using CandidateOutputSet = std::set<CandidateOutput *>;
   struct CacheKey {

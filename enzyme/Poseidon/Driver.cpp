@@ -2,6 +2,7 @@
 
 #include "Canonicalize.h"
 #include "CostModel.h"
+#include "Explain.h"
 #include "Flags.h"
 #include "HostDispatch.h"
 #include "Instrument.h"
@@ -496,6 +497,7 @@ bool optimizeSiteBody(CallInst *CI, Function *F,
     siteClones().push_back(F);
     setSlotMetadata(*F);
     noteSiteOrigin(F, sourceBody);
+    noteSiteCall(F, CI->getDebugLoc());
 
     SmallString<128> profilePath(flags::ProfileUse);
     llvm::sys::path::append(profilePath, siteProfileStem(*F) + ".fpprofile");

@@ -5,7 +5,11 @@
 # POSEIDON_CE_PROFILE_SECONDS), and the profile feeds the compile Compiler
 # Explorer asked for, which must finish within POSEIDON_CE_SOLVE_SECONDS.
 # Every -poseidon-<flag> on the command line goes to the pass; -poseidon-tau
-# defaults to POSEIDON_CE_TAU.
+# defaults to POSEIDON_CE_TAU. Flags that only shape the output (-emit-llvm,
+# remarks, -fstack-usage, -mllvm -print-*, ...) reach that last compile only;
+# -E and -fsyntax-only go straight to clang. Remarks are reported as notes.
+# With POSEIDON_CE_EXPLAIN set, the compile's <func>.explain.json files are
+# left next to its output for poseidon-explain-ce.sh.
 #
 # Herbie results are reused across compiles: read from cache/ next to this
 # script (shipped for the examples) and from POSEIDON_CE_CACHE, where new ones
@@ -50,15 +54,23 @@ SECS="${POSEIDON_CE_PROFILE_SECONDS:-10}"
 BUDGET="${POSEIDON_CE_SOLVE_SECONDS:-240}"
 SHARED="${POSEIDON_CE_CACHE:-${TMPDIR:-/tmp}/poseidon-ce-cache}"
 
-args=() pass=() src="" out="" emit="" tau_given=0 verbose=0 opt=""
+args=() final=() pass=() src="" out="" emit="" tau_given=0 verbose=0 opt="" direct=0 ir=0 dump=0
 while [ $# -gt 0 ]; do
-  case "$1 ${2:-}" in -mllvm\ -poseidon-*) shift ;; esac
+  case "$1 ${2:-}" in
+    -mllvm\ -poseidon-*) shift ;;
+    -Xclang\ -emit-llvm) ir=1; final+=("$1" "$2"); shift 2; continue ;;
+    -mllvm\ -print-*|-mllvm\ --print-*) dump=1; final+=("$1" "$2"); shift 2; continue ;;
+  esac
   case "$1" in
     -poseidon-tau=*) tau_given=1; pass+=(-mllvm "$1") ;;
     -poseidon-print|-poseidon-show-table) verbose=1; pass+=(-mllvm "$1") ;;
     -poseidon-*) pass+=(-mllvm "$1") ;;
     -o) out="$2"; shift ;;
     -S|-c) emit="$1" ;;
+    -E) direct=1; args+=("$1") ;;
+    -fsyntax-only) direct=1; final+=("$1") ;;
+    -emit-llvm) ir=1; final+=("$1") ;;
+    -R*|-fsave-optimization-record*|-foptimization-record-*|-fstack-usage|-ftime-trace*|-fdiagnostics-show-hotness|-fdiagnostics-hotness-threshold=*) final+=("$1") ;;
     -O*) opt="$1"; args+=("$1") ;;
     *.c|*.cc|*.cpp|*.cxx|*.cu) src="$1" ;;
     *) args+=("$1") ;;
@@ -66,6 +78,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$src" ] || { echo "poseidon-ce: no source file on the command line" >&2; exit 1; }
+if [ "$direct" = 1 ] && [ "$ir" = 0 ]; then
+  exec "$CLANG" -ffp-contract=on "-I$ROOT/include" "${args[@]}" "${final[@]}" ${emit:+"$emit"} "$src" ${out:+-o "$out"}
+fi
 [ "$tau_given" = 1 ] || pass+=(-mllvm "-poseidon-tau=$TAU")
 case "${opt:--O0}" in
   -O0) echo "poseidon-ce: warning: compile with -O1 or higher; at -O0 every load of a value reaches the solver as a separate input, so most rewrites are out of reach" >&2 ;;
@@ -94,12 +109,17 @@ publish() {
   done
 }
 diagnostics() {
-  if [ "$verbose" = 1 ]; then cat "$work/solve.err" >&2
+  esc=$'\e'
+  if [ "$dump" = 1 ]; then
+    ls "$work/ir" 2>/dev/null | awk -F- '{ print $1 "\t" ($NF == "before.ll" ? 0 : 1) "\t" $0 }' | sort -k1,1n -k2,2n |
+      cut -f3- | while IFS= read -r f; do cat "$work/ir/$f"; done
+    sed -n '/^\(# \)\{0,1\}\*\*\* IR Dump/,$p' "$work/solve.err" | sed "s/$esc\\[[0-9;]*m//g" |
+      grep -avE '^[^ ]+:[0-9]+:[0-9]+: |^ +[0-9]* \| |^[0-9]+ (warning|error)s? generated' || true
+  elif [ "$verbose" = 1 ]; then cat "$work/solve.err"
   else
-    esc=$'\e'
-    grep -aE "^($esc\\[[0-9;]*m)*(\\[poseidon\\]|Failed to)|No solution found|Best achievable|Applying solution|warning: |error: " "$work/solve.err" |
-      grep -vE 'Starting Floodfill|initial subgraphs|After splitting|canonical form hash|\] Finished|PT Function identified|with relative error tolerance: 0\.0|accuracy target confidence|NONE lands on the Pareto' >&2 || true
-  fi
+    grep -aE "^($esc\\[[0-9;]*m)*(\\[poseidon\\]|Failed to)|No solution found|Best achievable|Applying solution for|warning: |error: |note: |remark: " "$work/solve.err" |
+      grep -vE 'Starting Floodfill|initial subgraphs|After splitting|canonical form hash|\] Finished|PT Function identified|relative error tolerance:|accuracy target confidence|NONE lands on the Pareto|regime-split candidate|dropping (array )?candidate|array candidate per element|Herbie core .*: status=[a-z]+-(start|target)' || true
+  fi | sed -E "s/^(.*:[0-9]+:[0-9]+: ($esc\\[[0-9;]*m)*)remark: /\\1note: /" >&2
 }
 
 common=(-ffp-contract=on "-I$ROOT/include" "${args[@]}")
@@ -126,7 +146,10 @@ if ! ls "$work"/profile/*.fpprofile >/dev/null 2>&1; then
   exit 1
 fi
 
-solve=("$CLANG" "${common[@]}" "${load[@]}"
+[ "$dump" = 0 ] || final+=(-mllvm "-ir-dump-directory=$work/ir")
+explain=0
+[ -z "${POSEIDON_CE_EXPLAIN:-}" ] || [ "$dump$ir" != 00 ] || { explain=1; final+=(-mllvm "-poseidon-explain=$work/explain"); }
+solve=("$CLANG" "${common[@]}" "${final[@]}" "${load[@]}"
   -mllvm "-poseidon-profile-use=$work/profile" -mllvm "-poseidon-cost-model=$COST_MODEL"
   -mllvm "-poseidon-cache=$work/cache" -mllvm "-poseidon-herbie-binary=$HERBIE"
   -mllvm -poseidon-herbie-num-threads=4 -mllvm -poseidon-herbie-timeout=20
@@ -138,11 +161,19 @@ rc=0
 timeout -k 5 "$BUDGET" "${solve[@]}" 2>"$work/solve.err" || rc=$?
 publish
 if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
-  diagnostics
+  [ "$dump" = 1 ] || diagnostics
+  rm -rf "$work/ir" "$work/explain"
   echo "poseidon-ce: warning: Herbie did not finish within ${BUDGET}s, so this is the program as written. Searches that completed are kept; compiling again continues from them." >&2
   rc=0
   "${solve[@]}" -mllvm -poseidon-enable-herbie=0 -mllvm -poseidon-enable-pt=0 \
     -mllvm -poseidon-enable-multifloat=0 2>"$work/solve.err" || rc=$?
 fi
 [ "$rc" = 0 ] || { cat "$work/solve.err" >&2; exit 1; }
+if [ "$explain" = 1 ]; then
+  for f in "$work"/explain/*.explain.json; do
+    [ -e "$f" ] || continue
+    to="$(dirname "$out")/${f##*/}"
+    { cp "$f" "$to.$$" && mv -f "$to.$$" "$to"; } || true
+  done
+fi
 diagnostics

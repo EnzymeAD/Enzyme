@@ -1,6 +1,7 @@
 @LIT_SITE_CFG_IN_HEADER@
 
 import os
+import sys
 
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
@@ -34,6 +35,8 @@ config.substitutions.append(('%enzyme_plugin', enzyme_opt_plugin))
 
 config.substitutions.append(('%poseidon_clangxx',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))
+config.substitutions.append(('%poseidon_explain',
+                             '"' + sys.executable + '" @POSEIDON_SOURCE_DIR@/tools/explain/poseidon-explain'))
 
 # The GEMM dispatch runtimes, for tests that call an entry point directly
 # instead of having the pass emit the call.

@@ -53,6 +53,7 @@
 #include "CostModel.h"
 #include "Evaluators.h"
 #include "Expansion.h"
+#include "Explain.h"
 #include "Flags.h"
 #include "Herbie.h"
 #include "HostDispatch.h"
@@ -86,6 +87,10 @@ static std::map<const Function *, Function *> &siteOriginMap() {
 }
 void noteSiteOrigin(Function *clone, Function *orig) {
   siteOriginMap()[clone] = orig;
+}
+const Function *siteOriginOf(const Function &clone) {
+  auto it = siteOriginMap().find(&clone);
+  return it == siteOriginMap().end() ? nullptr : it->second;
 }
 
 // Keyed on the SOURCE body, not on the per-call clone: profileSite shares one
@@ -1260,6 +1265,7 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
           properties += " :pre " + precondition;
 
           CandidateOutput CO(subgraph, E.output, E.expr, E.grad, E.executions);
+          CO.herbiePrecision = prec;
           properties += " :name \"" + std::to_string(cos.size()) + "\"";
 
           std::string herbieInput =
@@ -1421,6 +1427,7 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
           arrayInputs.push_back(herbieInput);
           arrayCOs.emplace_back(subgraph, ArrayRef<Value *>(roots), grads, body,
                                 G.front()->executions);
+          arrayCOs.back().herbiePrecision = prec;
           arrayGroups.push_back(&G);
         }
       }
@@ -1899,8 +1906,10 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
                  << "\n";
 
   FunctionFPState st;
-  if (!collectFPCandidates(F, errorTol, confidence, sampleLogBits, st))
+  if (!collectFPCandidates(F, errorTol, confidence, sampleLogBits, st)) {
+    explainNothingToOptimize(F);
     return false;
+  }
 
   // A tolerance written AT THE SITE is the user interface; the global flag is a
   // whole-build override for a source that carries none. When both are given
@@ -1911,9 +1920,15 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
                  << ": the site's own accuracy target " << errorTol
                  << " overrides -poseidon-tau=" << flags::Tau << "\n";
 
+  SolveRecord record;
+  SolveRecord *rec = explainWanted(F) ? &record : nullptr;
+  record.accScale = st.accScale;
+  record.tau = budget;
+  record.siteTarget = errorTol > 0.0;
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
     steps = parseManualRewrites(flags::ApplyRewrites, st.COs, st.CSs, st.CMs);
+    record.selector = "manual";
   } else if (errorTol > 0.0 && !st.CMs.empty()) {
     // A site tolerance is a RELATIVE error target, and for a matrix product
     // that is what errorBudgetSelector compares against, exactly as the global
@@ -1924,7 +1939,7 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
       SmallVector<CandidateMatmul, 4> noCMs;
       SmallVector<SolutionStep> elem =
           accuracyDPSolver(F, st.COs, st.CSs, noCMs, st.valueToNodeMap,
-                           st.symbolToValueMap, budget, st.accScale);
+                           st.symbolToValueMap, budget, st.accScale, rec);
       for (const SolutionStep &e : elem) {
         // The two selectors ran independently, so the footprint rule the DP
         // applies internally is applied between their results here. Never
@@ -1940,12 +1955,16 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
         steps.push_back(e);
       }
     }
+    record.selector = "error-budget";
   } else if (flags::Tau > 0.0 && !st.CMs.empty()) {
     steps = errorBudgetSelector(st.CMs, budget, confidence);
+    record.selector = "error-budget";
   } else {
     steps = accuracyDPSolver(F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
-                             st.symbolToValueMap, budget, st.accScale);
+                             st.symbolToValueMap, budget, st.accScale, rec);
   }
+  if (rec)
+    explainSolve(F, st, steps, record);
   return materializeFPSolution(F, st, steps);
 }
 
@@ -1998,6 +2017,11 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   for (auto &s : states)
     raw.push_back(s.get());
 
+  SolveRecord record;
+  const bool explain = llvm::any_of(
+      raw, [](FunctionFPState *st) { return explainWanted(*st->F); });
+  record.tau = jointErrTol;
+  record.siteTarget = jointErrTol > 0.0;
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
     for (auto *st : raw) {
@@ -2005,8 +2029,10 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
           parseManualRewrites(flags::ApplyRewrites, st->COs, st->CSs, st->CMs);
       steps.append(s.begin(), s.end());
     }
+    record.selector = "manual";
   } else {
-    steps = jointAccuracyDPSolver(raw, jointErrTol);
+    steps =
+        jointAccuracyDPSolver(raw, jointErrTol, explain ? &record : nullptr);
   }
 
   std::unordered_map<const void *, FunctionFPState *> owner;
@@ -2030,6 +2056,9 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   // A site whose step list is empty gets its wrapper call restored to the
   // original body: the preprocessed clone is not guaranteed to lower
   // bit-identically, and an unrewritten site must be numerically transparent.
+  if (explain)
+    for (auto *st : raw)
+      explainSolve(*st->F, *st, perState[st], record);
   bool changed = false;
   for (auto *st : raw) {
     bool ch = materializeFPSolution(*st->F, *st, perState[st]);

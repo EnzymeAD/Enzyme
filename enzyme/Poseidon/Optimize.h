@@ -26,6 +26,7 @@ bool fpOptimize(llvm::Function &F, double errorTol = 0.0,
 bool solveJointly(llvm::Module &M, llvm::FunctionAnalysisManager &FAM);
 
 void noteSiteOrigin(llvm::Function *clone, llvm::Function *orig);
+const llvm::Function *siteOriginOf(const llvm::Function &clone);
 // The ".fpprofile" stem of a site clone. The profiling run writes one record
 // per marked BODY, so every clone of one body reads the same file.
 std::string siteProfileStem(const llvm::Function &clone);

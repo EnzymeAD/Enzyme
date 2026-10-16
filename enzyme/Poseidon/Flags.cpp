@@ -271,6 +271,11 @@ cl::opt<std::string> ReportPath(
              "<func>.txt (human-readable), <func>_rewrites.json\n"
              "(curated per-rewrite analysis with IDs), and\n"
              "validate_config.json + validate.py (validation script)."));
+cl::opt<std::string> Explain(
+    "poseidon-explain", cl::init(""), cl::Hidden,
+    cl::desc("Directory to write <func>.explain.json, what each site's solve\n"
+             "changed, considered and rejected, at source locations (also\n"
+             "written to -poseidon-report-path)."));
 
 } // namespace flags
 

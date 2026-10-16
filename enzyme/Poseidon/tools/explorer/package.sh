@@ -26,7 +26,8 @@ cp "$build/Poseidon/lib/Poseidon-$v.so" "$build/Enzyme/ClangEnzyme-$v.so" \
 cp -r "$enzyme/include" "$out/include"
 cp "$cm" "$out/cost_models/cm_x86-64_explorer.csv"
 cp -r "$herbie" "$out/herbie"
-cp "$here/poseidon-ce.sh" "$out/"
+cp "$here/poseidon-ce.sh" "$here/poseidon-explain-ce.sh" "$here/../explain/poseidon-explain" "$out/"
+ln -s poseidon-ce.sh "$out/clang++"
 git -C "$enzyme" rev-parse --short=12 HEAD >"$out/VERSION" 2>/dev/null || rm -f "$out/VERSION"
 
 # The examples' Herbie results ship in cache/, so their first compile in the

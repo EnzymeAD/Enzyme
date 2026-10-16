@@ -615,6 +615,10 @@ void setUnifiedAccuracyCost(
       }
       assert(!std::isnan(candidate.accuracyCost));
       newCandidates.push_back(std::move(candidate));
+    } else {
+      CS.dropped.push_back({candidate.desc,
+                            "it returns a non-finite value at a sampled input "
+                            "where the exact result is finite"});
     }
   }
   CS.candidates = std::move(newCandidates);
