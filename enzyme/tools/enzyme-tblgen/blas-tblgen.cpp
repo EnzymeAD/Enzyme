@@ -2179,6 +2179,11 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "                                                    \n"
      << "    auto callval = call.getCalledOperand();       \n\n";
 
+  // The derivative passes and receives the cuBLAS scalars in host memory.
+  os << "    if (cublasv2)\n"
+     << "      emitCuBLASPointerModeCheck(Builder2, arg_handle, called, "
+        "call);\n";
+
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
@@ -2284,6 +2289,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         "\"\\n\";\n"
      << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
      << "    }\n";
+
+  // The derivative passes and receives the cuBLAS scalars in host memory.
+  os << "    if (cublasv2)\n"
+     << "      emitCuBLASPointerModeCheck(Builder2, lookup(arg_handle, "
+        "Builder2), called, call);\n";
 
   os << "    Value *alloc = nullptr;\n"
      << "    if (byRef && !cublas) {\n"
