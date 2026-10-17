@@ -82,6 +82,14 @@ llvm::cl::opt<unsigned> EnzymeMaxTypeDepth("enzyme-max-type-depth", cl::init(6),
                                            cl::Hidden,
                                            cl::desc("Maximum type tree depth"));
 
+llvm::cl::opt<bool> EnzymeTAInactiveBlackBox(
+    "enzyme-ta-inactive-black-box", cl::init(true), cl::Hidden,
+    cl::desc("Do not analyze the body of a callee marked enzyme_inactive "
+             "whose pointer parameters and result all carry enzyme_type: it "
+             "is never differentiated, so only those annotations (and the "
+             "uses at the call) type the call, as AD tools treat black-box "
+             "routines"));
+
 llvm::cl::opt<bool> EnzymePrintType("enzyme-print-type", cl::init(false),
                                     cl::Hidden,
                                     cl::desc("Print type analysis algorithm"));
@@ -4707,6 +4715,23 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     TA.updateAnalysis(II.getOperand(ptrArgIndex), upTree.Only(-1, &II), &II);
 }
 
+/// Whether every pointer parameter (and a pointer result) of a call to fn
+/// carries an enzyme_type annotation, on the call or on fn, so that the
+/// annotations alone type everything the call exposes to the caller.
+static bool hasTypedInterface(const CallBase &call, const Function &fn) {
+  auto typed = [&](unsigned idx) {
+    return call.getAttributes().hasAttributeAtIndex(idx, "enzyme_type") ||
+           fn.getAttributes().hasAttributeAtIndex(idx, "enzyme_type");
+  };
+  if (fn.getReturnType()->isPointerTy() && !typed(AttributeList::ReturnIndex))
+    return false;
+  for (auto &arg : fn.args())
+    if (arg.getType()->isPointerTy() &&
+        !typed(AttributeList::FirstArgIndex + arg.getArgNo()))
+      return false;
+  return true;
+}
+
 void TypeAnalyzer::visitCallBase(CallBase &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -6191,6 +6216,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     if (dontAnalyze(funcName))
+      return;
+
+    // An inactive callee whose interface is fully typed is a black box: its
+    // internals (e.g. I/O routines that index differently-typed arrays of one
+    // COMMON block from its base after inlining) can only add spurious type
+    // conflicts. Without annotations its body is still the only source of
+    // the types it gives its arguments, so it is analyzed as usual.
+    if (EnzymeTAInactiveBlackBox &&
+        (ci->hasFnAttribute("enzyme_inactive") ||
+         call.hasFnAttr("enzyme_inactive")) &&
+        hasTypedInterface(call, *ci))
       return;
 
     if (!ci->empty() && !hasMetadata(ci, "enzyme_gradient") &&
