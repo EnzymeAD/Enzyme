@@ -142,8 +142,8 @@ declare void @_Z17__enzyme_autodiffPFddPdEz(double (double, double*)*, ...)
 ; CHECK-NEXT:   %"i17'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %[[i12:.+]], %incinvertbb5 ]
 ; CHECK-NEXT:   %"arg'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %[[i14]], %incinvertbb5 ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %bb2 ], [ %[[i15:.+]], %incinvertbb5 ]
-; CHECK-NEXT:   %[[d0diffei7:.+]] = fdiv fast double %"i17'de.0", 8.000000e-01
-; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %"i7'de.0", %[[d0diffei7]]
+; CHECK-NEXT:   %[[d0diffei7:.+]] = fdiv nnan ninf nsz arcp contract afn double %"i17'de.0", 8.000000e-01
+; CHECK-NEXT:   %[[i2:.+]] = fadd nnan ninf nsz arcp contract afn double %"i7'de.0", %[[d0diffei7]]
 ; CHECK-NEXT:   %"i13'ipg_unwrap" = getelementptr inbounds double, double* %"arg1'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"i13'ipg_unwrap", align 8
 ; DCE-NEXT:   store double 0.000000e+00, double* %"i13'ipg_unwrap", align 8

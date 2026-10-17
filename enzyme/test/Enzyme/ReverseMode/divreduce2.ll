@@ -86,12 +86,12 @@ declare double @__enzyme_autodiff(i8*, double*, double*, i64, double)
 ; CHECK-NEXT:   %7 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   %gep_unwrap = getelementptr inbounds double, double* %A, i64 %7
 ; CHECK-NEXT:   %ld_unwrap = load double, double* %gep_unwrap, align 8
-; CHECK-NEXT:   %[[d0differeduce]] = fdiv fast double %4, %ld_unwrap
+; CHECK-NEXT:   %[[d0differeduce]] = fdiv nnan ninf nsz arcp contract afn double %4, %ld_unwrap
 ; CHECK-NEXT:   %[[i8:.+]] = getelementptr inbounds double, double* %reduce_malloccache, i64 %7
 ; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i8]], align 8, !invariant.group !{{[0-9]+}}
-; CHECK-NEXT:   %[[div_unwrap:.+]] = fdiv {{(fast )?}}double %[[i9]], %ld_unwrap
-; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %[[d0differeduce]], %[[div_unwrap]]
-; CHECK-NEXT:   %[[i11:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[i10:.+]]
+; CHECK-NEXT:   %[[div_unwrap:.+]] = fdiv {{(fast |nnan ninf nsz arcp contract afn )?}}double %[[i9]], %ld_unwrap
+; CHECK-NEXT:   %[[i10:.+]] = fmul nnan ninf nsz arcp contract afn double %[[d0differeduce]], %[[div_unwrap]]
+; CHECK-NEXT:   %[[i11:.+]] = {{(fsub nnan ninf nsz arcp contract afn double \-?0.000000e\+00,|fneg nnan ninf nsz arcp contract afn double)}} %[[i10:.+]]
 ; CHECK-NEXT:   %"gep'ipg_unwrap" = getelementptr inbounds double, double* %"A'", i64 %7
 ; CHECK-NEXT:   %[[i12:.+]] = load double, double* %"gep'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i12]], %[[i11]]
