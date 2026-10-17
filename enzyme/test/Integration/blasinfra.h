@@ -106,6 +106,26 @@ char side_to_trans(char c) {
   }
 }
 
+char side_to_rtrans(char c) {
+  switch (c) {
+  case 'L':
+    return 'T';
+  case 'l':
+    return 't';
+  case 'R':
+    return 'N';
+  case 'r':
+    return 'n';
+  default:
+    printf("Illegal side_to_rtrans of '%c' %d\n", c, c);
+    exit(1);
+  }
+}
+
+int mat_ld(char layout, int rows, int cols) {
+  return layout == 101 ? cols : rows;
+}
+
 bool is_normal(char c) {
   switch (c) {
   case 'N':
@@ -344,6 +364,7 @@ enum class CallType {
   LACPY,
   MEMSET,
   TRMV,
+  TRSV,
   TRMM,
   SYRK,
   SYR2K,
@@ -480,6 +501,9 @@ void printty(CallType v) {
     return;
   case CallType::TRMV:
     printf("TRMV");
+    return;
+  case CallType::TRSV:
+    printf("TRSV");
     return;
   case CallType::TRMM:
     printf("TRMM");
@@ -959,6 +983,31 @@ void printcall(BlasCall rcall) {
     return;
   case CallType::TRMV:
     printf("TRMV(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(", trans=");
+    printty(rcall.targ1);
+    printf(", diag=");
+    printty(rcall.diag);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", A=");
+    printty(rcall.pin_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", X=");
+    printty(rcall.pout_arg1);
+    printf(", incx=");
+    printty(rcall.iarg5);
+    printf(")");
+    return;
+  case CallType::TRSV:
+    printf("TRSV(abi=");
     printty(rcall.abi);
     printf(", handle=");
     printty(rcall.handle);
@@ -2027,6 +2076,34 @@ __attribute__((noinline)) void cblas_dtrmv(char layout, char uplo, char trans,
   calls.push_back(call);
 }
 
+__attribute__((noinline)) void cblas_dtrsv(char layout, char uplo, char trans,
+                                           char diag, int N, double *A, int lda,
+                                           double *X, int incx) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::TRSV,
+                   X,
+                   A,
+                   UNUSED_POINTER,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   layout,
+                   trans,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   lda,
+                   incx,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   uplo,
+                   diag};
+  calls.push_back(call);
+}
+
 //     B := alpha*op( A )*B,   or   B := alpha*B*op( A ),
 __attribute__((noinline)) void cblas_dtrmm(char layout, char side, char uplo,
                                            char trans, char diag, int M, int N,
@@ -2866,6 +2943,26 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkMatrix(A, "A", layout, /*rows=*/N, /*cols=*/N, /*ld=*/lda, test, rcall,
                 trace);
 
+    checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+
+    checkDiag(diag_char, test, rcall, trace);
+    assert(uplo_char == 'U' || uplo_char == 'u' || uplo_char == 'L' ||
+           uplo_char == 'l');
+    return;
+  }
+  case CallType::TRSV: {
+    auto X = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto layout = rcall.layout;
+    auto diag_char = rcall.diag;
+    auto uplo_char = rcall.uplo;
+    auto N = rcall.iarg1;
+    auto lda = rcall.iarg4;
+    auto incX = rcall.iarg5;
+
+    checkMatrix(A, "A", layout, /*rows=*/N, /*cols=*/N, /*ld=*/lda, test,
+                rcall, trace);
     checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
 
     checkDiag(diag_char, test, rcall, trace);
