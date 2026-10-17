@@ -1126,10 +1126,14 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 
+// d/dx |x| = copysign(1, x). Unlike (x < 0 ? -1 : 1), this gives -1 for -0.0,
+// so the sign of a zero argument records the side from which it approached 0.
+// This makes e.g. the second derivative of fabs(-x*x) at 0 equal 2, not -2.
+// A NaN input gives +/-1 according to its sign bit, the same as fabs itself.
 def : IntrPattern<(Op $x),
                   [["fabs"]],
                   [
-                    (FMul (DiffeRet), (Select (FCmpOLT $x, (ConstantFP<"0"> $x)), (ConstantFP<"-1"> $x), (ConstantFP<"1"> $x)))
+                    (FMul (DiffeRet), (Intrinsic<"copysign"> (ConstantFP<"1"> $x), $x))
                   ],
                   (ForwardFromSummedReverse)
                   >;
