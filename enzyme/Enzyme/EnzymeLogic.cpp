@@ -82,6 +82,7 @@
 
 #include "llvm/ADT/StringSet.h"
 
+#include "Checkpointing.h"
 #include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
@@ -2198,6 +2199,22 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
+  if (isCheckpointLoop(todiff)) {
+    if (Function *F = createCheckpointAugmented(
+            *this, context, todiff, constant_args, TA, oldTypeInfo,
+            runtimeActivity, strongZero, width, AtomicAdd)) {
+      std::map<AugmentedStruct, int> returnMapping;
+      returnMapping[AugmentedStruct::Tape] = -1;
+      auto &res = insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                      AugmentedCachedFunctions, tup,
+                      AugmentedReturn(F, nullptr, {}, returnMapping, {}, {},
+                                      constant_args, shadowReturnUsed))
+                      ->second;
+      res.isComplete = true;
+      return res;
+    }
+  }
+
   // TODO make default typing (not just constant)
 
   if (auto md = hasMetadata(todiff, "enzyme_augment")) {
@@ -3866,6 +3883,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   TargetLibraryInfo &TLI =
       PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
 
+  if (isCheckpointLoop(key.todiff)) {
+    if (Function *F = createCheckpointGradient(*this, context, key, TA))
+      return insert_or_assign2<ReverseCacheKey, Function *>(
+                 ReverseCachedFunctions, key, F)
+          ->second;
+  }
+
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : key.constant_args) {
@@ -4863,6 +4887,16 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
+
+  if (todiff->hasFnAttribute("enzyme_checkpoint_pass")) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Forward mode over the reverse pass of a checkpointed loop ("
+       << todiff->getName()
+       << ") is not supported yet; differentiate reverse over forward "
+          "instead";
+    EmitNoDerivativeError(ss.str(), todiff, context);
+  }
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;

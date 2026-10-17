@@ -39,6 +39,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "Checkpointing.h"
 #include "DiffeGradientUtils.h"
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
@@ -5230,6 +5231,26 @@ public:
     }
   }
 
+  /// The activity with which argument `i` of `call` is passed. The schedule
+  /// arguments of a checkpointed loop never carry a derivative, whatever the
+  /// values passed: a scheme is a table of function pointers, which would
+  /// otherwise be given a shadow made of the derivatives of those functions.
+  /// Its other arguments are needed in the reverse pass, primal included.
+  DIFFE_TYPE getCallArgDiffeType(llvm::CallInst &call, llvm::Function *called,
+                                 unsigned i, bool foreignFunction) {
+    // Derivatives of a loop function (a forward-mode one, differentiated
+    // again) keep its attributes: its schedule arguments stay inactive.
+    if (called && called->hasFnAttribute("enzyme_checkpoint") &&
+        called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
+      return DIFFE_TYPE::CONSTANT;
+    if (isCheckpointLoop(called)) {
+      // The reverse pass reruns steps from the primal arguments.
+      auto ty = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      return ty == DIFFE_TYPE::DUP_NONEED ? DIFFE_TYPE::DUP_ARG : ty;
+    }
+    return gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+  }
+
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
@@ -5316,8 +5337,7 @@ public:
         if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
-        auto argTy =
-            gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+        auto argTy = getCallArgDiffeType(call, called, i, foreignFunction);
 
         bool replace =
             (argTy == DIFFE_TYPE::DUP_NONEED &&
@@ -5591,7 +5611,7 @@ public:
           structAttrs[pre_args.size()].push_back(attr);
         }
 
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      auto argTy = getCallArgDiffeType(call, called, i, foreignFunction);
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;
