@@ -1,0 +1,29 @@
+0
+	MinRes = 0.3679
+	MaxRes = 7.389
+	SumValue = 200.0
+	SumSens = 80.0
+	SumGrad = 40.0
+	Exec = 100
+	NumOperands = 1
+	Operand[0] = [-1.0, 2.0]
+1
+	MinRes = -0.6321
+	MaxRes = 6.389
+	SumValue = 150.0
+	SumSens = 60.0
+	SumGrad = 30.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [0.3679, 7.389]
+	Operand[1] = [-1.0, -1.0]
+2
+	MinRes = 0.5
+	MaxRes = 3.195
+	SumValue = 100.0
+	SumSens = 50.0
+	SumGrad = 25.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [-0.6321, 6.389]
+	Operand[1] = [-1.0, 2.0]
