@@ -1,19 +1,29 @@
 name: Julia Enzyme CI
 
 on:
+  # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
     - main
+  # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
     branches:
     - main
+    paths:
+      - '.github/workflows/enzyme-julia.yml'
+      - 'enzyme/**'
   merge_group:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 concurrency:
   # Skip intermediate builds: always.
   # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
 
 jobs:
   build:
@@ -26,15 +36,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version:
-          - '1.10'
-          - '1.11'
-          - '1.12'
-          - '1.13'
-        os:
-          - ubuntu-latest
-        arch:
-          - 'default'
+        version: ['1.10', '1.11', '1.12', '1.13']
+        os: [ubuntu-latest]
+        arch: [default]
     timeout-minutes: 60
     steps:
     - name: Checkout Enzyme repository
@@ -70,7 +74,7 @@ jobs:
     - uses: julia-actions/julia-buildpkg@v1
       with:
         project: jl
-    - name: "Set test arguments"
+    - name: Set test arguments
       shell: bash
       run: |
         # Run tests in verbose mode

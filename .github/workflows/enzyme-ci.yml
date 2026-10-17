@@ -1,11 +1,18 @@
 name: Enzyme CI
 
-on: 
+on:
+  # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
       - main
+  # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
+    paths:
+      - '.github/workflows/enzyme-ci.yml'
+      - 'enzyme/**'
   merge_group:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 concurrency:
   # Skip intermediate builds: always.
@@ -13,19 +20,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
+
 jobs:
   build-linux:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    
+
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15", "16"]
-        build: ["Release", "Debug"] # "RelWithDebInfo"
+        llvm: [15, 16]
+        build: [Release, Debug] # RelWithDebInfo
         os: [ubuntu-22.04]
-  
-    timeout-minutes: 30 
+    timeout-minutes: 30
 
     steps:
     - name: add llvm 
@@ -63,8 +72,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15", "16"]
-        build: ["Release"] # "RelWithDebInfo"
+        llvm: [15, 16]
+        build: [Release] # RelWithDebInfo
   
     timeout-minutes: 30 
     steps:
@@ -103,8 +112,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["16"]
-        build: ["Release"] # "RelWithDebInfo"
+        llvm: [16]
+        build: [Release] # RelWithDebInfo
 
     timeout-minutes: 30
     steps:
