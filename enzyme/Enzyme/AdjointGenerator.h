@@ -786,8 +786,11 @@ public:
       //  have their derivative computed Note that this is too aggressive for
       //  general programs as if the global aliases with an argument something
       //  that is written to, then we will have a logical error
+      //  A global that some code in the module may write is not one of those:
+      //  the write may be in a callee whose derivative, which creates the
+      //  shadow, is only made after this load is visited.
       if (auto arg = dyn_cast<GlobalVariable>(I.getOperand(0))) {
-        if (!hasMetadata(arg, "enzyme_shadow")) {
+        if (!hasMetadata(arg, "enzyme_shadow") && !mayBeWrittenInModule(arg)) {
           return;
         }
       }
