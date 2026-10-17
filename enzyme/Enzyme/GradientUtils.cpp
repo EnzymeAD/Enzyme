@@ -2696,6 +2696,28 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
   return lcssaPHI;
 }
 
+/// If the value `malloc` (in the new function) only needs its value from the
+/// final iteration of its loop to be cached (see cacheOnlyLastIteration),
+/// return the block whose loop nest should define the cache instead of the
+/// defining block: the preheader of the value's loop. This keeps one value per
+/// iteration of the enclosing loops, overwritten on every iteration of the
+/// value's own loop. Otherwise return null (use the default scope).
+BasicBlock *GradientUtils::getCacheScopeForReverse(Value *malloc) {
+  auto inst = dyn_cast<Instruction>(malloc);
+  if (!inst)
+    return nullptr;
+  if (cacheOnlyLastIteration.size() && isa<PHINode>(inst)) {
+    auto orig = isOriginal(inst);
+    if (orig && cacheOnlyLastIteration.count(orig)) {
+      LoopContext lc;
+      if (getContext(inst->getParent(), lc) && lc.header == inst->getParent() &&
+          isOriginalBlock(*lc.preheader))
+        return lc.preheader;
+    }
+  }
+  return nullptr;
+}
+
 Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                                       int idx, bool replace) {
   assert(malloc);
@@ -2776,15 +2798,18 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       return UndefValue::get(retType);
     }
 
+    BasicBlock *cacheScope = getCacheScopeForReverse(malloc);
     LimitContext ctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                      BuilderQ.GetInsertBlock());
     if (auto inst = dyn_cast<Instruction>(malloc))
       ctx = LimitContext(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                         inst->getParent());
+                         cacheScope ? cacheScope : inst->getParent());
     if (auto found = findInMap(scopeMap, malloc)) {
       ctx = found->second;
     }
     assert(isOriginalBlock(*ctx.Block));
+    if (!cacheScope)
+      cacheScope = BuilderQ.GetInsertBlock();
 
     bool inLoop;
     if (ctx.ForceSingleIteration) {
@@ -2825,7 +2850,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                                 /*inForwardPass*/ true, nullptr,
                                 LimitContext(
                                     /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                    BuilderQ.GetInsertBlock()))
+                                    cacheScope))
                                 .size();
              i < limit; ++i) {
           if (!isa<PointerType>(innerType)) {
@@ -2893,8 +2918,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         }
       }
 
-      LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                        BuilderQ.GetInsertBlock());
+      LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, cacheScope);
       AllocaInst *cache =
           createCacheForScope(lctx, innerType, "mdyncache_fromtape",
                               ((DiffeGradientUtils *)this)->FreeMemory, false);
@@ -3100,11 +3124,12 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       return malloc;
     }
 
+    BasicBlock *cacheScope = getCacheScopeForReverse(malloc);
     LimitContext ctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                      BuilderQ.GetInsertBlock());
     if (auto inst = dyn_cast<Instruction>(malloc))
       ctx = LimitContext(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                         inst->getParent());
+                         cacheScope ? cacheScope : inst->getParent());
     if (auto found = findInMap(scopeMap, malloc)) {
       ctx = found->second;
     }
@@ -3147,7 +3172,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     ensureLookupCached(
         cast<Instruction>(malloc),
         /*shouldFree=*/reverseBlocks.size() > 0,
-        /*scope*/ nullptr,
+        /*scope*/ cacheScope,
         cast<Instruction>(malloc)->getMetadata(LLVMContext::MD_tbaa));
     auto found2 = scopeMap.find(malloc);
     assert(found2 != scopeMap.end());
@@ -3174,7 +3199,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                               /*inForwardPass*/ true, nullptr,
                               LimitContext(
                                   /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                  BuilderQ.GetInsertBlock()))
+                                  cacheScope ? cacheScope
+                                             : BuilderQ.GetInsertBlock()))
                               .size();
            i < limit; ++i) {
         innerType = innerType->getPointerElementType();
@@ -8922,6 +8948,84 @@ void GradientUtils::computeMinCache() {
                 "CachedPointerError", cast<Instruction>(V)->getDebugLoc(),
                 cast<Instruction>(V)->getParent()->getParent(), ss.str());
           }
+        }
+      }
+    }
+
+    // A loop header PHI that is cached (rather than recomputed) is by default
+    // cached once per iteration of its loop. If however the only reverse-pass
+    // uses of the PHI are outside of its loop (e.g. the running sum of an
+    // unrotated reduction loop, used after the loop exits), those uses can
+    // only ever observe the value of the last execution of the PHI before the
+    // loop was exited. By SSA dominance such a use executes after the loop
+    // within the same iteration of every enclosing loop, and the loop cannot
+    // be re-entered without starting a new iteration of the enclosing loop.
+    // Thus it suffices to cache a single value per iteration of the
+    // enclosing loops, overwritten on each iteration of the PHI's loop. This
+    // holds independently of the number of exits of the loop.
+    //
+    // This is only legal if no reverse-pass computation within the loop needs
+    // the PHI: every user inside the loop must neither use the PHI directly
+    // in its adjoint, nor be needed (and thus potentially recomputed from the
+    // PHI) in the reverse pass, nor be control flow / memory / pointer
+    // related. This decision is made once when creating the augmented
+    // forward pass, and recorded in its AugmentedReturn such that all users
+    // of the tape (the reverse pass and the split forward-mode derivative)
+    // use the same cache layout. The combined mode is not affected, as it
+    // already looks such values up through an LCSSA phi (see fixLCSSA).
+    if (mode == DerivativeMode::ReverseModePrimal) {
+      std::map<UsageKey, bool> KnownSeen = populateSeenFromKnownRecompute();
+      for (BasicBlock &BB : *oldFunc) {
+        if (notForAnalysis.count(&BB))
+          continue;
+        Loop *L = OrigLI->getLoopFor(&BB);
+        if (!L || L->getHeader() != &BB)
+          continue;
+        for (PHINode &PN : BB.phis()) {
+          auto found = knownRecomputeHeuristic.find(&PN);
+          if (found == knownRecomputeHeuristic.end() || found->second)
+            continue;
+          if (PN.getType()->isPtrOrPtrVectorTy() ||
+              !PN.getType()->isSingleValueType())
+            continue;
+          if (NewLoopBoundReq.count(&PN))
+            continue;
+          bool legal = true;
+          for (User *U : PN.users()) {
+            if (U == &PN)
+              continue;
+            auto UI = dyn_cast<Instruction>(U);
+            if (!UI) {
+              legal = false;
+              break;
+            }
+            if (notForAnalysis.count(UI->getParent()))
+              continue;
+            if (!L->contains(UI->getParent()))
+              continue;
+            if (UI->isTerminator() || UI->mayReadOrWriteMemory() ||
+                UI->getType()->isPtrOrPtrVectorTy() ||
+                !(UI->getType()->isSingleValueType()) ||
+                NewLoopBoundReq.count(UI)) {
+              legal = false;
+              break;
+            }
+            if (DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
+                    this, &PN, minCutMode, UI, notForAnalysis,
+                    QueryType::Primal)) {
+              legal = false;
+              break;
+            }
+            std::map<UsageKey, bool> Seen = KnownSeen;
+            if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                    QueryType::Primal>(this, UI, minCutMode, Seen,
+                                       notForAnalysis)) {
+              legal = false;
+              break;
+            }
+          }
+          if (legal)
+            cacheOnlyLastIteration.insert(&PN);
         }
       }
     }
