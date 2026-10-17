@@ -35,7 +35,7 @@ program main
 contains
 
     ! TODO: Switch to assumed shape implementation once
-    !       https://github.com/EnzymeAD/Enzyme/issues/2820
+    !       https://github.com/EnzymeAD/Enzyme/issues/2822
     !       has been addressed
     subroutine selectFirst(n, x, y)
         integer, intent(in) :: n
