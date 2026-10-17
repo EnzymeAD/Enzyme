@@ -3312,8 +3312,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     if (called) {
-      if (funcName == "julia.write_barrier" ||
-          funcName == "julia.write_barrier_binding") {
+      if (isJuliaWriteBarrier(funcName)) {
         std::map<UsageKey, bool> Seen =
             gutils->populateSeenFromKnownRecompute();
         bool backwardsShadow = false;
@@ -3338,23 +3337,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
           for (size_t i = 0; i < gutils->getWidth(); i++) {
-            SmallVector<Value *, 1> iargs;
-            bool first = true;
-            for (auto &arg : call.args()) {
-              if (!gutils->isConstantValue(arg)) {
-                Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-                if (gutils->getWidth() > 1) {
-                  ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
-                }
-                iargs.push_back(ptrshadow);
-              } else {
-                if (first)
-                  break;
-              }
-              first = false;
-            }
-            if (iargs.size()) {
-              BuilderZ.CreateCall(called, iargs);
+            SmallVector<Value *, 3> iargs;
+            auto shadowBarrier = getShadowJuliaWriteBarrier(
+                &call, iargs,
+                [&](Value *arg) { return gutils->isConstantValue(arg); },
+                [&](Value *arg) {
+                  Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+                  if (gutils->getWidth() > 1)
+                    ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
+                  return ptrshadow;
+                });
+            if (shadowBarrier) {
+              BuilderZ.CreateCall(shadowBarrier, iargs);
             }
           }
         }

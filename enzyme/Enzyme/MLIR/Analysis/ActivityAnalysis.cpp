@@ -3451,8 +3451,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
 
       if (Operation *F = getFunctionFromCall(call)) {
+        auto name = cast<SymbolOpInterface>(F).getName();
         if (UA == UseActivity::AllStores &&
-            cast<SymbolOpInterface>(F).getName() == "julia.write_barrier")
+            (name == "julia.write_barrier" ||
+             name == "julia.object_write_barrier" ||
+             name.starts_with("julia.field_write_barrier.")))
           continue;
 
       } else if (PUA == UseActivity::None || PUA == UseActivity::OnlyStores) {

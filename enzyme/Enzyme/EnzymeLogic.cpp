@@ -584,10 +584,7 @@ struct CacheAnalysis {
     if (funcName == "julia.gc_loaded")
       return {};
 
-    if (funcName == "julia.write_barrier")
-      return {};
-
-    if (funcName == "julia.write_barrier_binding")
+    if (isJuliaWriteBarrier(funcName))
       return {};
 
     if (funcName == "julia.safepoint")
@@ -934,10 +931,7 @@ void calculateUnusedValuesInFunction(
               todo.push_back(&*u);
               continue;
             } else if (auto CI = dyn_cast<CallInst>(u)) {
-              if (getFuncNameFromCall(CI) == "julia.write_barrier") {
-                continue;
-              }
-              if (getFuncNameFromCall(CI) == "julia.write_barrier_binding") {
+              if (isJuliaWriteBarrier(getFuncNameFromCall(CI))) {
                 continue;
               }
               bool writeOnlyNoCapture = true;
@@ -1199,8 +1193,7 @@ void calculateUnusedValuesInFunction(
           const Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
-              isa<MemSetInst>(inst) || funcName == "julia.write_barrier" ||
-              funcName == "julia.write_barrier_binding") {
+              isa<MemSetInst>(inst) || isJuliaWriteBarrier(funcName)) {
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
                 if (DifferentialUseAnalysis::is_value_needed_in_reverse<
