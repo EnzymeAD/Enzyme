@@ -48,6 +48,31 @@ func.func @dmaxnumf(%a: f64, %b: f64, %dr: f64) -> (f64, f64) {
 
 // -----
 
+func.func @minnumf(%a: f64, %b: f64) -> f64 {
+  %res = arith.minnumf %a, %b : f64
+  return %res : f64
+}
+
+func.func @dminnumf(%a: f64, %b: f64, %dr: f64) -> (f64, f64) {
+  %0:2 = enzyme.autodiff @minnumf(%a, %b, %dr)
+    <{
+      activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
+      ret_activity=[#enzyme.activity<enzyme_activenoneed>]
+    }> : (f64, f64, f64) -> (f64, f64)
+  return %0#0, %0#1 : f64, f64
+}
+
+// CHECK: func.func private @diffeminnumf(%[[a:.+]]: f64, %[[b:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64) {
+// CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[cmp1:.+]] = arith.cmpf ogt, %[[a]], %[[b]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[da:.+]] = arith.select %[[cmp1]], %[[zero]], %[[dr]] : f64
+// CHECK-NEXT:    %[[cmp2:.+]] = arith.cmpf ogt, %[[a]], %[[b]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[db:.+]] = arith.select %[[cmp2]], %[[dr]], %[[zero]] : f64
+// CHECK-NEXT:    return %[[da]], %[[db]] : f64, f64
+// CHECK-NEXT:  }
+
+// -----
+
 func.func @minimumf(%a: f64, %b: f64) -> f64 {
   %res = arith.minimumf %a, %b : f64
   return %res : f64

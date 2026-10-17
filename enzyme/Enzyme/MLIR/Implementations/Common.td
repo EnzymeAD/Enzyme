@@ -190,6 +190,7 @@ def SItoF : ArithInst<"SIToFPOp">;
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
 def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
 def Arith_OLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OLT">;
+def Arith_OGT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGT">;
 def Arith_EQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpIPredicate::eq">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
