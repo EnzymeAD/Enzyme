@@ -25,7 +25,9 @@ module enzyme
   use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
                                    enzyme_fwddiff  => f__enzyme_fwddiff, &
                                    enzyme_function_like => &
-                                     f__enzyme_function_like
+                                     f__enzyme_function_like, &
+                                   enzyme_augmentfwd => f__enzyme_augmentfwd, &
+                                   enzyme_reverse => f__enzyme_reverse
   implicit none
   private
 
@@ -37,9 +39,12 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_scalar")    :: enzyme_scalar
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
+  integer(c_int), public, bind(C, name="enzyme_tape")      :: enzyme_tape
 
   ! Bindings for function hooks
   public :: enzyme_autodiff
   public :: enzyme_fwddiff
   public :: enzyme_function_like
+  public :: enzyme_augmentfwd
+  public :: enzyme_reverse
 end module enzyme
