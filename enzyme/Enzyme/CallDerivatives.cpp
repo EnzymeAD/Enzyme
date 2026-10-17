@@ -3599,11 +3599,29 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             uint64_t idx = 0;
             Value *prev = nullptr;
             ;
+            bool zeroShadow =
+                !inLoop &&
+                (Mode == DerivativeMode::ReverseModeCombined ||
+                 (Mode == DerivativeMode::ReverseModePrimal &&
+                  forwardsShadow) ||
+                 (Mode == DerivativeMode::ReverseModeGradient &&
+                  backwardsShadow) ||
+                 (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow));
+            // On a Julia that zeroes allocations in late-gc-lowering, let it
+            // zero the whole shadow instead of emitting a memset.
+            bool zeroWithBundle =
+                zeroShadow && !hasMetadata(&call, "enzyme_fromstack") &&
+                GradientUtils::canZeroAllocationWithBundle(&call);
+            auto Defs = gutils->getAllocationZeroingBundles(
+                &call, bb, /*lookup*/ false,
+                zeroWithBundle ? args[1] : nullptr);
             auto rule = [&]() {
               Value *anti =
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                                args, call.getName() + "'mi");
+                                args, Defs, call.getName() + "'mi");
               cast<CallInst>(anti)->setAttributes(call.getAttributes());
+              if (zeroWithBundle)
+                GradientUtils::markAllocationZeroed(cast<CallInst>(anti));
               cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
               cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
               cast<CallInst>(anti)->setDebugLoc(dbgLoc);
@@ -3651,18 +3669,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   }
                 }
               }
-              if (Mode == DerivativeMode::ReverseModeCombined ||
-                  (Mode == DerivativeMode::ReverseModePrimal &&
-                   forwardsShadow) ||
-                  (Mode == DerivativeMode::ReverseModeGradient &&
-                   backwardsShadow) ||
-                  (Mode == DerivativeMode::ForwardModeSplit &&
-                   backwardsShadow)) {
-                if (!inLoop) {
+              if (zeroShadow) {
+                if (!zeroWithBundle)
                   zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
                                       &call);
-                  zeroed = true;
-                }
+                zeroed = true;
               }
               idx++;
               prev = anti;
