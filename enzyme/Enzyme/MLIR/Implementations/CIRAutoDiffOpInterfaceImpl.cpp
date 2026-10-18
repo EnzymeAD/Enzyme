@@ -70,6 +70,17 @@ struct CIRStoreLike
   }
 };
 
+struct CIRLoadLike
+    : public LoadLikeInterface::ExternalModel<CIRLoadLike, cir::LoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<cir::LoadOp>(op).getAddr();
+  }
+};
+
+struct CIRAllocaLike
+    : public AllocaLikeInterface::ExternalModel<CIRAllocaLike, cir::AllocaOp> {
+};
+
 struct CIRLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           CIRLoadOpInterfaceReverse, cir::LoadOp> {
@@ -898,8 +909,10 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     dialect->addInterfaces<CIRAutoDiffControlFlow>();
     cir::SwitchFlatOp::attachInterface<SwitchFlatBranchOpInterface>(*context);
     cir::StoreOp::attachInterface<CIRStoreLike>(*context);
-    cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);
     cir::StoreOp::attachInterface<CIRStoreOpInterfaceReverse>(*context);
+    cir::LoadOp::attachInterface<CIRLoadLike>(*context);
+    cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);
+    cir::AllocaOp::attachInterface<CIRAllocaLike>(*context);
     cir::CastOp::attachInterface<CIRCastOpActivity>(*context);
     cir::CastOp::attachInterface<CIRCastOpForward>(*context);
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
