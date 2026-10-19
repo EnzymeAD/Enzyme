@@ -5,16 +5,13 @@ on:
   push:
     branches:
       - main
-    paths:
+    paths: &paths
       - '.github/workflows/format.yml'
       - 'enzyme/Enzyme/**'
       - 'enzyme/tools/enzyme-tblgen/**'
-  # Triggers the workflow on pushes to open pull requests with code changes
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    paths:
-      - '.github/workflows/format.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/tools/enzyme-tblgen/**'
+    paths: *paths
   merge_group:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:

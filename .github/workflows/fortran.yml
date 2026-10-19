@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-    paths:
+    paths: &paths
       - '.github/workflows/fortran.yml'
       - 'enzyme/Enzyme/**'
       - 'enzyme/Fortran/**'
@@ -16,19 +16,9 @@ on:
       - 'enzyme/cmake/**'
       - 'enzyme/CMakeLists.txt'
       - 'enzyme/CMakePresets.json'
-  # Triggers the workflow on pushes to open pull requests with code changes
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    paths:
-      - '.github/workflows/fortran.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/Fortran/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/benchmarks/**'
-      - 'enzyme/cmake/**'
-      - 'enzyme/CMakeLists.txt'
-      - 'enzyme/CMakePresets.json'
+    paths: *paths
   merge_group:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:

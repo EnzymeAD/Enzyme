@@ -5,20 +5,15 @@ on:
   push:
     branches:
       - main
-    paths:
+    paths: &paths
       - '.github/workflows/*.yml'
       - 'enzyme/**'
       - '.fortituderc.toml'
       - '**/CMakeLists.txt'
       - '**/*.sh'
-  # Triggers the workflow on pushes to open pull requests with code changes
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    paths:
-      - '.github/workflows/*.yml'
-      - 'enzyme/**'
-      - '.fortituderc.toml'
-      - '**/CMakeLists.txt'
-      - '**/*.sh'
+    paths: *paths
   merge_group:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:

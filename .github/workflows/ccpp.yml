@@ -5,14 +5,12 @@ on:
   push:
     branches:
       - main
-    paths:
+    paths: &paths
       - '.github/workflows/ccpp.yml'
       - 'enzyme/**'
-  # Triggers the workflow on pushes to open pull requests with code changes
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    paths:
-      - '.github/workflows/ccpp.yml'
-      - 'enzyme/**'
+    paths: *paths
   merge_group:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
