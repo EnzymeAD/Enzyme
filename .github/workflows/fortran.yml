@@ -38,11 +38,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [Release, Debug]
-        os: [ubuntu-26.04]
-        compiler: [flang]
-        llvm: [21, 22, 23]
-        mpi: [2021.7.1]
+        build:
+          - Release
+          - Debug
+        os:
+          - ubuntu-26.04
+        compiler:
+          - flang
+        llvm:
+          - 21
+          - 22
+          - 23
+        mpi:
+          - 2021.7.1
     timeout-minutes: 60
     steps:
     - name: add llvm with clang and flang
@@ -86,10 +94,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [Release, Debug]
-        os: [ubuntu-22.04]
-        compiler: [ifx]
-        mpi: [2021.7.1]
+        build:
+          - Release
+          - Debug
+        os:
+          - ubuntu-22.04
+        compiler:
+          - ifx
+        mpi:
+          - 2021.7.1
         versions:
           - llvm: 15
             ifx: 2023.0.0

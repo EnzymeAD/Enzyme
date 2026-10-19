@@ -31,9 +31,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: [15, 16]
-        build: [Release, Debug] # RelWithDebInfo
-        os: [ubuntu-22.04]
+        llvm:
+          - 15
+          - 16
+        build:
+          - Release
+          - Debug
+          # - RelWithDebInfo
+        os:
+          - ubuntu-22.04
     timeout-minutes: 30
 
     steps:
@@ -72,8 +78,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: [15, 16]
-        build: [Release] # RelWithDebInfo
+        llvm:
+          - 15
+          - 16
+        build:
+          - Release
+          # - RelWithDebInfo
   
     timeout-minutes: 30 
     steps:
@@ -112,8 +122,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: [16]
-        build: [Release] # RelWithDebInfo
+        llvm:
+          - 16
+        build:
+          - Release
+          # - RelWithDebInfo
 
     timeout-minutes: 30
     steps:
