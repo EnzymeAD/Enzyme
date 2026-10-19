@@ -4,11 +4,12 @@ on:
   # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
-    - main
+      - main
+    paths:
+      - '.github/workflows/enzyme-julia.yml'
+      - 'enzyme/**'
   # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
-    branches:
-    - main
     paths:
       - '.github/workflows/enzyme-julia.yml'
       - 'enzyme/**'

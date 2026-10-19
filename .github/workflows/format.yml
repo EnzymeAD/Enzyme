@@ -3,7 +3,12 @@ name: Clang-Format
 on:
   # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
-    branches: ["main"]
+    branches:
+      - main
+    paths:
+      - '.github/workflows/format.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/tools/enzyme-tblgen/**'
   # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
     paths:

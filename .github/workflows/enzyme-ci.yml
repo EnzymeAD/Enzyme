@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - '.github/workflows/enzyme-ci.yml'
+      - 'enzyme/**'
   # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
     paths:

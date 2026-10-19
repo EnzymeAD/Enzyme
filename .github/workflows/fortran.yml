@@ -4,7 +4,18 @@ on:
   # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
-    - main
+      - main
+    paths:
+      - '.github/workflows/fortran.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/Fortran/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   # Triggers the workflow on pushes to open pull requests with code changes
   pull_request:
     paths:
