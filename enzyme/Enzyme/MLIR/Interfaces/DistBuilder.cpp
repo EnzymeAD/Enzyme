@@ -18,8 +18,10 @@ using namespace mlir::impulse;
 static SupportKind applyXformToSupport(XformAttr xform, SupportKind in) {
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
-  case XformKind::AFFINE:
     return in;
+  case XformKind::AFFINE:
+    // loc + scale * [0, 1] is an interval with operand bounds.
+    return in == SupportKind::UNIT_INTERVAL ? SupportKind::INTERVAL : in;
   case XformKind::EXP:
   case XformKind::SOFTPLUS:
     return SupportKind::POSITIVE;
@@ -312,6 +314,25 @@ Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
   return scalarConst(b, loc, elemType, 0.0);
 }
 
+Value emitUnitUniformLogpdf(OpBuilder &b, Location loc, Value z,
+                            RankedTensorType sampleType) {
+  Type elemType = sampleType.getElementType();
+  Value zero =
+      broadcastToSample(b, loc, scalarConst(b, loc, elemType, 0.0), sampleType);
+  Value one =
+      broadcastToSample(b, loc, scalarConst(b, loc, elemType, 1.0), sampleType);
+  Value negInf = broadcastToSample(
+      b, loc,
+      scalarConst(b, loc, elemType, -std::numeric_limits<double>::infinity()),
+      sampleType);
+  Value geLo =
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGE, z, zero);
+  Value leHi = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLE, z, one);
+  Value inside = arith::AndIOp::create(b, loc, geLo, leHi);
+  Value term = arith::SelectOp::create(b, loc, inside, zero, negInf);
+  return reduceSumToScalar(b, loc, term);
+}
+
 // Standard normal logpdf, summed over the event.
 Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
                      RankedTensorType sampleType) {
@@ -534,8 +555,7 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
 
   switch (base) {
   case DistBaseKind::STD_UNIFORM:
-    // Density 1 on [0, 1): both terms vanish.
-    return {zeroScalar(), zeroScalar()};
+    return {emitUnitUniformLogpdf(b, loc, observed, sampleType), zeroScalar()};
   case DistBaseKind::EXPONENTIAL: {
     Value lam = bcast(distArgs[0]);
     Value unnormed = reduce(arith::NegFOp::create(
@@ -764,6 +784,11 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
   if (dist.getBase() != DistBaseKind::STD_NORMAL) {
     Value val =
         emitNativeSampler(b, loc, dist.getBase(), rng, distArgs, sampleType);
+    // The verifier allows chains only on STD_UNIFORM: distArgs are the chain's.
+    if (ArrayAttr transforms = dist.getTransforms())
+      for (Attribute a : transforms)
+        val = emitXformForward(b, loc, cast<XformAttr>(a), val, distArgs,
+                               sampleType);
     return {rng, val};
   }
 
@@ -788,7 +813,10 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
   auto sampleType = cast<RankedTensorType>(observed.getType());
   Type elemType = sampleType.getElementType();
 
-  if (dist.getBase() != DistBaseKind::STD_NORMAL) {
+  ArrayAttr chain = dist.getTransforms();
+  bool hasChain = chain && !chain.empty();
+  if (dist.getBase() != DistBaseKind::STD_NORMAL &&
+      !(dist.getBase() == DistBaseKind::STD_UNIFORM && hasChain)) {
     LogpdfSplit split =
         emitNativeLogpdfSplit(b, loc, dist.getBase(), observed, distArgs);
     if (!split.lognorm)
@@ -796,7 +824,6 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
     return arith::AddFOp::create(b, loc, split.unnormed, split.lognorm);
   }
 
-  // StdNormal + transform chain: base_logpdf(inverse(y)) - Sum logabsdetjac.
   Value val = observed;
   Value logdetTotal = scalarConst(b, loc, elemType, 0.0);
 
@@ -811,7 +838,9 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
     }
   }
 
-  Value base = emitBaseLogpdf(b, loc, val, sampleType);
+  Value base = dist.getBase() == DistBaseKind::STD_NORMAL
+                   ? emitBaseLogpdf(b, loc, val, sampleType)
+                   : emitUnitUniformLogpdf(b, loc, val, sampleType);
   return arith::SubFOp::create(b, loc, base, logdetTotal);
 }
 

@@ -18,6 +18,12 @@ using namespace mlir::impulse;
 
 static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
                                        SupportAttr support) {
+  // Only parameterless bases: the site's dist operands belong to the chain.
+  if (dist && dist.getTransforms() && !dist.getTransforms().empty() &&
+      dist.getBase() != DistBaseKind::STD_NORMAL &&
+      dist.getBase() != DistBaseKind::STD_UNIFORM)
+    return op->emitOpError("a transform chain is only supported on the "
+                           "STD_NORMAL and STD_UNIFORM bases");
   if (!dist || !support)
     return success();
   SupportAttr derived = deriveSupportFromDist(op->getContext(), dist);
