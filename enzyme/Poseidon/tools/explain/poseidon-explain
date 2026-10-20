@@ -95,7 +95,7 @@ def ranges(unit):
 def target_words(doc):
     t = doc.get("target", {})
     if "tau" in t:
-        src = " (set at the call)" if t.get("tau_from") == "site" else ""
+        src = " (the site's own)" if t.get("tau_from") == "site" else ""
         return "accuracy target tau = %s%s" % (num(t["tau"], 3), src)
     return "cost budget %s" % t.get("budget", 0)
 

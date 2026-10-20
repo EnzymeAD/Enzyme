@@ -95,6 +95,9 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler>
     $<INSTALL_INTERFACE:include>)
 target_compile_features(poseidon_profile PRIVATE cxx_std_17)
+# Linked into profile-generate builds only: it replaces malloc for the process.
+add_library(poseidon_profile_host STATIC runtime/fpprofiler/FPProfilerHost.cpp)
+target_compile_features(poseidon_profile_host PRIVATE cxx_std_17)
 
 option(
   POSEIDON_TCEC_USE_CUMPSGEMM
@@ -204,8 +207,8 @@ add_custom_command(
     $<TARGET_FILE_DIR:poseidon-clang>/poseidon-clang++)
 
 install(
-  TARGETS ${POSEIDON_PLUGIN_TARGET} poseidon_profile poseidon-clang
-  poseidon-calibrate
+  TARGETS ${POSEIDON_PLUGIN_TARGET} poseidon_profile poseidon_profile_host
+  poseidon-clang poseidon-calibrate
   EXPORT PoseidonTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -228,8 +231,9 @@ install(
 install(DIRECTORY runtime DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(DIRECTORY cost_models DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(DIRECTORY tools DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
-install(PROGRAMS tools/explain/poseidon-explain
-        DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(
+  PROGRAMS tools/explain/poseidon-explain
+  DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(
   EXPORT PoseidonTargets
   NAMESPACE Poseidon::

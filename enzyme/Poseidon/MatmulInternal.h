@@ -37,8 +37,7 @@ bool inKernelRaiseFits(llvm::Function *F, const AbstractMatmul &m,
                        uint64_t existingBytes, llvm::StringRef className);
 
 // `confidence` is the fraction of the sampled inputs the returned domain error
-// bounds (the percentile it is read off), the site's own or
-// -poseidon-confidence.
+// bounds (the percentile it is read off).
 double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
                              double confidence, unsigned sampleLogBits,
                              FPKind inputPrec, FPKind accPrec,

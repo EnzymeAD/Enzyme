@@ -17,14 +17,14 @@ source_filename = "attr_tau.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
 
-@.loose = private unnamed_addr constant [19 x i8] c"poseidon;tau=1e-07\00", section "llvm.metadata"
-@.tight = private unnamed_addr constant [19 x i8] c"poseidon;tau=1e-12\00", section "llvm.metadata"
-@.bare = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
+@.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
 @.file = private unnamed_addr constant [12 x i8] c"attr_tau.cu\00", section "llvm.metadata"
+@.loose = private unnamed_addr constant { double } { double 1.000000e-07 }, section "llvm.metadata"
+@.tight = private unnamed_addr constant { double } { double 1.000000e-12 }, section "llvm.metadata"
 @llvm.global.annotations = appending global [3 x { ptr, ptr, ptr, i32, ptr }] [
-  { ptr, ptr, ptr, i32, ptr } { ptr @fms_loose, ptr @.loose, ptr @.file, i32 2, ptr null },
-  { ptr, ptr, ptr, i32, ptr } { ptr @fms_tight, ptr @.tight, ptr @.file, i32 3, ptr null },
-  { ptr, ptr, ptr, i32, ptr } { ptr @fms_bare, ptr @.bare, ptr @.file, i32 4, ptr null }], section "llvm.metadata"
+  { ptr, ptr, ptr, i32, ptr } { ptr @fms_loose, ptr @.str, ptr @.file, i32 2, ptr @.loose },
+  { ptr, ptr, ptr, i32, ptr } { ptr @fms_tight, ptr @.str, ptr @.file, i32 3, ptr @.tight },
+  { ptr, ptr, ptr, i32, ptr } { ptr @fms_bare, ptr @.str, ptr @.file, i32 4, ptr null }], section "llvm.metadata"
 
 ; Function Attrs: mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite)
 define dso_local ptx_kernel void @fms_loose(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {

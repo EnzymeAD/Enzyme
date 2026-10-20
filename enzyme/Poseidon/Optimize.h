@@ -16,10 +16,9 @@ bool demoteFPCastPHIs(llvm::Function &F);
 
 void setSlotMetadata(llvm::Function &F);
 void preprocess(llvm::Function *F);
-// `siteConfidence` > 0 is the confidence level written AT the site; 0 means
-// the site wrote none and -poseidon-confidence decides.
-bool fpOptimize(llvm::Function &F, double errorTol = 0.0,
-                double siteConfidence = 0.0);
+// `errorTol` > 0 is the accuracy target written AT the site; 0 means the site
+// wrote none and -poseidon-tau decides.
+bool fpOptimize(llvm::Function &F, double errorTol = 0.0);
 
 // Joint-DP entry: optimizeSiteBody marks each site with "poseidon-joint-errtol"
 // instead of optimizing it inline; this solves one DP over all marked sites.

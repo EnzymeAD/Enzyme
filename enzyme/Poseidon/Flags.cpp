@@ -86,21 +86,8 @@ cl::opt<int64_t> CompCostBudget(
 cl::opt<double> Tau(
     "poseidon-tau", cl::init(0.0), cl::Hidden,
     cl::desc("Relative accuracy target of every site that carries none "
-             "(the dual of -poseidon-comp-cost-budget; 0 = disabled). A "
-             "site without a matrix product is solved under it like under "
-             "a site value; a site with matrix products has each take the "
-             "cheapest candidate whose domain error at -poseidon-confidence "
-             "is <= it, with the elementwise work left alone"));
-// Matrix products only. Their accuracy model scores a PERCENTILE of the
-// sampled relative errors and this is the percentile; an elementwise FP
-// subgraph is scored by the MEAN error over its samples, so no elementwise
-// candidate reads this. A call site overrides it with the marker key
-// poseidon_confidence.
-cl::opt<double> Confidence(
-    "poseidon-confidence", cl::init(kDefaultConfidence), cl::Hidden,
-    cl::desc("Confidence level of the accuracy target for matrix products: "
-             "this fraction of the sampled inputs must meet the target "
-             "(default 0.95)"));
+             "(the dual of -poseidon-comp-cost-budget; 0 = disabled); a site "
+             "is solved under it exactly as under a target of its own"));
 cl::opt<bool> TauCheapest(
     "poseidon-tau-cheapest", cl::init(true), cl::Hidden,
     cl::desc("Site-level tau selects the cheapest frontier point whose "
@@ -284,13 +271,6 @@ void applyFlagDefaults() {
   // run writes by default.
   if (flags::ProfileUse.getNumOccurrences() && flags::ProfileUse.empty())
     flags::ProfileUse = kDefaultProfileDir;
-
-  // A confidence level is a fraction of the samples: 1.0 is the worst observed
-  // sample and 0 names no sample at all. NaN fails the first test.
-  if (!((double)flags::Confidence > 0.0) || (double)flags::Confidence > 1.0)
-    report_fatal_error(Twine("Poseidon: -poseidon-confidence=") +
-                       std::to_string((double)flags::Confidence) +
-                       " is outside (0, 1]");
 }
 
 } // namespace poseidon

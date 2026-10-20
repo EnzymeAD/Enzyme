@@ -45,7 +45,7 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py)
 
 set(POSEIDON_TEST_DEPS Poseidon-${LLVM_VERSION_MAJOR} poseidon_profile
-    poseidon-clang LLVMEnzyme-${LLVM_VERSION_MAJOR})
+    poseidon_profile_host poseidon-clang LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})
 endif()

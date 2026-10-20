@@ -6,6 +6,8 @@
 // RUN:     -poseidon-profile-generate %S/raise_scalar_matmul_f64.cu -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
+// A GPU program has no host site, so its profiling run records no allocation.
+// RUN: llvm-nm --defined-only %t.exe | not grep __poseidon_host_sites_present
 //
 // RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache \

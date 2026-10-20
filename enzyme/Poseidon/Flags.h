@@ -33,9 +33,9 @@ namespace poseidon {
 constexpr const char *kDefaultProfileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 constexpr const char *kDefaultCacheDir = "./.poseidon";
 
-// The confidence level every accuracy-cache entry banked before
-// -poseidon-confidence existed was computed at; the cache key carries the
-// level only when it differs from this, so those entries stay valid.
+// The percentile of the sampled relative errors a matrix product is scored at.
+// The accuracy cache key carries a level only when it differs from this, so
+// every banked entry stays valid.
 constexpr double kDefaultConfidence = 0.95;
 
 // Resolve the flag spellings that carry a default only when written without a
@@ -69,7 +69,6 @@ extern llvm::cl::opt<unsigned> MinOpsSplit;
 // Solver and budgets.
 extern llvm::cl::opt<int64_t> CompCostBudget;
 extern llvm::cl::opt<double> Tau;
-extern llvm::cl::opt<double> Confidence;
 extern llvm::cl::opt<bool> TauCheapest;
 extern llvm::cl::opt<bool> EarlyPrune;
 extern llvm::cl::opt<bool> JointDP;

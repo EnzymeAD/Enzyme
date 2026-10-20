@@ -282,7 +282,7 @@ public:
     double compCost = -1.0;
     double accuracyCost = 0.0;
     // Relative DOMAIN error (sensitivity-weighted, normalized) at the
-    // confidence level the site was solved at: a real relative error a domain
+    // kDefaultConfidence percentile: a real relative error a domain
     // tolerance can be compared to, unlike accuracyCost (an un-normalized SUM
     // used only for compute-budget ranking).
     double domainError = 0.0;
@@ -328,7 +328,7 @@ uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
                                   std::string *breakdown);
 
 // `confidence`: the fraction of the sampled inputs each candidate's
-// `domainError` bounds (the site's own value or -poseidon-confidence).
+// `domainError` bounds.
 // `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
 // B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
 void generateMatmulCandidates(
