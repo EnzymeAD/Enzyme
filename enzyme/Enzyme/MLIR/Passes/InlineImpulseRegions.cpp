@@ -34,30 +34,43 @@ static bool fnBodyHasSamples(FunctionOpInterface fn) {
       .wasInterrupted();
 }
 
-/// pipeline supports: single-block bodies, all sites at the top level, leaf
-/// sites with logpdf functions following the (<non-RNG outputs>...,
-/// <non-RNG inputs>...) convention, sub-model sites recursively well-formed.
+/// Returns false when the model shape is unsupported in region form.
 static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
                                       ArrayRef<Attribute> prefix,
                                       SymbolTableCollection &symbolTable,
-                                      SmallVectorImpl<Attribute> &addresses) {
+                                      SmallVectorImpl<Attribute> &addresses,
+                                      bool allowBranchSites = false,
+                                      bool *hasBranchSites = nullptr) {
   Region &body = fn.getFunctionBody();
   if (!llvm::hasSingleElement(body))
     return false;
   Block &entry = body.front();
 
-  bool nestedInControlFlow = false;
+  bool unsupportedNesting = false;
+  bool branchSites = false;
   fn.walk([&](impulse::SampleOp sampleOp) {
-    if (sampleOp->getBlock() != &entry)
-      nestedInControlFlow = true;
+    if (sampleOp->getBlock() == &entry)
+      return;
+    branchSites = true;
+    if (!allowBranchSites || !prefix.empty()) {
+      unsupportedNesting = true;
+      return;
+    }
+    for (Operation *p = sampleOp->getParentOp(); p != fn.getOperation();
+         p = p->getParentOp())
+      if (!isa<impulse::IfOp>(p))
+        unsupportedNesting = true;
   });
-  if (nestedInControlFlow)
+  if (unsupportedNesting)
     return false;
+  if (hasBranchSites)
+    *hasBranchSites |= branchSites;
 
-  for (Operation &op : entry) {
-    auto sampleOp = dyn_cast<impulse::SampleOp>(&op);
-    if (!sampleOp)
-      continue;
+  SmallVector<impulse::SampleOp> sites;
+  fn.walk<WalkOrder::PreOrder>(
+      [&](impulse::SampleOp sampleOp) { sites.push_back(sampleOp); });
+  for (impulse::SampleOp sampleOp : sites) {
+    bool nested = sampleOp->getBlock() != &entry;
     auto symbol = sampleOp.getSymbolAttr();
     if (!symbol || sampleOp.getNumResults() < 2)
       return false;
@@ -92,8 +105,7 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
         return false;
       addresses.push_back(ArrayAttr::get(root->getContext(), address));
     } else {
-      // Sub-model: must contain sites and recursively qualify.
-      if (!fnBodyHasSamples(callee))
+      if (nested || !fnBodyHasSamples(callee))
         return false;
       if (!collectReachableAddresses(root, callee, address, symbolTable,
                                      addresses))
@@ -285,10 +297,16 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
     if (!inferOp.getHmcConfig().has_value() &&
         !inferOp.getNutsConfig().has_value() &&
         !inferOp.getViConfig().has_value() &&
-        !inferOp.getMhConfig().has_value())
+        !inferOp.getMhConfig().has_value() &&
+        !inferOp.getGibbsConfig().has_value())
       return failure();
+    // Constrained MH needs regenerate's observation refresh; keep it flat.
     if (inferOp.getMhConfig().has_value() && inferOp.getConstraint())
       return failure();
+    // Only these region lowerings score sites inside `impulse.if` arms.
+    bool allowBranchSites = inferOp.getHmcConfig().has_value() ||
+                            inferOp.getNutsConfig().has_value() ||
+                            inferOp.getGibbsConfig().has_value();
     auto fnAttr = inferOp.getFnAttr();
     if (!fnAttr)
       return failure();
@@ -305,8 +323,21 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
       return failure();
 
     SmallVector<Attribute> reachable;
-    if (!collectReachableAddresses(inferOp, fn, {}, symbolTable, reachable))
+    bool hasBranchSites = false;
+    if (!collectReachableAddresses(inferOp, fn, {}, symbolTable, reachable,
+                                   allowBranchSites, &hasBranchSites))
       return failure();
+    // Selected sites become logpdf-region position args, so must be top-level.
+    if (hasBranchSites) {
+      DenseSet<Attribute> topLevel;
+      for (Operation &op : fn.getFunctionBody().front())
+        if (auto s = dyn_cast<impulse::SampleOp>(&op))
+          if (auto sym = s.getSymbolAttr())
+            topLevel.insert(ArrayAttr::get(op.getContext(), {sym}));
+      for (Attribute addr : selection)
+        if (!topLevel.contains(addr))
+          return failure();
+    }
     DenseSet<Attribute> reachableSet(reachable.begin(), reachable.end());
     DenseSet<Attribute> allSet(allAddresses.begin(), allAddresses.end());
     for (Attribute addr : selection)
@@ -354,7 +385,24 @@ struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
         convertSampleToSampleRegion(rewriter, sampleOp, mapper, symbolTable);
         continue;
       }
-      rewriter.clone(op, mapper);
+      Operation *cloned = rewriter.clone(op, mapper);
+      if (hasBranchSites && cloned->getNumRegions() != 0) {
+        SmallVector<impulse::SampleOp> nestedSites;
+        cloned->walk([&](impulse::SampleOp nestedSite) {
+          nestedSites.push_back(nestedSite);
+        });
+        for (impulse::SampleOp nestedSite : nestedSites) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(nestedSite);
+          IRMapping nestedMapper;
+          convertSampleToSampleRegion(rewriter, nestedSite, nestedMapper,
+                                      symbolTable);
+          SmallVector<Value> replacements;
+          for (Value result : nestedSite.getResults())
+            replacements.push_back(nestedMapper.lookup(result));
+          rewriter.replaceOp(nestedSite, replacements);
+        }
+      }
     }
 
     rewriter.replaceOp(inferOp, regionOp.getResults());

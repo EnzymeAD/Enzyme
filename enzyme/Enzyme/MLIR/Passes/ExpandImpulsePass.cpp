@@ -289,11 +289,12 @@ collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
   if (!selection || !allAddresses || regionOp.getSampler().empty())
     return supports;
 
+  // Branch-local sites also hold trace columns, so walk the whole sampler.
   DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-  for (Operation &op : regionOp.getSampler().front())
-    if (auto site = dyn_cast<impulse::SampleRegionOp>(&op))
-      if (auto address = site.getAddressAttr())
-        siteByAddress[address] = site;
+  regionOp.getSampler().walk([&](impulse::SampleRegionOp site) {
+    if (auto address = site.getAddressAttr())
+      siteByAddress[address] = site;
+  });
 
   auto siteSize = [](impulse::SampleRegionOp site) -> int64_t {
     int64_t size = 0;
@@ -353,10 +354,10 @@ static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
     return false;
 
   DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
-  for (Operation &op : regionOp.getSampler().front())
-    if (auto site = dyn_cast<impulse::SampleRegionOp>(&op))
-      if (auto address = site.getAddressAttr())
-        siteByAddress[address] = site;
+  regionOp.getSampler().walk([&](impulse::SampleRegionOp site) {
+    if (auto address = site.getAddressAttr())
+      siteByAddress[address] = site;
+  });
 
   auto resultSizes = [](impulse::SampleRegionOp site,
                         SmallVectorImpl<int64_t> &sizes) {
