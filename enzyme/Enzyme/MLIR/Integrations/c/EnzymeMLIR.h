@@ -44,6 +44,11 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
                                                         bool adaptStepSize,
                                                         bool adaptMassMatrix);
 
+/// `numSteps` = 0 derives the leapfrog step count from `trajectoryLength`.
+MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGetWithNumSteps(
+    MlirContext ctx, double trajectoryLength, bool adaptStepSize,
+    bool adaptMassMatrix, int64_t numSteps);
+
 MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
     MlirContext ctx, int64_t maxTreeDepth, bool hasMaxDeltaEnergy,
     double maxDeltaEnergy, bool adaptStepSize, bool adaptMassMatrix);

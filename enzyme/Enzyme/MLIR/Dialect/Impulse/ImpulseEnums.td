@@ -179,11 +179,17 @@ def HMCConfigAttr : Impulse_Attr<"HMCConfig", "hmc_config"> {
     - trajectory_length: Total trajectory length for leapfrog integration.
     - adapt_step_size (default: true): Whether to adapt step size during warmup using dual averaging.
     - adapt_mass_matrix (default: true): Whether to adapt the mass matrix during warmup using Welford covariance.
+    - num_steps (default: 0): when positive, every transition takes exactly
+      this many leapfrog steps of the given step size (Gen's L, GenJAX's
+      n_steps), and trajectory_length is ignored. When 0, the count is
+      ceil(trajectory_length / step_size) and the step size is adjusted to
+      trajectory_length / count (NumPyro's convention).
   }];
   let parameters = (ins
     "FloatAttr":$trajectory_length,
     DefaultValuedParameter<"bool", "true">:$adapt_step_size,
-    DefaultValuedParameter<"bool", "true">:$adapt_mass_matrix
+    DefaultValuedParameter<"bool", "true">:$adapt_mass_matrix,
+    DefaultValuedParameter<"int64_t", "0">:$num_steps
   );
   let assemblyFormat = "`<` struct(params) `>`";
 }

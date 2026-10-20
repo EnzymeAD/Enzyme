@@ -957,13 +957,22 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   // 0. Compute num_steps and adjusted step_size
   // num_steps = ceil(trajectory_length / step_size)
   // adjusted_step_size = trajectory_length / num_steps
-  auto trajDivStep =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
-  auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
-  auto numSteps =
-      arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
-  auto adjustedStepSize =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  Value numSteps, adjustedStepSize;
+  if (ctx.numSteps > 0) {
+    numSteps = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(ctx.numSteps)));
+    adjustedStepSize = ctx.stepSize;
+  } else {
+    auto trajDivStep =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
+    auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
+    numSteps =
+        arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
+    adjustedStepSize =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  }
 
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 

@@ -148,8 +148,21 @@ MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
 
+  return wrap(mlir::impulse::HMCConfigAttr::get(mlirCtx, trajectoryLengthAttr,
+                                                adaptStepSize, adaptMassMatrix,
+                                                /*num_steps=*/0));
+}
+
+MlirAttribute enzymeHMCConfigAttrGetWithNumSteps(MlirContext ctx,
+                                                 double trajectoryLength,
+                                                 bool adaptStepSize,
+                                                 bool adaptMassMatrix,
+                                                 int64_t numSteps) {
+  auto *mlirCtx = unwrap(ctx);
+  auto trajectoryLengthAttr =
+      mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
   return wrap(mlir::impulse::HMCConfigAttr::get(
-      mlirCtx, trajectoryLengthAttr, adaptStepSize, adaptMassMatrix));
+      mlirCtx, trajectoryLengthAttr, adaptStepSize, adaptMassMatrix, numSteps));
 }
 
 MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,

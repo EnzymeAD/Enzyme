@@ -1351,9 +1351,11 @@ struct ExpandImpulsePass
 
       bool adaptStepSize = false;
       bool adaptMassMatrix = false;
+      int64_t fixedNumSteps = 0;
       auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
       if (isHMC) {
         auto hmcConfig = mcmcOp.getHmcConfig().value();
+        fixedNumSteps = hmcConfig.getNumSteps();
         double length = hmcConfig.getTrajectoryLength().getValueAsDouble();
         trajectoryLength = arith::ConstantOp::create(
             rewriter, loc, F64TensorType,
@@ -1394,6 +1396,7 @@ struct ExpandImpulsePass
           HMCContext ctx(logpdfFnAttr, fnInputs, currentInvMass,
                          currentMassMatrixSqrt, currentStepSize,
                          trajectoryLength, positionSize, autodiffAttrs);
+          ctx.numSteps = fixedNumSteps;
           if constexpr (isRegionForm)
             ctx.logpdfRegion = &mcmcOp.getLogpdf();
           return ctx;
@@ -1403,6 +1406,7 @@ struct ExpandImpulsePass
                          currentMassMatrixSqrt, currentStepSize,
                          trajectoryLength, positionSize, supports,
                          autodiffAttrs);
+          ctx.numSteps = fixedNumSteps;
           if constexpr (isRegionForm)
             ctx.logpdfRegion = &mcmcOp.getLogpdf();
           return ctx;

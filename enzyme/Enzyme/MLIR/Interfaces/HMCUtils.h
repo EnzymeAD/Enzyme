@@ -113,6 +113,8 @@ struct HMCContext {
   Value massMatrixSqrt;
   Value stepSize;
   Value trajectoryLength;
+  // 0 derives the step count from trajectoryLength.
+  int64_t numSteps = 0;
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
