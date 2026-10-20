@@ -2459,20 +2459,41 @@ struct ExpandImpulsePass
     }
   };
 
-  //           region evaluated at the proposed selected values.
+  // Which per-site yields (terminator operands 1..) depend on `seeds`.
+  static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
+    DenseSet<Value> tainted(seeds.begin(), seeds.end());
+    auto isTainted = [&](Value v) { return tainted.contains(v); };
+    for (Operation &o : lpBlock.without_terminator()) {
+      bool uses = llvm::any_of(o.getOperands(), isTainted);
+      if (!uses && o.getNumRegions() != 0)
+        uses = o.walk([&](Operation *inner) {
+                  return llvm::any_of(inner->getOperands(), isTainted)
+                             ? WalkResult::interrupt()
+                             : WalkResult::advance();
+                }).wasInterrupted();
+      if (uses)
+        tainted.insert(o.result_begin(), o.result_end());
+    }
+    Operation *term = lpBlock.getTerminator();
+    SmallVector<bool> dirty;
+    for (Value v : llvm::drop_begin(term->getOperands()))
+      dirty.push_back(isTainted(v));
+    return dirty;
+  }
+
   template <typename OpT>
   struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
     static constexpr bool isRegionForm =
         std::is_same_v<OpT, impulse::InferRegionOp>;
     using mlir::OpRewritePattern<OpT>::OpRewritePattern;
 
-    // region at the proposed selected values. Returns (newTrace, newWeight,
-    // corr, rng'), with corr the Hastings correction (see kMHHastingsAttr):
-    // the selected sites' new minus old densities, read from the logpdf
-    // region's per-site yields.
+    static SmallVector<bool> dirtySiteYields(Block &lpBlock) {
+      return taintedSiteYields(lpBlock, lpBlock.getArguments());
+    }
+
     std::tuple<Value, Value, Value, Value>
     proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
-                  ArrayAttr selection, ArrayAttr allAddresses,
+                  ArrayAttr selection, ArrayAttr allAddresses, bool delta,
                   ColumnWindows &changedColumns) const {
       changedColumns.clear();
       Region &sampler = op.getSampler();
@@ -2590,13 +2611,18 @@ struct ExpandImpulsePass
         b.clone(lo, lpMap);
       Operation *lpTerm = lpBlock.getTerminator();
       Value newWeight = lpMap.lookupOrDefault(lpTerm->getOperand(0));
+      SmallVector<bool> dirty =
+          delta ? dirtySiteYields(lpBlock)
+                : SmallVector<bool>(lpTerm->getNumOperands() - 1, true);
 
-      // through region-form MH steps.
+      // A trace wider than positionSize carries a per-site score tail.
       if (traceType.getShape()[1] > positionSize) {
         Value row0 = arith::ConstantOp::create(
             b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(0)));
         auto s11 = RankedTensorType::get({1, 1}, traceType.getElementType());
         for (unsigned j = 1, e = lpTerm->getNumOperands(); j < e; ++j) {
+          if (!dirty[j - 1])
+            continue;
           Value score = lpMap.lookupOrDefault(lpTerm->getOperand(j));
           Value flat = impulse::ReshapeOp::create(b, loc, s11, score);
           Value col = arith::ConstantOp::create(
@@ -2642,9 +2668,34 @@ struct ExpandImpulsePass
         corr = corr ? arith::AddFOp::create(b, loc, corr, d).getResult() : d;
       }
 
-      // The selected sites' columns and the whole score tail change.
-      if (traceType.getShape()[1] > positionSize)
+      if (delta) {
+        Value sum;
+        for (auto [j, isDirty] : llvm::enumerate(dirty)) {
+          if (!isDirty)
+            continue;
+          Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
+          Value oldScore =
+              scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
+          Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
+          sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
+        }
+        if (!sum) {
+          auto scalarType = RankedTensorType::get({}, b.getF64Type());
+          sum = arith::ConstantOp::create(
+              b, loc, scalarType, DenseElementsAttr::get(scalarType, 0.0));
+        }
+        newWeight = sum;
+      }
+
+      // Only dirty scores: XLA:CPU copies the accept chain into every element.
+      if (delta) {
+        for (auto [j, isDirty] : llvm::enumerate(dirty))
+          if (isDirty)
+            changedColumns.push_back(
+                {positionSize + (int64_t)j, positionSize + (int64_t)j + 1});
+      } else if (traceType.getShape()[1] > positionSize) {
         changedColumns.push_back({positionSize, traceType.getShape()[1]});
+      }
       changedColumns = mergeColumnWindows(changedColumns);
 
       return {newTrace, newWeight, corr, curRng};
@@ -2728,17 +2779,19 @@ struct ExpandImpulsePass
           fnResultTypes.push_back(t);
       }
 
-      // Flat path: a score-tail trace (width beyond the position size, one
-      // memoized score scalar per site) makes regenerate return the weight
-      // DELTA of the dirty terms; the accept ratio is then the regenerate
-      // result directly, and the carried weight advances by that delta on
-      // accept. Bare traces keep full-joint semantics.
-      bool deltaFlat = false;
-      if constexpr (!isRegionForm) {
-        int64_t fullPositionSize =
+      // A trace wider than the positions carries a score tail (delta weight).
+      int64_t fullPositionSize = 0;
+      if constexpr (isRegionForm) {
+        for (Operation &o : op.getSampler().front())
+          if (auto site = dyn_cast<impulse::SampleRegionOp>(&o))
+            for (unsigned k = 1, e = site.getNumResults(); k < e; ++k)
+              fullPositionSize += computeTensorElementCount(
+                  cast<RankedTensorType>(site.getResult(k).getType()));
+      } else {
+        fullPositionSize =
             computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
-        deltaFlat = traceType.getShape()[1] > fullPositionSize;
       }
+      bool deltaWeight = traceType.getShape()[1] > fullPositionSize;
 
       // The region form fills this in during the proposal.
       ColumnWindows changedColumns;
@@ -2752,20 +2805,21 @@ struct ExpandImpulsePass
                          Value rng) -> std::array<Value, 4> {
         Value newTrace, newWeight, corr, stepRng;
         if constexpr (isRegionForm)
-          std::tie(newTrace, newWeight, corr, stepRng) = proposeRegion(
-              b, loc, op, trace, rng, selection, allAddresses, changedColumns);
+          std::tie(newTrace, newWeight, corr, stepRng) =
+              proposeRegion(b, loc, op, trace, rng, selection, allAddresses,
+                            deltaWeight, changedColumns);
         else
           std::tie(newTrace, newWeight, corr, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
                           allAddresses);
 
         Value jointRatio =
-            deltaFlat
+            deltaWeight
                 ? newWeight
                 : arith::SubFOp::create(b, loc, newWeight, weight).getResult();
         Value logAlpha = arith::SubFOp::create(b, loc, jointRatio, corr);
         Value acceptWeight =
-            deltaFlat
+            deltaWeight
                 ? arith::AddFOp::create(b, loc, weight, newWeight).getResult()
                 : newWeight;
         Value zero = arith::ConstantOp::create(
