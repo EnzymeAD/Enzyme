@@ -2560,11 +2560,12 @@ struct ExpandImpulsePass
 
     // With `delta`, weight is the dirty-term delta: XLA:CPU fuses the accept
     // decision into every write-back element, so it must stay a short chain.
-    std::tuple<Value, Value, Value, Value> proposeRegion(
-        OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
-        ArrayAttr selection, ArrayAttr allAddresses, bool delta,
-        ColumnWindows &changedColumns,
-        const DenseMap<Operation *, Value> *drawOverride = nullptr) const {
+    std::tuple<Value, Value, Value, Value>
+    proposeRegion(OpBuilder &b, Location loc, OpT op, Value trace, Value rng,
+                  ArrayAttr selection, ArrayAttr allAddresses, bool delta,
+                  ColumnWindows &changedColumns,
+                  const DenseMap<Operation *, Value> *drawOverride = nullptr,
+                  Value *logRatioOut = nullptr) const {
       changedColumns.clear();
       Region &sampler = op.getSampler();
       Region &logpdf = op.getLogpdf();
@@ -2799,6 +2800,15 @@ struct ExpandImpulsePass
           }
           a = e;
         }
+        // log alpha is the other dirty terms, so XLA does not recompute draws.
+        bool splitRatio = logRatioOut && selectedOrdinals.size() >= 2 &&
+                          traceType.getShape()[1] > positionSize &&
+                          llvm::none_of(selectedOrdinals, [&](int64_t j) {
+                            return inFamily.contains(j);
+                          });
+        llvm::SmallDenseSet<int64_t> own(selectedOrdinals.begin(),
+                                         selectedOrdinals.end());
+        Value ratio;
         Value sum;
         for (int64_t j : dirtyIdx) {
           if (inFamily.contains(j))
@@ -2808,6 +2818,9 @@ struct ExpandImpulsePass
               scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
           Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
           sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
+          if (splitRatio && !own.contains(j))
+            ratio =
+                ratio ? arith::AddFOp::create(b, loc, ratio, d).getResult() : d;
         }
         for (auto [V, k0, K, j0, stride] : families) {
           auto vt = cast<RankedTensorType>(V.getType());
@@ -2832,6 +2845,18 @@ struct ExpandImpulsePass
               b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({}),
               b.getDenseI64ArrayAttr({0}), b.getDenseI64ArrayAttr({0}));
           sum = sum ? arith::AddFOp::create(b, loc, sum, fs).getResult() : fs;
+          // No family member is a selected site's own term (checked above).
+          if (splitRatio)
+            ratio = ratio ? arith::AddFOp::create(b, loc, ratio, fs).getResult()
+                          : fs;
+        }
+        if (splitRatio) {
+          if (!ratio) {
+            auto scalarType = RankedTensorType::get({}, b.getF64Type());
+            ratio = arith::ConstantOp::create(
+                b, loc, scalarType, DenseElementsAttr::get(scalarType, 0.0));
+          }
+          *logRatioOut = ratio;
         }
         if (!sum) {
           auto scalarType = RankedTensorType::get({}, b.getF64Type());
@@ -2957,11 +2982,11 @@ struct ExpandImpulsePass
 
       auto oneStep = [&](OpBuilder &b, Value trace, Value weight,
                          Value rng) -> std::array<Value, 4> {
-        Value newTrace, newWeight, corr, stepRng;
+        Value newTrace, newWeight, corr, stepRng, logRatio;
         if constexpr (isRegionForm)
           std::tie(newTrace, newWeight, corr, stepRng) =
               proposeRegion(b, loc, op, trace, rng, selection, allAddresses,
-                            deltaWeight, changedColumns);
+                            deltaWeight, changedColumns, nullptr, &logRatio);
         else
           std::tie(newTrace, newWeight, corr, stepRng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
@@ -2971,7 +2996,10 @@ struct ExpandImpulsePass
             deltaWeight
                 ? newWeight
                 : arith::SubFOp::create(b, loc, newWeight, weight).getResult();
-        Value logAlpha = arith::SubFOp::create(b, loc, jointRatio, corr);
+        Value logAlpha =
+            logRatio
+                ? logRatio
+                : arith::SubFOp::create(b, loc, jointRatio, corr).getResult();
         Value acceptWeight =
             deltaWeight
                 ? arith::AddFOp::create(b, loc, weight, newWeight).getResult()

@@ -47,7 +47,7 @@ module {
     return %tr, %acc, %orng, %w : tensor<1x6xf64>, tensor<i1>, tensor<2xui64>, tensor<f64>
   }
 
-  // correction covers both selected sites.
+  // Block move on s and u: their own terms cancel, so log alpha is t's term.
   func.func @mh_region_delta_block(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>, %trace : tensor<1x6xf64>, %weight : tensor<f64>) -> (tensor<1x6xf64>, tensor<i1>, tensor<2xui64>, tensor<f64>) {
     %tsl = impulse.slice %trace {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x6xf64>) -> tensor<1x1xf64>
     %tpin = impulse.reshape %tsl : (tensor<1x1xf64>) -> tensor<f64>
@@ -192,16 +192,7 @@ module {
 // CHECK-NEXT: %[[LPT:.+]] = arith.mulf %[[DT]], %[[DT]] : tensor<f64>
 // CHECK-NEXT: %[[DU:.+]] = arith.subf %[[UV]], %[[MEAN]] : tensor<f64>
 // CHECK-NEXT: %[[LPU:.+]] = arith.mulf %[[DU]], %[[DU]] : tensor<f64>
-// Hastings correction over both selected sites (scores 3 and 5).
-// CHECK: %[[OS:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 3>, strides = array<i64: 1, 1>}
-// CHECK-NEXT: %[[OSS:.+]] = impulse.reshape %[[OS]]
-// CHECK-NEXT: %[[C1:.+]] = arith.subf %[[LPS]], %[[OSS]] : tensor<f64>
-// CHECK-NEXT: %[[OU:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 6>, start_indices = array<i64: 0, 5>, strides = array<i64: 1, 1>}
-// CHECK-NEXT: %[[OUS:.+]] = impulse.reshape %[[OU]]
-// CHECK-NEXT: %[[C2:.+]] = arith.subf %[[LPU]], %[[OUS]] : tensor<f64>
-// CHECK-NEXT: %[[CORR:.+]] = arith.addf %[[C1]], %[[C2]] : tensor<f64>
-// Delta over all three dirty terms, program order.
-// CHECK-NEXT: %[[OS2:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 3>, strides = array<i64: 1, 1>}
+// CHECK: %[[OS2:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 4>, start_indices = array<i64: 0, 3>, strides = array<i64: 1, 1>}
 // CHECK-NEXT: %[[OSS2:.+]] = impulse.reshape %[[OS2]]
 // CHECK-NEXT: %[[D1:.+]] = arith.subf %[[LPS]], %[[OSS2]] : tensor<f64>
 // CHECK-NEXT: %[[OT:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 5>, start_indices = array<i64: 0, 4>, strides = array<i64: 1, 1>}
@@ -212,9 +203,8 @@ module {
 // CHECK-NEXT: %[[OUS2:.+]] = impulse.reshape %[[OU2]]
 // CHECK-NEXT: %[[D3:.+]] = arith.subf %[[LPU]], %[[OUS2]] : tensor<f64>
 // CHECK-NEXT: %[[DELTA:.+]] = arith.addf %[[D12]], %[[D3]] : tensor<f64>
-// CHECK-NEXT: %[[ALPHA:.+]] = arith.subf %[[DELTA]], %[[CORR]] : tensor<f64>
 // CHECK-NEXT: %[[WNEW:.+]] = arith.addf %[[W]], %[[DELTA]] : tensor<f64>
-// CHECK: %[[ACC:.+]] = arith.cmpf olt, %{{.+}}, %[[ALPHA]] : tensor<f64>
+// CHECK: %[[ACC:.+]] = arith.cmpf olt, %{{.+}}, %[[D2]] : tensor<f64>
 // CHECK-NEXT: %[[VP:.+]] = impulse.slice %[[P:.+]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x6xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[VC:.+]] = impulse.slice %[[TR]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x6xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[VU:.+]] = impulse.select %[[ACC]], %[[VP]], %[[VC]] : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
