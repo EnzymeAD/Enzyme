@@ -2749,15 +2749,89 @@ struct ExpandImpulsePass
       }
 
       if (delta) {
+        // Strided vector families reduce in one op; this reorders the sum.
+        auto familyElem =
+            [&](Value v) -> std::optional<std::pair<Value, int64_t>> {
+          auto r = v.getDefiningOp<impulse::ReshapeOp>();
+          auto sl = r ? r->getOperand(0).getDefiningOp<impulse::SliceOp>()
+                      : v.getDefiningOp<impulse::SliceOp>();
+          if (!sl)
+            return std::nullopt;
+          Value src = sl->getOperand(0);
+          auto st = cast<RankedTensorType>(src.getType());
+          if (st.getRank() != 1 || sl.getStrides()[0] != 1 ||
+              sl.getLimitIndices()[0] != sl.getStartIndices()[0] + 1)
+            return std::nullopt;
+          return std::make_pair(src, sl.getStartIndices()[0]);
+        };
+        SmallVector<int64_t> dirtyIdx;
+        for (auto [j, isDirty] : llvm::enumerate(dirty))
+          if (isDirty)
+            dirtyIdx.push_back(j);
+        llvm::SmallDenseSet<int64_t> inFamily;
+        SmallVector<std::tuple<Value, int64_t, int64_t, int64_t, int64_t>>
+            families; // (V, k0, K, j0, stride)
+        for (size_t a = 0; a < dirtyIdx.size();) {
+          auto fa = familyElem(
+              lpMap.lookupOrDefault(lpTerm->getOperand(1 + dirtyIdx[a])));
+          if (!fa) {
+            ++a;
+            continue;
+          }
+          size_t e = a + 1;
+          int64_t stride = 0;
+          while (e < dirtyIdx.size()) {
+            auto fe = familyElem(
+                lpMap.lookupOrDefault(lpTerm->getOperand(1 + dirtyIdx[e])));
+            int64_t s = dirtyIdx[e] - dirtyIdx[e - 1];
+            if (!fe || fe->first != fa->first ||
+                fe->second != fa->second + (int64_t)(e - a) ||
+                (stride && s != stride))
+              break;
+            stride = s;
+            ++e;
+          }
+          if (e - a >= 4) {
+            families.push_back(
+                {fa->first, fa->second, (int64_t)(e - a), dirtyIdx[a], stride});
+            for (size_t i = a; i < e; ++i)
+              inFamily.insert(dirtyIdx[i]);
+          }
+          a = e;
+        }
         Value sum;
-        for (auto [j, isDirty] : llvm::enumerate(dirty)) {
-          if (!isDirty)
+        for (int64_t j : dirtyIdx) {
+          if (inFamily.contains(j))
             continue;
           Value newScore = lpMap.lookupOrDefault(lpTerm->getOperand(1 + j));
           Value oldScore =
               scalarAt(b, loc, trace, {0, positionSize + (int64_t)j});
           Value d = arith::SubFOp::create(b, loc, newScore, oldScore);
           sum = sum ? arith::AddFOp::create(b, loc, sum, d).getResult() : d;
+        }
+        for (auto [V, k0, K, j0, stride] : families) {
+          auto vt = cast<RankedTensorType>(V.getType());
+          auto kt = RankedTensorType::get({K}, vt.getElementType());
+          Value newVec = V;
+          if (k0 != 0 || vt.getDimSize(0) != K)
+            newVec = impulse::SliceOp::create(
+                b, loc, kt, V, b.getDenseI64ArrayAttr({k0}),
+                b.getDenseI64ArrayAttr({k0 + K}), b.getDenseI64ArrayAttr({1}));
+          int64_t c0 = positionSize + j0;
+          Value old = impulse::SliceOp::create(
+              b, loc, RankedTensorType::get({1, K}, vt.getElementType()), trace,
+              b.getDenseI64ArrayAttr({0, c0}),
+              b.getDenseI64ArrayAttr({1, c0 + stride * (K - 1) + 1}),
+              b.getDenseI64ArrayAttr({1, stride}));
+          old = impulse::ReshapeOp::create(b, loc, kt, old);
+          Value d = arith::SubFOp::create(b, loc, newVec, old);
+          Value ones = arith::ConstantOp::create(
+              b, loc, kt, DenseElementsAttr::get(kt, 1.0));
+          Value fs = impulse::DotOp::create(
+              b, loc, RankedTensorType::get({}, vt.getElementType()), d, ones,
+              b.getDenseI64ArrayAttr({}), b.getDenseI64ArrayAttr({}),
+              b.getDenseI64ArrayAttr({0}), b.getDenseI64ArrayAttr({0}));
+          sum = sum ? arith::AddFOp::create(b, loc, sum, fs).getResult() : fs;
         }
         if (!sum) {
           auto scalarType = RankedTensorType::get({}, b.getF64Type());
