@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
 ; The memset memory's type tree has Anything bytes (struct padding) next to
 ; floats: {[0]:Float@float, [4-7]:Anything, [8]:Float@double}
