@@ -47,6 +47,19 @@ void SampleDependenceAnalysis::propagateDependence(Region &region) {
           break;
         }
       }
+      // Ops with regions also depend on the values their regions use.
+      if (!hasDependent && op->getNumRegions() != 0)
+        hasDependent =
+            op->walk([&](Operation *inner) {
+                if (inner == op)
+                  return WalkResult::advance();
+                for (Value operand : inner->getOperands())
+                  if (isSampleDependent(operand))
+                    return WalkResult::interrupt();
+                if (isa<SampleRegionOp>(inner) && isSampleDependent(inner))
+                  return WalkResult::interrupt();
+                return WalkResult::advance();
+              }).wasInterrupted();
 
       if (hasDependent) {
         for (Value result : op->getResults()) {
