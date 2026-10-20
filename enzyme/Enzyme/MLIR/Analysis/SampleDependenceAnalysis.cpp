@@ -9,13 +9,14 @@ using namespace mlir;
 using namespace mlir::impulse;
 
 SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp)
-    : regionOp(regionOp), target(AnalysisTarget::Sampler) {
-  runSamplerAnalysis();
-}
+    : SampleDependenceAnalysis(regionOp, AnalysisTarget::Sampler) {}
 
 SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp,
                                                    AnalysisTarget target)
-    : regionOp(regionOp), target(target) {
+    : regionOp(regionOp), target(target),
+      builtSelection(regionOp.getSelectionAttr()),
+      builtLogpdfFn(regionOp.getLogpdfFnAttr()),
+      builtNumPositionArgs(regionOp.getNumPositionArgs()) {
   if (target == AnalysisTarget::Logpdf)
     runLogpdfAnalysis();
   else
@@ -156,6 +157,124 @@ bool SampleDependenceAnalysis::canHoist(Operation *op) const {
   }
 
   return true;
+}
+
+bool SampleDependenceAnalysis::isSelectedSite(SampleRegionOp site) {
+  ArrayAttr selection = regionOp.getSelectionAttr();
+  Attribute address = site.getAddressAttr();
+  return !selection || !address || llvm::is_contained(selection, address);
+}
+
+void SampleDependenceAnalysis::raise(Value value) {
+  if (!sampleDependentValues.insert(value).second)
+    return;
+  ++stats.raised;
+  raisedWorklist.push_back(value);
+}
+
+/// Site results are dependent only if the site is a source (selected).
+void SampleDependenceAnalysis::raiseUser(Operation *user) {
+  if (!isa<SampleRegionOp>(user))
+    for (Value result : user->getResults())
+      raise(result);
+  for (Operation *parent = user->getParentOp();
+       parent && parent != regionOp.getOperation();
+       parent = parent->getParentOp()) {
+    ++stats.ancestorSteps;
+    if (!isa<SampleRegionOp>(parent))
+      for (Value result : parent->getResults())
+        raise(result);
+  }
+}
+
+void SampleDependenceAnalysis::updateOperation(Operation *op) {
+  ++stats.opsVisited;
+  bool dependentSite = false;
+  if (auto site = dyn_cast<SampleRegionOp>(op)) {
+    if (target == AnalysisTarget::Sampler) {
+      if (!llvm::is_contained(sampleOps, site))
+        sampleOps.push_back(site);
+      if (isSelectedSite(site)) {
+        for (Value result : op->getResults())
+          raise(result);
+        dependentSite = true;
+      }
+    }
+  }
+  if (dependentSite || llvm::any_of(op->getOperands(), [&](Value operand) {
+        return isSampleDependent(operand);
+      }))
+    raiseUser(op);
+}
+
+void SampleDependenceAnalysis::propagateRaised() {
+  while (!raisedWorklist.empty()) {
+    Value value = raisedWorklist.pop_back_val();
+    for (Operation *user : value.getUsers()) {
+      ++stats.useVisits;
+      if (isInTargetRegion(user))
+        raiseUser(user);
+    }
+  }
+}
+
+void SampleDependenceAnalysis::notifyOperationInserted(Operation *op) {
+  if (!isInTargetRegion(op))
+    return;
+  // Clones and moves bring nested IR: evaluate the whole subtree.
+  op->walk([&](Operation *nested) { updateOperation(nested); });
+  propagateRaised();
+}
+
+void SampleDependenceAnalysis::notifyOperationModified(Operation *op) {
+  if (!isInTargetRegion(op))
+    return;
+  updateOperation(op);
+  propagateRaised();
+}
+
+void SampleDependenceAnalysis::notifyOperationReplaced(Operation *op,
+                                                       ValueRange replacement) {
+  if (!isInTargetRegion(op))
+    return;
+  // Called before the uses change; users are only ever raised.
+  for (auto [result, newValue] : llvm::zip(op->getResults(), replacement)) {
+    if (!newValue || !isSampleDependent(newValue) || isSampleDependent(result))
+      continue;
+    for (Operation *user : result.getUsers()) {
+      ++stats.useVisits;
+      if (isInTargetRegion(user))
+        raiseUser(user);
+    }
+  }
+  propagateRaised();
+}
+
+void SampleDependenceAnalysis::notifyOperationErased(Operation *op) {
+  for (Value result : op->getResults())
+    sampleDependentValues.erase(result);
+  if (auto site = dyn_cast<SampleRegionOp>(op))
+    llvm::erase(sampleOps, site);
+}
+
+void SampleDependenceAnalysis::notifyBlockInserted(Block *block) {
+  Region *parent = block->getParent();
+  if (!parent || !getTargetRegion().isAncestor(parent))
+    return;
+  for (Operation &op : *block)
+    op.walk([&](Operation *nested) { updateOperation(nested); });
+  propagateRaised();
+}
+
+void SampleDependenceAnalysis::notifyBlockErased(Block *block) {
+  for (BlockArgument arg : block->getArguments())
+    sampleDependentValues.erase(arg);
+}
+
+bool SampleDependenceAnalysis::sourcesChanged() {
+  return regionOp.getSelectionAttr() != builtSelection ||
+         regionOp.getLogpdfFnAttr() != builtLogpdfFn ||
+         regionOp.getNumPositionArgs() != builtNumPositionArgs;
 }
 
 static bool checkOperandDominance(IRMapping &regionToOuter, DominanceInfo &dom,
