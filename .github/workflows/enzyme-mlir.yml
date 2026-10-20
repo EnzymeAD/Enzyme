@@ -25,7 +25,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [linux-x86-n2-32]
+        os: [linux-x86-n4-32]
 
     timeout-minutes: 500
 
