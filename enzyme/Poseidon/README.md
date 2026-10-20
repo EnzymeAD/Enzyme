@@ -72,12 +72,15 @@ run CUDA.
 ## Use
 
 Three actions, modelled on clang's PGO. Mark the computation to optimize,
-profile it once on a small problem, then compile with a target:
+profile it once on a small problem, then compile with a target. A function on
+the host and a kernel on the GPU are marked the same way:
 
 ```c
 #include "poseidon/poseidon.h"
 
-POSEIDON_OPTIMIZE __global__ void step(double *out, const double *in, int n) { ... }
+POSEIDON_OPTIMIZE void kick(double *v, const double *a, double dt, int n) { ... }
+POSEIDON_OPTIMIZE __global__ void force(double *a, const double *x, int n) { ... }
+POSEIDON_OPTIMIZE_TAU(1e-12) __global__ void advance(double *x, const double *v, int n) { ... }
 
 int main() { ...; poseidon_metric("energy drift", drift); }
 ```
@@ -88,22 +91,87 @@ poseidon-clang++ -poseidon-profile-generate app.cu -o app
 poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
 ```
 
-`POSEIDON_OPTIMIZE` makes a kernel an optimization site: the whole kernel body
-is the annotated computation, and nothing else in the application changes.
-`-poseidon-kernels=<regex>` (or `all`) annotates a library's kernels without
-touching its source, and only sites above a share of the profiled cost are
-optimized. `poseidon_metric` is optional and declares the one quantity the
-accuracy target refers to; the profiling run measures how far it moves when
-each site is perturbed, which is what lets the solver spend error where it does
-not reach the answer. `poseidon-clang++ -poseidon-help` lists the user flags,
-and any other `-poseidon-<flag>` reaches the pass.
+The ways to opt in, simplest first:
 
-**The target is a modelled bound, not a proof.** `-poseidon-tau` is compared
-against an error the accuracy model estimates by sampling inputs inside the
-profiled ranges and comparing the candidate against a high-precision reference,
-weighted by the profiled sensitivity. It is an estimate over a sampled domain
-on a profiled workload, not a certified bound over all inputs, and a deployment
-whose inputs leave the profiled ranges is outside what was modelled.
+1. `POSEIDON_OPTIMIZE` on a function or kernel, and `-poseidon-tau=<t>` on the
+   optimizing compile. Every call of the function is the site: its whole body
+   is profiled and rewritten, and nothing else in the application changes.
+   Start here.
+2. `POSEIDON_OPTIMIZE_TAU(t)`: the same with that site's own target, which wins
+   over `-poseidon-tau`. For sites that need different accuracy. `t` may be a
+   literal, a macro or a constant expression.
+3. `__poseidon_optimize(fn, args...)`, or `__poseidon_optimize_tau(t, fn,
+   args...)` with that call's own target: one call instead of every call. The
+   call has its own profile, target and rewritten copy of `fn`, so two calls of
+   one function can be rewritten differently, and other calls of `fn` run it as
+   written; no shadows are needed. `fn` names a host function defined in the
+   same translation unit, and `t` is a compile-time constant.
+4. `-poseidon-kernels=<regex>|all`: GPU kernels opted in without editing the
+   source (library code); only the ones above `-poseidon-min-cost-share` of the
+   profiled cost are optimized.
+5. `poseidon_metric(name, value)`, once at the end of the profiling run: the
+   quantity the target refers to, so the solver can spend error where it does
+   not reach that quantity. The profiling run measures how far it moves when
+   each site is perturbed. Optional.
+6. `__poseidon_fp_optimize(fn, args...)`: one call with explicit Enzyme
+   activities and shadows; see [Advanced: one call with shadows](#advanced-one-call-with-shadows).
+
+```c
+double e = __poseidon_optimize(energy, x, n);       /* this call is a site */
+__poseidon_optimize_tau(1e-12, kick, v, a, dt, n);  /* with its own target */
+```
+
+Precedence: the site's own target (`POSEIDON_OPTIMIZE_TAU`,
+`__poseidon_optimize_tau`, or `poseidon_tau` in the call) > `-poseidon-tau` >
+none. The target is the same number wherever
+it is written: moving it from the flag into the source never changes what a
+site emits. A site with no target is solved against
+`-poseidon-comp-cost-budget` instead; at its default of 0 that is the most
+accurate rewrite costing no more than the code as written, which may be the
+code as written. `poseidon-clang++ -poseidon-help` lists the user flags, and
+any other `-poseidon-<flag>` reaches the pass.
+
+A marked host function, or one called through `__poseidon_optimize`, returns
+nothing, a floating-point scalar or an integer, and takes pointers,
+floating-point scalars and integers; any other signature is left as written
+with a warning. Its profiling build sizes the shadow of every pointer argument
+from the allocation it points into: any heap allocation in the process (the
+driver links a profiling runtime that records them), and the globals and stack
+arrays of the translation units that hold a site. A pointer into anything else
+stops the profiling run, naming the function and the argument. A profile is
+read back by a compile at any -O level as long as the site's code has the same
+canonical form there; when it does not (for example `std::sqrt` is a libm call
+at -O1 and an intrinsic at -O2), the compile says so and asks for a new
+profile.
+
+The accuracy target is empirical, not a formally verified bound.
+`-poseidon-tau` is compared against an error the accuracy model estimates by
+sampling inputs inside the profiled ranges and comparing the candidate against
+a high-precision reference, weighted by the profiled sensitivity. It is an
+estimate over a sampled domain on a profiled workload, not a certified bound
+over all inputs, and a deployment whose inputs leave the profiled ranges is
+outside what was modelled.
+
+### Advanced: one call with shadows
+
+`__poseidon_fp_optimize(fn, args...)` makes one call the site like
+`__poseidon_optimize`, for pointers the profiler cannot size or a custom seed.
+The arguments are `fn`'s, each pointer followed by a shadow of the same size
+that the caller allocates, zeroed for inputs and filled with 1.0 for outputs,
+as Enzyme's `enzyme_dup` takes them; `poseidon_tau, t` among them sets that
+call's target:
+
+```cpp
+template <typename R, typename... T> R __poseidon_fp_optimize(void *, T...);
+extern int enzyme_dup, poseidon_tau;
+
+__poseidon_fp_optimize<void>((void *)kernel, poseidon_tau, 1e-10,
+                             enzyme_dup, x, dx, enzyme_dup, out, dout, n);
+```
+
+A function that carries `POSEIDON_OPTIMIZE` is a site at every call already,
+and naming it in `__poseidon_optimize` or `__poseidon_fp_optimize` as well is
+a compile error.
 
 ## The cost model
 
@@ -181,28 +249,49 @@ compiles it again under `-poseidon-tau` (default 1e-6); every other
 `-poseidon-<flag>` reaches the pass. The `Dockerfile` builds a standalone
 explorer from the release tarball the `Poseidon Explorer` workflow publishes
 (`nightly-poseidon`), with C++ only, the example `examples/c++/` and plain
-clang next to Poseidon for comparison:
+clang next to Poseidon for comparison.
+
+The tarball carries no cost model: the machine that runs the explorer measures
+its own once, with `calibrate/microbm_cpu.py` from the tarball (or
+`tools/calibrate/`; it needs `numpy` and `llvmlite` and runs for hours), and
+the explorer is given it explicitly:
 
 ```sh
+python3 microbm_cpu.py --native-arch x86-64 --out cm_x86-64_explorer.csv
 cd enzyme/Poseidon/tools/explorer
-docker compose up -d --build              # http://localhost:10240
+POSEIDON_COST_MODEL=<dir>/cm_x86-64_explorer.csv docker compose up -d --build   # http://localhost:10240
 ```
 
 `--build-arg POSEIDON_TARBALL=<url>` takes another tarball. To run a local
-build instead, lay it out with `package.sh <build> <cost-model.csv> <dir>` and
-mount it over the downloaded one; its LLVM must be one the image has a clang
-for (`LLVM_VERSION`, default 21):
+build instead, lay it out with `package.sh <build> <cost-model.csv|-> <dir>`
+and mount it over the downloaded one; its LLVM must be one the image has a
+clang for (`LLVM_VERSION`, default 21):
 
 ```sh
-docker run -d -p 10240:10240 -v <dir>:/opt/compiler-explorer/poseidon:ro poseidon-explorer
+docker run -d -p 10240:10240 -v <dir>:/opt/compiler-explorer/poseidon:ro \
+  -v <csv>:/opt/compiler-explorer/poseidon/cost_models/cm_x86-64_explorer.csv:ro poseidon-explorer
 ```
 
+Without a cost model every Poseidon compile stops with an error that names
+the missing file; none is substituted.
+
 The explorer compiles for a
-generic x86-64 CPU with a cost model measured for one, so the CPU marker form
-`__poseidon_fp_optimize` is what it can show; GPU kernels need a local build.
-Compile with `-O1` or higher. Herbie results are kept in `POSEIDON_CE_CACHE`
+generic x86-64 CPU with a cost model measured for one, so it shows host
+functions marked `POSEIDON_OPTIMIZE` and calls made through
+`__poseidon_optimize`; GPU kernels need a local build. The examples cover the
+marker, per-function targets, per-call sites and a regime split, and each
+prints the values of an unmarked copy next to Poseidon's. Compile with `-O1` or
+higher. Herbie results are kept in `POSEIDON_CE_CACHE`
 (default `/tmp/poseidon-ce-cache`) and reused by later compiles; `package.sh`
-ships the examples' results so their first compile does not search.
+ships the examples' results so their first compile does not search. The
+defaults suit a shared machine: at most `POSEIDON_CE_MAX_SEARCHES` (2)
+compiles profile and search at once, and one that finds both slots taken for
+3 seconds is compiled as written with a note to try again; a search gets
+`POSEIDON_CE_SOLVE_SECONDS` (60), two Herbie workers and
+`POSEIDON_CE_SOLVE_MEMORY_MB` (4096) of address space per process, and past
+either limit the program is compiled as written. The profiling run, which is
+the user's program outside the explorer's sandbox, gets
+`POSEIDON_CE_PROFILE_SECONDS` (10) and `POSEIDON_CE_PROFILE_MEMORY_MB` (1024).
 `test-explorer.py --url http://localhost:10240` checks a running explorer
 through its REST API.
 
@@ -212,10 +301,10 @@ view plain clang has: LLVM IR, optimization remarks, the optimization pipeline
 stack usage and the linked binary. Flags that only shape that output reach the
 final compile, not the profiling build. The compiler output keeps the solver's
 decisions and the remarks (`-Rpass=poseidon -Rpass-analysis=poseidon` are on),
-which the editor marks as notes; `-poseidon-print` shows everything. With
-`POSEIDON_CE_EXPLAIN` set (the image sets it) the wrapper leaves the compile's
-`<func>.explain.json` next to its output, and the tools Poseidon report, Poseidon
-source, Poseidon diff and Poseidon FPCore show it through `poseidon-explain`.
+which the editor marks as notes; `-poseidon-print` shows everything. The
+wrapper leaves the compile's `<func>.explain.json` next to its output (unless
+`POSEIDON_CE_EXPLAIN=0`), and the tools Poseidon report, Poseidon source,
+Poseidon diff and Poseidon FPCore show it through `poseidon-explain`.
 `llvm-mca` and `nm` are available for both compilers, and the Templates menu has
 an assembly diff of plain clang against clang + Poseidon.
 

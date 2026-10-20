@@ -64,11 +64,8 @@ void printHelp(StringRef Prog) {
          "  -poseidon-profile-use[=<dir>] rewrite from a profile\n"
          "                                "
          "(default " POSEIDON_DEFAULT_PROFILE_DIR ")\n"
-         "  -poseidon-tau=<rel>           accuracy target the rewrite must "
-         "meet\n"
-         "  -poseidon-confidence=<c>      fraction of the sampled inputs a\n"
-         "                                matrix product must meet the target\n"
-         "                                on (default 0.95)\n"
+         "  -poseidon-tau=<rel>           accuracy target of every site that\n"
+         "                                does not carry its own\n"
          "  -poseidon-cost-model=<csv>    cost model to price candidates "
          "with;\n"
          "                                without it the model for the target\n"
@@ -258,6 +255,10 @@ int main(int argc, char **argv) {
       Cmd.push_back("-lcudart");
     }
     Cmd.push_back("-L" + LibDir);
+    // The shadows of a POSEIDON_OPTIMIZE function on the host are sized from
+    // the allocations this library records.
+    if (ProfileGenerate)
+      Cmd.push_back("-lposeidon_profile_host");
     // poseidon_metric, and the profiler the instrumented code calls into.
     Cmd.push_back("-lposeidon_profile");
     if (ProfileUse && IsCUDA) {

@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: sed "s/1e-07/1e-12/" %s > %t/mid.ll
-; RUN: sed "s/1e-07/1e-18/" %s > %t/tight.ll
+; RUN: sed "s/double 1.000000e-07/double 1.000000e-12/" %s > %t/mid.ll
+; RUN: sed "s/double 1.000000e-07/double 1.000000e-18/" %s > %t/tight.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -S 2>&1 | FileCheck --check-prefix=LOOSE %s
 ; RUN: %opt %t/mid.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -S 2>&1 | FileCheck --check-prefix=MID %s
 ; RUN: %opt %t/tight.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -S 2>&1 | FileCheck --check-prefix=TIGHT %s
@@ -20,9 +20,10 @@ source_filename = "annotated_kernel.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
 
-@.str = private unnamed_addr constant [19 x i8] c"poseidon;tau=1e-07\00", section "llvm.metadata"
+@.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
 @.str.1 = private unnamed_addr constant [14 x i8] c"tau_ladder.cu\00", section "llvm.metadata"
-@llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @fms_kernel, ptr @.str, ptr @.str.1, i32 2, ptr null }], section "llvm.metadata"
+@.args = private unnamed_addr constant { double } { double 1.000000e-07 }, section "llvm.metadata"
+@llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @fms_kernel, ptr @.str, ptr @.str.1, i32 2, ptr @.args }], section "llvm.metadata"
 
 ; Function Attrs: mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite)
 define dso_local ptx_kernel void @fms_kernel(ptr noundef readonly captures(none) %0, ptr noundef readonly captures(none) %1, ptr noundef writeonly captures(none) %2) #0 {

@@ -1270,6 +1270,8 @@ json::Object Explainer::toJSON() {
   json::Object fn;
   const Function *origin = siteOriginOf(F);
   StringRef symbol = origin ? origin->getName() : F.getName();
+  symbol.consume_back("_poseidon_body");
+  symbol = symbol.split(".poseidon.").first;
   fn["name"] = llvm::demangle(symbol.str());
   fn["symbol"] = symbol.str();
   fn["ir"] = F.getName().str();
@@ -1466,8 +1468,10 @@ void Explainer::emitRemarks() {
                                    ? DiagnosticLocation(siteIt->second)
                                    : DiagnosticLocation(F.getSubprogram());
   const Function *origin = siteOriginOf(F);
-  std::string siteName =
-      llvm::demangle((origin ? origin->getName() : F.getName()).str());
+  StringRef symbol = origin ? origin->getName() : F.getName();
+  symbol.consume_back("_poseidon_body");
+  symbol = symbol.split(".poseidon.").first;
+  std::string siteName = llvm::demangle(symbol.str());
   if (auto paren = siteName.find('('); paren != std::string::npos)
     siteName = siteName.substr(0, paren);
 

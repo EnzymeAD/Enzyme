@@ -5,7 +5,7 @@
 // status, and -lcudart, independent of the host's CUDA.
 //
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
-// RUN:     -poseidon-tau=1e-7 -poseidon-confidence=0.9 -poseidon-cache=%t.cache \
+// RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=USE %s
@@ -29,17 +29,17 @@
 int main(void) { return 0; }
 
 // USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so -I{{.*}}/include -ffp-contract=on
-// USE-SAME: -mllvm -poseidon-profile-use -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-confidence=0.9 -mllvm -poseidon-cache=
+// USE-SAME: -mllvm -poseidon-profile-use -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=
 // USE-SAME: -lposeidon_profile -lposeidon_rt -lcublas
 
 // GEN: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so
 // GEN-SAME: -mllvm -poseidon-profile-generate
-// GEN-SAME: -fcuda-rdc {{.*}}FPProfilerCUDA.cu -L{{.*}} -lcudart -L{{.*}} -lposeidon_profile
+// GEN-SAME: -fcuda-rdc {{.*}}FPProfilerCUDA.cu -L{{.*}} -lcudart -L{{.*}} -lposeidon_profile_host -lposeidon_profile
 
 // HELP: -poseidon-profile-generate
 // HELP: -poseidon-profile-use
 // HELP: -poseidon-tau
-// HELP: -poseidon-confidence
+// HELP-NOT: -poseidon-confidence
 
 // XPAIR: clang{{.*}} -Xcuda-ptxas --maxrregcount=160
 // XPAIR-SAME: -Xclang -poseidon-not-a-flag

@@ -1,3 +1,6 @@
+# The nightly-poseidon tarball carries no cost model: run the image with this
+# machine's mounted at /opt/compiler-explorer/poseidon/cost_models/cm_x86-64_explorer.csv
+# (compose.yaml takes it from POSEIDON_COST_MODEL).
 ARG CE_IMAGE=ghcr.io/enzymead/compiler-explorer-builder-frontend:main
 FROM ${CE_IMAGE}
 ARG LLVM_VERSION=21
@@ -13,6 +16,5 @@ COPY config/ /app/etc/config/
 COPY examples/c++/ /app/examples/c++/
 COPY examples/c++/Poseidon_cancellation.cpp /app/examples/c++/default.cpp
 RUN sed -i "s/@LLVM@/$LLVM_VERSION/g" /app/etc/config/c++.poseidon.properties /app/etc/config/site-templates.yaml
-ENV POSEIDON_CE_EXPLAIN=1
 EXPOSE 10240
 ENTRYPOINT ["tini", "--", "node", "./out/dist/app.js", "--static", "./out/webpack/static", "--env", "poseidon", "--language", "c++"]

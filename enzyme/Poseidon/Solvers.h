@@ -88,9 +88,6 @@ bool stepConflictsWithMatmulSteps(const SolutionStep &elem,
 struct FunctionFPState {
   llvm::Function *F = nullptr;
   double errTol = 0.0;
-  // Fraction of the sampled inputs a matrix-product candidate's domainError
-  // bounds; elementwise candidates are scored by their mean and ignore it.
-  double confidence = kDefaultConfidence;
   unsigned sampleLogBits = 0;
   // Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
   // costs carry; the denominator that turns an accuracy cost into a
@@ -119,7 +116,7 @@ struct FunctionFPState {
   std::optional<llvm::ScalarEvolution> raiseSE;
 };
 
-bool collectFPCandidates(llvm::Function &F, double errorTol, double confidence,
+bool collectFPCandidates(llvm::Function &F, double errorTol,
                          unsigned sampleLogBits, FunctionFPState &st);
 
 bool materializeFPSolution(llvm::Function &F, FunctionFPState &st,

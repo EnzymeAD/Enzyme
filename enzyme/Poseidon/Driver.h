@@ -7,6 +7,7 @@
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
+class CallBase;
 class CallInst;
 class Module;
 class PassBuilder;
@@ -20,13 +21,13 @@ bool isMarkerCall(llvm::StringRef calleeName);
 // Profile-use: lower every marker collected from one function into a call of
 // the optimized body.
 bool lowerMarkers(llvm::ArrayRef<llvm::CallInst *> markers,
-                  llvm::SmallVectorImpl<llvm::CallInst *> &calls);
+                  llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
 // Runs before the host's own marker scan. Profile generation happens entirely
 // here: each site is canonicalized, instrumented with the profiling probes and
 // its marker rewritten into an ordinary __enzyme_autodiff request, which the
-// host then lowers like any other.
-void prepareModule(llvm::Module &M);
+// host then lowers like any other. True if it instrumented a site.
+bool prepareModule(llvm::Module &M);
 
 // Profile use for the sites this module declares with POSEIDON_OPTIMIZE (or
 // names with -poseidon-kernels): each such kernel becomes a wrapper around its

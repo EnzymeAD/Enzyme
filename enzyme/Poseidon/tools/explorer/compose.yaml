@@ -4,4 +4,6 @@ services:
     image: poseidon-explorer
     ports:
       - "${POSEIDON_EXPLORER_PORT:-10240}:10240"
+    volumes:
+      - "${POSEIDON_COST_MODEL:?set POSEIDON_COST_MODEL to this machine's cost model, measured with calibrate/microbm_cpu.py}:/opt/compiler-explorer/poseidon/cost_models/cm_x86-64_explorer.csv:ro"
     restart: unless-stopped

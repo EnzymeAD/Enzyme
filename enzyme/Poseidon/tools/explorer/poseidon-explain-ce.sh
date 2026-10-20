@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compiler Explorer tool: presents the explanation a compile left next to its
-# output (poseidon-ce.sh with POSEIDON_CE_EXPLAIN set).
+# output (poseidon-ce.sh, unless POSEIDON_CE_EXPLAIN=0).
 #   poseidon-explain-ce.sh <format> [poseidon-explain options...] <source>
 set -eu
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -10,7 +10,7 @@ src="${!#}"
 set -- "${@:1:$(($# - 1))}"
 dir="$(dirname "$src")"
 if ! ls "$dir"/*.explain.json >/dev/null 2>&1; then
-  echo "No Poseidon explanation: the compile failed or reached no __poseidon_fp_optimize site (see the compiler output)."
+  echo "No Poseidon explanation: the compile failed or was compiled as written (see the compiler output), or it reached no Poseidon site: mark a function with POSEIDON_OPTIMIZE or a call with __poseidon_optimize."
   exit 0
 fi
 clang=()

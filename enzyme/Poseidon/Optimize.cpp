@@ -13,7 +13,9 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Dominators.h"
 
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
@@ -732,11 +734,10 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
                  << " subgraphs in " << F.getName() << "\n";
 }
 
-bool collectFPCandidates(Function &F, double errorTol, double confidence,
-                         unsigned sampleLogBits, FunctionFPState &st) {
+bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
+                         FunctionFPState &st) {
   st.F = &F;
   st.errTol = errorTol;
-  st.confidence = confidence;
   st.sampleLogBits = sampleLogBits;
   requireCostModel(F);
 
@@ -1674,7 +1675,7 @@ bool collectFPCandidates(Function &F, double errorTol, double confidence,
   }
 
   auto &CMs = st.CMs;
-  generateMatmulCandidates(abstractMatmuls, profileMap, st.confidence,
+  generateMatmulCandidates(abstractMatmuls, profileMap, kDefaultConfidence,
                            st.sampleLogBits, CMs);
 
   // Put this site's error on the application's scale. kappa is the measured
@@ -1877,44 +1878,28 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
   return changed;
 }
 
-bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
+bool fpOptimize(Function &F, double errorTol) {
+  // A target written AT THE SITE wins over -poseidon-tau, which is the target
+  // of every site that carries none. Either way the number means the same: one
+  // path below solves the site under it.
+  const double target = errorTol > 0.0 ? errorTol : (double)flags::Tau;
+
   // Matrix-product selection is only trustworthy with dynamic-range-aware
   // sampling (uniform [min,max] under-prices fixed-point Ozaki on
-  // wide-dynamic-range matrices), so a tolerance -- the site's or the flag's --
-  // defaults the sampling knob to a wide log-uniform range; an explicit
-  // -poseidon-sample-log-bits still overrides. Read only by the matmul accuracy
-  // model, so a site with no matrix product is unaffected.
+  // wide-dynamic-range matrices), so a target defaults the sampling knob to a
+  // wide log-uniform range; an explicit -poseidon-sample-log-bits still
+  // overrides. Read only by the matmul accuracy model, so a site with no matrix
+  // product is unaffected.
   unsigned sampleLogBits = flags::SampleLogBits;
-  if ((flags::Tau > 0.0 || errorTol > 0.0) && sampleLogBits == 0)
+  if (target > 0.0 && sampleLogBits == 0)
     sampleLogBits = 40;
 
-  // The confidence level the matrix-product accuracy model reads its domain
-  // error off, under the same precedence as the tolerance: what the site wrote
-  // wins over the whole-build flag.
-  const double confidence =
-      siteConfidence > 0.0 ? siteConfidence : (double)flags::Confidence;
-  if (siteConfidence > 0.0 && flags::Confidence.getNumOccurrences())
-    llvm::errs() << "[poseidon] " << F.getName()
-                 << ": the site's own confidence " << siteConfidence
-                 << " overrides -poseidon-confidence=" << flags::Confidence
-                 << "\n";
-  if (flags::Print)
-    llvm::errs() << "[poseidon] " << F.getName()
-                 << ": accuracy target confidence " << confidence
-                 << (siteConfidence > 0.0 ? " (site)"
-                                          : " (-poseidon-confidence)")
-                 << "\n";
-
   FunctionFPState st;
-  if (!collectFPCandidates(F, errorTol, confidence, sampleLogBits, st)) {
+  if (!collectFPCandidates(F, errorTol, sampleLogBits, st)) {
     explainNothingToOptimize(F);
     return false;
   }
 
-  // A tolerance written AT THE SITE is the user interface; the global flag is a
-  // whole-build override for a source that carries none. When both are given
-  // the site value wins, because it is the one the source asked for.
-  double budget = errorTol > 0.0 ? errorTol : (double)flags::Tau;
   if (errorTol > 0.0 && flags::Tau > 0.0)
     llvm::errs() << "[poseidon] " << F.getName()
                  << ": the site's own accuracy target " << errorTol
@@ -1923,23 +1908,23 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
   SolveRecord record;
   SolveRecord *rec = explainWanted(F) ? &record : nullptr;
   record.accScale = st.accScale;
-  record.tau = budget;
+  record.tau = target;
   record.siteTarget = errorTol > 0.0;
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
     steps = parseManualRewrites(flags::ApplyRewrites, st.COs, st.CSs, st.CMs);
     record.selector = "manual";
-  } else if (errorTol > 0.0 && !st.CMs.empty()) {
-    // A site tolerance is a RELATIVE error target, and for a matrix product
-    // that is what errorBudgetSelector compares against, exactly as the global
-    // flag does. Whatever elementwise work the products do not cover is then
-    // solved by the normalized DP under the same number.
-    steps = errorBudgetSelector(st.CMs, budget, confidence);
+  } else if (target > 0.0 && !st.CMs.empty()) {
+    // The target is a RELATIVE error, and for a matrix product that is what
+    // errorBudgetSelector compares against. Whatever elementwise work the
+    // products do not cover is then solved by the normalized DP under the same
+    // number.
+    steps = errorBudgetSelector(st.CMs, target, kDefaultConfidence);
     if (!st.COs.empty() || !st.CSs.empty()) {
       SmallVector<CandidateMatmul, 4> noCMs;
       SmallVector<SolutionStep> elem =
           accuracyDPSolver(F, st.COs, st.CSs, noCMs, st.valueToNodeMap,
-                           st.symbolToValueMap, budget, st.accScale, rec);
+                           st.symbolToValueMap, target, st.accScale, rec);
       for (const SolutionStep &e : elem) {
         // The two selectors ran independently, so the footprint rule the DP
         // applies internally is applied between their results here. Never
@@ -1956,12 +1941,9 @@ bool fpOptimize(Function &F, double errorTol, double siteConfidence) {
       }
     }
     record.selector = "error-budget";
-  } else if (flags::Tau > 0.0 && !st.CMs.empty()) {
-    steps = errorBudgetSelector(st.CMs, budget, confidence);
-    record.selector = "error-budget";
   } else {
     steps = accuracyDPSolver(F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
-                             st.symbolToValueMap, budget, st.accScale, rec);
+                             st.symbolToValueMap, target, st.accScale, rec);
   }
   if (rec)
     explainSolve(F, st, steps, record);
@@ -1979,30 +1961,50 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   llvm::errs() << "Poseidon JOINT: collecting candidates from " << marked.size()
                << " marked function(s)\n";
 
-  std::vector<std::unique_ptr<FunctionFPState>> states;
-  double jointErrTol = 0.0;
+  // One shared budget is spent against one target, so every site in the
+  // solve has to mean the same one: its own if it carries one, else
+  // -poseidon-tau, else none.
+  SmallVector<std::pair<Function *, double>, 4> targets;
+  bool allFromSite = true;
   for (Function *F : marked) {
     double errTol = 0.0;
     F->getFnAttribute("poseidon-joint-errtol")
         .getValueAsString()
         .getAsDouble(errTol);
     F->removeFnAttr("poseidon-joint-errtol");
-    if (errTol > jointErrTol)
-      jointErrTol = errTol;
-
-    // Each site keeps the confidence it was annotated with: the joint DP shares
-    // one BUDGET, not one accuracy model.
-    double confidence = (double)flags::Confidence;
-    if (F->hasFnAttribute("poseidon-joint-confidence")) {
-      F->getFnAttribute("poseidon-joint-confidence")
-          .getValueAsString()
-          .getAsDouble(confidence);
-      F->removeFnAttr("poseidon-joint-confidence");
+    allFromSite &= errTol > 0.0;
+    targets.push_back({F, errTol > 0.0 ? errTol : (double)flags::Tau});
+  }
+  const double jointErrTol = targets.front().second;
+  if (llvm::any_of(targets,
+                   [&](const auto &t) { return t.second != jointErrTol; })) {
+    std::string msg;
+    raw_string_ostream os(msg);
+    os << "Poseidon: the sites of one -poseidon-joint-dp solve have different "
+          "accuracy targets:";
+    for (auto &[F, t] : targets) {
+      const Function *origin = siteOriginOf(*F);
+      os << " "
+         << llvm::demangle((origin ? origin->getName() : F->getName()).str())
+         << " (";
+      if (t > 0.0)
+        os << t;
+      else
+        os << "none";
+      os << ")";
     }
+    os << "; give them one target";
+    M.getContext().diagnose(DiagnosticInfoUnsupported(
+        *targets.front().first, os.str(), DiagnosticLocation(), DS_Error));
+    for (auto &[F, t] : targets)
+      redirectNoopSite(F);
+    return false;
+  }
 
+  std::vector<std::unique_ptr<FunctionFPState>> states;
+  for (auto &[F, errTol] : targets) {
     auto st = std::make_unique<FunctionFPState>();
-    if (collectFPCandidates(*F, errTol, confidence, flags::SampleLogBits,
-                            *st)) {
+    if (collectFPCandidates(*F, errTol, flags::SampleLogBits, *st)) {
       states.push_back(std::move(st));
     } else {
       llvm::errs() << "Poseidon JOINT: nothing to optimize in " << F->getName()
@@ -2021,7 +2023,7 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   const bool explain = llvm::any_of(
       raw, [](FunctionFPState *st) { return explainWanted(*st->F); });
   record.tau = jointErrTol;
-  record.siteTarget = jointErrTol > 0.0;
+  record.siteTarget = allFromSite;
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
     for (auto *st : raw) {
