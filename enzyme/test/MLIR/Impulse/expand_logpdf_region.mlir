@@ -7,7 +7,7 @@ module {
                                   %B : tensor<8xf64>) -> tensor<f64> {
     %nh = arith.constant dense<-5.000000e-01> : tensor<f64>
     %s = arith.mulf %position, %B : tensor<8xf64>
-    %d = impulse.dot %s, %s {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
+    %d = impulse.dot %s, %s <{lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
     %r = arith.mulf %d, %nh : tensor<f64>
     return %r : tensor<f64>
   }
@@ -57,7 +57,7 @@ module {
       %magic = arith.constant dense<3.300000e+00> : tensor<8xf64>
       %scaled = arith.mulf %pos, %B : tensor<8xf64>
       %biased = arith.mulf %scaled, %magic : tensor<8xf64>
-      %d = impulse.dot %biased, %biased {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
+      %d = impulse.dot %biased, %biased <{lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
       %nh = arith.constant dense<-5.000000e-01> : tensor<f64>
       %r = arith.mulf %d, %nh : tensor<f64>
       "impulse.yield"(%r) : (tensor<f64>) -> ()

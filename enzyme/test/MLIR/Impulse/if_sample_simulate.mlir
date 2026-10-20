@@ -6,10 +6,10 @@ module {
 
   func.func @model(%rng : tensor<2xui64>, %pred : tensor<i1>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     %if:2 = impulse.if (%pred) ({
-      %e:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %e:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %e#0, %e#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %l:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %l:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %l#0, %l#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>
@@ -17,7 +17,7 @@ module {
 
   func.func @test(%rng : tensor<2xui64>, %pred : tensor<i1>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:4 = impulse.simulate @model(%rng, %pred, %mean, %stddev)
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<i1>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }

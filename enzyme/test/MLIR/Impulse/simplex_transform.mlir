@@ -7,7 +7,7 @@ module {
   func.func private @logpdf(%x : tensor<3xf64>, %alpha : tensor<3xf64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %alpha : tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>) {
-    %s:2 = impulse.sample @dirichlet(%rng, %alpha) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<SIMPLEX event_size = 3 : i64> } : (tensor<2xui64>, tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>)
+    %s:2 = impulse.sample @dirichlet(%rng, %alpha) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<SIMPLEX event_size = 3 : i64> }> : (tensor<2xui64>, tensor<3xf64>) -> (tensor<2xui64>, tensor<3xf64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<3xf64>
   }
 
@@ -20,7 +20,7 @@ module {
     %res:4 = impulse.infer @test(%rng, %alpha) given %init_trace
       init_inverse_mass_matrix = %inverse_mass_matrix
       init_step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 2>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 2>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<3xf64>, tensor<1x3xf64>, tensor<2x2xf64>, tensor<f64>) -> (tensor<1x3xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x3xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -28,9 +28,9 @@ module {
 
 // CHECK: %[[GATHER:.+]] = impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : (tensor<1x3xf64>, tensor<1x3xf64>, tensor<i64>, tensor<i64>) -> tensor<1x3xf64>
 // CHECK-NEXT: %[[U1D:.+]] = impulse.reshape %[[GATHER]] : (tensor<1x3xf64>) -> tensor<3xf64>
-// CHECK-NEXT: %[[USLICE:.+]] = impulse.slice %[[U1D]] {limit_indices = array<i64: 3>, start_indices = array<i64: 0>, strides = array<i64: 1>} : (tensor<3xf64>) -> tensor<3xf64>
+// CHECK-NEXT: %[[USLICE:.+]] = impulse.slice %[[U1D]] <start_indices = [0], limit_indices = [3], strides = [1]> : (tensor<3xf64>) -> tensor<3xf64>
 // CHECK-NEXT: %[[YMAT:.+]] = impulse.reshape %[[USLICE]] : (tensor<3xf64>) -> tensor<1x3xf64>
-// CHECK-NEXT: %[[YCROP:.+]] = impulse.slice %[[YMAT]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x3xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[YCROP:.+]] = impulse.slice %[[YMAT]] <start_indices = [0, 0], limit_indices = [1, 2], strides = [1, 1]> : (tensor<1x3xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[CUM:.+]] = impulse.dot %[[YCROP]], %{{.+}} {{.*}} : (tensor<1x2xf64>, tensor<2x2xf64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[Z1M:.+]] = arith.subf %{{.+}}, %[[CUM]] : tensor<1x2xf64>
 // CHECK-NEXT: %[[RATIO:.+]] = arith.divf %[[YCROP]], %[[Z1M]] : tensor<1x2xf64>

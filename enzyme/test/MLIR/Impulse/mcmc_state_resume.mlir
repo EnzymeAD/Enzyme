@@ -7,7 +7,7 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
@@ -22,10 +22,10 @@ module {
     %res:19 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       init_step_size = %step_size
       state = [%pos, %grad, %pe, %ss, %imm, %da0, %da1, %da2, %da3, %da4, %wm, %wm2, %wn, %widx, %off]
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
         name = "resume", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]],
         num_warmup = 4, total_warmup = 100, num_samples = 1,
-        state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix", "da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx", "warmup_offset"] }
+        state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix", "da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx", "warmup_offset"] }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>,
          tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>,
          tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>, tensor<i64>,

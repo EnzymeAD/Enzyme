@@ -6,10 +6,10 @@ module {
 
   func.func @model(%rng : tensor<2xui64>, %pred : tensor<i1>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     %if:2 = impulse.if (%pred) ({
-      %e:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %e:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %e#0, %e#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %l:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %l:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %l#0, %l#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>
@@ -17,7 +17,7 @@ module {
 
   func.func @test(%rng : tensor<2xui64>, %pred : tensor<i1>, %mean : tensor<f64>, %stddev : tensor<f64>, %trace : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:4 = impulse.regenerate @model(%rng, %pred, %mean, %stddev) given %trace
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<1>]] }
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [[#impulse.symbol<1>]] }>
         : (tensor<2xui64>, tensor<i1>, tensor<f64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -37,7 +37,7 @@ module {
 // CHECK-NEXT: %[[TTR:.+]] = impulse.dynamic_update_slice %[[TRACE_INIT]], %[[TRS]], %[[C0]], %[[C0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: impulse.yield %[[TS]]#0, %[[TS]]#1, %[[TTR]], %[[TW]] : tensor<2xui64>, tensor<f64>, tensor<1x2xf64>, tensor<f64>
 // CHECK-NEXT: }, {
-// CHECK-NEXT: %[[SLICE:.+]] = impulse.slice %[[ARG0]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[SLICE:.+]] = impulse.slice %[[ARG0]] <start_indices = [0, 1], limit_indices = [1, 2], strides = [1, 1]> : (tensor<1x2xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[FVAL:.+]] = impulse.reshape %[[SLICE]] : (tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[FLP:.+]] = func.call @logpdf(%[[FVAL]], %[[ARG3]], %[[ARG4]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT: %[[FW:.+]] = arith.addf %[[FLP]], %[[ZERO]] : tensor<f64>

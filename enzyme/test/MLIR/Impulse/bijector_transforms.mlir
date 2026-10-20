@@ -5,7 +5,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) { logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<UNIT_INTERVAL> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<UNIT_INTERVAL> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -14,7 +14,7 @@ module {
     %ss = arith.constant dense<0.1> : tensor<f64>
     %res:4 = impulse.infer @test(%rng, %p) given %init_trace
       init_inverse_mass_matrix = %imm init_step_size = %ss
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -41,7 +41,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) { logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<INTERVAL lower = 2.000000e+00 : f64 upper = 5.000000e+00 : f64> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<INTERVAL lower = 2.000000e+00 : f64 upper = 5.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -50,7 +50,7 @@ module {
     %ss = arith.constant dense<0.1> : tensor<f64>
     %res:4 = impulse.infer @test(%rng, %p) given %init_trace
       init_inverse_mass_matrix = %imm init_step_size = %ss
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -79,7 +79,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) { logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<GREATER_THAN lower = 1.000000e+00 : f64> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<GREATER_THAN lower = 1.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -88,7 +88,7 @@ module {
     %ss = arith.constant dense<0.1> : tensor<f64>
     %res:4 = impulse.infer @test(%rng, %p) given %init_trace
       init_inverse_mass_matrix = %imm init_step_size = %ss
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
@@ -109,7 +109,7 @@ module {
   func.func private @d(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @lp(%x : tensor<f64>, %p : tensor<f64>) -> tensor<f64>
   func.func @test(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @d(%rng, %p) { logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<LESS_THAN upper = 4.000000e+00 : f64> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @d(%rng, %p) <{ logpdf = @lp, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<LESS_THAN upper = 4.000000e+00 : f64> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @nuts(%rng : tensor<2xui64>, %p : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
@@ -118,7 +118,7 @@ module {
     %ss = arith.constant dense<0.1> : tensor<f64>
     %res:4 = impulse.infer @test(%rng, %p) given %init_trace
       init_inverse_mass_matrix = %imm init_step_size = %ss
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 1>, name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
       : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }

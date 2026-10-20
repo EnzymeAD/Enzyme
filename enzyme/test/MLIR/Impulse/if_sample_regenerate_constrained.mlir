@@ -8,10 +8,10 @@ module {
 
   func.func @model(%rng : tensor<2xui64>, %pred : tensor<i1>, %l1 : tensor<f64>, %l2 : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     %if:2 = impulse.if (%pred) ({
-      %e:2 = impulse.sample @pois(%rng, %l1) { logpdf = @poislp, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %e:2 = impulse.sample @pois(%rng, %l1) <{ logpdf = @poislp, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %e#0, %e#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %l:2 = impulse.sample @pois(%rng, %l2) { logpdf = @poislp, symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %l:2 = impulse.sample @pois(%rng, %l2) <{ logpdf = @poislp, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %l#0, %l#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>
@@ -19,7 +19,7 @@ module {
 
   func.func @test(%rng : tensor<2xui64>, %pred : tensor<i1>, %l1 : tensor<f64>, %l2 : tensor<f64>, %trace : tensor<1x2xf64>, %constraint : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:4 = impulse.regenerate @model(%rng, %pred, %l1, %l2) given %trace constrained_by %constraint
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [], constrained_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], regenerate_addresses = [], constrained_addresses = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<i1>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -37,7 +37,7 @@ module {
 // CHECK-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x2xf64>
 // CHECK: %[[IF:.+]]:4 = impulse.if(%[[R_PRED]]) ({
-// CHECK-NEXT: %[[TSLICE:.+]] = impulse.slice %[[R_CONSTRAINT]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[TSLICE:.+]] = impulse.slice %[[R_CONSTRAINT]] <start_indices = [0, 0], limit_indices = [1, 1], strides = [1, 1]> : (tensor<1x2xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[TVAL:.+]] = impulse.reshape %[[TSLICE]] : (tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[TLP:.+]] = func.call @poislp(%[[TVAL]], %[[R_L1]]) : (tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT: %[[TW:.+]] = arith.addf %[[TLP]], %[[ZERO]] : tensor<f64>
@@ -45,7 +45,7 @@ module {
 // CHECK-NEXT: %[[TTR:.+]] = impulse.dynamic_update_slice %[[TRACE_INIT]], %[[TRS]], %[[C0]], %[[C0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: impulse.yield %[[R_RNG]], %[[TVAL]], %[[TTR]], %[[TW]] : tensor<2xui64>, tensor<f64>, tensor<1x2xf64>, tensor<f64>
 // CHECK-NEXT: }, {
-// CHECK-NEXT: %[[FSLICE:.+]] = impulse.slice %[[R_CONSTRAINT]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[FSLICE:.+]] = impulse.slice %[[R_CONSTRAINT]] <start_indices = [0, 1], limit_indices = [1, 2], strides = [1, 1]> : (tensor<1x2xf64>) -> tensor<1x1xf64>
 // CHECK-NEXT: %[[FVAL:.+]] = impulse.reshape %[[FSLICE]] : (tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[FLP:.+]] = func.call @poislp(%[[FVAL]], %[[R_L2]]) : (tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT: %[[FW:.+]] = arith.addf %[[FLP]], %[[ZERO]] : tensor<f64>

@@ -16,9 +16,9 @@ module {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %res:19 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       init_step_size = %step_size
-      { nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
+      <{ nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
         name = "expose_full", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 4, num_samples = 1,
-        state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix", "da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx", "warmup_offset"] }
+        state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix", "da_log_step_size", "da_log_step_size_avg", "da_gradient_avg", "da_step_count", "da_prox_center", "welford_mean", "welford_m2", "welford_n", "window_idx", "warmup_offset"] }>
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>)
         -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>,
             tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>,

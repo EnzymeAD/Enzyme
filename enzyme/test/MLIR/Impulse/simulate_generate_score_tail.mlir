@@ -6,18 +6,18 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<2>, name="t" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2>, name="t" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 
   func.func @sim(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>) {
-    %tr, %w, %r, %v = impulse.simulate @model(%rng, %mean, %stddev) { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    %tr, %w, %r, %v = impulse.simulate @model(%rng, %mean, %stddev) <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %w : tensor<1x4xf64>, tensor<f64>
   }
 
   func.func @gen(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>, %obs : tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>) {
-    %tr, %w, %r, %v = impulse.generate @model(%rng, %mean, %stddev) given %obs { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], constrained_addresses = [[#impulse.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    %tr, %w, %r, %v = impulse.generate @model(%rng, %mean, %stddev) given %obs <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]], constrained_addresses = [[#impulse.symbol<2>]] }> : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x4xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %tr, %w : tensor<1x4xf64>, tensor<f64>
   }
 }
@@ -36,7 +36,7 @@ module {
 // CHECK-NEXT:    %[[GW1:.+]] = arith.addf %[[GLP1]], %[[GZERO]] : tensor<f64>
 // CHECK-NEXT:    %[[G1W:.+]] = impulse.reshape %[[G1]]#1 : (tensor<f64>) -> tensor<1x1xf64>
 // CHECK-NEXT:    %[[GV1:.+]] = impulse.dynamic_update_slice %[[GZVALS]], %[[G1W]], %[[GCOL0]], %[[GCOL0]]
-// CHECK-NEXT:    %[[OSL:.+]] = impulse.slice %[[OBS]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>
+// CHECK-NEXT:    %[[OSL:.+]] = impulse.slice %[[OBS]] <start_indices = [0, 0], limit_indices = [1, 1]
 // CHECK-NEXT:    %[[OV:.+]] = impulse.reshape %[[OSL]] : (tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT:    %[[GLP2:.+]] = call @logpdf(%[[OV]], %[[G1]]#1, %[[STD]])
 // CHECK-NEXT:    %[[GW2:.+]] = arith.addf %[[GW1]], %[[GLP2]] : tensor<f64>

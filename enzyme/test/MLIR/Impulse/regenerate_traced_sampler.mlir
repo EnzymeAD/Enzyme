@@ -4,14 +4,14 @@ module {
   func.func private @gam_s(%rng : tensor<2xui64>, %a : tensor<f64>, %b : tensor<f64>) -> (tensor<2xui64>, tensor<1xf64>)
 
   func.func @model(%rng : tensor<2xui64>, %a : tensor<f64>, %b : tensor<f64>) -> (tensor<2xui64>, tensor<1xf64>) {
-    %s:2 = impulse.sample @gam_s(%rng, %a, %b) { symbol = #impulse.symbol<1>, dist = #impulse.dist<GAMMA>, support = #impulse.support<POSITIVE> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1xf64>)
+    %s:2 = impulse.sample @gam_s(%rng, %a, %b) <{ symbol = #impulse.symbol<1>, dist = #impulse.dist<GAMMA>, support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1xf64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<1xf64>
   }
 
   func.func @test(%rng : tensor<2xui64>, %a : tensor<f64>, %b : tensor<f64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1xf64>) {
     %prev = arith.constant dense<[[0.5]]> : tensor<1x1xf64>
     %res:4 = impulse.regenerate @model(%rng, %a, %b) given %prev
-        { selection = [[#impulse.symbol<1>]], regenerate_addresses = [[#impulse.symbol<1>]] }
+        <{ selection = [[#impulse.symbol<1>]], regenerate_addresses = [[#impulse.symbol<1>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1xf64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1xf64>
   }

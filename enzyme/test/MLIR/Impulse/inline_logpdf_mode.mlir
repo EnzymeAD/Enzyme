@@ -4,7 +4,7 @@ module {
   func.func private @model_logpdf(%position : tensor<8xf64>,
                                   %B : tensor<8xf64>) -> tensor<f64> {
     %scaled = arith.mulf %position, %B : tensor<8xf64>
-    %sq = impulse.dot %scaled, %scaled {lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
+    %sq = impulse.dot %scaled, %scaled <{lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<8xf64>, tensor<8xf64>) -> tensor<f64>
     %neg_half = arith.constant dense<-5.000000e-01> : tensor<f64>
     %result = arith.mulf %neg_half, %sq : tensor<f64>
     return %result : tensor<f64>
@@ -19,8 +19,8 @@ module {
   // CHECK-NEXT: %[[SCALED:.+]] = arith.mulf %[[POS]], %[[B]] : tensor<8xf64>
   // CHECK-NEXT: %[[SQ:.+]] = impulse.dot %[[SCALED]], %[[SCALED]]
   // CHECK: impulse.yield %{{.+}} : tensor<f64>
-  // CHECK: num_position_args = 1 : i64
-  // CHECK-SAME: position_size = 8 : i64
+  // CHECK: num_position_args = 1
+  // CHECK-SAME: position_size = 8
   // CHECK-NOT: impulse.infer(
   func.func @main(%rng : tensor<2xui64>,
                   %B : tensor<8xf64>)

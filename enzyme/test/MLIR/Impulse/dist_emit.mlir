@@ -7,14 +7,14 @@ module {
   func.func @model(%r: tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>) {
     %mu = arith.constant dense<0.5> : tensor<f64>
     %sig = arith.constant dense<2.0> : tensor<f64>
-    %o:2 = impulse.sample @normal_sampler(%r, %mu, %sig) {
+    %o:2 = impulse.sample @normal_sampler(%r, %mu, %sig) <{
       symbol = #impulse.symbol<1>,
       dist = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>]>
-    } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
   func.func @top(%r: tensor<2xui64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %t, %w, %rng, %v = impulse.simulate @model(%r) {selection = [[#impulse.symbol<1>]]}
+    %t, %w, %rng, %v = impulse.simulate @model(%r) <{selection = [[#impulse.symbol<1>]]}>
       : (tensor<2xui64>) -> (tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %t, %w, %rng, %v : tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -28,7 +28,7 @@ module {
 // CHECK-DAG:   %[[MU:.+]] = arith.constant dense<5.000000e-01> : tensor<f64>
 // CHECK-DAG:   %[[SIG:.+]] = arith.constant dense<2.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[RNG:.+]], %[[Z:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<NORMAL>}
+// CHECK:       %[[RNG:.+]], %[[Z:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] <rng_distribution = NORMAL>
 // CHECK-NEXT:  %[[SCALED:.+]] = arith.mulf %[[Z]], %[[SIG]] : tensor<f64>
 // CHECK-NEXT:  %[[Y:.+]] = arith.addf %[[SCALED]], %[[MU]] : tensor<f64>
 // CHECK-NEXT:  %[[CENT:.+]] = arith.subf %[[Y]], %[[MU]] : tensor<f64>

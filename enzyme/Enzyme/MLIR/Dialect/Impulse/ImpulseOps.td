@@ -391,7 +391,7 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf attr-dict
+    `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf prop-dict attr-dict
     `:` functional-type($inputs, $outputs)
   }];
 }
@@ -442,7 +442,7 @@ def InferRegionOp : Impulse_Op<"infer_region",
     (`init_scale` `=` $init_scale^)?
     (`state` `=` `[` $state_in^ `]`)?
     `sampler` $sampler `logpdf` $logpdf
-    attr-dict `:` functional-type(operands, results)
+    prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
