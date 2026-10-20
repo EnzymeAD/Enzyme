@@ -29,8 +29,10 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/BitVector.h"
 
 #include <type_traits>
 
@@ -2482,6 +2484,64 @@ struct ExpandImpulsePass
     return dirty;
   }
 
+  // Bit k: depends on selected site k. An `impulse.if` result depends on its
+  // predicate only when its two yielded values differ.
+  struct GibbsSiteDependence {
+    unsigned numSites;
+    DenseMap<Value, llvm::BitVector> sites;
+
+    explicit GibbsSiteDependence(unsigned numSites) : numSites(numSites) {}
+
+    llvm::BitVector get(Value v) const {
+      auto it = sites.find(v);
+      return it == sites.end() ? llvm::BitVector(numSites) : it->second;
+    }
+    void seed(Value v, unsigned k) {
+      llvm::BitVector s(numSites);
+      s.set(k);
+      sites[v] = s;
+    }
+    void run(Block &block) {
+      for (Operation &op : block.without_terminator())
+        visit(op);
+    }
+    void visit(Operation &op) {
+      // Sample sites are seeded (selected) or fixed by the trace (unselected).
+      if (isa<impulse::SampleRegionOp>(op))
+        return;
+      if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
+        llvm::BitVector pred = get(ifOp.getPredicate());
+        Block &tb = ifOp.getTrueBranch().front();
+        Block &fb = ifOp.getFalseBranch().front();
+        run(tb);
+        run(fb);
+        Operation *ty = tb.getTerminator(), *fy = fb.getTerminator();
+        for (auto [i, r] : llvm::enumerate(ifOp.getResults())) {
+          Value a = ty->getOperand(i), b = fy->getOperand(i);
+          llvm::BitVector s = get(a);
+          s |= get(b);
+          if (a != b)
+            s |= pred;
+          if (s.any())
+            sites[r] = s;
+        }
+        return;
+      }
+      llvm::BitVector s(numSites);
+      for (Value v : op.getOperands())
+        s |= get(v);
+      if (op.getNumRegions() != 0) {
+        SetVector<Value> captured;
+        getUsedValuesDefinedAbove(op.getRegions(), captured);
+        for (Value v : captured)
+          s |= get(v);
+      }
+      if (s.any())
+        for (Value r : op.getResults())
+          sites[r] = s;
+    }
+  };
+
   template <typename OpT>
   struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
     static constexpr bool isRegionForm =
@@ -2897,9 +2957,9 @@ struct ExpandImpulsePass
     }
   };
 
-  // dirty score columns are written too. When the dirty sets of the selected
-  // sites are disjoint (flags that are conditionally independent given the
-  // rest), the sequential scan equals a simultaneous update draw for draw.
+  // Enumerative Gibbs over scalar BERNOULLI sites: new = u < logistic(s1 - s0).
+  // The batched sweep is sound only when each per-site yield depends on at
+  // most one selected site and no site's parameters depend on another.
   struct LowerGibbsRegionPattern
       : public mlir::OpRewritePattern<impulse::InferRegionOp> {
     using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
@@ -3005,6 +3065,38 @@ struct ExpandImpulsePass
         dirtyOf.push_back(
             taintedSiteYields(lpBlock, ValueRange{lpBlock.getArgument(k)}));
 
+      // siteOfYield[j]: the selected site yield j depends on, or -1 for none.
+      unsigned numSites = selection.size();
+      SmallVector<int> siteOfYield(numYields, -1);
+      bool batched = numSites >= 2;
+      if (batched) {
+        GibbsSiteDependence lpDep(numSites);
+        for (unsigned k = 0; k < numSites; ++k)
+          lpDep.seed(lpBlock.getArgument(k), k);
+        lpDep.run(lpBlock);
+        for (unsigned j = 0; j < numYields && batched; ++j) {
+          llvm::BitVector s = lpDep.get(lpTerm->getOperand(1 + j));
+          if (s.count() > 1)
+            batched = false;
+          else if (s.any())
+            siteOfYield[j] = s.find_first();
+        }
+      }
+      if (batched) {
+        GibbsSiteDependence samplerDep(numSites);
+        SmallVector<impulse::SampleRegionOp> selectedSites;
+        for (auto [k, addr] : llvm::enumerate(selection)) {
+          impulse::SampleRegionOp site = siteByAddress.lookup(addr);
+          selectedSites.push_back(site);
+          samplerDep.seed(site.getResult(1), k);
+        }
+        samplerDep.run(samplerEntry);
+        for (auto [k, site] : llvm::enumerate(selectedSites))
+          for (Value param : llvm::drop_begin(site->getOperands()))
+            if (samplerDep.get(param).any())
+              batched = false;
+      }
+
       auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
       auto idx = [&](OpBuilder &b, int64_t v) -> Value {
         return arith::ConstantOp::create(
@@ -3024,8 +3116,158 @@ struct ExpandImpulsePass
             b, loc, traceType, trace, flat, ValueRange{idx(b, 0), idx(b, col)});
       };
 
+      // For later regions (e.g. HMC) that pin these sites from the trace.
+      auto writeObserved = [&](OpBuilder &b, Value trace) -> Value {
+        Value constraint = op.getConstraint();
+        for (auto [col, off, n] : observedBranchCols) {
+          Value obs = impulse::SliceOp::create(
+              b, loc, RankedTensorType::get({1, n}, traceType.getElementType()),
+              constraint, b.getDenseI64ArrayAttr({0, off}),
+              b.getDenseI64ArrayAttr({1, off + n}),
+              b.getDenseI64ArrayAttr({1, 1}));
+          trace = writeCols(b, trace, col, obs);
+        }
+        return trace;
+      };
+
+      auto batchedSweep = [&](OpBuilder &b, Value trace, Value weight,
+                              Value rng) -> std::array<Value, 3> {
+        int64_t n = numSites;
+        Type elemType = traceType.getElementType();
+        auto scalarType = RankedTensorType::get({}, elemType);
+        auto elemVecType = RankedTensorType::get({1}, elemType);
+        auto vecType = RankedTensorType::get({n}, elemType);
+        auto rowType = RankedTensorType::get({1, n}, elemType);
+        auto colType = RankedTensorType::get({1, 1}, elemType);
+        auto element = [&](Value vec, int64_t k) -> Value {
+          auto vt = cast<RankedTensorType>(vec.getType());
+          Value sl = impulse::SliceOp::create(
+              b, loc, RankedTensorType::get({1}, vt.getElementType()), vec,
+              b.getDenseI64ArrayAttr({k}), b.getDenseI64ArrayAttr({k + 1}),
+              b.getDenseI64ArrayAttr({1}));
+          return impulse::ReshapeOp::create(
+              b, loc, RankedTensorType::get({}, vt.getElementType()), sl);
+        };
+        auto assemble = [&](ArrayRef<Value> scalars) -> Value {
+          Value vec = fconst(b, vecType, 0.0);
+          for (auto [k, s] : llvm::enumerate(scalars)) {
+            Value elemCell = impulse::ReshapeOp::create(b, loc, elemVecType, s);
+            vec = impulse::DynamicUpdateSliceOp::create(
+                b, loc, vecType, vec, elemCell, ValueRange{idx(b, k)});
+          }
+          return vec;
+        };
+        int64_t stride = n > 1 ? selectedCols[1] - selectedCols[0] : 1;
+        bool evenlySpaced = stride >= 1;
+        for (int64_t k = 1; k < n && evenlySpaced; ++k)
+          evenlySpaced = selectedCols[k] - selectedCols[k - 1] == stride;
+
+        Value curVec;
+        if (evenlySpaced) {
+          Value row = impulse::SliceOp::create(
+              b, loc, rowType, trace,
+              b.getDenseI64ArrayAttr({0, selectedCols[0]}),
+              b.getDenseI64ArrayAttr({1, selectedCols[n - 1] + 1}),
+              b.getDenseI64ArrayAttr({1, stride}));
+          curVec = impulse::ReshapeOp::create(b, loc, vecType, row);
+        } else {
+          SmallVector<Value> cur;
+          for (int64_t col : selectedCols)
+            cur.push_back(impulse::ReshapeOp::create(
+                b, loc, scalarType,
+                impulse::SliceOp::create(b, loc, colType, trace,
+                                         b.getDenseI64ArrayAttr({0, col}),
+                                         b.getDenseI64ArrayAttr({1, col + 1}),
+                                         b.getDenseI64ArrayAttr({1, 1}))));
+          curVec = assemble(cur);
+        }
+
+        // All sites at v at once: each yield sees at most one selected site.
+        SmallVector<Value> yieldsAt[2];
+        for (int v = 0; v < 2; ++v) {
+          IRMapping m;
+          for (unsigned j = 0; j < lpBlock.getNumArguments(); ++j)
+            m.map(
+                lpBlock.getArgument(j),
+                fconst(b,
+                       cast<RankedTensorType>(lpBlock.getArgument(j).getType()),
+                       (double)v));
+          for (Operation &lo : lpBlock.without_terminator())
+            b.clone(lo, m);
+          for (unsigned j = 0; j < numYields; ++j)
+            yieldsAt[v].push_back(m.lookupOrDefault(lpTerm->getOperand(1 + j)));
+        }
+        SmallVector<Value> logOdds(n);
+        for (unsigned j = 0; j < numYields; ++j) {
+          int k = siteOfYield[j];
+          if (k < 0)
+            continue;
+          Value d =
+              arith::SubFOp::create(b, loc, yieldsAt[1][j], yieldsAt[0][j]);
+          logOdds[k] =
+              logOdds[k]
+                  ? arith::AddFOp::create(b, loc, logOdds[k], d).getResult()
+                  : d;
+        }
+        for (Value &l : logOdds)
+          if (!l)
+            l = fconst(b, scalarType, 0.0);
+        Value lVec = assemble(logOdds);
+
+        Value p1 = impulse::LogisticOp::create(b, loc, vecType, lVec);
+        Value uLo = fconst(b, scalarType, 0.0);
+        Value uHi = fconst(b, scalarType, 1.0);
+        auto rnd = impulse::RandomOp::create(
+            b, loc, TypeRange{rngType, vecType}, rng, uLo, uHi,
+            impulse::RngDistributionAttr::get(
+                b.getContext(), impulse::RngDistribution::UNIFORM));
+        Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+                                            rnd.getResult(), p1);
+        Value curIs1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT,
+                                             curVec, fconst(b, vecType, 0.5));
+        Value zeros = fconst(b, vecType, 0.0);
+        Value newVals = arith::SelectOp::create(b, loc, take1,
+                                                fconst(b, vecType, 1.0), zeros);
+
+        // +L_k on a 0 -> 1 flip, -L_k on 1 -> 0, else 0.
+        Value negL = arith::NegFOp::create(b, loc, lVec);
+        Value toOne = arith::SelectOp::create(b, loc, curIs1, zeros, lVec);
+        Value toZero = arith::SelectOp::create(b, loc, curIs1, negL, zeros);
+        Value delta = arith::SelectOp::create(b, loc, take1, toOne, toZero);
+        for (int64_t k = 0; k < n; ++k)
+          weight = arith::AddFOp::create(b, loc, weight, element(delta, k));
+
+        Value newRow = impulse::ReshapeOp::create(b, loc, rowType, newVals);
+        if (evenlySpaced && stride == 1) {
+          trace = impulse::DynamicUpdateSliceOp::create(
+              b, loc, traceType, trace, newRow,
+              ValueRange{idx(b, 0), idx(b, selectedCols[0])});
+        } else {
+          for (auto [k, col] : llvm::enumerate(selectedCols)) {
+            Value colSlice = impulse::SliceOp::create(
+                b, loc, colType, newRow,
+                b.getDenseI64ArrayAttr({0, (int64_t)k}),
+                b.getDenseI64ArrayAttr({1, (int64_t)k + 1}),
+                b.getDenseI64ArrayAttr({1, 1}));
+            trace = impulse::DynamicUpdateSliceOp::create(
+                b, loc, traceType, trace, colSlice,
+                ValueRange{idx(b, 0), idx(b, col)});
+          }
+        }
+        if (scoreTail)
+          for (unsigned j = 0; j < numYields; ++j)
+            if (siteOfYield[j] >= 0)
+              trace = writeCols(b, trace, positionSize + j,
+                                arith::SelectOp::create(
+                                    b, loc, element(take1, siteOfYield[j]),
+                                    yieldsAt[1][j], yieldsAt[0][j]));
+        return {writeObserved(b, trace), weight, rnd.getOutputRngState()};
+      };
+
       auto oneSweep = [&](OpBuilder &b, Value trace, Value weight,
                           Value rng) -> std::array<Value, 3> {
+        if (batched)
+          return batchedSweep(b, trace, weight, rng);
         SmallVector<Value> cur;
         for (auto [k, col] : llvm::enumerate(selectedCols)) {
           auto argType =
@@ -3099,16 +3341,7 @@ struct ExpandImpulsePass
                                                           yieldsAt[1][j],
                                                           yieldsAt[0][j]));
         }
-        Value constraint = op.getConstraint();
-        for (auto [col, off, n] : observedBranchCols) {
-          Value obs = impulse::SliceOp::create(
-              b, loc, RankedTensorType::get({1, n}, traceType.getElementType()),
-              constraint, b.getDenseI64ArrayAttr({0, off}),
-              b.getDenseI64ArrayAttr({1, off + n}),
-              b.getDenseI64ArrayAttr({1, 1}));
-          trace = writeCols(b, trace, col, obs);
-        }
-        return {trace, weight, rng};
+        return {writeObserved(b, trace), weight, rng};
       };
 
       int64_t numSamples = op.getNumSamples();
