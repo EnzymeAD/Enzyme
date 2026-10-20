@@ -167,16 +167,16 @@ LogicalResult InferOp::verify() {
   bool hasNUTS = getNutsConfig().has_value();
   bool hasVI = getViConfig().has_value();
   bool hasMH = getMhConfig().has_value();
+  bool hasGibbs = getGibbsConfig().has_value();
 
-  if (hasHMC + hasNUTS + hasVI + hasMH != 1) {
-    return emitOpError("exactly one of hmc_config, nuts_config, vi_config, or "
-                       "mh_config must be specified");
+  if (hasHMC + hasNUTS + hasVI + hasMH + hasGibbs != 1) {
+    return emitOpError("exactly one of hmc_config, nuts_config, vi_config, "
+                       "mh_config, or gibbs_config must be specified");
   }
 
-  // The constraint operand and its layout attribute are MH-only.
-  if ((getConstraint() || getConstrainedAddressesAttr()) && !hasMH)
+  if ((getConstraint() || getConstrainedAddressesAttr()) && !hasMH && !hasGibbs)
     return emitOpError("`constraint`/`constrained_addresses` are only valid "
-                       "with mh_config");
+                       "with mh_config or gibbs_config");
 
   int64_t numChains = getNumChains();
   if (numChains < 1)
@@ -221,8 +221,7 @@ LogicalResult InferOp::verify() {
 
   if (numStateOut != 0) {
     SmallVector<impulse::StateSlot> expected;
-    if (hasMH) {
-      // MH carries a single scalar `weight` slot; the trace/rng are universal.
+    if (hasMH || hasGibbs) {
       auto wType = dyn_cast<RankedTensorType>(getStateOut()[0].getType());
       if (!wType || wType.getRank() != 0)
         return emitOpError("MH `weight` state slot must be a scalar tensor");

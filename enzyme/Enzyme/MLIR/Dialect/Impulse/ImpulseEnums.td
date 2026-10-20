@@ -294,4 +294,21 @@ def MHConfigAttr : Impulse_Attr<"MHConfig", "mh_config"> {
   let assemblyFormat = "";
 }
 
+def GibbsConfigAttr : Impulse_Attr<"GibbsConfig", "gibbs_config"> {
+  let summary = "Configuration for enumerative Gibbs sampling";
+  let description = [{
+    Marker config selecting enumerative Gibbs on `impulse.infer` /
+    `impulse.infer_region`: each selected site, in `selection` order, is
+    redrawn from its exact full conditional, computed by scoring every value
+    of its finite support (BERNOULLI: {0, 1}). Only the density terms that
+    depend on the site are scored. `num_samples` is the number of sweeps.
+    A `constraint` operand (with `constrained_addresses`) supplies the
+    observed values of constrained sites, so a flip that makes a branch-local
+    observation live scores it from the observation and writes it into the
+    trace.
+  }];
+  let parameters = (ins);
+  let assemblyFormat = "";
+}
+
 #endif // IMPULSE_ENUMS

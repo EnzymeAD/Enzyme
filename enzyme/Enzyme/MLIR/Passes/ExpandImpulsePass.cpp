@@ -2896,6 +2896,278 @@ struct ExpandImpulsePass
     }
   };
 
+  // dirty score columns are written too. When the dirty sets of the selected
+  // sites are disjoint (flags that are conditionally independent given the
+  // rest), the sequential scan equals a simultaneous update draw for draw.
+  struct LowerGibbsRegionPattern
+      : public mlir::OpRewritePattern<impulse::InferRegionOp> {
+    using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(impulse::InferRegionOp op,
+                                  PatternRewriter &rewriter) const override {
+      if (!op.getGibbsConfig().has_value())
+        return rewriter.notifyMatchFailure(op, "no gibbs_config");
+      Location loc = op.getLoc();
+      if (op.getSampler().empty() || op.getLogpdf().empty()) {
+        op.emitError("Impulse Gibbs: infer_region requires sampler and "
+                     "constructed logpdf regions (run sicm first)");
+        return failure();
+      }
+      if (op.getStateIn().size() != 1 || op.getInputs().empty() ||
+          !op.getOriginalTrace()) {
+        op.emitError("Impulse Gibbs: expects the rng input, a trace and a "
+                     "single `weight` state_in slot");
+        return failure();
+      }
+      Block &samplerEntry = op.getSampler().front();
+      Block &lpBlock = op.getLogpdf().front();
+      Operation *lpTerm = lpBlock.getTerminator();
+      unsigned numYields = lpTerm->getNumOperands() - 1;
+      ArrayAttr selection = op.getSelectionAttr();
+      ArrayAttr allAddresses = op.getAllAddressesAttr();
+
+      DenseMap<Attribute, impulse::SampleRegionOp> siteByAddress;
+      op.getSampler().walk([&](impulse::SampleRegionOp site) {
+        if (auto address = site.getAddressAttr())
+          siteByAddress[address] = site;
+      });
+      auto siteSize = [](impulse::SampleRegionOp site) {
+        int64_t n = 0;
+        for (unsigned i = 1, e = site.getNumResults(); i < e; ++i)
+          n += cast<RankedTensorType>(site.getResult(i).getType())
+                   .getNumElements();
+        return n;
+      };
+      DenseMap<Attribute, int64_t> traceOffsetOf;
+      int64_t positionSize = 0;
+      for (Attribute addr : allAddresses) {
+        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
+        if (!site) {
+          op.emitError("Impulse Gibbs: all_addresses entry without a site");
+          return failure();
+        }
+        traceOffsetOf[addr] = positionSize;
+        positionSize += siteSize(site);
+      }
+      Value initTrace = op.getOriginalTrace();
+      Value initWeight = op.getStateIn()[0];
+      Value initRng = op.getInputs()[0];
+      auto traceType = cast<RankedTensorType>(initTrace.getType());
+      auto weightType = cast<RankedTensorType>(initWeight.getType());
+      Type rngType = initRng.getType();
+      int64_t width = traceType.getShape()[1];
+      bool scoreTail = width > positionSize;
+      if (scoreTail && width != positionSize + (int64_t)numYields) {
+        op.emitError("Impulse Gibbs: score-tail width does not match the "
+                     "logpdf region's per-site yields");
+        return failure();
+      }
+      if (lpBlock.getNumArguments() != selection.size()) {
+        op.emitError("Impulse Gibbs: one position argument per selected "
+                     "site expected");
+        return failure();
+      }
+      SmallVector<int64_t> selectedCols;
+      for (auto [k, addr] : llvm::enumerate(selection)) {
+        impulse::SampleRegionOp site = siteByAddress.lookup(addr);
+        impulse::DistAttr dist = site ? site.getDistAttr() : nullptr;
+        if (!site || site->getBlock() != &samplerEntry || !dist ||
+            dist.getBase() != impulse::DistBaseKind::BERNOULLI ||
+            (dist.getTransforms() && !dist.getTransforms().empty()) ||
+            site.getNumResults() != 2 ||
+            cast<RankedTensorType>(lpBlock.getArgument(k).getType())
+                    .getNumElements() != 1) {
+          op.emitError("Impulse Gibbs: every selected site must be a "
+                       "top-level scalar BERNOULLI site");
+          return failure();
+        }
+        selectedCols.push_back(traceOffsetOf.lookup(addr));
+      }
+      // (trace col, constraint offset, size) of constrained branch-local sites.
+      SmallVector<std::tuple<int64_t, int64_t, int64_t>> observedBranchCols;
+      if (Value constraint = op.getConstraint()) {
+        int64_t off = 0;
+        for (Attribute addr : op.getConstrainedAddressesAttr()) {
+          impulse::SampleRegionOp site = siteByAddress.lookup(addr);
+          if (!site) {
+            op.emitError("Impulse Gibbs: constrained address without a site");
+            return failure();
+          }
+          if (site->getBlock() != &samplerEntry)
+            observedBranchCols.push_back(
+                {traceOffsetOf.lookup(addr), off, siteSize(site)});
+          off += siteSize(site);
+        }
+      }
+      SmallVector<SmallVector<bool>> dirtyOf;
+      for (unsigned k = 0; k < selection.size(); ++k)
+        dirtyOf.push_back(
+            taintedSiteYields(lpBlock, ValueRange{lpBlock.getArgument(k)}));
+
+      auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+      auto idx = [&](OpBuilder &b, int64_t v) -> Value {
+        return arith::ConstantOp::create(
+            b, loc, i64S, DenseElementsAttr::get(i64S, b.getI64IntegerAttr(v)));
+      };
+      auto fconst = [&](OpBuilder &b, RankedTensorType t, double v) -> Value {
+        return arith::ConstantOp::create(b, loc, t,
+                                         DenseElementsAttr::get(t, v));
+      };
+      auto writeCols = [&](OpBuilder &b, Value trace, int64_t col,
+                           Value value) -> Value {
+        auto vt = cast<RankedTensorType>(value.getType());
+        auto flatType = RankedTensorType::get({1, vt.getNumElements()},
+                                              traceType.getElementType());
+        Value flat = impulse::ReshapeOp::create(b, loc, flatType, value);
+        return impulse::DynamicUpdateSliceOp::create(
+            b, loc, traceType, trace, flat, ValueRange{idx(b, 0), idx(b, col)});
+      };
+
+      auto oneSweep = [&](OpBuilder &b, Value trace, Value weight,
+                          Value rng) -> std::array<Value, 3> {
+        SmallVector<Value> cur;
+        for (auto [k, col] : llvm::enumerate(selectedCols)) {
+          auto argType =
+              cast<RankedTensorType>(lpBlock.getArgument(k).getType());
+          Value sl = impulse::SliceOp::create(
+              b, loc, RankedTensorType::get({1, 1}, traceType.getElementType()),
+              trace, b.getDenseI64ArrayAttr({0, col}),
+              b.getDenseI64ArrayAttr({1, col + 1}),
+              b.getDenseI64ArrayAttr({1, 1}));
+          cur.push_back(impulse::ReshapeOp::create(b, loc, argType, sl));
+        }
+        auto scalarType = RankedTensorType::get({}, traceType.getElementType());
+        for (unsigned k = 0; k < selectedCols.size(); ++k) {
+          auto argType =
+              cast<RankedTensorType>(lpBlock.getArgument(k).getType());
+          SmallVector<Value> yieldsAt[2];
+          Value scoreAt[2];
+          for (int v = 0; v < 2; ++v) {
+            IRMapping m;
+            for (unsigned j = 0; j < lpBlock.getNumArguments(); ++j)
+              m.map(lpBlock.getArgument(j),
+                    j == k ? fconst(b, argType, (double)v) : cur[j]);
+            for (Operation &lo : lpBlock.without_terminator())
+              b.clone(lo, m);
+            for (unsigned j = 0; j < numYields; ++j) {
+              Value y = m.lookupOrDefault(lpTerm->getOperand(1 + j));
+              yieldsAt[v].push_back(y);
+              if (!dirtyOf[k][j])
+                continue;
+              scoreAt[v] =
+                  scoreAt[v]
+                      ? arith::AddFOp::create(b, loc, scoreAt[v], y).getResult()
+                      : y;
+            }
+            if (!scoreAt[v])
+              scoreAt[v] = fconst(b, scalarType, 0.0);
+          }
+          Value diff = arith::SubFOp::create(b, loc, scoreAt[1], scoreAt[0]);
+          Value p1 = impulse::LogisticOp::create(b, loc, diff.getType(), diff);
+          Value zero = fconst(b, weightType, 0.0);
+          Value one = fconst(b, weightType, 1.0);
+          auto rnd = impulse::RandomOp::create(
+              b, loc, TypeRange{rngType, weightType}, rng, zero, one,
+              impulse::RngDistributionAttr::get(
+                  b.getContext(), impulse::RngDistribution::UNIFORM));
+          rng = rnd.getOutputRngState();
+          Value take1 = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+                                              rnd.getResult(), p1);
+          Value curScalar =
+              impulse::ReshapeOp::create(b, loc, scalarType, cur[k]);
+          Value curIs1 =
+              arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT,
+                                    curScalar, fconst(b, scalarType, 0.5));
+          Value sNew =
+              arith::SelectOp::create(b, loc, take1, scoreAt[1], scoreAt[0]);
+          Value sCur =
+              arith::SelectOp::create(b, loc, curIs1, scoreAt[1], scoreAt[0]);
+          weight = arith::AddFOp::create(
+              b, loc, weight, arith::SubFOp::create(b, loc, sNew, sCur));
+          Value oneArg = fconst(b, argType, 1.0);
+          Value zeroArg = fconst(b, argType, 0.0);
+          Value newVal =
+              arith::SelectOp::create(b, loc, take1, oneArg, zeroArg);
+          cur[k] = newVal;
+          trace = writeCols(b, trace, selectedCols[k], newVal);
+          if (scoreTail)
+            for (unsigned j = 0; j < numYields; ++j)
+              if (dirtyOf[k][j])
+                trace = writeCols(b, trace, positionSize + j,
+                                  arith::SelectOp::create(b, loc, take1,
+                                                          yieldsAt[1][j],
+                                                          yieldsAt[0][j]));
+        }
+        Value constraint = op.getConstraint();
+        for (auto [col, off, n] : observedBranchCols) {
+          Value obs = impulse::SliceOp::create(
+              b, loc, RankedTensorType::get({1, n}, traceType.getElementType()),
+              constraint, b.getDenseI64ArrayAttr({0, off}),
+              b.getDenseI64ArrayAttr({1, off + n}),
+              b.getDenseI64ArrayAttr({1, 1}));
+          trace = writeCols(b, trace, col, obs);
+        }
+        return {trace, weight, rng};
+      };
+
+      int64_t numSamples = op.getNumSamples();
+      Value outTrace, outWeight, outRng;
+      if (numSamples <= 1) {
+        auto r = oneSweep(rewriter, initTrace, initWeight, initRng);
+        outTrace = r[0];
+        outWeight = r[1];
+        outRng = r[2];
+      } else {
+        Value c0 = idx(rewriter, 0), cN = idx(rewriter, numSamples),
+              c1 = idx(rewriter, 1);
+        SmallVector<Type> loopTypes{traceType, weightType, rngType};
+        SmallVector<Value> initArgs{initTrace, initWeight, initRng};
+        auto forOp = impulse::ForOp::create(rewriter, loc, loopTypes, c0, cN,
+                                            c1, initArgs);
+        Block *body = rewriter.createBlock(&forOp.getRegion());
+        body->addArgument(i64S, loc);
+        for (Type t : loopTypes)
+          body->addArgument(t, loc);
+        rewriter.setInsertionPointToStart(body);
+        auto r = oneSweep(rewriter, body->getArgument(1), body->getArgument(2),
+                          body->getArgument(3));
+        impulse::YieldOp::create(rewriter, loc, ValueRange{r[0], r[1], r[2]});
+        rewriter.setInsertionPointAfter(forOp);
+        outTrace = forOp.getResult(0);
+        outWeight = forOp.getResult(1);
+        outRng = forOp.getResult(2);
+      }
+
+      // Gibbs always accepts; `log_densities` is a zero placeholder.
+      auto diagType = cast<ShapedType>(op.getDiagnostics().getType());
+      Value diagnostics = arith::ConstantOp::create(
+          rewriter, loc, diagType,
+          DenseElementsAttr::get(diagType, rewriter.getBoolAttr(true)));
+      auto ldType = cast<ShapedType>(op.getLogDensities().getType());
+      Value logDensities = arith::ConstantOp::create(
+          rewriter, loc, ldType,
+          DenseElementsAttr::get(
+              ldType, rewriter.getFloatAttr(ldType.getElementType(), 0.0)));
+      rewriter.replaceOp(
+          op, {outTrace, diagnostics, logDensities, outRng, outWeight});
+      return success();
+    }
+  };
+
+  struct RejectFlatGibbsPattern
+      : public mlir::OpRewritePattern<impulse::InferOp> {
+    using mlir::OpRewritePattern<impulse::InferOp>::OpRewritePattern;
+    LogicalResult matchAndRewrite(impulse::InferOp op,
+                                  PatternRewriter &rewriter) const override {
+      if (!op.getGibbsConfig().has_value())
+        return failure();
+      op.emitError("Impulse Gibbs: requires the region pipeline "
+                   "(inline-infer-regions, sicm); this model was not admitted "
+                   "to region form");
+      return failure();
+    }
+  };
+
   struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
     using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
 
@@ -4592,6 +4864,7 @@ void ExpandImpulsePass::runOnOperation() {
                                                        debugDump);
   patterns.add<LowerMHInferPattern<impulse::InferOp>,
                LowerMHInferPattern<impulse::InferRegionOp>>(&getContext());
+  patterns.add<LowerGibbsRegionPattern, RejectFlatGibbsPattern>(&getContext());
 
   mlir::GreedyRewriteConfig config;
 

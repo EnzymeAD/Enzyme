@@ -264,10 +264,7 @@ class Impulse_InferSignatureArgs {
     Variadic<AnyRankedTensor>:$state_in,
     Optional<AnyRankedTensor>:$original_trace,
 
-    // MH-only: observed values for constrained sample sites (with
-    // `constrained_addresses` describing the layout), forwarded verbatim to the
-    // internal regenerate so a branch-flipping proposal re-scores the
-    // newly-taken observation from the constraint. Null for HMC/NUTS/VI.
+    // MH and Gibbs only; packed in `constrained_addresses` order.
     Optional<AnyRankedTensor>:$constraint,
 
     Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
@@ -292,8 +289,8 @@ class Impulse_InferSignatureArgs {
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
     OptionalAttr<VIConfigAttr>:$vi_config,
     OptionalAttr<MHConfigAttr>:$mh_config,
+    OptionalAttr<GibbsConfigAttr>:$gibbs_config,
 
-    // MH-only: layout of the `constraint` operand (see above). Null otherwise.
     OptionalAttr<AddressArrayAttr>:$constrained_addresses,
 
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
