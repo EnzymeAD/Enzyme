@@ -332,7 +332,7 @@ module {
 // CHECK-NEXT: %[[L2R:.+]] = impulse.reshape %[[L2]] : (tensor<f64>) -> tensor<1xf64>
 // CHECK-NEXT: %[[LV:.+]] = impulse.dynamic_update_slice %[[LV1]], %[[L2R]], %[[C1]] : (tensor<2xf64>, tensor<1xf64>, tensor<i64>) -> tensor<2xf64>
 // CHECK-NEXT: %[[P:.+]] = impulse.logistic %[[LV]] : (tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT: %[[ORNG:.+]], %[[U:.+]] = impulse.random %[[RNG]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK-NEXT: %[[ORNG:.+]], %[[U:.+]] = impulse.random %[[RNG]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
 // CHECK-NEXT: %[[TAKE:.+]] = arith.cmpf olt, %[[U]], %[[P]] : tensor<2xf64>
 // CHECK-NEXT: %[[CUR1:.+]] = arith.cmpf ogt, %[[CUR]], %[[VHALF]] : tensor<2xf64>
 // CHECK-NEXT: %[[NEW:.+]] = arith.select %[[TAKE]], %[[VONE]], %[[VZERO]] : tensor<2xi1>, tensor<2xf64>
@@ -375,7 +375,7 @@ module {
 // CHECK-NEXT: %[[L1:.+]] = arith.subf %[[P11]], %[[P10]] : tensor<f64>
 // CHECK-NEXT: %[[L2:.+]] = arith.subf %[[P21]], %[[P20]] : tensor<f64>
 // CHECK: %[[P:.+]] = impulse.logistic %{{.+}} : (tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT: %[[ORNG:.+]], %[[U:.+]] = impulse.random %[[RNG]], %[[ZERO]], %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK-NEXT: %[[ORNG:.+]], %[[U:.+]] = impulse.random %[[RNG]], %[[ZERO]], %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
 // CHECK-NEXT: %[[TAKE:.+]] = arith.cmpf olt, %[[U]], %[[P]] : tensor<2xf64>
 // CHECK-NEXT: %{{.+}} = arith.cmpf ogt, %[[CUR]], %{{.+}} : tensor<2xf64>
 // CHECK-NEXT: %[[NEW:.+]] = arith.select %[[TAKE]], %{{.+}}, %{{.+}} : tensor<2xi1>, tensor<2xf64>
@@ -404,11 +404,11 @@ module {
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PB1:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RB1:.+]], %[[UB1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RB1:.+]], %[[UB1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UB1]], %[[PB1]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PB2:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RB2:.+]], %[[UB2:.+]] = impulse.random %[[RB1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RB2:.+]], %[[UB2:.+]] = impulse.random %[[RB1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UB2]], %[[PB2]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: return %{{.+}}, %[[RB2]], %{{.+}} : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>
@@ -417,11 +417,11 @@ module {
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PC1:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RC1:.+]], %[[UC1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RC1:.+]], %[[UC1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UC1]], %[[PC1]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PC2:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RC2:.+]], %[[UC2:.+]] = impulse.random %[[RC1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RC2:.+]], %[[UC2:.+]] = impulse.random %[[RC1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UC2]], %[[PC2]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: return %{{.+}}, %[[RC2]], %{{.+}} : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>
@@ -430,11 +430,11 @@ module {
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PD1:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RD1:.+]], %[[UD1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RD1:.+]], %[[UD1:.+]] = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UD1]], %[[PD1]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: %[[PD2:.+]] = impulse.logistic %{{.+}} : (tensor<f64>) -> tensor<f64>
-// CHECK-NEXT: %[[RD2:.+]], %[[UD2:.+]] = impulse.random %[[RD1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[RD2:.+]], %[[UD2:.+]] = impulse.random %[[RD1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = arith.cmpf olt, %[[UD2]], %[[PD2]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: return %{{.+}}, %[[RD2]], %{{.+}} : tensor<1x4xf64>, tensor<2xui64>, tensor<f64>

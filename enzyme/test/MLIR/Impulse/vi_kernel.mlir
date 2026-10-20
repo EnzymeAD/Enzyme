@@ -33,13 +33,13 @@ module {
 // CHECK-NEXT: %[[SPLIT_STEP:.+]]:2 = impulse.randomSplit %[[SPLIT_STATE]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT: %[[SPLIT_SITE:.+]]:2 = impulse.randomSplit %[[SPLIT_STEP]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 
-// CHECK-NEXT: %{{.*}}, %[[EPS:.+]] = impulse.random %[[SPLIT_SITE]]#1, %{{.*}}, %{{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.*}}, %[[EPS:.+]] = impulse.random %[[SPLIT_SITE]]#1, %{{.*}}, %{{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 
 // CHECK: %[[AD:.+]]:4 = enzyme.autodiff_region(%{{.*}}, %{{.*}}, %{{.*}}) {
 
 // CHECK: func.call @test.generate(%{{.*}}, %[[SPLIT_STEP]]#0, %{{.*}}, %{{.*}})
 
-// CHECK: ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]
+// CHECK: ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]
 
 // CHECK: "enzyme.broadcast"
 // CHECK-NEXT: arith.mulf

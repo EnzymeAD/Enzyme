@@ -19,14 +19,14 @@ module {
 }
 
 // CHECK-LABEL: func.func @mvn_model.simulate
-// CHECK: %{{.*}}, %[[Z:[a-zA-Z0-9_]+]] = impulse.random %{{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK: %{{.*}}, %[[Z:[a-zA-Z0-9_]+]] = impulse.random %{{.*}} {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK: %[[U:.+]] = impulse.cholesky %arg2 {lower = false}
 // CHECK: %[[UTZ:.+]] = impulse.dot %[[U]], %[[Z]] {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>}
 // CHECK: %[[DRAW:.+]] = arith.addf %arg1, %[[UTZ]]
 // CHECK: %[[DIFF:.+]] = arith.subf %[[DRAW]], %arg1 : tensor<2xf64>
 // CHECK-NEXT: %[[U2:.+]] = impulse.cholesky %arg2 {lower = false} : (tensor<2x2xf64>) -> tensor<2x2xf64>
 // CHECK-NEXT: %[[DCOL:.+]] = impulse.reshape %[[DIFF]] : (tensor<2xf64>) -> tensor<2x1xf64>
-// CHECK-NEXT: %[[W:.+]] = impulse.triangular_solve %[[U2]], %[[DCOL]] {lower = false, transpose_a = #impulse<transpose TRANSPOSE>} : (tensor<2x2xf64>, tensor<2x1xf64>) -> tensor<2x1xf64>
+// CHECK-NEXT: %[[W:.+]] = impulse.triangular_solve %[[U2]], %[[DCOL]] {lower = false, transpose_a = #impulse.transpose<TRANSPOSE>} : (tensor<2x2xf64>, tensor<2x1xf64>) -> tensor<2x1xf64>
 // CHECK-NEXT: %[[WV:.+]] = impulse.reshape %[[W]] : (tensor<2x1xf64>) -> tensor<2xf64>
 // CHECK-NEXT: %[[WSQ:.+]] = arith.mulf %[[WV]], %[[WV]] : tensor<2xf64>
 // CHECK-NEXT: %{{.+}} = impulse.dot %[[WSQ]], %{{.+}} {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>

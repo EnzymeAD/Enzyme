@@ -23,7 +23,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -32,7 +32,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -41,7 +41,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -79,7 +79,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -88,7 +88,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -97,7 +97,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -141,7 +141,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -151,7 +151,7 @@ module {
       %lg_z2 = arith.addf %lg, %z1#1 : tensor<f64>
       %z2:2 = impulse.sample_region(%z1#0, %lg_z2) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -160,7 +160,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -199,7 +199,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -209,7 +209,7 @@ module {
       %lg_z2 = arith.addf %lg, %z1#1 : tensor<f64>
       %z2:2 = impulse.sample_region(%z1#0, %lg_z2) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -218,7 +218,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -263,7 +263,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -272,7 +272,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -282,7 +282,7 @@ module {
       %lg_z3 = arith.addf %lg, %z2#1 : tensor<f64>
       %z3:2 = impulse.sample_region(%z2#0, %lg_z3) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -321,7 +321,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -330,7 +330,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -340,7 +340,7 @@ module {
       %lg_z3 = arith.addf %lg, %z2#1 : tensor<f64>
       %z3:2 = impulse.sample_region(%z2#0, %lg_z3) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -379,7 +379,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -388,7 +388,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -398,7 +398,7 @@ module {
       %lg_z3 = arith.addf %lg, %z2#1 : tensor<f64>
       %z3:2 = impulse.sample_region(%z2#0, %lg_z3) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -443,7 +443,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -452,7 +452,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -461,7 +461,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -499,7 +499,7 @@ module {
       } {address = [#impulse.symbol<1>], fn = @draw, logpdf_fn = @lp, name = "a"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z1:2 = impulse.sample_region(%a#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -508,7 +508,7 @@ module {
       } {address = [#impulse.symbol<2>], dist = #impulse.dist<BERNOULLI>, name = "z1"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z2:2 = impulse.sample_region(%z1#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -517,7 +517,7 @@ module {
       } {address = [#impulse.symbol<3>], dist = #impulse.dist<BERNOULLI>, name = "z2"} : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       %z3:2 = impulse.sample_region(%z2#0, %lg) sampler {
       ^bb0(%s0: tensor<2xui64>, %s1: tensor<f64>):
-        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+        %o, %u = impulse.random %s0, %zero, %one {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
         %p = impulse.logistic %s1 : (tensor<f64>) -> tensor<f64>
         %t = arith.cmpf olt, %u, %p : tensor<f64>
         %v = arith.select %t, %one, %zero : tensor<i1>, tensor<f64>
@@ -548,8 +548,8 @@ module {
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>, %[[M:[^:]+]]: tensor<f64>, %[[LOGIT:[^:]+]]: tensor<f64>, %[[SP:[^:]+]]: tensor<f64>, %[[TR:[^:]+]]: tensor<1x8xf64>, %[[W:[^:]+]]: tensor<f64>)
 // CHECK-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK: %[[PST:.+]], %[[PROP:.+]] = impulse.random %[[RNG]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT: %[[AST:.+]], %[[ACCU:.+]] = impulse.random %[[PST]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK: %[[PST:.+]], %[[PROP:.+]] = impulse.random %[[RNG]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK-NEXT: %[[AST:.+]], %[[ACCU:.+]] = impulse.random %[[PST]], %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[ACCU]] : tensor<2xf64>
 // CHECK-NEXT: %[[U1S:.+]] = impulse.slice %[[PROP]] {limit_indices = array<i64: 1>, start_indices = array<i64: 0>, strides = array<i64: 1>} : (tensor<2xf64>) -> tensor<1xf64>
 // CHECK-NEXT: %[[U1:.+]] = impulse.reshape %[[U1S]] : (tensor<1xf64>) -> tensor<f64>
@@ -589,14 +589,14 @@ module {
 // CHECK-LABEL: func.func @mh_sequential_dependent
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S1:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S1:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S2:.+]], %[[U2:.+]] = impulse.random %[[S1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S2:.+]], %[[U2:.+]] = impulse.random %[[S1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = math.log %[[U2]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[S2]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[S2]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S4:.+]], %[[U4:.+]] = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S4:.+]], %[[U4:.+]] = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %{{.+}} = math.log %[[U4]] : tensor<f64>
 // CHECK-NOT: tensor<2xf64>
 // CHECK: return %{{.+}}, %[[S4]], %{{.+}} : tensor<1x8xf64>, tensor<2xui64>, tensor<f64>
@@ -604,24 +604,24 @@ module {
 // z3's prior depends on z2: (z1, z2) is batched, z3 stays sequential.
 // CHECK-LABEL: func.func @mh_split_mixed
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
-// CHECK: %[[PST:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT: %[[AST:.+]], %{{.+}} = impulse.random %[[PST]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK: %[[PST:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK-NEXT: %[[AST:.+]], %{{.+}} = impulse.random %[[PST]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
 // CHECK: %[[ACC:.+]] = arith.cmpf olt, %{{.+}}, %{{.+}} : tensor<2xf64>
 // CHECK: %[[TB:.+]] = impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : (tensor<1x8xf64>, tensor<1x2xf64>, tensor<i64>, tensor<i64>) -> tensor<1x8xf64>
 // CHECK-NEXT: %[[Z2S:.+]] = impulse.slice %[[TB]] {limit_indices = array<i64: 1, 3>, start_indices = array<i64: 0, 2>, strides = array<i64: 1, 1>} : (tensor<1x8xf64>) -> tensor<1x1xf64>
-// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[AST]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK: %[[S4:.+]], %{{.+}} = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[AST]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S4:.+]], %{{.+}} = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK: return %{{.+}}, %[[S4]], %{{.+}} : tensor<1x8xf64>, tensor<2xui64>, tensor<f64>
 
 // CHECK-LABEL: func.func @mh_sequential_trace_read
 // CHECK-SAME: (%[[RNG:[^:]+]]: tensor<2xui64>
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S1:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S1:.+]], %{{.+}} = impulse.random %[[RNG]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S2:.+]], %{{.+}} = impulse.random %[[S1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S2:.+]], %{{.+}} = impulse.random %[[S1]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[S2]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S3:.+]], %{{.+}} = impulse.random %[[S2]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
-// CHECK: %[[S4:.+]], %{{.+}} = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK: %[[S4:.+]], %{{.+}} = impulse.random %[[S3]], %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NOT: tensor<2xf64>
 // CHECK: return %[[T2:.+]], %[[S4]], %{{.+}}, %[[T1:.+]] : tensor<1x8xf64>, tensor<2xui64>, tensor<f64>, tensor<1x8xf64>

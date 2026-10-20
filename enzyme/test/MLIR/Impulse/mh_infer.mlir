@@ -41,7 +41,7 @@ module {
 // CHECK-NEXT: %[[CORR:.+]] = impulse.reshape %[[CSL]] : (tensor<1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[WDIFF:.+]] = arith.subf %[[W]], %[[INIT_WEIGHT]] : tensor<f64>
 // CHECK-NEXT: %[[ALPHA:.+]] = arith.subf %[[WDIFF]], %[[CORR]] : tensor<f64>
-// CHECK-NEXT: %[[NEWRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[NEWRNG:.+]], %[[U:.+]] = impulse.random %[[REGEN]]#2, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT: %[[LOGU:.+]] = math.log %[[U]] : tensor<f64>
 // CHECK-NEXT: %[[ACC:.+]] = arith.cmpf olt, %[[LOGU]], %[[ALPHA]] : tensor<f64>
 // CHECK-NEXT: %[[WP:.+]] = impulse.slice %[[REGEN]]#0 {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>

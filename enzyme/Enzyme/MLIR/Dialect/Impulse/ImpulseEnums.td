@@ -262,8 +262,8 @@ def VIConfigAttr : Impulse_Attr<"VIConfig", "vi_config"> {
       Only meaningful when optimizer_kind = ADAM.
   }];
   let parameters = (ins
-    "GuideKindAttr":$guide_kind,
-    "OptimizerKindAttr":$optimizer_kind,
+    EnumAttrParameter<GuideKindAttr>:$guide_kind,
+    EnumAttrParameter<OptimizerKindAttr>:$optimizer_kind,
     DefaultValuedParameter<"int64_t", "1">:$num_particles,
     OptionalParameter<"FloatAttr">:$init_scale,
     OptionalParameter<"FloatAttr">:$adam_b1,

@@ -27,7 +27,7 @@ module {
 // CHECK-DAG:   %[[LO:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[SC:.+]] = arith.constant dense<4.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[RNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[RNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[SCALED:.+]] = arith.mulf %[[U]], %[[SC]] : tensor<f64>
 // CHECK-NEXT:  %[[Y:.+]] = arith.addf %[[SCALED]], %[[LO]] : tensor<f64>
 // CHECK-NEXT:  %[[CENT:.+]] = arith.subf %[[Y]], %[[LO]] : tensor<f64>

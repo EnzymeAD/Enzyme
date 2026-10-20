@@ -28,10 +28,10 @@ module {
   }
 }
 
-// CHECK: %{{.+}}, %[[EPS1:.+]] = impulse.random %{{.+}}, %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK: %{{.+}}, %[[EPS1:.+]] = impulse.random %{{.+}}, %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 // CHECK-NEXT: %[[EPS_A:.+]] = impulse.dynamic_update_slice %{{.+}}, %[[EPS1]], %{{.+}}, %{{.+}} : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 // CHECK-NEXT: %[[SPLIT2:.+]]:2 = impulse.randomSplit %{{.+}} : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
-// CHECK-NEXT: %{{.+}}, %[[EPS2:.+]] = impulse.random %[[SPLIT2]]#1, %{{.+}}, %{{.+}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK-NEXT: %{{.+}}, %[[EPS2:.+]] = impulse.random %[[SPLIT2]]#1, %{{.+}}, %{{.+}} {rng_distribution = #impulse.rng_distribution<NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 // CHECK-NEXT: %[[EPS:.+]] = impulse.dynamic_update_slice %[[EPS_A]], %[[EPS2]], %{{.+}}, %{{.+}} : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
 
 // CHECK: %[[AD:.+]]:3 = enzyme.autodiff_region(%{{.+}}, %{{.+}}, %{{.+}}) {
@@ -62,7 +62,7 @@ module {
 // CHECK-NEXT: %[[ELBO:.+]] = arith.subf %[[GEN]]#1, %[[LOG_Q]] : tensor<f64>
 // CHECK-NEXT: enzyme.yield %[[ELBO]], %[[GEN]]#2 : tensor<f64>, tensor<2xui64>
 
-// CHECK: ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_constnoneed>]
+// CHECK: ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_constnoneed>]
 
 // CHECK-LABEL: func.func @test.generate
 // CHECK: call @normal_logpdf

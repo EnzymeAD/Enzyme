@@ -256,7 +256,7 @@ module {
 // CHECK-LABEL: func.func @gum_model.simulate
 // CHECK-DAG:   %[[GZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[GONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[GRNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[GZERO]], %[[GONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[GRNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[GZERO]], %[[GONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[L1:.+]] = math.log %[[U]] : tensor<f64>
 // CHECK-NEXT:  %[[NL1:.+]] = arith.negf %[[L1]] : tensor<f64>
 // CHECK-NEXT:  %[[L2:.+]] = math.log %[[NL1]] : tensor<f64>
@@ -296,7 +296,7 @@ module {
 // CHECK-DAG:   %[[HC1ME:.+]] = arith.constant dense<0.99999999999999978> : tensor<f64>
 // CHECK-DAG:   %[[HCZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[HCONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[URNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[HCZERO]], %[[HCONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[URNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[HCZERO]], %[[HCONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[UM:.+]] = arith.mulf %[[U]], %[[HC1ME]] : tensor<f64>
 // CHECK-NEXT:  %[[UC:.+]] = arith.addf %[[UM]], %[[HCEPS]] : tensor<f64>
 // CHECK-NEXT:  %[[SUBH:.+]] = arith.subf %[[UC]], %[[HCHALF]] : tensor<f64>
@@ -320,7 +320,7 @@ module {
 // CHECK-DAG:   %[[HNTWO:.+]] = arith.constant dense<2.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[HNZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[HNONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[HNRNG:.+]], %[[Z:.+]] = impulse.random %arg0, %[[HNZERO]], %[[HNONE]] {rng_distribution = #impulse<rng_distribution NORMAL>}
+// CHECK:       %[[HNRNG:.+]], %[[Z:.+]] = impulse.random %arg0, %[[HNZERO]], %[[HNONE]] {rng_distribution = #impulse.rng_distribution<NORMAL>}
 // CHECK-NEXT:  %[[SCL:.+]] = arith.mulf %arg1, %[[Z]] : tensor<f64>
 // CHECK-NEXT:  %[[Y:.+]] = math.absf %[[SCL]] : tensor<f64>
 // CHECK-NEXT:  %[[SIG2:.+]] = arith.mulf %arg1, %arg1 : tensor<f64>
@@ -351,7 +351,7 @@ module {
 // CHECK-LABEL: func.func @du_model.simulate
 // CHECK-DAG:   %[[DZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[DONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[DRNG:.+]], %[[DU:.+]] = impulse.random %arg0, %[[DZERO]], %[[DONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[DRNG:.+]], %[[DU:.+]] = impulse.random %arg0, %[[DZERO]], %[[DONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[HML:.+]] = arith.subf %arg2, %arg1 : tensor<f64>
 // CHECK-NEXT:  %[[N:.+]] = arith.addf %[[HML]], %[[DONE]] : tensor<f64>
 // CHECK-NEXT:  %[[SC:.+]] = arith.mulf %[[DU]], %[[N]] : tensor<f64>
@@ -367,7 +367,7 @@ module {
 // CHECK-LABEL: func.func @bern_model.simulate
 // CHECK-DAG:   %[[BZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[BONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[BRNG:.+]], %[[BU:.+]] = impulse.random %arg0, %[[BZERO]], %[[BONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[BRNG:.+]], %[[BU:.+]] = impulse.random %arg0, %[[BZERO]], %[[BONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[NLG:.+]] = arith.negf %arg1 : tensor<f64>
 // CHECK-NEXT:  %[[E:.+]] = math.exp %[[NLG]] : tensor<f64>
 // CHECK-NEXT:  %[[DEN:.+]] = arith.addf %[[E]], %[[BONE]] : tensor<f64>
@@ -389,7 +389,7 @@ module {
 // CHECK-LABEL: func.func @exp_model.simulate
 // CHECK-DAG:   %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 // CHECK-DAG:   %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK:       %[[RNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse<rng_distribution UNIFORM>}
+// CHECK:       %[[RNG:.+]], %[[U:.+]] = impulse.random %arg0, %[[ZERO]], %[[ONE]] {rng_distribution = #impulse.rng_distribution<UNIFORM>}
 // CHECK-NEXT:  %[[NU:.+]] = arith.negf %[[U]] : tensor<f64>
 // CHECK-NEXT:  %[[L1P:.+]] = math.log1p %[[NU]] : tensor<f64>
 // CHECK-NEXT:  %[[Z:.+]] = arith.negf %[[L1P]] : tensor<f64>
