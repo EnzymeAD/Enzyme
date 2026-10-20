@@ -694,11 +694,7 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     return {reduce(kernel), lognorm};
   }
   case DistBaseKind::MVN: {
-    // Multivariate normal quadratic form, matching the traced construction:
-    //   diff = x - mu; U = cholesky(Sigma, lower=false); alpha = Sigma^-1 diff;
-    //   log p = -0.5*( sum(diff .* alpha) + 2*sum(log diag(U)) + n*log(2*pi) ).
-    // alpha is computed with two triangular solves against U (solve U^T w =
-    // diff then U alpha = w), reproducing the traced `C \ diff`.
+    // One solve, as NumPyro's _batch_mahalanobis: |U^-T diff|^2, Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
     int64_t n = 1;
@@ -712,19 +708,13 @@ LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc, DistBaseKind base,
     Value U = impulse::CholeskyOp::create(b, loc, matType, sigma,
                                           b.getBoolAttr(/*lower=*/false));
     Value diffCol = impulse::ReshapeOp::create(b, loc, colType, diff);
-    Value w = impulse::TriangularSolveOp::create(
+    Value wCol = impulse::TriangularSolveOp::create(
         b, loc, colType, U, diffCol, /*left_side=*/b.getBoolAttr(true),
         /*lower=*/b.getBoolAttr(false), /*unit_diagonal=*/b.getBoolAttr(false),
         impulse::TransposeAttr::get(b.getContext(),
                                     impulse::Transpose::TRANSPOSE));
-    // alpha = U^-1 w : solve U alpha = w.
-    Value alphaCol = impulse::TriangularSolveOp::create(
-        b, loc, colType, U, w, /*left_side=*/b.getBoolAttr(true),
-        /*lower=*/b.getBoolAttr(false), /*unit_diagonal=*/b.getBoolAttr(false),
-        impulse::TransposeAttr::get(b.getContext(),
-                                    impulse::Transpose::NO_TRANSPOSE));
-    Value alpha = impulse::ReshapeOp::create(b, loc, vecType, alphaCol);
-    Value maha = reduce(arith::MulFOp::create(b, loc, diff, alpha));
+    Value w = impulse::ReshapeOp::create(b, loc, vecType, wCol);
+    Value maha = reduce(arith::MulFOp::create(b, loc, w, w));
     Value unnormed = arith::MulFOp::create(
         b, loc, scalarConst(b, loc, elemType, -0.5), maha);
 

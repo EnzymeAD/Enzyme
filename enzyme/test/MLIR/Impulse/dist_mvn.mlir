@@ -1,8 +1,6 @@
 // RUN: %eopt --expand-impulse %s | FileCheck %s
 
-// Gaussian-quadratic-form logpdf via two triangular solves against U.
-// test pins the cholesky uplo, the dot contraction dims, and the two triangular
-// solves' transpose flags.
+// Sampler mu + U^T z (U upper Cholesky); logpdf solves U^T w = x - mu once.
 
 module {
   func.func private @mvn_s(%r: tensor<2xui64>, %mu: tensor<2xf64>, %sig: tensor<2x2xf64>) -> (tensor<2xui64>, tensor<2xf64>) {
@@ -25,7 +23,12 @@ module {
 // CHECK: %[[U:.+]] = impulse.cholesky %arg2 {lower = false}
 // CHECK: %[[UTZ:.+]] = impulse.dot %[[U]], %[[Z]] {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>}
 // CHECK: %[[DRAW:.+]] = arith.addf %arg1, %[[UTZ]]
-// logpdf: alpha = Sigma^-1 diff via solve U^T w = diff then U alpha = w.
-// CHECK: impulse.cholesky %arg2 {lower = false}
-// CHECK: impulse.triangular_solve %{{.*}}, %{{.*}} {lower = false, transpose_a = #impulse<transpose TRANSPOSE>}
-// CHECK: impulse.triangular_solve %{{.*}}, %{{.*}} {lower = false}
+// CHECK: %[[DIFF:.+]] = arith.subf %[[DRAW]], %arg1 : tensor<2xf64>
+// CHECK-NEXT: %[[U2:.+]] = impulse.cholesky %arg2 {lower = false} : (tensor<2x2xf64>) -> tensor<2x2xf64>
+// CHECK-NEXT: %[[DCOL:.+]] = impulse.reshape %[[DIFF]] : (tensor<2xf64>) -> tensor<2x1xf64>
+// CHECK-NEXT: %[[W:.+]] = impulse.triangular_solve %[[U2]], %[[DCOL]] {lower = false, transpose_a = #impulse<transpose TRANSPOSE>} : (tensor<2x2xf64>, tensor<2x1xf64>) -> tensor<2x1xf64>
+// CHECK-NEXT: %[[WV:.+]] = impulse.reshape %[[W]] : (tensor<2x1xf64>) -> tensor<2xf64>
+// CHECK-NEXT: %[[WSQ:.+]] = arith.mulf %[[WV]], %[[WV]] : tensor<2xf64>
+// CHECK-NEXT: %{{.+}} = impulse.dot %[[WSQ]], %{{.+}} {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+// CHECK-NOT: impulse.triangular_solve
+// CHECK: return
