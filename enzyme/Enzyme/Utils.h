@@ -2578,7 +2578,10 @@ static inline void moveBeforeInst(llvm::Instruction *I,
 }
 
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIOrPseudoProbe();
+#elif LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
@@ -2589,7 +2592,9 @@ static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 
 static inline llvm::Instruction *
 getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  return &*B->getFirstNonPHIOrLifetime();
+#elif LLVM_VERSION_MAJOR >= 20
   return &*B->getFirstNonPHIOrDbgOrLifetime();
 #else
   return B->getFirstNonPHIOrDbgOrLifetime();
