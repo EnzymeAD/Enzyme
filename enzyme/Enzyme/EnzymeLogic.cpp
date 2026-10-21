@@ -1935,7 +1935,7 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
     if (isa<AllocaInst>(inst))
       moveBeforeInst(inst, &gutils->newFunc->getEntryBlock().front());
     else
-      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+      moveBeforeInst(inst, getFirstNonPHIOrDbgOrLifetime(entry));
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -2795,8 +2795,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   while (gutils->inversionAllocs->size() > 0) {
-    gutils->inversionAllocs->back().moveBefore(
-        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    moveBeforeInst(
+        &gutils->inversionAllocs->back(),
+        getFirstNonPHIOrDbgOrLifetime(&gutils->newFunc->getEntryBlock()));
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -4773,7 +4774,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           AIs.push_back(AI);
       }
       for (auto AI : AIs)
-        AI->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+        moveBeforeInst(AI, getFirstNonPHIOrDbgOrLifetime(entry));
       entry = OldEntryInsts;
     }
   }
