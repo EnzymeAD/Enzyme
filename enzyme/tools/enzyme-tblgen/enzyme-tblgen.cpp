@@ -382,11 +382,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                         Twine("list 'indices' not defined in ") +
                             resultTree->getAsString());
       SmallVector<unsigned, 2> retidx_cur;
-      if (indicesP->getValues().size() == 1 &&
-          cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
+      if (indicesP->size() == 1 &&
+          cast<IntInit>(indicesP->getElement(0))->getValue() == -1) {
         retidx_cur = SmallVector<unsigned, 2>(retidx.begin(), retidx.end());
       } else {
-        for (auto res : indicesP->getValues()) {
+        for (auto res : *indicesP) {
           auto val = cast<IntInit>(res)->getValue();
           assert(val >= 0);
           retidx_cur.push_back((unsigned)val);
@@ -2061,15 +2061,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
         auto lst = cast<ListInit>(nameI);
         assert(lst->size() >= 1);
-        StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
+        StringRef name = cast<StringInit>(lst->getElement(0))->getValue();
         if (lst->size() >= 2) {
-          auto min = cast<StringInit>(lst->getValues()[1])->getValue();
+          auto min = cast<StringInit>(lst->getElement(1))->getValue();
           int min_int = 100000;
           min.getAsInteger(10, min_int);
           if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
           if (lst->size() >= 3) {
-            auto max = cast<StringInit>(lst->getValues()[2])->getValue();
+            auto max = cast<StringInit>(lst->getElement(2))->getValue();
             int max_int = 0;
             max.getAsInteger(10, max_int);
             if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
@@ -3003,9 +3003,9 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
         auto lst = cast<ListInit>(nameI);
         assert(lst->size() >= 1);
-        StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
+        StringRef name = cast<StringInit>(lst->getElement(0))->getValue();
         if (lst->size() >= 2) {
-          auto min = cast<StringInit>(lst->getValues()[1])->getValue();
+          auto min = cast<StringInit>(lst->getElement(1))->getValue();
           int min_int = 0;
           if (min.size() != 0 && min.getAsInteger(10, min_int)) {
             PrintFatalError(pattern->getLoc(),
@@ -3014,7 +3014,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
           if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
           if (lst->size() >= 3) {
-            auto max = cast<StringInit>(lst->getValues()[2])->getValue();
+            auto max = cast<StringInit>(lst->getElement(2))->getValue();
             int max_int = 0;
             if (max.size() != 0 && max.getAsInteger(10, max_int)) {
               PrintFatalError(pattern->getLoc(),

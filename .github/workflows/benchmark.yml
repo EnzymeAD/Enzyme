@@ -41,7 +41,7 @@ jobs:
           # - Debug
           # - RelWithDebInfo
         os:
-          - linux-x86-n2-32
+          - linux-x86-n4-32
     timeout-minutes: 120 
     steps:
     - name: add llvm 

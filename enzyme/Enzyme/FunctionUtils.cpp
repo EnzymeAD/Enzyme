@@ -430,7 +430,7 @@ void RecursivelyReplaceAddressSpace(
           continue;
         }
       } else {
-        IRBuilder<> B(&(*P->getParent()->getFirstNonPHIOrDbgOrLifetime()));
+        IRBuilder<> B(getFirstNonPHIOrDbgOrLifetime(P->getParent()));
         auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
         for (size_t i = 0; i < NumOperands; i++) {
           nP->addIncoming(replacedOperands[i], P->getIncomingBlock(i));
