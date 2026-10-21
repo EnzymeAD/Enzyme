@@ -6327,6 +6327,24 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
     }
   }
+  // (uitofp a) != 0 -> a != 0, and likewise for sitofp
+  if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+    if (fcmp->getPredicate() == FCmpInst::FCMP_UNE ||
+        fcmp->getPredicate() == FCmpInst::FCMP_ONE) {
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i)))
+          if (C->isZero())
+            if (auto cast = dyn_cast<CastInst>(fcmp->getOperand(1 - i)))
+              if (cast->getOpcode() == Instruction::UIToFP ||
+                  cast->getOpcode() == Instruction::SIToFP) {
+                auto ncmp1 = pushcse(B.CreateICmp(
+                    ICmpInst::ICMP_NE, cast->getOperand(0),
+                    ConstantInt::get(cast->getOperand(0)->getType(), 0)));
+                replaceAndErase(cur, ncmp1);
+                return "FCmpNeToICmp";
+              }
+    }
+  }
   if (auto fcmp = dyn_cast<CmpInst>(cur)) {
     if (fcmp->getPredicate() == CmpInst::ICMP_EQ ||
         fcmp->getPredicate() == CmpInst::ICMP_NE ||
