@@ -66,12 +66,26 @@ jobs:
         . spack/share/spack/setup-env.sh
         spack compiler find
         spack install openmpi ^llvm
+    - name: install sundials
+      # Built from source rather than apt's libsundials-fortran-dev: its .mod
+      # files are gfortran's, and flang cannot read them. Only the pieces the
+      # CVODE tests in enzyme/test/Integration/Fortran/cvode need are built.
+      run: |
+        set -eo pipefail
+        curl -fsSL https://github.com/LLNL/sundials/releases/download/v7.9.0/sundials-7.9.0.tar.gz | tar xz -C $RUNNER_TEMP
+        cmake -S $RUNNER_TEMP/sundials-7.9.0 -B $RUNNER_TEMP/sundials-build -GNinja -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=clang-${{ matrix.llvm }} -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} \
+          -DBUILD_FORTRAN_MODULE_INTERFACE=ON -DBUILD_STATIC_LIBS=OFF \
+          -DBUILD_ARKODE=OFF -DBUILD_CVODES=OFF -DBUILD_IDA=OFF -DBUILD_IDAS=OFF -DBUILD_KINSOL=OFF \
+          -DEXAMPLES_ENABLE_C=OFF -DEXAMPLES_ENABLE_F2003=OFF -DEXAMPLES_INSTALL=OFF \
+          -DCMAKE_INSTALL_PREFIX=$HOME/sundials
+        cmake --build $RUNNER_TEMP/sundials-build --target install
     - name: generate build system
       run: |
         . spack/share/spack/setup-env.sh
         spack load openmpi
         rm -rf build && mkdir build && cd build
-        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }}
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DENZYME_FLANG=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }} -DSUNDIALS_DIR=$HOME/sundials/lib/cmake/sundials
     - name: build enzyme
       working-directory: 'build'
       run: |
