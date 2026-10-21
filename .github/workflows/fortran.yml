@@ -83,7 +83,7 @@ jobs:
       run: |
         . ../spack/share/spack/setup-env.sh
         spack load openmpi
-        ninja check-enzyme-fortran
+        ninja check-enzyme-fortran check-enzyme-integration-fortran
   build-and-test-fortran-ifx:
     name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
     runs-on: ${{matrix.os}}
