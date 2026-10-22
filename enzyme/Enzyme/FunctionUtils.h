@@ -75,6 +75,16 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
 
+/// Mark pointer arguments through which nothing is captured and no active
+/// value is ever stored, even through pointers loaded (transitively) from the
+/// memory they point to, with the "enzyme_RecursiveNoActiveStore" argument
+/// attribute. A store is inactive if it stores a constant, is marked
+/// enzyme_inactive, or stores an integer by TBAA; a memset fills bytes; a call
+/// is fine if it is known inactive and does not capture the pointer, or
+/// receives it as a parameter with the same property. Returns whether any
+/// attribute was added.
+bool DetectRecursiveNoActiveStore(llvm::Module &M);
+
 class PreProcessCache {
 public:
   PreProcessCache();
