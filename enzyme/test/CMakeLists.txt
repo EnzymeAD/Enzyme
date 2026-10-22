@@ -42,6 +42,42 @@ if(ENZYME_FORTRAN)
   endif()
 endif()
 
+# Locate SUNDIALS with its Fortran module interface for the CVODE tests
+# (enzyme/test/Integration/Fortran/cvode); they are unsupported without it.
+# Point SUNDIALS_DIR at the lib/cmake/sundials directory of an installation
+# configured with BUILD_FORTRAN_MODULE_INTERFACE=ON by the same Fortran
+# compiler (.mod files are compiler specific). The include and link flags are
+# serialized into the lit substitutions %cvode_include and %cvode_libs.
+set(ENZYME_CVODE_FORTRAN_ENABLED 0)
+set(ENZYME_CVODE_INCLUDE_FLAGS "")
+set(ENZYME_CVODE_LINK_FLAGS "")
+if(ENZYME_FORTRAN)
+  find_package(SUNDIALS CONFIG QUIET)
+  if(SUNDIALS_FOUND AND TARGET SUNDIALS::fcvode_mod)
+    # SUNDIALS_DIR is <libdir>/cmake/sundials; the modules are in <prefix>/fortran.
+    get_filename_component(_enzyme_sundials_libdir "${SUNDIALS_DIR}/../.." ABSOLUTE)
+    get_filename_component(_enzyme_sundials_prefix "${_enzyme_sundials_libdir}/.." ABSOLUTE)
+    if(EXISTS "${_enzyme_sundials_prefix}/fortran/fcvode_mod.mod")
+      set(ENZYME_CVODE_FORTRAN_ENABLED 1)
+      set(ENZYME_CVODE_INCLUDE_FLAGS "-I${_enzyme_sundials_prefix}/fortran")
+      set(ENZYME_CVODE_LINK_FLAGS
+          "-L${_enzyme_sundials_libdir} -Wl,-rpath,${_enzyme_sundials_libdir}")
+      foreach(lib fcvode_mod cvode fnvecserial_mod nvecserial fsunlinsolspgmr_mod
+                  sunlinsolspgmr fsunlinsoldense_mod sunlinsoldense fsunmatrixdense_mod
+                  sunmatrixdense fcore_mod core)
+        string(APPEND ENZYME_CVODE_LINK_FLAGS " -lsundials_${lib}")
+      endforeach()
+      message(
+        STATUS
+          "Enzyme Fortran CVODE tests enabled: ${ENZYME_CVODE_INCLUDE_FLAGS} / ${ENZYME_CVODE_LINK_FLAGS}")
+    endif()
+  endif()
+  if(NOT ENZYME_CVODE_FORTRAN_ENABLED)
+    message(
+      STATUS "SUNDIALS Fortran modules not found: CVODE Fortran tests unsupported")
+  endif()
+endif()
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py MAIN_CONFIG
@@ -71,6 +107,9 @@ if(ENZYME_FORTRAN)
          LLDEnzyme-${LLVM_VERSION_MAJOR})
   endif()
   add_subdirectory(Fortran)
+  # Added here rather than from Integration/CMakeLists.txt, which is only
+  # reached when clang is found.
+  add_subdirectory(Integration/Fortran)
 endif()
 if(ENZYME_BC_LOADER)
   add_subdirectory(BCLoader)

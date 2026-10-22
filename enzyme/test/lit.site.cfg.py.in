@@ -149,6 +149,14 @@ if "@ENZYME_MPI_FORTRAN_ENABLED@" == "1":
     if 'HOME' in os.environ:
         config.environment['HOME'] = os.environ['HOME']
 
+# Include and link flags for SUNDIALS' Fortran module interface, located by
+# CMake's find_package(SUNDIALS). The CVODE tests
+# (enzyme/test/Integration/Fortran/cvode) are gated on `REQUIRES: cvode`.
+config.substitutions.append(('%cvode_include', '@ENZYME_CVODE_INCLUDE_FLAGS@'))
+config.substitutions.append(('%cvode_libs', '@ENZYME_CVODE_LINK_FLAGS@'))
+if "@ENZYME_CVODE_FORTRAN_ENABLED@" == "1":
+    config.available_features.add('cvode')
+
 # Built by ENZYME_FLANG=ON; lets flang run Enzyme itself instead of piping IR to opt.
 # -Xflang -load also registers Enzyme's options, so that -mllvm -enzyme-* parses.
 flangEnzyme = ('@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
