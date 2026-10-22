@@ -109,5 +109,10 @@ int main(int argc, char** argv) {
       printf("%ld, %ld = %f\n", tup.row, tup.col, tup.val);
   }
 
+  // hess_f reads the input through mod_load (x[idx % N]) and seeds
+  // index N like index 0; the dense reference uses the unrolled ring.
+  double *y = (double *)malloc(sizeof(double) * (N + 1));
+  for (size_t k = 0; k <= N; k++) y[k] = x[k % N];
+  CHECK_SPARSE_HESSIAN(res, grad_f<double>, N, y, N, N + 1, N);
   return 0;
 }
