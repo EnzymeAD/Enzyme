@@ -1,17 +1,28 @@
 name: Benchmarking
 
-on: 
+on:
+  # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
-    - main
+      - main
+    paths: &paths
+      - '.github/workflows/benchmark.yml'
+      - 'enzyme/**'
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    branches:
-    - main
+    paths: *paths
   merge_group:
-    
-concurrency: 
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
 
 jobs:
   build:
@@ -23,9 +34,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15"]
-        build: ["Release"] #, "Debug" "RelWithDebInfo"
-        os: ["linux-x86-n4-32"]
+        llvm:
+          - 15
+        build:
+          - Release
+          # - Debug
+          # - RelWithDebInfo
+        os:
+          - linux-x86-n4-32
     timeout-minutes: 120 
     steps:
     - name: add llvm 
