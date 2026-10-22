@@ -965,7 +965,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           }                                                                    \
         origParent = lookupInst;                                               \
         if (!noLookup)                                                         \
-          ___res = lookupM(v, Builder, available, v != val, origParent);       \
+          ___res = lookupM(v, Builder, available, v != val, origParent,        \
+                           /*permitFailure*/ true);                            \
       }                                                                        \
       if (___res)                                                              \
         assert(___res->getType() == vty && "uw");                              \
@@ -976,7 +977,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       if (found != available.end() && !found->second)                          \
         ___res = nullptr;                                                      \
       else {                                                                   \
-        ___res = lookupM(v, Builder, available, v != val, origParent);         \
+        ___res = lookupM(v, Builder, available, v != val, origParent,          \
+                         /*permitFailure*/ true);                              \
         if (___res && ___res->getType() != vty) {                              \
           llvm::errs() << *newFunc << "\n";                                    \
           llvm::errs() << " v = " << *v << " res = " << *___res << "\n";       \
@@ -2176,7 +2178,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   if (!noLookup) {
                     BasicBlock *nS2 = nextScope;
                     Value *v = inst;
-                    ___res = lookupM(v, B, prevAvailable, v != val, nS2);
+                    ___res = lookupM(v, B, prevAvailable, v != val, nS2,
+                                     /*permitFailure*/ true);
                   }
                 }
                 if (___res)
@@ -2487,7 +2490,11 @@ endCheck:
         }
       }
     auto toreturn = lookupM(nval, BuilderM, available,
-                            /*tryLegalRecomputeCheck*/ false, scope);
+                            /*tryLegalRecomputeCheck*/ false, scope,
+                            /*permitFailure*/ unwrapMode ==
+                                UnwrapMode::AttemptFullUnwrapWithLookup);
+    if (!toreturn)
+      return nullptr;
     assert(val->getType() == toreturn->getType());
     return toreturn;
   }
@@ -6834,7 +6841,8 @@ static bool addRecsCorrespond(const SCEVAddRecExpr *ar1,
 
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &incoming_available,
-                              bool tryLegalRecomputeCheck, BasicBlock *scope) {
+                              bool tryLegalRecomputeCheck, BasicBlock *scope,
+                              bool permitFailure) {
 
   assert(mode == DerivativeMode::ReverseModePrimal ||
          mode == DerivativeMode::ReverseModeGradient ||
@@ -7090,6 +7098,11 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   assert(inst->getName() != "<badref>");
   val = fixLCSSA(inst, scope);
+  if (isa<UndefValue>(val) && permitFailure) {
+    // scope is unreachable from the definition of inst, so there is no value
+    // to be had here. The caller is expected to cache instead.
+    return nullptr;
+  }
   if (isa<UndefValue>(val)) {
     llvm::errs() << *oldFunc << "\n";
     llvm::errs() << *newFunc << "\n";
@@ -7156,6 +7169,22 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     } else {
       if (isa<LoadInst>(prelcssaInst)) {
       }
+    }
+  }
+
+  // A value which may not be stored to the tape, such as a julia decayed
+  // pointer, has to be rebuilt from its operands here. Those operands are
+  // themselves cacheable, so unwrap with a lookup fallback rather than falling
+  // through to the caching below, which would produce a cache of the
+  // uncacheable value itself.
+  if (hasNoCache(inst)) {
+    auto op = unwrapM(prelcssaInst, BuilderM, available,
+                      UnwrapMode::AttemptFullUnwrapWithLookup, scope);
+    if (op) {
+      assert(op->getType() == inst->getType());
+      if (!reduceRegister)
+        lookup_cache[BuilderM.GetInsertBlock()][val] = op;
+      return op;
     }
   }
 
