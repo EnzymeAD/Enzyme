@@ -13,6 +13,7 @@
 #include "Interfaces/CloneFunction.h"
 #include "Interfaces/Utils.h"
 
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -267,8 +268,37 @@ void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
   invertedPointers.map(val, toset);
 }
 
-void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
-  // TODO also block arguments
+LogicalResult mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
+  // Validate active intermediate types before constructing their shadows.
+  auto validate = [&](Value val) -> LogicalResult {
+    if (isConstantValue(val))
+      return success();
+    Type type = val.getType();
+    bool supported = isa<AutoDiffTypeInterface>(type);
+    if (auto vectorType = dyn_cast<VectorType>(type)) {
+      Type elementType = vectorType.getElementType();
+      supported &= isa<IntegerType, IndexType, FloatType>(elementType) &&
+                   isa<AutoDiffTypeInterface>(elementType);
+    }
+    if (supported)
+      return success();
+    return emitError(val.getLoc())
+           << "AutoDiffTypeInterface not implemented for active type " << type;
+  };
+  auto checked = oldFunc.walk([&](Operation *op) -> WalkResult {
+    for (Value val : op->getResults())
+      if (failed(validate(val)))
+        return WalkResult::interrupt();
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument arg : block.getArguments())
+          if (failed(validate(arg)))
+            return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  if (checked.wasInterrupted())
+    return failure();
+
   // assert(TR.getFunction() == oldFunc);
 
   // Don't create derivatives for code that results in termination
@@ -320,6 +350,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       invertedPointers.map(res, anti);
     }
   });
+  return success();
 }
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
