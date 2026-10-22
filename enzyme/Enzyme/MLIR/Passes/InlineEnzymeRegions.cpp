@@ -18,6 +18,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -445,23 +446,31 @@ struct OutlineEnzymeFromRegion
     unsigned increment = 0;
     for (auto regionOp : toOutlineRev) {
       auto symbol = regionOp->getParentOfType<SymbolOpInterface>();
-      std::string defaultName =
-          (Twine(symbol.getName(), "_to_diff") + Twine(increment)).str();
+      auto *symbolTable = SymbolTable::getNearestSymbolTable(symbol);
+      // An earlier outlining pass (or the input module) may already contain
+      // this name. Inlining leaves those functions in the symbol table.
+      std::string defaultName;
+      do {
+        defaultName =
+            (Twine(symbol.getName(), "_to_diff") + Twine(increment++)).str();
+      } while (SymbolTable::lookupSymbolIn(symbolTable, defaultName));
       if (failed(outlineEnzymeAutoDiffRegion(regionOp, defaultName, builder)))
         return signalPassFailure();
-
-      ++increment;
     }
 
     for (auto regionOp : toOutlineFwd) {
       auto symbol = regionOp->getParentOfType<SymbolOpInterface>();
-      std::string defaultName =
-          (Twine(symbol.getName(), "_to_fwddiff") + Twine(increment)).str();
+      auto *symbolTable = SymbolTable::getNearestSymbolTable(symbol);
+      // An earlier outlining pass (or the input module) may already contain
+      // this name. Inlining leaves those functions in the symbol table.
+      std::string defaultName;
+      do {
+        defaultName =
+            (Twine(symbol.getName(), "_to_fwddiff") + Twine(increment++)).str();
+      } while (SymbolTable::lookupSymbolIn(symbolTable, defaultName));
       if (failed(
               outlineEnzymeForwardDiffRegion(regionOp, defaultName, builder)))
         return signalPassFailure();
-
-      ++increment;
     }
   }
 };

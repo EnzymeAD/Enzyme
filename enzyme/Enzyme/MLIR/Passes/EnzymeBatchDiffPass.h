@@ -9,7 +9,9 @@
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include <cstdint>
 
@@ -17,11 +19,31 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
+// The shared effect collector does not model every LLVM call. Until it does,
+// batching must conservatively retain calls rather than move reads across them
+// or execute a potentially effectful primal fewer times.
+inline bool containsLLVMCall(Operation *op) {
+  return op->walk([](LLVM::CallOp) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
+inline SmallVector<MemoryEffects::EffectInstance>
+collectBatchFnEffects(FunctionOpInterface fn) {
+  auto effects = oputils::collectFnEffects(fn);
+  if (containsLLVMCall(fn)) {
+    effects.emplace_back(MemoryEffects::Read::get());
+    effects.emplace_back(MemoryEffects::Write::get());
+  }
+  return effects;
+}
+
 struct BatchDiffCacheKey {
   FunctionOpInterface function;
   SmallVector<mlir::Value> inputs;
   SmallVector<enzyme::Activity> inActivity;
   SmallVector<enzyme::Activity> retActivity;
+  bool strongZero;
+  bool atomicAdd;
   Block *blk;
 
   // for use in std::map:
@@ -56,6 +78,10 @@ struct BatchDiffCacheKey {
       return true;
     if (other.retActivity < retActivity)
       return false;
+    if (strongZero != other.strongZero)
+      return strongZero < other.strongZero;
+    if (atomicAdd != other.atomicAdd)
+      return atomicAdd < other.atomicAdd;
 
     return blk < other.blk;
   }
@@ -69,8 +95,12 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   SmallVector<Activity> retActivity(
       uop.getRetActivity().template getAsValueRange<ActivityAttr>());
   SmallVector<Value> in_args = uop.getPrimalInputs();
-  batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity,
-                                    uop->getBlock()};
+  bool atomicAdd = false;
+  if constexpr (std::is_same_v<SourceOp, AutoDiffOp>)
+    atomicAdd = uop.getAtomicAdd();
+  batchutils::BatchDiffCacheKey key{
+      fn,        in_args,        inActivity, retActivity, uop.getStrongZero(),
+      atomicAdd, uop->getBlock()};
   return key;
 }
 
@@ -104,8 +134,8 @@ SmallVector<MemoryEffects::EffectInstance> findCallerEffects(
     if (!foundPrimal) {
       // TODO: Handle this either as a global value, or a value which
       // is inside of the MLIR function(for inter-proc alias analysis) -
-      // Just skip for now, since we don't have interprocedural alias-analysis
-      // implemented yet.
+      // Retain an unknown effect rather than dropping a possible conflict.
+      outerEffects.emplace_back(eff.getEffect(), eff.getResource());
       continue;
     }
 
@@ -169,6 +199,7 @@ llvm::SmallVector<SourceOp, 2> pruneGradDefs(BatchDiffCacheKey &key,
   // the first diff in the same block. (ops in allDiffs are guaranteed to belong
   // to the same basic block)
   auto firstDiffOp = allDiffs[0];
+  DominanceInfo dominance;
   for (auto uop : allDiffs) {
 
     auto diffArgs = uop.getShadows();
@@ -180,13 +211,9 @@ llvm::SmallVector<SourceOp, 2> pruneGradDefs(BatchDiffCacheKey &key,
     bool definedBeforeFirst = true;
 
     for (auto diffVal : diffArgs) {
-      if (auto diffValOR = dyn_cast<OpResult>(diffVal)) {
-        // check that defining op appears before the current op
-        auto parentOp = diffValOR.getOwner();
-        if (!parentOp->isBeforeInBlock(firstDiffOp.getOperation())) {
-          definedBeforeFirst = false;
-          break;
-        }
+      if (!dominance.properlyDominates(diffVal, firstDiffOp.getOperation())) {
+        definedBeforeFirst = false;
+        break;
       }
     }
 
@@ -241,11 +268,11 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(currFwdOp,
                                                 currFwdOp.getFnAttr()));
-        if (!fnOp)
-          continue;
+        if (!fnOp || fnOp.isExternal())
+          return legalMerge;
 
         if (!innerEffectCache.contains(fnOp)) {
-          innerEffectCache[fnOp] = oputils::collectFnEffects(fnOp);
+          innerEffectCache[fnOp] = collectBatchFnEffects(fnOp);
         }
 
         // map to outerEffects
@@ -256,11 +283,11 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(currBwdOp,
                                                 currBwdOp.getFnAttr()));
-        if (!fnOp)
-          continue;
+        if (!fnOp || fnOp.isExternal())
+          return legalMerge;
 
         if (!innerEffectCache.contains(fnOp)) {
-          innerEffectCache[fnOp] = oputils::collectFnEffects(fnOp);
+          innerEffectCache[fnOp] = collectBatchFnEffects(fnOp);
         }
 
         // map to outerEffects
@@ -271,7 +298,10 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         // from `findCallerEffects` into collectOpEffects(), accounting for
         // inter-procedural alias analysis
         SmallVector<MemoryEffects::EffectInstance> currOpEffects;
-        (void)oputils::collectOpEffects(curr, currOpEffects);
+        if (containsLLVMCall(curr))
+          return legalMerge;
+        if (!oputils::collectOpEffects(curr, currOpEffects))
+          return legalMerge;
         betweenEffects.append(currOpEffects);
       }
     }
@@ -287,12 +317,8 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         // relative order of writes to the primal and derivative arguments. For
         // this, we alias the underlying effects in the preceding effects and
         // the current  candidate operation.
-        if ((isa<MemoryEffects::Write>(prevEffect.getEffect()) &&
-             isa<MemoryEffects::Read>(candidateEffect.getEffect())) ||
-            (isa<MemoryEffects::Read>(prevEffect.getEffect()) &&
-             isa<MemoryEffects::Write>(candidateEffect.getEffect())) ||
-            (isa<MemoryEffects::Write>(prevEffect.getEffect()) &&
-             isa<MemoryEffects::Write>(candidateEffect.getEffect()))) {
+        if (!isa<MemoryEffects::Read>(prevEffect.getEffect()) ||
+            !isa<MemoryEffects::Read>(candidateEffect.getEffect())) {
 
           // if the effects alias each other, then this is not a candidate for
           // merging
