@@ -24,10 +24,11 @@ declare float @__enzyme_autodiff(float (float)*, ...)
 
 ; CHECK: define internal { float } @diffetester(float %x, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast float @air.cbrt.f32(float %x)
-; CHECK-DAG:    [[REG1:%[0-9]+]] = fmul fast float 3.000000e+00, %x
-; CHECK-DAG:    [[REG2:%[0-9]+]] = fmul fast float %differeturn, %0
-; CHECK-NEXT:   %3 = fdiv fast float [[REG2]], [[REG1]]
-; CHECK-NEXT:   %4 = insertvalue { float } undef, float %3, 0
-; CHECK-NEXT:   ret { float } %4
+; CHECK-NEXT:   %0 = call float @air.cbrt.f32(float %x)
+; CHECK-DAG:    [[REG1:%[0-9]+]] = fmul float 3.000000e+00, %x
+; CHECK-DAG:    [[REG2:%[0-9]+]] = fmul float %differeturn, %0
+; CHECK-NEXT:   %3 = fdiv float [[REG2]], [[REG1]]
+; CHECK-NEXT:   %4 = fadd float 0.000000e+00, %3
+; CHECK-NEXT:   %5 = insertvalue { float } undef, float %4, 0
+; CHECK-NEXT:   ret { float } %5
 ; CHECK-NEXT: }

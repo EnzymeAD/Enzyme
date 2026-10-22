@@ -21,6 +21,6 @@ declare double @__enzyme_autodiff(double (double)*, double)
 declare double @llvm.sin.f64(double)
 
 ; CHECK: define internal { double } @diffecaller(
-; CHECK: call fast double @llvm.cos.f64(
+; CHECK: call double @llvm.cos.f64(
 ; CHECK: define internal { double } @diffecallee(
 ; CHECK-NEXT: unreachable

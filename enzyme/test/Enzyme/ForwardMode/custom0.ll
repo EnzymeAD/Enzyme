@@ -31,7 +31,7 @@ attributes #0 = { norecurse nounwind readnone }
 
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @fixderivative_add(double %x, double %"x'", double %x, double %"x'")
+; CHECK-NEXT:   %0 = call double @fixderivative_add(double %x, double %"x'", double %x, double %"x'")
 ; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }
 

@@ -20,12 +20,12 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %1 = select fast i1 %0, double 0.000000e+00, double %"x'"
-; CHECK-NEXT:   %2 = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %3 = fneg fast double %"y'"
-; CHECK-NEXT:   %4 = select fast i1 %2, double 0.000000e+00, double %3
-; CHECK-NEXT:   %5 = fadd fast double %1, %4
+; CHECK-NEXT:   %0 = fcmp olt double %x, %y
+; CHECK-NEXT:   %1 = select i1 %0, double 0.000000e+00, double %"x'"
+; CHECK-NEXT:   %2 = fcmp olt double %x, %y
+; CHECK-NEXT:   %3 = fneg double %"y'"
+; CHECK-NEXT:   %4 = select i1 %2, double 0.000000e+00, double %3
+; CHECK-NEXT:   %5 = fadd double %1, %4
 ; CHECK-NEXT:   ret double %5
 ; CHECK-NEXT: }
 

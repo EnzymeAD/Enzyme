@@ -22,9 +22,10 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffetester(double %x, double %y, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[diffex:.+]] = select {{(fast )?}}i1 %[[cmp]], double 0.000000e+00, double %[[differet]]
-; CHECK-NEXT:   %[[diffey:.+]] = select {{(fast )?}}i1 %[[cmp]], double %[[differet]], double 0.000000e+00
+; CHECK-NEXT:   %[[cmp:.+]] = fcmp olt double %x, %y
+; CHECK-NEXT:   %[[acc:.+]] = fadd double 0.000000e+00, %[[differet]]
+; CHECK-NEXT:   %[[diffex:.+]] = select {{(fast )?}}i1 %[[cmp]], double 0.000000e+00, double %[[acc]]
+; CHECK-NEXT:   %[[diffey:.+]] = select {{(fast )?}}i1 %[[cmp]], double %[[acc]], double 0.000000e+00
 ; CHECK-NEXT:   %[[iv0:.+]] = insertvalue { double, double } undef, double %[[diffex]], 0
 ; CHECK-NEXT:   %[[iv1:.+]] = insertvalue { double, double } %[[iv0]], double %[[diffey]], 1
 ; CHECK-NEXT:   ret { double, double } %[[iv1]]
