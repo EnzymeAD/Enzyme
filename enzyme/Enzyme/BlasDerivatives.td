@@ -102,6 +102,9 @@ def is_diag_int : IntMatchers<
 def is_left : MagicInst;
 def is_lower : MagicInst;
 def is_zero : MagicInst;
+// (max_one $n): max(1, $n). BLAS requires a leading dimension of at least one
+// even for an empty matrix, so use this for buffers Enzyme allocates.
+def max_one : MagicInst;
 def is_nonunit : MagicInst;
 
 def First : MagicInst;
@@ -354,7 +357,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   [
                   
                   /* alpha */ (Seq<["AB", "product", "m", "n"], [], 1> 
-                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, (max_one $m)),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),
                   /* A     */ (BlasCall<"gemm"> $layout, (Rows $transa, 
                                                     (Concat $transa, transpose<"transb">, $m, $k), 
@@ -643,7 +646,7 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
                   [
                   /* a     */ 
                     (Seq<["tri", "triangular", "n"], [], 1>
-                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, (max_one $n)),
                       (BlasCall<"gemm">
                         $layout,
                         Char<"N">,
@@ -659,14 +662,14 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
                           (Concat $B, (ld $B, Char<"N">, $ldb, $n, $n)),
                           (Shadow $B)),
                         Constant<"1">,
-                        use<"tri">, $n),
+                        use<"tri">, (max_one $n)),
 
                       (BlasCall<"copy"> 
                           (ISelect (is_nonunit $diag), ConstantInt<0>, $n),
                           (First (Shadow $A)), (Add $lda, ConstantInt<1>),
                           use<"tri">, (Add $n, ConstantInt<1>)),
 
-                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, (max_one $n), (Shadow $A))
                       ),
                   /* b     */ (BlasCall<"trtrs"> $layout, $uplo, transpose<"trans">, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
                   ]
@@ -751,9 +754,9 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   [
                     /* A     */ 
                   (Seq<["ztri", "zerotriangular", "n"], [], 1>
-                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"ztri">, $n),
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"ztri">, (max_one $n)),
                       
-                      (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, $n),
+                      (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, (max_one $n)),
 
                       (Seq<["tmp", "vector", "n"], [], 1>
                         
@@ -761,13 +764,13 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"ztri">, (Add $n, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
                         (BlasCall<"scal"> $n, Constant<"0.5">, use<"tmp">, ConstantInt<1>),
 
-                        (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"ztri">, $n, Alloca<1>),
+                        (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"ztri">, (max_one $n), Alloca<1>),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, use<"ztri">, (Add $n, ConstantInt<1>))
                       ),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, (max_one $n)),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, $n) ,
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, (max_one $n)) ,
 
                       (For<"i", 0> (ISelect (is_zero $n), ConstantInt<0>, (Sub $n, ConstantInt<1>)),
                         (BlasCall<"axpy">
@@ -803,11 +806,11 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                             )
                         )
                       ),
-                     (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"ztri">, $n, (Shadow $A))
+                     (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"ztri">, (max_one $n), (Shadow $A))
                   )
                   ],
                   (Seq<["tri", "triangular", "n"], [], 0>
-                      (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, (max_one $n)),
                       
                       (CopyLowerToUpper<""> $layout, $uplo, (Shadow $A), $n),
                       
@@ -828,7 +831,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),    
                         // Restore the flipped side, but saving our computed diagonal
                         (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
-                        (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, use<"tri">, $n, (Shadow $A)),
+                        (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, use<"tri">, (max_one $n), (Shadow $A)),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
                     )
                   )
@@ -841,14 +844,14 @@ def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $i
                   [
                     (Seq<["tri", "triangular", "n"], [], 1>
 
-                      (BlasCall<"syr2k"> $layout, Char<"U">, Char<"N">, $n, $nrhs, Constant<"1.0">, input<"B">, $n, (Shadow $B), Constant<"0.0">, use<"tri">, $n),
+                      (BlasCall<"syr2k"> $layout, Char<"U">, Char<"N">, $n, $nrhs, Constant<"1.0">, input<"B">, (max_one $n), (Shadow $B), Constant<"0.0">, use<"tri">, (max_one $n)),
                       (CopyLowerToUpper<""> $layout, Char<"U">, (Concat use<"tri">, $n), $n),
 
-                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, (max_one $n)),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, (max_one $n)),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, (max_one $n)),
 
 
                       (For<"i", 0> $n,
