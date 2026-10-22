@@ -348,7 +348,8 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
-if (pattern.getName() == "potrf" || pattern.getName() == "trtrs") {
+if (pattern.getName() == "potrf" || pattern.getName() == "trtrs" ||
+    pattern.getName() == "trsv" || pattern.getName() == "trsm") {
 os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
 }
   os << "    if (byRef) {\n";
@@ -359,7 +360,7 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
     const char* scalType;
     if (ty == ArgType::len || ty == ArgType::vincInc || ty == ArgType::mldLD) {
       scalType = "intType";
-    } else if (ty == ArgType::trans) {
+    } else if (is_char_arg(ty)) {
       scalType = "charType";
     } else if (ty == ArgType::fp) {
       scalType = "fpType";
