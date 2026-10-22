@@ -7,6 +7,7 @@ add_mlir_dialect_library(
   MLIREnzymeTransforms
   LowerAffineAtomicRmwPass.cpp
   LowerBinomialProgressPass.cpp
+  LowerOnlineProgressPass.cpp
   EnzymeMLIRPass.cpp
   EnzymeActivityOpt.cpp
   ExpandImpulsePass.cpp

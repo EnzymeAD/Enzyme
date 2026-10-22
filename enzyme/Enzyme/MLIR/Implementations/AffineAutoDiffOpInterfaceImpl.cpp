@@ -608,7 +608,8 @@ struct AffineForOpInterfaceReverse
     // LoopCheckpointing::cacheBinomial/cachePeriodic) than the plain-loop
     // path below, so caches[i] must not be popped as a control operand
     // unless we already know the plain path is the one that applies.
-    if (needsBinomialCheckpointing(forOp) || needsCheckpointing(forOp)) {
+    if (needsBinomialCheckpointing(forOp) || needsCheckpointing(forOp) ||
+        needsOnlineCheckpointing(forOp)) {
       SmallVector<Value> incomingGradients;
       for (auto &&[active, res] :
            llvm::zip_equal(operandsActive, op->getResults())) {
