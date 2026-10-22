@@ -275,6 +275,9 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
 LogicalResult mlir::enzyme::detail::allocationForwardHandler(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils, bool zero) {
+  // An inactive allocation has no shadow.
+  if (gutils->isConstantValue(orig->getResult(0)))
+    return success();
 
   Operation *primal = gutils->getNewFromOriginal(orig);
   Operation *shadow = builder.clone(*primal);
