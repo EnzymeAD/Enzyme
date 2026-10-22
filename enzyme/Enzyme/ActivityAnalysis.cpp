@@ -2512,6 +2512,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         llvm::errs() << potentialStore;
       llvm::errs() << "\n";
     }
+    // Re-evaluation during the search can disprove the active assumption,
+    // invalidating the collected load/store candidates.
+    if (Hypothesis->ConstantValues.count(Val)) {
+      insertConstantsFrom(TR, *Hypothesis);
+      return true;
+    }
     if (potentiallyActiveLoad && potentiallyActiveStore) {
       if (EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
