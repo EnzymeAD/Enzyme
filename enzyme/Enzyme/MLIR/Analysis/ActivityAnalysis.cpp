@@ -2782,19 +2782,20 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   if (EnzymePrintActivity)
     llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *op << "\n";
 
-  // A store into inactive memory is inactive. A store of an inactive value
-  // transfers no active data, but if it overwrites active memory it still
-  // kills the derivative of what was there, so it stays active: the reverse
-  // pass must zero the shadow of the overwritten location.
+  // if either src or dst is inactive, there cannot be a transfer of active
+  // values and thus the store is inactive
   if (auto store = dyn_cast<enzyme::StoreLikeInterface>(op)) {
-    if (isConstantValue(TR, store.getStoredPointer())) {
+    if (isConstantValue(TR, store.getStoredValue()) ||
+        isConstantValue(TR, store.getStoredPointer())) {
       if (EnzymePrintActivity)
-        llvm::errs() << " constant instruction as store pointer is inactive"
+        llvm::errs() << " constant instruction as store operand is inactive"
                      << *op << "\n";
       return true;
     }
-    if (inactArg)
+    if (inactArg) {
+      inactArg->insert(store.getStoredValue());
       inactArg->insert(store.getStoredPointer());
+    }
     return false;
   }
 
