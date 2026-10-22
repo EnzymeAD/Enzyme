@@ -263,7 +263,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           continue;
         }
         if (auto ST = dyn_cast<StructType>(sv->getType())) {
-          bool legal = true;
+          bool covered = true;
           for (size_t i = 0; i < ST->getNumElements(); i++) {
 
             CountTrackedPointers tracked(ST->getElementType(i));
@@ -359,13 +359,30 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             if (!fullyCovered) {
               llvm::errs() << " failed to find extracted pointer for " << *sv
                            << " at index " << i << "\n";
-              legal = false;
+              covered = false;
               break;
             }
           }
-          if (legal) {
+          if (covered) {
             continue;
           }
+          // Not every tracked pointer in this aggregate could be shown to be
+          // rooted separately. Report it and reroot conservatively rather than
+          // falling into the pointer-shaped handling below, which asserts on
+          // any non-pointer value.
+          if (hasUnassignedReturnRootingAfterArg) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Could not find use of stored value\n";
+            ss << " sv: " << *sv << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(ss.str().c_str(), wrap(sv),
+                                 ErrorType::GCRewrite, nullptr, wrap(arg),
+                                 nullptr);
+            }
+          }
+          legal = false;
+          break;
         }
         if (!isa<PointerType>(sv->getType()) ||
             !isSpecialPtr(cast<PointerType>(sv->getType()))) {
