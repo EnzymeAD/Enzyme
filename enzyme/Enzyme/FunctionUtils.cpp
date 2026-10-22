@@ -6327,6 +6327,24 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
     }
   }
+  // (uitofp a) != 0 -> a != 0, and likewise for sitofp
+  if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+    if (fcmp->getPredicate() == FCmpInst::FCMP_UNE ||
+        fcmp->getPredicate() == FCmpInst::FCMP_ONE) {
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i)))
+          if (C->isZero())
+            if (auto cast = dyn_cast<CastInst>(fcmp->getOperand(1 - i)))
+              if (cast->getOpcode() == Instruction::UIToFP ||
+                  cast->getOpcode() == Instruction::SIToFP) {
+                auto ncmp1 = pushcse(B.CreateICmp(
+                    ICmpInst::ICMP_NE, cast->getOperand(0),
+                    ConstantInt::get(cast->getOperand(0)->getType(), 0)));
+                replaceAndErase(cur, ncmp1);
+                return "FCmpNeToICmp";
+              }
+    }
+  }
   if (auto fcmp = dyn_cast<CmpInst>(cur)) {
     if (fcmp->getPredicate() == CmpInst::ICMP_EQ ||
         fcmp->getPredicate() == CmpInst::ICMP_NE ||
@@ -8479,10 +8497,9 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
         return false;
     return true;
   }
-  if (auto expr = dyn_cast<SCEVSignExtendExpr>(S)) {
+  if (auto expr = dyn_cast<SCEVCastExpr>(S)) {
     return cannotDependOnLoopIV(expr->getOperand(), L);
   }
-  llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
   return false;
 }
 
@@ -9465,8 +9482,9 @@ getSparseConditions(bool &legal, Value *val,
         if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
           auto res = Constraints::make_compare(
               sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
-          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
-                       << "\n";
+          if (SparseDebug)
+            llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
+                         << "\n";
           return res;
         }
       }
