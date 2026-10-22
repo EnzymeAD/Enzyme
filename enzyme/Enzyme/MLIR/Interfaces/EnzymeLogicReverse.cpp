@@ -12,8 +12,6 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Pass/PassManager.h"
-#include "mlir/Pass/PassRegistry.h"
 
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
@@ -198,8 +196,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
     mlir::Type addedType, MFnTypeInfo type_args,
     std::vector<bool> overwritten_args, void *augmented, bool omp,
-    llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
-    bool markReadonly) {
+    PostPasses postpasses, bool strongZero, bool markReadonly) {
 
   if (fn.getFunctionBody().empty()) {
     fn.emitError() << "cannot differentiate a function without a body: "
@@ -232,8 +229,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
-      retType, constants, addedType, omp, postpasses, verifyPostPasses,
-      strongZero);
+      retType, constants, addedType, omp, postpasses, strongZero);
   if (markReadonly) {
     markReadOnlyLoads(gutils->oldFunc, [&](Operation *origOp) {
       gutils->getNewFromOriginal(origOp)->setAttr(
@@ -282,20 +278,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   if (!res.succeeded())
     return nullptr;
 
-  if (postpasses != "") {
-    mlir::PassManager pm(nf->getContext());
-    pm.enableVerifier(verifyPostPasses);
-    std::string error_message;
-    // llvm::raw_string_ostream error_stream(error_message);
-    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
-    if (mlir::failed(result)) {
-      return nullptr;
-    }
-
-    if (!mlir::succeeded(pm.run(nf))) {
-      return nullptr;
-    }
-  }
+  if (postpasses && failed(postpasses(nf)))
+    return nullptr;
 
   return nf;
 }

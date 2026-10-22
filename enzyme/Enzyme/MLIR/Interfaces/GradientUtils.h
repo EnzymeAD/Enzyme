@@ -44,8 +44,7 @@ public:
   MTypeAnalysis &TA;
   MTypeResults TR;
   bool omp;
-  bool verifyPostPasses;
-  llvm::StringRef postpasses;
+  PostPasses postpasses;
   bool strongZero;
   const llvm::ArrayRef<bool> returnPrimals;
   const llvm::ArrayRef<bool> returnShadows;
@@ -71,8 +70,7 @@ public:
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp,
-                 llvm::StringRef postpasses, bool verifyPostPasses,
-                 bool strongZero);
+                 PostPasses postpasses, bool strongZero);
   void erase(Operation *op) { op->erase(); }
   void replaceOrigOpWith(Operation *op, ValueRange vals) {
     for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
@@ -160,24 +158,23 @@ public:
                       ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp,
-                      llvm::StringRef postpasses, bool verifyPostPasses,
-                      bool strongZero)
+                      PostPasses postpasses, bool strongZero)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        returnPrimals, returnShadows, constantvalues_,
                        activevals_, RetActivity, ArgActivity, origToNew_,
-                       origToNewOps_, mode, width, omp, postpasses,
-                       verifyPostPasses, strongZero),
+                       origToNewOps_, mode, width, omp, postpasses, strongZero),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
-  static MDiffeGradientUtils *CreateFromClone(
-      MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
-      FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const llvm::ArrayRef<bool> returnPrimals,
-      const llvm::ArrayRef<bool> returnShadows,
-      ArrayRef<DIFFE_TYPE> RetActivity, ArrayRef<DIFFE_TYPE> ArgActivity,
-      mlir::Type additionalArg, bool omp, llvm::StringRef postpasses,
-      bool verifyPostPasses, bool strongZero) {
+  static MDiffeGradientUtils *
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+                  FunctionOpInterface todiff, MTypeAnalysis &TA,
+                  MFnTypeInfo &oldTypeInfo,
+                  const llvm::ArrayRef<bool> returnPrimals,
+                  const llvm::ArrayRef<bool> returnShadows,
+                  ArrayRef<DIFFE_TYPE> RetActivity,
+                  ArrayRef<DIFFE_TYPE> ArgActivity, mlir::Type additionalArg,
+                  bool omp, PostPasses postpasses, bool strongZero) {
     std::string prefix;
 
     switch (mode) {
@@ -214,7 +211,7 @@ public:
         Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
         returnShadows, constant_values, nonconstant_values, RetActivity,
         ArgActivity, originalToNew, originalToNewOps, mode, width, omp,
-        postpasses, verifyPostPasses, strongZero);
+        postpasses, strongZero);
   }
 };
 
