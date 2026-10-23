@@ -3108,10 +3108,13 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
 #if LLVM_VERSION_MAJOR >= 24
-// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors.
-static unsigned EnzymeLicmMssaOptCap() { return getLicmMssaOptCap(); }
+// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors;
+// a null LibraryOptionsContext returns the global (command-line) value.
+static unsigned EnzymeLicmMssaOptCap() {
+  return getLicmMssaOptCap(/*LibraryOptions=*/nullptr);
+}
 static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
-  return getLicmMssaNoAccForPromotionCap();
+  return getLicmMssaNoAccForPromotionCap(/*LibraryOptions=*/nullptr);
 }
 #else
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;
