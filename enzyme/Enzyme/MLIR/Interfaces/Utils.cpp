@@ -46,8 +46,7 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<enzyme::LoadLikeInterface, affine::AffineLoadOp>(
-              u))
+      if (isa<enzyme::LoadLikeInterface, affine::AffineLoadOp>(u))
         continue;
       if (auto s = dyn_cast<memref::StoreOp>(u)) {
         if (s.getValue() == v)
