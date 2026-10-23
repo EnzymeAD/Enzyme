@@ -58,6 +58,17 @@ struct MemRefStoreLike
   }
 };
 
+struct MemRefLoadLike
+    : public LoadLikeInterface::ExternalModel<MemRefLoadLike, memref::LoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<memref::LoadOp>(op).getMemref();
+  }
+};
+
+struct MemRefAllocaLike
+    : public AllocaLikeInterface::ExternalModel<MemRefAllocaLike,
+                                                memref::AllocaOp> {};
+
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        memref::LoadOp> {
@@ -492,7 +503,9 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     MemRefType::attachInterface<MemRefClonableTypeInterface>(*context);
 
     memref::StoreOp::attachInterface<MemRefStoreLike>(*context);
+    memref::LoadOp::attachInterface<MemRefLoadLike>(*context);
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
+    memref::AllocaOp::attachInterface<MemRefAllocaLike>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);

@@ -26,6 +26,7 @@
 #include "DataFlowAliasAnalysis.h"
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
@@ -828,8 +829,8 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-             affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
+  return isa<memref::StoreOp, affine::AffineLoadOp, affine::AffineStoreOp,
+             enzyme::LoadLikeInterface, LLVM::StoreOp, enzyme::PushOp,
              enzyme::PopOp>(op);
 }
 

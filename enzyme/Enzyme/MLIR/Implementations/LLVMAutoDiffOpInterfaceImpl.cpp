@@ -69,6 +69,17 @@ struct LLVMStoreLike
   }
 };
 
+struct LLVMLoadLike
+    : public LoadLikeInterface::ExternalModel<LLVMLoadLike, LLVM::LoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<LLVM::LoadOp>(op).getAddr();
+  }
+};
+
+struct LLVMAllocaLike
+    : public AllocaLikeInterface::ExternalModel<LLVMAllocaLike,
+                                                LLVM::AllocaOp> {};
+
 struct InlineAsmActivityInterface
     : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
                                                 LLVM::InlineAsmOp> {
@@ -1121,6 +1132,8 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::MemcpyOp::attachInterface<MemcpyForwardInterface>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
+    LLVM::LoadOp::attachInterface<LLVMLoadLike>(*context);
+    LLVM::AllocaOp::attachInterface<LLVMAllocaLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);

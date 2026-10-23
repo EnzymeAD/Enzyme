@@ -14,6 +14,7 @@
 #include "Analysis/ActivityAnnotations.h"
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/EnzymeLogic.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"
@@ -91,10 +92,10 @@ struct PrintActivityAnalysisPass
     for (const auto &[paramIdx, paramType] :
          llvm::enumerate(callee.getArgumentTypes())) {
       Value arg = autodiff_call.getArgOperands()[argIdx];
-      if (auto loadOp =
-              dyn_cast_if_present<LLVM::LoadOp>(arg.getDefiningOp())) {
+      if (auto loadOp = dyn_cast_if_present<enzyme::LoadLikeInterface>(
+              arg.getDefiningOp())) {
         if (auto addressOf = dyn_cast_if_present<LLVM::AddressOfOp>(
-                loadOp.getAddr().getDefiningOp())) {
+                loadOp.getLoadedPointer().getDefiningOp())) {
           if (addressOf.getGlobalName() == "enzyme_const") {
             argActivities[paramIdx] = enzyme::Activity::enzyme_const;
           } else if (addressOf.getGlobalName() == "enzyme_dup") {
