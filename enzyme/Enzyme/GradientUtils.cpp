@@ -4762,6 +4762,28 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   llvm_unreachable("unknown constant to create shadow of");
 }
 
+DIFFE_TYPE GradientUtils::shadowFunctionReturnType(Type *RT,
+                                                   DerivativeMode mode) {
+  bool forward = mode == DerivativeMode::ForwardMode ||
+                 mode == DerivativeMode::ForwardModeError;
+  if (RT->isVoidTy() || RT->isEmptyTy() ||
+      (RT->isIntegerTy() && cast<IntegerType>(RT)->getBitWidth() < 16))
+    return DIFFE_TYPE::CONSTANT;
+  if (forward)
+    return DIFFE_TYPE::DUP_ARG;
+  if (RT->isFPOrFPVectorTy())
+    return DIFFE_TYPE::OUT_DIFF;
+  if (auto ST = dyn_cast<StructType>(RT)) {
+    size_t numflt = 0;
+    for (unsigned i = 0; i < ST->getNumElements(); ++i)
+      if (ST->getElementType(i)->isFPOrFPVectorTy())
+        numflt++;
+    if (numflt == ST->getNumElements())
+      return DIFFE_TYPE::OUT_DIFF;
+  }
+  return DIFFE_TYPE::DUP_ARG;
+}
+
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
@@ -4847,42 +4869,22 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     types.push_back(typ);
   }
 
-  DIFFE_TYPE retType = fn->getReturnType()->isFPOrFPVectorTy() &&
-                               mode != DerivativeMode::ForwardMode &&
-                               mode != DerivativeMode::ForwardModeError
-                           ? DIFFE_TYPE::OUT_DIFF
-                           : DIFFE_TYPE::DUP_ARG;
-
-  if (fn->getReturnType()->isVoidTy() || fn->getReturnType()->isEmptyTy() ||
-      (fn->getReturnType()->isIntegerTy() &&
-       cast<IntegerType>(fn->getReturnType())->getBitWidth() < 16))
-    retType = DIFFE_TYPE::CONSTANT;
-
-  if (mode != DerivativeMode::ForwardMode &&
-      mode != DerivativeMode::ForwardModeError &&
-      retType == DIFFE_TYPE::DUP_ARG) {
-    if (auto ST = dyn_cast<StructType>(fn->getReturnType())) {
-      size_t numflt = 0;
-
-      for (unsigned i = 0; i < ST->getNumElements(); ++i) {
-        auto midTy = ST->getElementType(i);
-        if (midTy->isFPOrFPVectorTy())
-          numflt++;
-      }
-      if (numflt == ST->getNumElements())
-        retType = DIFFE_TYPE::OUT_DIFF;
-    }
-  }
+  DIFFE_TYPE retType = shadowFunctionReturnType(fn->getReturnType(), mode);
 
   std::vector<bool> nowrite_shadows(fn->arg_size(), false);
 
   switch (mode) {
   case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode: {
+    // The caller may use the primal result too, and cannot recompute it
+    // since it calls the derivative instead of the function (see
+    // shadowFunctionReturnType).
+    bool returnValue =
+        !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
     Constant *newf = Logic.CreateForwardDiff(
-        context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        runtimeActivity, strongZero, width, nullptr, type_args,
-        subsequent_calls_may_write, overwritten_args,
+        context, fn, retType, types, TA, returnValue, mode,
+        /*freeMemory*/ true, runtimeActivity, strongZero, width, nullptr,
+        type_args, subsequent_calls_may_write, overwritten_args,
         /*augmented*/ nullptr);
 
     assert(newf);
