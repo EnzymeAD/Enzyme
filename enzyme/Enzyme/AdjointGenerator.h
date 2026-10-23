@@ -2428,6 +2428,26 @@ public:
     ((GradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
   }
 
+  /// Number of scalar leaves in T, saturating just above the by-value limit.
+  static unsigned countScalarFields(llvm::Type *T) {
+    unsigned limit = EnzymeMaxTapeFieldsByValue + 1;
+    if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+      unsigned n = 0;
+      for (auto E : ST->elements()) {
+        n += countScalarFields(E);
+        if (n >= limit)
+          return limit;
+      }
+      return n;
+    }
+    if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+      uint64_t n =
+          AT->getNumElements() * countScalarFields(AT->getElementType());
+      return n >= limit ? limit : (unsigned)n;
+    }
+    return 1;
+  }
+
   bool shouldFree() {
     assert(Mode == DerivativeMode::ReverseModeCombined ||
            Mode == DerivativeMode::ReverseModeGradient ||
@@ -5799,6 +5819,9 @@ public:
     }
 
     Value *tape = nullptr;
+    // Whether the anonymous tape of the subcall is handed to its reverse pass
+    // as a pointer, rather than being loaded into SSA here.
+    bool tapeByRef = false;
     CallInst *augmentcall = nullptr;
     Value *cachereplace = nullptr;
 
@@ -6241,6 +6264,18 @@ public:
            Mode == DerivativeMode::ForwardModeSplit) &&
           shouldFree()) {
         assert(tape);
+        // Loading a large tape here turns it into one SSA value per field,
+        // each of which must be cached and merged with a phi on every path to
+        // the reverse call. Instead let the reverse pass load and free it.
+        tapeByRef = Mode != DerivativeMode::ForwardModeSplit &&
+                    countScalarFields(fnandtapetype->tapeType) >
+                        EnzymeMaxTapeFieldsByValue;
+      }
+      if (fnandtapetype && fnandtapetype->tapeType &&
+          (Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit) &&
+          shouldFree() && !tapeByRef) {
         auto tapep = BuilderZ.CreatePointerCast(
             tape, getPointerType(
                       fnandtapetype->tapeType,
@@ -6333,7 +6368,7 @@ public:
               .freeMemory = true,
               .AtomicAdd = gutils->AtomicAdd,
               .additionalType = tape ? tape->getType() : nullptr,
-              .forceAnonymousTape = false,
+              .forceAnonymousTape = tapeByRef,
               .typeInfo = nextTypeInfo,
               .runtimeActivity = gutils->runtimeActivity,
               .strongZero = gutils->strongZero},

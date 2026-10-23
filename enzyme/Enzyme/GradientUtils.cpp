@@ -114,6 +114,12 @@ llvm::cl::opt<bool> EnzymeFreeInternalAllocations(
     cl::desc("Always free internal allocations (disable if allocation needs "
              "access outside)"));
 
+llvm::cl::opt<unsigned> EnzymeMaxTapeFieldsByValue(
+    "enzyme-max-tape-fields-by-value", cl::init(16), cl::Hidden,
+    cl::desc("Tapes of subcalls with more scalar fields than this are passed "
+             "to the reverse pass by pointer instead of being loaded into "
+             "SSA in the caller"));
+
 llvm::cl::opt<bool>
     EnzymeRematerialize("enzyme-rematerialize", cl::init(true), cl::Hidden,
                         cl::desc("Rematerialize allocations/shadows in the "
