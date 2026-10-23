@@ -73,8 +73,8 @@ struct CIRLoadLike
 };
 
 struct CIRAllocaLike
-    : public AllocaLikeInterface::ExternalModel<CIRAllocaLike,
-                                                cir::AllocaOp> {};
+    : public AllocaLikeInterface::ExternalModel<CIRAllocaLike, cir::AllocaOp> {
+};
 
 struct CIRLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
