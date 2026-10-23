@@ -1604,6 +1604,10 @@ public:
             } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
               // TODO CHECK THIS
               return Builder2.CreateZExt(dif, op0->getType());
+            } else if (I.getOpcode() == CastInst::CastOps::ZExt) {
+              // The extended bits are zero and carry no derivative (e.g. a
+              // float widened to be packed into a larger integer)
+              return Builder2.CreateTrunc(dif, op0->getType());
             } else {
               std::string s;
               llvm::raw_string_ostream ss(s);
@@ -2713,6 +2717,36 @@ public:
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
 
+      // Packing of bit fields, e.g. two floats into one integer
+      // (zext + shl + or): each operand receives its own bit field.
+      if (isStructurallyDisjointOr(orig_op0, orig_op1)) {
+        size_t size = (dl.getTypeSizeInBits(BO.getType()) + 7) / 8;
+        Type *flt = TR.addingType(size, &BO);
+        if (!flt) {
+          flt = TR.addingType(size, orig_op0);
+          if (!flt)
+            flt = TR.addingType(size, orig_op1);
+        }
+        if (flt) {
+          for (int i = 0; i < 2; ++i) {
+            if (gutils->isConstantValue(BO.getOperand(i)))
+              continue;
+            auto keep = ConstantInt::get(
+                BO.getType(), ~structurallyZeroBits(BO.getOperand(i)));
+            auto rule = [&](Value *idiff) {
+              return Builder2.CreateAnd(idiff, keep);
+            };
+            Value *d = applyChainRule(BO.getType(), Builder2, rule, idiff);
+            if (i == 0)
+              dif0 = d;
+            else
+              dif1 = d;
+          }
+          addingType = flt;
+          goto done;
+        }
+      }
+
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
@@ -2808,11 +2842,45 @@ public:
       }
       goto def;
     }
+    case Instruction::Shl: {
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateLShr(idiff, ci);
+              };
+              dif0 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
+              addingType = flt;
+              goto done;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::UDiv:
     case Instruction::URem:
     case Instruction::SRem:
     case Instruction::SDiv:
-    case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
@@ -2948,6 +3016,22 @@ public:
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
+      // Packing of bit fields, e.g. two floats into one integer
+      // (zext + shl + or): the shadows are packed the same way.
+      if (isStructurallyDisjointOr(orig_op0, orig_op1)) {
+        Value *res;
+        if (dif[0] && dif[1]) {
+          auto rule = [&](Value *d0, Value *d1) {
+            return Builder2.CreateOr(d0, d1);
+          };
+          res = applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+        } else {
+          res = dif[0] ? dif[0] : dif[1];
+        }
+        setDiffe(&BO, res, Builder2);
+        return;
+      }
+
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
@@ -3075,12 +3159,50 @@ public:
       }
       goto def;
     }
+    case Instruction::Shl: {
+      // Shift of a value holding floats by a multiple of the float size
+      // (e.g. to pack two floats into one integer): shift the shadow as well.
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateShl(idiff, ci);
+              };
+              auto dif = applyChainRule(orig_op0->getType(), Builder2, rule,
+                                        diffe(orig_op0, Builder2));
+              setDiffe(&BO, dif, Builder2);
+              return;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::AShr:
     case Instruction::SDiv:
     case Instruction::UDiv:
     case Instruction::SRem:
     case Instruction::URem:
-    case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
