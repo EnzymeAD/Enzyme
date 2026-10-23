@@ -2385,12 +2385,26 @@ public:
     }
   }
 
+  // Set while emitting the derivative of an instruction whose derivative
+  // formula must not be reassociated (see visitBinaryOperator).
+  bool noReassociation = false;
+
+  void restrictFastMath(llvm::IRBuilder<> &Builder2) {
+    if (!noReassociation)
+      return;
+    auto FMF = Builder2.getFastMathFlags();
+    FMF.setAllowReassoc(false);
+    Builder2.setFastMathFlags(FMF);
+  }
+
   void getReverseBuilder(llvm::IRBuilder<> &Builder2, bool original = true) {
     ((GradientUtils *)gutils)->getReverseBuilder(Builder2, original);
+    restrictFastMath(Builder2);
   }
 
   void getForwardBuilder(llvm::IRBuilder<> &Builder2) {
     ((GradientUtils *)gutils)->getForwardBuilder(Builder2);
+    restrictFastMath(Builder2);
   }
 
   llvm::Value *diffe(llvm::Value *val, llvm::IRBuilder<> &Builder) {
@@ -2556,6 +2570,16 @@ public:
 
     {
       using namespace llvm;
+      // The derivative of x / y is scaled to avoid y * y, which overflows
+      // for large |y| (e.g. (dx - dy * (x / y)) / y). With reassociation
+      // allowed, LLVM folds it back into (dx * y - dy * x) / (y * y).
+      // (The generated code returns early, so restore the flag on scope exit.)
+      struct RestoreFlag {
+        bool &flag;
+        bool prev;
+        ~RestoreFlag() { flag = prev; }
+      } restore{noReassociation, noReassociation};
+      noReassociation = BO.getOpcode() == Instruction::FDiv;
       switch (BO.getOpcode()) {
 #include "BinopDerivatives.inc"
       default:
