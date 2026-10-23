@@ -273,7 +273,16 @@ FunctionOpInterface CloneFunctionWithReturns(
         << F << "this function does not implement AutoDiffFunctionInterface";
     return nullptr;
   }
-  NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
+#ifdef ENZYME_CLANG_HAS_CIR
+  // !cir.func has one optional return: void is a null return type
+  if (auto cirFTy = dyn_cast<cir::FuncType>(F.getFunctionType())) {
+    assert(resultTypes.size() <= 1 && "cir.func returns at most one value");
+    NewF.setType(cir::FuncType::get(
+        F->getContext(), llvm::to_vector(FTy.getInputs()),
+        resultTypes.empty() ? Type() : resultTypes.front(), cirFTy.isVarArg()));
+  } else
+#endif
+    NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
 
   Operation *parent = F->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);
