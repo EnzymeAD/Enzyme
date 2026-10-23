@@ -46,7 +46,7 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<memref::LoadOp, enzyme::LoadLikeInterface, affine::AffineLoadOp>(
+      if (isa<enzyme::LoadLikeInterface, affine::AffineLoadOp>(
               u))
         continue;
       if (auto s = dyn_cast<memref::StoreOp>(u)) {
@@ -138,8 +138,7 @@ Value getBaseObject(Value v, bool offsetAllowed) {
 }
 
 static bool isStackAlloca(Value v) {
-  return v.getDefiningOp<memref::AllocaOp>() ||
-         v.getDefiningOp<memref::AllocOp>() ||
+  return v.getDefiningOp<memref::AllocOp>() ||
          v.getDefiningOp<enzyme::AllocaLikeInterface>();
 }
 
