@@ -1943,7 +1943,13 @@ public:
       size_t l1 = count.getKnownMinValue();
       uint64_t instidx = 0;
 
-      for (size_t idx : SVI.getShuffleMask()) {
+      for (int maskidx : SVI.getShuffleMask()) {
+        // A poison or undef mask lane (-1) reads no operand element.
+        if (maskidx < 0) {
+          ++instidx;
+          continue;
+        }
+        size_t idx = maskidx;
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
 
