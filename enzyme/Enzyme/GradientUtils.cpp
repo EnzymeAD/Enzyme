@@ -5630,7 +5630,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         size_t i = 0;
         assert(size > 0);
         for (; i < size;) {
-          auto CT2 = TT[{(int)i}];
+          auto CT2 = TT.byteType({(int)i});
           if (CT2 == BaseType::Pointer) {
             i += DL.getPointerSize(0);
             continue;
