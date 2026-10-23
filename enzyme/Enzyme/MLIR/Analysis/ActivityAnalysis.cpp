@@ -2334,7 +2334,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       if (!potentiallyActiveLoad && isRefSet(modRef)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *op << "\n";
-        if (isa<memref::LoadOp, enzyme::LoadLikeInterface>(op)) {
+        if (isa<enzyme::LoadLikeInterface>(op)) {
           // TODO: this assumption should be built into the MLIR interface
           // verifier, or alternatively we should relax it.
           assert(op->getNumResults() == 1 &&
@@ -2512,8 +2512,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
     if (auto VI = Val.getDefiningOp<enzyme::AllocaLikeInterface>()) {
       allFollowersOf(VI.getOperation(), checkActivityWrapper);
-    } else if (auto VI = Val.getDefiningOp<memref::AllocaOp>()) {
-      allFollowersOf(VI, checkActivityWrapper);
       // } else if (auto VI = dyn_cast<CallInst>(Val)) {
       //   if (VI->hasRetAttr(Attribute::NoAlias))
       //     allFollowersOf(VI, checkActivity);
@@ -2604,8 +2602,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
         if (getFunctionIfArgument(
                 TmpOrig) || /*isa<GlobalVariable>(TmpOrig) ||*/
-            TmpOrig.getDefiningOp<enzyme::AllocaLikeInterface>() ||
-            TmpOrig.getDefiningOp<memref::AllocaOp>() /*||
+            TmpOrig.getDefiningOp<enzyme::AllocaLikeInterface>() /*||
             isAllocationCall(TmpOrig, TLI)*/) {
           std::shared_ptr<mlir::enzyme::ActivityAnalyzer> DownHypothesis2 =
               std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
