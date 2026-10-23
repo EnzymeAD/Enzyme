@@ -3037,7 +3037,12 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             while (ops.size()) {
               auto z = dyn_cast_or_null<Instruction>(ops[0]);
               ops.pop_front();
-              if (z && z->getNumUses() == 0 && !z->isUsedByMetadata()) {
+              // Do not erase the cache allocation itself, even if the
+              // free was its last user (e.g. when the lookups of the cache
+              // were erased again by a failed unwrap): scopeMap still holds
+              // it, and it is erased below if requested.
+              if (z && z != found->first && z->getNumUses() == 0 &&
+                  !z->isUsedByMetadata()) {
                 for (unsigned i = 0; i < z->getNumOperands(); ++i) {
                   ops.push_back(z->getOperand(i));
                 }
