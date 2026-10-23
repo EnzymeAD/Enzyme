@@ -10,6 +10,7 @@ add_subdirectory(BatchMode)
 add_subdirectory(ProbProg)
 add_subdirectory(JLSimplify)
 add_subdirectory(SimpleGVN)
+add_subdirectory(Summary)
 
 # Run regression and unit tests
 add_lit_testsuite(
