@@ -253,6 +253,15 @@ GradientUtils::GradientUtils(
   }
 }
 
+// Julia (julia#60924) attaches these bundles to allocation calls to have
+// late-gc-lowering zero the GC pointer fields (or a region) of the new object
+// right after it is allocated. Their inputs are offsets and sizes.
+static bool isJuliaAllocZeroingBundle(StringRef tag) {
+  return tag == "julia.gc_alloc_ptr_offsets" ||
+         tag == "julia.gc_alloc_zeroinit" ||
+         tag == "julia.gc_alloc_zeroinit_indirect";
+}
+
 // Whether a particular value is neded in rooting the reverse pass
 bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
                                   ArrayRef<ValueType> types,
@@ -287,6 +296,9 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
         if (anyShadow && shadow)
           return true;
       }
+    } else if (isJuliaAllocZeroingBundle(tag)) {
+      // Allocation zeroing info, not needed for rooting.
+      continue;
     } else if (tag == "gc-transition") {
       if (shadow)
         continue;
@@ -347,7 +359,7 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
         }
       }
       Defs.push_back(OperandBundleDef(tag.str(), bunds));
-    } else if (tag == "gc-transition") {
+    } else if (tag == "gc-transition" || isJuliaAllocZeroingBundle(tag)) {
       SmallVector<Value *, 2> bunds;
       for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
@@ -360,6 +372,52 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
       errs() << "unsupported tag " << tag << " for " << *orig << "\n";
       llvm_unreachable("unsupported tag");
     }
+  }
+  return Defs;
+}
+
+bool GradientUtils::canZeroAllocationWithBundle(const CallInst *orig) {
+  if (getFuncNameFromCall(orig) != "julia.gc_alloc_obj")
+    return false;
+  for (unsigned i = 0, e = orig->getNumOperandBundles(); i != e; ++i) {
+    auto tag = orig->getOperandBundleAt(i).getTagName();
+    if (tag == "julia.gc_alloc_ptr_offsets" || tag == "julia.gc_alloc_zeroinit")
+      return true;
+  }
+  return false;
+}
+
+void GradientUtils::markAllocationZeroed(CallInst *alloc) {
+#if LLVM_VERSION_MAJOR >= 15
+  alloc->removeFnAttr(Attribute::AllocKind);
+  alloc->addFnAttr(
+      Attribute::get(alloc->getContext(), Attribute::AllocKind,
+                     uint64_t(AllocFnKind::Alloc | AllocFnKind::Zeroed)));
+#endif
+}
+
+SmallVector<OperandBundleDef, 1> GradientUtils::getAllocationZeroingBundles(
+    CallInst *orig, IRBuilder<> &Builder2, bool lookup, Value *zeroAllSize) {
+  if (zeroAllSize) {
+    // julia.gc_alloc_zeroinit and julia.gc_alloc_ptr_offsets are mutually
+    // exclusive; zeroing the whole object covers the pointer fields.
+    Value *ops[] = {ConstantInt::get(zeroAllSize->getType(), 0), zeroAllSize};
+    return {OperandBundleDef("julia.gc_alloc_zeroinit", ops)};
+  }
+  SmallVector<OperandBundleDef, 2> OrigDefs;
+  orig->getOperandBundlesAsDefs(OrigDefs);
+  SmallVector<OperandBundleDef, 1> Defs;
+  for (auto &bund : OrigDefs) {
+    if (!isJuliaAllocZeroingBundle(bund.getTag()))
+      continue;
+    SmallVector<Value *, 2> bunds;
+    for (auto inp : bund.inputs()) {
+      Value *newv = getNewFromOriginal(inp);
+      if (lookup)
+        newv = lookupM(newv, Builder2);
+      bunds.push_back(newv);
+    }
+    Defs.push_back(OperandBundleDef(bund.getTag().str(), bunds));
   }
   return Defs;
 }
@@ -3652,11 +3710,20 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
 
               anti = shadowHandlers[funcName](NB, orig, args, this);
             } else {
+              // On a Julia that zeroes allocations in late-gc-lowering, let it
+              // zero the whole shadow instead of emitting a memset.
+              bool zeroWithBundle = !hasMetadata(orig, "enzyme_fromstack") &&
+                                    canZeroAllocationWithBundle(orig);
+              auto Defs = getAllocationZeroingBundles(orig, NB, /*lookup*/ true,
+                                                      zeroWithBundle ? args[1]
+                                                                     : nullptr);
               auto rule = [&]() {
                 Value *anti = NB.CreateCall(orig->getFunctionType(),
                                             orig->getCalledOperand(), args,
-                                            orig->getName() + "'mi");
+                                            Defs, orig->getName() + "'mi");
                 cast<CallInst>(anti)->setAttributes(orig->getAttributes());
+                if (zeroWithBundle)
+                  markAllocationZeroed(cast<CallInst>(anti));
                 cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
                 cast<CallInst>(anti)->setDebugLoc(
                     getNewFromOriginal(I.getDebugLoc()));
@@ -3697,12 +3764,13 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 anti = replacement;
               }
 
-              applyChainRule(
-                  NB,
-                  [&](Value *anti) {
-                    zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
-                  },
-                  anti);
+              if (!zeroWithBundle)
+                applyChainRule(
+                    NB,
+                    [&](Value *anti) {
+                      zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
+                    },
+                    anti);
             }
           } else {
             llvm_unreachable("Unknown shadow rematerialization value");
