@@ -59,8 +59,7 @@ struct MemRefStoreLike
 };
 
 struct MemRefLoadLike
-    : public LoadLikeInterface::ExternalModel<MemRefLoadLike,
-                                              memref::LoadOp> {
+    : public LoadLikeInterface::ExternalModel<MemRefLoadLike, memref::LoadOp> {
   Value getLoadedPointer(Operation *op) const {
     return cast<memref::LoadOp>(op).getMemref();
   }
