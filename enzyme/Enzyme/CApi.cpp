@@ -694,6 +694,21 @@ LLVMValueRef EnzymeCreateForwardDiff(
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       subsequent_calls_may_write, overwritten_args, eunwrap(augmented)));
 }
+void EnzymeRegisterFwdSplitCallHandler(const char *Name,
+                                       CustomFunctionForwardSplit FwdHandle) {
+  auto &pair = customFwdSplitCallHandlers[Name];
+  pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
+             Value *&normalReturn, Value *&shadowReturn, Value *tape) -> bool {
+    LLVMValueRef normalR = wrap(normalReturn);
+    LLVMValueRef shadowR = wrap(shadowReturn);
+    uint8_t noMod =
+        FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, wrap(tape));
+    normalReturn = unwrap(normalR);
+    shadowReturn = unwrap(shadowR);
+    return noMod != 0;
+  };
+}
+
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
