@@ -7911,6 +7911,44 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   }
 
   BasicBlock *scopeI = inst->getParent();
+  // A shadow pointer loaded from an invariant address can still need a cache
+  // if a write after the loop prevents recomputation in the reverse pass.
+  // Use one cache slot for this loop if the corresponding primal load cannot
+  // be changed by a write inside the loop.
+  // The load and cache store remain at the original execution point, so a
+  // conditional or zero-trip loop never performs a speculative load.
+  if (mode == DerivativeMode::ReverseModeCombined && EnzymeLoopInvariantCache) {
+    if (auto *load = dyn_cast<LoadInst>(inst)) {
+      auto *original = dyn_cast_or_null<LoadInst>(hasUninverted(load));
+      auto *loop = LI.getLoopFor(load->getParent());
+      auto *originalLoop =
+          original ? OrigLI->getLoopFor(original->getParent()) : nullptr;
+      if (original && originalLoop && loop && load->isSimple() &&
+          original->isSimple() && load->getType()->isPointerTy() &&
+          originalLoop->isLoopInvariant(original->getPointerOperand()) &&
+          loop->isLoopInvariant(load->getPointerOperand()) &&
+          isOriginal(loop->getHeader()) == originalLoop->getHeader()) {
+        bool modifiedInLoop = false;
+        for (auto *block : originalLoop->blocks()) {
+          if (notForAnalysis.count(block))
+            continue;
+          for (auto &candidate : *block) {
+            if (&candidate == original || !candidate.mayWriteToMemory())
+              continue;
+            if (writesToMemoryReadBy(&TR, *OrigAA, TLI, original, &candidate)) {
+              modifiedInLoop = true;
+              break;
+            }
+          }
+          if (modifiedInLoop)
+            break;
+        }
+        if (!modifiedInLoop)
+          if (auto *preheader = loop->getLoopPreheader())
+            scopeI = preheader;
+      }
+    }
+  }
   if (auto origInst = isOriginal(inst)) {
     auto found = rematerializableAllocations.find(origInst);
     if (found != rematerializableAllocations.end())
