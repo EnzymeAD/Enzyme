@@ -34,6 +34,8 @@
 namespace mlir {
 namespace enzyme {
 
+int64_t binomialProgress(int64_t numSteps, int64_t budget);
+
 template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // How the trip count is decomposed for periodic checkpointing: `nOuter`
   // segments of `nInner` iterations, plus a shorter trailing segment of
@@ -647,6 +649,24 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     memref::DeallocOp::create(builder, buf.getLoc(), buf);
   }
 
+  // Emits a binomial_progress. When the trip count is constant, it also
+  // records static upper bounds on the operands: `num_steps` never exceeds the
+  // trip count, and `budget` never exceeds the effective budget
+  // min(budget, numIters).
+  static Value createBinomialProgress(OpBuilder &builder, Location loc,
+                                      Value numSteps, Value budgetV,
+                                      OpName forOp, int64_t budget) {
+    IntegerAttr maxNumSteps, maxBudget;
+    if (auto numIters = FinalClass::getConstantNumberOfIterations(forOp)) {
+      maxNumSteps = builder.getI64IntegerAttr(*numIters);
+      maxBudget =
+          builder.getI64IntegerAttr(std::min(budget, (int64_t)*numIters));
+    }
+    return enzyme::BinomialProgressOp::create(
+        builder, loc, FinalClass::getIndexLikeType(builder), numSteps, budgetV,
+        maxNumSteps, maxBudget);
+  }
+
   // Forward augmentation for binomial (Revolve) checkpointing. Builds an
   // outer loop of `budget` iterations that snapshots the loop state into
   // memref checkpoint buffers at Revolve-scheduled positions, advancing the
@@ -767,8 +787,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // Never use more checkpoints than remaining steps (binomial_progress is
     // degenerate for budget > steps).
     budgetRem = FinalClass::emitMin(builder, loc, budgetRem, numStepsRem);
-    Value split = enzyme::BinomialProgressOp::create(builder, loc, idxTy,
-                                                     numStepsRem, budgetRem);
+    Value split = createBinomialProgress(builder, loc, numStepsRem, budgetRem,
+                                         forOp, budget);
 
     // Snapshot each mutable ref into slot `k`, reusing the clone already
     // there. Stays here, before innerFwd, so the snapshot precedes the
@@ -1069,9 +1089,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       // Never use more checkpoints than remaining steps (binomial_progress
       // is degenerate for budget > steps).
       budgetRem = FinalClass::emitMin(builder, loc, budgetRem, remaining);
-      Value split = enzyme::BinomialProgressOp::create(
-          builder, loc, FinalClass::getIndexLikeType(builder), remaining,
-          budgetRem);
+      Value split = createBinomialProgress(builder, loc, remaining, budgetRem,
+                                           forOp, budget);
 
       // Place a checkpoint at slot `acapo`. The mutable-ref snapshot has to
       // go with it: the working clones currently hold the content at step
