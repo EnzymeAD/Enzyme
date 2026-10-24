@@ -227,6 +227,84 @@ struct CIRPointerArithmeticReverse
   }
 };
 
+// Any int or bool to and from conversion is drop as they need to be marked as
+// constant.
+// TODO: Support Complex
+static bool isPointerCast(cir::CastKind kind) {
+  return kind == cir::CastKind::bitcast ||
+         kind == cir::CastKind::address_space ||
+         kind == cir::CastKind::array_to_ptrdecay;
+}
+
+// Cast always mimic source so it is impossible to create active.
+struct CIRCastOpActivity
+    : public ActivityOpInterface::ExternalModel<CIRCastOpActivity,
+                                                cir::CastOp> {
+  bool isInactive(Operation *) const { return false; }
+  bool isArgInactive(Operation *, size_t) const { return false; }
+};
+
+struct CIRCastOpForward
+    : public AutoDiffOpInterface::ExternalModel<CIRCastOpForward, cir::CastOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto castOp = cast<cir::CastOp>(op);
+    if (gutils->isConstantValue(castOp.getResult()))
+      return success();
+    cir::CastKind kind = castOp.getKind();
+    if (kind != cir::CastKind::floating && !isPointerCast(kind))
+      return op->emitError() << "unsupported active cir.cast kind '"
+                             << cir::stringifyCastKind(kind) << "' " << *op;
+    return mlir::enzyme::detail::memoryIdentityForwardHandler(
+        op, builder, gutils, /*storedVals=*/{});
+  }
+};
+
+struct CIRCastOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRCastOpReverse,
+                                                       cir::CastOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto castOp = cast<cir::CastOp>(op);
+    Value src = castOp.getSrc();
+    Value res = castOp.getResult();
+    if (gutils->isConstantValue(res) || gutils->isConstantValue(src))
+      return success();
+    cir::CastKind kind = castOp.getKind();
+    if (isPointerCast(kind))
+      return success();
+    if (kind != cir::CastKind::floating)
+      return op->emitError() << "unsupported active cir.cast kind '"
+                             << cir::stringifyCastKind(kind) << "' " << *op;
+    Value dres = gutils->diffe(res, builder);
+    Value dsrc = cir::CastOp::create(builder, op->getLoc(), src.getType(),
+                                     cir::CastKind::floating, dres);
+    gutils->addToDiffe(src, dsrc, builder);
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto castOp = cast<cir::CastOp>(op);
+    if (!isPointerCast(castOp.getKind()))
+      return success();
+    Value src = castOp.getSrc();
+    if (gutils->isConstantValue(src))
+      return success();
+    auto newCast = cast<cir::CastOp>(gutils->getNewFromOriginal(op));
+    auto shadowCast = cast<cir::CastOp>(builder.clone(*newCast));
+    shadowCast.getSrcMutable().assign(gutils->invertPointerM(src, builder));
+    gutils->setInvertedPointer(castOp.getResult(), shadowCast.getResult());
+    return success();
+  }
+};
+
 } // namespace
 
 class AutoDiffCIRFuncOpFunctionInterface
@@ -285,6 +363,9 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::StoreOp::attachInterface<CIRStoreLike>(*context);
     cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);
     cir::StoreOp::attachInterface<CIRStoreOpInterfaceReverse>(*context);
+    cir::CastOp::attachInterface<CIRCastOpActivity>(*context);
+    cir::CastOp::attachInterface<CIRCastOpForward>(*context);
+    cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
     cir::PtrStrideOp::attachInterface<
         CIRPointerArithmeticReverse<cir::PtrStrideOp>>(*context);
     cir::GetMemberOp::attachInterface<
