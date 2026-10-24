@@ -341,6 +341,17 @@ def : CallOp<"cir", "CallOp">;
 def : BranchOp<"cir", "BrOp">;
 def : BranchOp<"cir", "BrCondOp">;
 def : BranchOp<"cir", "SwitchFlatOp">;
-
 def : CirInactiveOp<"ConstantOp">;
 def : CirInactiveOp<"CeilOp">;
+def : CirInactiveOp<"FloorOp">;
+def : CirInactiveOp<"RoundOp">;
+def : CirInactiveOp<"RoundEvenOp">;
+def : CirInactiveOp<"RintOp">;
+def : CirInactiveOp<"NearbyintOp">;
+def : CirInactiveOp<"TruncOp">;
+def : CirInactiveOp<"LroundOp">;
+def : CirInactiveOp<"LlroundOp">;
+def : CirInactiveOp<"LrintOp">;
+def : CirInactiveOp<"LlrintOp">;
+def : CirInactiveOp<"IsFPClassOp">;
+def : CirInactiveOp<"SignBitOp">;
