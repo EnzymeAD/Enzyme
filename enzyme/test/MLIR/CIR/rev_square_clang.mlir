@@ -17,7 +17,7 @@ module {
     cir.return %5 : !cir.double
   }
   cir.func @dsquare(%x: !cir.double, %dr: !cir.double) -> !cir.double {
-    %r = enzyme.autodiff @square(%x, %dr) { activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.double, !cir.double) -> !cir.double
+    %r = enzyme.autodiff @square(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.double, !cir.double) -> !cir.double
     cir.return %r : !cir.double
   }
 }

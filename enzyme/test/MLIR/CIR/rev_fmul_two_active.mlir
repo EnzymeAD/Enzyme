@@ -12,7 +12,7 @@ module {
     cir.return %0 : !cir.double
   }
   cir.func @df(%x: !cir.double, %y: !cir.double, %dr: !cir.double) -> !cir.double {
-    %res = enzyme.autodiff @f(%x, %y, %dr) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.double, !cir.double, !cir.double) -> !rec
+    %res = enzyme.autodiff @f(%x, %y, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.double, !cir.double, !cir.double) -> !rec
     %dx = cir.extract_member %res[0] : !rec -> !cir.double
     %dy = cir.extract_member %res[1] : !rec -> !cir.double
     %s = cir.fadd %dx, %dy : !cir.double

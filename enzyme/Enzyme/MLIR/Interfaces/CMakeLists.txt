@@ -1,3 +1,4 @@
+add_mlir_interface(OffsetViewInterface)
 add_mlir_interface(AutoDiffOpInterface)
 
 set(LLVM_TARGET_DEFINITIONS AutoDiffTypeInterface.td)
@@ -7,6 +8,7 @@ add_public_tablegen_target(MLIRAutoDiffTypeInterfaceIncGen)
 
 add_mlir_library(
   MLIREnzymeAutoDiffInterface
+  OffsetViewInterface.cpp
   AutoDiffOpInterface.cpp
   AutoDiffTypeInterface.cpp
   CloneFunction.cpp
@@ -19,6 +21,7 @@ add_mlir_library(
   EnzymeLogicReverse.cpp
   Utils.cpp
   DEPENDS
+  MLIROffsetViewInterfaceIncGen
   MLIRAutoDiffOpInterfaceIncGen
   MLIRAutoDiffTypeInterfaceIncGen
   MLIREnzymeEnumsIncGen
@@ -27,5 +30,6 @@ add_mlir_library(
   LINK_LIBS
   PUBLIC
   MLIRIR
+  MLIRViewLikeInterface
   MLIREnzymeAnalysis
   MLIRImpulse)

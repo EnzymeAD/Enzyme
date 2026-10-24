@@ -30,7 +30,7 @@ module {
     cir.return %12 : !cir.double
   }
   cir.func @dcond(%x: !cir.double, %dx: !cir.double) -> !cir.double {
-    %r = enzyme.fwddiff @cond(%x, %dx) { activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] } : (!cir.double, !cir.double) -> !cir.double
+    %r = enzyme.fwddiff @cond(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!cir.double, !cir.double) -> !cir.double
     cir.return %r : !cir.double
   }
 }

@@ -3,6 +3,9 @@
 Source files in this subdirectory provides Fortran bindings for Enzyme, as
 detailed in the following.
 
+The [custom derivatives](#custom-derivatives) section registers reverse-mode and
+forward-mode rules through a derived type of Fortran procedure pointers.
+
 ## Note on compilers
 
 Before providing details on the Fortran bindings, it is worth noting that Enzyme
@@ -29,9 +32,15 @@ from flang and running the Enzyme pass over it with `opt`:
 
 ```console
 $ flang -flto -c -I /path/to/enzyme/modules program.f90 -o program.bc
-$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so -passes=enzyme program.bc -o program-enzyme.bc
+$ opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
+    -passes='preserve-nvvm,enzyme,preserve-nvvm-end' program.bc -o program-enzyme.bc
 $ flang -flto program-enzyme.bc -o program
 ```
+
+`preserve-nvvm` consumes the registration markers described below (custom
+derivatives and `enzyme_function_like` procedure pointers) before `enzyme`
+differentiates, and `preserve-nvvm-end` restores the linkage and inlining
+attributes it changed. `-passes=enzyme` alone skips registration.
 
 Both routes are exercised by the tests in `enzyme/test/Fortran`. The plugin route is
 flang-only; with ifx use the `opt` pipeline above.
@@ -310,3 +319,176 @@ in a module; it keeps the registration marker out of the module's public API.
 The `test` wrapper takes its argument by reference for the `enzyme_autodiff`
 binding, while `double_value` takes its argument by value to match the scalar
 `log1p` rule.
+
+## Custom derivatives
+
+Enzyme can use custom derivative routines written in Fortran, in reverse mode
+and in [forward mode](#forward-mode-custom-derivatives). Register them with one
+module variable of a derived type whose components are procedure pointers
+initialized to the routines. No C registration file is needed. The reverse-mode
+walkthrough below uses three components; forward mode uses two.
+
+The [complete example](../test/Fortran/ReverseMode/custom_derivative.f90)
+calculates `2*x` but uses the derivative of `log1p(x)`, the natural logarithm of `1+x`.
+This deliberate difference shows that Enzyme uses the custom rule.
+At `x = 2`:
+
+| Calculation | Value |
+|---|---|
+| Original result, `2*x` | `4` |
+| Ordinary derivative | `2` |
+| Custom derivative, `1/(1+x)` | `0.3333` |
+
+1. Define these three routines in one module.
+
+   | Routine | Operation |
+   |---|---|
+   | `double_value(x, y)` | Calculates `y = 2*x`. |
+   | `augment_double_value(x, dx, y, dy)` | Calls `double_value`. Leaves `dy` unchanged. |
+   | `reverse_double_value(x, dx, y, dy)` | Adds the custom derivative to `dx`. Clears `dy`. |
+
+   The augmented forward routine calculates the original result.
+   It can also save values for the reverse routine.
+   This is the forward part of reverse-mode differentiation, not forward-mode differentiation.
+
+   Each original argument is followed by its derivative storage: `x, dx, y, dy`.
+   Keep all arguments, including unused arguments.
+   This example uses scalars passed by reference.
+   It needs no tape, which is storage for intermediate values from the forward calculation.
+   Other interfaces must also match Enzyme's custom derivative requirements.
+
+   The reverse routine contains:
+
+   ```fortran
+   dx = dx + dy / (1.0 + x)
+   dy = 0.0
+   ```
+
+   Enzyme supplies `dy`, the derivative of the final result with respect to `y`.
+   The first statement adds the contribution for `x` to `dx`.
+   Clearing `dy` prevents an earlier write to `y` from adding the contribution again.
+   The forward routine must preserve `dy` because Enzyme can supply it before that call.
+
+2. Put this declaration before `contains` in the same module.
+
+   ```fortran
+   type :: gradient_registration
+     procedure(double_value), pointer, nopass :: primal => double_value
+     procedure(augment_double_value), pointer, nopass :: augmented => augment_double_value
+     procedure(reverse_double_value), pointer, nopass :: reverse => reverse_double_value
+   end type gradient_registration
+
+   type(gradient_registration) :: f__enzyme_register_gradient_double_value
+   ```
+
+   Keep the pointer order: original routine, forward routine, reverse routine.
+   `procedure(...)` specifies the interface; `=>` sets the default target.
+   `nopass` prevents Fortran from passing the record as an additional argument.
+
+   Give each registration variable a unique name containing `__enzyme_register_gradient`.
+   The leading `f` makes this example a valid Fortran identifier.
+   Enzyme reads the static initializer during compilation, then removes the registration variable.
+   Therefore, do not access the registration variable during program execution.
+   Do not replace the initializers with assignments during program execution.
+
+3. Differentiate a function that calls the original routine.
+
+   In the example, `wrapper` calls `double_value` and returns `y`.
+
+   ```fortran
+   x = 2.0
+   dx = 0.0
+   call enzyme_autodiff(wrapper, x, dx)
+   ```
+
+   Initialize `dx` to zero for a fresh derivative calculation.
+   Use an existing derivative value only when you want to accumulate contributions.
+   Enzyme starts the derivative of the scalar result at one.
+   Thus, the custom rule adds `1/(1+x)` to `dx`.
+
+4. Compile and run the complete example.
+
+   Keep all three routines and the registration in one source file for this example.
+   Use a plugin built for your Flang and LLVM version.
+   Replace the include path with the directory containing `enzyme.mod`.
+   Replace the plugin path with your plugin's path.
+   Run these commands from the example's directory:
+
+   ```sh
+   flang -O2 -I /path/to/enzyme/modules \
+     -fpass-plugin=/path/to/FlangEnzyme-21.so \
+     custom_derivative.f90 -o custom_derivative
+   ./custom_derivative
+   ```
+
+   The plugin registers the custom rule before optimization.
+   Expected output:
+
+   ```text
+   y = 4.0000
+   dx = 0.3333
+   ```
+
+Alternatively, use the `opt` route from
+[Running Enzyme from flang](#running-enzyme-from-flang) with matching Flang,
+LLVM, and Enzyme versions. Replace the paths as above:
+
+```sh
+flang -O0 -flto -c -I /path/to/enzyme/modules \
+  custom_derivative.f90 -o custom_derivative.bc
+opt -load-pass-plugin=/path/to/LLVMEnzyme-21.so \
+  -passes='preserve-nvvm,enzyme,preserve-nvvm-end' \
+  custom_derivative.bc -o custom_derivative-enzyme.bc
+flang -O2 -flto custom_derivative-enzyme.bc -o custom_derivative
+./custom_derivative
+```
+
+Use `-O0` before `opt` to prevent optimization from removing calls before registration.
+The passes register the custom routines, differentiate the code, and restore temporary linkage and inlining attributes.
+The final compilation can use `-O2`.
+
+The [regression test](../test/Fortran/ReverseMode/custom_derivative_accumulation.f90)
+checks registration, custom routine calls, and derivative accumulation when two calls overwrite the same output.
+
+### Forward-mode custom derivatives
+
+Forward mode uses the same mechanism with two components, the original routine
+and the forward-mode routine, and a registration variable whose name contains
+`__enzyme_register_derivative`:
+
+```fortran
+type :: derivative_registration
+  procedure(double_value), pointer, nopass :: primal => double_value
+  procedure(forward_double_value), pointer, nopass :: forward => forward_double_value
+end type derivative_registration
+
+type(derivative_registration) :: f__enzyme_register_derivative_double_value
+```
+
+The forward routine takes each original argument followed by its tangent,
+`x, dx, y, dy`. It calculates the original result and sets `dy` from `dx`:
+
+```fortran
+subroutine forward_double_value(x, dx, y, dy)
+  real, intent(in) :: x, dx
+  real, intent(out) :: y, dy
+
+  call double_value(x, y)
+  dy = dx / (1.0 + x)
+end subroutine forward_double_value
+```
+
+Unlike the reverse routine, the forward routine overwrites `dy` instead of
+adding to it. Differentiate a subroutine `wrapper(x, y)` that calls
+`double_value` with `enzyme_fwddiff`:
+
+```fortran
+x = 2.0
+dx = 1.0
+call enzyme_fwddiff(wrapper, enzyme_dup, x, dx, enzyme_dup, y, dy)
+```
+
+The [forward-mode example](../test/Fortran/ForwardMode/custom_derivative.f90)
+prints `dy = 0.3333`. The
+[seed test](../test/Fortran/ForwardMode/custom_derivative_seeds.f90) checks that
+`dy` scales with `dx` and that the rule replaces a previous value of `dy`.

@@ -10,10 +10,10 @@ func.func @foo(%x: memref<?xf32>, %y: memref<?xf32>) {
 }
 
 func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
-  enzyme.autodiff @foo(%x, %dx, %y, %dy) {
+  enzyme.autodiff @foo(%x, %dx, %y, %dy) <{
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
-  } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
+  }> : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return
 }
 
@@ -64,10 +64,10 @@ func.func @nonconst_bound(%x: memref<?xf32>, %y: memref<?xf32>, %len: index) {
 
 func.func @dnonconst(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
   %c4 = arith.constant 4 : index
-  enzyme.autodiff @nonconst_bound(%x, %dx, %y, %dy, %c4) {
+  enzyme.autodiff @nonconst_bound(%x, %dx, %y, %dy, %c4) <{
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>],
     ret_activity = []
-  } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
+  }> : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>, index) -> ()
   return
 }
 
@@ -118,10 +118,10 @@ func.func @non_1_step(%x: memref<?xf32>, %y: memref<?xf32>) {
 }
 
 func.func @dnon_1_step(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: memref<?xf32>) {
-  enzyme.autodiff @non_1_step(%x, %dx, %y, %dy) {
+  enzyme.autodiff @non_1_step(%x, %dx, %y, %dy) <{
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
-  } : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
+  }> : (memref<?xf32>, memref<?xf32>, memref<?xf32>, memref<?xf32>) -> ()
   return
 }
 
@@ -174,10 +174,10 @@ func.func @par2d(%x: memref<3x3xf32>, %y: memref<3x3xf32>) {
 }
 
 func.func @dpar2d(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %y: memref<3x3xf32>, %dy: memref<3x3xf32>) {
-  enzyme.autodiff @par2d(%x, %dx, %y, %dy) {
+  enzyme.autodiff @par2d(%x, %dx, %y, %dy) <{
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
-  } : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
+  }> : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
   return
 }
 
@@ -233,10 +233,10 @@ func.func @some_inactive(%x: memref<3x3xf32>, %inactive: memref<3x3xf32>, %y: me
 }
 
 func.func @dsome_inactive(%x: memref<3x3xf32>, %dx: memref<3x3xf32>, %inactive: memref<3x3xf32>, %y: memref<3x3xf32>, %dy: memref<3x3xf32>) {
-  enzyme.autodiff @some_inactive(%x, %dx, %inactive, %y, %dy) {
+  enzyme.autodiff @some_inactive(%x, %dx, %inactive, %y, %dy) <{
     activity = [#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
-  } : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
+  }> : (memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>, memref<3x3xf32>) -> ()
   return
 }
 

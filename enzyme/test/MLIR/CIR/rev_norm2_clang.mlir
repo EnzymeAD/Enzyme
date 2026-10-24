@@ -37,7 +37,7 @@ module {
     cir.return %19 : !cir.double
   }
   cir.func @dnorm2(%x: !cir.double, %y: !cir.double, %dr: !cir.double) -> !rec_anon_struct {
-    %r = enzyme.autodiff @norm2(%x, %y, %dr) { activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] } : (!cir.double, !cir.double, !cir.double) -> !rec_anon_struct
+    %r = enzyme.autodiff @norm2(%x, %y, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (!cir.double, !cir.double, !cir.double) -> !rec_anon_struct
     cir.return %r : !rec_anon_struct
   }
 }
