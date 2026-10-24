@@ -6,13 +6,12 @@ detailed in the following.
 The [custom derivatives](#custom-derivatives) section registers reverse-mode and
 forward-mode rules through a derived type of Fortran procedure pointers.
 
-## Note on compilers
-
-Before providing details on the Fortran bindings, it is worth noting that Enzyme
-only supports the `2023.0.0` and `2023.2.4` versions of the Intel
-IFX Fortran compiler. We strongly recommend using the
-[Flang](https://flang.llvm.org) compiler, which is available as part of the
-[LLVM project](https://github.com/llvm/llvm-project).
+> [!NOTE]
+> Before providing details on the Fortran bindings, it is worth noting that
+> Enzyme only supports the `2023.0.0` and `2023.2.4` versions of the Intel
+> IFX Fortran compiler. We strongly recommend using the
+> [Flang](https://flang.llvm.org) compiler, which is available as part of the
+> [LLVM project](https://github.com/llvm/llvm-project).
 
 ## Running Enzyme from flang
 
@@ -149,7 +148,6 @@ for an example.
 > [!NOTE]
 > You will likely find that batching works more straightforwardly with
 > subroutines than with Fortran functions.
-
 
 ## Function-like hooks
 
@@ -508,3 +506,9 @@ The [forward-mode example](../test/Fortran/ForwardMode/custom_derivative.f90)
 prints `dy = 0.3333`. The
 [seed test](../test/Fortran/ForwardMode/custom_derivative_seeds.f90) checks that
 `dy` scales with `dx` and that the rule replaces a previous value of `dy`.
+
+## Further information
+
+For further information on the Fortran bindings for Enzyme, see the
+[Fortran guide](https://enzyme.mit.edu/getting_started/FortranGuide/) on the
+Enzyme website.
