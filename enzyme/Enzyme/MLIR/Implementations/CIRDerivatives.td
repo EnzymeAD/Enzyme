@@ -331,6 +331,7 @@ def : CirInactiveOp<"StackSaveOp">;
 def : CirInactiveOp<"StackRestoreOp">;
 def : CirInactiveOp<"LifetimeStartOp">;
 def : CirInactiveOp<"LifetimeEndOp">;
+def : CirInactiveOp<"UnreachableOp">;
 def : CirInactiveOp<"VTableAddrPointOp">;
 def : CirInactiveOp<"VTableGetVPtrOp">;
 

@@ -447,6 +447,24 @@ public:
   }
 };
 
+template <typename OpTy>
+struct CIRLifetimeForward
+    : public AutoDiffOpInterface::ExternalModel<CIRLifetimeForward<OpTy>,
+                                                OpTy> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto ltOp = cast<OpTy>(op);
+    if (gutils->isConstantValue(ltOp.getPtr()))
+      return success();
+
+    Value shadow = gutils->invertPointerM(ltOp.getPtr(), builder);
+    auto newOp = cast<OpTy>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<OpTy>(builder.clone(*newOp));
+    shadowOp.getPtrMutable().assign(shadow);
+    return success();
+  }
+};
+
 struct CIRReturnOpFunctionReturnInterface
     : public FunctionReturnOpInterface::ExternalModel<
           CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
@@ -463,6 +481,15 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpForward>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpReverse>(*context);
+    cir::LifetimeStartOp::attachInterface<
+        CIRLifetimeForward<cir::LifetimeStartOp>>(*context);
+    cir::LifetimeEndOp::attachInterface<CIRLifetimeForward<cir::LifetimeEndOp>>(
+        *context);
+    // Control never reaches cir.unreachable, so there is nothing to undo; the
+    // reverse sweep still has to be told so for a terminator, which the
+    // activity tables alone do not cover.
+    cir::UnreachableOp::attachInterface<
+        detail::NoopRevAutoDiffInterface<cir::UnreachableOp>>(*context);
     cir::PtrStrideOp::attachInterface<
         CIRPointerArithmeticReverse<cir::PtrStrideOp>>(*context);
     cir::GetMemberOp::attachInterface<
