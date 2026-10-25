@@ -4,7 +4,8 @@ add_mlir_doc(EnzymeOps -gen-op-doc EnzymeOps Enzyme/)
 
 set(LLVM_TARGET_DEFINITIONS EnzymeOps.td)
 mlir_tablegen(EnzymeAttributeInterfaces.h.inc -gen-attr-interface-decls)
-mlir_tablegen(EnzymeAttributes.h.inc -gen-attrdef-decls -attrdefs-dialect=enzyme)
+mlir_tablegen(
+  EnzymeAttributes.h.inc -gen-attrdef-decls -attrdefs-dialect=enzyme)
 mlir_tablegen(EnzymeAttributes.cpp.inc -gen-attrdef-defs
               -attrdefs-dialect=enzyme)
 add_public_tablegen_target(MLIREnzymeAttributesIncGen)
