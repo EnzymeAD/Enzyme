@@ -7,6 +7,8 @@ def CirEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::eq">
 def CirGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::ge">;
 def CirLT : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "cir::CmpOpKind::lt">;
 def CirAnd : CirInst<"AndOp">;
+// The type of the op's own result, for ops whose builder cannot infer it.
+def CirRetType : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResult(0).getType()">;
 
 // Some constant for de-duplication
 class CirCF<string v> : ConstantFP<v,"cir","ConstantOp">;
@@ -304,13 +306,81 @@ def : MLIRDerivative<"cir", "Log10Op", (Op $x),
                   >;
 
 
-// TODO: Add cir.complex member
 
 // Memory
-// TODO: Cir Cast cannot be single op as they aggregate different conversation into 1 cir.cast
 def : MemoryIdentityOp<"cir", "StoreOp", [1], [0]>;
 def : ReadOnlyIdentityOp<"cir", "LoadOp", [0]>;
 def : AllocationOp<"cir", "AllocaOp">;
+
+// Complex
+def CirComplexCreate : CirInst<"ComplexCreateOp">;
+def CirComplexReal : CirInst<"ComplexRealOp">;
+def CirComplexImag : CirInst<"ComplexImagOp">;
+def CirComplexAdd : CirInst<"ComplexAddOp">;
+def CirComplexSub : CirInst<"ComplexSubOp">;
+def CirComplexMul : CirInst<"ComplexMulOp">;
+def CirComplexDiv : CirInst<"ComplexDivOp">;
+def CirRange : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op.getRange()">;
+def CirComplexConj : CirInst<"ComplexConjOp">;
+
+def : MLIRDerivative<"cir", "ComplexAddOp", (Op $x, $y),
+                    [
+                      (DiffeRet),
+                      (DiffeRet),
+                    ]
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexSubOp", (Op $x, $y),
+                    [
+                      (DiffeRet),
+// CIR has no complex negation op; 0 - d spells it.
+                      (CirComplexSub (CirCF0 $x), (DiffeRet)),
+                    ]
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexMulOp", (Op $x, $y),
+                    [
+                      (CirComplexMul (DiffeRet), $y, (CirRange)),
+                      (CirComplexMul (DiffeRet), $x, (CirRange)),
+                    ]
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexDivOp", (Op $x, $y),
+                    [
+                      (CirComplexDiv (DiffeRet), $y, (CirRange)),
+                      (CirComplexSub (CirCF0 $x), (CirComplexMul (CirComplexDiv (DiffeRet), $y, (CirRange)), (CirComplexDiv $x, $y, (CirRange)), (CirRange))),
+                    ]
+                  >;
+
+// conj is not holomorphic: d/dz conj(z) as a real-linear map is conj itself,
+// and conj(conj(conj(d))) = conj(d) survives the emitter's wrapping.
+def : MLIRDerivative<"cir", "ComplexConjOp", (Op $x),
+                    [
+                      (CirComplexConj (DiffeRet)),
+                    ]
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexRealOp", (Op $x),
+                    [
+                      (CirComplexCreate (TypeOf $x), (DiffeRet), (CirCF0)),
+                    ],
+                    (CirComplexReal (CirRetType), (Shadow $x))
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexImagOp", (Op $x),
+                    [
+                      (CirComplexCreate (TypeOf $x), (CirCF0), (CirFNeg (DiffeRet))),
+                    ],
+                    (CirComplexImag (CirRetType), (Shadow $x))
+                  >;
+
+def : MLIRDerivative<"cir", "ComplexCreateOp", (Op $re, $im),
+                    [
+                      (CirComplexReal (TypeOf $re), (DiffeRet)),
+                      (CirFNeg (CirComplexImag (TypeOf $im), (DiffeRet))),
+                    ],
+                    (CirComplexCreate (CirRetType), (Shadow $re), (Shadow $im))
+                  >;
 
 def : ReadOnlyIdentityOp<"cir", "GetMemberOp", [0]>;
 def : ReadOnlyIdentityOp<"cir", "GetElementOp", [0]>;
