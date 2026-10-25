@@ -1,6 +1,6 @@
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s --check-prefix=NOREQ; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s --check-prefix=NOREQ; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s --check-prefix=NOREQ; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme" -S | FileCheck %s --check-prefix=NOREQ; fi
 
 ; Outer requests whose targets reach inner requests only through ordinary
 ; calls (h -> wrap -> df -> __enzyme_autodiff). Callers are defined before
@@ -224,7 +224,7 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define double @pre_df(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %{{.+}} = call fast { double } @diffecube(double %x, double 1.000000e+00)
+; CHECK-NEXT:   %{{.+}} = call {{(fast )?}}{ double } @diffecube(double %x, double 1.000000e+00)
 
 ; CHECK: define double @h(double %x, double %dx)
 ; CHECK-NEXT: entry:
@@ -261,7 +261,7 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define double @rev_h(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %{{.+}} = call fast { double } @differev_wrap(double %x, double 1.000000e+00)
+; CHECK-NEXT:   %{{.+}} = call {{(fast )?}}{ double } @differev_wrap(double %x, double 1.000000e+00)
 
 ; CHECK: define double @fwd_h(double %x, double %dx)
 ; CHECK-NEXT: entry:
@@ -282,7 +282,7 @@ declare double @__enzyme_autodiff(...)
 ; CHECK: define internal double @fwddiffemulti(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[a:[^ ]+]] = fadd fast double %"x'", %"x'"
-; CHECK-NEXT:   %[[w:[^ ]+]] = call fast { double, double } @fwddiffewrap2(double %x, double %"x'")
+; CHECK-NEXT:   %[[w:[^ ]+]] = call {{(fast )?}}{ double, double } @fwddiffewrap2(double %x, double %"x'")
 ; CHECK-NEXT:   %[[b:[^ ]+]] = extractvalue { double, double } %[[w]], 0
 ; CHECK-NEXT:   %[[db:[^ ]+]] = extractvalue { double, double } %[[w]], 1
 ; CHECK-NEXT:   %[[p:[^ ]+]] = fmul fast double %[[db]], %x
@@ -369,4 +369,4 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define internal double @fwddiffepre_df(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %{{.+}} = call fast { double } @fwddiffediffecube(double %x, double %"x'", double 1.000000e+00)
+; CHECK-NEXT:   %{{.+}} = call {{(fast )?}}{ double } @fwddiffediffecube(double %x, double %"x'", double 1.000000e+00)
