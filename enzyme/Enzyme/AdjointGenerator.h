@@ -6582,6 +6582,10 @@ public:
     return;
   }
 
+  bool handleGetrs(llvm::CallInst &call, llvm::Function *called,
+                   const BlasInfo &blas,
+                   const std::vector<bool> &overwritten_args);
+
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
 
