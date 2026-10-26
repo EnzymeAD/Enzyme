@@ -1935,7 +1935,7 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
     if (isa<AllocaInst>(inst))
       moveBeforeInst(inst, &gutils->newFunc->getEntryBlock().front());
     else
-      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+      moveBeforeInst(inst, getFirstNonPHIOrDbgOrLifetime(entry));
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -2795,8 +2795,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   while (gutils->inversionAllocs->size() > 0) {
-    gutils->inversionAllocs->back().moveBefore(
-        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    moveBeforeInst(
+        &gutils->inversionAllocs->back(),
+        getFirstNonPHIOrDbgOrLifetime(&gutils->newFunc->getEntryBlock()));
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -4773,7 +4774,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           AIs.push_back(AI);
       }
       for (auto AI : AIs)
-        AI->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+        moveBeforeInst(AI, getFirstNonPHIOrDbgOrLifetime(entry));
       entry = OldEntryInsts;
     }
   }
@@ -6748,6 +6749,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
       "void std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_c_str",
+      "void std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_c_str",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
       "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",
