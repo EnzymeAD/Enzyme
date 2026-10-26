@@ -3707,6 +3707,18 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        // A copy from a flang character literal (@_QQcl...) copies character
+        // data. Type analysis only sees the bytes of the literal as Anything,
+        // since an i8 array may hold the bytes of any type.
+        if (auto GV = dyn_cast<GlobalVariable>(getBaseObject(orig_src)))
+          if (GV->isConstant() && GV->hasInitializer() &&
+              startsWith(GV->getName(), "_QQcl"))
+            if (auto CDS =
+                    dyn_cast<ConstantDataSequential>(GV->getInitializer()))
+              if (CDS->isString()) {
+                vd = TypeTree(BaseType::Integer).Only(-1, &MTI);
+                goto known;
+              }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
