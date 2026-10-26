@@ -597,6 +597,20 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   if (F->empty())
     return;
 
+  // A function that never returns (e.g. one that always throws) produces no
+  // sret result. Julia's GC lowering (1.10/1.11) requires a call whose sret
+  // mixes tracked and untracked fields to pass its roots as the second
+  // argument, but nothing writes the roots of such a function, so
+  // interprocedural passes remove that argument and leave the call without it.
+  // Such a function and its calls therefore pass the buffer without the sret
+  // attribute.
+  bool canReturn = false;
+  for (auto &BB : *F)
+    if (isa<ReturnInst>(BB.getTerminator())) {
+      canReturn = true;
+      break;
+    }
+
   auto RT = F->getReturnType();
   std::set<size_t> srets;
   std::set<size_t> enzyme_srets;
@@ -896,9 +910,10 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   size_t nexti = 0;
   if (sretTy) {
     types.push_back(getUnqual(sretTy));
-    NewAttrs = NewAttrs.addAttribute(
-        F->getContext(), AttributeList::FirstArgIndex + nexti,
-        Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+    if (canReturn)
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti,
+          Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      Attribute::NoAlias);
@@ -1147,9 +1162,10 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     if (sretTy) {
       sret = EB.CreateAlloca(sretTy, 0, "stack_sret");
       vals.push_back(sret);
-      NewAttrs = NewAttrs.addAttribute(
-          F->getContext(), AttributeList::FirstArgIndex + nexti,
-          Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+      if (canReturn)
+        NewAttrs = NewAttrs.addAttribute(
+            F->getContext(), AttributeList::FirstArgIndex + nexti,
+            Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
       nexti++;
     }
     AllocaInst *roots = nullptr;
