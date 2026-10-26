@@ -907,6 +907,9 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                         Value *storeInto, MDNode *InvariantMD) {
   if (!FreeMemory)
     return nullptr;
+  if (mode == DerivativeMode::ForwardModeSplit)
+    return freeCacheAtReturns(sublimits, i, alloc, T, byteSizeOfType, storeInto,
+                              InvariantMD);
   assert(reverseBlocks.find(forwardPreheader) != reverseBlocks.end());
   assert(reverseBlocks[forwardPreheader].size());
   IRBuilder<> tbuild(reverseBlocks[forwardPreheader].back());
@@ -959,6 +962,50 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
     scopeFrees[alloc].insert(ci);
   }
   return ci;
+}
+
+CallInst *DiffeGradientUtils::freeCacheAtReturns(
+    const SubLimitType &sublimits, int i, AllocaInst *alloc, llvm::Type *T,
+    ConstantInt *byteSizeOfType, Value *storeInto, MDNode *InvariantMD) {
+  // In split forward mode there is no reverse pass to free the cache in. The
+  // tangent pass is the last reader of the cache that the augmented pass
+  // allocated, so free it once the tangent pass returns. Only the outermost
+  // chunk sits at a location that is valid on return; freeing the chunks
+  // nested in dynamic outer loops would need a loop over those iterations.
+  // TODO: free nested chunks too. They are leaked for now.
+  if ((size_t)i + 1 != sublimits.size())
+    return nullptr;
+
+  SmallVector<ReturnInst *, 2> rets;
+  for (auto &BB : *newFunc)
+    if (auto RI = dyn_cast_or_null<ReturnInst>(BB.getTerminator()))
+      rets.push_back(RI);
+
+  CallInst *last = nullptr;
+  for (auto RI : rets) {
+    IRBuilder<> tbuild(RI);
+    tbuild.setFastMathFlags(getFast());
+    LoadInst *forfree = tbuild.CreateLoad(T, storeInto, "forfree");
+    forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
+    forfree->setMetadata(
+        LLVMContext::MD_dereferenceable,
+        MDNode::get(
+            forfree->getContext(),
+            ArrayRef<Metadata *>(ConstantAsMetadata::get(byteSizeOfType))));
+    unsigned align = getCacheAlignment(
+        (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
+    forfree->setAlignment(Align(align));
+
+    CallInst *ci = CreateDealloc(tbuild, forfree);
+    if (ci) {
+      if (newFunc->getSubprogram())
+        ci->setDebugLoc(DILocation::get(newFunc->getContext(), 0, 0,
+                                        newFunc->getSubprogram(), 0));
+      scopeFrees[alloc].insert(ci);
+      last = ci;
+    }
+  }
+  return last;
 }
 
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
