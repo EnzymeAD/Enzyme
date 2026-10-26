@@ -469,6 +469,29 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
   return SymbolTable::lookupNearestSymbolFrom(iface.getOperation(), symbol);
 }
 
+static bool isArgumentMarkedInactive(CallOpInterface call, Value val) {
+  if (dyn_cast<Value>(call.getCallableForCallee()) == val)
+    return false;
+  auto isMarked = [](DictionaryAttr dict) {
+    return dict && (dict.contains("enzyme.inactive") ||
+                    dict.contains("enzyme_inactive"));
+  };
+  auto callee =
+      dyn_cast_or_null<FunctionOpInterface>(getFunctionFromCall(call));
+  ArrayAttr callArgAttrs = call.getArgAttrsAttr();
+  bool passed = false;
+  for (auto [i, arg] : llvm::enumerate(call.getArgOperands())) {
+    if (arg != val)
+      continue;
+    passed = true;
+    if (!(callArgAttrs && i < callArgAttrs.size() &&
+          isMarked(dyn_cast<DictionaryAttr>(callArgAttrs[i]))) &&
+        !(callee && isMarked(callee.getArgAttrDict(i))))
+      return false;
+  }
+  return passed;
+}
+
 constexpr bool EnzymePrintActivity = false;
 
 static bool isReadOnly(Operation *op) {
@@ -512,12 +535,11 @@ bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
 }
 
 /// Is the use of value val as an argument of call CI known to be inactive
-/// This tool can only be used when in DOWN mode
-bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
-    CallOpInterface CI, Value val) {
-  assert(directions & DOWN);
-
+static bool isArgumentUseInactive(CallOpInterface CI, Value val) {
   if (CI->hasAttr("enzyme_inactive"))
+    return true;
+
+  if (isArgumentMarkedInactive(CI, val))
     return true;
 
   Operation *F = getFunctionFromCall(CI);
@@ -635,6 +657,13 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   // With all other options exhausted we have to assume this function could
   // actively use the value
   return false;
+}
+
+/// This tool can only be used when in DOWN mode
+bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
+    CallOpInterface CI, Value val) {
+  assert(directions & DOWN);
+  return isArgumentUseInactive(CI, val);
 }
 
 // TODO: better support for known function calls. Ideally, they should become
@@ -1501,6 +1530,103 @@ static void allFollowersOf(Operation *op,
   }
 }
 
+static bool
+allMemoryUses(Value addr,
+              llvm::function_ref<bool(Operation *user, Value ptr)> visit) {
+  SmallVector<Value> todo = {addr};
+  SmallPtrSet<Value, 4> seen;
+  while (!todo.empty()) {
+    Value cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    for (Operation *user : cur.getUsers()) {
+      if (auto view = dyn_cast<ViewLikeOpInterface>(user)) {
+        if (view.getViewSource() == cur) {
+          llvm::append_range(todo, user->getResults());
+          continue;
+        }
+      }
+      if (!visit(user, cur))
+        return false;
+    }
+  }
+  return true;
+}
+
+static bool
+allGlobalAddresses(Operation *global, Operation *fn,
+                   llvm::function_ref<bool(Value addr, bool inFn)> visit) {
+  Operation *symbolTable = SymbolTable::getNearestSymbolTable(global);
+  if (!symbolTable)
+    return false;
+  auto uses = SymbolTable::getSymbolUses(global, symbolTable);
+  if (!uses)
+    return false;
+  for (const SymbolTable::SymbolUse &use : *uses) {
+    Operation *user = use.getUser();
+    if (user->getNumResults() != 1 ||
+        oputils::getGlobalForAddress(user->getResult(0)) != global)
+      return false;
+    if (!visit(user->getResult(0),
+               user->getParentOfType<FunctionOpInterface>() == fn))
+      return false;
+  }
+  return true;
+}
+
+static bool
+hasNoActiveAccess(mlir::enzyme::ActivityAnalyzer &analyzer,
+                  MTypeResults const &TR, Operation *global, Operation *fn,
+                  llvm::function_ref<bool(Operation *)> isKnownInactiveOp,
+                  Value &storeReval, Value &loadReval, Operation *&opReval) {
+  bool noActiveStore = true, noActiveLoad = true;
+  bool walked = allGlobalAddresses(global, fn, [&](Value addr, bool inFn) {
+    auto isInactive = [&](Value v, Value &reval) {
+      if (inFn) {
+        if (analyzer.isConstantValue(TR, v))
+          return true;
+        reval = v;
+        return false;
+      }
+      if (matchPattern(v, m_Constant()))
+        return true;
+      MConcreteType ct = TR.intType(1, v, /*errIfNotFound*/ false);
+      return !ct.isPossibleFloat() && !ct.isPossiblePointer();
+    };
+    return allMemoryUses(addr, [&](Operation *user, Value ptr) {
+      if (auto store = dyn_cast<enzyme::StoreLikeInterface>(user)) {
+        Value stored = store.getStoredValue();
+        if (stored == ptr)
+          noActiveStore = noActiveLoad = false;
+        else if (noActiveStore && !isInactive(stored, storeReval))
+          noActiveStore = false;
+      } else if (auto call = dyn_cast<CallOpInterface>(user);
+                 call && isArgumentUseInactive(call, ptr)) {
+        for (Value r : user->getResults())
+          if (noActiveStore &&
+              TR.intType(1, r, /*errIfNotFound*/ false).isPossiblePointer())
+            noActiveStore = false;
+      } else if (auto iface = dyn_cast<enzyme::ActivityOpInterface>(user);
+                 isReadOnly(user) || (iface && iface.isInactive()) ||
+                 (inFn && isKnownInactiveOp(user))) {
+        for (Value r : user->getResults()) {
+          if (noActiveStore &&
+              TR.intType(1, r, /*errIfNotFound*/ false).isPossiblePointer())
+            noActiveStore = false;
+          if (noActiveLoad && !isInactive(r, loadReval))
+            noActiveLoad = false;
+        }
+      } else {
+        noActiveStore = noActiveLoad = false;
+        if (inFn)
+          opReval = user;
+      }
+      return noActiveStore || noActiveLoad;
+    });
+  });
+  return walked && (noActiveStore || noActiveLoad);
+}
+
 bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
                                                      Value Val) {
   // This analysis may only be called by instructions corresponding to
@@ -1612,124 +1738,58 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     return true;
   }
 
-  // TODO: since in MLIR globals are operations like others, this should be
-  // handled via interfaces.
-  //
-  // if (auto GI = dyn_cast<GlobalVariable>(Val)) {
-  //   // If operating under the assumption globals are inactive unless
-  //   // explicitly marked as active, this is inactive
-  //   if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive)
-  //   {
-  //     InsertConstantValue(TR, Val);
-  //     return true;
-  //   }
+  if (Operation *global = oputils::getGlobalForAddress(Val)) {
+    StringRef name = cast<SymbolOpInterface>(global).getName();
+    if (global->hasAttr("enzyme_inactive") || name.contains("enzyme_const") ||
+        InactiveGlobals.count(name.str())) {
+      InsertConstantValue(TR, Val);
+      return true;
+    }
 
-  //   if (GI->getName().contains("enzyme_const") ||
-  //       InactiveGlobals.count(GI->getName().str())) {
-  //     InsertConstantValue(TR, Val);
-  //     return true;
-  //   }
+    // If this global is unchanging and the internal constant data
+    // is inactive, the global is inactive
+    if (oputils::isConstantGlobal(global)) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " VALUE const global " << Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
 
-  //   // If this global is unchanging and the internal constant data
-  //   // is inactive, the global is inactive
-  //   if (GI->isConstant() && GI->hasInitializer() &&
-  //       isConstantValue(TR, GI->getInitializer())) {
-  //     InsertConstantValue(TR, Val);
-  //     if (EnzymePrintActivity)
-  //       llvm::errs() << " VALUE const global " << *Val
-  //                    << " init: " << *GI->getInitializer() << "\n";
-  //     return true;
-  //   }
+    if (directions == (UP | DOWN) && !global->hasAttr("enzyme_shadow") &&
+        oputils::isLocalGlobal(global)) {
+      auto DownHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
+          new mlir::enzyme::ActivityAnalyzer(*this, DOWN));
+      DownHypothesis->ConstantValues.insert(Val);
+      Operation *fn =
+          Val.getParentRegion()->getParentOfType<FunctionOpInterface>();
+      Value storeReval, loadReval;
+      Operation *opReval = nullptr;
+      auto isKnownInactiveOp = [&](Operation *op) {
+        return DownHypothesis->ConstantOperations.count(op) != 0;
+      };
+      if (hasNoActiveAccess(*DownHypothesis, TR, global, fn, isKnownInactiveOp,
+                            storeReval, loadReval, opReval)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " VALUE const global without shadow " << Val << "\n";
+        insertConstantsFrom(TR, *DownHypothesis);
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+      // Either access turning out inactive later may make the global
+      // inactive.
+      if (storeReval)
+        ReEvaluateValueIfInactiveValue[storeReval].insert(Val);
+      if (loadReval)
+        ReEvaluateValueIfInactiveValue[loadReval].insert(Val);
+      if (opReval)
+        ReEvaluateValueIfInactiveOp[opReval].insert(Val);
+    }
 
-  //   // If this global is a pointer to an integer, it is inactive
-  //   // TODO note this may need updating to consider the size
-  //   // of the global
-  //   auto res = TR.query(GI).Data0();
-  //   auto dt = res[{-1}];
-  //   if (dt.isIntegral()) {
-  //     if (EnzymePrintActivity)
-  //       llvm::errs() << " VALUE const as global int pointer " << *Val
-  //                    << " type - " << res.str() << "\n";
-  //     InsertConstantValue(TR, Val);
-  //     return true;
-  //   }
-
-  //   // If this is a global local to this translation unit with inactive
-  //   // initializer and no active uses, it is definitionally inactive
-  //   bool usedJustInThisModule =
-  //       GI->hasInternalLinkage() || GI->hasPrivateLinkage();
-
-  //   if (EnzymePrintActivity)
-  //     llvm::errs() << "pre attempting(" << (int)directions
-  //                  << ") just used in module for: " << *GI << " dir"
-  //                  << (int)directions << " justusedin:" <<
-  //                  usedJustInThisModule
-  //                  << "\n";
-
-  //   if (directions == 3 && usedJustInThisModule) {
-  //     // TODO this assumes global initializer cannot refer to itself (lest
-  //     // infinite loop)
-  //     if (!GI->hasInitializer() || isConstantValue(TR, GI->getInitializer()))
-  //     {
-
-  //       if (EnzymePrintActivity)
-  //         llvm::errs() << "attempting just used in module for: " << *GI <<
-  //         "\n";
-  //       // Not looking at users to prove inactive (definition of down)
-  //       // If all users are inactive, this is therefore inactive.
-  //       // Since we won't look at origins to prove, we can inductively assume
-  //       // this is inactive
-
-  //       // As an optimization if we are going down already
-  //       // and we won't use ourselves (done by PHI's), we
-  //       // dont need to inductively assume we're true
-  //       // and can instead use this object!
-  //       // This pointer is inactive if it is either not actively stored to or
-  //       // not actively loaded from
-  //       // See alloca logic to explain why OnlyStores is insufficient here
-  //       if (directions == DOWN) {
-  //         if (isValueInactiveFromUsers(TR, Val, UseActivity::OnlyLoads)) {
-  //           InsertConstantValue(TR, Val);
-  //           return true;
-  //         }
-  //       } else {
-  //         Instruction *LoadReval = nullptr;
-  //         Instruction *StoreReval = nullptr;
-  //         auto DownHypothesis =
-  //         std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
-  //             new mlir::enzyme::ActivityAnalyzer(*this, DOWN));
-  //         DownHypothesis->ConstantValues.insert(Val);
-  //         if (DownHypothesis->isValueInactiveFromUsers(
-  //                 TR, Val, UseActivity::OnlyLoads, &LoadReval) ||
-  //             (TR.query(GI)[{-1, -1}].isFloat() &&
-  //              DownHypothesis->isValueInactiveFromUsers(
-  //                  TR, Val, UseActivity::OnlyStores, &StoreReval))) {
-  //           insertConstantsFrom(TR, *DownHypothesis);
-  //           InsertConstantValue(TR, Val);
-  //           return true;
-  //         } else {
-  //           if (LoadReval) {
-  //             if (EnzymePrintActivity)
-  //               llvm::errs() << " global activity of " << *Val
-  //                            << " dependant on " << *LoadReval << "\n";
-  //             ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
-  //           }
-  //           if (StoreReval)
-  //             ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
-  //         }
-  //       }
-  //     }
-  //   }
-
-  //   // Otherwise we have to assume this global is active since it can
-  //   // be arbitrarily used in an active way
-  //   // TODO we can be more aggressive here in the future
-  //   if (EnzymePrintActivity)
-  //     llvm::errs() << " VALUE nonconst unknown global " << *Val << " type - "
-  //                  << res.str() << "\n";
-  //   ActiveValues.insert(Val);
-  //   return false;
-  // }
+    if (EnzymePrintActivity)
+      llvm::errs() << " VALUE nonconst global " << Val << "\n";
+    ActiveValues.insert(Val);
+    return false;
+  }
 
   //
   // TODO: constants are just operations in MLIR, this should be handled via
