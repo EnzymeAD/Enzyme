@@ -23,6 +23,10 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
+#endif
+
 using namespace mlir;
 using namespace mlir::enzyme;
 namespace mlir {
@@ -146,6 +150,10 @@ Operation *getGlobalForAddress(Value v) {
     name = op.getNameAttr();
   else if (auto op = dyn_cast<LLVM::AddressOfOp>(def))
     name = op.getGlobalNameAttr();
+#ifdef ENZYME_CLANG_HAS_CIR
+  else if (auto op = dyn_cast<cir::GetGlobalOp>(def))
+    name = op.getNameAttr();
+#endif
   if (!name)
     return nullptr;
   Operation *global = SymbolTable::lookupNearestSymbolFrom(def, name);
@@ -159,6 +167,10 @@ bool isConstantGlobal(Operation *global) {
     return op.getConstant();
   if (auto op = dyn_cast<LLVM::GlobalOp>(global))
     return op.getConstant();
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (auto op = dyn_cast<cir::GlobalOp>(global))
+    return op.getConstant();
+#endif
   return false;
 }
 
@@ -166,6 +178,10 @@ bool isLocalGlobal(Operation *global) {
   if (auto op = dyn_cast<LLVM::GlobalOp>(global))
     return op.getLinkage() == LLVM::Linkage::Internal ||
            op.getLinkage() == LLVM::Linkage::Private;
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (auto op = dyn_cast<cir::GlobalOp>(global))
+    return cir::isLocalLinkage(op.getLinkage());
+#endif
   return cast<SymbolOpInterface>(global).isPrivate();
 }
 
