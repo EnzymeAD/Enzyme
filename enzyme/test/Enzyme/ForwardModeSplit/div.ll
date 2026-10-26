@@ -19,9 +19,9 @@ declare double @__enzyme_fwdsplit(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %"x'", double %y, double %"y'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fdiv fast double %x, %y
-; CHECK-NEXT:   %1 = fmul fast double %"y'", %0
-; CHECK-NEXT:   %2 = fsub fast double %"x'", %1
-; CHECK-NEXT:   %3 = fdiv fast double %2, %y
+; CHECK-NEXT:   %0 = fdiv nnan ninf nsz arcp contract afn double %x, %y
+; CHECK-NEXT:   %1 = fmul nnan ninf nsz arcp contract afn double %"y'", %0
+; CHECK-NEXT:   %2 = fsub nnan ninf nsz arcp contract afn double %"x'", %1
+; CHECK-NEXT:   %3 = fdiv nnan ninf nsz arcp contract afn double %2, %y
 ; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }
