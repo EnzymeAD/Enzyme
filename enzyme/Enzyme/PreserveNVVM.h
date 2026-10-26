@@ -50,12 +50,22 @@ private:
   // dead code, and the kernels it launches, alive. The globals are consumed
   // either way.
   bool PreserveCustomRuleLinkage;
+  // Only meaningful with !Begin: the end of an LTO pre-link pipeline that
+  // deferred differentiation to the post-link run. The functions Begin made
+  // external get their original linkage back, so the bitcode does not export a
+  // strong copy of every static or inline function a rule names, and are kept
+  // alive through llvm.compiler.used instead. Their inlining attributes stay as
+  // Begin left them; the post-link end pass restores those and drops the
+  // llvm.compiler.used entries.
+  bool LTOPreLink;
   static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;
-  PreserveNVVMNewPM(bool Begin, bool PreserveCustomRuleLinkage = true)
-      : Begin(Begin), PreserveCustomRuleLinkage(PreserveCustomRuleLinkage) {}
+  PreserveNVVMNewPM(bool Begin, bool PreserveCustomRuleLinkage = true,
+                    bool LTOPreLink = false)
+      : Begin(Begin), PreserveCustomRuleLinkage(PreserveCustomRuleLinkage),
+        LTOPreLink(LTOPreLink) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 

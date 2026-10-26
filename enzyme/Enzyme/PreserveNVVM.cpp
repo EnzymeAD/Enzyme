@@ -30,10 +30,12 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -42,6 +44,7 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 
@@ -80,6 +83,97 @@ void markFunctionInactive(Function &F) {
   }
 }
 
+/// If F is a trivial forwarding wrapper -- one basic block holding a single
+/// call whose operands are F's own arguments in order, followed by a return of
+/// that call's result -- copy the callee's function attributes onto F, except
+/// those that only steer inlining or code placement.
+///
+/// preserveLinkage marks libdevice wrappers such as __nv_sqrt (whose body is
+/// just `call @llvm.nvvm.sqrt.rn.d; ret`) noinline so Enzyme can recognize
+/// them by name. Inlining is how the wrapper would normally pick up the
+/// intrinsic's attributes, and FunctionAttrs never infers `speculatable`, so
+/// without this the wrapper stays an opaque call that LICM cannot hoist and
+/// SimplifyCFG cannot if-convert. In a loop, that forces Enzyme to cache
+/// per-iteration values that would otherwise be loop invariant.
+///
+/// Returns whether F changed.
+bool copyForwardedCalleeAttrs(Function &F) {
+  if (F.isDeclaration() || F.isVarArg() || F.size() != 1)
+    return false;
+  BasicBlock &BB = F.getEntryBlock();
+  if (BB.size() != 2)
+    return false;
+  auto *CI = dyn_cast<CallInst>(&BB.front());
+  auto *RI = dyn_cast<ReturnInst>(BB.getTerminator());
+  if (!CI || !RI)
+    return false;
+  Function *Callee = CI->getCalledFunction();
+  if (!Callee || Callee == &F || CI->arg_size() != F.arg_size())
+    return false;
+  for (unsigned i = 0, e = F.arg_size(); i < e; ++i)
+    if (CI->getArgOperand(i) != F.getArg(i))
+      return false;
+  if (F.getReturnType()->isVoidTy()) {
+    if (RI->getReturnValue())
+      return false;
+  } else if (RI->getReturnValue() != CI) {
+    return false;
+  }
+
+  bool changed = false;
+#if LLVM_VERSION_MAJOR >= 16
+  // F only runs the callee, so its effects are at most the callee's.
+  auto ME = F.getMemoryEffects() & Callee->getMemoryEffects();
+  if (ME != F.getMemoryEffects()) {
+    F.setMemoryEffects(ME);
+    changed = true;
+  }
+#endif
+  // Only semantic guarantees that hold for a call forwarded verbatim. Anything
+  // describing how the callee's own body was compiled (inlining hints, code
+  // placement, sanitizers, stack protection, coroutine state, ...) stays put.
+  static const Attribute::AttrKind Forwardable[] = {
+    Attribute::Speculatable,
+    Attribute::NoUnwind,
+    Attribute::WillReturn,
+    Attribute::MustProgress,
+    Attribute::NoSync,
+    Attribute::NoFree,
+    Attribute::NoRecurse,
+    Attribute::NoCallback,
+    Attribute::NoReturn,
+    Attribute::Convergent,
+#if LLVM_VERSION_MAJOR >= 23
+    Attribute::NoCreateUndefOrPoison,
+#endif
+#if LLVM_VERSION_MAJOR < 16
+    Attribute::ReadNone,
+    Attribute::ReadOnly,
+    Attribute::WriteOnly,
+    Attribute::ArgMemOnly,
+    Attribute::InaccessibleMemOnly,
+    Attribute::InaccessibleMemOrArgMemOnly,
+#endif
+  };
+  for (auto K : Forwardable) {
+    if (!Callee->hasFnAttribute(K) || F.hasFnAttribute(K))
+      continue;
+    F.addFnAttr(K);
+    changed = true;
+  }
+  // llvm.nvvm.sqrt.* (rn/rz/rm/rp, ftz, approx) are declared IntrNoMem but not
+  // IntrSpeculatable upstream, unlike llvm.nvvm.fabs or llvm.sqrt itself, even
+  // though InstCombine later rewrites the rn forms to llvm.sqrt. They have no
+  // side effects or UB (a negative input just yields NaN), so __nv_sqrt and
+  // __nv_sqrtf may be hoisted and if-converted like any other math call.
+  if (startsWith(Callee->getName(), "llvm.nvvm.sqrt.") &&
+      !F.hasFnAttribute(Attribute::Speculatable)) {
+    F.addFnAttr(Attribute::Speculatable);
+    changed = true;
+  }
+  return changed;
+}
+
 //! Returns whether changed.
 bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
@@ -91,12 +185,47 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
     if (Inlining) {
       F.removeFnAttr(Attribute::AlwaysInline);
       F.addFnAttr(Attribute::NoInline);
+      copyForwardedCalleeAttrs(F);
     }
     F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
     F.setLinkage(Function::LinkageTypes::ExternalLinkage);
     return true;
   }
   return false;
+}
+
+static void handleFunctionLike(bool Begin, Value *Target,
+                               StringRef FunctionName) {
+  while (auto *CE = dyn_cast<ConstantExpr>(Target))
+    Target = CE->getOperand(0);
+
+  if (FunctionName.empty()) {
+    errs() << "Use of enzyme_function_like requires a non-empty function "
+              "name\n";
+    llvm_unreachable("enzyme_function_like");
+  }
+
+  auto *F = dyn_cast<Function>(Target);
+  if (!F) {
+    errs() << "First argument of enzyme_function_like must be a constant "
+              "function\n"
+           << *Target << "\n";
+    llvm_unreachable("enzyme_function_like");
+  }
+
+  // Warn on conflicting registrations while preserving the existing
+  // last-registration-wins behavior.
+  Attribute Existing = F->getFnAttribute("enzyme_math");
+  if (Existing.isValid() && Existing.getValueAsString() != FunctionName) {
+    errs() << "warning: conflicting enzyme_function_like registrations for "
+              "function '"
+           << F->getName() << "': replacing '" << Existing.getValueAsString()
+           << "' with '" << FunctionName << "'\n";
+  }
+
+  F->addAttribute(AttributeList::FunctionIndex,
+                  Attribute::get(F->getContext(), "enzyme_math", FunctionName));
+  preserveLinkage(Begin, *F);
 }
 
 // Return true if the module has a triple indicating an nvptx target, false
@@ -304,7 +433,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
-        } else if (Mode == DerivativeMode::ForwardMode) {
+        } else if constexpr (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
           if (PreserveCustomRuleLinkage)
             preserveLinkage(true, *Fs[1], false);
@@ -312,7 +441,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-        } else if (Mode == DerivativeMode::ForwardModeSplit) {
+        } else if constexpr (Mode == DerivativeMode::ForwardModeSplit) {
           assert(numargs == 3);
           if (PreserveCustomRuleLinkage)
             preserveLinkage(true, *Fs[1], false);
@@ -357,6 +486,59 @@ bool preserveNVVM(bool Begin, Module &M,
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
+
+  // Flang cannot construct the constant function/string aggregate used by
+  // __enzyme_function_like. The Fortran binding instead passes a function and
+  // a BIND(C) global whose name is enzyme_math_<function>.
+  if (Begin) {
+    SmallVector<CallInst *, 4> functionLikeCalls;
+    for (Function &Caller : M) {
+      for (BasicBlock &BB : Caller) {
+        for (Instruction &I : BB) {
+          auto *Call = dyn_cast<CallInst>(&I);
+          if (!Call)
+            continue;
+
+          auto *Hook =
+              dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
+          if (!Hook || !startsWith(Hook->getName(), "f__enzyme_function_like"))
+            continue;
+
+          if (Call->arg_size() != 2) {
+            errs() << "Fortran enzyme_function_like requires exactly a "
+                      "function and a function name\n"
+                   << *Call << "\n";
+            llvm_unreachable("invalid Fortran enzyme_function_like call");
+          }
+
+          auto *NameGlobal = dyn_cast<GlobalVariable>(
+              Call->getArgOperand(1)->stripPointerCasts());
+          if (!NameGlobal) {
+            errs() << "Second argument of Fortran enzyme_function_like must "
+                      "be an enzyme_math_* function name\n"
+                   << *Call->getArgOperand(1) << "\n";
+            llvm_unreachable(
+                "invalid Fortran enzyme_function_like function name");
+          }
+
+          StringRef FunctionName = NameGlobal->getName();
+          if (!FunctionName.consume_front("enzyme_math_")) {
+            errs() << "Fortran enzyme_function_like function name must use "
+                      "the enzyme_math_* BIND(C) naming convention\n"
+                   << *NameGlobal << "\n";
+            llvm_unreachable(
+                "invalid Fortran enzyme_function_like function name");
+          }
+
+          handleFunctionLike(Begin, Call->getArgOperand(0), FunctionName);
+          functionLikeCalls.push_back(Call);
+          changed = true;
+        }
+      }
+    }
+    for (CallInst *Call : functionLikeCalls)
+      Call->eraseFromParent();
+  }
 
   if (Begin)
     if (GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations")) {
@@ -466,11 +648,8 @@ bool preserveNVVM(bool Begin, Module &M,
 
             if (startsWith(AS, "enzyme_function_like") && Func) {
               auto val = AS.substr(1 + AS.find('='));
-              Func->addAttribute(
-                  AttributeList::FunctionIndex,
-                  Attribute::get(Func->getContext(), "enzyme_math", val));
+              handleFunctionLike(Begin, Func, val);
               changed = true;
-              preserveLinkage(Begin, *Func);
               replacements.push_back(Constant::getNullValue(CAOp->getType()));
               continue;
             }
@@ -484,6 +663,21 @@ bool preserveNVVM(bool Begin, Module &M,
               replacements.push_back(Constant::getNullValue(CAOp->getType()));
               continue;
             }
+
+            if (AS == "enzyme_ta_norecur" && (Glob || Func)) {
+              if (Glob) {
+                Glob->setMetadata("enzyme_ta_norecur",
+                                  MDNode::get(Glob->getContext(), {}));
+              } else if (Func) {
+                Func->addAttribute(
+                    AttributeList::FunctionIndex,
+                    Attribute::get(Func->getContext(), "enzyme_ta_norecur"));
+              }
+              changed = true;
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
             replacements.push_back(cast<Constant>(CAOp));
           }
           GA->setInitializer(ConstantArray::get(CA->getType(), replacements));
@@ -653,7 +847,22 @@ bool preserveNVVM(bool Begin, Module &M,
     if (g.getName().contains("__enzyme_function_like")) {
       if (g.hasInitializer()) {
         auto CA = dyn_cast<ConstantAggregate>(g.getInitializer());
-        if (!CA || CA->getNumOperands() < 2) {
+        if (!CA) {
+          constexpr StringLiteral Marker = "__enzyme_function_like__";
+          auto MarkerPos = g.getName().rfind(Marker);
+          Value *Target = g.getInitializer()->stripPointerCasts();
+
+          // Ignore globals that are not Fortran function-like registrations.
+          if (MarkerPos == StringRef::npos || !isa<Function>(Target))
+            continue;
+
+          handleFunctionLike(Begin, Target,
+                             g.getName().substr(MarkerPos + Marker.size()));
+          toErase.push_back(&g);
+          changed = true;
+          continue;
+        }
+        if (CA->getNumOperands() < 2) {
           llvm::errs() << "Use of "
                        << "enzyme_function_like"
                        << " must be a "
@@ -663,9 +872,6 @@ bool preserveNVVM(bool Begin, Module &M,
         }
         Value *V = CA->getOperand(0);
         Value *name = CA->getOperand(1);
-        while (auto CE = dyn_cast<ConstantExpr>(V)) {
-          V = CE->getOperand(0);
-        }
         while (auto CE = dyn_cast<ConstantExpr>(name)) {
           name = CE->getOperand(0);
         }
@@ -678,27 +884,9 @@ bool preserveNVVM(bool Begin, Module &M,
                     CA->isCString())
                   nameVal = CA->getAsCString();
 
-        if (nameVal == "") {
-          llvm::errs() << *name << "\n";
-          llvm::errs() << "Use of "
-                       << "enzyme_function_like"
-                       << "requires a non-empty function name"
-                       << "\n";
-          llvm_unreachable("enzyme_function_like");
-        }
-        if (auto F = cast<Function>(V)) {
-          F->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::get(g.getContext(), "enzyme_math", nameVal));
-          toErase.push_back(&g);
-          changed = true;
-        } else {
-          llvm::errs() << "Param of __enzyme_function_like must be a "
-                          "constant function"
-                       << g << "\n"
-                       << *V << "\n";
-          llvm_unreachable("__enzyme_function_like");
-        }
+        handleFunctionLike(Begin, V, nameVal);
+        toErase.push_back(&g);
+        changed = true;
       }
     }
     if (g.getName().contains("__enzyme_allocation_like")) {
@@ -963,6 +1151,7 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
 #endif
+  SmallPtrSet<Constant *, 4> compilerUsed;
   for (auto &F : M) {
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {
@@ -1004,6 +1193,10 @@ bool preserveNVVM(bool Begin, Module &M,
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
       changed = true;
+      if (F.hasFnAttribute("prev_compiler_used")) {
+        F.removeFnAttr("prev_compiler_used");
+        compilerUsed.insert(&F);
+      }
       F.removeFnAttr("prev_fixup");
       if (F.hasFnAttribute("prev_always_inline")) {
         F.addFnAttr(Attribute::AlwaysInline);
@@ -1018,6 +1211,43 @@ bool preserveNVVM(bool Begin, Module &M,
       F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
       F.setLinkage((Function::LinkageTypes)val);
     }
+  }
+#if LLVM_VERSION_MAJOR >= 20
+  // Only the LTO pre-link end pass, used from LLVM 20, adds these entries.
+  if (!compilerUsed.empty())
+    removeFromUsedLists(M, [&](Constant *C) { return compilerUsed.count(C); });
+#endif
+  return changed;
+}
+
+// The end of an LTO pre-link pipeline that deferred differentiation. Every
+// function Begin made external goes back to its original linkage: otherwise
+// each object file would define a strong copy of the static and inline
+// functions a rule names, and linking two of them fails on duplicate symbols.
+// Those that could now be dropped as unused are kept alive through
+// llvm.compiler.used until the post-link end pass, which also restores the
+// inlining attributes left in place here.
+static bool preserveNVVMLTOPreLinkEnd(Module &M) {
+  bool changed = false;
+  SmallVector<GlobalValue *, 4> keep;
+  for (auto &F : M) {
+    if (!F.hasFnAttribute("prev_fixup") ||
+        F.hasFnAttribute("prev_compiler_used"))
+      continue;
+    int64_t val;
+    F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+    auto L = (Function::LinkageTypes)val;
+    changed |= F.getLinkage() != L;
+    F.setLinkage(L);
+    if (GlobalValue::isDiscardableIfUnused(L) &&
+        !GlobalValue::isAvailableExternallyLinkage(L)) {
+      F.addFnAttr("prev_compiler_used");
+      keep.push_back(&F);
+    }
+  }
+  if (!keep.empty()) {
+    appendToCompilerUsed(M, keep);
+    changed = true;
   }
   return changed;
 }
@@ -1076,7 +1306,9 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = preserveNVVM(Begin, M, PreserveCustomRuleLinkage);
+  bool changed = (!Begin && LTOPreLink)
+                     ? preserveNVVMLTOPreLinkEnd(M)
+                     : preserveNVVM(Begin, M, PreserveCustomRuleLinkage);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;

@@ -13,6 +13,7 @@
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/GradientUtils.h"
 
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -44,11 +45,31 @@ struct GPUAllocOpInterface
     return isa<gpu::DeallocOp>(user);
   }
 };
+
+struct GPULaunchOpInterface
+    : public AutoDiffOpInterface::ExternalModel<GPULaunchOpInterface,
+                                                gpu::LaunchOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    // The launch operands (async dependencies, grid/block/cluster sizes,
+    // dynamic shared memory) and the optional token result carry no
+    // tangents; the tangent of a launch is the launch itself with a
+    // differentiated body.
+    for (auto &region : op->getRegions())
+      for (auto &block : region)
+        for (Operation &o : block)
+          if (failed(gutils->visitChild(&o)))
+            return failure();
+    return success();
+  }
+};
 } // namespace
 
 void mlir::enzyme::registerGPUDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, gpu::GPUDialect *) {
     gpu::AllocOp::attachInterface<GPUAllocOpInterface>(*context);
+    gpu::LaunchOp::attachInterface<GPULaunchOpInterface>(*context);
+    registerAutoDiffUsingRegionTerminatorInterface<gpu::TerminatorOp>(*context);
   });
 }

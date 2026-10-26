@@ -59,6 +59,18 @@ program main
   write(*, "(f4.1)") dy(1)
   write(*, "(f4.1)") dz
 
+  ! Compute gradient computation with respect to just y
+  dx(:) = 0.0
+  dy(:) = 0.0
+  dz = 0.0
+  call enzyme_autodiff(dot, enzyme_const, n, &
+                       enzyme_const, x, &
+                       enzyme_dup, y, dy, &
+                       enzyme_const, z)
+  write(*, "(f4.1)") dx(1)
+  write(*, "(f4.1)") dy(1)
+  write(*, "(f4.1)") dz
+
 contains
 
   ! Function for computing the dot product of two vectors and adding a scalar
@@ -89,3 +101,6 @@ end program main
 ! CHECK-NEXT: 0.0
 ! CHECK-NEXT: 0.0
 ! CHECK-NEXT: 1.0
+! CHECK-NEXT: 0.0
+! CHECK-NEXT: 20.0
+! CHECK-NEXT: 0.0

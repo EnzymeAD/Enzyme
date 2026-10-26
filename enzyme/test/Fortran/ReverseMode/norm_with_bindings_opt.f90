@@ -36,9 +36,9 @@ contains
     real, dimension(n), intent(in) :: x
     real, dimension(n), intent(out) :: y
     y(:) = x / sum(x)
-  end subroutine
+  end subroutine norm
 
-end program
+end program main
 
 ! CHECK: 1.0000
 ! CHECK-NEXT: 0.0000

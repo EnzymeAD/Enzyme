@@ -34,11 +34,14 @@ struct LowerAffineAtomicRmwPass
       SmallVector<Value> indices;
       enzyme::computeAffineIndices(builder, rmw.getLoc(), rmw.getMap(),
                                    rmw.getIndices(), indices);
-      rmw.getResult().replaceAllUsesWith(
-          memref::AtomicRMWOp::create(builder, rmw.getLoc(),
-                                      arith::AtomicRMWKind::addf,
-                                      rmw.getValue(), rmw.getMemref(), indices)
-              .getResult());
+      // The enzyme atomic rather than the memref one: it is what carries the
+      // ordering and the alignment this op holds. The kind is the one the op
+      // names, which is not always an accumulation.
+      auto lowered = enzyme::AtomicRMWOp::create(
+          builder, rmw.getLoc(), rmw.getResult().getType(), rmw.getKind(),
+          rmw.getOrdering(), rmw.getValue(), rmw.getMemref(), indices,
+          rmw.getAlignmentAttr(), rmw.getFastmath());
+      rmw.getResult().replaceAllUsesWith(lowered.getResult());
       rmw->erase();
     });
   };

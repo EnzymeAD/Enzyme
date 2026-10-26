@@ -25,7 +25,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [linux-x86-n2-32]
+        os: [linux-x86-n4-32]
 
     timeout-minutes: 500
 
@@ -38,14 +38,18 @@ jobs:
           apt-get update
           apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
-    - uses: actions/checkout@v4
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         path: 'Enzyme'
 
-    - uses: actions/checkout@v4
+    - name: Checkout LLVM repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       with:
+        persist-credentials: false
         repository: 'llvm/llvm-project'
-        ref: '084f6484d76625b995c07f512a323ab7cdc5351d'
+        ref: 'f9cea2f24b6713cc344a875e674d45728c19d24e'
         path: 'llvm-project'
 
     - name: Set BASE_DIR
@@ -75,16 +79,16 @@ jobs:
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
-      working-directory: ${{ env.BASE_DIR }}/'llvm-project'
+      working-directory: ${{ env.BASE_DIR }}/llvm-project
       run: |
         mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir" -DLLVM_ENABLE_RUNTIMES=openmp -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
-        -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 \
+        -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_PARALLEL_COMPILE_JOBS=16 \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
         -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
 
     - name: Enzyme build
-      working-directory: ${{ env.BASE_DIR }}/'Enzyme'
+      working-directory: ${{ env.BASE_DIR }}/Enzyme
       run: |
           mkdir enzyme-build && cd enzyme-build
           cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build -DENZYME_MLIR=ON

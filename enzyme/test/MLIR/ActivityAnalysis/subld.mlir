@@ -13,7 +13,7 @@ module attributes {
     #dlti.dl_entry<f128, dense<128> : vector<2xi64>>,
     #dlti.dl_entry<"dlti.endianness", "little">>} {
   llvm.func @f(%arg0: !llvm.ptr {llvm.nocapture, llvm.readonly}) -> !llvm.ptr attributes {memory_effects = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read, errnoMem = none, targetMem0 = none, targetMem1 = none>, sym_visibility = "private"} {
-    %0 = llvm.load %arg0 {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr
+    %0 = llvm.load %arg0 <alignment = 8> : !llvm.ptr -> !llvm.ptr
     llvm.return %0 : !llvm.ptr
   }
   // CHECK-LABEL: @submalloced
@@ -22,9 +22,9 @@ module attributes {
   llvm.func @submalloced(%arg0: !llvm.ptr) -> f64 {
     %0 = llvm.mlir.constant(1 : i32) : i32
     %1 = llvm.alloca %0 x !llvm.ptr {alignment = 8 : i64, tag = "ptrtoptr"} : (i32) -> !llvm.ptr
-    llvm.store %arg0, %1 {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr
+    llvm.store %arg0, %1 <alignment = 8> : !llvm.ptr, !llvm.ptr
     %2 = llvm.call @f(%1) : (!llvm.ptr) -> !llvm.ptr
-    %3 = llvm.load %2 {alignment = 8 : i64, tag = "retval"} : !llvm.ptr -> f64
+    %3 = llvm.load %2 <alignment = 8> {tag = "retval"} : !llvm.ptr -> f64
     llvm.return %3 : f64
   }
 }

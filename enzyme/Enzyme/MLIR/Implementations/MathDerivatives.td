@@ -1,5 +1,7 @@
 include "Common.td"
 
+class MathInactiveOp<string m> : InactiveOp<"math", m>;
+
 def : MLIRDerivative<"math", "CosOp", (Op $x),
                     [
                       (CheckedMulF (DiffeRet), (NegF (SinF $x)))
@@ -16,7 +18,7 @@ def : MLIRDerivative<"math", "Exp2Op", (Op $x),
                         (DiffeRet),
                         (MulF
                           (Exp2F $x),
-                          (LogF 
+                          (LogF
                             (ConstantFP<"2","arith","ConstantOp"> $x)
                             )))
                     ]
@@ -33,6 +35,15 @@ def : MLIRDerivative<"math", "SinOp", (Op $x),
                       (CheckedMulF (DiffeRet), (CosF $x))
                     ]
                   >;
+
+def : MLIRDerivative<"math", "SincosOp", (Op $x),
+                    [(AssertingInactiveArg)],
+                    (ArrayRet
+                      (MulF (Shadow $x),
+                            (SelectIfAllResultsActive (SincosCosF $x), (CosF $x))),
+                      (NegF (MulF (Shadow $x),
+                                  (SelectIfAllResultsActive (SincosSinF $x), (SinF $x)))))
+                  >;
 def : MLIRDerivative<"math", "SqrtOp", (Op $x),
                     [
                       (Arith_Select (CmpF (Arith_OEQ), $x, (ConstantFP<"0","arith","ConstantOp"> $x):$zero), $zero, (DivF (DiffeRet), (MulF (ConstantFP<"2.0","arith","ConstantOp"> $x), (SqrtF $x))))
@@ -45,6 +56,17 @@ def : MLIRDerivative<"math", "PowFOp", (Op $x, $y),
                       // d/dy pow(x, y) = pow(x, y) * log(x), which the x == 0
                       // guard pins to zero where the log has none.
                       (CheckedMulF (DiffeRet), (Arith_Select (CmpF (Arith_OEQ), $x, (ConstantFP<"0","arith","ConstantOp"> $x):$pzero), $pzero, (MulF (PowF $x, $y), (LogF $x))))
+                    ]
+                  >;
+def : MLIRDerivative<"math", "FPowIOp", (Op $x, $y),
+                    [
+                      (Arith_Select
+                        (CmpI (Arith_EQ), $y, (ConstantInt<"0","arith","ConstantOp"> $y)),
+                        (ConstantFP<"0","arith","ConstantOp"> $x),
+                        (CheckedMulF (DiffeRet),
+                          (MulF (SItoF (TypeOf $x), $y),
+                                (FPowI $x, (SubI $y, (ConstantInt<"1","arith","ConstantOp"> $y)))))),
+                      (InactiveArg)
                     ]
                   >;
 def : MLIRDerivative<"math", "LogOp", (Op $x),
@@ -66,6 +88,18 @@ def : MLIRDerivative<"math", "AtanOp", (Op $x),
                       (CheckedMulF (DiffeRet), (DivF (ConstantFP<"1.0","arith","ConstantOp"> $x):$one, (AddF (MulF $x, $x), $one)))
                     ]
                   >;
+// atan2(y, x) = atan(y / x)
+def : MLIRDerivative<"math", "Atan2Op", (Op $y, $x),
+                    [
+                      // d/dy = x / (x² + y²)
+                      (CheckedMulF (DiffeRet),
+                        (DivF $x, (AddF (MulF $x, $x), (MulF $y, $y)))),
+                      // d/dx = -y / (x² + y²)
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF $y), (AddF (MulF $x, $x), (MulF $y, $y))))
+                    ]
+                  >;
+
 def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                     [
                       (SelectIfComplex $x,
@@ -78,3 +112,142 @@ def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                       )
                     ]
                   >;
+
+def : MLIRDerivative<"math", "TanhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SubF (ConstantFP<"1.0","arith","ConstantOp"> $x), (MulF (TanhF $x):$t, $t)))
+                    ]
+                  >;
+def : MLIRDerivative<"math", "CbrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (DivF (CbrtF $x), (MulF (ConstantFP<"3.0","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "Log1pOp", (Op $x),
+                    [
+                      (CheckedDivF
+                        (DiffeRet),
+                        (AddF $x, (ConstantFP<"1","arith","ConstantOp"> $x)))
+                    ]
+                  >;
+
+def : MLIRDerivative<"math", "CopySignOp", (Op $x, $y),
+                    [
+                      (CheckedMulF
+                        (DiffeRet),
+                        (MulF
+                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $x), $x),
+                          (CopySignF (ConstantFP<"1","arith","ConstantOp"> $y), $y))),
+                      (InactiveArg)
+                    ]
+                  >;
+
+// d/dx cosh(x) = sinh(x)
+def : MLIRDerivative<"math", "CoshOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (SinhF $x))
+                    ]
+                  >;
+
+// d/dx sinh(x) = cosh(x)
+def : MLIRDerivative<"math", "SinhOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (CoshF $x))
+                    ]
+                  >;
+
+// d/dx tan(x) = 1 / cos²(x)
+def : MLIRDerivative<"math", "TanOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet), (MulF (CosF $x):$c, $c))
+                    ]
+                  >;
+
+// d/dx asin(x) = 1 / sqrt(1 - x²)
+def : MLIRDerivative<"math", "AsinOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx acos(x) = -1 / sqrt(1 - x²)
+def : MLIRDerivative<"math", "AcosOp", (Op $x),
+                    [
+                      (CheckedDivF (NegF (DiffeRet)),
+                        (SqrtF (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx asinh(x) = 1 / sqrt(1 + x²)
+def : MLIRDerivative<"math", "AsinhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (AddF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x))))
+                    ]
+                  >;
+
+// d/dx acosh(x) = 1 / sqrt(x² - 1)
+def : MLIRDerivative<"math", "AcoshOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SqrtF (SubF (MulF $x, $x), (ConstantFP<"1","arith","ConstantOp"> $x))))
+                    ]
+                  >;
+
+// d/dx atanh(x) = 1 / (1 - x²)
+def : MLIRDerivative<"math", "AtanhOp", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (SubF (ConstantFP<"1","arith","ConstantOp"> $x), (MulF $x, $x)))
+                    ]
+                  >;
+
+// d/dx expm1(x) = exp(x)
+def : MLIRDerivative<"math", "ExpM1Op", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet), (ExpF $x))
+                    ]
+                  >;
+
+// d/dx log10(x) = 1 / (x · ln(10))
+def : MLIRDerivative<"math", "Log10Op", (Op $x),
+                    [
+                      (CheckedDivF (DiffeRet),
+                        (MulF $x, (ConstantFP<"2.302585092994046","arith","ConstantOp"> $x)))
+                    ]
+                  >;
+
+// d/dx rsqrt(x) = -1/2 · x^(-3/2) = -rsqrt(x) / (2x)
+def : MLIRDerivative<"math", "RsqrtOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (DivF (NegF (RsqrtF $x)),
+                              (MulF (ConstantFP<"2","arith","ConstantOp"> $x), $x)))
+                    ]
+                  >;
+
+
+// d/dx erf(x) = 2/sqrt(pi) · exp(-x²)
+def : MLIRDerivative<"math", "ErfOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
+
+// d/dx erfc(x) = -2/sqrt(pi) · exp(-x²)
+def : MLIRDerivative<"math", "ErfcOp", (Op $x),
+                    [
+                      (CheckedMulF (DiffeRet),
+                        (MulF (ConstantFP<"-1.1283791670955125738961589031215451716881012586580","arith","ConstantOp"> $x),
+                              (ExpF (NegF (MulF $x, $x)))))
+                    ]
+                  >;
+def : MathInactiveOp<"CeilOp">;
+def : MathInactiveOp<"FloorOp">;
+def : MathInactiveOp<"RoundOp">;
+def : MathInactiveOp<"RoundEvenOp">;
+def : MathInactiveOp<"TruncOp">;

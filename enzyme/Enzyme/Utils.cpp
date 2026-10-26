@@ -111,6 +111,31 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
+
+bool isFlangRuntimeNoFree(llvm::StringRef name) {
+  for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
+                      "_FortranAModuloInteger", "_FortranAModuloReal"})
+    if (startsWith(name, prefix))
+      return true;
+  static const char *Names[] = {
+      "_FortranAFlush",
+      "_FortranAIndex1",
+      "_FortranAIndex2",
+      "_FortranAIndex4",
+      "_FortranAScan1",
+      "_FortranAScan2",
+      "_FortranAScan4",
+      "_FortranAVerify1",
+      "_FortranAVerify2",
+      "_FortranAVerify4",
+      "_FortranACharacterCompareScalar",
+      "_FortranACharacterCompareScalar1",
+      "_FortranACharacterCompareScalar2",
+      "_FortranACharacterCompareScalar4",
+  };
+  return llvm::is_contained(Names, name);
+}
+
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
@@ -172,7 +197,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
   }
-  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+  // Canonical MPI name across calling conventions (C "MPI_Recv", "PMPI_Recv"
+  // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
+  // ABIs; the Fortran ABI only appends a trailing `ierr` argument.
+  StringRef canonMPIName = canonicalizeMPIName(F.getName());
+  if (canonMPIName == "MPI_Irecv") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -189,7 +218,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     // OpenMPI vs MPICH
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
@@ -205,7 +234,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     }
   }
   auto name = getFuncName(&F);
-  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+  if (canonMPIName == "MPI_Isend") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -237,8 +266,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
-      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+  if (canonMPIName == "MPI_Comm_rank" || canonMPIName == "MPI_Comm_size") {
     auto FT = F.getFunctionType();
     bool PointerABI = true;
     changed = true;
@@ -267,7 +295,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     }
   }
-  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+  if (canonMPIName == "MPI_Wait") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -282,7 +310,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+  if (canonMPIName == "MPI_Waitall") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -311,7 +339,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 
       {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
   {
-    auto found = MPI_TYPE_ARGS.find(name.str());
+    auto found = MPI_TYPE_ARGS.find(canonMPIName.str());
     if (found != MPI_TYPE_ARGS.end()) {
       for (auto user : F.users()) {
         if (auto CI = dyn_cast<CallBase>(user))
@@ -407,6 +435,72 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // With -enzyme-global-activity a call to a function without body may free
+  // memory or return an allocation needed in the reverse pass, and Enzyme
+  // then differentiates even an inactive call to it.
+  // These LLVM flang runtime queries are also in KnownInactiveFunctions.
+  const char *FlangRuntimeQueries[] = {
+      // LLVM flang runtime: time
+      "_FortranACpuTime",
+      "_FortranADateAndTime",
+      "_FortranAEtime",
+      "_FortranASystemClockCount",
+      "_FortranASystemClockCountRate",
+      "_FortranASystemClockCountMax",
+      "_FortranATimef",
+      // LLVM flang runtime: command line and environment
+      "_FortranAArgumentCount",
+      "_FortranAGetCommand",
+      "_FortranAGetCommandArgument",
+      "_FortranAGetEnvVariable",
+      "_FortranAGetCwd",
+      "_FortranAHostnm",
+      "_FortranAGetPID",
+      "_FortranAGetUID",
+      "_FortranAGetGID",
+  };
+  if (llvm::is_contained(FlangRuntimeQueries, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions do not free memory of the program
+  // (see isFlangRuntimeNoFree, used by CreateNoFree) and, like the
+  // termination calls, do not return or store an allocation into it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // The OpenMP runtime calls of worksharing loops and synchronization neither
+  // free memory of the program nor hand an allocation to it.
+  const char *OpenMPRuntimeCalls[] = {
+      "__kmpc_global_thread_num",
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u",
+      "__kmpc_for_static_fini",
+      "__kmpc_barrier",
+      "__kmpc_critical",
+      "__kmpc_end_critical",
+      "omp_get_thread_num",
+      "omp_get_num_threads",
+      "omp_get_max_threads",
+  };
+  if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
@@ -669,7 +763,9 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       ZeroMem = nullptr;
     }
   } else {
-#if LLVM_VERSION_MAJOR > 17
+#if LLVM_VERSION_MAJOR >= 24
+    res = Builder.CreateMalloc(AllocSizeTy, Align, AllocCount, nullptr, Name);
+#elif LLVM_VERSION_MAJOR > 17
     res =
         Builder.CreateMalloc(AllocSizeTy, T, Align, AllocCount, nullptr, Name);
 #else
@@ -2643,7 +2739,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Function *templateFn,
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                     const llvm::SmallPtrSetImpl<Instruction *> &stores,
+                     const llvm::SetVector<Instruction *> &stores,
                      const llvm::Loop *region) {
   using namespace llvm;
   std::map<BasicBlock *, SmallVector<Instruction *, 1>> maybeBlocks;
@@ -2700,6 +2796,54 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
       todo.push_back(B);
     }
   }
+}
+
+const SCEV *evaluateAtIterationWithoutExt(const SCEVAddRecExpr *AR,
+                                          const SCEV *It, ScalarEvolution &SE) {
+  Type *Ty = AR->getType();
+  unsigned N = AR->getNumOperands();
+  if (!Ty->isIntegerTy() || !It->getType()->isIntegerTy() || N > 4)
+    return AR->evaluateAtIteration(It, SE);
+
+  // The binomial coefficients are formed in the wider of the two types, so
+  // that no bit of the iteration number is dropped before the halving (the
+  // value of I*(I-1)/2 modulo 2^W depends on bit W of I).
+  Type *CalcTy = SE.getTypeSizeInBits(It->getType()) > SE.getTypeSizeInBits(Ty)
+                     ? It->getType()
+                     : Ty;
+  const SCEV *I = SE.getTruncateOrZeroExtend(It, CalcTy);
+  const SCEV *Res = AR->getOperand(0);
+  if (N > 1)
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(1), SE.getTruncateOrNoop(I, Ty)));
+  if (N > 2) {
+    // I*(I-1)/2 as (I/2)*(I-1) + (I%2)*((I-1)/2): whichever of I and I-1 is
+    // even is halved exactly, the other term is then zero.
+    const SCEV *One = SE.getOne(CalcTy);
+    const SCEV *Two = SE.getConstant(CalcTy, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(2), SE.getTruncateOrNoop(Tri, Ty)));
+    if (N > 3) {
+      // I*(I-1)*(I-2)/6 = (I*(I-1)/2) * (I-2) / 3, and exact division by the
+      // odd number 3 is multiplication by its inverse modulo 2^W (found by
+      // Newton iteration, which doubles the number of correct bits each step).
+      unsigned Bits = SE.getTypeSizeInBits(CalcTy);
+      APInt Three(Bits, 3), Inv(Bits, 3);
+      for (unsigned Correct = 3; Correct < Bits; Correct *= 2)
+        Inv *= APInt(Bits, 2) - Three * Inv;
+      const SCEV *Tet = SE.getMulExpr(
+          SE.getMulExpr(Tri, SE.getMinusSCEV(I, Two)), SE.getConstant(Inv));
+      Res = SE.getAddExpr(
+          Res, SE.getMulExpr(AR->getOperand(3), SE.getTruncateOrNoop(Tet, Ty)));
+    }
+  }
+  return Res;
 }
 
 bool overwritesToMemoryReadByLoop(
@@ -2833,7 +2977,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
               if (ebd == SE.getCouldNotCompute())
                 break;
-              elim = endL->evaluateAtIteration(ebd, SE);
+              elim = evaluateAtIterationWithoutExt(endL, ebd, SE);
               continue;
             }
           }
@@ -2852,7 +2996,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
           if (sbd == SE.getCouldNotCompute())
             break;
-          slim = startL->evaluateAtIteration(sbd, SE);
+          slim = evaluateAtIterationWithoutExt(startL, sbd, SE);
           continue;
         }
       }
@@ -2868,7 +3012,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -2883,7 +3027,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -3030,6 +3174,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         isDeallocationFunction(funcName, TLI)) {
       return false;
     }
+
+    if (isReadOnlyOrThrow(call))
+      return false;
 
     if (isMemFreeLibMFunction(funcName)) {
       return false;
@@ -3567,22 +3714,8 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
       auto offset = preOffset;
 
       auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
-      SmallVector<Value *, 4> vec;
-      vec.push_back(ConstantInt::get(Type::getInt64Ty(EVI->getContext()), 0));
-      for (auto ind : EVI->getIndices()) {
-        vec.push_back(
-            ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
-      }
-      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
-      auto g2 =
-          GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
-      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-      g2->accumulateConstantOffset(DL, ai);
-      // Using destructor rather than eraseFromParent
-      //   as g2 has no parent
-      delete g2;
-
-      offset += (size_t)ai.getLimitedValue();
+      offset += (size_t)getAggregateElementOffset(
+          DL, EVI->getOperand(0)->getType(), EVI->getIndices());
 
       if (valSz == 0) {
         auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
@@ -3688,66 +3821,97 @@ Function *getFirstFunctionDefinition(Module &M) {
   return nullptr;
 }
 
+/// Decompose `in` as `prefix + floatType + stem + suffix` using the supplied
+/// tables, setting the out-parameters to the entries that matched.
+///
+/// No name the tables in `extractBLAS` can spell decomposes in more than one
+/// way, so peeling the fixed parts off either end of `in` and looking up what
+/// remains is equivalent to comparing `in` against every name the tables can
+/// generate -- but it allocates nothing. That matters: `extractBLAS` runs for
+/// every call instruction visited by type analysis and by
+/// `is_use_directly_needed_in_reverse`, and materialising the ~1200 candidate
+/// `std::string`s per query dominated compile time on call-heavy modules that
+/// contain no BLAS at all.
+static bool matchBLASName(StringRef in, ArrayRef<const char *> prefixes,
+                          ArrayRef<const char *> floatTypes,
+                          ArrayRef<const char *> stems,
+                          ArrayRef<const char *> suffixes,
+                          const char *&prefixOut, const char *&floatTypeOut,
+                          const char *&stemOut, const char *&suffixOut) {
+  for (const char *p : prefixes) {
+    StringRef afterPrefix = in;
+    if (!afterPrefix.consume_front(p))
+      continue;
+    for (const char *t : floatTypes) {
+      StringRef afterType = afterPrefix;
+      if (!afterType.consume_front(t))
+        continue;
+      for (const char *s : suffixes) {
+        StringRef stem = afterType;
+        if (!stem.consume_back(s))
+          continue;
+        for (const char *f : stems) {
+          if (stem != f)
+            continue;
+          prefixOut = p;
+          floatTypeOut = t;
+          stemOut = f;
+          suffixOut = s;
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {
+  static const char *extractable[] = {
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
   };
-  const char *floatType[] = {"s", "d", "c", "z"};
-  const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
-  const char *suffixes[] = {"", "_", "64_", "_64_"};
-  for (auto t : floatType) {
-    for (auto f : extractable) {
-      for (auto p : prefixes) {
-        for (auto s : suffixes) {
-          if (in == (Twine(p) + t + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t, p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *floatType[] = {"s", "d", "c", "z"};
+  static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
+  static const char *suffixes[] = {"", "_", "64_", "_64_"};
+
+  const char *p = nullptr, *t = nullptr, *f = nullptr, *s = nullptr;
+  if (matchBLASName(in, prefixes, floatType, extractable, suffixes, p, t, f,
+                    s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
-  const char *cuFFloatType[] = {"s", "d", "c", "z"};
-  const char *cuCPrefixes[] = {"cublas"};
-  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
-  for (auto t : llvm::enumerate(cuCFloatType)) {
-    for (auto f : extractable) {
-      for (auto p : cuCPrefixes) {
-        for (auto s : cuSuffixes) {
-          if (in == (Twine(p) + t.value() + f + s).str()) {
-            bool is64 = llvm::StringRef(s).contains("64");
-            return BlasInfo{
-                t.value(), p, s, f, is64,
-            };
-          }
-        }
-      }
-    }
+  static const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  static const char *cuCPrefixes[] = {"cublas"};
+  static const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
+  if (matchBLASName(in, cuCPrefixes, cuCFloatType, extractable, cuSuffixes, p,
+                    t, f, s)) {
+    bool is64 = llvm::StringRef(s).contains("64");
+    return BlasInfo{
+        t, p, s, f, is64,
+    };
   }
+
   // Fortran interface to cublas
-  const char *cuFPrefixes[] = {"cublas_"};
-  for (auto t : cuFFloatType) {
-    for (auto f : extractable) {
-      for (auto p : cuFPrefixes) {
-        if (in == (Twine(p) + t + f).str()) {
-          return BlasInfo{
-              t, p, "", f, false,
-          };
-        }
-      }
-    }
+  static const char *cuFFloatType[] = {"s", "d", "c", "z"};
+  static const char *cuFPrefixes[] = {"cublas_"};
+  static const char *cuFSuffixes[] = {""};
+  if (matchBLASName(in, cuFPrefixes, cuFFloatType, extractable, cuFSuffixes, p,
+                    t, f, s)) {
+    return BlasInfo{
+        t, p, "", f, false,
+    };
   }
+
   return {};
 }
 
@@ -4533,12 +4697,52 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
     std::string str;
     raw_string_ostream ss(str);
     ss << message << "\n";
-    gutils->TR.dump(ss);
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
+}
+
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length) {
+  // Each (type, offset) entry describes the bytes from its offset up to the
+  // next entry's offset.
+  size_t end = start + length;
+  if (end < start)
+    end = SIZE_MAX;
+  llvm::SmallVector<llvm::Metadata *, 8> out;
+  auto I64 = llvm::Type::getInt64Ty(md->getContext());
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    size_t offset =
+        llvm::cast<llvm::ConstantInt>(
+            llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                ->getValue())
+            ->getZExtValue();
+    if (offset >= end)
+      break;
+    size_t next = SIZE_MAX;
+    if (i + 3 < md->getNumOperands())
+      next = llvm::cast<llvm::ConstantInt>(
+                 llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 3))
+                     ->getValue())
+                 ->getZExtValue();
+    if (next <= start)
+      continue;
+    size_t newoff = offset <= start ? 0 : offset - start;
+    out.push_back(md->getOperand(i));
+    out.push_back(
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(I64, newoff)));
+  }
+  if (out.empty())
+    return nullptr;
+  return llvm::MDNode::get(md->getContext(), out);
 }
 
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
@@ -4635,14 +4839,16 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures, Instruction *startinst) {
+                       size_t checkLoadCaptures, Instruction *startinst,
+                       llvm::TargetLibraryInfo *TLI) {
+  // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
     VI = dyn_cast<Instruction>(V);
-  if (!VI)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  else
+  if (VI)
     VI = VI->getNextNode();
+  else if (inst)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
   if (inst) {
     SmallVector<BasicBlock *, 1> todo;
@@ -4705,6 +4911,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     }
 
     if (auto CI = dyn_cast<CallBase>(UI)) {
+      // Freeing the memory does not capture it.
+      if (TLI && level == 0 && isDeallocationCall(CI, *TLI))
+        continue;
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -4717,7 +4926,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
           return false;
         }
       }
-      return true;
+      // This call does not capture; keep checking the remaining users.
+      continue;
     }
 
     if (isa<CmpInst>(UI)) {
@@ -4743,7 +4953,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
-bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
+  return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
+}
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].

@@ -42,9 +42,9 @@ contains
     real, intent(in) :: x(n)
     real, intent(inout) :: y
     y = x(1)
-  end subroutine
+  end subroutine selectFirst
 
-end program
+end program main
 
 ! CHECK: 2
 ! CHECK-NEXT: 1

@@ -85,10 +85,12 @@ struct AffineAtomicRMWOpInterfaceReverse
     if (!gutils->isConstantValue(rmwOp.getResult())) {
       Value gradient = gutils->diffe(rmwOp.getResult(), builder);
       gutils->zeroDiffe(rmwOp.getResult(), builder);
+      // The adjoint accumulates where the primal did, so it is ordered as
+      // the primal was.
       setDerivativeFastMath(enzyme::AffineAtomicRMWOp::create(
           builder, rmwOp.getLoc(), gradient.getType(),
-          arith::AtomicRMWKind::addf, gradient, memrefGradient,
-          retrievedArguments, rmwOp.getMap(), alignAttr));
+          arith::AtomicRMWKind::addf, rmwOp.getOrdering(), gradient,
+          memrefGradient, retrievedArguments, rmwOp.getMap(), alignAttr));
     }
 
     return success();
@@ -157,8 +159,8 @@ struct AffineAtomicRMWOpForwardInterface
       shadowIndices.push_back(v);
     auto shadowOp = enzyme::AffineAtomicRMWOp::create(
         builder, rmwOp.getLoc(), shadowVal.getType(),
-        arith::AtomicRMWKind::addf, shadowVal, shadowMemref, shadowIndices,
-        rmwOp.getMap(), rmwOp.getAlignmentAttr());
+        arith::AtomicRMWKind::addf, rmwOp.getOrdering(), shadowVal,
+        shadowMemref, shadowIndices, rmwOp.getMap(), rmwOp.getAlignmentAttr());
     shadowOp->setAttr("fastmath", newOp.getFastmathAttr());
     if (!gutils->isConstantValue(rmwOp.getResult()))
       gutils->setDiffe(rmwOp.getResult(), shadowOp.getResult(), builder);

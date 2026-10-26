@@ -538,7 +538,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       if (shadow && val == CI->getArgOperand(0)) {
         if ((funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") &&
             mode != DerivativeMode::ReverseModeGradient) {
-          // Need shadow buffer for forward pass of irecieve
+          // Need shadow buffer for forward pass of ireceive
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
                          << *val << " in reverse as shadow MPI " << *CI << "\n";
@@ -1142,7 +1142,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           if (!gutils->TR.anyPointer(a))
             continue;
 
-          auto vd = gutils->TR.query(a);
+          const auto &vd = gutils->TR.query(a);
 
           if (!vd[{-1, -1}].isPossiblePointer())
             continue;
@@ -1258,15 +1258,10 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
         !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
       isLoopyReduction = true;
     }
-  } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-    for (int i = 0; i < 2; i++) {
-      if (SI->getOperand(i + 1) == P0 &&
-          !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
-        isLoopyReduction = true;
-        break;
-      }
-    }
   }
+  // A select reduction (e.g. a running max) is differentiated through the
+  // index of the last selecting iteration and never reads the start value's
+  // primal, so only the division form needs it.
   if (!isLoopyReduction)
     return false;
 
@@ -1317,14 +1312,6 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       if (BO->getOpcode() == Instruction::FDiv && BO->getOperand(0) == P0 &&
           !gutils->isConstantValue(const_cast<BinaryOperator *>(BO))) {
         isLoopyReduction = true;
-      }
-    } else if (auto SI = dyn_cast<SelectInst>(userInst)) {
-      for (int i = 0; i < 2; i++) {
-        if (SI->getOperand(i + 1) == P0 &&
-            !gutils->isConstantValue(const_cast<SelectInst *>(SI))) {
-          isLoopyReduction = true;
-          break;
-        }
       }
     }
     if (!isLoopyReduction)

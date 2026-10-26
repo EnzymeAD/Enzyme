@@ -15,6 +15,8 @@
 #include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Intrinsics.h"
@@ -728,7 +730,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 
   // The return instruction doesn't impact activity (handled specifically
   // during adjoint generation)
-  if (I->hasTrait<OpTrait::ReturnLike>())
+  if (mlir::enzyme::isFunctionReturnLike(I))
     return true;
 
   if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(I)) {
@@ -1041,7 +1043,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 }
 
 static bool isFunctionReturn(Operation *op) {
-  if (!op->hasTrait<OpTrait::ReturnLike>())
+  if (!mlir::enzyme::isFunctionReturnLike(op))
     return false;
   return dyn_cast<FunctionOpInterface>(op->getParentOp());
 }
@@ -1108,27 +1110,6 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
     }
   }
   return false;
-}
-
-static Value getUnderlyingObject(mlir::Value value, unsigned maxLookup) {
-  // TODO: this should become a MLIR interface.
-  for (unsigned i = 0; maxLookup == 0 || i < maxLookup; ++i) {
-    if (!isa<MemRefType, LLVM::LLVMPointerType>(value.getType()))
-      return value;
-
-    if (auto gep = value.getDefiningOp<LLVM::GEPOp>()) {
-      value = gep.getBase();
-    } else if (auto bitcast = value.getDefiningOp<LLVM::BitcastOp>()) {
-      value = bitcast->getOperand(0);
-    } else if (auto addrSpaceCast =
-                   value.getDefiningOp<LLVM::AddrSpaceCastOp>()) {
-      value = addrSpaceCast->getOperand(0);
-    } else {
-      // TODO: support more operations and dataflow through blocks/regions.
-      return value;
-    }
-  }
-  return value;
 }
 
 static bool mayAllocateMemory(Operation *op) {
@@ -1851,7 +1832,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   //
   if (containsPointer) {
 
-    Value TmpOrig = getUnderlyingObject(Val, 100);
+    Value TmpOrig = oputils::getBaseObject(Val);
 
     // If we know that our origin is inactive from its arguments,
     // we are definitionally inactive
@@ -2519,7 +2500,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     // Check activity modifies the captured variables, and also returns a value
@@ -2905,16 +2886,16 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
       }
   }
 
-  if (auto gep = dyn_cast<LLVM::GEPOp>(op)) {
-    // A gep's only args that could make it active is the pointer operand
-    if (isConstantValue(TR, gep.getBase())) {
+  if (auto view = dyn_cast<ViewLikeOpInterface>(op)) {
+    // Only the source of a view can make it active.
+    if (isConstantValue(TR, view.getViewSource())) {
       if (EnzymePrintActivity)
-        llvm::errs() << "constant(" << (int)directions << ") up-gep " << *op
+        llvm::errs() << "constant(" << (int)directions << ") up-view " << *op
                      << "\n";
       return true;
     }
     if (inactArg) {
-      inactArg->insert(gep.getBase());
+      inactArg->insert(view.getViewSource());
     }
     return false;
   }
@@ -3070,7 +3051,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
   for (Operation *a : val.getUsers()) {
     todo.push_back(std::make_tuple(a, val, PUA));
   }
-  std::set<std::tuple<Operation *, Value, UseActivity>> done = {};
+  llvm::DenseSet<std::tuple<Operation *, Value, UseActivity>> done;
 
   llvm::SmallPtrSet<Value, 1> AllocaSet;
 
@@ -3086,9 +3067,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     UseActivity UA;
     auto tuple = todo.front();
     todo.pop_front();
-    if (done.count(tuple))
+    if (!done.insert(tuple).second)
       continue;
-    done.insert(tuple);
     std::tie(a, parent, UA) = tuple;
 
     if (auto LI = dyn_cast<LLVM::LoadOp>(a)) {
@@ -3584,7 +3564,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             UA == UseActivity::OnlyNonPointerStores) {
           if (!isa<
                   // clang-format off
-            LLVM::GEPOp,
+            ViewLikeOpInterface,
             // Integer binary ops.
             LLVM::AddOp,
             LLVM::SubOp,
@@ -3607,8 +3587,6 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             LLVM::FRemOp,
             LLVM::FNegOp,
             // Cast op
-            LLVM::BitcastOp,
-            LLVM::AddrSpaceCastOp,
             LLVM::IntToPtrOp,
             LLVM::PtrToIntOp,
             LLVM::SExtOp,

@@ -101,6 +101,11 @@ using namespace llvm;
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
                                  cl::desc("Run the Enzyme pass"));
 
+llvm::cl::opt<bool> EnzymeLTOPreLink(
+    "enzyme-lto-prelink", cl::init(false), cl::Hidden,
+    cl::desc("Run Enzyme in an LTO pre-link pipeline, rather than deferring "
+             "differentiation to the post-link run"));
+
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
@@ -619,7 +624,7 @@ public:
       } else {
         AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
                                              nullptr, DL.getPrefTypeAlign(Ty));
-        primalA->insertBefore(CI);
+        insertBeforeInst(primalA, CI);
         primal = primalA;
       }
 
@@ -2467,11 +2472,11 @@ public:
             IRBuilder<> S1(sel1);
             auto B1 = S1.CreateBr(post);
             CallInst *cloned = cast<CallInst>(CI->clone());
-            cloned->insertBefore(B1);
+            insertBeforeInst(cloned, B1);
             cloned->setOperand(0, si->getTrueValue());
             IRBuilder<> S2(sel2);
             auto B2 = S2.CreateBr(post);
-            CI->moveBefore(B2);
+            moveBeforeInst(CI, B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
               IRBuilder<> P(getFirstNonPHI(post));
@@ -3102,8 +3107,23 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
+#if LLVM_VERSION_MAJOR >= 24
+// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors;
+// a null LibraryOptionsContext returns the global (command-line) value.
+static unsigned EnzymeLicmMssaOptCap() {
+  return getLicmMssaOptCap(/*LibraryOptions=*/nullptr);
+}
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return getLicmMssaNoAccForPromotionCap(/*LibraryOptions=*/nullptr);
+}
+#else
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;
 extern cl::opt<unsigned> SetLicmMssaOptCap;
+static unsigned EnzymeLicmMssaOptCap() { return SetLicmMssaOptCap; }
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return SetLicmMssaNoAccForPromotionCap;
+}
+#endif
 #define EnableLoopFlatten false
 #define EagerlyInvalidateAnalyses false
 #define RunNewGVN false
@@ -3151,7 +3171,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
 #if LLVM_VERSION_MAJOR >= 20
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+                            ThinOrFullLTOPhase Phase)
 #else
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
@@ -3160,6 +3180,34 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
     if (!EnzymeEnable)
       return;
+
+#if LLVM_VERSION_MAJOR >= 20
+    // An LTO pre-link pipeline only ever sees one translation unit, so a
+    // __enzyme_autodiff call here may name a function whose body lives in
+    // another object file. Differentiating now fails on exactly those calls,
+    // while the post-link run sees the whole program: for full LTO that is the
+    // FullLinkTimeOptimizationEarly callback below, for ThinLTO this same
+    // callback re-entered with ThinLTOPostLink. Defer to it, restoring the
+    // linkage PreserveNVVM changed so the bitcode exports nothing new, while
+    // still keeping the relevant functions alive until then.
+    //
+    // A ThinLTO post-link pipeline at O0 invokes no callbacks at all, so that
+    // run would never come. The pre-link run cannot know the post-link level,
+    // but the driver passes the compile -O level on to the linker, so an O0
+    // ThinLTO compile still differentiates here.
+    //
+    // This requires the plugin to be loaded by the linker as well, e.g.
+    // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
+    // restore the old behaviour when that is not possible.
+    if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
+                              (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
+                               Level != OptimizationLevel::O0))) {
+      MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
+                                    /*PreserveCustomRuleLinkage*/ true,
+                                    /*LTOPreLink*/ true));
+      return;
+    }
+#endif
 
     if (Level != OptimizationLevel::O0)
       prePass(MPM, Level);
@@ -3424,12 +3472,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     FunctionPassManager MainFPM;
 #if LLVM_VERSION_MAJOR >= 22
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true));
 #else
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
 #endif

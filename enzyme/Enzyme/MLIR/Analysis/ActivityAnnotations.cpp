@@ -850,7 +850,7 @@ void initializeSparseBackwardActivityAnnotations(FunctionOpInterface func,
   using namespace mlir::enzyme;
 
   for (Operation &op : func.getCallableRegion()->getOps()) {
-    if (!op.hasTrait<OpTrait::ReturnLike>())
+    if (!mlir::enzyme::isFunctionReturnLike(&op))
       continue;
 
     for (OpOperand &returnOperand : op.getOpOperands()) {
@@ -1070,7 +1070,7 @@ void enzyme::computeSummaries(
 
   // Create the overall summary by joining sets at all return sites.
   for (Operation &op : funcOp.getCallableRegion()->getOps()) {
-    if (op.hasTrait<OpTrait::ReturnLike>()) {
+    if (mlir::enzyme::isFunctionReturnLike(&op)) {
       ProgramPoint *point = solver.getProgramPointAfter(&op);
       (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(point));
       auto *returnOrigins =

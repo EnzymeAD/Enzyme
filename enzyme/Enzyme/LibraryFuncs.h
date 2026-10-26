@@ -65,12 +65,19 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
 
   using namespace llvm;
   llvm::LibFunc libfunc;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc)
+    return false;
+#else
   if (!TLI.getLibFunc(name, libfunc))
     return false;
+#endif
 
   switch (libfunc) {
-  case LibFunc_malloc: // malloc(unsigned int);
-  case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_malloc:        // malloc(unsigned int);
+  case LibFunc_valloc:        // valloc(unsigned int);
+  case LibFunc_aligned_alloc: // aligned_alloc(size_t align, size_t size);
 
   case LibFunc_Znwj:                // new(unsigned int);
   case LibFunc_ZnwjRKSt9nothrow_t:  // new(unsigned int, nothrow);
@@ -135,7 +142,12 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   llvm::LibFunc libfunc;
   if (name == "_ZdlPvmSt11align_val_t")
     return true;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc) {
+#else
   if (!TLI.getLibFunc(name, libfunc)) {
+#endif
     if (name == "free")
       return true;
     if (name == "_mlir_memref_to_llvm_free")
@@ -225,7 +237,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 
   Value *allocSize = argValues[0];
   if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-      funcName == "ijl_gc_alloc_typed") {
+      funcName == "ijl_gc_alloc_typed" || funcName == "aligned_alloc") {
     allocSize = argValues[1];
   }
   if (funcName == "enzyme_allocator") {

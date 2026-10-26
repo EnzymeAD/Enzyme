@@ -44,16 +44,16 @@ module attributes {
     %11 = llvm.bitcast %10 : !llvm.ptr to !llvm.ptr
     %12 = llvm.getelementptr inbounds %10[%1, 2] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<"class.std::__cxx11::basic_string", (struct<"struct.std::__cxx11::basic_string<char>::_Alloc_hider", (ptr)>, i64, struct<"union.anon", (i64, array<8 x i8>)>)>
     %13 = llvm.bitcast %10 : !llvm.ptr to !llvm.ptr
-    llvm.store %12, %13 {alignment = 8 : i64, tbaa = [#tbaa_tag1]} : !llvm.ptr, !llvm.ptr
+    llvm.store %12, %13 <alignment = 8, tbaa = [#tbaa_tag1]> : !llvm.ptr, !llvm.ptr
     %14 = llvm.bitcast %12 {tag = "casted"} : !llvm.ptr to !llvm.ptr
     "llvm.intr.memcpy"(%14, %4, %5) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()
     %15 = llvm.getelementptr inbounds %10[%1, 0, 0] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<"class.std::__cxx11::basic_string", (struct<"struct.std::__cxx11::basic_string<char>::_Alloc_hider", (ptr)>, i64, struct<"union.anon", (i64, array<8 x i8>)>)>
     %16 = llvm.getelementptr inbounds %10[%1, 1] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<"class.std::__cxx11::basic_string", (struct<"struct.std::__cxx11::basic_string<char>::_Alloc_hider", (ptr)>, i64, struct<"union.anon", (i64, array<8 x i8>)>)>
-    llvm.store %5, %16 {alignment = 8 : i64, tbaa = [#tbaa_tag2]} : i64, !llvm.ptr
+    llvm.store %5, %16 <alignment = 8, tbaa = [#tbaa_tag2]> : i64, !llvm.ptr
     %17 = llvm.getelementptr inbounds %10[%1, 2, 1, %8] : (!llvm.ptr, i64, i64) -> !llvm.ptr, !llvm.struct<"class.std::__cxx11::basic_string", (struct<"struct.std::__cxx11::basic_string<char>::_Alloc_hider", (ptr)>, i64, struct<"union.anon", (i64, array<8 x i8>)>)>
-    llvm.store %9, %17 {alignment = 1 : i64, tbaa = [#tbaa_tag]} : i8, !llvm.ptr
+    llvm.store %9, %17 <alignment = 1, tbaa = [#tbaa_tag]> : i8, !llvm.ptr
     %18 = llvm.call @printf(%14) vararg(!llvm.func<i32 (ptr, ...)>) : (!llvm.ptr) -> i32
-    %19 = llvm.load %15 {alignment = 8 : i64, tbaa = [#tbaa_tag3], tag = "loaded"} : !llvm.ptr -> !llvm.ptr
+    %19 = llvm.load %15 <alignment = 8, tbaa = [#tbaa_tag3]> {tag = "loaded"} : !llvm.ptr -> !llvm.ptr
     %20 = llvm.icmp "eq" %19, %14 : !llvm.ptr
     llvm.cond_br %20, ^bb2, ^bb1
   ^bb1:  // pred: ^bb0

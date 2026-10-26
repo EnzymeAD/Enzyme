@@ -476,6 +476,11 @@ EnzymeGradientUtilsGetDiffeType(GradientUtils *G, LLVMValueRef oval,
   return (CDIFFE_TYPE)(G->getDiffeType(unwrap(oval), foreignFunction != 0));
 }
 
+uint8_t EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(GradientUtils *G,
+                                                        LLVMValueRef oval) {
+  return G->augmentedPrimalReturnUsed(unwrap(oval));
+}
+
 CDIFFE_TYPE
 EnzymeGradientUtilsGetReturnDiffeType(GradientUtils *G, LLVMValueRef oval,
                                       uint8_t *needsPrimal,
@@ -618,8 +623,7 @@ uint8_t EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,
                                                     LLVMValueRef val) {
   auto v = unwrap(val);
-  TypeTree TT = gutils->TR.query(v);
-  TypeTree *pTT = new TypeTree(TT);
+  TypeTree *pTT = new TypeTree(gutils->TR.query(v));
   return (CTypeTreeRef)pTT;
 }
 
@@ -1014,7 +1018,7 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
           BR.SetInsertPoint(I1->getNextNode());
       }
     }
-    I1->moveBefore(I2);
+    moveBeforeInst(I1, I2);
   }
 }
 
@@ -1319,6 +1323,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
+  resetClonedGUID(NewF);
 
   if (!keepReturn) {
     for (auto &B : *NewF) {

@@ -19,6 +19,7 @@
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "llvm/ADT/ScopeExit.h"
 
 using namespace mlir;
@@ -46,7 +47,7 @@ static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
   return llvm::all_of(
              op->getResults(),
              [gutils](Value v) { return gutils->isConstantValue(v); }) &&
-         gutils->isConstantInstruction(op);
+         gutils->isConstantInstruction(op) && oputils::isReadOnly(op);
 }
 
 /*

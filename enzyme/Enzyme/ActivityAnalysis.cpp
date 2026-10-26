@@ -117,6 +117,8 @@ cl::list<std::string> EnzymeLoadInactiveFiles(
 static const StringSet<> InactiveGlobals = {
     "small_typeof",
     "jl_small_typeof",
+    "jl_world_counter",
+    "ijl_world_counter",
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
@@ -225,8 +227,9 @@ struct {
 bool isInactiveCall(CallBase &CI) {
 
   // clang-format off
-const char *KnownInactiveFunctionsStartingWith[] = {
+static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    "_FortranAio", // LLVM flang I/O
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -235,11 +238,36 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSaIcEC1Ev",
 };
 
-const char *KnownInactiveFunctionsContains[] = {
+static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
-const StringSet<> KnownInactiveFunctions = {
+static const StringSet<> KnownInactiveFunctions = {
+    // LLVM flang runtime: inquiries, character operations and termination
+    "_FortranASize",
+    "_FortranASizeDim",
+    "_FortranAIsContiguous",
+    "_FortranAPointerIsAssociated",
+    "_FortranAPointerIsAssociatedWith",
+    "_FortranAAllocatableCheckAllocated",
+    "_FortranAAllocatableCheckLengthParameter",
+    "_FortranAPointerCheckLengthParameter",
+    "_FortranAClassIs",
+    "_FortranASameTypeAs",
+    "_FortranAExtendsTypeOf",
+    "_FortranATrim",
+    "_FortranAIndex1",
+    "_FortranAScan1",
+    "_FortranAVerify1",
+    "_FortranAAdjustl",
+    "_FortranAAdjustr",
+    "_FortranACharacterCompareScalar1",
+    "_FortranAStopStatement",
+    "_FortranAStopStatementText",
+    "_FortranAReportFatalUserError",
+    "_FortranAExit",
+    "_FortranAAbort",
+    "_FortranAFlush",
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -372,9 +400,27 @@ const StringSet<> KnownInactiveFunctions = {
     "__cudaPushCallConfiguration",
     "__cudaPopCallConfiguration",
     "cudaGetLastError",
+    // LLVM flang runtime: time
+    "_FortranACpuTime",
+    "_FortranADateAndTime",
+    // _FortranAEtime overwrites active memory, see CallDerivatives.cpp
+    "_FortranASystemClockCount",
+    "_FortranASystemClockCountRate",
+    "_FortranASystemClockCountMax",
+    "_FortranATimef",
+    // LLVM flang runtime: command line and environment
+    "_FortranAArgumentCount",
+    "_FortranAGetCommand",
+    "_FortranAGetCommandArgument",
+    "_FortranAGetEnvVariable",
+    "_FortranAGetCwd",
+    "_FortranAHostnm",
+    "_FortranAGetPID",
+    "_FortranAGetUID",
+    "_FortranAGetGID",
 };
 
-const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
+static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::experimental_noalias_scope_decl,
     Intrinsic::objectsize,
     Intrinsic::floor,
@@ -436,7 +482,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::is_constant,
     Intrinsic::memset};
 
-const char *DemangledKnownInactiveFunctionsStartingWith[] = {
+static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator"
     "std::__u::basic_streambuf",
@@ -594,7 +640,22 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     return true;
   }
 
+  // Also recognize Fortran ABI manglings of MPI routines (e.g. "mpi_init_",
+  // "mpi_comm_rank_") by their canonical C name.
+  StringRef CanonicalMPIName = canonicalizeMPIName(Name);
+
+  if (!CanonicalMPIName.empty() &&
+      KnownInactiveFunctions.count(CanonicalMPIName)) {
+    return true;
+  }
+
   if (MPIInactiveCommAllocators.find(Name) != MPIInactiveCommAllocators.end()) {
+    return true;
+  }
+
+  if (!CanonicalMPIName.empty() &&
+      MPIInactiveCommAllocators.find(CanonicalMPIName) !=
+          MPIInactiveCommAllocators.end()) {
     return true;
   }
   Intrinsic::ID ID;
@@ -712,23 +773,49 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
     return true;
 
-  // only the buffer is active for mpi send/recv
-  if (Name == "MPI_Recv" || Name == "MPI_Send" || Name == "PMPI_Recv" ||
-      Name == "PMPI_Send") {
-    return val != CI->getOperand(0);
-  }
-  // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "PMPI_Irecv" ||
-      Name == "PMPI_Isend") {
-    return val != CI->getOperand(0) && val != CI->getOperand(6);
-  }
+  // Canonicalize MPI names across calling conventions (C "MPI_Recv",
+  // "PMPI_Recv" and Fortran "mpi_recv_" etc.): the leading argument indices
+  // match between the ABIs, the Fortran ABI only appends an `ierr` argument.
+  StringRef CanonicalMPIName = canonicalizeMPIName(Name);
 
-  // only request is active
-  if (Name == "MPI_Wait" || Name == "PMPI_Wait")
-    return val != CI->getOperand(0);
+  // Handle MPI functions
+  if (!CanonicalMPIName.empty()) {
 
-  if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
-    return val != CI->getOperand(1);
+    // only the buffer is active for mpi send/recv
+    if (CanonicalMPIName == "MPI_Recv" || CanonicalMPIName == "MPI_Send") {
+      return val != CI->getOperand(0);
+    }
+    // only the recv buffer and request is active for mpi isend/irecv
+    if (CanonicalMPIName == "MPI_Irecv" || CanonicalMPIName == "MPI_Isend") {
+      return val != CI->getOperand(0) && val != CI->getOperand(6);
+    }
+
+    // only request is active
+    if (CanonicalMPIName == "MPI_Wait")
+      return val != CI->getOperand(0);
+
+    if (CanonicalMPIName == "MPI_Waitall")
+      return val != CI->getOperand(1);
+
+    // only the send/recv buffers are active for mpi reduce/allreduce
+    if (CanonicalMPIName == "MPI_Reduce" ||
+        CanonicalMPIName == "MPI_Allreduce" ||
+        CanonicalMPIName == "MPI_Reduce_scatter_block") {
+      return val != CI->getOperand(0) && val != CI->getOperand(1);
+    }
+
+    // only the buffer is active for mpi bcast
+    if (CanonicalMPIName == "MPI_Bcast") {
+      return val != CI->getOperand(0);
+    }
+
+    // mpi init/finalize and rank/size queries have no active arguments
+    if (CanonicalMPIName == "MPI_Init" || CanonicalMPIName == "MPI_Finalize" ||
+        CanonicalMPIName == "MPI_Comm_rank" ||
+        CanonicalMPIName == "MPI_Comm_size" ||
+        CanonicalMPIName == "MPI_Barrier")
+      return true;
+  }
 
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
@@ -909,7 +996,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 
   if (auto II = dyn_cast<IntrinsicInst>(I)) {
     if (isIntelSubscriptIntrinsic(*II)) {
-      // The intrinsic "llvm.intel.subscript" does not propogate deriviative
+      // The intrinsic "llvm.intel.subscript" does not propagate derivative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
       return true;
@@ -1083,6 +1170,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             }
             Value *obj = getBaseObject(CB->getArgOperand(i));
             if (ConstantValues.find(obj) != ConstantValues.end()) {
+              continue;
+            }
+            // Memory that is not local to this function (an sret-like
+            // argument of ours passed straight through, a global, a pointer
+            // loaded from elsewhere) is read by whoever owns it once we
+            // return, so its users here say nothing about its activity: go by
+            // the value's own activity instead. Only a local alloca or
+            // allocation can be shown inactive from a lack of active users.
+            if (!isa<AllocaInst>(obj) && !isAllocationCall(obj, TLI)) {
+              if (!isConstantValue(TR, obj)) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " possible active sret-like value not local "
+                                  "to the function ["
+                               << (int)directions << "] from instruction " << *I
+                               << " obj: " << *obj << "\n";
+                legal = false;
+                break;
+              }
               continue;
             }
             if (directions != 3) {
@@ -2354,7 +2459,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     if (auto VI = dyn_cast<AllocaInst>(Val)) {

@@ -23,8 +23,10 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
@@ -66,12 +68,16 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                  APFloat(ET.getFloatSemantics(), "0"))};
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<mlir::Complex<APFloat>>(values));
+    } else if (auto IET = dyn_cast<IntegerType>(T.getElementType())) {
+      APInt values[] = {APInt(IET.getWidth(), value, /*radix=*/10)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<APInt>(values));
     } else {
       llvm::errs() << " unsupported eltype: " << T.getElementType()
                    << " of type " << type << "\n";
       llvm_unreachable("unsupported eltype");
     }
-  } else if (auto T = cast<FloatType>(type)) {
+  } else if (auto T = dyn_cast<FloatType>(type)) {
     APFloat apvalue(T.getFloatSemantics(), value);
     return FloatAttr::get(T, apvalue);
     // NOTE `complex::ConstantOp` doesn't accept `TypedAttr`, only `ArrayAttr`
@@ -81,12 +87,22 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), value)),
     //     FloatAttr::get(F, APFloat(F.getFloatSemantics(), "0"));
     //   });
+  } else if (auto T = dyn_cast<IntegerType>(type)) {
+    APInt apvalue(T.getWidth(), value, /*radix=*/10);
+    return IntegerAttr::get(T, apvalue);
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
     llvm_unreachable("unsupported eltype");
   }
 }
 
+bool mlir::enzyme::allResultsActive(Operation *op,
+                                    const MGradientUtils *gutils) {
+  for (Value result : op->getResults())
+    if (gutils->isConstantValue(result))
+      return false;
+  return true;
+}
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
                                                    OpBuilder &builder,
                                                    MGradientUtils *gutils) {
@@ -267,6 +283,9 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
 LogicalResult mlir::enzyme::detail::allocationForwardHandler(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils, bool zero) {
+  // An inactive allocation has no shadow.
+  if (gutils->isConstantValue(orig->getResult(0)))
+    return success();
 
   Operation *primal = gutils->getNewFromOriginal(orig);
   Operation *shadow = builder.clone(*primal);
@@ -334,15 +353,23 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
           successor.isOperation()
               ? parentOp->getResults()
               : regionBranchOp.getSuccessorInputs(successor);
-      assert(operandRange.size() == targetValues.size());
-      for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+      // The parent may carry more results than the terminator forwards to it
+      // (a gpu wrapper's token-like result has no yield operand); only the
+      // paired prefix can be shadowed.
+      size_t numPaired = std::min(operandRange.size(), targetValues.size());
+      for (auto &&[i, target] :
+           llvm::enumerate(targetValues.take_front(numPaired))) {
         if (!gutils->isConstantValue(target))
           operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       }
     }
   } else {
-    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
-    for (auto res : parentOp->getResults()) {
+    // The parent may carry more results than its terminator forwards (a gpu
+    // wrapper's token-like result has no yield operand); only the paired
+    // results can be shadowed.
+    size_t numPaired = std::min<size_t>(parentOp->getNumResults(),
+                                        origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults().take_front(numPaired)) {
       if (!gutils->isConstantValue(res))
         operandsToShadow.insert(res.getResultNumber());
     }
@@ -588,6 +615,11 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       /* addedType */ nullptr, type_args, overwritten_args,
       /* augmented */ nullptr, gutils->omp, gutils->postpasses,
       gutils->verifyPostPasses, gutils->strongZero);
+
+  if (!forwardFn)
+    return orig->emitError()
+           << "failed to create forward-mode derivative for callee "
+           << fn.getNameAttr() << "\n";
 
   SmallVector<Value> fwdArguments;
 
@@ -1003,6 +1035,11 @@ static LogicalResult callReverseHandlerCombined(Operation *orig,
       type_args, overwritten_args, /*augmented*/ nullptr, gutils->omp,
       gutils->postpasses, gutils->verifyPostPasses, gutils->strongZero,
       /*markReadonly=*/false);
+
+  if (!revFn)
+    return orig->emitError()
+           << "failed to create reverse-mode adjoint for callee "
+           << fn.getNameAttr() << "\n";
 
   SmallVector<Value> revArguments;
 

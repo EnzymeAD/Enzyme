@@ -20,6 +20,7 @@ def DifferentiatePass : Pass<"enzyme"> {
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
     "memref::MemRefDialect",
+    "math::MathDialect",
     "mlir::LLVM::LLVMDialect",
     "mlir::enzyme::llvm_ext::LLVMExtDialect"
   ];
@@ -128,6 +129,7 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
     "memref::MemRefDialect",
+    "math::MathDialect",
     "mlir::LLVM::LLVMDialect",
     "mlir::enzyme::llvm_ext::LLVMExtDialect"
   ];
@@ -279,6 +281,14 @@ def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
 }
 
+def PrintBaseObjectPass : Pass<"test-print-base-object"> {
+  let summary = "Print the base object of each function return operand";
+  let options = [
+    Option<"offsetAllowed", "offset-allowed", "bool", "true",
+           "Look through operations that can change the address">
+  ];
+}
+
 def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
   let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
 }
@@ -300,7 +310,7 @@ def LowerEnzymeCustomRulesToFuncPass : Pass<"lower-enzyme-custom-rules-to-func">
 
 def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
   let summary = "Hoist independent primal ops out of autodiff_region.";
-  let dependentDialects = [ 
+  let dependentDialects = [
   "enzyme::EnzymeDialect",
   ];
 }
@@ -338,7 +348,7 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 def EnzymeBatchToTensorPass : Pass<"enzyme-batch-to-tensor"> {
   let summary = "Legalize batching specific operations to tensor dialect";
   let dependentDialects = [
-    "tensor::TensorDialect", 
+    "tensor::TensorDialect",
     "arith::ArithDialect",
     "enzyme::EnzymeDialect"
   ];

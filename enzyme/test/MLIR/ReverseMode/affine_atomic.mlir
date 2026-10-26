@@ -34,7 +34,7 @@ module {
 // CHECK:             affine.store %[[CONSTANT_0]], %[[ARG4]][0] : memref<?xf32>
 // CHECK:             %[[MULF_1:.*]] = arith.mulf %[[LOAD_2]], %[[ARG0]] fastmath<fast> : f32
 // CHECK:             %[[MULF_2:.*]] = arith.mulf %[[LOAD_2]], %[[LOAD_1]] fastmath<fast> : f32
-// CHECK:             %[[AFFINE_ATOMIC_RMW_0:.*]] = enzyme.affine_atomic_rmw addf %[[MULF_1]], %[[ARG2]], (#[[$ATTR_0]]) [] fastmath<fast> : (f32, memref<?xf32>) -> f32
+// CHECK:             %[[AFFINE_ATOMIC_RMW_0:.*]] = enzyme.affine_atomic_rmw addf %[[MULF_1]], %[[ARG2]], (#[[$ATTR_0]]) [] monotonic fastmath<fast> : (f32, memref<?xf32>) -> f32
 // CHECK:             affine.yield %[[MULF_2]] : f32
 // CHECK:           }
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<1xf32>

@@ -17,10 +17,11 @@ module {
   }
 }
 
-// CHECK: #[[MAP:.+]] = affine_map<(d0, d1) -> (d0 * 3 + d1)>
-// CHECK: #[[MAP1:.+]] = affine_map<(d0, d1) -> (d0 * -3 + d1 + 6)>
+// CHECK-DAG: #[[MAP:.+]] = affine_map<(d0, d1) -> (d0 * 3 + d1)>
+// CHECK-DAG: #[[REVERSE_MAP:.+]] = affine_map<(d0) -> (-d0 + 2)>
+// CHECK-DAG: #[[RECOMPUTE_MAP:.+]] = affine_map<(d0, d1) -> (d0 * -3 + d1 + 6)>
+// CHECK-DAG: #[[REVERSE_RECOMPUTE_MAP:.+]] = affine_map<(d0, d1) -> (d0 * -3 - d1 + 8)>
 // CHECK:  func.func @main(%arg0: f32, %arg1: f32) -> f32 {
-// CHECK-NEXT:    %c2 = arith.constant 2 : index
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<3xf32>
 // CHECK-NEXT:    %0 = affine.for %arg2 = 0 to 3 iter_args(%arg3 = %arg0) -> (f32) {
 // CHECK-NEXT:      memref.store %arg3, %alloc[%arg2] : memref<3xf32>
@@ -36,12 +37,12 @@ module {
 // CHECK-NEXT:      affine.yield %2 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1 = affine.for %arg2 = 0 to 3 iter_args(%arg3 = %arg1) -> (f32) {
-// CHECK-NEXT:      %2 = arith.subi %c2, %arg2 : index
+// CHECK-NEXT:      %2 = affine.apply #[[REVERSE_MAP]](%arg2)
 // CHECK-NEXT:      %3 = memref.load %alloc[%2] : memref<3xf32>
 // CHECK-NEXT:      %alloc_0 = memref.alloc() : memref<3xf32>
 // CHECK-NEXT:      %4 = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %3) -> (f32) {
 // CHECK-NEXT:        memref.store %arg5, %alloc_0[%arg4] : memref<3xf32>
-// CHECK-NEXT:        %6 = affine.apply #[[MAP1]](%arg2, %arg4)
+// CHECK-NEXT:        %6 = affine.apply #[[RECOMPUTE_MAP]](%arg2, %arg4)
 // CHECK-NEXT:        %7 = arith.mulf %arg5, %arg5 : f32
 // CHECK-NEXT:        %8 = math.cos %7 : f32
 // CHECK-NEXT:        %9 = arith.index_cast %6 : index to i64
@@ -50,9 +51,9 @@ module {
 // CHECK-NEXT:        affine.yield %11 : f32
 // CHECK-NEXT:      }
 // CHECK-NEXT:      %5 = affine.for %arg4 = 0 to 3 iter_args(%arg5 = %arg3) -> (f32) {
-// CHECK-NEXT:        %6 = arith.subi %c2, %arg4 : index
+// CHECK-NEXT:        %6 = affine.apply #[[REVERSE_MAP]](%arg4)
 // CHECK-NEXT:        %7 = memref.load %alloc_0[%6] : memref<3xf32>
-// CHECK-NEXT:        %8 = affine.apply #[[MAP1]](%arg2, %6)
+// CHECK-NEXT:        %8 = affine.apply #[[REVERSE_RECOMPUTE_MAP]](%arg2, %arg4)
 // CHECK-NEXT:        %9 = arith.mulf %7, %7 : f32
 // CHECK-NEXT:        %10 = arith.index_cast %8 : index to i64
 // CHECK-NEXT:        %11 = arith.uitofp %10 : i64 to f32
