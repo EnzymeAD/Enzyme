@@ -228,6 +228,62 @@ struct CIRPointerArithmeticReverse
   }
 };
 
+static LogicalResult createGlobalShadow(cir::GetGlobalOp op, OpBuilder &builder,
+                                        MGradientUtils *gutils) {
+  auto global =
+      dyn_cast_or_null<cir::GlobalOp>(oputils::getGlobalForAddress(op));
+  if (!global)
+    return op.emitError() << "could not find the global of " << *op;
+  auto shadowName = global->getAttrOfType<FlatSymbolRefAttr>("enzyme_shadow");
+  if (!shadowName)
+    return op.emitError() << "global @" << global.getSymName()
+                          << " is active, so it needs a shadow global named "
+                             "by an enzyme_shadow attribute";
+  auto shadow =
+      SymbolTable::lookupNearestSymbolFrom<cir::GlobalOp>(op, shadowName);
+  if (!shadow || shadow.getSymType() != global.getSymType())
+    return op.emitError() << "enzyme_shadow of @" << global.getSymName()
+                          << " must name a cir.global of type "
+                          << global.getSymType();
+  if (gutils->width != 1)
+    return op.emitError() << "vector mode is not supported for global @"
+                          << global.getSymName();
+  auto shadowOp = cast<cir::GetGlobalOp>(
+      builder.clone(*gutils->getNewFromOriginal(op.getOperation())));
+  shadowOp.setNameAttr(shadowName);
+  gutils->setInvertedPointer(op.getAddr(), shadowOp.getAddr());
+  return success();
+}
+
+struct CIRGetGlobalOpForward
+    : public AutoDiffOpInterface::ExternalModel<CIRGetGlobalOpForward,
+                                                cir::GetGlobalOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return createGlobalShadow(cast<cir::GetGlobalOp>(op), builder, gutils);
+  }
+};
+
+struct CIRGetGlobalOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRGetGlobalOpReverse,
+                                                       cir::GetGlobalOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return createGlobalShadow(cast<cir::GetGlobalOp>(op), builder, gutils);
+  }
+};
+
 // Any int or bool to and from conversion is drop as they need to be marked as
 // constant.
 // TODO: Support Complex
@@ -530,6 +586,8 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpForward>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpReverse>(*context);
+    cir::GetGlobalOp::attachInterface<CIRGetGlobalOpForward>(*context);
+    cir::GetGlobalOp::attachInterface<CIRGetGlobalOpReverse>(*context);
     cir::LifetimeStartOp::attachInterface<
         CIRLifetimeForward<cir::LifetimeStartOp>>(*context);
     cir::LifetimeEndOp::attachInterface<CIRLifetimeForward<cir::LifetimeEndOp>>(
