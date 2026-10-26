@@ -25,157 +25,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
-#include "BlasGetrs.h"
 #include "FlangRuntime.h"
-#include <tuple>
 
 using namespace llvm;
-
-bool AdjointGenerator::handleGetrs(llvm::CallInst &call, llvm::Function *called,
-                                   const BlasInfo &blas,
-                                   const std::vector<bool> &overwritten_args) {
-  using namespace llvm;
-  if (!called || blas.function != "getrs" || !blas.prefix.empty() ||
-      (blas.floatType != "s" && blas.floatType != "d") ||
-      !call.getType()->isVoidTy() || call.arg_size() < 9 ||
-      gutils->isConstantInstruction(&call))
-    return false;
-
-  auto New = cast<CallInst>(gutils->getNewFromOriginal(&call));
-  IRBuilder<> B(New);
-  auto &M = *called->getParent();
-  auto PointerBits = M.getDataLayout().getPointerSizeInBits();
-  auto IsReference = [&](Type *T) {
-    if (auto P = dyn_cast<PointerType>(T))
-      return P->getAddressSpace() == 0;
-    // Some foreign-library declarations encode a reference as an integer.
-    return T->isIntegerTy(PointerBits);
-  };
-  auto Compatible = [&](Function *F, unsigned Base, unsigned Characters) {
-    if (F->isVarArg() || !F->getReturnType()->isVoidTy() ||
-        (F->arg_size() != Base && F->arg_size() != Base + Characters))
-      return false;
-    for (unsigned I = 0; I < F->arg_size(); ++I) {
-      auto T = F->getFunctionType()->getParamType(I);
-      if (I < Base ? !IsReference(T) : !T->isIntegerTy())
-        return false;
-    }
-    return true;
-  };
-  bool ValidABI = Compatible(called, 9, 1) &&
-                  call.getFunctionType() == called->getFunctionType();
-  for (auto Entry :
-       {std::make_tuple("trmm", 11u, 4u), std::make_tuple("gemm", 13u, 2u),
-        std::make_tuple("laswp", 7u, 0u)}) {
-    auto Name = getRenamedPerCallingConv(
-        called->getName(), blas.floatType + std::get<0>(Entry) + blas.suffix);
-    if (auto F = M.getFunction(Name))
-      ValidABI &= Compatible(F, std::get<1>(Entry), std::get<2>(Entry));
-  }
-  if (!ValidABI) {
-    EmitNoDerivativeError("getrs requires compatible Fortran by-reference "
-                          "BLAS/LAPACK declarations",
-                          call, gutils, B);
-    return true;
-  }
-  const bool ActiveA = !gutils->isConstantValue(call.getArgOperand(3));
-  if (gutils->runtimeActivity || Mode == DerivativeMode::ForwardModeSplit ||
-      gutils->isConstantValue(call.getArgOperand(6))) {
-    EmitNoDerivativeError(
-        "getrs requires an active RHS and static activity; split forward mode "
-        "is not yet supported",
-        call, gutils, B);
-    return true;
-  }
-  Type *FP = blas.fpType(call.getContext());
-  auto IT = blas.intType(call.getContext());
-  auto TapeTy = getGetrsTapeType(call.getContext(), blas);
-  auto Convert = [&](IRBuilder<> &Builder, Value *V, Type *Elem) -> Value * {
-    auto P = getUnqual(Elem);
-    if (V->getType()->isIntegerTy())
-      return Builder.CreateIntToPtr(V, P);
-    return Builder.CreatePointerCast(V, P);
-  };
-  auto Primal = [&](unsigned I) {
-    return gutils->getNewFromOriginal(call.getArgOperand(I));
-  };
-  auto InputTape = [&](IRBuilder<> &Builder) -> Value * {
-    auto Read = [&](unsigned I, Type *T) {
-      return Builder.CreateLoad(T, Convert(Builder, Primal(I), T));
-    };
-    Value *Tape = UndefValue::get(TapeTy);
-    Value *LDA = Read(4, IT), *LDB = Read(7, IT);
-    Value *Values[] = {
-        Read(0, Builder.getInt8Ty()),
-        Read(1, IT),
-        Read(2, IT),
-        Convert(Builder, Primal(3), FP),
-        LDA,
-        Convert(Builder, Primal(5), IT),
-        Convert(Builder, Primal(6), FP),
-        LDB,
-        Builder.CreateICmpEQ(Read(8, IT), ConstantInt::get(IT, 0)),
-        LDB,
-        LDA};
-    for (unsigned I = 0; I < getrs::NumFields; ++I)
-      Tape = Builder.CreateInsertValue(Tape, Values[I], I);
-    return Tape;
-  };
-  const bool Forward = Mode == DerivativeMode::ForwardMode ||
-                       Mode == DerivativeMode::ForwardModeError;
-  auto Overwritten = [&](unsigned I) {
-    return I >= overwritten_args.size() || overwritten_args[I];
-  };
-  GetrsCache Cache{!Forward && Overwritten(3), !Forward && Overwritten(5),
-                   !Forward && ActiveA && Overwritten(6)};
-  Value *Tape = nullptr;
-  if (Forward) {
-    B.SetInsertPoint(New->getNextNode());
-    Tape = InputTape(B);
-  } else {
-    if (Mode == DerivativeMode::ReverseModeGradient) {
-      Tape = B.CreatePHI(TapeTy, 0);
-    } else {
-      B.SetInsertPoint(New->getNextNode());
-      auto Snapshot = getOrInsertGetrsSnapshot(*called->getParent(), called,
-                                               blas, ActiveA, Cache);
-      auto Saved = B.CreateCall(Snapshot, {InputTape(B)});
-      gutils->TapesToPreventRecomputation.insert(Saved);
-      Tape = Saved;
-    }
-    Tape =
-        gutils->cacheForReverse(B, Tape, getIndex(&call, CacheType::Tape, B));
-    if (Mode == DerivativeMode::ReverseModePrimal)
-      return true;
-    getReverseBuilder(B, /*original=*/false);
-    Tape = lookup(Tape, B);
-  }
-
-  auto DA =
-      ActiveA ? gutils->invertPointerM(call.getArgOperand(3), B) : nullptr;
-  auto DB = gutils->invertPointerM(call.getArgOperand(6), B);
-  if (!Forward) {
-    if (DA)
-      DA = lookup(DA, B);
-    DB = lookup(DB, B);
-  }
-  for (unsigned Lane = 0; Lane < gutils->getWidth(); ++Lane) {
-    auto Rule = getOrInsertGetrsDerivative(
-        *called->getParent(), called, blas, !Forward, ActiveA,
-        !Forward && shouldFree() && Lane + 1 == gutils->getWidth(), Cache);
-    Value *A = DA, *RHS = DB;
-    if (gutils->getWidth() > 1) {
-      if (A)
-        A = gutils->extractMeta(B, A, Lane);
-      RHS = gutils->extractMeta(B, RHS, Lane);
-    }
-    A = A ? Convert(B, A, FP) : ConstantPointerNull::get(getUnqual(FP));
-    B.CreateCall(Rule, {Tape, A, Convert(B, RHS, FP)});
-  }
-  if (Mode == DerivativeMode::ReverseModeGradient)
-    eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-  return true;
-}
 
 extern "C" {
 void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
@@ -2820,8 +2672,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   }
 
   if (auto blas = extractBLAS(funcName)) {
-    if (handleGetrs(call, called, *blas, overwritten_args))
-      return true;
     if (handleBLAS(call, called, *blas, overwritten_args))
       return true;
   }
