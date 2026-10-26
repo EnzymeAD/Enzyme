@@ -571,19 +571,59 @@ void PostOrderWalkDriver::notifyOperationInserted(
   // Check if the inserted op would be next in the post order or not compared to
   // the current operation.
   bool shouldInsert = false;
-  (void)root->walk([&](EnzymeOpsRemoverOpInterface iface) {
-    if ((Operation *)iface == current) {
+
+  if (current == op) {
+    shouldInsert = true;
+  } else if (current->isAncestor(op)) {
+    shouldInsert = false;
+  } else if (op->isAncestor(current)) {
+    shouldInsert = true;
+  } else if (current->getBlock() == op->getBlock()) {
+    if (current->getNextNode() == op)
       shouldInsert = true;
-      return WalkResult::interrupt();
-    }
-
-    if ((Operation *)iface == op) {
+    else if (op->getNextNode() == current)
       shouldInsert = false;
-      return WalkResult::interrupt();
-    }
+    else
+      shouldInsert = current->isBeforeInBlock(op);
+  } else if (Operation *sib = current->getBlock()->findAncestorOpInBlock(*op)) {
+    shouldInsert = current->isBeforeInBlock(sib);
+  } else if (Operation *anc = op->getBlock()->findAncestorOpInBlock(*current)) {
+    shouldInsert = anc->isBeforeInBlock(op);
+  } else {
+    Operation *common = current->getParentOp();
+    while (common && !common->isAncestor(op))
+      common = common->getParentOp();
 
-    return WalkResult::advance();
-  });
+    if (!common) {
+      shouldInsert = true; // what the walk from root found first: current
+    } else {
+      // The branches of `common` that hold current and op.
+      Region *rc = nullptr, *ro = nullptr;
+      Operation *ac = nullptr, *ao = nullptr;
+      for (Region &region : common->getRegions()) {
+        if (!ac && (ac = region.findAncestorOpInRegion(*current)))
+          rc = &region;
+        if (!ao && (ao = region.findAncestorOpInRegion(*op)))
+          ro = &region;
+      }
+      if (rc != ro) {
+        // Regions are walked in order: is current's region first?
+        shouldInsert = rc->getRegionNumber() < ro->getRegionNumber();
+      } else {
+        // Same region, different blocks: blocks are walked in list order.
+        for (Block &block : *rc) {
+          if (&block == ac->getBlock()) {
+            shouldInsert = true;
+            break;
+          }
+          if (&block == ao->getBlock()) {
+            shouldInsert = false;
+            break;
+          }
+        }
+      }
+    }
+  }
 
   if (shouldInsert)
     addToWorklist(op);
