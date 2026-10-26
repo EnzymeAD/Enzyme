@@ -20,6 +20,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
+#include "clang/CIR/Dialect/Builder/CIRBaseBuilder.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
 
 #include "Dialect/Ops.h"
@@ -235,10 +236,34 @@ static LogicalResult createGlobalShadow(cir::GetGlobalOp op, OpBuilder &builder,
   if (!global)
     return op.emitError() << "could not find the global of " << *op;
   auto shadowName = global->getAttrOfType<FlatSymbolRefAttr>("enzyme_shadow");
-  if (!shadowName)
-    return op.emitError() << "global @" << global.getSymName()
-                          << " is active, so it needs a shadow global named "
-                             "by an enzyme_shadow attribute";
+  if (!shadowName) {
+    // As LLVM does, create a zero shadow next to a global this module defines
+    // or that cannot change; only a global defined elsewhere must name one.
+    if (!global.getConstant() && !cir::isLocalLinkage(global.getLinkage()) &&
+        !(cir::isExternalLinkage(global.getLinkage()) &&
+          global.hasInitializer()))
+      return op.emitError() << "global @" << global.getSymName()
+                            << " is active and defined outside this module, "
+                               "so it needs a shadow global named by an "
+                               "enzyme_shadow attribute";
+    OpBuilder globalBuilder(op.getContext());
+    auto shadow = cir::GlobalOp::create(
+        globalBuilder, global.getLoc(), global.getSymName().str() + "_shadow",
+        global.getSymType(), global.getConstant(), global.getAddrSpaceAttr(),
+        global.getLinkage());
+    shadow.setSymVisibilityAttr(global.getSymVisibilityAttr());
+    shadow.setGlobalVisibility(global.getGlobalVisibility());
+    shadow.setTlsModelAttr(global.getTlsModelAttr());
+    shadow.setDsoLocal(global.getDsoLocal());
+    shadow.setAlignmentAttr(global.getAlignmentAttr());
+    shadow.setInitialValueAttr(cir::CIRBaseBuilderTy(*op.getContext())
+                                   .getZeroInitAttr(global.getSymType()));
+    // Renames the shadow if the name is taken.
+    SymbolTable(SymbolTable::getNearestSymbolTable(global))
+        .insert(shadow, std::next(Block::iterator(global)));
+    shadowName = FlatSymbolRefAttr::get(shadow.getSymNameAttr());
+    global->setAttr("enzyme_shadow", shadowName);
+  }
   auto shadow =
       SymbolTable::lookupNearestSymbolFrom<cir::GlobalOp>(op, shadowName);
   if (!shadow || shadow.getSymType() != global.getSymType())
