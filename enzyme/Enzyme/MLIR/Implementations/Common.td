@@ -153,6 +153,14 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
 class ConstantInt<string val, string dialect_, string op_, string type_="">
     : ConstantFP<val, dialect_, op_, type_>;
 
+class ConstantCFP<string re, string im, string dialect_, string op_, string type_="">
+    : ConstantFP<re, dialect_, op_, type_> {
+  string imag = im;
+}
+
+class ComplexConstant<string re, string im="0">
+    : ConstantCFP<re, im, "complex", "ConstantOp", "mlir::ArrayAttr">;
+
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
 def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   SmallVector<Type> shadowTypes(op->getResultTypes());
@@ -212,6 +220,26 @@ def LlvmExpF : LlvmInst<"ExpOp">;
 def ComplexCreate : ComplexInst<"CreateOp">;
 def ComplexRe : ComplexInst<"ReOp">;
 def ComplexIm : ComplexInst<"ImOp">;
+def ComplexMul : ComplexInst<"MulOp">;
+def ComplexDiv : ComplexInst<"DivOp">;
+def ComplexEq : ComplexInst<"EqualOp">;
+def ComplexSub : ComplexInst<"SubOp">;
+def ComplexNeg : ComplexInst<"NegOp">;
+
+
+def CheckedComplexMul : SubRoutine<(Op $diffret, $x),
+                  (
+                    SelectIfStrongZero
+                    (Arith_Select (ComplexEq $diffret, (ComplexConstant<"0"> $diffret):$zero), $zero, (ComplexMul $diffret, $x)),
+                    (ComplexMul $diffret, $x)
+                  )>;
+
+def CheckedComplexDiv : SubRoutine<(Op $diffret, $x),
+                  (
+                    SelectIfStrongZero
+                    (Arith_Select (ComplexEq $diffret, (ComplexConstant<"0"> $diffret):$zero), $zero, (ComplexDiv $diffret, $x)),
+                    (ComplexDiv $diffret, $x)
+                  )>;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
