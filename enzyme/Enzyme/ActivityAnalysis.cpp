@@ -1019,7 +1019,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     bool SeenInteger = false;
     auto q = TR.query(SI->getPointerOperand()).Data0();
     for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
+      auto dt = q.byteType({i});
       if (dt.isIntegral() || dt == BaseType::Anything) {
         SeenInteger = true;
         if (i == -1)
@@ -1049,7 +1049,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     bool SeenInteger = false;
     auto q = TR.query(SI->getOperand(0)).Data0();
     for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
+      auto dt = q.byteType({i});
       if (dt.isIntegral() || dt == BaseType::Anything) {
         SeenInteger = true;
         if (i == -1)

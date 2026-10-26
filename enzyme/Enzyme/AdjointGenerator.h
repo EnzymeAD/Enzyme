@@ -813,7 +813,7 @@ public:
         Value *prediff = nullptr;
 
         for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
-          if (vd[{(int)i}].isFloat()) {
+          if (vd.byteType({(int)i}).isFloat()) {
             prediff = diffe(&I, Builder2);
             break;
           }
@@ -839,7 +839,8 @@ public:
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(vd.byteType({(int)i}), /*PointerIntSame*/ true,
+                           Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -1162,9 +1163,9 @@ public:
         // and does not propagate to memory) take the stored value's own type.
         TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          ConcreteType ct = vd[{(int)i}];
+          ConcreteType ct = vd.byteType({(int)i});
           if (!ct.isKnown())
-            ct = valTT[{(int)i}];
+            ct = valTT.byteType({(int)i});
           if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
@@ -1242,7 +1243,7 @@ public:
 
       auto dt = vd[{-1}];
       for (size_t i = start; i < storeSize; ++i) {
-        auto nex = vd[{(int)i}];
+        auto nex = vd.byteType({(int)i});
         if ((nex == BaseType::Anything && dt.isFloat()) ||
             (dt == BaseType::Anything && nex.isFloat())) {
           nextStart = i;
@@ -2040,7 +2041,7 @@ public:
 
           auto dt = vd[{-1}];
           for (size_t i = start; i < storeSize; ++i) {
-            auto nex = vd[{(int)i}];
+            auto nex = vd.byteType({(int)i});
             if ((nex == BaseType::Anything && dt.isFloat()) ||
                 (dt == BaseType::Anything && nex.isFloat())) {
               nextStart = i;
@@ -2209,7 +2210,7 @@ public:
 
           auto dt = TT[{-1}];
           for (size_t i = start; i < size0;) {
-            auto nex = TT[{(int)i}];
+            auto nex = TT.byteType({(int)i});
             if ((nex == BaseType::Anything && dt.isFloat()) ||
                 (dt == BaseType::Anything && nex.isFloat())) {
               nextStart = i;
@@ -2294,7 +2295,7 @@ public:
 
           auto dt = TT[{-1}];
           for (size_t i = start; i < size1;) {
-            auto nex = TT[{(int)i}];
+            auto nex = TT.byteType({(int)i});
             if (MD) {
               for (size_t j = 0; j < MD->getNumOperands(); j += 2) {
                 ConcreteType base(
@@ -3448,7 +3449,8 @@ public:
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(vd.byteType({(int)i}), /*PointerIntSame*/ true,
+                           Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -3802,7 +3804,7 @@ public:
           for (size_t i = start; i < size; ++i) {
             bool Legal = true;
             auto tmp = dt;
-            auto next = vd[{(int)i}];
+            auto next = vd.byteType({(int)i});
             tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
             // Prevent fusion of {Anything, Float} since anything is an int rule
             // but float requires zeroing.
@@ -3821,7 +3823,7 @@ public:
                 // if known non-constant, also the same
                 //   + copy
                 if ((dt.isFloat() == nullptr) ==
-                    (vd[{(int)i}].isFloat() == nullptr)) {
+                    (vd.byteType({(int)i}).isFloat() == nullptr)) {
                   Legal = true;
                 }
                 if (!gutils->isConstantValue(orig_src) &&
@@ -5154,7 +5156,7 @@ public:
       auto dt = vd[{-1}];
       for (size_t i = start; i < size; ++i) {
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        dt.checkedOrIn(vd.byteType({(int)i}), /*PointerIntSame*/ true, Legal);
         if (!Legal) {
           nextStart = i;
           break;

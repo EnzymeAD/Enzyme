@@ -138,7 +138,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         }
         bool hasFloat = true;
         for (ssize_t i = -1; i < (ssize_t)storeSize; ++i) {
-          if (vd[{(int)i}].isFloat()) {
+          if (vd.byteType({(int)i}).isFloat()) {
             hasFloat = true;
             break;
           }
@@ -231,7 +231,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 1) / 8;
         bool hasFloat = true;
         for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
-          if (vd[{(int)i}].isFloat()) {
+          if (vd.byteType({(int)i}).isFloat()) {
             hasFloat = true;
             break;
           }
