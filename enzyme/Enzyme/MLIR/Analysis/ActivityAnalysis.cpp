@@ -16,6 +16,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Intrinsics.h"
@@ -3047,7 +3048,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
   for (Operation *a : val.getUsers()) {
     todo.push_back(std::make_tuple(a, val, PUA));
   }
-  std::set<std::tuple<Operation *, Value, UseActivity>> done = {};
+  llvm::DenseSet<std::tuple<Operation *, Value, UseActivity>> done;
 
   llvm::SmallPtrSet<Value, 1> AllocaSet;
 
@@ -3063,9 +3064,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     UseActivity UA;
     auto tuple = todo.front();
     todo.pop_front();
-    if (done.count(tuple))
+    if (!done.insert(tuple).second)
       continue;
-    done.insert(tuple);
     std::tie(a, parent, UA) = tuple;
 
     if (auto LI = dyn_cast<LLVM::LoadOp>(a)) {

@@ -7,7 +7,7 @@
 module {
   func.func @inner(%x: f64) -> f64 {
     // expected-error @below {{could not compute the adjoint for this operation}}
-    %s, %c = math.sincos %x : f64
+    %s = llvm.inline_asm "", "=r,r" %x : (f64) -> f64
     return %s : f64
   }
   func.func @outer(%x: f64) -> f64 {
