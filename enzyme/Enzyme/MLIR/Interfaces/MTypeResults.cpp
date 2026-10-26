@@ -14,6 +14,8 @@
 
 #include "EnzymeLogic.h"
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -92,15 +94,29 @@ MConcreteType MTypeResults::intType(size_t num, Value val, bool errIfNotFound,
                                     bool pointerIntSame) const {
   if (isa<IntegerType, IndexType>(val.getType()))
     return MBaseType::Integer;
+  if (isa<FloatType>(val.getType()))
+    return MConcreteType::getFloat(val.getType());
   if (errIfNotFound)
     llvm_unreachable("MTypeResults::intType: could not deduce the type of the "
                      "value from its MLIR type");
   return MBaseType::Unknown;
 }
 
+// A memref produced by memref.view may be punning, so it answers Unknown; so
+// do i8 memrefs, the byte buffers it reads.
 MConcreteType MTypeResults::firstPointer(size_t num, Value val,
                                          bool errIfNotFound,
                                          bool pointerIntSame) const {
+  if (auto memref = dyn_cast<BaseMemRefType>(val.getType())) {
+    Type elt = memref.getElementType();
+    if (!val.getDefiningOp<memref::ViewOp>() &&
+        !(isa<IntegerType>(elt) && elt.getIntOrFloatBitWidth() == 8)) {
+      if (isa<IntegerType, IndexType>(elt))
+        return MBaseType::Integer;
+      if (isa<FloatType>(elt))
+        return MConcreteType::getFloat(elt);
+    }
+  }
   if (errIfNotFound)
     llvm_unreachable("MTypeResults::firstPointer: could not deduce the pointee "
                      "type of the value from its MLIR type");
