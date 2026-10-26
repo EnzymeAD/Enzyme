@@ -1687,6 +1687,9 @@ public:
     //  3) phi == B0 whenever not coming from preheader [implies 2]
     //  4) [optional but done for ease] one exit to make it easier to
     //  calculation the product at that point
+    //  5) BO has no active use in the loop besides phi: only its value after
+    //  the loop is differentiated, so its adjoint is not that of an
+    //  intermediate iteration
     for (int i = 0; i < 2; i++)
       if (auto P0 = dyn_cast<PHINode>(SI.getOperand(i + 1))) {
         LoopContext lc;
@@ -1710,7 +1713,8 @@ public:
               break;
             }
           }
-          if (allIncoming && lc.exitBlocks.size() == 1) {
+          if (allIncoming && lc.exitBlocks.size() == 1 &&
+              gutils->onlyActiveUseInLoopIsPHI(&SI, P0)) {
             if (!gutils->isConstantValue(SI.getOperand(2 - i))) {
               auto addingType = TR.addingType(size, SI.getOperand(2 - i));
               if (addingType || !looseTypeAnalysis) {
@@ -2460,6 +2464,9 @@ public:
       //  3) phi == B0 whenever not coming from preheader [implies 2]
       //  4) [optional but done for ease] one exit to make it easier to
       //  calculation the product at that point
+      //  5) BO has no active use in the loop besides phi: only its value after
+      //  the loop is differentiated, so its adjoint is not that of an
+      //  intermediate iteration
       Value *orig_op0 = BO.getOperand(0);
       if (auto P0 = dyn_cast<PHINode>(orig_op0)) {
         LoopContext lc;
@@ -2484,7 +2491,8 @@ public:
               break;
             }
           }
-          if (allIncoming && lc.exitBlocks.size() == 1) {
+          if (allIncoming && lc.exitBlocks.size() == 1 &&
+              gutils->onlyActiveUseInLoopIsPHI(&BO, P0)) {
 
             IRBuilder<> Builder2(&BO);
             getReverseBuilder(Builder2);

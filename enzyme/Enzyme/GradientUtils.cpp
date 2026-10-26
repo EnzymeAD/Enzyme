@@ -592,6 +592,23 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
   return red;
 }
 
+bool GradientUtils::onlyActiveUseInLoopIsPHI(const Instruction *val,
+                                             const PHINode *phi) const {
+  auto L = OrigLI->getLoopFor(phi->getParent());
+  assert(L);
+  for (auto U : val->users()) {
+    auto I = cast<Instruction>(U);
+    if (I == phi)
+      continue;
+    if (!L->contains(I->getParent()))
+      continue;
+    if (isConstantInstruction(I))
+      continue;
+    return false;
+  }
+  return true;
+}
+
 bool GradientUtils::assumeDynamicLoopOfSizeOne(Loop *L) const {
   if (!EnzymeInactiveDynamic)
     return false;

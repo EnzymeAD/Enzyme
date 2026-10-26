@@ -3594,7 +3594,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
           break;
         }
       }
-      if (allIncoming) {
+      if (allIncoming &&
+          gutils->onlyActiveUseInLoopIsPHI(activeUses[0], orig)) {
         if (auto SI = dyn_cast<SelectInst>(activeUses[0])) {
           for (int i = 0; i < 2; i++) {
             if (SI->getOperand(i + 1) == orig) {
