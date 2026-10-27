@@ -492,6 +492,46 @@ static bool isArgumentMarkedInactive(CallOpInterface call, Value val) {
   return passed;
 }
 
+static bool isNoCaptureUse(Operation *op, Value val, bool &mayRead,
+                           bool &mayWrite) {
+  auto call = dyn_cast<CallOpInterface>(op);
+  if (!call || dyn_cast<Value>(call.getCallableForCallee()) == val)
+    return false;
+  auto callee =
+      dyn_cast_or_null<FunctionOpInterface>(getFunctionFromCall(call));
+  if (!callee)
+    return false;
+  ArrayAttr callArgAttrs = call.getArgAttrsAttr();
+  auto hasAttr = [&](unsigned i, StringRef name) {
+    if (callArgAttrs && i < callArgAttrs.size())
+      if (auto dict = dyn_cast<DictionaryAttr>(callArgAttrs[i]);
+          dict && dict.contains(name))
+        return true;
+    return i < callee.getNumArguments() && callee.getArgAttr(i, name);
+  };
+  auto memory =
+      callee->getAttrOfType<LLVM::MemoryEffectsAttr>("memory_effects");
+  LLVM::ModRefInfo argMem =
+      memory ? memory.getArgMem() : LLVM::ModRefInfo::ModRef;
+  bool found = false;
+  mayRead = mayWrite = false;
+  for (auto [i, arg] : llvm::enumerate(call.getArgOperands())) {
+    if (arg != val)
+      continue;
+    found = true;
+    if (!hasAttr(i, LLVM::LLVMDialect::getNoCaptureAttrName()))
+      return false;
+    bool readNone = hasAttr(i, LLVM::LLVMDialect::getReadnoneAttrName());
+    mayRead |=
+        !readNone && !hasAttr(i, LLVM::LLVMDialect::getWriteOnlyAttrName()) &&
+        (argMem == LLVM::ModRefInfo::Ref || argMem == LLVM::ModRefInfo::ModRef);
+    mayWrite |=
+        !readNone && !hasAttr(i, LLVM::LLVMDialect::getReadonlyAttrName()) &&
+        (argMem == LLVM::ModRefInfo::Mod || argMem == LLVM::ModRefInfo::ModRef);
+  }
+  return found;
+}
+
 constexpr bool EnzymePrintActivity = false;
 
 static bool isReadOnly(Operation *op) {
@@ -1594,6 +1634,7 @@ hasNoActiveAccess(mlir::enzyme::ActivityAnalyzer &analyzer,
       return !ct.isPossibleFloat() && !ct.isPossiblePointer();
     };
     return allMemoryUses(addr, [&](Operation *user, Value ptr) {
+      bool mayRead, mayWrite;
       if (auto store = dyn_cast<enzyme::StoreLikeInterface>(user)) {
         Value stored = store.getStoredValue();
         if (stored == ptr)
@@ -1616,6 +1657,11 @@ hasNoActiveAccess(mlir::enzyme::ActivityAnalyzer &analyzer,
           if (noActiveLoad && !isInactive(r, loadReval))
             noActiveLoad = false;
         }
+      } else if (isNoCaptureUse(user, ptr, mayRead, mayWrite)) {
+        noActiveStore &= !mayWrite;
+        noActiveLoad &= !mayRead;
+        if (inFn && (mayRead || mayWrite))
+          opReval = user;
       } else {
         noActiveStore = noActiveLoad = false;
         if (inFn)
