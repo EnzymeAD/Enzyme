@@ -201,6 +201,17 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     ArrayRef<int> storedVals) {
   auto iface = cast<ActivityOpInterface>(orig);
 
+  bool allStored = contains(storedVals, -1);
+  if (llvm::all_of(orig->getResults(),
+                   [&](Value v) { return gutils->isConstantValue(v); }) &&
+      (allStored ||
+       llvm::all_of(orig->getOpOperands(), [&](OpOperand &operand) {
+         unsigned idx = operand.getOperandNumber();
+         return iface.isArgInactive(idx) || contains(storedVals, idx) ||
+                gutils->isConstantValue(operand.get());
+       })))
+    return success();
+
   SmallVector<Value> newOperands;
   newOperands.reserve(orig->getNumOperands());
   SmallVector<bool> inverted(orig->getNumOperands(), false);
