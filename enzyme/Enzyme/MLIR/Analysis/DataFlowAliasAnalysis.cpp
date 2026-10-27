@@ -829,8 +829,8 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<enzyme::LoadLikeInterface, enzyme::StoreLikeInterface, enzyme::PushOp,
-             enzyme::PopOp>(op);
+  return isa<enzyme::LoadLikeInterface, enzyme::StoreLikeInterface,
+             enzyme::PushOp, enzyme::PopOp>(op);
 }
 
 void enzyme::AliasAnalysis::transfer(
