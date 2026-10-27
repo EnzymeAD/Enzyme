@@ -2481,9 +2481,9 @@ public:
             if (CI->getNumUses() != 0) {
               IRBuilder<> P(getFirstNonPHI(post));
               auto merge = P.CreatePHI(CI->getType(), 2);
+              CI->replaceAllUsesWith(merge);
               merge->addIncoming(cloned, sel1);
               merge->addIncoming(CI, sel2);
-              CI->replaceAllUsesWith(merge);
             }
             goto retry;
           }
