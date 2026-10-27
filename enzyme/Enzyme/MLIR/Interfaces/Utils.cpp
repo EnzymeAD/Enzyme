@@ -192,6 +192,14 @@ std::optional<MemTransfer> getMemTransfer(Operation *op) {
     return MemTransfer{m.getDst(), m.getSrc()};
   if (auto m = dyn_cast<LLVM::MemcpyInlineOp>(op))
     return MemTransfer{m.getDst(), m.getSrc()};
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (auto m = dyn_cast<cir::CopyOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+  if (auto m = dyn_cast<cir::MemCpyOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+  if (auto m = dyn_cast<cir::MemMoveOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+#endif
   return std::nullopt;
 }
 
