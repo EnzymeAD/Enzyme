@@ -201,6 +201,27 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     ArrayRef<int> storedVals) {
   auto iface = cast<ActivityOpInterface>(orig);
 
+  bool allStored = contains(storedVals, -1);
+  bool needsShadow = false;
+  for (Value v : orig->getResults()) {
+    if (!gutils->isConstantValue(v)) {
+      needsShadow = true;
+      break;
+    }
+  }
+  if (!needsShadow && !allStored) {
+    for (OpOperand &operand : orig->getOpOperands()) {
+      unsigned idx = operand.getOperandNumber();
+      if (!iface.isArgInactive(idx) && !contains(storedVals, idx) &&
+          !gutils->isConstantValue(operand.get())) {
+        needsShadow = true;
+        break;
+      }
+    }
+  }
+  if (!needsShadow)
+    return success();
+
   SmallVector<Value> newOperands;
   newOperands.reserve(orig->getNumOperands());
   SmallVector<bool> inverted(orig->getNumOperands(), false);
@@ -210,8 +231,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     } else {
       if (gutils->isConstantValue(operand.get())) {
 
-        if (contains(storedVals, operand.getOperandNumber()) ||
-            contains(storedVals, -1)) {
+        if (allStored || contains(storedVals, operand.getOperandNumber())) {
           if (isa<AutoDiffTypeInterface>(operand.get().getType())) {
             // Zero for an immutable value; for a mutable value -- an
             // inactive pointer -- the primal is its own shadow.
