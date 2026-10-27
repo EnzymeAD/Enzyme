@@ -20,6 +20,10 @@ module {
   memref.global "private" @arg_call : memref<f64> = dense<0.0>
   memref.global "private" @arg_other : memref<f64> = dense<0.0>
   memref.global "private" @priv_loop : memref<f64> = dense<0.0>
+  memref.global "private" @nc_read : memref<f64> = dense<0.0>
+  memref.global "private" @nc_write : memref<f64> = dense<0.0>
+  memref.global "private" @nc_effects : memref<f64> = dense<0.0>
+  memref.global "private" @ro_capture : memref<f64> = dense<0.0>
   memref.global @bytes : memref<8xi8> = dense<0>
 
   func.func @write_only_private(%x: f64) -> f64 {
@@ -141,6 +145,41 @@ module {
     %r = call @scale_other(%x, %p) : (f64, memref<f64>) -> f64
     return %r : f64
   }
+  func.func private @peek(%m: memref<f64> {llvm.nocapture, llvm.readonly}) -> f64
+  func.func private @clear(%m: memref<f64> {llvm.nocapture, llvm.writeonly})
+  func.func private @peek_effects(%m: memref<f64> {llvm.nocapture}) -> f64 attributes {memory_effects = #llvm.memory_effects<other = none, argMem = read, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>}
+  func.func private @peek_capture(%m: memref<f64> {llvm.readonly}) -> f64
+  func.func @nocapture_read(%x: f64) -> f64 {
+    %c = arith.constant 3.0 : f64
+    %p = memref.get_global @nc_read : memref<f64>
+    memref.store %c, %p[] : memref<f64>
+    %v = call @peek(%p) : (memref<f64>) -> f64
+    %r = arith.mulf %x, %v : f64
+    return %r : f64
+  }
+  func.func @nocapture_write(%x: f64) -> f64 {
+    %p = memref.get_global @nc_write : memref<f64>
+    memref.store %x, %p[] : memref<f64>
+    call @clear(%p) : (memref<f64>) -> ()
+    %r = arith.mulf %x, %x : f64
+    return %r : f64
+  }
+  func.func @nocapture_effects(%x: f64) -> f64 {
+    %c = arith.constant 3.0 : f64
+    %p = memref.get_global @nc_effects : memref<f64>
+    memref.store %c, %p[] : memref<f64>
+    %v = call @peek_effects(%p) : (memref<f64>) -> f64
+    %r = arith.mulf %x, %v : f64
+    return %r : f64
+  }
+  func.func @readonly_capture(%x: f64) -> f64 {
+    %c = arith.constant 3.0 : f64
+    %p = memref.get_global @ro_capture : memref<f64>
+    memref.store %c, %p[] : memref<f64>
+    %v = call @peek_capture(%p) : (memref<f64>) -> f64
+    %r = arith.mulf %x, %v : f64
+    return %r : f64
+  }
   func.func private @use_count(memref<i32>)
   func.func @int_global(%x: f64) -> f64 {
     %p = memref.get_global @count : memref<i32>
@@ -229,3 +268,19 @@ module {
 // Another argument is marked, not the global's.
 // CHECK-LABEL: func.func @other_arg_marked
 // CHECK:         memref.get_global @arg_other {{.*}}enzyme.res_icv0 = false
+
+// A call that keeps no copy of the address can only store into the global
+// through it if it may write, and only read it out if it may read. Only a
+// constant is ever stored into @nc_read and @nc_effects, and @peek and
+// @peek_effects only read; @clear only writes @nc_write, and nothing reads it.
+// CHECK-LABEL: func.func @nocapture_read
+// CHECK:         memref.get_global @nc_read {{.*}}enzyme.res_icv0 = true
+// CHECK-LABEL: func.func @nocapture_write
+// CHECK:         memref.get_global @nc_write {{.*}}enzyme.res_icv0 = true
+// CHECK-LABEL: func.func @nocapture_effects
+// CHECK:         memref.get_global @nc_effects {{.*}}enzyme.res_icv0 = true
+
+// @peek_capture only reads, but may keep the address and write through it
+// later.
+// CHECK-LABEL: func.func @readonly_capture
+// CHECK:         memref.get_global @ro_capture {{.*}}enzyme.res_icv0 = false
