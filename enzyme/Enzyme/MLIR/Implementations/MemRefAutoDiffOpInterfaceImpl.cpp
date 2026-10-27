@@ -69,6 +69,10 @@ struct MemRefAllocaLike
     : public AllocaLikeInterface::ExternalModel<MemRefAllocaLike,
                                                 memref::AllocaOp> {};
 
+struct MemRefMallocLike
+    : public MallocLikeInterface::ExternalModel<MemRefMallocLike,
+                                                memref::AllocOp> {};
+
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        memref::LoadOp> {
@@ -506,6 +510,7 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<MemRefLoadLike>(*context);
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::AllocaOp::attachInterface<MemRefAllocaLike>(*context);
+    memref::AllocOp::attachInterface<MemRefMallocLike>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);

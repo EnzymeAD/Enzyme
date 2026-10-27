@@ -1039,6 +1039,14 @@ struct AffineParallelRegionBranchOpInterface
   }
 };
 
+struct AffineLoadLike
+    : public LoadLikeInterface::ExternalModel<AffineLoadLike,
+                                              affine::AffineLoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<affine::AffineLoadOp>(op).getMemref();
+  }
+};
+
 struct AffineLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
@@ -1519,6 +1527,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     // declared it as a dependent dialect.
     context->getOrLoadDialect<scf::SCFDialect>();
     registerInterfaces(context);
+    affine::AffineLoadOp::attachInterface<AffineLoadLike>(*context);
     affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(
         *context);
     affine::AffineStoreOp::attachInterface<AffineStoreLike>(*context);
