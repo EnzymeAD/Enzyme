@@ -14,30 +14,8 @@
 
 #include "EnzymeLogic.h"
 
-#include "llvm/Support/raw_ostream.h"
-
 using namespace mlir;
 using namespace mlir::enzyme;
-
-std::string MConcreteType::str() const {
-  switch (kind) {
-  case MBaseType::Integer:
-    return "Integer";
-  case MBaseType::Pointer:
-    return "Pointer";
-  case MBaseType::Anything:
-    return "Anything";
-  case MBaseType::Unknown:
-    return "Unknown";
-  case MBaseType::Float: {
-    std::string s;
-    llvm::raw_string_ostream os(s);
-    os << "Float@" << floatType;
-    return os.str();
-  }
-  }
-  return "Unknown";
-}
 
 void MTypeTree::insert(const std::vector<int> &seq, MConcreteType ct) {
   assert((seq.size() <= 1 ||
@@ -51,7 +29,7 @@ MConcreteType MTypeTree::operator[](const std::vector<int> &seq) const {
   if (found != mapping.end())
     return found->second;
   if (seq.empty())
-    return MBaseType::Unknown;
+    return BaseType::Unknown;
 
   auto extend = [](const std::vector<int> &prefix, int idx) {
     llvm::SmallVector<std::vector<int>, 2> out;
@@ -78,7 +56,7 @@ MConcreteType MTypeTree::operator[](const std::vector<int> &seq) const {
     for (auto &cand : extend(prefix, seq.back()))
       if (auto f = mapping.find(cand); f != mapping.end())
         return f->second;
-  return MBaseType::Unknown;
+  return BaseType::Unknown;
 }
 
 MTypeTree MTypeResults::query(Value val) const {
@@ -91,11 +69,11 @@ MTypeTree MTypeResults::query(Value val) const {
 MConcreteType MTypeResults::intType(size_t num, Value val, bool errIfNotFound,
                                     bool pointerIntSame) const {
   if (isa<IntegerType, IndexType>(val.getType()))
-    return MBaseType::Integer;
+    return BaseType::Integer;
   if (errIfNotFound)
     llvm_unreachable("MTypeResults::intType: could not deduce the type of the "
                      "value from its MLIR type");
-  return MBaseType::Unknown;
+  return BaseType::Unknown;
 }
 
 MConcreteType MTypeResults::firstPointer(size_t num, Value val,
@@ -104,5 +82,5 @@ MConcreteType MTypeResults::firstPointer(size_t num, Value val,
   if (errIfNotFound)
     llvm_unreachable("MTypeResults::firstPointer: could not deduce the pointee "
                      "type of the value from its MLIR type");
-  return MBaseType::Unknown;
+  return BaseType::Unknown;
 }
