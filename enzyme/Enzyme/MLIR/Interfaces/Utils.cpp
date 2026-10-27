@@ -185,6 +185,16 @@ bool isLocalGlobal(Operation *global) {
   return cast<SymbolOpInterface>(global).isPrivate();
 }
 
+std::optional<MemTransfer> getMemTransfer(Operation *op) {
+  if (auto m = dyn_cast<LLVM::MemcpyOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+  if (auto m = dyn_cast<LLVM::MemmoveOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+  if (auto m = dyn_cast<LLVM::MemcpyInlineOp>(op))
+    return MemTransfer{m.getDst(), m.getSrc()};
+  return std::nullopt;
+}
+
 static bool isStackAlloca(Value v) {
   return v.getDefiningOp<memref::AllocaOp>() ||
          v.getDefiningOp<memref::AllocOp>() ||
