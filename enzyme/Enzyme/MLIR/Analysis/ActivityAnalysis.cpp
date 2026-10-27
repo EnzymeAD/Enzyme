@@ -1602,7 +1602,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
   // This value is certainly a pointer to an integer (and only an integer, not
   // a pointer or float). Therefore its value is constant
-  if (TR.firstPointer(1, Val, /*errIfNotFound*/ false).isIntegral()) {
+  auto mutableTy = dyn_cast<AutoDiffTypeInterface>(Val.getType());
+  if (mutableTy && mutableTy.isMutable() &&
+      TR.firstPointer(1, Val, /*errIfNotFound*/ false).isIntegral()) {
     if (EnzymePrintActivity)
       llvm::errs() << " Value const as integral pointer" << (int)directions
                    << " " << Val << "\n";

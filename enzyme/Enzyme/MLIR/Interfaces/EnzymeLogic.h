@@ -29,39 +29,30 @@ public:
   }
 };
 
-enum class MBaseType { Integer, Float, Pointer, Anything, Unknown };
+} // namespace enzyme
+} // namespace mlir
 
-class MConcreteType {
-  MBaseType kind;
-  mlir::Type floatType;
+template <> struct ConcreteTypeTraits<mlir::Type> {
+  static bool isFloatingPoint(mlir::Type T) { return static_cast<bool>(T); }
 
-public:
-  MConcreteType(MBaseType kind = MBaseType::Unknown) : kind(kind) {}
-  static MConcreteType getFloat(mlir::Type t) {
-    MConcreteType ct(MBaseType::Float);
-    ct.floatType = t;
-    return ct;
+  static void print(llvm::raw_ostream &OS, mlir::Type T) { OS << T; }
+
+  static std::string floatName(mlir::Type T) {
+    std::string S;
+    llvm::raw_string_ostream OS(S);
+    OS << T;
+    return S;
   }
 
-  bool isKnown() const { return kind != MBaseType::Unknown; }
-  bool isIntegral() const { return kind == MBaseType::Integer; }
-  bool isPossiblePointer() const {
-    return kind == MBaseType::Pointer || kind == MBaseType::Anything ||
-           kind == MBaseType::Unknown;
+  static bool less(mlir::Type A, mlir::Type B) {
+    return A.getAsOpaquePointer() < B.getAsOpaquePointer();
   }
-  bool isPossibleFloat() const {
-    return kind == MBaseType::Float || kind == MBaseType::Anything ||
-           kind == MBaseType::Unknown;
-  }
-  mlir::Type isFloat() const { return floatType; }
-
-  bool operator==(const MConcreteType &o) const {
-    return kind == o.kind && floatType == o.floatType;
-  }
-  bool operator!=(const MConcreteType &o) const { return !(*this == o); }
-
-  std::string str() const;
 };
+
+namespace mlir {
+namespace enzyme {
+
+using MConcreteType = GenericConcreteType<mlir::Type>;
 
 class MTypeTree {
   std::map<std::vector<int>, MConcreteType> mapping;
