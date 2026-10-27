@@ -171,6 +171,15 @@ def AllocaLikeInterface : OpInterface<"AllocaLikeInterface"> {
   let methods = [];
 }
 
+def MallocLikeInterface : OpInterface<"MallocLikeInterface"> {
+  let description = [{
+    An operation that allocates fresh heap memory and returns a single
+    pointer or reference to it.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+  let methods = [];
+}
+
 def ActivityOpInterface
     : OpInterface<"ActivityOpInterface"> {
   let cppNamespace = "::mlir::enzyme";

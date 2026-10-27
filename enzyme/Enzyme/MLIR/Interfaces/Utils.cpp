@@ -46,7 +46,7 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<enzyme::LoadLikeInterface, affine::AffineLoadOp>(u))
+      if (isa<enzyme::LoadLikeInterface>(u))
         continue;
       if (auto s = dyn_cast<memref::StoreOp>(u)) {
         if (s.getValue() == v)
@@ -136,8 +136,8 @@ Value getBaseObject(Value v, bool offsetAllowed) {
   return v;
 }
 
-static bool isStackAlloca(Value v) {
-  return v.getDefiningOp<memref::AllocOp>() ||
+static bool isFreshAllocation(Value v) {
+  return v.getDefiningOp<enzyme::MallocLikeInterface>() ||
          v.getDefiningOp<enzyme::AllocaLikeInterface>();
 }
 
@@ -164,11 +164,11 @@ bool mayAlias(Value v1, Value v2) {
   bool isAlloca[2];
   bool isGlobal[2];
 
-  isAlloca[0] = isStackAlloca(v1);
+  isAlloca[0] = isFreshAllocation(v1);
   isGlobal[0] = v1.getDefiningOp<memref::GetGlobalOp>() ||
                 v1.getDefiningOp<LLVM::AddressOfOp>();
 
-  isAlloca[1] = isStackAlloca(v2);
+  isAlloca[1] = isFreshAllocation(v2);
 
   isGlobal[1] = v2.getDefiningOp<memref::GetGlobalOp>() ||
                 v2.getDefiningOp<LLVM::AddressOfOp>();

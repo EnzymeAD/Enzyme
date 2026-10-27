@@ -829,8 +829,7 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<memref::StoreOp, affine::AffineLoadOp, affine::AffineStoreOp,
-             enzyme::LoadLikeInterface, LLVM::StoreOp, enzyme::PushOp,
+  return isa<enzyme::LoadLikeInterface, enzyme::StoreLikeInterface, enzyme::PushOp,
              enzyme::PopOp>(op);
 }
 
