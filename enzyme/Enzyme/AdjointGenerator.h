@@ -5240,11 +5240,15 @@ public:
                                  unsigned i, bool foreignFunction) {
     // Derivatives of a loop function (a forward-mode one, differentiated
     // again) keep its attributes: its schedule arguments stay inactive.
-    if (called && called->hasFnAttribute("enzyme_checkpoint") &&
+    // So do the passes of its reverse mode, differentiated in forward mode.
+    bool pass = called && called->hasFnAttribute("enzyme_checkpoint_pass");
+    if (called &&
+        (called->hasFnAttribute("enzyme_checkpoint") || pass) &&
         called->getAttributes().hasParamAttr(i, "enzyme_inactive"))
       return DIFFE_TYPE::CONSTANT;
-    if (isCheckpointLoop(called)) {
-      // The reverse pass reruns steps from the primal arguments.
+    if (isCheckpointLoop(called) || pass) {
+      // The reverse pass reruns steps from the primal arguments, and its
+      // tangent from their tangents.
       auto ty = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
       return ty == DIFFE_TYPE::DUP_NONEED ? DIFFE_TYPE::DUP_ARG : ty;
     }
