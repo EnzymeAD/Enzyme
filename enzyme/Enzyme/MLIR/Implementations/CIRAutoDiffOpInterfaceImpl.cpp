@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/MemTransferOpInterface.h"
 #include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -595,6 +596,15 @@ template <typename OpTy> static void registerCIRAddressView(MLIRContext &ctx) {
   OpTy::template attachInterface<CIRAddressOffset<OpTy>>(ctx);
 }
 
+template <typename OpTy>
+struct CIRMemTransfer
+    : public MemTransferOpInterface::ExternalModel<CIRMemTransfer<OpTy>, OpTy> {
+  Value getTransferDest(Operation *op) const { return cast<OpTy>(op).getDst(); }
+  Value getTransferSource(Operation *op) const {
+    return cast<OpTy>(op).getSrc();
+  }
+};
+
 struct CIRReturnOpFunctionReturnInterface
     : public FunctionReturnOpInterface::ExternalModel<
           CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
@@ -611,6 +621,9 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpForward>(*context);
     cir::CopyOp::attachInterface<CIRCopyOpReverse>(*context);
+    cir::CopyOp::attachInterface<CIRMemTransfer<cir::CopyOp>>(*context);
+    cir::MemCpyOp::attachInterface<CIRMemTransfer<cir::MemCpyOp>>(*context);
+    cir::MemMoveOp::attachInterface<CIRMemTransfer<cir::MemMoveOp>>(*context);
     cir::GetGlobalOp::attachInterface<CIRGetGlobalOpForward>(*context);
     cir::GetGlobalOp::attachInterface<CIRGetGlobalOpReverse>(*context);
     cir::LifetimeStartOp::attachInterface<
