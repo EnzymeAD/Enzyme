@@ -1,6 +1,7 @@
 #include "ActivityAnalysis.h"
 #include "Dialect/Dialect.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/MemTransferOpInterface.h"
 #include "Interfaces/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -2382,20 +2383,18 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
             SmallPtrSet<Value, 2> Seen;
             loadCheck(loadedValue, Seen);
           }
-        } else if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp, LLVM::MemcpyInlineOp>(
-                       op)) {
-          if (!Hypothesis->isConstantValue(TR, op->getOperand(0))) {
+        } else if (auto transfer = dyn_cast<MemTransferOpInterface>(op)) {
+          if (!Hypothesis->isConstantValue(TR, transfer.getTransferDest())) {
             potentiallyActiveLoad = true;
-            // TODO: in absence of MLIR type analysis, assume everything is a
-            // possible pointer.
-            //
-            // if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
-            // if (EnzymePrintActivity)
-            //   llvm::errs()
-            //       << "potential active store via pointer in memcpy: " << *I
-            //       << " of " << *Val << "\n";
-            potentiallyActiveStore = true;
-            // }
+            // Copying into active memory can only store an active pointer if
+            // the memory being copied may hold one.
+            if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "potential active store via pointer in memcpy: " << *op
+                    << " of " << Val << "\n";
+              potentiallyActiveStore = true;
+            }
           }
         } else {
           // Otherwise fallback and check any part of the instruction is
@@ -2465,9 +2464,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
-        } else if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp, LLVM::MemcpyInlineOp>(
-                       op)) {
-          bool cop = !Hypothesis->isConstantValue(TR, op->getOperand(1));
+        } else if (auto transfer = dyn_cast<MemTransferOpInterface>(op)) {
+          bool cop =
+              !Hypothesis->isConstantValue(TR, transfer.getTransferSource());
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
@@ -2799,18 +2798,18 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     return false;
   }
 
-  if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp>(op)) {
+  if (auto transfer = dyn_cast<MemTransferOpInterface>(op)) {
     // if either src or dst is inactive, there cannot be a transfer of active
     // values and thus the store is inactive
-    if (isConstantValue(TR, op->getOperand(0)) ||
-        isConstantValue(TR, op->getOperand(1))) {
+    if (isConstantValue(TR, transfer.getTransferDest()) ||
+        isConstantValue(TR, transfer.getTransferSource())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as memtransfer " << *op << "\n";
       return true;
     }
     if (inactArg) {
-      inactArg->insert(op->getOperand(0));
-      inactArg->insert(op->getOperand(1));
+      inactArg->insert(transfer.getTransferDest());
+      inactArg->insert(transfer.getTransferSource());
     }
     return false;
   }
@@ -3351,7 +3350,9 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
     }
 
-    if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp>(a)) {
+    if (auto transfer = dyn_cast<MemTransferOpInterface>(a)) {
+      Value transferOperands[2] = {transfer.getTransferDest(),
+                                   transfer.getTransferSource()};
       //
       // TODO: see how this works with MLIR global constant operation approach
       //
@@ -3371,36 +3372,37 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       // }
 
       // Only need to care about loads from
-      if (UA == UseActivity::OnlyLoads && a->getOperand(1) != parent)
+      if (UA == UseActivity::OnlyLoads &&
+          transfer.getTransferSource() != parent)
         continue;
 
       // Only need to care about store from
-      if (a->getOperand(0) != parent) {
+      if (transfer.getTransferDest() != parent) {
         if (UA == UseActivity::OnlyStores)
           continue;
         else if (UA == UseActivity::OnlyNonPointerStores ||
                  UA == UseActivity::AllStores) {
           // todo can change this to query either -1 (all mem) or 0..size
           // (if size of copy is const)
-          // if (!TR.query(call->getArgOperand(1))[{-1,
-          // -1}].isPossiblePointer())
-          //   continue;
+          if (!TR.query(transfer.getTransferSource())[{-1, -1}]
+                   .isPossiblePointer())
+            continue;
         }
       }
 
       bool shouldContinue = false;
       if (UA != UseActivity::AllStores)
         for (int arg = 0; arg < 2; arg++)
-          if (a->getOperand(arg) != parent &&
+          if (transferOperands[arg] != parent &&
               (arg == 0 || (PUA == UseActivity::None))) {
-            Value TmpOrig = a->getOperand(arg);
+            Value TmpOrig = transferOperands[arg];
             while (1) {
               if (AllocaSet.count(TmpOrig)) {
                 shouldContinue = true;
                 break;
               }
               if (TmpOrig.getDefiningOp<LLVM::AllocaOp>()) {
-                done.insert(std::make_tuple(a, a->getOperand(arg), UA));
+                done.insert(std::make_tuple(a, transferOperands[arg], UA));
                 for (Operation *a : TmpOrig.getUsers()) {
                   todo.push_back(std::make_tuple(a, TmpOrig, UA));
                 }

@@ -811,6 +811,31 @@ gentbl_cc_library(
 )
 
 td_library(
+    name = "MemTransferOpInterfaceTdFiles",
+    srcs = ["Enzyme/MLIR/Interfaces/MemTransferOpInterface.td"],
+    includes = ["."],
+    deps = ["@llvm-project//mlir:OpBaseTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "MemTransferOpInterfaceIncGen",
+    strip_include_prefix = "Enzyme",
+    tbl_outs = [
+        (
+            ["--gen-op-interface-decls"],
+            "Enzyme/MLIR/Interfaces/MemTransferOpInterface.h.inc",
+        ),
+        (
+            ["--gen-op-interface-defs"],
+            "Enzyme/MLIR/Interfaces/MemTransferOpInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/MemTransferOpInterface.td",
+    deps = [":MemTransferOpInterfaceTdFiles"],
+)
+
+td_library(
     name = "ImplementationsCommonTdFiles",
     srcs = [
         "Enzyme/MLIR/Implementations/Common.td",
@@ -1001,6 +1026,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":MemTransferOpInterfaceIncGen",
         ":OffsetViewInterfaceIncGen",
         ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeAttributesIncGen",

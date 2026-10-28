@@ -17,6 +17,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/MemTransferOpInterface.h"
 #include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -39,6 +40,16 @@ struct BitcastOpViewInterface
                                                 LLVM::BitcastOp> {
   Value getViewSource(Operation *op) const {
     return cast<LLVM::BitcastOp>(op).getArg();
+  }
+};
+
+template <typename OpTy>
+struct LLVMMemTransfer
+    : public MemTransferOpInterface::ExternalModel<LLVMMemTransfer<OpTy>,
+                                                   OpTy> {
+  Value getTransferDest(Operation *op) const { return cast<OpTy>(op).getDst(); }
+  Value getTransferSource(Operation *op) const {
+    return cast<OpTy>(op).getSrc();
   }
 };
 
@@ -1119,6 +1130,11 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
         NoAdjointReverseInterface<LLVM::DbgLabelOp>>(*context);
     LLVM::MemsetOp::attachInterface<MemsetForwardInterface>(*context);
     LLVM::MemcpyOp::attachInterface<MemcpyForwardInterface>(*context);
+    LLVM::MemcpyOp::attachInterface<LLVMMemTransfer<LLVM::MemcpyOp>>(*context);
+    LLVM::MemmoveOp::attachInterface<LLVMMemTransfer<LLVM::MemmoveOp>>(
+        *context);
+    LLVM::MemcpyInlineOp::attachInterface<
+        LLVMMemTransfer<LLVM::MemcpyInlineOp>>(*context);
     LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     LLVM::StoreOp::attachInterface<LLVMStoreLike>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
