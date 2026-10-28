@@ -17,48 +17,6 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-void MTypeTree::insert(const std::vector<int> &seq, MConcreteType ct) {
-  assert((seq.size() <= 1 ||
-          mapping.count(std::vector<int>(seq.begin(), seq.end() - 1))) &&
-         "MTypeTree::insert: the enclosing prefix must be inserted first");
-  mapping.insert_or_assign(seq, ct);
-}
-
-MConcreteType MTypeTree::operator[](const std::vector<int> &seq) const {
-  auto found = mapping.find(seq);
-  if (found != mapping.end())
-    return found->second;
-  if (seq.empty())
-    return BaseType::Unknown;
-
-  auto extend = [](const std::vector<int> &prefix, int idx) {
-    llvm::SmallVector<std::vector<int>, 2> out;
-    out.push_back(prefix);
-    out.back().push_back(-1);
-    if (idx != -1) {
-      out.push_back(prefix);
-      out.back().push_back(idx);
-    }
-    return out;
-  };
-
-  std::vector<std::vector<int>> prefixes = {{}};
-  for (size_t i = 0; i + 1 < seq.size(); ++i) {
-    std::vector<std::vector<int>> next;
-    for (const auto &prefix : prefixes)
-      for (auto &cand : extend(prefix, seq[i]))
-        if (mapping.count(cand))
-          next.push_back(std::move(cand));
-    prefixes = std::move(next);
-  }
-
-  for (const auto &prefix : prefixes)
-    for (auto &cand : extend(prefix, seq.back()))
-      if (auto f = mapping.find(cand); f != mapping.end())
-        return f->second;
-  return BaseType::Unknown;
-}
-
 MTypeTree MTypeResults::query(Value val) const {
   // TODO: cache the tree per type in a DenseMap<Type, MTypeTree> once
   // building it is more than a few isa checks.

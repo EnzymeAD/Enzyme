@@ -4,6 +4,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include "../../TypeAnalysis/TypeTree.h"
 #include "../../Utils.h"
 #include <functional>
 #include <map>
@@ -49,18 +50,33 @@ template <> struct ConcreteTypeTraits<mlir::Type> {
   }
 };
 
+template <> struct TypeTreeTraits<mlir::Type> {
+  using Origin = mlir::Operation *;
+
+  // Mirror the defaults of -enzyme-max-type-depth and -enzyme-max-type-offset.
+  static unsigned maxDepth() { return 6; }
+
+  static int maxOffset() { return 500; }
+
+  template <typename TreeT>
+  static void depthLimitExceeded(const TreeT &Tree, Origin Orig,
+                                 const llvm::Twine &Detail) {
+    std::string Msg = ("not handling more than " + llvm::Twine(maxDepth()) +
+                       " pointer lookups deep dt:" + Tree.str() + Detail)
+                          .str();
+    if (Orig)
+      Orig->emitWarning(Msg);
+    else
+      llvm::errs() << Msg << "\n";
+  }
+};
+
 namespace mlir {
 namespace enzyme {
 
 using MConcreteType = GenericConcreteType<mlir::Type>;
 
-class MTypeTree {
-  std::map<std::vector<int>, MConcreteType> mapping;
-
-public:
-  void insert(const std::vector<int> &seq, MConcreteType ct);
-  MConcreteType operator[](const std::vector<int> &seq) const;
-};
+using MTypeTree = GenericTypeTree<mlir::Type>;
 
 // The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {

@@ -61,7 +61,38 @@ static inline std::string to_string(const std::vector<int> x) {
   return out;
 }
 
-class TypeTree;
+template <typename SubTypeT> struct TypeTreeTraits;
+
+template <> struct TypeTreeTraits<llvm::Type *> {
+  using Origin = llvm::Instruction *;
+
+  static unsigned maxDepth() { return EnzymeMaxTypeDepth; }
+
+  static int maxOffset() { return MaxTypeOffset; }
+
+  template <typename TreeT>
+  static void depthLimitExceeded(const TreeT &Tree, Origin Orig,
+                                 const llvm::Twine &Detail) {
+    if (!EnzymeTypeWarning)
+      return;
+    if (CustomErrorHandler) {
+      CustomErrorHandler("TypeAnalysisDepthLimit", wrap(Orig),
+                         ErrorType::TypeDepthExceeded, &Tree, nullptr, nullptr);
+    } else if (Orig) {
+      EmitWarning("TypeAnalysisDepthLimit", *Orig, *Orig,
+                  " not handling more than ", EnzymeMaxTypeDepth,
+                  " pointer lookups deep dt: ", Tree.str(), Detail.str());
+    } else {
+      llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
+                   << " pointer lookups deep dt:" << Tree.str() << Detail
+                   << "\n";
+    }
+  }
+};
+
+template <typename SubTypeT> class GenericTypeTree;
+
+using TypeTree = GenericTypeTree<llvm::Type *>;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
 typedef std::map<const std::vector<int>, ConcreteType> ConcreteTypeMapType;
@@ -69,26 +100,38 @@ typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
 /// sequences of offsets to a ConcreteType
-class TypeTree : public std::enable_shared_from_this<TypeTree> {
+///
+/// The class is templated over the handle of the floating point type, like
+/// GenericConcreteType, so that it is shared between LLVM and MLIR
+template <typename SubTypeT>
+class GenericTypeTree
+    : public std::enable_shared_from_this<GenericTypeTree<SubTypeT>> {
+  using Traits = TypeTreeTraits<SubTypeT>;
+
+public:
+  using ConcreteType = GenericConcreteType<SubTypeT>;
+  using ConcreteTypeMapType = std::map<const std::vector<int>, ConcreteType>;
+
 private:
   // mapping of known indices to type if one exists
   ConcreteTypeMapType mapping;
   std::vector<int> minIndices;
 
 public:
-  TypeTree() {}
-  TypeTree(ConcreteType dat) {
+  GenericTypeTree() {}
+  GenericTypeTree(ConcreteType dat) {
     if (dat != ConcreteType(BaseType::Unknown)) {
       mapping.insert(std::pair<const std::vector<int>, ConcreteType>({}, dat));
     }
   }
 
-  static TypeTree parse(llvm::StringRef str, llvm::LLVMContext &ctx) {
+  template <typename ContextT>
+  static GenericTypeTree parse(llvm::StringRef str, ContextT &ctx) {
     using namespace llvm;
     assert(str[0] == '{');
     str = str.substr(1);
 
-    TypeTree Result;
+    GenericTypeTree Result;
     while (true) {
       while (str[0] == ' ')
         str = str.substr(1);
@@ -174,41 +217,37 @@ public:
 
   /// Lookup the underlying ConcreteType at a given offset sequence
   /// or Unknown if none exists
-  ConcreteType operator[](const std::vector<int> Seq) const {
-    auto Found0 = mapping.find(Seq);
-    if (Found0 != mapping.end())
-      return Found0->second;
-    size_t Len = Seq.size();
-    if (Len == 0)
+  ConcreteType operator[](const std::vector<int> &Seq) const {
+    auto Found = mapping.find(Seq);
+    if (Found != mapping.end())
+      return Found->second;
+    if (Seq.empty())
       return BaseType::Unknown;
 
-    std::vector<std::vector<int>> todo[2];
-    todo[0].push_back({});
-    int parity = 0;
-    for (size_t i = 0, Len = Seq.size(); i < Len - 1; ++i) {
-      for (auto prev : todo[parity]) {
-        prev.push_back(-1);
-        if (mapping.find(prev) != mapping.end())
-          todo[1 - parity].push_back(prev);
+    std::vector<std::vector<int>> Prefixes = {{}};
+    for (size_t i = 0; i + 1 < Seq.size(); ++i) {
+      std::vector<std::vector<int>> Next;
+      for (std::vector<int> Cand : Prefixes) {
+        Cand.push_back(-1);
+        if (mapping.count(Cand))
+          Next.push_back(Cand);
         if (Seq[i] != -1) {
-          prev.back() = Seq[i];
-          if (mapping.find(prev) != mapping.end())
-            todo[1 - parity].push_back(prev);
+          Cand.back() = Seq[i];
+          if (mapping.count(Cand))
+            Next.push_back(std::move(Cand));
         }
       }
-      todo[parity].clear();
-      parity = 1 - parity;
+      Prefixes = std::move(Next);
     }
 
-    size_t i = Len - 1;
-    for (auto prev : todo[parity]) {
-      prev.push_back(-1);
-      auto Found = mapping.find(prev);
+    for (std::vector<int> Cand : Prefixes) {
+      Cand.push_back(-1);
+      auto Found = mapping.find(Cand);
       if (Found != mapping.end())
         return Found->second;
-      if (Seq[i] != -1) {
-        prev.back() = Seq[i];
-        Found = mapping.find(prev);
+      if (Seq.back() != -1) {
+        Cand.back() = Seq.back();
+        Found = mapping.find(Cand);
         if (Found != mapping.end())
           return Found->second;
       }
@@ -236,18 +275,9 @@ public:
   bool insert(const std::vector<int> Seq, ConcreteType CT,
               bool PointerIntSame = false) {
     size_t SeqSize = Seq.size();
-    if (SeqSize > EnzymeMaxTypeDepth) {
-      if (EnzymeTypeWarning) {
-        if (CustomErrorHandler) {
-          CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
-                             ErrorType::TypeDepthExceeded, this, nullptr,
-                             nullptr);
-        } else
-          llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                       << " pointer lookups deep dt:" << str()
-                       << " adding v: " << to_string(Seq) << ": " << CT.str()
-                       << "\n";
-      }
+    if (SeqSize > Traits::maxDepth()) {
+      Traits::depthLimitExceeded(
+          *this, nullptr, " adding v: " + to_string(Seq) + ": " + CT.str());
       return false;
     }
     if (SeqSize == 0) {
@@ -373,7 +403,7 @@ public:
         (minIndices.size() <= SeqSize) ? minIndices.size() : SeqSize;
     for (size_t i = 0; i < minLen; i++) {
       if (minIndices[i] > Seq[i]) {
-        if (minIndices[i] > MaxTypeOffset)
+        if (minIndices[i] > Traits::maxOffset())
           possibleDeletion = true;
         minIndices[i] = Seq[i];
       }
@@ -391,7 +421,7 @@ public:
         bool mustKeep = false;
         bool considerErase = false;
         for (int val : pair.first) {
-          if (val > MaxTypeOffset) {
+          if (val > Traits::maxOffset()) {
             if (val == minIndices[i]) {
               mustKeep = true;
               break;
@@ -411,7 +441,7 @@ public:
     bool keep = false;
     bool considerErase = false;
     for (auto val : Seq) {
-      if (val > MaxTypeOffset) {
+      if (val > Traits::maxOffset()) {
         if (val == minIndices[i]) {
           keep = true;
           break;
@@ -427,7 +457,9 @@ public:
   }
 
   /// How this TypeTree compares with another
-  bool operator<(const TypeTree &vd) const { return mapping < vd.mapping; }
+  bool operator<(const GenericTypeTree &vd) const {
+    return mapping < vd.mapping;
+  }
 
   /// Whether this TypeTree contains any information
   bool isKnown() const {
@@ -458,8 +490,8 @@ public:
   }
 
   /// Select only the Integer ConcreteTypes
-  TypeTree JustInt() const {
-    TypeTree vd;
+  GenericTypeTree JustInt() const {
+    GenericTypeTree vd;
     for (auto &pair : mapping) {
       if (pair.second == BaseType::Integer) {
         vd.insert(pair.first, pair.second);
@@ -470,35 +502,21 @@ public:
   }
 
   /// Prepend an offset to all mappings
-  TypeTree Only(int Off, llvm::Instruction *orig) const {
-    TypeTree Result;
+  GenericTypeTree Only(int Off, typename Traits::Origin orig) const {
+    GenericTypeTree Result;
     Result.minIndices.reserve(1 + minIndices.size());
     Result.minIndices.push_back(Off);
     for (auto midx : minIndices)
       Result.minIndices.push_back(midx);
 
-    if (Result.minIndices.size() > EnzymeMaxTypeDepth) {
+    if (Result.minIndices.size() > Traits::maxDepth()) {
       Result.minIndices.pop_back();
-      if (EnzymeTypeWarning) {
-        if (CustomErrorHandler) {
-          CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
-                             ErrorType::TypeDepthExceeded, this, nullptr,
-                             nullptr);
-        } else if (orig) {
-          EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
-                      " not handling more than ", EnzymeMaxTypeDepth,
-                      " pointer lookups deep dt: ", str(), " only(", Off, ")");
-        } else {
-          llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                       << " pointer lookups deep dt:" << str() << " only("
-                       << Off << "): "
-                       << "\n";
-        }
-      }
+      Traits::depthLimitExceeded(*this, orig,
+                                 " only(" + llvm::Twine(Off) + ")");
     }
 
     for (const auto &pair : mapping) {
-      if (pair.first.size() == EnzymeMaxTypeDepth)
+      if (pair.first.size() == Traits::maxDepth())
         continue;
       std::vector<int> Vec;
       Vec.reserve(pair.first.size() + 1);
@@ -512,8 +530,8 @@ public:
   }
 
   /// Peel off the outermost index at offset 0
-  TypeTree Data0() const {
-    TypeTree Result;
+  GenericTypeTree Data0() const {
+    GenericTypeTree Result;
 
     for (const auto &pair : mapping) {
       if (pair.first.size() == 0) {
@@ -555,8 +573,8 @@ public:
 
   /// Remove any mappings in the range [start, end) or [len, inf)
   /// This function has special handling for -1's
-  TypeTree Clear(size_t start, size_t end, size_t len) const {
-    TypeTree Result;
+  GenericTypeTree Clear(size_t start, size_t end, size_t len) const {
+    GenericTypeTree Result;
 
     // Note that below do insertion with the orIn operator
     // to force an error if there is an incompatible
@@ -592,7 +610,7 @@ public:
 
   /// Select all submappings whose first index is in range [0, len) and remove
   /// the first index. This is the inverse of the `Only` operation
-  TypeTree Lookup(size_t len, const llvm::DataLayout &dl) const {
+  GenericTypeTree Lookup(size_t len, const llvm::DataLayout &dl) const {
 
     // Map of indices[1:] => ( End => possible Index[0] )
     std::map<std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
@@ -621,7 +639,7 @@ public:
       staging[next][pair.second].insert(pair.first[1]);
     }
 
-    TypeTree Result;
+    GenericTypeTree Result;
     for (auto &pair : staging) {
       auto &pnext = pair.first;
       for (auto &pair2 : pair.second) {
@@ -784,8 +802,8 @@ public:
   }
 
   /// Keep only pointers (or anything's) to a repeated value (represented by -1)
-  TypeTree KeepMinusOne(bool &legal) const {
-    TypeTree dat;
+  GenericTypeTree KeepMinusOne(bool &legal) const {
+    GenericTypeTree dat;
 
     for (const auto &pair : mapping) {
 
@@ -826,7 +844,7 @@ public:
 
     size_t size = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
 
-    auto m0 = TypeTree::operator[]({0});
+    auto m0 = GenericTypeTree::operator[]({0});
 
     llvm::Type *flt = m0.isFloat();
     if (!flt) {
@@ -838,7 +856,7 @@ public:
     // walk bytewise until a concrete float type is found.
     size_t chunk = flt ? dl.getTypeSizeInBits(flt) / 8 : 1;
     for (size_t i = chunk; i < size; i += chunk) {
-      auto mx = TypeTree::operator[]({(int)i});
+      auto mx = GenericTypeTree::operator[]({(int)i});
       if (auto f2 = mx.isFloat()) {
         if (f2 != flt) {
           if (anythingIsFloat && !flt) {
@@ -909,8 +927,8 @@ public:
   /// Replace mappings in the range in [offset, offset+maxSize] with those in
   // [addOffset, addOffset + maxSize]. In other words, select all mappings in
   // [offset, offset+maxSize] then add `addOffset`
-  TypeTree ShiftIndices(const llvm::DataLayout &dl, const int offset,
-                        const int maxSize, size_t addOffset = 0) const {
+  GenericTypeTree ShiftIndices(const llvm::DataLayout &dl, const int offset,
+                               const int maxSize, size_t addOffset = 0) const {
 
     // If we have no terms 1+ layer deep return the current result as a shift
     // won't change anything. This also makes the latercode simpler as it
@@ -923,9 +941,9 @@ public:
     // will always result in an added variable (which would not be the case
     // on a size == 0).
     if (maxSize == 0)
-      return TypeTree();
+      return GenericTypeTree();
 
-    TypeTree Result;
+    GenericTypeTree Result;
 
     // The normal orIn / insert methods do collision checking, which is slow
     //  (and presently O(n)). This is because an expansion of a -1 which could
@@ -1044,7 +1062,7 @@ public:
 
       // If after moving this would not merit being kept for being a min index
       // or being within the max type offset, skip it.
-      if (next0 > MaxTypeOffset) {
+      if (next0 > Traits::maxOffset()) {
         bool minIndex = next0 == Result.minIndices[0];
         if (!minIndex)
           for (size_t i = 1; i < pair.first.size(); i++) {
@@ -1110,8 +1128,8 @@ public:
   }
 
   /// Keep only mappings where the type is not an `Anything`
-  TypeTree PurgeAnything() const {
-    TypeTree Result;
+  GenericTypeTree PurgeAnything() const {
+    GenericTypeTree Result;
     Result.minIndices.reserve(minIndices.size());
     for (const auto &pair : mapping) {
       if (pair.second == ConcreteType(BaseType::Anything))
@@ -1128,8 +1146,8 @@ public:
   }
 
   /// Replace -1 with 0
-  TypeTree ReplaceMinus() const {
-    TypeTree dat;
+  GenericTypeTree ReplaceMinus() const {
+    GenericTypeTree dat;
     for (const auto &pair : mapping) {
       if (pair.second == ConcreteType(BaseType::Anything))
         continue;
@@ -1152,8 +1170,8 @@ public:
   }
 
   /// Keep only mappings where the type is an `Anything`
-  TypeTree JustAnything() const {
-    TypeTree dat;
+  GenericTypeTree JustAnything() const {
+    GenericTypeTree dat;
     for (const auto &pair : mapping) {
       if (pair.second != ConcreteType(BaseType::Anything))
         continue;
@@ -1163,10 +1181,12 @@ public:
   }
 
   /// Chceck equality of two TypeTrees
-  bool operator==(const TypeTree &RHS) const { return mapping == RHS.mapping; }
+  bool operator==(const GenericTypeTree &RHS) const {
+    return mapping == RHS.mapping;
+  }
 
   /// Set this to another TypeTree, returning if this was changed
-  bool operator=(const TypeTree &RHS) {
+  bool operator=(const GenericTypeTree &RHS) {
     if (*this == RHS)
       return false;
     minIndices = RHS.minIndices;
@@ -1312,7 +1332,8 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
-  bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr) {
+  bool checkedOrIn(const GenericTypeTree &RHS, bool PointerIntSame,
+                   bool &LegalOr) {
     // TODO detect recursive merge and simplify
 
     bool changed = false;
@@ -1325,7 +1346,7 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent This function will error if doing an illegal Operation
-  bool orIn(const TypeTree &RHS, bool PointerIntSame) {
+  bool orIn(const GenericTypeTree &RHS, bool PointerIntSame) {
     bool Legal = true;
     bool Result = checkedOrIn(RHS, PointerIntSame, Legal);
     if (!Legal) {
@@ -1356,14 +1377,14 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed This assumes that pointers and integers are distinct This function
   /// will error if doing an illegal Operation
-  bool operator|=(const TypeTree &RHS) {
+  bool operator|=(const GenericTypeTree &RHS) {
     return orIn(RHS, /*PointerIntSame*/ false);
   }
 
   /// Set this to the logical and of itself and RHS, returning whether this
   /// value changed If this and RHS are incompatible at an index, the result
   /// will be BaseType::Unknown
-  bool andIn(const TypeTree &RHS) {
+  bool andIn(const GenericTypeTree &RHS) {
     bool changed = false;
 
     for (auto &pair : llvm::make_early_inc_range(mapping)) {
@@ -1384,12 +1405,12 @@ public:
   /// Set this to the logical and of itself and RHS, returning whether this
   /// value changed If this and RHS are incompatible at an index, the result
   /// will be BaseType::Unknown
-  bool operator&=(const TypeTree &RHS) { return andIn(RHS); }
+  bool operator&=(const GenericTypeTree &RHS) { return andIn(RHS); }
 
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(bool &Legal, const TypeTree &RHS,
+  bool binopIn(bool &Legal, const GenericTypeTree &RHS,
                llvm::BinaryOperator::BinaryOps Op) {
     bool changed = false;
 
@@ -1474,7 +1495,7 @@ public:
 
   llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
     llvm::SmallVector<llvm::Metadata *, 1> subMD;
-    std::map<int, TypeTree> todo;
+    std::map<int, GenericTypeTree> todo;
     ConcreteType base(BaseType::Unknown);
     for (auto &pair : mapping) {
       if (pair.first.size() == 0) {
@@ -1513,8 +1534,8 @@ public:
     }
   }
 
-  static TypeTree fromMD(llvm::MDNode *md) {
-    TypeTree ret;
+  static GenericTypeTree fromMD(llvm::MDNode *md) {
+    GenericTypeTree ret;
     std::vector<int> off;
     ret.insertFromMD(md, off);
     return ret;
