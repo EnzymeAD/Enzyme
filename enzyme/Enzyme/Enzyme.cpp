@@ -74,6 +74,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include "ActivityAnalysis.h"
+#include "Checkpointing.h"
 #include "DiffeGradientUtils.h"
 #include "EnzymeCallMarkers.h"
 #include "EnzymeLogic.h"
@@ -2802,6 +2803,8 @@ public:
     if (EnzymeDetectReadThrow && DetectReadonlyOrThrow(M)) {
       changed = true;
     }
+
+    changed |= lowerCheckpointMarkers(M);
 
     std::set<Function *> done;
     lowered.clear();
