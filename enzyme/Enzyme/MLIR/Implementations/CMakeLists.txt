@@ -85,6 +85,7 @@ add_mlir_library(
   ${ENZYME_CIR_SOURCES}
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
+  MLIRMemTransferOpInterfaceIncGen
   AffineDerivativesIncGen
   ArithDerivativesIncGen
   ComplexDerivativesIncGen
