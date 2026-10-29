@@ -513,8 +513,10 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
   else
     ss << " addingType: null\n";
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
     CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
-                       nullptr, nullptr, wrap(&BuilderM));
+                       nullptr, nullptr, BR);
+    finishCallbackBuilder(BR, BuilderM);
   } else {
     DebugLoc loc;
     if (auto inst = dyn_cast<Instruction>(val))
@@ -688,8 +690,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
       } else if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return addedSelects;
       } else {
         TR.dump(ss);
@@ -720,8 +724,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
          << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
          << "\n";
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return addedSelects;
       } else {
         DebugLoc loc;
@@ -1129,9 +1135,10 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
          << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(orig),
-                           ErrorType::NoDerivative, this, nullptr,
-                           wrap(&BuilderM));
+                           ErrorType::NoDerivative, this, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return;
       } else {
         EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());

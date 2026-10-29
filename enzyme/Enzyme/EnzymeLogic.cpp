@@ -2775,11 +2775,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << *ri
                    << " const val: " << *orig_oldval;
-                if (CustomErrorHandler)
+                if (CustomErrorHandler) {
+                  LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
                   invertri = unwrap(CustomErrorHandler(
                       str.c_str(), wrap(ri), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_oldval), wrap(&BuilderZ)));
-                else
+                      gutils, wrap(orig_oldval), BR));
+                  finishCallbackBuilder(BR, BuilderZ);
+                } else
                   EmitWarningAlways("MixedActivityError", *ri, ss.str(),
                                     MixedActivityHint);
               }
@@ -3167,8 +3169,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
         ggep->setIsInBounds(true);
       }
-      if (EnzymeFixupReturn)
-        actualrv = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(actualrv)));
+      if (EnzymeFixupReturn) {
+        LLVMBuilderRef BR = startCallbackBuilder(ib);
+        actualrv = unwrap(EnzymeFixupReturn(BR, wrap(actualrv)));
+        finishCallbackBuilder(BR, ib);
+      }
       auto storeinst = ib.CreateStore(actualrv, gep);
       PostCacheStore(storeinst, ib);
     }
@@ -3196,8 +3201,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           assert(found != VMap.end());
           shadowRV = found->second;
         }
-        if (EnzymeFixupReturn)
-          shadowRV = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(shadowRV)));
+        if (EnzymeFixupReturn) {
+          LLVMBuilderRef BR = startCallbackBuilder(ib);
+          shadowRV = unwrap(EnzymeFixupReturn(BR, wrap(shadowRV)));
+          finishCallbackBuilder(BR, ib);
+        }
         auto storeinst = ib.CreateStore(shadowRV, gep);
         PostCacheStore(storeinst, ib);
       }
@@ -3368,11 +3376,13 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *inst
                << " const val: " << *ret;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(nBuilder);
               invertedPtr = unwrap(CustomErrorHandler(
                   str.c_str(), wrap(inst), ErrorType::MixedActivityError,
-                  gutils, wrap(ret), wrap(&nBuilder)));
-            else
+                  gutils, wrap(ret), BR));
+              finishCallbackBuilder(BR, nBuilder);
+            } else
               EmitWarningAlways("MixedActivityError", *inst, ss.str(),
                                 MixedActivityHint);
           }
@@ -5540,8 +5550,10 @@ public:
     ss << "cannot handle unknown instruction\n" << I;
     if (CustomErrorHandler) {
       IRBuilder<> Builder2(getNewFromOriginal(&I));
+      LLVMBuilderRef BR = startCallbackBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
-                         this, nullptr, wrap(&Builder2));
+                         this, nullptr, BR);
+      finishCallbackBuilder(BR, Builder2);
       return;
     } else {
       EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
