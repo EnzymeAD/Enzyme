@@ -43,9 +43,15 @@ class MGradientUtilsReverse;
 // the builder is positioned before the call's clone in the derivative, the
 // handler sets the shadow of every active result (setDiffe), and it either
 // leaves the clone to compute the primal results or replaces them
-// (replaceOrigOpWith) and erases the clone.
+// (replaceForwardCall).
 using ForwardCallHandler = std::function<LogicalResult(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
+
+// Replaces the results of the call `orig` in the derivative by `values` and
+// erases the call's clone. A builder positioned before the clone, as a
+// handler's is, is moved past it, so the handler can go on inserting there.
+void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
+                        MGradientUtils *gutils);
 
 // Registers (or replaces) the handler for calls to `callee`. The registry is
 // process-wide, as on Enzyme's LLVM side, and safe to use while a pass runs.

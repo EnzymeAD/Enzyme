@@ -597,6 +597,18 @@ mlir::enzyme::lookupForwardCallHandler(StringRef callee) {
   return found->second;
 }
 
+void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
+                                      OpBuilder &builder,
+                                      MGradientUtils *gutils) {
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  Block *block = newOp->getBlock();
+  if (builder.getInsertionBlock() == block &&
+      builder.getInsertionPoint() == Block::iterator(newOp))
+    builder.setInsertionPoint(block, std::next(Block::iterator(newOp)));
+  gutils->replaceOrigOpWith(orig, values);
+  gutils->erase(newOp);
+}
+
 // The flat symbol a call op names as its callee, if it names one.
 static FlatSymbolRefAttr getFlatCallee(Operation *op) {
   auto callOp = dyn_cast<CallOpInterface>(op);

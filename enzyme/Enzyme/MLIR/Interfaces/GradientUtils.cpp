@@ -141,12 +141,14 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     if (auto iface =
             dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()))) {
       OpBuilder::InsertionGuard guard(Builder2);
-      if (auto op = v.getDefiningOp())
-        Builder2.setInsertionPoint(getNewFromOriginal(op));
-      else {
-        auto ba = cast<BlockArgument>(v);
-        Builder2.setInsertionPointToStart(getNewFromOriginal(ba.getOwner()));
-      }
+      // Where the value v became is defined, so that the zero dominates every
+      // use of it. The op that defined v may be gone by now, replaced by a
+      // derivative rule (as a call's is), so it cannot serve as the anchor.
+      Value nv = getNewFromOriginal(v);
+      if (auto op = nv.getDefiningOp())
+        Builder2.setInsertionPoint(op);
+      else
+        Builder2.setInsertionPointToStart(cast<BlockArgument>(nv).getOwner());
       Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;

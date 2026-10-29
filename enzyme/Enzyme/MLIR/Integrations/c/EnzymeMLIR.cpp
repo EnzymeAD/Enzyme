@@ -167,7 +167,6 @@ void enzymeGradientUtilsReplaceOrigOpWith(EnzymeMLIRGradientUtilsRef gutils,
   llvm::SmallVector<mlir::Value> vals;
   for (intptr_t i = 0; i < nValues; i++)
     vals.push_back(unwrap(values[i]));
-  mlir::Operation *newOp = gutils->gutils->getNewFromOriginal(gutils->orig);
-  gutils->gutils->replaceOrigOpWith(gutils->orig, vals);
-  gutils->gutils->erase(newOp);
+  mlir::enzyme::replaceForwardCall(gutils->orig, vals, gutils->builder,
+                                   gutils->gutils);
 }

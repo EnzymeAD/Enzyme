@@ -109,7 +109,8 @@ enzymeGradientUtilsSetDiffe(EnzymeMLIRGradientUtilsRef gutils, MlirValue result,
                             MlirValue shadow);
 
 /// Replaces the call's results in the derivative by `values` (one per result)
-/// and erases the call's clone.
+/// and erases the call's clone. Operations inserted afterwards go where the
+/// clone was.
 MLIR_CAPI_EXPORTED void
 enzymeGradientUtilsReplaceOrigOpWith(EnzymeMLIRGradientUtilsRef gutils,
                                      intptr_t nValues, MlirValue const *values);

@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:tangent --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:tangent --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme %s | FileCheck %s
 
 // A call whose callee has a registered forward call handler is differentiated
 // by the handler, not through the callee's body. The test handlers call
@@ -117,6 +117,59 @@ module {
     %r = enzyme.fwddiff @cube(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
     return %r : f64
   }
+
+  // A handler may ask for the zero shadow of a constant result of a call that
+  // was differentiated (and so replaced) before it.
+  func.func private @split(%x: f64) -> (f64, i1) {
+    %y = arith.mulf %x, %x : f64
+    %zero = arith.constant 0.0 : f64
+    %b = arith.cmpf ogt, %x, %zero : f64
+    return %y, %b : f64, i1
+  }
+  func.func private @sel(%y: f64, %b: i1) -> f64 {
+    %zero = arith.constant 0.0 : f64
+    %r = arith.select %b, %y, %zero : f64
+    return %r : f64
+  }
+  func.func private @sel_jvp(%y: f64, %dy: f64, %b: i1, %db: i1) -> (f64, f64) {
+    %zero = arith.constant 0.0 : f64
+    %r = arith.select %b, %y, %zero : f64
+    %dr = arith.select %b, %dy, %zero : f64
+    return %r, %dr : f64, f64
+  }
+  func.func @s(%x: f64) -> f64 {
+    %y, %b = func.call @split(%x) : (f64) -> (f64, i1)
+    %r = func.call @sel(%y, %b) : (f64, i1) -> f64
+    return %r : f64
+  }
+  func.func @ds(%x: f64, %dx: f64) -> f64 {
+    %r = enzyme.fwddiff @s(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+    return %r : f64
+  }
+
+  // A handler may replace the primal results first and go on inserting ops.
+  func.func private @sq(%x: f64) -> f64 {
+    %y = arith.mulf %x, %x : f64
+    return %y : f64
+  }
+  func.func private @sq_primal(%x: f64) -> f64 {
+    %y = arith.mulf %x, %x : f64
+    return %y : f64
+  }
+  func.func private @sq_tangent(%x: f64, %dx: f64) -> f64 {
+    %five = arith.constant 5.0 : f64
+    %dy = arith.mulf %five, %dx : f64
+    return %dy : f64
+  }
+  func.func @q(%x: f64) -> f64 {
+    %y = func.call @sq(%x) : (f64) -> f64
+    %z = arith.addf %y, %x : f64
+    return %z : f64
+  }
+  func.func @dq(%x: f64, %dx: f64) -> f64 {
+    %r = enzyme.fwddiff @q(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+    return %r : f64
+  }
 }
 
 // CHECK-LABEL: func.func private @fwddiffef(
@@ -155,3 +208,20 @@ module {
 // CHECK-LABEL: func.func private @fwddiffecube(
 // CHECK-NOT:     call
 // CHECK:         return
+
+// The zero shadow of the constant result goes before the call that replaced
+// @split's.
+// CHECK-LABEL: func.func private @fwddiffes(
+// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[false:.+]] = arith.constant false
+// CHECK-NEXT:    %[[y:.+]]:3 = call @fwddiffesplit(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64, i1)
+// CHECK-NEXT:    %[[r:.+]]:2 = call @sel_jvp(%[[y]]#0, %[[y]]#1, %[[y]]#2, %[[false]]) : (f64, f64, i1, i1) -> (f64, f64)
+// CHECK-NEXT:    return %[[r]]#1 : f64
+
+// CHECK-LABEL: func.func private @fwddiffeq(
+// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[y:.+]] = call @sq_primal(%[[x]]) : (f64) -> f64
+// CHECK-NEXT:    %[[dy:.+]] = call @sq_tangent(%[[x]], %[[dx]]) : (f64, f64) -> f64
+// CHECK-NEXT:    %[[dz:.+]] = arith.addf %[[dy]], %[[dx]] fastmath<fast> : f64
+// CHECK-NEXT:    %{{.+}} = arith.addf %[[y]], %[[x]] : f64
+// CHECK-NEXT:    return %[[dz]] : f64
