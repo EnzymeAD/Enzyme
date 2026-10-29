@@ -379,6 +379,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
               CustomErrorHandler(ss.str().c_str(), wrap(sv),
                                  ErrorType::GCRewrite, nullptr, wrap(arg),
                                  nullptr);
+            } else {
+              llvm::report_fatal_error(llvm::StringRef(ss.str()));
             }
           }
           legal = false;
