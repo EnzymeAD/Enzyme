@@ -5896,9 +5896,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             "shadow global\n";
       ss << *arg << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -5916,9 +5919,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ss << *arg << "\n";
       ss << " md: " << *md << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -6167,11 +6173,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
                  << " const val: " << *op;
-              if (CustomErrorHandler)
+              if (CustomErrorHandler) {
+                LLVMBuilderRef BR = startCallbackBuilder(bb);
                 ivops[i] = unwrap(CustomErrorHandler(
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
-              else
+                    wrap(op), BR));
+                finishCallbackBuilder(BR, bb);
+              } else
                 EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                                   MixedActivityHint);
             }
@@ -6282,11 +6290,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(tval), wrap(&bb)));
-        else
+                                            wrap(tval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6303,11 +6313,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(fval), wrap(&bb)));
-        else
+                                            wrap(fval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6656,11 +6668,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6730,11 +6744,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6795,9 +6811,10 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    auto iv =
-        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
-                                  this, nullptr, wrap(&BuilderM)));
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    auto iv = unwrap(CustomErrorHandler(
+        str.c_str(), wrap(oval), ErrorType::NoShadow, this, nullptr, BR));
+    finishCallbackBuilder(BR, BuilderM);
     if (iv) {
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
@@ -9977,8 +9994,10 @@ int GradientUtils::getIndex(
     ss << "idx: " << *idx.first << ", " << idx.second << "\n";
     ss << " could not find index in mapping\n";
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR = startCallbackBuilder(B);
       CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
-                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
+                         ErrorType::GetIndexError, this, nullptr, BR);
+      finishCallbackBuilder(BR, B);
     } else {
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
                   ss.str());
