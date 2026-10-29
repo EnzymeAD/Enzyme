@@ -2991,7 +2991,7 @@ public:
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
 
-      PassBuilder PB;
+      PassBuilder PB = makePassBuilder(M.getContext());
       LoopAnalysisManager LAM;
       FunctionAnalysisManager FAM;
       CGSCCAnalysisManager CGAM;

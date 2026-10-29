@@ -4678,8 +4678,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     toshow = context.req;
   }
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR =
+        context.ip ? startCallbackBuilder(*context.ip) : nullptr;
     CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
+                       nullptr, wrap(todiff), BR);
+    if (BR)
+      finishCallbackBuilder(BR, *context.ip);
     return true;
   } else if (context.ip && EnzymeRuntimeError) {
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
