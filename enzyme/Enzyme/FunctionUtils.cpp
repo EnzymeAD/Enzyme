@@ -1669,9 +1669,6 @@ PreProcessCache::PreProcessCache() {
     return AM;
   });
 
-  // The cache is created before it meets any module, and LLVM 24's
-  // PassBuilder needs a context that outlives it to read its options from,
-  // so the standard analyses are registered against one kept for that.
   static LLVMContext AnalysisRegistrationCtx;
   PassBuilder PB = makePassBuilder(AnalysisRegistrationCtx);
   PB.registerModuleAnalyses(MAM);

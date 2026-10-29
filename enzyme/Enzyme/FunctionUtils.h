@@ -79,9 +79,6 @@ namespace llvm {
 class PassBuilder;
 }
 
-/// A PassBuilder for pipelines over code in @p Ctx. LLVM 24 reads the
-/// pipeline options from the context (llvm/llvm-project#233150); earlier
-/// versions take none.
 llvm::PassBuilder makePassBuilder(llvm::LLVMContext &Ctx);
 
 class PreProcessCache {
