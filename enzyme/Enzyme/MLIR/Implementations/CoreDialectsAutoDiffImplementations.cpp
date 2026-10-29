@@ -25,8 +25,11 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+
+#include <mutex>
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -563,6 +566,46 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
+static std::mutex &forwardCallHandlersMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+static llvm::StringMap<ForwardCallHandler> &forwardCallHandlers() {
+  static llvm::StringMap<ForwardCallHandler> handlers;
+  return handlers;
+}
+
+void mlir::enzyme::registerForwardCallHandler(StringRef callee,
+                                              ForwardCallHandler handler) {
+  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
+  forwardCallHandlers()[callee] = std::move(handler);
+}
+
+void mlir::enzyme::unregisterForwardCallHandler(StringRef callee) {
+  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
+  forwardCallHandlers().erase(callee);
+}
+
+// A copy, so that a handler may unregister itself or others while it runs.
+std::optional<ForwardCallHandler>
+mlir::enzyme::lookupForwardCallHandler(StringRef callee) {
+  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
+  auto found = forwardCallHandlers().find(callee);
+  if (found == forwardCallHandlers().end())
+    return std::nullopt;
+  return found->second;
+}
+
+// The flat symbol a call op names as its callee, if it names one.
+static FlatSymbolRefAttr getFlatCallee(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return nullptr;
+  auto sym = dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee());
+  return dyn_cast_if_present<FlatSymbolRefAttr>(sym);
+}
+
 // The callee of `op`, or null where it is not a direct call to something this
 // can see the body of.
 static FunctionOpInterface getDirectCallee(Operation *op) {
@@ -579,6 +622,12 @@ static FunctionOpInterface getDirectCallee(Operation *op) {
 LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  // A registered handler takes precedence over the callee's body, and stands
+  // in for a body that is missing.
+  if (auto callee = getFlatCallee(orig))
+    if (auto handler = lookupForwardCallHandler(callee.getValue()))
+      return (*handler)(orig, builder, gutils);
 
   auto fn = getDirectCallee(orig);
   if (!fn) {

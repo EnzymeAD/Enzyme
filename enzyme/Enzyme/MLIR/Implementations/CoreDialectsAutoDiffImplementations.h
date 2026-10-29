@@ -20,6 +20,10 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringRef.h"
+
+#include <functional>
+#include <optional>
 
 namespace mlir {
 class DialectRegistry;
@@ -30,6 +34,26 @@ class RegionSuccessor;
 namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
+
+// A frontend's own forward-mode derivative for calls to one callee, the
+// counterpart of Enzyme's customFwdCallHandlers. Where forward mode meets a
+// call op whose callee is a flat symbol with a registered handler, it runs the
+// handler instead of differentiating the callee's body, which need not exist.
+// The handler is invoked like AutoDiffOpInterface::createForwardModeTangent:
+// the builder is positioned before the call's clone in the derivative, the
+// handler sets the shadow of every active result (setDiffe), and it either
+// leaves the clone to compute the primal results or replaces them
+// (replaceOrigOpWith) and erases the clone.
+using ForwardCallHandler = std::function<LogicalResult(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
+
+// Registers (or replaces) the handler for calls to `callee`. The registry is
+// process-wide, as on Enzyme's LLVM side, and safe to use while a pass runs.
+void registerForwardCallHandler(llvm::StringRef callee,
+                                ForwardCallHandler handler);
+void unregisterForwardCallHandler(llvm::StringRef callee);
+std::optional<ForwardCallHandler>
+lookupForwardCallHandler(llvm::StringRef callee);
 
 namespace detail {
 // Non-template implementation of
