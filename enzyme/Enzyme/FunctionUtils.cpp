@@ -1669,15 +1669,11 @@ PreProcessCache::PreProcessCache() {
     return AM;
   });
 
-#if LLVM_VERSION_MAJOR >= 24
   // The cache is created before it meets any module, and LLVM 24's
   // PassBuilder needs a context that outlives it to read its options from,
   // so the standard analyses are registered against one kept for that.
   static LLVMContext AnalysisRegistrationCtx;
-  PassBuilder PB(AnalysisRegistrationCtx);
-#else
-  PassBuilder PB;
-#endif
+  PassBuilder PB = makePassBuilder(AnalysisRegistrationCtx);
   PB.registerModuleAnalyses(MAM);
   PB.registerFunctionAnalyses(FAM);
   PB.registerLoopAnalyses(LAM);
