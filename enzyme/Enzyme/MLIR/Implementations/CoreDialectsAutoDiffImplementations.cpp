@@ -29,8 +29,6 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
-#include <mutex>
-
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -566,11 +564,6 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
-static std::mutex &forwardCallHandlersMutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
 static llvm::StringMap<ForwardCallHandler> &forwardCallHandlers() {
   static llvm::StringMap<ForwardCallHandler> handlers;
   return handlers;
@@ -578,23 +571,19 @@ static llvm::StringMap<ForwardCallHandler> &forwardCallHandlers() {
 
 void mlir::enzyme::registerForwardCallHandler(StringRef callee,
                                               ForwardCallHandler handler) {
-  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
   forwardCallHandlers()[callee] = std::move(handler);
 }
 
 void mlir::enzyme::unregisterForwardCallHandler(StringRef callee) {
-  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
   forwardCallHandlers().erase(callee);
 }
 
-// A copy, so that a handler may unregister itself or others while it runs.
-std::optional<ForwardCallHandler>
+const ForwardCallHandler *
 mlir::enzyme::lookupForwardCallHandler(StringRef callee) {
-  std::lock_guard<std::mutex> lock(forwardCallHandlersMutex());
   auto found = forwardCallHandlers().find(callee);
   if (found == forwardCallHandlers().end())
-    return std::nullopt;
-  return found->second;
+    return nullptr;
+  return &found->second;
 }
 
 void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
@@ -638,7 +627,7 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
   // A registered handler takes precedence over the callee's body, and stands
   // in for a body that is missing.
   if (auto callee = getFlatCallee(orig))
-    if (auto handler = lookupForwardCallHandler(callee.getValue()))
+    if (auto *handler = lookupForwardCallHandler(callee.getValue()))
       return (*handler)(orig, builder, gutils);
 
   auto fn = getDirectCallee(orig);

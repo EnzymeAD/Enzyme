@@ -68,7 +68,9 @@ typedef MlirLogicalResult (*EnzymeMLIRForwardCallHandler)(
 
 /// Registers `handler` for the forward-mode derivative of every call op whose
 /// callee is the flat symbol `callee`, replacing any handler registered for
-/// it. The registry is process-wide; `userData` is passed to the handler.
+/// it. The registry is process-wide and unsynchronized: register and
+/// unregister handlers only while no pass that looks them up runs, e.g. at
+/// startup. `userData` is passed to the handler.
 MLIR_CAPI_EXPORTED void enzymeRegisterForwardCallHandler(
     MlirStringRef callee, EnzymeMLIRForwardCallHandler handler, void *userData);
 

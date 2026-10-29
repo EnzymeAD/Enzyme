@@ -23,7 +23,6 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <functional>
-#include <optional>
 
 namespace mlir {
 class DialectRegistry;
@@ -54,12 +53,14 @@ void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
                         MGradientUtils *gutils);
 
 // Registers (or replaces) the handler for calls to `callee`. The registry is
-// process-wide, as on Enzyme's LLVM side, and safe to use while a pass runs.
+// process-wide and unsynchronized, as on Enzyme's LLVM side: register and
+// unregister handlers only while no pass that looks them up runs, e.g. at
+// startup.
 void registerForwardCallHandler(llvm::StringRef callee,
                                 ForwardCallHandler handler);
 void unregisterForwardCallHandler(llvm::StringRef callee);
-std::optional<ForwardCallHandler>
-lookupForwardCallHandler(llvm::StringRef callee);
+// The handler registered for `callee`, or null.
+const ForwardCallHandler *lookupForwardCallHandler(llvm::StringRef callee);
 
 namespace detail {
 // Non-template implementation of
