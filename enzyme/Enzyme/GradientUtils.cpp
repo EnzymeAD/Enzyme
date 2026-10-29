@@ -3770,9 +3770,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           newDest = remap(SI->getDefaultDest());
         else {
           for (auto cas : SI->cases()) {
-            if (!notForAnalysis.count(cas.getCaseSuccessor()))
+            if (!notForAnalysis.count(cas.getCaseSuccessor())) {
               newDest = remap(cas.getCaseSuccessor());
-            break;
+              break;
+            }
           }
         }
         if (!newDest) {
