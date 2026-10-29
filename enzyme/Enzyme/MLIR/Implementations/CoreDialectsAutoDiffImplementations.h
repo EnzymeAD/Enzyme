@@ -34,10 +34,14 @@ namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
 
-// A frontend's own forward-mode derivative for calls to one callee, the
-// counterpart of Enzyme's customFwdCallHandlers. Where forward mode meets a
-// call op whose callee is a flat symbol with a registered handler, it runs the
-// handler instead of differentiating the callee's body, which need not exist.
+// A frontend's own forward-mode derivative for calls, the counterpart of
+// Enzyme's customFwdCallHandlers. Where forward mode meets a direct call of a
+// flat symbol, it looks for a handler under the call's key: the `enzyme_math`
+// string attribute of the call, else that of the callee, else the callee's
+// name, as on Enzyme's LLVM side. Only that key is looked up. With a handler,
+// it runs the handler instead of differentiating the callee's body, which
+// need not exist. A shared key lets one handler serve many callees and tell
+// them apart itself.
 // The handler is invoked like AutoDiffOpInterface::createForwardModeTangent:
 // the builder is positioned before the call's clone in the derivative, the
 // handler sets the shadow of every active result (setDiffe), and it either
@@ -52,15 +56,15 @@ using ForwardCallHandler = std::function<LogicalResult(
 void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
                         MGradientUtils *gutils);
 
-// Registers (or replaces) the handler for calls to `callee`. The registry is
-// process-wide and unsynchronized, as on Enzyme's LLVM side: register and
+// Registers (or replaces) the handler for calls with key `key`. The registry
+// is process-wide and unsynchronized, as on Enzyme's LLVM side: register and
 // unregister handlers only while no pass that looks them up runs, e.g. at
 // startup.
-void registerForwardCallHandler(llvm::StringRef callee,
+void registerForwardCallHandler(llvm::StringRef key,
                                 ForwardCallHandler handler);
-void unregisterForwardCallHandler(llvm::StringRef callee);
-// The handler registered for `callee`, or null.
-const ForwardCallHandler *lookupForwardCallHandler(llvm::StringRef callee);
+void unregisterForwardCallHandler(llvm::StringRef key);
+// The handler registered for `key`, or null.
+const ForwardCallHandler *lookupForwardCallHandler(llvm::StringRef key);
 
 namespace detail {
 // Non-template implementation of

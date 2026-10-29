@@ -108,11 +108,11 @@ struct EnzymeMLIRGradientUtils {
   mlir::enzyme::MGradientUtils *gutils;
 };
 
-void enzymeRegisterForwardCallHandler(MlirStringRef callee,
+void enzymeRegisterForwardCallHandler(MlirStringRef key,
                                       EnzymeMLIRForwardCallHandler handler,
                                       void *userData) {
   mlir::enzyme::registerForwardCallHandler(
-      unwrap(callee),
+      unwrap(key),
       [handler, userData](mlir::Operation *orig, mlir::OpBuilder &builder,
                           mlir::enzyme::MGradientUtils *gutils) {
         EnzymeMLIRGradientUtils ref{orig, builder, gutils};
@@ -120,8 +120,8 @@ void enzymeRegisterForwardCallHandler(MlirStringRef callee,
       });
 }
 
-void enzymeUnregisterForwardCallHandler(MlirStringRef callee) {
-  mlir::enzyme::unregisterForwardCallHandler(unwrap(callee));
+void enzymeUnregisterForwardCallHandler(MlirStringRef key) {
+  mlir::enzyme::unregisterForwardCallHandler(unwrap(key));
 }
 
 int64_t enzymeGradientUtilsGetWidth(EnzymeMLIRGradientUtilsRef gutils) {

@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:tangent --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:tangent --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme-test-forward-call-handler=shared --enzyme-test-forward-call-handler=delta --enzyme %s | FileCheck %s
 
 // A call whose callee has a registered forward call handler is differentiated
 // by the handler, not through the callee's body. The test handlers call
@@ -170,6 +170,57 @@ module {
     %r = enzyme.fwddiff @q(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
     return %r : f64
   }
+
+  // Callees with the same `enzyme_math` key share its handler; the key on the
+  // call takes precedence over the callee's.
+  func.func private @alpha(%x: f64) -> f64 attributes {enzyme_math = "shared"} {
+    %y = arith.mulf %x, %x : f64
+    return %y : f64
+  }
+  func.func private @beta(%x: f64) -> f64 attributes {enzyme_math = "shared"} {
+    %y = arith.addf %x, %x : f64
+    return %y : f64
+  }
+  func.func private @gamma(%x: f64) -> f64 attributes {enzyme_math = "cube"} {
+    %x2 = arith.mulf %x, %x : f64
+    %x3 = arith.mulf %x2, %x : f64
+    return %x3 : f64
+  }
+  func.func private @shared_jvp(%x: f64, %dx: f64) -> (f64, f64) {
+    %eleven = arith.constant 11.0 : f64
+    %dy = arith.mulf %eleven, %dx : f64
+    return %x, %dy : f64, f64
+  }
+  func.func @k(%x: f64) -> f64 {
+    %a = func.call @alpha(%x) : (f64) -> f64
+    %b = func.call @beta(%a) : (f64) -> f64
+    %c = func.call @gamma(%b) : (f64) -> f64
+    %d = func.call @gamma(%c) {enzyme_math = "shared"} : (f64) -> f64
+    return %d : f64
+  }
+  func.func @dk(%x: f64, %dx: f64) -> f64 {
+    %r = enzyme.fwddiff @k(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+    return %r : f64
+  }
+
+  // Only a call's key is looked up: with a key nobody registered, the handler
+  // registered under @delta's name is not used.
+  func.func private @delta(%x: f64) -> f64 attributes {enzyme_math = "unregistered"} {
+    %y = arith.mulf %x, %x : f64
+    return %y : f64
+  }
+  func.func private @delta_jvp(%x: f64, %dx: f64) -> (f64, f64) {
+    %y = arith.mulf %x, %x : f64
+    return %y, %dx : f64, f64
+  }
+  func.func @e(%x: f64) -> f64 {
+    %y = func.call @delta(%x) : (f64) -> f64
+    return %y : f64
+  }
+  func.func @de(%x: f64, %dx: f64) -> f64 {
+    %r = enzyme.fwddiff @e(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+    return %r : f64
+  }
 }
 
 // CHECK-LABEL: func.func private @fwddiffef(
@@ -225,3 +276,16 @@ module {
 // CHECK-NEXT:    %[[dz:.+]] = arith.addf %[[dy]], %[[dx]] fastmath<fast> : f64
 // CHECK-NEXT:    %{{.+}} = arith.addf %[[y]], %[[x]] : f64
 // CHECK-NEXT:    return %[[dz]] : f64
+
+// CHECK-LABEL: func.func private @fwddiffek(
+// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[a:.+]]:2 = call @shared_jvp(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %[[b:.+]]:2 = call @shared_jvp(%[[a]]#0, %[[a]]#1) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %[[c:.+]]:2 = call @cube_jvp(%[[b]]#0, %[[b]]#1) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %[[d:.+]]:2 = call @shared_jvp(%[[c]]#0, %[[c]]#1) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    return %[[d]]#1 : f64
+
+// CHECK-LABEL: func.func private @fwddiffee(
+// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[y:.+]]:2 = call @fwddiffedelta(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    return %[[y]]#1 : f64

@@ -66,16 +66,16 @@ typedef struct EnzymeMLIRGradientUtils *EnzymeMLIRGradientUtilsRef;
 typedef MlirLogicalResult (*EnzymeMLIRForwardCallHandler)(
     MlirOperation call, EnzymeMLIRGradientUtilsRef gutils, void *userData);
 
-/// Registers `handler` for the forward-mode derivative of every call op whose
-/// callee is the flat symbol `callee`, replacing any handler registered for
-/// it. The registry is process-wide and unsynchronized: register and
-/// unregister handlers only while no pass that looks them up runs, e.g. at
+/// Registers `handler` for the forward-mode derivative of every direct call of
+/// a flat symbol whose key is `key`, replacing any handler registered for it.
+/// A call's key is its `enzyme_math` string attribute, else the callee's, else
+/// the callee's name. The registry is process-wide and unsynchronized: register
+/// and unregister handlers only while no pass that looks them up runs, e.g. at
 /// startup. `userData` is passed to the handler.
 MLIR_CAPI_EXPORTED void enzymeRegisterForwardCallHandler(
-    MlirStringRef callee, EnzymeMLIRForwardCallHandler handler, void *userData);
+    MlirStringRef key, EnzymeMLIRForwardCallHandler handler, void *userData);
 
-MLIR_CAPI_EXPORTED void
-enzymeUnregisterForwardCallHandler(MlirStringRef callee);
+MLIR_CAPI_EXPORTED void enzymeUnregisterForwardCallHandler(MlirStringRef key);
 
 /// The number of tangents computed at once (the batch width).
 MLIR_CAPI_EXPORTED int64_t
