@@ -1669,10 +1669,19 @@ PreProcessCache::PreProcessCache() {
     return AM;
   });
 
-  PassBuilder PB;
+  static LLVMContext AnalysisRegistrationCtx;
+  PassBuilder PB = makePassBuilder(AnalysisRegistrationCtx);
   PB.registerModuleAnalyses(MAM);
   PB.registerFunctionAnalyses(FAM);
   PB.registerLoopAnalyses(LAM);
+}
+
+llvm::PassBuilder makePassBuilder(LLVMContext &Ctx) {
+#if LLVM_VERSION_MAJOR >= 24
+  return PassBuilder(Ctx);
+#else
+  return PassBuilder();
+#endif
 }
 
 llvm::AAResults &
@@ -3154,7 +3163,7 @@ bool DetectReadonlyOrThrow(Module &M) {
     }
   }
 
-  PassBuilder PB;
+  PassBuilder PB = makePassBuilder(M.getContext());
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;
@@ -3681,7 +3690,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         break;
       }
       if (Level != OptimizationLevel::O0) {
-        PassBuilder PB;
+        PassBuilder PB = makePassBuilder(F->getContext());
         FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
             Level, ThinOrFullLTOPhase::None);
         PA = FPM.run(*NewF, FAM);
@@ -4015,7 +4024,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
     auto Level = OptimizationLevel::O2;
 
-    PassBuilder PB;
+    PassBuilder PB = makePassBuilder(F->getContext());
     FunctionPassManager FPM =
         PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
     auto PA = FPM.run(*F, FAM);
@@ -4822,7 +4831,7 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
     break;
   }
   if (Level != OptimizationLevel::O0) {
-    PassBuilder PB;
+    PassBuilder PB = makePassBuilder(F->getContext());
     FunctionPassManager FPM =
         PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
     PA = FPM.run(*F, FAM);
@@ -10382,7 +10391,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   todo.clear();
 
   if (changed && EnzymeAutoSparsity) {
-    PassBuilder PB;
+    PassBuilder PB = makePassBuilder(F->getContext());
     LoopAnalysisManager LAM;
     FunctionAnalysisManager FAM;
     CGSCCAnalysisManager CGAM;

@@ -5935,9 +5935,12 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
       ss << *totrunc << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(totrunc), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       return NewF;
     }
     if (context.req) {
@@ -6025,9 +6028,12 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       ss << *tobatch << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(tobatch),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(tobatch), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       return NewF;
     }
     if (context.req) {
@@ -6321,9 +6327,12 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
       ss << *totrace << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrace),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(totrace), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       auto newFunc = tutils->newFunc;
       delete tracer;
       delete tutils;
