@@ -20,6 +20,7 @@
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
@@ -1207,6 +1208,1080 @@ public:
   }
 };
 
+//===----------------------------------------------------------------------===//
+// WhileOpInterfaceReverse — online checkpointing for scf.while
+//
+// Unlike for-loops, scf.while has no a priori bound; the trip count is
+// discovered during the forward pass.  This makes online (Stumm-Walther)
+// checkpointing the natural fit: OnlineProgressOp drives STORE/FORWARD
+// decisions at each step, and the scaffold scf.while exits when the primal's
+// own termination condition first returns false.
+//
+// For simplicity this initial implementation:
+//   - Supports only immutable outside references (no ClonableTypeInterface
+//     mutable-ref snapshotting; that is left as a TODO matching the for-loop
+//     path's mutableRefs machinery).
+//   - Differentiates both the before block and the after block of the primal.
+//     Gradients flow: after-block adjoint → before-block adjoint.
+//===----------------------------------------------------------------------===//
+
+struct WhileOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<WhileOpInterfaceReverse,
+                                                       scf::WhileOp> {
+
+  // Scaffold helpers are accessed via the already-instantiated for-loop CRTP
+  // so we avoid multiple inheritance issues with ExternalModel's vtable.
+  using H = LoopCheckpointing<ForOpInterfaceReverse, scf::ForOp>;
+
+  // Attribute name helpers (replicated from LoopCheckpointing defaults).
+  static bool needsOnlineCheckpointing(scf::WhileOp op) {
+    auto enabled = op->template getAttrOfType<BoolAttr>(
+        "enzyme.enable_checkpointing");
+    return enabled && enabled.getValue() &&
+           op->hasAttr("enzyme.online_checkpointing");
+  }
+  static std::optional<int64_t> getCheckpointBudget(scf::WhileOp op) {
+    if (auto a = op->template getAttrOfType<IntegerAttr>(
+            "enzyme.checkpoint_period"))
+      return a.getInt();
+    return std::nullopt;
+  }
+  static void preserveAttributesButCheckpointing(Operation *newOp,
+                                                 Operation *oldOp) {
+    H::preserveAttributesButCheckpointing(newOp, oldOp);
+  }
+
+  // ── Cache layout for while-loop online checkpointing ─────────────────────
+  // Same as OnlineCacheLayout but no start/step entries (while loops have
+  // no bounds).  Layout: [ckptBufs | idxBuf | immutableRefs | numFwdBuf | spBuf]
+  struct WhileOnlineCacheLayout {
+    size_t numCarried = 0;
+    size_t numImmutable = 0;
+
+    size_t ckptBuf(size_t i) const { return i; }
+    size_t idxBuf() const { return numCarried; }
+    size_t immutable(size_t i) const { return numCarried + 1 + i; }
+    size_t numFwdBuf() const { return immutable(numImmutable); }
+    size_t size() const { return immutable(numImmutable) + 1; }
+  };
+
+  // ── Helper: copy a block's ops (without terminator) into the builder ──────
+  // Equivalent to LoopCheckpointing::copyBlockWithoutTerminator but also maps
+  // outside values (defined outside the block's parent regions) to their
+  // new-function counterparts via gutils->getNewFromOriginal().
+  static void copyWhileBlock(OpBuilder &builder, Block *b,
+                              MGradientUtilsReverse *gutils,
+                              IRMapping &mapping) {
+    for (auto &op : b->without_terminator()) {
+      // Map each operand that is defined outside the block (and not yet in
+      // the mapping) to its new-function version.
+      for (Value operand : op.getOperands()) {
+        if (!mapping.contains(operand)) {
+          // Use lookupOrNull on originalToNewFn (not the crashing
+          // getNewFromOriginal) so that block arguments of the primal's own
+          // while regions — which are explicitly mapped beforehand — are
+          // silently skipped rather than triggering an unreachable.
+          if (Value nv = gutils->originalToNewFn.lookupOrNull(operand))
+            mapping.map(operand, nv);
+        }
+      }
+      builder.clone(op, mapping);
+    }
+    for (auto [oldVal, newVal] : mapping.getValueMap())
+      gutils->originalToNewFn.map(oldVal, newVal);
+    for (auto [oldOp, newOp] : mapping.getOperationMap())
+      gutils->originalToNewFnOps[oldOp] = newOp;
+  }
+
+  // ── Forward pass: online checkpointing of scf.while ──────────────────────
+  //
+  // Scaffold scf.while carries:
+  //   before: (sp, numFwd, 10 SM scalars, done, primalCarried...)
+  //   after:  (sp, numFwd, action, 10 SM scalars, done, primalCarried...)
+  //             [action injected at index 2 by OnlineProgressOp in before]
+  //
+  // Loop condition: !done  (done=1 when the primal's before block returns false)
+  // STORE action: checkpoint primalCarried at slot sp, sp++
+  // FORWARD action: run primal before → if true run primal after, numFwd++
+  //                 else set done=1 (primal terminated)
+  static SmallVector<Value> cacheWhileOnline(scf::WhileOp whileOp,
+                                              int64_t budget,
+                                              MGradientUtilsReverse *gutils) {
+    Location loc = whileOp.getLoc();
+    auto newWhileOp =
+        cast<scf::WhileOp>(gutils->getNewFromOriginal(whileOp));
+    OpBuilder builder(newWhileOp);
+    Type idxTy = builder.getIndexType();
+
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value budgetV = arith::ConstantIndexOp::create(builder, loc, budget);
+
+    // Primal carried state = init values (before-block arg types).
+    ValueRange primalInits = newWhileOp.getInits();
+    size_t numCarried = primalInits.size();
+
+    // Checkpoint stores: one per carried value + one index store.
+    // Allocate budget+1 slots (not budget) so the inner Revolve reconstruction
+    // in the reverse pass can safely use slot `budget` as a scratch slot.
+    // The forward pass only ever writes to slots 0..budget-1 (via new_check),
+    // but the inner Revolve increments acapo past budget-1 before checking the
+    // while exit condition, potentially storing at slot budget.  The extra slot
+    // absorbs that write without a buffer overflow.
+    SmallVector<Value> stores;
+    for (auto init : primalInits)
+      stores.push_back(memref::AllocOp::create(
+          builder, loc, MemRefType::get({budget + 1}, init.getType())));
+    stores.push_back(memref::AllocOp::create(
+        builder, loc, MemRefType::get({budget + 1}, idxTy)));
+    const size_t idxStore = stores.size() - 1;
+
+    // Online_r2 SM arrays (freed after the forward pass).
+    // Allocate at least 3 elements: the lowered OnlineProgressOp speculatively
+    // evaluates ch[1] and ch[ind] (where ind can be 2 for snaps=1) via
+    // arith.select even when snaps < 3, causing unconditional out-of-bounds
+    // loads at runtime for small budgets.
+    int64_t smSize = std::max(budget, (int64_t)3);
+    auto smArrTy = MemRefType::get({smSize}, idxTy);
+    Value chBuf     = memref::AllocOp::create(builder, loc, smArrTy);
+    Value ordChBuf  = memref::AllocOp::create(builder, loc, smArrTy);
+    Value numRepBuf = memref::AllocOp::create(builder, loc, smArrTy);
+
+    // Scaffold init: (numFwd=0, smCheck=-1, 9×smScalar=0, primalInit...)
+    // sp is deliberately OMITTED from the before-block carry.  The reverse
+    // pass uses a slot-scan (Julia's storemap) and the constant `budget` to
+    // find the top checkpoint, so it never needs sp.  Carrying sp caused
+    // --canonicalize to drop it as a trivial pass-through in the outer reverse
+    // for loop, leaving the scaffold while result for numFwd at the wrong index.
+    Value smCheckInit = arith::ConstantIndexOp::create(builder, loc, -1);
+    SmallVector<Value> whileInit;
+    whileInit.push_back(c0);           // numFwd
+    whileInit.push_back(smCheckInit);  // check = -1
+    for (int i = 0; i < 9; ++i)       // capo..offset (9 more SM scalars)
+      whileInit.push_back(c0);
+    // (no 'done' — primal termination is detected locally in the before-block)
+    whileInit.append(primalInits.begin(), primalInits.end());
+
+    SmallVector<Type> beforeTypes;
+    for (Value v : whileInit)
+      beforeTypes.push_back(v.getType());
+
+    // After-block types: numFwd, action, 10 SM scalars, primalCarried
+    // (sp and done both omitted; the reverse uses budget constant + scan)
+    SmallVector<Type> afterTypes;
+    afterTypes.push_back(idxTy); // numFwd
+    afterTypes.push_back(idxTy); // action
+    for (int i = 0; i < 10; ++i)
+      afterTypes.push_back(idxTy); // SM scalars
+    for (auto init : primalInits)
+      afterTypes.push_back(init.getType()); // primalCarried
+
+    SmallVector<Location> befLocs(beforeTypes.size(), loc);
+    SmallVector<Location> aftLocs(afterTypes.size(), loc);
+
+    // Create scaffold scf.while (results typed by afterTypes, inits by beforeTypes).
+    auto scaffoldWhile =
+        scf::WhileOp::create(builder, loc, afterTypes, whileInit);
+
+    // ── Before block ────────────────────────────────────────────────────────
+    {
+      OpBuilder::InsertionGuard g(builder);
+      Block *before = builder.createBlock(&scaffoldWhile.getBefore(), {},
+                                          beforeTypes, befLocs);
+      builder.setInsertionPointToEnd(before);
+      auto ba = before->getArguments();
+      Value numFwd = ba[0];
+      // SM scalars at positions 1..10; primalCarried at 11+  (no sp, no done)
+      Value smCheck = ba[1], smCapo = ba[2], smOldcapoO = ba[3];
+      Value smT = ba[4], smIncr = ba[5], smIter = ba[6];
+      Value smOldind = ba[7], smInd = ba[8], smOldF = ba[9], smOffset = ba[10];
+      auto primalCarried = ba.drop_front(11);
+
+      auto prog = enzyme::OnlineProgressOp::create(
+          builder, loc,
+          smCheck, smCapo, smOldcapoO, smT, smIncr, smIter,
+          smOldind, smInd, smOldF, smOffset, budgetV,
+          chBuf, ordChBuf, numRepBuf);
+
+      // Loop terminates when the PRIMAL while terminates (primalCond=false).
+      // We do NOT check action != 0 here: when Online_r2 transitions from the
+      // online phase to the offline Revolve it returns action=0 (TERMINATE),
+      // but the primal may still have unrun steps.  Gating on action would exit
+      // the scaffold early and under-count numFwd.  When action=0 in the
+      // after-block, isStore=false so we fall through to the FORWARD branch
+      // and continue advancing the primal.
+
+      // Run the primal's condition check on the CURRENT carried state.
+      Block *primalBeforeBlk = &newWhileOp.getBefore().front();
+      IRMapping condCheckMap;
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalBeforeBlk->getArguments(), primalCarried))
+        condCheckMap.map(old, nw);
+      copyWhileBlock(builder, primalBeforeBlk, gutils, condCheckMap);
+      auto primalCondOp =
+          cast<scf::ConditionOp>(primalBeforeBlk->getTerminator());
+      Value primalCond =
+          condCheckMap.lookupOrDefault(primalCondOp.getCondition());
+
+      // Loop terminates when the primal while terminates (primalCond=false).
+      //
+      // When the Online_r2 online phase completes (action=0), Julia's
+      // next_action! transparently hands off to offline Revolve and keeps
+      // returning STORE/FORWARD; the forward loop only exits when condition()
+      // is false.  We match that by using primalCond as the sole termination
+      // criterion — the remaining advance steps after action=0 are handled
+      // by the offline Revolve reconstruction in the reverse pass.
+      //
+      // However, Online_r2 with `snaps` checkpoints can only handle loops of
+      // at most β(snaps) = (snaps+2)*(snaps+1)/2 - 1 iterations.  Beyond
+      // that the repetition counters in num_rep are exhausted and the
+      // reconstruction is invalid.  Julia raises an explicit error in that
+      // case.  We assert at runtime so the error is surfaced clearly rather
+      // than silently producing wrong gradients.
+      {
+        int64_t beta = (int64_t)(budget + 2) * (budget + 1) / 2 - 1;
+        Value betaV  = arith::ConstantIndexOp::create(builder, loc, beta);
+        // Assert: action==0 implies numFwd < beta  (i.e. within capacity).
+        // Fires only when action is TERMINATE and we've already exceeded the
+        // algorithm's supported range, matching Julia's error condition.
+        Value actionIsZero = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::eq, prog.getAction(), c0);
+        Value belowBeta = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sle, numFwd, betaV);
+        // valid = !actionIsZero || belowBeta
+        Value notActionZero = arith::XOrIOp::create(
+            builder, loc, actionIsZero,
+            arith::ConstantIntOp::create(builder, loc, 1, 1));
+        Value capacityOk = arith::OrIOp::create(builder, loc, notActionZero, belowBeta);
+        cf::AssertOp::create(builder, loc, capacityOk,
+            "Online_r2: loop exceeds maximum supported iterations for this "
+            "checkpoint budget.  Increase enzyme.checkpoint_period.");
+      }
+      Value shouldContinue = primalCond;  // exit only when primal terminates
+
+      SmallVector<Value> condVals;
+      condVals.push_back(numFwd);
+      condVals.push_back(prog.getAction());
+      condVals.push_back(prog.getNewCheck());
+      condVals.push_back(prog.getNewCapo());
+      condVals.push_back(prog.getNewOldcapoO());
+      condVals.push_back(prog.getNewT());
+      condVals.push_back(prog.getNewIncr());
+      condVals.push_back(prog.getNewIter());
+      condVals.push_back(prog.getNewOldind());
+      condVals.push_back(prog.getNewInd());
+      condVals.push_back(prog.getNewOldF());
+      condVals.push_back(prog.getNewOffset());
+      // (no 'done' in condVals — it was the source of the canonicalize bug)
+      condVals.append(primalCarried.begin(), primalCarried.end());
+      scf::ConditionOp::create(builder, loc, shouldContinue, condVals);
+    }
+
+    // ── After block ─────────────────────────────────────────────────────────
+    {
+      OpBuilder::InsertionGuard g(builder);
+      Block *after = builder.createBlock(&scaffoldWhile.getAfter(), {},
+                                         afterTypes, aftLocs);
+      builder.setInsertionPointToEnd(after);
+      auto aa = after->getArguments();
+      Value numFwd = aa[0], action = aa[1];
+      // aa[2..11]: updated SM scalars (new_check..new_offset); aa[12+]: primalCarried
+      auto primalCarried = aa.drop_front(12);
+
+      // Dispatch on action == 1 (STORE) vs action == 2 (FORWARD).
+      Value storeVal = arith::ConstantIndexOp::create(builder, loc, 1);
+      Value isStore = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::eq, action, storeVal);
+
+      // Branch result types: (newNumFwd, newPrimalCarried...)
+      SmallVector<Type> brTys = {idxTy};
+      for (auto init : primalInits)
+        brTys.push_back(init.getType());
+
+      auto dispatch = scf::IfOp::create(builder, loc, brTys, isStore,
+                                        /*withElse=*/true);
+
+      // ── STORE branch ───────────────────────────────────────────────────
+      // Mirror Julia's checkpoint_struct_while:
+      //   check = next_action.cpnum + 1   (1-indexed)
+      //   model_check[check] = deepcopy(model)
+      //
+      // Here aa[3] = new_check = prog.getNewCheck(), which is the 0-indexed
+      // equivalent of Julia's cpnum.  The algorithm keeps new_check in
+      // [0, budget-1], so the fixed-size buffer never overflows.
+      // sp is set to new_check + 1 so the reverse finds the top checkpoint
+      // at capo = sp - 1 = new_check.
+      {
+        OpBuilder::InsertionGuard g2(builder);
+        builder.setInsertionPointToStart(dispatch.thenBlock());
+        Value checkSlot = aa[2]; // new_check at aa[2] (aa[0]=numFwd, aa[1]=action)
+        for (size_t i = 0; i < numCarried; ++i)
+          memref::StoreOp::create(builder, loc, primalCarried[i],
+                                  stores[i], ValueRange{checkSlot});
+        memref::StoreOp::create(builder, loc, numFwd, stores[idxStore],
+                                ValueRange{checkSlot});
+        SmallVector<Value> thenY;
+        thenY.push_back(numFwd); // unchanged
+        thenY.append(primalCarried.begin(), primalCarried.end());
+        scf::YieldOp::create(builder, loc, thenY);
+      }
+
+      // ── FORWARD branch ─────────────────────────────────────────────────
+      {
+        OpBuilder::InsertionGuard g2(builder);
+        builder.setInsertionPointToStart(dispatch.elseBlock());
+
+        Block *primalBefore = &newWhileOp.getBefore().front();
+        Block *primalAfter  = &newWhileOp.getAfter().front();
+
+        // Run primal before block with current carried state.
+        IRMapping beforeMap;
+        for (auto &&[old, nw] :
+             llvm::zip_equal(primalBefore->getArguments(), primalCarried))
+          beforeMap.map(old, nw);
+        copyWhileBlock(builder, primalBefore, gutils, beforeMap);
+
+        auto condOp = cast<scf::ConditionOp>(primalBefore->getTerminator());
+        Value primalCond = beforeMap.lookupOrDefault(condOp.getCondition());
+        SmallVector<Value> mappedCondVals;
+        for (auto arg : condOp.getArgs())
+          mappedCondVals.push_back(beforeMap.lookupOrDefault(arg));
+
+        // Run primal after block (we know primal_cond is true here because
+        // the before-block only passes action=FORWARD when primalCond holds).
+        // Branch types: (newCarried..., stepTaken)
+        SmallVector<Type> cBrTys;
+        for (auto init : primalInits)
+          cBrTys.push_back(init.getType());
+        cBrTys.push_back(idxTy); // stepTaken = 1
+
+        auto condBranch = scf::IfOp::create(builder, loc, cBrTys, primalCond,
+                                            /*withElse=*/true);
+        {
+          // Primal continues: run one step.
+          OpBuilder::InsertionGuard g3(builder);
+          builder.setInsertionPointToStart(condBranch.thenBlock());
+          IRMapping afterMap;
+          for (auto &&[old, nw] :
+               llvm::zip_equal(primalAfter->getArguments(), mappedCondVals))
+            afterMap.map(old, nw);
+          copyWhileBlock(builder, primalAfter, gutils, afterMap);
+          auto yieldOp = cast<scf::YieldOp>(primalAfter->getTerminator());
+          SmallVector<Value> thenY2;
+          for (auto op : yieldOp.getOperands())
+            thenY2.push_back(afterMap.lookupOrDefault(op));
+          thenY2.push_back(c1); // stepTaken = 1
+          scf::YieldOp::create(builder, loc, thenY2);
+        }
+        {
+          // Primal terminated (fallback; shouldn't fire since the before-block
+          // condition prevents FORWARD when primal is done, but safe to have).
+          OpBuilder::InsertionGuard g3(builder);
+          builder.setInsertionPointToStart(condBranch.elseBlock());
+          SmallVector<Value> elseY2(primalCarried.begin(), primalCarried.end());
+          elseY2.push_back(c0); // stepTaken = 0
+          scf::YieldOp::create(builder, loc, elseY2);
+        }
+
+        auto cbRes       = condBranch.getResults();
+        auto newCarried  = cbRes.drop_back(1);
+        Value stepTaken  = cbRes.back();
+        Value newNumFwd  = arith::AddIOp::create(builder, loc, numFwd, stepTaken);
+
+        SmallVector<Value> elseY;
+        elseY.push_back(newNumFwd);
+        elseY.append(newCarried.begin(), newCarried.end());
+        scf::YieldOp::create(builder, loc, elseY);
+      }
+
+      // Yield updated carry back to the before block.
+      // before-block order: numFwd, SM(1..10), primalCarried  (no sp, no done)
+      auto dr = dispatch.getResults();
+      Value newNumFwd  = dr[0];
+      auto  newCarried = dr.drop_front(1);
+
+      SmallVector<Value> whileY;
+      whileY.push_back(newNumFwd);
+      // SM scalars: pass through from the after-block args (aa[2..11]).
+      for (int i = 2; i <= 11; ++i)
+        whileY.push_back(aa[i]);
+      whileY.append(newCarried.begin(), newCarried.end());
+      scf::YieldOp::create(builder, loc, whileY);
+    }
+
+    builder.setInsertionPointAfter(scaffoldWhile);
+    auto wr = scaffoldWhile.getResults();
+    // wr[0]=numFwd, wr[1]=action, wr[2..11]=SM scalars — all unneeded post-loop
+    // except numFwd.  wr[12+] = finalPrimalState.
+    Value finalNumFwd = wr[0];
+    auto finalPrimalState = wr.drop_front(12);
+
+    // Free SM arrays (their job is done after the forward pass).
+    memref::DeallocOp::create(builder, loc, chBuf);
+    memref::DeallocOp::create(builder, loc, ordChBuf);
+    memref::DeallocOp::create(builder, loc, numRepBuf);
+
+    // Collect immutable outside references.
+    SmallVector<Value> immutableRefs;
+    {
+      SetVector<Value> outside;
+      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
+      for (auto ref : outside)
+        if (!isa<ClonableTypeInterface>(ref.getType()))
+          immutableRefs.push_back(ref);
+    }
+
+    // Build caches in WhileOnlineCacheLayout order.
+    SmallVector<Value> caches;
+    for (auto store : stores)
+      caches.push_back(gutils->initAndPushCache(store, builder));
+    for (auto ref : immutableRefs)
+      caches.push_back(
+          gutils->initAndPushCache(gutils->getNewFromOriginal(ref), builder));
+    // Online-specific: total primal steps (sp is gone, reverse uses budget constant).
+    caches.push_back(gutils->initAndPushCache(finalNumFwd, builder));
+
+    // Replace the primal while op with the scaffold's final primal state.
+    gutils->replaceOrigOpWith(whileOp,
+                              SmallVector<Value>(finalPrimalState.begin(),
+                                                 finalPrimalState.end()));
+    gutils->erase(newWhileOp);
+    gutils->originalToNewFnOps[whileOp] = scaffoldWhile;
+
+    return caches;
+  }
+
+  // ── Forward pass: full-tape caching of scf.while ─────────────────────────
+  //
+  // Used when no checkpointing attributes are present.  The forward scaffold
+  // pushes the before-block args (= loop-carried state) to a dynamic tape
+  // (enzyme.push) at the start of every iteration, and counts iterations.
+  //
+  // Scaffold before-block carries: (primalCarried..., numIters)
+  // Scaffold after-block carries:  (condArgs..., numIters)
+  //
+  // After the while: final numIters is pushed to its own cache.
+  // Returns pop-caches: [numIters_pop, tape_pop_0, tape_pop_1, ...]
+  //                      (one tape entry per active before-block arg)
+  static SmallVector<Value> cacheWhileFullTape(scf::WhileOp whileOp,
+                                               MGradientUtilsReverse *gutils) {
+    Location loc = whileOp.getLoc();
+    auto newWhileOp = cast<scf::WhileOp>(gutils->getNewFromOriginal(whileOp));
+    OpBuilder builder(newWhileOp);
+
+    Block *primalBefore = &newWhileOp.getBefore().front();
+    Block *primalAfter  = &newWhileOp.getAfter().front();
+    size_t numCarried   = whileOp.getNumOperands();
+
+    // Determine which carried values are active.
+    SmallVector<bool> operandsActive;
+    for (size_t i = 0; i < numCarried; ++i) {
+      bool active = !gutils->isConstantValue(whileOp.getOperand(i)) ||
+                    !gutils->isConstantValue(whileOp.getResult(i));
+      operandsActive.push_back(active);
+    }
+
+    // Create one tape cache per active carried value + one for numIters.
+    // getNewCache places the enzyme.init at the initialization block (outside
+    // any loops), so it is safe to call from here (before the new while).
+    SmallVector<Value> tapePushCaches, tapePopCaches;
+    for (size_t i = 0; i < numCarried; ++i) {
+      if (operandsActive[i]) {
+        auto ct = gutils->getCacheType(primalBefore->getArgument(i).getType());
+        auto [push, pop] = gutils->getNewCache(ct);
+        tapePushCaches.push_back(push);
+        tapePopCaches.push_back(pop);
+      }
+    }
+    auto niCt = gutils->getCacheType(builder.getIndexType());
+    auto [niPushCache, niPopCache] = gutils->getNewCache(niCt);
+
+    // ── Build scaffold scf.while ──────────────────────────────────────────
+    // Inits: (primalInits..., numIters=0)
+    ValueRange primalInits = newWhileOp.getInits();
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+
+    SmallVector<Value> scaffoldInit(primalInits.begin(), primalInits.end());
+    scaffoldInit.push_back(c0); // numIters = 0
+
+    // Result types = after-block types = (primalCarried..., numIters)
+    SmallVector<Type> afterTypes;
+    for (auto v : primalInits)
+      afterTypes.push_back(v.getType());
+    afterTypes.push_back(builder.getIndexType());
+
+    auto scaffoldWhile =
+        scf::WhileOp::create(builder, loc, afterTypes, scaffoldInit);
+
+    // Before block: push active args to tape, then run primal condition.
+    {
+      Block &bb = scaffoldWhile.getBefore().emplaceBlock();
+      for (size_t i = 0; i < numCarried; ++i)
+        bb.addArgument(primalBefore->getArgument(i).getType(), loc);
+      bb.addArgument(builder.getIndexType(), loc); // numIters
+      OpBuilder bld(&bb, bb.end());
+
+      auto bbArgs = bb.getArguments();
+      Value numItersArg = bbArgs.back();
+      auto primalArgs   = bbArgs.drop_back(1);
+
+      // Push active carried values (= loop-carried state entering this iter).
+      size_t tapeIdx = 0;
+      for (size_t i = 0; i < numCarried; ++i) {
+        if (operandsActive[i])
+          enzyme::PushOp::create(bld, loc, tapePushCaches[tapeIdx++], primalArgs[i]);
+      }
+
+      // Copy primal before-block ops (condition computation).
+      IRMapping bmap;
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalBefore->getArguments(), primalArgs))
+        bmap.map(old, nw);
+      copyWhileBlock(bld, primalBefore, gutils, bmap);
+
+      auto condOp = cast<scf::ConditionOp>(primalBefore->getTerminator());
+      Value condV = bmap.lookupOrDefault(condOp.getCondition());
+      SmallVector<Value> condArgs;
+      for (auto v : condOp.getArgs())
+        condArgs.push_back(bmap.lookupOrDefault(v));
+      condArgs.push_back(numItersArg); // pass numIters to after block
+      scf::ConditionOp::create(bld, loc, condV, condArgs);
+    }
+
+    // After block: run primal body, yield (newCarried..., numIters+1).
+    {
+      Block &ab = scaffoldWhile.getAfter().emplaceBlock();
+      // After-block args match the condition's passed values + numIters.
+      // Types must match afterTypes.
+      for (size_t i = 0; i < numCarried; ++i)
+        ab.addArgument(primalAfter->getArgument(i).getType(), loc);
+      ab.addArgument(builder.getIndexType(), loc); // numIters
+      OpBuilder bld(&ab, ab.end());
+
+      auto abArgs     = ab.getArguments();
+      Value numIters2 = abArgs.back();
+      auto condPassed = abArgs.drop_back(1);
+
+      IRMapping amap;
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalAfter->getArguments(), condPassed))
+        amap.map(old, nw);
+      copyWhileBlock(bld, primalAfter, gutils, amap);
+
+      auto yieldOp = cast<scf::YieldOp>(primalAfter->getTerminator());
+      SmallVector<Value> yields;
+      for (auto v : yieldOp.getOperands())
+        yields.push_back(amap.lookupOrDefault(v));
+      yields.push_back(arith::AddIOp::create(bld, loc, numIters2, c1));
+      scf::YieldOp::create(bld, loc, yields);
+    }
+
+    // After the scaffold while: push the final iteration count.
+    builder.setInsertionPointAfter(scaffoldWhile);
+    auto scaffoldResults = scaffoldWhile.getResults();
+    Value finalNumIters  = scaffoldResults.back();
+    auto primalResults   = scaffoldResults.drop_back(1);
+    enzyme::PushOp::create(builder, loc, niPushCache, finalNumIters);
+
+    // Replace the primal while op with the scaffold's primal results.
+    gutils->replaceOrigOpWith(whileOp, primalResults);
+    gutils->erase(newWhileOp);
+    gutils->originalToNewFnOps[whileOp] = scaffoldWhile;
+
+    // Return pop-caches: [numIters_pop, tapePop_0, tapePop_1, ...]
+    SmallVector<Value> resultCaches;
+    resultCaches.push_back(niPopCache);
+    resultCaches.append(tapePopCaches.begin(), tapePopCaches.end());
+    return resultCaches;
+  }
+
+  // ── Reverse pass: full-tape reverse for scf.while ────────────────────────
+  //
+  // Pops numIters, then runs scf.for i = 0..numIters.  Each iteration:
+  //   - Pops the before-block args (loop-carried state) from tape (LIFO =
+  //     reverse chronological order, which is what the reverse sweep needs).
+  //   - Re-runs the before+after blocks forward to recompute intermediates.
+  //   - Seeds adjoints from the outer gradient iter-args.
+  //   - Visits the after block then the before block in reverse (adjoint).
+  //   - Yields the updated gradient iter-args.
+  static LogicalResult
+  reverseWhileFullTape(scf::WhileOp whileOp, OpBuilder &builder,
+                       MGradientUtilsReverse *gutils,
+                       SmallVector<Value> caches, ArrayRef<bool> operandsActive,
+                       ArrayRef<Value> incomingGradients) {
+    Location loc = whileOp.getLoc();
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+
+    // caches[0] = numIters pop-cache; caches[1..] = tape pop-caches.
+    Value numIters = gutils->popCache(caches[0], builder);
+
+    Block *primalBefore = &whileOp.getBefore().front();
+    Block *primalAfter  = &whileOp.getAfter().front();
+
+    auto revFor = H::createScaffoldForLoop(
+        builder, loc, c0, numIters, c1,
+        SmallVector<Value>(incomingGradients.begin(), incomingGradients.end()));
+
+    bool valid = true;
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(revFor.body);
+
+      auto adjArgs = revFor.args();
+
+      // Pop active before-block args (= loop-carried state at start of this
+      // forward iteration) from the tape in LIFO order.
+      // Inactive args must also be explicitly mapped to prevent copyWhileBlock
+      // from falling back to stale gutils->originalToNewFn entries (which
+      // point into the now-erased primal while's regions).  For inactive args
+      // we use the new-function version of the init operand — an approximation
+      // that is safe for gradient correctness because inactive values carry no
+      // gradient and copyWhileBlock only needs a valid dominating SSA value.
+      IRMapping mapping;
+      size_t tapeIdx = 1;
+      for (auto &&[active, arg, initOp] :
+           llvm::zip_equal(operandsActive, primalBefore->getArguments(),
+                           whileOp.getInits())) {
+        if (active) {
+          Value popped = gutils->popCache(caches[tapeIdx++], builder);
+          mapping.map(arg, popped);
+          gutils->originalToNewFn.map(arg, popped);
+        } else {
+          // Map inactive args to the combined-function's version of the while
+          // op's init value.  This is a constant or function argument that
+          // dominates the reverse loop and won't introduce any gradient.
+          if (Value nv = gutils->originalToNewFn.lookupOrNull(initOp))
+            mapping.map(arg, nv);
+        }
+      }
+
+      // Re-run before-block forward to recompute condition and intermediates.
+      copyWhileBlock(builder, primalBefore, gutils, mapping);
+
+      // Map after-block args to the condition's passed values.
+      auto condOp = cast<scf::ConditionOp>(primalBefore->getTerminator());
+      IRMapping afterMap;
+      for (auto &&[arg, condVal] :
+           llvm::zip_equal(primalAfter->getArguments(), condOp.getArgs()))
+        afterMap.map(arg, mapping.lookupOrDefault(condVal));
+
+      // Re-run after-block forward to recompute intermediates.
+      copyWhileBlock(builder, primalAfter, gutils, afterMap);
+
+      // Seed adjoints: each yield operand gets the gradient from the outer
+      // reverse-for iter-arg.
+      auto yieldOp = cast<scf::YieldOp>(primalAfter->getTerminator());
+      unsigned revIdx = 0;
+      for (auto &&[active, operand] :
+           llvm::zip_equal(operandsActive, yieldOp.getOperands())) {
+        if (active) {
+          gutils->addToDiffe(operand, adjArgs[revIdx], builder);
+          revIdx++;
+        }
+      }
+
+      // Visit after-block then before-block in reverse (adjoint rules).
+      // visitChild accumulates gradient into dffe(primalAfter->getArguments())
+      // (the after-block args, which map to the same popped values as the
+      // before-block args when scf.condition passes them through unchanged).
+      {
+        H::SegmentCacheCreatorGuard cacheGuard(gutils, revFor.op);
+        auto visitBlock = [&](Block *b) {
+          for (auto it = b->rbegin(); it != b->rend(); ++it) {
+            if (&*it == b->getTerminator())
+              continue;
+            valid &=
+                gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+          }
+        };
+        visitBlock(primalAfter);
+        visitBlock(primalBefore);
+      }
+
+      // Collect new adjoints from after-block args.
+      // visitChild accumulates into dffe(primalAfter->getArguments()), not
+      // dffe(primalBefore->getArguments()), because after-block args are where
+      // the body ops run.  In the typical scf.while pattern the condition
+      // passes the before-block args unchanged, so after-block args and
+      // before-block args map to the same popped values and share the gradient.
+      SmallVector<Value> newAdjoints;
+      for (auto &&[active, arg] :
+           llvm::zip_equal(operandsActive, primalAfter->getArguments())) {
+        if (active) {
+          newAdjoints.push_back(gutils->diffe(arg, builder));
+          if (!gutils->isConstantValue(arg))
+            gutils->zeroDiffe(arg, builder);
+        }
+      }
+      H::finalizeScaffoldLoop(builder, loc, revFor, newAdjoints);
+    }
+
+    builder.setInsertionPointAfter(revFor.op);
+
+    // Propagate final gradients to the while op's init operands.
+    unsigned revIdx = 0;
+    auto revForResults = revFor.results();
+    for (auto &&[active, initArg] :
+         llvm::zip_equal(operandsActive, whileOp.getInits())) {
+      if (active) {
+        if (!gutils->isConstantValue(initArg))
+          gutils->addToDiffe(initArg, revForResults[revIdx], builder);
+        revIdx++;
+      }
+    }
+    return success(valid);
+  }
+
+  // ── Reverse pass: Revolve reconstruction for scf.while ───────────────────
+  //
+  // Structurally identical to reverseOnline (for scf.for) but the inner remat
+  // loop advances the primal by running the while op's before+after blocks
+  // instead of computing an IV and calling a single body block.
+  static LogicalResult
+  reverseWhileOnline(scf::WhileOp whileOp, int64_t budget,
+                     OpBuilder &builder, MGradientUtilsReverse *gutils,
+                     SmallVector<Value> caches,
+                     ArrayRef<bool> operandsActive,
+                     ArrayRef<Value> incomingGradients) {
+    Location loc = whileOp.getLoc();
+    size_t numCarried = whileOp.getNumOperands();
+
+    // Build the cache layout and pop all entries.
+    WhileOnlineCacheLayout layout;
+    layout.numCarried = numCarried;
+
+    SmallVector<Value> immutableRefs;
+    {
+      SetVector<Value> outside;
+      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
+      for (auto ref : outside)
+        if (!isa<ClonableTypeInterface>(ref.getType()))
+          immutableRefs.push_back(ref);
+    }
+    layout.numImmutable = immutableRefs.size();
+
+    SmallVector<Value> stores;
+    for (size_t j = 0; j < numCarried; ++j)
+      stores.push_back(gutils->popCache(caches[layout.ckptBuf(j)], builder));
+    stores.push_back(gutils->popCache(caches[layout.idxBuf()], builder));
+    const size_t idxStore = stores.size() - 1;
+
+    IRMapping mapping;
+    for (auto &&[i, ref] : llvm::enumerate(immutableRefs)) {
+      Value cached = gutils->popCache(caches[layout.immutable(i)], builder);
+      mapping.map(ref, cached);
+    }
+
+    Value numItersV = gutils->popCache(caches[layout.numFwdBuf()], builder);
+    // sp was removed from the scaffold while entirely, so there is no spBuf.
+    // The reverse uses the constant `budget` for slot scans and budgetRem.
+
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value totalBudget = arith::ConstantIndexOp::create(builder, loc, budget);
+    Value negOne = arith::ConstantIndexOp::create(builder, loc, -1);
+
+    // Outer reverse loop: carries only the gradient adjoints (no sp).
+    SmallVector<Value> outerInit;
+    outerInit.append(incomingGradients.begin(), incomingGradients.end());
+
+    auto revOuter = H::createScaffoldForLoop(builder, loc, c0, numItersV, c1,
+                                             outerInit);
+    preserveAttributesButCheckpointing(revOuter.op, whileOp);
+
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(revOuter.body);
+
+      Value ivO = revOuter.getIV();
+      auto adjArgs = revOuter.args();  // all iter-args = gradients
+
+      SmallVector<Value> liveStores(stores);
+
+      Value currentRevStep = H::emitSub(builder, loc, numItersV, ivO);
+      // targetStep = currentRevStep - 1: the step we need state just BEFORE.
+      Value targetStep = H::emitSub(builder, loc, currentRevStep, c1);
+
+      // ── Step→slot lookup (Julia's storemap) ─────────────────────────────
+      // Find the checkpoint slot whose stored step is the HIGHEST value
+      // ≤ targetStep.  This is the slot from which Revolve reconstruction
+      // should start — the equivalent of Julia's
+      //   storemap[next_action.iteration - 1]
+      // The scan costs O(budget) per outer iteration; for small budgets
+      // (2–10) this is negligible.
+      //
+      //   bestCapo = argmax{ liveStores[idxStore][s]
+      //                      | s in 0..budget-1, step[s] ≤ targetStep }
+      auto scanLoop = scf::ForOp::create(builder, loc, c0, totalBudget, c1,
+                                         SmallVector<Value>{c0, negOne});
+      if (!scanLoop.getBody()->empty())
+        scanLoop.getBody()->front().erase();
+      {
+        OpBuilder::InsertionGuard sg(builder);
+        builder.setInsertionPointToStart(scanLoop.getBody());
+        Value slot     = scanLoop.getInductionVar();
+        Value bestCapo = scanLoop.getRegionIterArgs()[0];
+        Value bestStep = scanLoop.getRegionIterArgs()[1];
+        Value stepAtSlot = H::loadSlot(builder, loc, liveStores[idxStore],
+                                       slot, builder.getIndexType());
+        Value withinTarget = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sle, stepAtSlot, targetStep);
+        Value isBetter = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::sgt, stepAtSlot, bestStep);
+        Value update = arith::AndIOp::create(builder, loc, withinTarget, isBetter);
+        Value newBestCapo = arith::SelectOp::create(builder, loc, update, slot, bestCapo);
+        Value newBestStep = arith::SelectOp::create(builder, loc, update, stepAtSlot, bestStep);
+        scf::YieldOp::create(builder, loc, ValueRange{newBestCapo, newBestStep});
+      }
+      Value capo = scanLoop.getResult(0);  // slot of the best checkpoint
+
+      // Load top checkpoint: carried state + the primal step it was taken at.
+      SmallVector<Value> ckptState;
+      Block *primalBefore = &whileOp.getBefore().front();
+      Block *primalAfter  = &whileOp.getAfter().front();
+      for (auto &&[store, arg] : llvm::zip_equal(
+               ArrayRef<Value>(liveStores).drop_back(),
+               primalBefore->getArguments()))
+        ckptState.push_back(
+            H::loadSlot(builder, loc, store, capo, arg.getType()));
+      Value ckptStep =
+          H::loadSlot(builder, loc, liveStores[idxStore], capo,
+                      builder.getIndexType());
+
+      // Inner Revolve reconstruction: advance from ckptStep to currentRevStep-1.
+      SmallVector<Value> whileInitInner;
+      whileInitInner.push_back(ckptStep);
+      whileInitInner.push_back(capo);
+      whileInitInner.append(ckptState.begin(), ckptState.end());
+
+      auto revWhile = H::createScaffoldWhileLoop(
+          builder, loc, whileInitInner,
+          [&](OpBuilder &b, Location l, ValueRange args) {
+            Value posPlus1 = H::emitAdd(b, l, args[0], c1);
+            return H::emitCmpLT(b, l, posPlus1, currentRevStep);
+          });
+
+      {
+        H::setInsertionPointToBodyEnd(builder, revWhile.body);
+        auto wargs = revWhile.args();
+        Value pos    = wargs[0];
+        Value acapo  = wargs[1];
+        auto astate  = wargs.slice(2, numCarried);
+
+        Value remaining = H::emitSub(builder, loc, currentRevStep, pos);
+        // Use the constant budget (not budgetV=sp which may be < budget after
+        // r=2 STORE reuses a lower slot) so Revolve knows how many checkpoint
+        // slots the buffer actually holds.
+        Value totalBudget = arith::ConstantIndexOp::create(builder, loc, budget);
+        Value budgetRem = H::emitSub(builder, loc, totalBudget, acapo);
+        budgetRem = H::emitMin(builder, loc, budgetRem, remaining);
+        Value split = enzyme::BinomialProgressOp::create(
+            builder, loc, builder.getIndexType(), remaining, budgetRem);
+
+        // Checkpoint current astate at slot acapo.
+        for (auto &&[i, val] : llvm::enumerate(astate))
+          H::storeSlot(builder, loc, liveStores[i], acapo, val);
+        H::storeSlot(builder, loc, liveStores[idxStore], acapo, pos);
+
+        // Advance the primal by `split` steps from `pos`.
+        // Each "step" = run primal before block → run primal after block.
+        Value posPlusSplit = H::emitAdd(builder, loc, pos, split);
+        Value isLast = H::emitCmpEQ(builder, loc, posPlusSplit, currentRevStep);
+        Value rematUB = H::emitSelect(builder, loc, isLast,
+                                      H::emitSub(builder, loc, posPlusSplit, c1),
+                                      posPlusSplit);
+
+        // Inner remat: scf.for i = pos to rematUB, carrying (primal state...)
+        auto innerRemat = H::createScaffoldForLoop(
+            builder, loc, pos, rematUB, c1,
+            SmallVector<Value>(astate.begin(), astate.end()));
+        preserveAttributesButCheckpointing(innerRemat.op, whileOp);
+
+        {
+          OpBuilder::InsertionGuard g2(builder);
+          builder.setInsertionPointToStart(innerRemat.body);
+
+          // One primal step: run before block → run after block.
+          IRMapping stepMap;
+          for (auto &&[old, nw] :
+               llvm::zip_equal(primalBefore->getArguments(), innerRemat.args()))
+            stepMap.map(old, nw);
+          copyWhileBlock(builder, primalBefore, gutils, stepMap);
+
+          auto condOp = cast<scf::ConditionOp>(primalBefore->getTerminator());
+          SmallVector<Value> condVals;
+          for (auto arg : condOp.getArgs())
+            condVals.push_back(stepMap.lookupOrDefault(arg));
+
+          IRMapping afterStepMap;
+          for (auto &&[old, nw] :
+               llvm::zip_equal(primalAfter->getArguments(), condVals))
+            afterStepMap.map(old, nw);
+          copyWhileBlock(builder, primalAfter, gutils, afterStepMap);
+
+          auto yieldOp = cast<scf::YieldOp>(primalAfter->getTerminator());
+          SmallVector<Value> stepYields;
+          for (auto op : yieldOp.getOperands())
+            stepYields.push_back(afterStepMap.lookupOrDefault(op));
+          H::finalizeScaffoldLoop(builder, loc, innerRemat, stepYields);
+        }
+
+        Value newCapo = H::emitAdd(builder, loc, acapo, c1);
+        SmallVector<Value> afterYields;
+        afterYields.push_back(posPlusSplit);
+        afterYields.push_back(newCapo);
+        auto rematResults = innerRemat.results();
+        afterYields.append(rematResults.begin(), rematResults.end());
+        H::finalizeScaffoldLoop(builder, loc, revWhile, afterYields);
+      }
+
+      H::setInsertionPointToBodyEnd(builder, revOuter.body);
+      auto whileResults = revWhile.results();
+      // whileResults[0]=finalPos, [1]=finalCapo (not used), [2+]=reconState
+      auto reconState  = whileResults.slice(2, numCarried);
+
+      // Adjoint of one primal step at (currentRevStep - 1).
+      mapping = IRMapping();
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalBefore->getArguments(), reconState))
+        mapping.map(old, nw);
+      copyWhileBlock(builder, primalBefore, gutils, mapping);
+
+      auto condOp = cast<scf::ConditionOp>(primalBefore->getTerminator());
+      SmallVector<Value> condVals;
+      for (auto arg : condOp.getArgs())
+        condVals.push_back(mapping.lookupOrDefault(arg));
+
+      IRMapping afterAdjMap;
+      for (auto &&[old, nw] :
+           llvm::zip_equal(primalAfter->getArguments(), condVals))
+        afterAdjMap.map(old, nw);
+      copyWhileBlock(builder, primalAfter, gutils, afterAdjMap);
+
+      // Seed adjoints from the outer carried gradients.
+      auto yieldOp = cast<scf::YieldOp>(primalAfter->getTerminator());
+      unsigned revIdx = 0;
+      for (auto &&[active, operand] :
+           llvm::zip_equal(operandsActive, yieldOp.getOperands())) {
+        if (active) {
+          gutils->addToDiffe(operand, adjArgs[revIdx], builder);
+          revIdx++;
+        }
+      }
+
+      // Visit after block ops in reverse (adjoint), then before block ops.
+      bool valid = true;
+      {
+        H::SegmentCacheCreatorGuard cacheGuard(gutils, revWhile.op);
+        auto visitBlock = [&](Block *b) {
+          for (auto it = b->rbegin(); it != b->rend(); ++it) {
+            if (&*it == b->getTerminator())
+              continue;
+            valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+          }
+        };
+        visitBlock(primalAfter);
+        visitBlock(primalBefore);
+      }
+
+      // Collect from after-block args: visitChild accumulates into
+      // dffe(primalAfter->getArguments()), which map to the same reconstructed
+      // state as primalBefore->getArguments() when condition passes them through.
+      SmallVector<Value> newAdjoints;
+      for (auto &&[active, arg] :
+           llvm::zip_equal(operandsActive, primalAfter->getArguments())) {
+        if (active) {
+          newAdjoints.push_back(gutils->diffe(arg, builder));
+          if (!gutils->isConstantValue(arg))
+            gutils->zeroDiffe(arg, builder);
+        }
+      }
+
+      SmallVector<Value> outerYields;
+      outerYields.append(newAdjoints.begin(), newAdjoints.end());
+      H::finalizeScaffoldLoop(builder, loc, revOuter, outerYields);
+
+      builder.setInsertionPointAfter(revOuter.op);
+
+      // Propagate gradients back to the while op's init operands.
+      revIdx = 0;
+      auto revOuterResults = revOuter.results();
+      auto whileOpInits    = whileOp.getInits();
+      for (auto &&[active, initArg] :
+           llvm::zip_equal(operandsActive, whileOpInits)) {
+        if (active) {
+          if (!gutils->isConstantValue(initArg))
+            gutils->addToDiffe(initArg, revOuterResults[revIdx], builder);
+          revIdx++;
+        }
+      }
+
+      // Release checkpoint stores.
+      for (auto store : stores)
+        H::destroyStore(builder, loc, store);
+    }
+
+    return success(true);
+  }
+
+  // ── Interface methods ─────────────────────────────────────────────────────
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    if (needsOnlineCheckpointing(whileOp)) {
+      auto budget = getCheckpointBudget(whileOp);
+      if (budget && *budget >= 1)
+        return cacheWhileOnline(whileOp, *budget, gutils);
+      op->emitError() << "online checkpointing requires enzyme.checkpoint_period >= 1";
+      return {};
+    }
+    // No checkpointing annotation: full-tape mode.
+    return cacheWhileFullTape(whileOp, gutils);
+  }
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+
+    // Build operandsActive and incomingGradients from the while op's results.
+    SmallVector<bool> operandsActive;
+    SmallVector<Value> incomingGradients;
+    for (auto &&[init, res] :
+         llvm::zip_equal(whileOp.getInits(), op->getResults())) {
+      bool active = !gutils->isConstantValue(init) ||
+                    !gutils->isConstantValue(res);
+      operandsActive.push_back(active);
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(res, builder));
+        if (!gutils->isConstantValue(res))
+          gutils->zeroDiffe(res, builder);
+      }
+    }
+
+    if (needsOnlineCheckpointing(whileOp)) {
+      auto budget = getCheckpointBudget(whileOp);
+      if (!budget || *budget < 1)
+        return op->emitError()
+               << "online checkpointing requires enzyme.checkpoint_period >= 1";
+      return reverseWhileOnline(whileOp, *budget, builder, gutils, caches,
+                                operandsActive, incomingGradients);
+    }
+
+    // No checkpointing annotation: full-tape mode.
+    return reverseWhileFullTape(whileOp, builder, gutils, caches,
+                                operandsActive, incomingGradients);
+  }
+
+  LogicalResult createShadowValues(Operation *, OpBuilder &,
+                                   MGradientUtilsReverse *) const {
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
@@ -1225,5 +2300,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
+    scf::WhileOp::attachInterface<WhileOpInterfaceReverse>(*context);
   });
 }

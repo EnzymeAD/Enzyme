@@ -451,4 +451,13 @@ def LowerBinomialProgressPass : Pass<"lower-enzyme-binomial-progress"> {
   ];
 }
 
+def LowerOnlineProgressPass : Pass<"lower-enzyme-online-progress"> {
+  let summary = "Lower enzyme.online_progress to scf/arith/memref";
+  let dependentDialects = [
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
+}
+
 #endif // ENZYME_PASSES
