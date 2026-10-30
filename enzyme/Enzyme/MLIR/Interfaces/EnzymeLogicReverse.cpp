@@ -19,6 +19,7 @@
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "llvm/ADT/ScopeExit.h"
 
 using namespace mlir;
@@ -40,6 +41,8 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
 }
 
 // Returns true if the operation, or any operation nested in it with recursive
+// memory effects, may have an effect other than a read on active memory. An
+// effect on an inactive value cannot touch shadow memory. An effect with no
 // known target can only reach active memory through an active operand.
 static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
   if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
@@ -78,9 +81,9 @@ static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
 
 // Returns true iff the operation:
 //    1. Produces no active data nor active pointers
-//    2. If it does not implement ReverseAutoDiffOpInterface, and does not
-//    affect
-//       active memory.
+//    2. Does not need its reverse hook to update shadow memory: an op with a
+//       ReverseAutoDiffOpInterface must be read-only, an op without one must
+//       not write to active memory.
 //    3. Does not propagate active data nor pointers (via side effects)
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
   if (!llvm::all_of(op->getResults(),
