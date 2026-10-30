@@ -1813,8 +1813,9 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
   // Each adjoint read by the rule is loaded into difs, and an active result
-  // that no rule reads is refused rather than having its adjoint dropped.
+  // that no rule reads is refused below rather than having its adjoint dropped.
   std::string usedResults;
+  bool readsAdjoint = false;
   if (intrinsic == MLIRDerivatives) {
     SmallSet<unsigned, 2> results;
     for (auto arg : *argOps)
@@ -1826,7 +1827,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
                                    }),
                                    ", ") +
                   "}";
-    if (!results.empty()) {
+    readsAdjoint = !results.empty();
+    if (readsAdjoint) {
       os << "        if (" << origName << "->getNumResults() <= "
          << sorted.back() << ")\n";
       os << "          return " << origName
@@ -1835,15 +1837,6 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
          << " << \"\\n\";\n";
       os << "        SmallVector<mlir::Value> difs(" << origName
          << "->getNumResults(), nullptr);\n";
-      os << "        for (unsigned i = 0, e = " << origName
-         << "->getNumResults(); i < e; i++)\n";
-      os << "          if (!gutils->isConstantValue(" << origName
-         << "->getResult(i)) && !llvm::is_contained(" << usedResults
-         << ", i))\n";
-      os << "            return " << origName
-         << "->emitError() << \"Unimplemented derivative for active result \" "
-            "<< i << \" in reverse mode for op \" << *"
-         << origName << " << \"\\n\";\n";
     }
   }
 
@@ -1922,6 +1915,19 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
   if (intrinsic == MLIRDerivatives) {
     os << "          if (gutils->isConstantInstruction(op) || "
        << allResultsInactiveMLIR << ") return success();\n";
+    // Refuse an active result that the rule does not read, once a constant
+    // instruction has already returned above.
+    if (readsAdjoint) {
+      os << "          for (unsigned i = 0, e = " << origName
+         << "->getNumResults(); i < e; i++)\n";
+      os << "            if (!gutils->isConstantValue(" << origName
+         << "->getResult(i)) && !llvm::is_contained(" << usedResults
+         << ", i))\n";
+      os << "              return " << origName
+         << "->emitError() << \"Unimplemented derivative for active result \" "
+            "<< i << \" in reverse mode for op \" << *"
+         << origName << " << \"\\n\";\n";
+    }
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";
