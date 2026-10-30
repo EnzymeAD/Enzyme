@@ -78,7 +78,8 @@ static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
 
 // Returns true iff the operation:
 //    1. Produces no active data nor active pointers
-//    2. If it does not implement ReverseAutoDiffOpInterface, and does not affect
+//    2. If it does not implement ReverseAutoDiffOpInterface, and does not
+//    affect
 //       active memory.
 //    3. Does not propagate active data nor pointers (via side effects)
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
