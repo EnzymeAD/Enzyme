@@ -6,7 +6,11 @@ import os
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_obj_root = "@LLVM_BINARY_DIR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
-if len("@ENZYME_BINARY_DIR@") == 0:
+# The bazel build leaves ENZYME_BINARY_DIR empty and used to substitute a
+# workspace-relative tools dir, which only resolved against the test's cwd.
+# It now substitutes an absolute path; prefixing that with cwd would corrupt
+# it (and leave bare FileCheck off PATH), so only relative paths get fixed up.
+if len("@ENZYME_BINARY_DIR@") == 0 and not os.path.isabs(config.llvm_tools_dir):
   config.llvm_tools_dir = os.getcwd() + "/" + config.llvm_tools_dir
 config.llvm_libs_dir = "@LLVM_LIBS_DIR@"
 config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
