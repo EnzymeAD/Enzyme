@@ -24,6 +24,10 @@
 // an the SubType category ``BaseType`` as well as the SubType of float, if
 // relevant. This also contains several helper utility functions.
 //
+// The class is templated over the handle of the floating point SubType so that
+// it is shared between LLVM (``llvm::Type *``) and MLIR (``mlir::Type``).
+// Everything specific to the IR is provided by ``ConcreteTypeTraits``.
+//
 //===----------------------------------------------------------------------===//
 #ifndef ENZYME_TYPE_ANALYSIS_CONCRETE_TYPE_H
 #define ENZYME_TYPE_ANALYSIS_CONCRETE_TYPE_H 1
@@ -33,63 +37,99 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "BaseType.h"
 
+template <typename SubTypeT> struct ConcreteTypeTraits;
+
+template <> struct ConcreteTypeTraits<llvm::Type *> {
+  static bool isFloatingPoint(llvm::Type *T) {
+    return !llvm::isa<llvm::VectorType>(T) && T->isFloatingPointTy();
+  }
+
+  static void print(llvm::raw_ostream &OS, llvm::Type *T) { OS << *T; }
+
+  static std::string floatName(llvm::Type *T) {
+    if (T->isHalfTy())
+      return "half";
+    if (T->isFloatTy())
+      return "float";
+    if (T->isDoubleTy())
+      return "double";
+    if (T->isX86_FP80Ty())
+      return "fp80";
+    if (T->isBFloatTy())
+      return "bf16";
+    if (T->isFP128Ty())
+      return "fp128";
+    if (T->isPPC_FP128Ty())
+      return "ppc128";
+    llvm_unreachable("unknown data SubType");
+  }
+
+  static llvm::Type *parseFloat(llvm::StringRef SubName, llvm::LLVMContext &C) {
+    if (SubName == "half")
+      return llvm::Type::getHalfTy(C);
+    if (SubName == "float")
+      return llvm::Type::getFloatTy(C);
+    if (SubName == "double")
+      return llvm::Type::getDoubleTy(C);
+    if (SubName == "fp80")
+      return llvm::Type::getX86_FP80Ty(C);
+    if (SubName == "bf16")
+      return llvm::Type::getBFloatTy(C);
+    if (SubName == "fp128")
+      return llvm::Type::getFP128Ty(C);
+    if (SubName == "ppc128")
+      return llvm::Type::getPPC_FP128Ty(C);
+    llvm_unreachable("unknown data SubType");
+  }
+
+  static bool less(llvm::Type *A, llvm::Type *B) { return A < B; }
+};
+
 /// Concrete SubType of a given value. Consists of a category `BaseType` and the
 /// particular floating point value, if relevant.
-class ConcreteType {
+template <typename SubTypeT> class GenericConcreteType {
+  using Traits = ConcreteTypeTraits<SubTypeT>;
+
 public:
   /// Category of underlying type
   BaseType SubTypeEnum;
-  /// Floating point type, if relevant, otherwise nullptr
-  llvm::Type *SubType;
+  /// Floating point type, if relevant, otherwise null
+  SubTypeT SubType;
 
   /// Construct a ConcreteType from an existing FloatingPoint Type
-  ConcreteType(llvm::Type *SubType)
+  GenericConcreteType(SubTypeT SubType)
       : SubTypeEnum(BaseType::Float), SubType(SubType) {
-    assert(SubType != nullptr);
-    assert(!llvm::isa<llvm::VectorType>(SubType));
-    if (!SubType->isFloatingPointTy()) {
-      llvm::errs() << " passing in non FP SubType: " << *SubType << "\n";
+    assert(SubType);
+    if (!Traits::isFloatingPoint(SubType)) {
+      llvm::errs() << " passing in non FP SubType: ";
+      Traits::print(llvm::errs(), SubType);
+      llvm::errs() << "\n";
     }
-    assert(SubType->isFloatingPointTy());
+    assert(Traits::isFloatingPoint(SubType));
   }
 
   /// Construct a non-floating Concrete type from a BaseType
-  ConcreteType(BaseType SubTypeEnum)
-      : SubTypeEnum(SubTypeEnum), SubType(nullptr) {
+  GenericConcreteType(BaseType SubTypeEnum)
+      : SubTypeEnum(SubTypeEnum), SubType() {
     assert(SubTypeEnum != BaseType::Float);
   }
 
   /// Construct a ConcreteType from a string
   ///  A Concrete Type's string representation is given by the string of the
   ///  enum If it is a floating point it is given by Float@<specific_type>
-  ConcreteType(llvm::StringRef Str, llvm::LLVMContext &C) {
+  template <typename ContextT>
+  GenericConcreteType(llvm::StringRef Str, ContextT &C) {
     auto Sep = Str.find('@');
     if (Sep != llvm::StringRef::npos) {
       SubTypeEnum = BaseType::Float;
       assert(Str.substr(0, Sep) == "Float");
-      auto SubName = Str.substr(Sep + 1);
-      if (SubName == "half") {
-        SubType = llvm::Type::getHalfTy(C);
-      } else if (SubName == "float") {
-        SubType = llvm::Type::getFloatTy(C);
-      } else if (SubName == "double") {
-        SubType = llvm::Type::getDoubleTy(C);
-      } else if (SubName == "fp80") {
-        SubType = llvm::Type::getX86_FP80Ty(C);
-      } else if (SubName == "bf16") {
-        SubType = llvm::Type::getBFloatTy(C);
-      } else if (SubName == "fp128") {
-        SubType = llvm::Type::getFP128Ty(C);
-      } else if (SubName == "ppc128") {
-        SubType = llvm::Type::getPPC_FP128Ty(C);
-      } else {
-        llvm_unreachable("unknown data SubType");
-      }
+      SubType = Traits::parseFloat(Str.substr(Sep + 1), C);
     } else {
-      SubType = nullptr;
+      SubType = SubTypeT();
       SubTypeEnum = parseBaseType(Str);
     }
   }
@@ -97,25 +137,8 @@ public:
   /// Convert the ConcreteType to a string
   std::string str() const {
     std::string Result = to_string(SubTypeEnum);
-    if (SubTypeEnum == BaseType::Float) {
-      if (SubType->isHalfTy()) {
-        Result += "@half";
-      } else if (SubType->isFloatTy()) {
-        Result += "@float";
-      } else if (SubType->isDoubleTy()) {
-        Result += "@double";
-      } else if (SubType->isX86_FP80Ty()) {
-        Result += "@fp80";
-      } else if (SubType->isBFloatTy()) {
-        Result += "@bf16";
-      } else if (SubType->isFP128Ty()) {
-        Result += "@fp128";
-      } else if (SubType->isPPC_FP128Ty()) {
-        Result += "@ppc128";
-      } else {
-        llvm_unreachable("unknown data SubType");
-      }
-    }
+    if (SubTypeEnum == BaseType::Float)
+      Result += "@" + Traits::floatName(SubType);
     return Result;
   }
 
@@ -142,7 +165,7 @@ public:
   }
 
   /// Return the floating point type, if this is a float
-  llvm::Type *isFloat() const { return SubType; }
+  SubTypeT isFloat() const { return SubType; }
 
   /// Return if this is known to be the BaseType BT
   /// This cannot be called with BaseType::Float as it lacks information
@@ -169,16 +192,16 @@ public:
   }
 
   /// Return if this is known to be the ConcreteType CT
-  bool operator==(const ConcreteType CT) const {
+  bool operator==(const GenericConcreteType CT) const {
     return SubType == CT.SubType && SubTypeEnum == CT.SubTypeEnum;
   }
 
   /// Return if this is known not to be the ConcreteType CT
-  bool operator!=(const ConcreteType CT) const { return !(*this == CT); }
+  bool operator!=(const GenericConcreteType CT) const { return !(*this == CT); }
 
   /// Set this to the given ConcreteType, returning true if
   /// this ConcreteType has changed
-  bool operator=(const ConcreteType CT) {
+  bool operator=(const GenericConcreteType CT) {
     bool changed = false;
     if (SubTypeEnum != CT.SubTypeEnum)
       changed = true;
@@ -193,13 +216,14 @@ public:
   /// this ConcreteType has changed
   bool operator=(const BaseType BT) {
     assert(BT != BaseType::Float);
-    return ConcreteType::operator=(ConcreteType(BT));
+    return GenericConcreteType::operator=(GenericConcreteType(BT));
   }
 
   /// Set this to the logical or of itself and CT, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
-  bool checkedOrIn(const ConcreteType CT, bool PointerIntSame, bool &LegalOr) {
+  bool checkedOrIn(const GenericConcreteType CT, bool PointerIntSame,
+                   bool &LegalOr) {
     if (SubTypeEnum == BaseType::Anything) {
       return false;
     }
@@ -236,7 +260,7 @@ public:
   /// Set this to the logical or of itself and CT, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent This function will error if doing an illegal Operation
-  bool orIn(const ConcreteType CT, bool PointerIntSame) {
+  bool orIn(const GenericConcreteType CT, bool PointerIntSame) {
     bool Legal = true;
     bool Result = checkedOrIn(CT, PointerIntSame, Legal);
     if (!Legal) {
@@ -251,14 +275,14 @@ public:
   /// Set this to the logical or of itself and CT, returning whether this value
   /// changed This assumes that pointers and integers are distinct This function
   /// will error if doing an illegal Operation
-  bool operator|=(const ConcreteType CT) {
+  bool operator|=(const GenericConcreteType CT) {
     return orIn(CT, /*pointerIntSame*/ false);
   }
 
   /// Set this to the logical and of itself and CT, returning whether this value
   /// changed If this and CT are incompatible, the result will be
   /// BaseType::Unknown
-  bool andIn(const ConcreteType CT) {
+  bool andIn(const GenericConcreteType CT) {
     if (SubTypeEnum == BaseType::Anything) {
       return *this = CT;
     }
@@ -284,10 +308,10 @@ public:
   /// Set this to the logical and of itself and CT, returning whether this value
   /// changed If this and CT are incompatible, the result will be
   /// BaseType::Unknown
-  bool operator&=(const ConcreteType CT) { return andIn(CT); }
+  bool operator&=(const GenericConcreteType CT) { return andIn(CT); }
 
   /// Keep only mappings where the type is not an `Anything`
-  ConcreteType PurgeAnything() const {
+  GenericConcreteType PurgeAnything() const {
     if (SubTypeEnum == BaseType::Anything)
       return BaseType::Unknown;
     return *this;
@@ -296,7 +320,7 @@ public:
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(bool &Legal, const ConcreteType RHS,
+  bool binopIn(bool &Legal, const GenericConcreteType RHS,
                llvm::BinaryOperator::BinaryOps Op) {
     bool Changed = false;
     using namespace llvm;
@@ -316,7 +340,7 @@ public:
                         RHS.SubTypeEnum == BaseType::Integer ||
                         RHS.SubTypeEnum == BaseType::Unknown)))) {
       SubTypeEnum = BaseType::Unknown;
-      SubType = nullptr;
+      SubType = SubTypeT();
       Changed = true;
       return Changed;
     }
@@ -503,16 +527,21 @@ public:
   }
 
   /// Compare concrete types for use in map's
-  bool operator<(const ConcreteType dt) const {
+  bool operator<(const GenericConcreteType dt) const {
     if (SubTypeEnum == dt.SubTypeEnum) {
-      return SubType < dt.SubType;
+      return Traits::less(SubType, dt.SubType);
     } else {
       return SubTypeEnum < dt.SubTypeEnum;
     }
   }
 };
 
+using ConcreteType = GenericConcreteType<llvm::Type *>;
+
 // Convert ConcreteType to string
-static inline std::string to_string(const ConcreteType dt) { return dt.str(); }
+template <typename SubTypeT>
+static inline std::string to_string(const GenericConcreteType<SubTypeT> dt) {
+  return dt.str();
+}
 
 #endif

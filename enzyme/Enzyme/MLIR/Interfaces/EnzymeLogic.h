@@ -4,9 +4,12 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
-#include "../../TypeAnalysis/TypeAnalysis.h"
+#include "../../TypeAnalysis/TypeTree.h"
 #include "../../Utils.h"
 #include <functional>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace mlir {
 namespace enzyme {
@@ -27,21 +30,44 @@ public:
   }
 };
 
+} // namespace enzyme
+} // namespace mlir
+
+template <> struct ConcreteTypeTraits<mlir::Type> {
+  static bool isFloatingPoint(mlir::Type T) { return static_cast<bool>(T); }
+
+  static void print(llvm::raw_ostream &OS, mlir::Type T) { OS << T; }
+
+  static std::string floatName(mlir::Type T) {
+    std::string S;
+    llvm::raw_string_ostream OS(S);
+    OS << T;
+    return S;
+  }
+
+  static bool less(mlir::Type A, mlir::Type B) {
+    return A.getAsOpaquePointer() < B.getAsOpaquePointer();
+  }
+};
+
+namespace mlir {
+namespace enzyme {
+
+using MConcreteType = GenericConcreteType<mlir::Type>;
+
+// The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {
 public:
   // TODO
   TypeTree getReturnAnalysis() { return TypeTree(); }
   TypeTree query(Value) const { return TypeTree(); }
-  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
-                       bool pointerIntSame = false) const {
-    if (isa<IntegerType, IndexType>(val.getType())) {
-      return BaseType::Integer;
-    }
-    if (errIfNotFound) {
-      llvm_unreachable("something happened");
-    }
-    return BaseType::Unknown;
-  }
+
+  /// What the value itself is.
+  MConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
+                        bool pointerIntSame = false) const;
+
+  MConcreteType firstPointer(size_t num, Value val, bool errIfNotFound = true,
+                             bool pointerIntSame = false) const;
 };
 
 class MEnzymeLogic {
