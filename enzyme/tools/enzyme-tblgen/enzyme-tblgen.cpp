@@ -1820,7 +1820,7 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     llvm::SetVector<unsigned> results;
     for (auto arg : *argOps)
       collectDiffeRetResults(pattern, arg, results);
-    mlirUsedResults = results.takeVector();
+    mlirUsedResults.assign(results.begin(), results.end());
     llvm::sort(mlirUsedResults);
     readsAdjoint = !mlirUsedResults.empty();
     if (readsAdjoint) {
