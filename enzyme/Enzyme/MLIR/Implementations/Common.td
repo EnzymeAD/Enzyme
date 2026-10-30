@@ -89,7 +89,7 @@ class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
 class DiffeRetIndex<int index_> {
   int index = index_;
 }
-def DiffeRet : DiffeRetIndex<-1>;
+def DiffeRet : DiffeRetIndex<0>;
 
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }

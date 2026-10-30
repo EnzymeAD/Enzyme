@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
@@ -377,7 +378,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
     if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
       if (intrinsic == MLIRDerivatives) {
         auto index = Def->getValueAsInt("index");
-        if (index == -1)
+        if (index == 0)
           os << "dif";
         else
           os << "difs[" << index << "]";
@@ -1673,7 +1674,7 @@ void printDiffUse(
   }
 }
 
-static constexpr const char *allResultsInactiveMLIR =
+static constexpr llvm::StringLiteral allResultsInactiveMLIR =
     "(op->getNumResults() != 0 && llvm::all_of(op->getResults(), "
     "[&](Value res) { return gutils->isConstantValue(res); }))";
 
@@ -1787,19 +1788,19 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
 
 // Collects the op results whose adjoints an MLIR rule reads.
 static void collectDiffeRetResults(const Record *pattern, const Init *init,
-                                   SmallSet<unsigned, 2> &results) {
-  const Record *Def = nullptr;
+                                   llvm::SetVector<unsigned> &results) {
+  const Record *def = nullptr;
   auto resultRoot = dyn_cast<DagInit>(init);
   if (resultRoot)
-    Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+    def = cast<DefInit>(resultRoot->getOperator())->getDef();
   else if (auto DefArg = dyn_cast<DefInit>(init))
-    Def = DefArg->getDef();
-  if (Def && Def->isSubClassOf("DiffeRetIndex")) {
-    auto index = Def->getValueAsInt("index");
-    if (index < -1)
+    def = DefArg->getDef();
+  if (def && def->isSubClassOf("DiffeRetIndex")) {
+    auto index = def->getValueAsInt("index");
+    if (index < 0)
       PrintFatalError(pattern->getLoc(),
-                      "DiffeRetIndex takes a result index or -1");
-    results.insert(index == -1 ? 0 : index);
+                      "DiffeRetIndex takes a positive result index");
+    results.insert(index);
     return;
   }
   if (resultRoot)
@@ -1812,32 +1813,26 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
                               StringRef origName, const ListInit *argOps) {
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
-  // Each adjoint read by the rule is loaded into difs, and an active result
-  // that no rule reads is refused below rather than having its adjoint dropped.
-  std::string usedResults;
+  SmallVector<unsigned> mlirUsedResults;
   bool readsAdjoint = false;
+
   if (intrinsic == MLIRDerivatives) {
-    SmallSet<unsigned, 2> results;
+    llvm::SetVector<unsigned> results;
     for (auto arg : *argOps)
       collectDiffeRetResults(pattern, arg, results);
-    SmallVector<unsigned, 2> sorted(results.begin(), results.end());
-    llvm::sort(sorted);
-    usedResults = "{" +
-                  llvm::join(llvm::map_range(sorted,
-                                             [](unsigned i) {
-                                               return std::to_string(i) + "u";
-                                             }),
-                             ", ") +
-                  "}";
-    readsAdjoint = !results.empty();
+    mlirUsedResults = results.takeVector();
+    llvm::sort(mlirUsedResults);
+    readsAdjoint = !mlirUsedResults.empty();
     if (readsAdjoint) {
-      os << "        if (" << origName
-         << "->getNumResults() <= " << sorted.back() << ")\n";
-      os << "          return " << origName
-         << "->emitError() << \"Derivative rule reads the adjoint of result "
-         << sorted.back() << " of op \" << *" << origName << " << \"\\n\";\n";
-      os << "        SmallVector<mlir::Value> difs(" << origName
-         << "->getNumResults(), nullptr);\n";
+      os << llvm::formatv(
+          R"(        if ({0}->getNumResults() <= {1})
+          return {0}->emitError() << "derivative rule reads the adjoint of result {1} of op " << *{0} << "\n";
+        SmallVector<mlir::Value> difs({0}->getNumResults(), nullptr);
+)",
+          origName, mlirUsedResults.back());
+    } else {
+      PrintFatalError(pattern->getLoc(),
+                      "reverse rule reads no result adjoint");
     }
   }
 
@@ -1883,7 +1878,15 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     if (hasDiffeRet(resultTree)) {
       if (intrinsic == MLIRDerivatives) {
         // An inactive result contributes a zero adjoint.
-        os << "          for (unsigned i : " << usedResults << ") {\n";
+        os << "          for (unsigned i : {";
+
+        for (auto [i, resultIndex] : llvm::enumerate(mlirUsedResults)) {
+          if (i != 0)
+            os << ", ";
+          os << resultIndex << "u";
+        }
+
+        os << "}) {\n";
         os << "            mlir::Value res = " << origName
            << "->getResult(i);\n";
         os << "            if (gutils->isConstantValue(res)) {\n";
@@ -1922,8 +1925,13 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
       os << "          for (unsigned i = 0, e = " << origName
          << "->getNumResults(); i < e; i++)\n";
       os << "            if (!gutils->isConstantValue(" << origName
-         << "->getResult(i)) && !llvm::is_contained(" << usedResults
-         << ", i))\n";
+         << "->getResult(i)) && !llvm::is_contained({";
+      for (auto [i, resultIndex] : llvm::enumerate(mlirUsedResults)) {
+        if (i != 0)
+          os << ", ";
+        os << resultIndex << "u";
+      }
+      os << "}, i))\n";
       os << "              return " << origName
          << "->emitError() << \"Unimplemented derivative for active result \" "
             "<< i << \" in reverse mode for op \" << *"
