@@ -389,6 +389,11 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
+  // Functions whose Enzyme calls have been lowered, so postopt may inline
+  // them into their callers.
+  SmallPtrSet<Function *, 16> lowered;
+  // Functions already visited when preparing nested request targets.
+  SmallPtrSet<Function *, 16> prepared;
   EnzymeBase(bool PostOpt)
       : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
@@ -2078,6 +2083,7 @@ public:
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
+    SetVector<Function *> nestedTargets;
   retry:;
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
@@ -2506,16 +2512,34 @@ public:
           } else
             toLower[CI] = derivativeMode;
 
-          if (auto dc = dyn_cast<Function>(fn)) {
-            // Force postopt on any inner functions in the nested
-            // AD case.
-            bool tmp = Logic.PostOpt;
-            Logic.PostOpt = true;
-            Changed |= lowerEnzymeCalls(*dc, done);
-            Logic.PostOpt = tmp;
-          }
+          if (auto dc = dyn_cast<Function>(fn))
+            nestedTargets.insert(dc);
         }
       }
+    }
+
+    // Differentiating a target also differentiates its callees, so first lower
+    // requests in every function reachable from the targets by direct calls.
+    // Done after the scan, since lowering with postopt may inline into F.
+    if (!nestedTargets.empty()) {
+      // Force postopt on any inner functions in the nested AD case.
+      bool tmp = Logic.PostOpt;
+      Logic.PostOpt = true;
+      SmallVector<Function *, 4> todo(nestedTargets.rbegin(),
+                                      nestedTargets.rend());
+      while (!todo.empty()) {
+        Function *cur = todo.pop_back_val();
+        if (!prepared.insert(cur).second)
+          continue;
+        for (BasicBlock &CBB : *cur)
+          for (Instruction &I : CBB)
+            if (auto CB = dyn_cast<CallBase>(&I))
+              if (auto called = getFunctionFromCall(CB))
+                if (!called->empty() && !prepared.count(called))
+                  todo.push_back(called);
+        Changed |= lowerEnzymeCalls(*cur, done);
+      }
+      Logic.PostOpt = tmp;
     }
 
     for (auto CI : InactiveCalls) {
@@ -2604,6 +2628,8 @@ public:
       HandleProbProg(call, mode, calls);
     }
 
+    lowered.insert(&F);
+
     if (Logic.PostOpt) {
       auto Params = llvm::getInlineParams();
 
@@ -2644,9 +2670,12 @@ public:
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
                 LowerSparsification(outerFunc, /*replaceAll*/ false);
+                // Copying outerFunc into its callers before its own Enzyme
+                // calls are lowered would leave the copies unlowered.
                 for (auto U : outerFunc->users()) {
                   if (auto CI = dyn_cast<CallInst>(U)) {
-                    if (CI->getCalledFunction() == outerFunc) {
+                    if (CI->getCalledFunction() == outerFunc &&
+                        lowered.count(outerFunc)) {
                       Q.insert(CI);
                     }
                   }
@@ -2775,6 +2804,8 @@ public:
     }
 
     std::set<Function *> done;
+    lowered.clear();
+    prepared.clear();
     for (Function &F : M) {
       if (F.empty())
         continue;
@@ -2960,7 +2991,7 @@ public:
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
 
-      PassBuilder PB;
+      PassBuilder PB = makePassBuilder(M.getContext());
       LoopAnalysisManager LAM;
       FunctionAnalysisManager FAM;
       CGSCCAnalysisManager CGAM;
@@ -3108,10 +3139,13 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
 #if LLVM_VERSION_MAJOR >= 24
-// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors.
-static unsigned EnzymeLicmMssaOptCap() { return getLicmMssaOptCap(); }
+// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors;
+// a null LibraryOptionsContext returns the global (command-line) value.
+static unsigned EnzymeLicmMssaOptCap() {
+  return getLicmMssaOptCap(/*LibraryOptions=*/nullptr);
+}
 static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
-  return getLicmMssaNoAccForPromotionCap();
+  return getLicmMssaNoAccForPromotionCap(/*LibraryOptions=*/nullptr);
 }
 #else
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;

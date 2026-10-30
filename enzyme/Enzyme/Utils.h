@@ -216,6 +216,15 @@ extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           LLVMBuilderRef);
 }
 
+/// Hand the builder @p B to a C API callback. LLVM 24 made LLVMBuilderRef a
+/// builder the C API owns (llvm/llvm-project#234620) and removed
+/// wrap(IRBuilder<> *), so this creates a C API builder positioned where @p B
+/// is. Pass the result to finishCallbackBuilder once the callback returned: it
+/// moves @p B to where the callback left the C API builder and frees it.
+/// Before LLVM 24 both are a plain wrap of @p B.
+LLVMBuilderRef startCallbackBuilder(llvm::IRBuilder<> &B);
+void finishCallbackBuilder(LLVMBuilderRef Ref, llvm::IRBuilder<> &B);
+
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
 
@@ -2578,7 +2587,10 @@ static inline void moveBeforeInst(llvm::Instruction *I,
 }
 
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIOrPseudoProbe();
+#elif LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
@@ -2589,7 +2601,9 @@ static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 
 static inline llvm::Instruction *
 getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  return &*B->getFirstNonPHIOrLifetime();
+#elif LLVM_VERSION_MAJOR >= 20
   return &*B->getFirstNonPHIOrDbgOrLifetime();
 #else
   return B->getFirstNonPHIOrDbgOrLifetime();

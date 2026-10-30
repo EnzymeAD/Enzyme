@@ -85,7 +85,7 @@ jobs:
       run: |
         python3 -m venv enzyme_venv
         . enzyme_venv/bin/activate
-        pip install cmakefmt
+        pip install cmakefmt==2.3.0
     - name: Run cmakefmt --check
       run: |
         . enzyme_venv/bin/activate
