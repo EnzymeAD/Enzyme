@@ -1822,19 +1822,20 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
       collectDiffeRetResults(pattern, arg, results);
     SmallVector<unsigned, 2> sorted(results.begin(), results.end());
     llvm::sort(sorted);
-    usedResults = "{" + llvm::join(llvm::map_range(sorted, [](unsigned i) {
-                                     return std::to_string(i) + "u";
-                                   }),
-                                   ", ") +
+    usedResults = "{" +
+                  llvm::join(llvm::map_range(sorted,
+                                             [](unsigned i) {
+                                               return std::to_string(i) + "u";
+                                             }),
+                             ", ") +
                   "}";
     readsAdjoint = !results.empty();
     if (readsAdjoint) {
-      os << "        if (" << origName << "->getNumResults() <= "
-         << sorted.back() << ")\n";
+      os << "        if (" << origName
+         << "->getNumResults() <= " << sorted.back() << ")\n";
       os << "          return " << origName
          << "->emitError() << \"Derivative rule reads the adjoint of result "
-         << sorted.back() << " of op \" << *" << origName
-         << " << \"\\n\";\n";
+         << sorted.back() << " of op \" << *" << origName << " << \"\\n\";\n";
       os << "        SmallVector<mlir::Value> difs(" << origName
          << "->getNumResults(), nullptr);\n";
     }
