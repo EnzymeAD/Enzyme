@@ -39,8 +39,8 @@ def : MLIRDerivative<"math", "SinOp", (Op $x),
 def : MLIRDerivative<"math", "SincosOp", (Op $x),
                     [
                         (AddF
-                            (CheckedMulF (DiffeRetIndex<[0]>), (CosF $x)),
-                            (CheckedMulF (DiffeRetIndex<[1]>), (NegF (SinF $x))))
+                            (CheckedMulF (DiffeRetIndex<0>), (CosF $x)),
+                            (CheckedMulF (DiffeRetIndex<1>), (NegF (SinF $x))))
                     ],
                     (ArrayRet
                       (MulF (Shadow $x),

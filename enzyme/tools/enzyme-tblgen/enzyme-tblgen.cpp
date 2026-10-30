@@ -375,21 +375,20 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       opName = Def->getValueAsString("name");
     }
     if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
+      if (intrinsic == MLIRDerivatives) {
+        auto index = Def->getValueAsInt("index");
+        if (index == -1)
+          os << "dif";
+        else
+          os << "difs[" << index << "]";
+        return true;
+      }
 
       auto indicesP = dyn_cast<ListInit>(Def->getValueInit("indices"));
       if (!indicesP)
         PrintFatalError(pattern->getLoc(),
                         Twine("list 'indices' not defined in ") +
                             resultTree->getAsString());
-      // In MLIR the index selects the op result whose adjoint is read.
-      if (intrinsic == MLIRDerivatives) {
-        auto val = cast<IntInit>(indicesP->getElement(0))->getValue();
-        if (val == -1)
-          os << "dif";
-        else
-          os << "difs[" << val << "]";
-        return true;
-      }
       SmallVector<unsigned, 2> retidx_cur;
       if (indicesP->size() == 1 &&
           cast<IntInit>(indicesP->getElement(0))->getValue() == -1) {
@@ -1786,8 +1785,7 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
     os << "        (void)dif;\n";
 }
 
-// Collects the op results whose adjoints an MLIR rule reads, where DiffeRet
-// is the first result and DiffeRetIndex<[i]> is result i.
+// Collects the op results whose adjoints an MLIR rule reads.
 static void collectDiffeRetResults(const Record *pattern, const Init *init,
                                    SmallSet<unsigned, 2> &results) {
   const Record *Def = nullptr;
@@ -1797,14 +1795,11 @@ static void collectDiffeRetResults(const Record *pattern, const Init *init,
   else if (auto DefArg = dyn_cast<DefInit>(init))
     Def = DefArg->getDef();
   if (Def && Def->isSubClassOf("DiffeRetIndex")) {
-    auto indices = Def->getValueAsListOfInts("indices");
-    if (indices.size() == 1 && indices[0] == -1)
-      results.insert(0);
-    else if (indices.size() == 1 && indices[0] >= 0)
-      results.insert(indices[0]);
-    else
+    auto index = Def->getValueAsInt("index");
+    if (index < -1)
       PrintFatalError(pattern->getLoc(),
-                      "MLIR DiffeRetIndex takes exactly one result index");
+                      "DiffeRetIndex takes a result index or -1");
+    results.insert(index == -1 ? 0 : index);
     return;
   }
   if (resultRoot)
@@ -1820,7 +1815,6 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
   // Each adjoint read by the rule is loaded into difs, and an active result
   // that no rule reads is refused rather than having its adjoint dropped.
   std::string usedResults;
-  unsigned firstUsedResult = 0;
   if (intrinsic == MLIRDerivatives) {
     SmallSet<unsigned, 2> results;
     for (auto arg : *argOps)
@@ -1833,7 +1827,6 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
                                    ", ") +
                   "}";
     if (!results.empty()) {
-      firstUsedResult = sorted.front();
       os << "        if (" << origName << "->getNumResults() <= "
          << sorted.back() << ")\n";
       os << "          return " << origName
@@ -1911,8 +1904,7 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
               "builder, difs[i].getLoc(), difs[i]);\n";
         os << "            gutils->zeroDiffe(res, builder);\n";
         os << "          }\n";
-        // dif also marks the adjoints as loaded, so it must be non-null.
-        os << "          dif = difs[" << firstUsedResult << "];\n";
+        os << "          dif = difs[0];\n";
       } else {
         os << "          dif = diffe(&" << origName << ", Builder2);\n";
         os << "          setDiffe(&" << origName
