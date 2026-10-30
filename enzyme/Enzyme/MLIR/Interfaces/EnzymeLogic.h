@@ -50,17 +50,40 @@ template <> struct ConcreteTypeTraits<mlir::Type> {
   }
 };
 
+extern llvm::cl::opt<unsigned> EnzymeMaxTypeDepth;
+extern llvm::cl::opt<int> EnzymeMaxTypeOffset;
+
+template <> struct TypeTreeTraits<mlir::Type> {
+  using Origin = mlir::Operation *;
+
+  static unsigned maxDepth() { return EnzymeMaxTypeDepth; }
+
+  static int maxOffset() { return EnzymeMaxTypeOffset; }
+
+  template <typename TreeT>
+  static void depthLimitExceeded(const TreeT &Tree, Origin Orig,
+                                 const llvm::Twine &Detail) {
+    std::string Msg = ("not handling more than " + llvm::Twine(maxDepth()) +
+                       " pointer lookups deep dt:" + Tree.str() + Detail)
+                          .str();
+    if (Orig)
+      Orig->emitWarning(Msg);
+    else
+      llvm::errs() << Msg << "\n";
+  }
+};
+
 namespace mlir {
 namespace enzyme {
 
 using MConcreteType = GenericConcreteType<mlir::Type>;
 
+using MTypeTree = GenericTypeTree<mlir::Type>;
+
 // The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {
 public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
-  TypeTree query(Value) const { return TypeTree(); }
+  MTypeTree query(Value val) const;
 
   /// What the value itself is.
   MConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
