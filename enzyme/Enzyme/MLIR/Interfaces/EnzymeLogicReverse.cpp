@@ -5,6 +5,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/Utils.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -77,14 +78,21 @@ static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
 
 // Returns true iff the operation:
 //    1. Produces no active data nor active pointers
-//    2. Does not propagate active data nor pointers (via side effects)
-//    3. Does not write to active memory, e.g. storing an inactive value into
-//       active memory must still zero the shadow.
+//    2. If it does not implement ReverseAutoDiffOpInterface, and does not affect
+//       active memory.
+//    3. Does not propagate active data nor pointers (via side effects)
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
-  return llvm::all_of(
-             op->getResults(),
-             [gutils](Value v) { return gutils->isConstantValue(v); }) &&
-         gutils->isConstantInstruction(op) && !mayWriteActiveMemory(op, gutils);
+  if (!llvm::all_of(op->getResults(),
+                    [gutils](Value v) { return gutils->isConstantValue(v); }))
+    return false;
+
+  if (!gutils->isConstantInstruction(op))
+    return false;
+
+  if (!isa<ReverseAutoDiffOpInterface>(op) && !mayWriteActiveMemory(op, gutils))
+    return true;
+
+  return oputils::isReadOnly(op);
 }
 
 /*
