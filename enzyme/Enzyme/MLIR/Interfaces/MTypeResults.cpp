@@ -14,20 +14,8 @@
 
 #include "EnzymeLogic.h"
 
-#include "llvm/Support/CommandLine.h"
-
 using namespace mlir;
 using namespace mlir::enzyme;
-
-llvm::cl::opt<unsigned>
-    EnzymeMaxTypeDepth("enzyme-max-type-depth", llvm::cl::init(6),
-                       llvm::cl::Hidden,
-                       llvm::cl::desc("Maximum type tree depth"));
-
-llvm::cl::opt<int>
-    EnzymeMaxTypeOffset("enzyme-max-type-offset", llvm::cl::init(500),
-                        llvm::cl::Hidden,
-                        llvm::cl::desc("Maximum type tree offset"));
 
 MTypeTree MTypeResults::query(Value val) const {
   // TODO: cache the tree per type in a DenseMap<Type, MTypeTree> once
