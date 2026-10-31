@@ -2124,9 +2124,14 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       }
     }
 
+    // Even under strict aliasing, an index scaled by an element wider than a
+    // byte cannot meaningfully hold a pointer when both the base and the
+    // result are known to be pointers.
     if (has_non_const_idx &&
         (gep.isInBounds() ||
-         (!EnzymeStrictAliasing &&
+         ((!EnzymeStrictAliasing ||
+           DL.getTypeAllocSize(gep.getSourceElementType()).getKnownMinValue() >
+               1) &&
           pointerAnalysis.Inner0() == BaseType::Pointer &&
           getAnalysis(&gep).Inner0() == BaseType::Pointer))) {
       for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
