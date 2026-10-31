@@ -2133,9 +2133,6 @@ public:
 #endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              // The frontend may already have marked the pointer readonly (a
-              // const argument) or writeonly; either is incompatible with
-              // readnone and the verifier rejects the pair.
               CI->removeParamAttr(i, Attribute::ReadOnly);
               CI->removeParamAttr(i, Attribute::WriteOnly);
               CI->addParamAttr(i, Attribute::ReadNone);
