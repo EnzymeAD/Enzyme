@@ -24,6 +24,12 @@ class mld<list<string> _args> : BLASType<2, 1> {
   list<string> args = _args;
 }
 
+// Discrete, contiguous integer data. Values can be needed by a derivative
+// without the array itself being differentiable (e.g. LAPACK pivot indices).
+class ivec<list<string> _args> : BLASType<1, 0> {
+  list<string> args = _args;
+}
+
 class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
 }
@@ -41,6 +47,12 @@ def cblas_side    : blas_modes<["CblasLeft","CblasRight"]>;
 def info          : blas_modes<[]>;
 
 
+class FortranABI<string _routine, int _arguments, int _characters> {
+  string routine = _routine;
+  int arguments = _arguments;
+  int characters = _characters;
+}
+
 class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> paramTypes, 
                       list<dag> resultOps, dag forwardOps = (AssertingInactiveArg)> {
   dag PatternToMatch = patternToMatch;
@@ -48,6 +60,16 @@ class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> 
   list<dag> ArgDerivatives = resultOps;
   list<string> mutable = mutables;
   dag ArgDuals = forwardOps;
+  // Optional real-solve precondition used before constructing a tape.
+  list<string> solveGuard = [];
+  int fortranArguments = 0;
+  int fortranCharacters = 0;
+  list<FortranABI> requiredABIs = [];
+  list<string> requiredActiveArgs = [];
+  bit staticActivityOnly = 0;
+  bit supportsSplitForward = 1;
+  bit preserveFortranABI = 0;
+  bit outline = 0;
 }
 
 
@@ -153,6 +175,26 @@ class Seq<list<string> _args = [], list<string> _vars = [], bit _start = 1> {
   list<string> args = _args;
   list<string> vars = _vars;
   bit start = _start;
+}
+
+// Select a statement sequence according to a BLAS transpose argument.
+def IfNormal : MagicInst;
+
+// Guard a real square solve: supported transpose, positive extents and
+// leading dimensions large enough for the supplied matrices.
+def IfSolveValid : MagicInst;
+
+// A sequence involving a shadow is only meaningful when that input is active.
+class IfActive<string _name> {
+  string name = _name;
+}
+
+// MatrixUpdate(region, add)(layout, m, n, alpha, src/ldsrc, dst/lddst).
+// Copy mode writes zero outside region; add mode preserves those entries.
+// Supported regions are "all", "upper", and "strict_lower".
+class MatrixUpdate<string _region, bit _add> {
+  string region = _region;
+  bit add = _add;
 }
 
 class CopyLowerToUpper<string _tmp> {
@@ -889,3 +931,163 @@ def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $i
                     (BlasCall<"potrs"> $layout, $uplo, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>)
                   ]
                   >;
+
+// Solve op(A) X = B using supplied packed LU factors and fixed integer pivots.
+// The unit diagonal of L is implicit: lower-factor tangents are strictly lower.
+// GETRF and the discrete choice of pivots are outside this rule.
+
+// GETRS derivative products use LASWP as a primal row-permutation operation.
+// Register its argument and memory types without claiming a standalone AD rule.
+def laswp : CallBlasPattern<
+    (Op $n, $A, $lda, $k1, $k2, $ipiv, $incx),
+    ["A"], [len, mld<["k2", "n"]>, len, len, ivec<["k2"]>, len],
+    [(AssertingInactiveArg)]
+>;
+
+def getrs : CallBlasPattern<
+    (Op $layout, $trans, $n, $nrhs, $A, $lda, $ipiv, $B, $ldb, $info),
+    ["B"],
+    [cblas_layout, trans, len, len, mld<["n", "n"]>, ivec<["n"]>,
+     mld<["n", "nrhs"]>, info],
+    [
+      // A: reconstruct X from the cached pre-call RHS. Keep Y in a private
+      // buffer so the subsequent B rule still sees the incoming solution bar.
+      (IfSolveValid $trans, $n, $nrhs, $lda, $ldb,
+      (Seq<["x", "product", "n", "nrhs"]>
+        (Seq<["y", "product", "n", "nrhs"]>
+          (Seq<["w", "product", "n", "nrhs"]>
+            (Seq<["v", "product", "n", "nrhs"]>
+              (Seq<["uv", "product", "n", "nrhs"]>
+                (Seq<["factorbar", "product", "n", "n"]>
+                  (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                    (Concat input<"B">, $n), (Concat use<"x">, $n)),
+                  (BlasCall<"getrs"> $layout, $trans, $n, $nrhs,
+                    $A, (ld $A, Char<"N">, $lda, $n, $n), $ipiv,
+                    use<"x">, $n, Alloca<1>),
+                  (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                    (Shadow $B), (Concat use<"y">, $n)),
+                  (BlasCall<"getrs"> $layout, transpose<"trans">, $n, $nrhs,
+                    $A, (ld $A, Char<"N">, $lda, $n, $n), $ipiv,
+                    use<"y">, $n, Alloca<1>),
+                  (IfNormal $trans,
+                    (Seq<>
+                      (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                        (Concat use<"y">, $n), (Concat use<"w">, $n)),
+                      (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                        (Concat use<"x">, $n), (Concat use<"v">, $n))),
+                    (Seq<>
+                      (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                        (Concat use<"x">, $n), (Concat use<"w">, $n)),
+                      (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                        (Concat use<"y">, $n), (Concat use<"v">, $n)))),
+                  // Q is the forward sequence of row interchanges: Q A = L U.
+                  (BlasCall<"laswp"> $nrhs, use<"w">, $n,
+                    ConstantInt<1>, $n, $ipiv, ConstantInt<1>),
+                  (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                    (Concat use<"v">, $n), (Concat use<"uv">, $n)),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"U">,
+                    Char<"N">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    $A, (ld $A, Char<"N">, $lda, $n, $n), use<"uv">, $n),
+                  (BlasCall<"gemm"> $layout, Char<"N">, Char<"T">,
+                    $n, $n, $nrhs, Constant<"-1.0">,
+                    use<"w">, $n, use<"uv">, $n, Constant<"0.0">,
+                    use<"factorbar">, $n),
+                  (MatrixUpdate<"strict_lower", 1> $layout, $n, $n,
+                    Constant<"1.0">, (Concat use<"factorbar">, $n),
+                    (Shadow $A)),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">,
+                    Char<"T">, Char<"U">, $n, $nrhs, Constant<"1.0">,
+                    $A, (ld $A, Char<"N">, $lda, $n, $n), use<"w">, $n),
+                  (BlasCall<"gemm"> $layout, Char<"N">, Char<"T">,
+                    $n, $n, $nrhs, Constant<"-1.0">,
+                    use<"w">, $n, use<"v">, $n, Constant<"0.0">,
+                    use<"factorbar">, $n),
+                  (MatrixUpdate<"upper", 1> $layout, $n, $n,
+                    Constant<"1.0">, (Concat use<"factorbar">, $n),
+                    (Shadow $A))
+                )
+              )
+            )
+          )
+        )
+      )),
+      // B: its shadow is overwritten by op(A)^(-T) times the solution bar.
+      (IfSolveValid $trans, $n, $nrhs, $lda, $ldb,
+      (BlasCall<"getrs"> $layout, transpose<"trans">, $n, $nrhs,
+        $A, (ld $A, Char<"N">, $lda, $n, $n), $ipiv,
+        (Shadow $B), Alloca<1>))
+    ],
+    // The primal call has already replaced B with X. Form the factor
+    // contribution, subtract it from dB, then solve for dX in place.
+    (Seq<[], [], 0>
+      (IfSolveValid $trans, $n, $nrhs, $lda, $ldb,
+      (Seq<>
+      (IfActive<"A">
+        (Seq<["dl", "product", "n", "n"]>
+          (Seq<["w1", "product", "n", "nrhs"]>
+            (Seq<["w2", "product", "n", "nrhs"]>
+              (MatrixUpdate<"strict_lower", 0> $layout, $n, $n,
+                Constant<"1.0">, (Shadow $A), (Concat use<"dl">, $n)),
+              (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                (Concat $B, $ldb), (Concat use<"w1">, $n)),
+              (IfNormal $trans,
+                (Seq<>
+                  (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                    (Concat $B, $ldb), (Concat use<"w2">, $n)),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"U">,
+                    Char<"N">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    $A, $lda, use<"w1">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">,
+                    Char<"N">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    use<"dl">, $n, use<"w1">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"U">,
+                    Char<"N">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    (Shadow $A), use<"w2">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">,
+                    Char<"N">, Char<"U">, $n, $nrhs, Constant<"1.0">,
+                    $A, $lda, use<"w2">, $n)),
+                (Seq<>
+                  (BlasCall<"laswp"> $nrhs, use<"w1">, $n,
+                    ConstantInt<1>, $n, $ipiv, ConstantInt<1>),
+                  (MatrixUpdate<"all", 0> $layout, $n, $nrhs, Constant<"1.0">,
+                    (Concat use<"w1">, $n), (Concat use<"w2">, $n)),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">,
+                    Char<"T">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    use<"dl">, $n, use<"w1">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"U">,
+                    Char<"T">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    $A, $lda, use<"w1">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"L">,
+                    Char<"T">, Char<"U">, $n, $nrhs, Constant<"1.0">,
+                    $A, $lda, use<"w2">, $n),
+                  (BlasCall<"trmm"> $layout, Char<"L">, Char<"U">,
+                    Char<"T">, Char<"N">, $n, $nrhs, Constant<"1.0">,
+                    (Shadow $A), use<"w2">, $n))),
+              (MatrixUpdate<"all", 1> $layout, $n, $nrhs, Constant<"1.0">,
+                (Concat use<"w2">, $n), (Concat use<"w1">, $n)),
+              (IfNormal $trans,
+                (BlasCall<"laswp"> $nrhs, use<"w1">, $n,
+                  ConstantInt<1>, $n, $ipiv, ConstantInt<-1>),
+                (Seq<>)),
+              (MatrixUpdate<"all", 1> $layout, $n, $nrhs, Constant<"-1.0">,
+                (Concat use<"w1">, $n), (Shadow $B))
+            )
+          )
+        )
+      ),
+      (BlasCall<"getrs"> $layout, $trans, $n, $nrhs, $A, $lda, $ipiv,
+        (Shadow $B), Alloca<1>)
+      ))
+    )
+> {
+  let solveGuard = ["trans", "n", "nrhs", "lda", "ldb"];
+  let fortranArguments = 9;
+  let fortranCharacters = 1;
+  let requiredABIs = [FortranABI<"trmm", 11, 4>, FortranABI<"gemm", 13, 2>,
+                      FortranABI<"laswp", 7, 0>];
+  let requiredActiveArgs = ["B"];
+  let staticActivityOnly = 1;
+  let supportsSplitForward = 0;
+  let preserveFortranABI = 1;
+  let outline = 1;
+}

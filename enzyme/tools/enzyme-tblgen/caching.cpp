@@ -133,13 +133,12 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     if (isVecLikeArg(ty)) {
       os
 << "  if (cache_" << nameVec[i] << ")\n"
-<< "    cacheTypes.push_back(getUnqual(fpType));\n";
+<< "    cacheTypes.push_back(getUnqual(" << (ty == ArgType::ivec ? "intType" : "fpType") << "));\n";
     }
   }
 }
 
 void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
-  auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
@@ -153,15 +152,83 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
   }
   }
 
-  for (size_t i = 0; i < actArgs.size(); i++) {
-    size_t argIdx = actArgs[i];
+  // Discrete arrays can be needed by an active rule even though the arrays
+  // themselves are never active. Preserve argument order to match cacheTypes.
+  for (size_t argIdx = 0; argIdx < nameVec.size(); ++argIdx) {
     auto ty = typeMap.lookup(argIdx);
-    if (ty != ArgType::ap && ty != ArgType::mldData && ty != ArgType::vincData)
+    if (!isVecLikeArg(ty))
       continue;
     auto name = nameVec[argIdx];
     auto dimensions = pattern.getRelatedLengthArgs(argIdx);
 
-    if (ty == ArgType::ap) {
+    if (!pattern.getRecord()->getValueAsListOfStrings("solveGuard").empty()) {
+      if (ty != ArgType::ivec &&
+          (ty != ArgType::mldData || dimensions.size() != 2))
+        PrintFatalError(pattern.getLoc(),
+                        "guarded solve caches require integer vectors or rectangular matrices");
+      os
+<< "    if (cache_" << name << ") {\n"
+<< "      Type *cacheElemTy = " << (ty == ArgType::ivec ? "intType" : "fpType") << ";\n"
+<< "      auto rows = load_if_ref(BuilderZ, intType, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      Value *cols = ";
+      if (ty == ArgType::ivec)
+        os << "ConstantInt::get(intType, 1);\n";
+      else
+        os << "load_if_ref(BuilderZ, intType, arg_" << nameVec[dimensions[1]] << ", byRef);\n";
+      os << "      Value *sourceLD = ";
+      if (ty == ArgType::ivec)
+        os << "rows;\n";
+      else
+        os << "load_if_ref(BuilderZ, intType, arg_" << nameVec[argIdx + 1] << ", byRef);\n";
+      os
+<< "      auto src = arg_" << name << ";\n"
+<< "      auto ptrTy = getUnqual(cacheElemTy);\n"
+<< "      if (src->getType()->isIntegerTy())\n"
+<< "        src = BuilderZ.CreateIntToPtr(src, ptrTy);\n"
+<< "      else if (src->getType() != ptrTy)\n"
+<< "        src = BuilderZ.CreatePointerCast(src, ptrTy);\n"
+<< "      auto copier = blasCacheCopy(*gutils->oldFunc->getParent(), cacheElemTy, intType);\n"
+<< "      SmallVector<ValueType, 10> valueTypes = {" << valueTypes << "};\n"
+<< "      valueTypes[" << argIdx << "] = ValueType::Primal;\n";
+      for (auto dim : dimensions)
+        os << "      if (byRef) valueTypes[" << dim << "] = ValueType::Primal;\n";
+      if (ty == ArgType::mldData)
+        os << "      if (byRef) valueTypes[" << argIdx + 1 << "] = ValueType::Primal;\n";
+      os
+<< "      auto copied = BuilderZ.CreateCall(copier, {blasCacheValid, src, rows, cols, sourceLD},\n"
+<< "          gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/ false));\n"
+<< "      gutils->TapesToPreventRecomputation.insert(copied);\n"
+<< "      cacheValues.push_back(copied);\n"
+<< "    }\n";
+      continue;
+    }
+
+    if (ty == ArgType::ivec) {
+      os
+<< "    if (cache_" << name << ") {\n"
+<< "      auto count = load_if_ref(BuilderZ, intType, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, intType, count, \"cache." << name << "\", &malloccall);\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n"
+<< "      auto src = arg_" << name << ";\n"
+<< "      if (src->getType()->isIntegerTy())\n"
+<< "        src = BuilderZ.CreateIntToPtr(src, malins->getType());\n"
+<< "      else if (src->getType() != malins->getType())\n"
+<< "        src = BuilderZ.CreatePointerCast(src, malins->getType());\n"
+<< "      auto sizeType = gutils->oldFunc->getParent()->getDataLayout().getIntPtrType(call.getContext());\n"
+<< "      auto bytes = BuilderZ.CreateMul(BuilderZ.CreateZExtOrTrunc(count, sizeType), ConstantInt::get(sizeType, intType->getBitWidth() / 8));\n"
+<< "      auto copier = getIntrinsicDeclaration(gutils->oldFunc->getParent(), Intrinsic::memcpy, {malins->getType(), src->getType(), sizeType});\n"
+<< "      SmallVector<ValueType, 10> valueTypes = {" << valueTypes << "};\n"
+<< "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "      if (byRef) valueTypes[" << dimensions[0] << "] = ValueType::Primal;\n"
+<< "      BuilderZ.CreateCall(copier, {malins, src, bytes, ConstantInt::getFalse(call.getContext())},\n"
+<< "          gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/ false));\n"
+<< "      cacheValues.push_back(malins);\n"
+<< "    }\n";
+    } else if (ty == ArgType::ap) {
       os
 << "    if (cache_" << name << ") {\n"
 << "      Value *malloc_size;\n"
@@ -389,6 +456,10 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
 << "  unsigned cacheidx = 0;\n";
 
   assert(rules.size() == activeArgs.size());
+  for (size_t i = 0; i < nameVec.size(); ++i) {
+    if (typeMap.lookup(i) == ArgType::ivec)
+      os << "  Value *free_" << nameVec[i] << " = nullptr;\n";
+  }
   for (size_t a = 0; a < rules.size(); a++) {
     auto rule = rules[a];
     auto i = activeArgs[a];

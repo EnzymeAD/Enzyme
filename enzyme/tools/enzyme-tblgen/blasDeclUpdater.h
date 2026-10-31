@@ -109,12 +109,12 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "  if (!cublas && !cblas) {\n";
   for (int i = 0; i < numChars; i++) {
-    os << "  if (prevFT->getNumParams() > argTys.size())";
+    // Preserve whether an existing Fortran prototype includes hidden lengths.
+    os << "if (prevFT->getNumParams() > argTys.size()) {\n";
     os << "    argTys.push_back(prevFT->getParamType(argTys.size()));\n";
-    os << "  else";
-    os << "    argTys.push_back(blas.intType(F->getContext()));\n";
     os << "  F->addParamAttr(argTys.size()-1, "
           "llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
+    os << "}\n";
   }
   os << "  }\n";
 
@@ -149,7 +149,8 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     size_t i = (lv23 ? argPos - 1 : argPos);
 
     if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
-        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::mldLD) {
+        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::mldLD ||
+        typeOfArg == ArgType::ivec) {
       os << "  F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::get(F->getContext(), \"enzyme_inactive\"));\n";
     }
@@ -179,7 +180,8 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
+    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData ||
+        typeOfArg == ArgType::ivec) {
       os << "  addFunctionNoCapture(F, " << i << " + offset);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
