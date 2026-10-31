@@ -1,11 +1,14 @@
 name: Bazel
 
-# TODO: Fix and re-enable this workflow
-# on:
+# TODO: Fix and re-enable this workflow's automatic triggers
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+#   # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
 #   push:
 #     branches:
 #       - main
-#     paths:
+#     paths: &paths
 #       - '.github/workflows/enzyme-bazel.yml'
 #       - 'enzyme/Enzyme/**'
 #       - 'enzyme/includes/**'
@@ -13,22 +16,19 @@ name: Bazel
 #       - 'enzyme/tools/**'
 #       - 'enzyme/BUILD'
 #       - 'enzyme/WORKSPACE'
-#   pull_request:
-#     branches:
-#       - main
-#     paths:
-#       - '.github/workflows/enzyme-bazel.yml'
-#       - 'enzyme/Enzyme/**'
-#       - 'enzyme/includes/**'
-#       - 'enzyme/test/**'
-#       - 'enzyme/tools/**'
-#       - 'enzyme/BUILD'
-#       - 'enzyme/WORKSPACE'
+#     # Triggers the workflow on pushes to open pull requests affecting '&paths' above
+#     pull_request:
+#       paths: *paths
 #   merge_group:
 
 concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
 
 jobs:
   build:
