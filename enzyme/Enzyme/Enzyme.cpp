@@ -2121,7 +2121,10 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
 #endif
         }
-        if (Fn->getName().contains("__enzyme_float")) {
+        if (Fn->getName().contains("__enzyme_float") ||
+            Fn->getName().contains("__enzyme_integer") ||
+            Fn->getName().contains("__enzyme_double") ||
+            Fn->getName().contains("__enzyme_pointer")) {
 #if LLVM_VERSION_MAJOR >= 16
           CI->setOnlyReadsMemory();
           CI->setOnlyWritesMemory();
@@ -2130,48 +2133,8 @@ public:
 #endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_integer")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_double")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_pointer")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->removeParamAttr(i, Attribute::ReadOnly);
+              CI->removeParamAttr(i, Attribute::WriteOnly);
               CI->addParamAttr(i, Attribute::ReadNone);
               addCallSiteNoCapture(CI, i);
             }
