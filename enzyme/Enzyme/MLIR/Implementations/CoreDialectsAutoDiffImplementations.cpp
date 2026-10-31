@@ -25,6 +25,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -563,6 +564,64 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
+static llvm::StringMap<ForwardCallHandler> &forwardCallHandlers() {
+  static llvm::StringMap<ForwardCallHandler> handlers;
+  return handlers;
+}
+
+void mlir::enzyme::registerForwardCallHandler(StringRef key,
+                                              ForwardCallHandler handler) {
+  forwardCallHandlers()[key] = std::move(handler);
+}
+
+void mlir::enzyme::unregisterForwardCallHandler(StringRef key) {
+  forwardCallHandlers().erase(key);
+}
+
+const ForwardCallHandler *
+mlir::enzyme::lookupForwardCallHandler(StringRef key) {
+  auto found = forwardCallHandlers().find(key);
+  if (found == forwardCallHandlers().end())
+    return nullptr;
+  return &found->second;
+}
+
+void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
+                                      OpBuilder &builder,
+                                      MGradientUtils *gutils) {
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  Block *block = newOp->getBlock();
+  if (builder.getInsertionBlock() == block &&
+      builder.getInsertionPoint() == Block::iterator(newOp))
+    builder.setInsertionPoint(block, std::next(Block::iterator(newOp)));
+  gutils->replaceOrigOpWith(orig, values);
+  gutils->erase(newOp);
+}
+
+// The flat symbol a call op names as its callee, if it names one.
+static FlatSymbolRefAttr getFlatCallee(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return nullptr;
+  auto sym = dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee());
+  return dyn_cast_if_present<FlatSymbolRefAttr>(sym);
+}
+
+// The key a forward call handler for `op` is registered under, or null where
+// `op` is not a direct call of a flat symbol: its `enzyme_math` string
+// attribute, else the callee's, else the callee's name.
+static StringAttr getForwardCallHandlerKey(Operation *op) {
+  auto callee = getFlatCallee(op);
+  if (!callee)
+    return nullptr;
+  if (auto key = op->getAttrOfType<StringAttr>("enzyme_math"))
+    return key;
+  if (auto *fn = SymbolTable::lookupNearestSymbolFrom(op, callee))
+    if (auto key = fn->getAttrOfType<StringAttr>("enzyme_math"))
+      return key;
+  return callee.getAttr();
+}
+
 // The callee of `op`, or null where it is not a direct call to something this
 // can see the body of.
 static FunctionOpInterface getDirectCallee(Operation *op) {
@@ -579,6 +638,12 @@ static FunctionOpInterface getDirectCallee(Operation *op) {
 LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  // A registered handler takes precedence over the callee's body, and stands
+  // in for a body that is missing.
+  if (auto key = getForwardCallHandlerKey(orig))
+    if (auto *handler = lookupForwardCallHandler(key.getValue()))
+      return (*handler)(orig, builder, gutils);
 
   auto fn = getDirectCallee(orig);
   if (!fn) {

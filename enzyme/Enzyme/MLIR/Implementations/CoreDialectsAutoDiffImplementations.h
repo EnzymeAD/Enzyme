@@ -20,6 +20,9 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringRef.h"
+
+#include <functional>
 
 namespace mlir {
 class DialectRegistry;
@@ -30,6 +33,38 @@ class RegionSuccessor;
 namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
+
+// A frontend's own forward-mode derivative for calls, the counterpart of
+// Enzyme's customFwdCallHandlers. Where forward mode meets a direct call of a
+// flat symbol, it looks for a handler under the call's key: the `enzyme_math`
+// string attribute of the call, else that of the callee, else the callee's
+// name, as on Enzyme's LLVM side. Only that key is looked up. With a handler,
+// it runs the handler instead of differentiating the callee's body, which
+// need not exist. A shared key lets one handler serve many callees and tell
+// them apart itself.
+// The handler is invoked like AutoDiffOpInterface::createForwardModeTangent:
+// the builder is positioned before the call's clone in the derivative, the
+// handler sets the shadow of every active result (setDiffe), and it either
+// leaves the clone to compute the primal results or replaces them
+// (replaceForwardCall).
+using ForwardCallHandler = std::function<LogicalResult(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
+
+// Replaces the results of the call `orig` in the derivative by `values` and
+// erases the call's clone. A builder positioned before the clone, as a
+// handler's is, is moved past it, so the handler can go on inserting there.
+void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
+                        MGradientUtils *gutils);
+
+// Registers (or replaces) the handler for calls with key `key`. The registry
+// is process-wide and unsynchronized, as on Enzyme's LLVM side: register and
+// unregister handlers only while no pass that looks them up runs, e.g. at
+// startup.
+void registerForwardCallHandler(llvm::StringRef key,
+                                ForwardCallHandler handler);
+void unregisterForwardCallHandler(llvm::StringRef key);
+// The handler registered for `key`, or null.
+const ForwardCallHandler *lookupForwardCallHandler(llvm::StringRef key);
 
 namespace detail {
 // Non-template implementation of

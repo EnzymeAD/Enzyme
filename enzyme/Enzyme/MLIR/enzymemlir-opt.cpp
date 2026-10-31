@@ -40,11 +40,119 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Interfaces/GradientUtils.h"
 #include "Passes/Passes.h"
 
 #include "Dialect/Ops.h"
 
+#include "llvm/Support/CommandLine.h"
+
 using namespace mlir;
+
+// For tests of registered forward call handlers, which a frontend would
+// otherwise supply. The handler registered under `<key>` (a callee's name or
+// an `enzyme_math` value) calls `@<key>_jvp` instead of differentiating the
+// callee; that function takes every operand followed by its shadow (a zero one
+// for a constant operand) and returns every result followed by its shadow.
+// With `<key>:tangent` the call's clone stays to compute the primal results,
+// and `@<key>_tangent` takes the same arguments and returns only the shadows.
+// With `<key>:primal-first` the primal results are first replaced by those of
+// `@<key>_primal`, which takes the operands only, and `@<key>_tangent` is
+// called after that.
+enum class TestForwardCallHandlerKind { JVP, Tangent, PrimalFirst };
+
+static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
+                                            StringRef name, TypeRange types,
+                                            ValueRange args) {
+  if (!SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+          orig, StringAttr::get(orig->getContext(), name))) {
+    orig->emitError() << "test forward call handler: no function @" << name;
+    return failure();
+  }
+  return func::CallOp::create(builder, orig->getLoc(), name, types, args);
+}
+
+static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
+                                            enzyme::MGradientUtils *gutils,
+                                            StringRef key,
+                                            TestForwardCallHandlerKind kind) {
+  SmallVector<Value> primalArgs, args;
+  for (Value operand : orig->getOperands()) {
+    Value primal = gutils->getNewFromOriginal(operand);
+    primalArgs.push_back(primal);
+    args.push_back(primal);
+    args.push_back(gutils->invertPointerM(operand, builder));
+  }
+  SmallVector<Type> types, shadowTypes, jvpTypes;
+  for (Value res : orig->getResults()) {
+    types.push_back(res.getType());
+    shadowTypes.push_back(gutils->getShadowType(res.getType()));
+    jvpTypes.push_back(types.back());
+    jvpTypes.push_back(shadowTypes.back());
+  }
+
+  SmallVector<Value> primals, shadows;
+  switch (kind) {
+  case TestForwardCallHandlerKind::JVP: {
+    auto call =
+        callTestRule(orig, builder, (key + "_jvp").str(), jvpTypes, args);
+    if (failed(call))
+      return failure();
+    for (unsigned i = 0, e = orig->getNumResults(); i < e; i++) {
+      primals.push_back(call->getResult(2 * i));
+      shadows.push_back(call->getResult(2 * i + 1));
+    }
+    break;
+  }
+  case TestForwardCallHandlerKind::Tangent: {
+    auto call = callTestRule(orig, builder, (key + "_tangent").str(),
+                             shadowTypes, args);
+    if (failed(call))
+      return failure();
+    llvm::append_range(shadows, call->getResults());
+    break;
+  }
+  case TestForwardCallHandlerKind::PrimalFirst: {
+    auto primalCall =
+        callTestRule(orig, builder, (key + "_primal").str(), types, primalArgs);
+    if (failed(primalCall))
+      return failure();
+    enzyme::replaceForwardCall(orig, primalCall->getResults(), builder, gutils);
+    auto call = callTestRule(orig, builder, (key + "_tangent").str(),
+                             shadowTypes, args);
+    if (failed(call))
+      return failure();
+    llvm::append_range(shadows, call->getResults());
+    break;
+  }
+  }
+
+  for (auto &&[res, shadow] : llvm::zip_equal(orig->getResults(), shadows))
+    if (!gutils->isConstantValue(res))
+      gutils->setDiffe(res, shadow, builder);
+  if (kind == TestForwardCallHandlerKind::JVP)
+    enzyme::replaceForwardCall(orig, primals, builder, gutils);
+  return success();
+}
+
+static llvm::cl::list<std::string> TestForwardCallHandlers(
+    "enzyme-test-forward-call-handler", llvm::cl::Hidden,
+    llvm::cl::desc("Register a test forward-mode call handler under <key> "
+                   "(or <key>:tangent, <key>:primal-first)"),
+    llvm::cl::callback([](const std::string &spec) {
+      StringRef key = spec;
+      auto kind = TestForwardCallHandlerKind::JVP;
+      if (key.consume_back(":tangent"))
+        kind = TestForwardCallHandlerKind::Tangent;
+      else if (key.consume_back(":primal-first"))
+        kind = TestForwardCallHandlerKind::PrimalFirst;
+      std::string name = key.str();
+      enzyme::registerForwardCallHandler(
+          key, [name, kind](Operation *orig, OpBuilder &builder,
+                            enzyme::MGradientUtils *gutils) {
+            return testForwardCallHandler(orig, builder, gutils, name, kind);
+          });
+    }));
 
 class MemRefInsider
     : public mlir::MemRefElementTypeInterface::FallbackModel<MemRefInsider> {};
