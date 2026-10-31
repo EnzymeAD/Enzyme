@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
@@ -375,6 +376,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       opName = Def->getValueAsString("name");
     }
     if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
+      if (intrinsic == MLIRDerivatives) {
+        auto index = Def->getValueAsInt("index");
+        if (index == 0)
+          os << "dif";
+        else
+          os << "difs[" << index << "]";
+        return true;
+      }
 
       auto indicesP = dyn_cast<ListInit>(Def->getValueInit("indices"));
       if (!indicesP)
@@ -1586,8 +1595,9 @@ void printDiffUse(
 
       if (foundDiffRet) {
         if (intrinsic == MLIRDerivatives)
-          os << " && !gutils->isConstantValue(" << origName
-             << "->getResult(0))";
+          os << " && llvm::any_of(" << origName
+             << "->getResults(), [&](Value res) { return "
+                "!gutils->isConstantValue(res); })";
         else
           os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
              << origName << "))";
@@ -1664,6 +1674,10 @@ void printDiffUse(
   }
 }
 
+static constexpr llvm::StringLiteral allResultsInactiveMLIR =
+    "(op->getNumResults() != 0 && llvm::all_of(op->getResults(), "
+    "[&](Value res) { return gutils->isConstantValue(res); }))";
+
 static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
                             const DagInit *tree, ActionType intrinsic,
                             StringRef origName, const ListInit *argOps) {
@@ -1729,7 +1743,7 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                                 MGradientUtilsReverse *gutils) "
         "const {\n";
   os << "          if (gutils->isConstantInstruction(op) || "
-        "gutils->isConstantValue(op->getResult(0))) return {};\n";
+     << allResultsInactiveMLIR << ") return {};\n";
   os << "          auto neededArgs = cachedArguments(op, gutils);\n";
   os << "          SmallVector<Value> toret;\n";
   os << "          OpBuilder builder(gutils->getNewFromOriginal(op));\n";
@@ -1772,10 +1786,55 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
     os << "        (void)dif;\n";
 }
 
+// Collects the op results whose adjoints an MLIR rule reads.
+static void collectDiffeRetResults(const Record *pattern, const Init *init,
+                                   llvm::SetVector<unsigned> &results) {
+  const Record *def = nullptr;
+  auto resultRoot = dyn_cast<DagInit>(init);
+  if (resultRoot)
+    def = cast<DefInit>(resultRoot->getOperator())->getDef();
+  else if (auto DefArg = dyn_cast<DefInit>(init))
+    def = DefArg->getDef();
+  if (def && def->isSubClassOf("DiffeRetIndex")) {
+    auto index = def->getValueAsInt("index");
+    if (index < 0)
+      PrintFatalError(pattern->getLoc(),
+                      "DiffeRetIndex takes a positive result index");
+    results.insert(index);
+    return;
+  }
+  if (resultRoot)
+    for (auto arg : resultRoot->getArgs())
+      collectDiffeRetResults(pattern, arg, results);
+}
+
 static void emitReverseCommon(raw_ostream &os, const Record *pattern,
                               const DagInit *tree, ActionType intrinsic,
                               StringRef origName, const ListInit *argOps) {
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
+
+  SmallVector<unsigned> mlirUsedResults;
+  bool readsAdjoint = false;
+
+  if (intrinsic == MLIRDerivatives) {
+    llvm::SetVector<unsigned> results;
+    for (auto arg : *argOps)
+      collectDiffeRetResults(pattern, arg, results);
+    mlirUsedResults.assign(results.begin(), results.end());
+    llvm::sort(mlirUsedResults);
+    readsAdjoint = !mlirUsedResults.empty();
+    if (readsAdjoint) {
+      os << llvm::formatv(
+          R"(        if ({0}->getNumResults() <= {1})
+          return {0}->emitError() << "derivative rule reads the adjoint of result {1} of op " << *{0} << "\n";
+        SmallVector<mlir::Value> difs({0}->getNumResults(), nullptr);
+)",
+          origName, mlirUsedResults.back());
+    } else {
+      PrintFatalError(pattern->getLoc(),
+                      "reverse rule reads no result adjoint");
+    }
+  }
 
   bool seen = false;
   for (auto argOpEn : enumerate(*argOps)) {
@@ -1818,11 +1877,31 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     auto resultTree = cast<DagInit>(argOpEn.value());
     if (hasDiffeRet(resultTree)) {
       if (intrinsic == MLIRDerivatives) {
-        os << "          dif = gutils->diffe(" << origName << ", builder);\n";
-        os << "          dif = "
-              "cast<AutoDiffTypeInterface>(dif.getType()).createConjOp(builder,"
-              " dif.getLoc(), dif);\n";
-        os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
+        // An inactive result contributes a zero adjoint.
+        os << "          for (unsigned i : {";
+
+        for (auto [i, resultIndex] : llvm::enumerate(mlirUsedResults)) {
+          if (i != 0)
+            os << ", ";
+          os << resultIndex << "u";
+        }
+
+        os << "}) {\n";
+        os << "            mlir::Value res = " << origName
+           << "->getResult(i);\n";
+        os << "            if (gutils->isConstantValue(res)) {\n";
+        os << "              difs[i] = cast<AutoDiffTypeInterface>("
+              "gutils->getShadowType(res.getType())).createNullValue(builder, "
+              "res.getLoc());\n";
+        os << "              continue;\n";
+        os << "            }\n";
+        os << "            difs[i] = gutils->diffe(res, builder);\n";
+        os << "            difs[i] = "
+              "cast<AutoDiffTypeInterface>(difs[i].getType()).createConjOp("
+              "builder, difs[i].getLoc(), difs[i]);\n";
+        os << "            gutils->zeroDiffe(res, builder);\n";
+        os << "          }\n";
+        os << "          dif = difs[0];\n";
       } else {
         os << "          dif = diffe(&" << origName << ", Builder2);\n";
         os << "          setDiffe(&" << origName
@@ -1839,7 +1918,25 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
 
   if (intrinsic == MLIRDerivatives) {
     os << "          if (gutils->isConstantInstruction(op) || "
-          "gutils->isConstantValue(op->getResult(0))) return success();\n";
+       << allResultsInactiveMLIR << ") return success();\n";
+    // Refuse an active result that the rule does not read, once a constant
+    // instruction has already returned above.
+    if (readsAdjoint) {
+      os << "          for (unsigned i = 0, e = " << origName
+         << "->getNumResults(); i < e; i++)\n";
+      os << "            if (!gutils->isConstantValue(" << origName
+         << "->getResult(i)) && !llvm::is_contained({";
+      for (auto [i, resultIndex] : llvm::enumerate(mlirUsedResults)) {
+        if (i != 0)
+          os << ", ";
+        os << resultIndex << "u";
+      }
+      os << "}, i))\n";
+      os << "              return " << origName
+         << "->emitError() << \"Unimplemented derivative for active result \" "
+            "<< i << \" in reverse mode for op \" << *"
+         << origName << " << \"\\n\";\n";
+    }
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";
