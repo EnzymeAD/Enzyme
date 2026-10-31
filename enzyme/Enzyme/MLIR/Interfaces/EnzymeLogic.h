@@ -3,6 +3,7 @@
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "llvm/Support/CommandLine.h"
 
 #include "../../TypeAnalysis/TypeTree.h"
 #include "../../Utils.h"
@@ -50,15 +51,26 @@ template <> struct ConcreteTypeTraits<mlir::Type> {
   }
 };
 
-extern llvm::cl::opt<unsigned> EnzymeMaxTypeDepth;
-extern llvm::cl::opt<int> EnzymeMaxTypeOffset;
-
 template <> struct TypeTreeTraits<mlir::Type> {
   using Origin = mlir::Operation *;
 
-  static unsigned maxDepth() { return EnzymeMaxTypeDepth; }
+  template <typename T>
+  static llvm::cl::opt<T> *registeredOption(llvm::StringRef Name) {
+    auto &Opts = llvm::cl::getRegisteredOptions();
+    auto It = Opts.find(Name);
+    return It == Opts.end() ? nullptr
+                            : static_cast<llvm::cl::opt<T> *>(It->second);
+  }
 
-  static int maxOffset() { return EnzymeMaxTypeOffset; }
+  static unsigned maxDepth() {
+    static auto *Opt = registeredOption<unsigned>("enzyme-max-type-depth");
+    return Opt ? *Opt : 6;
+  }
+
+  static int maxOffset() {
+    static auto *Opt = registeredOption<int>("enzyme-max-type-offset");
+    return Opt ? *Opt : 500;
+  }
 
   template <typename TreeT>
   static void depthLimitExceeded(const TreeT &Tree, Origin Orig,
