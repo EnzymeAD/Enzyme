@@ -1464,6 +1464,200 @@ Value *CacheUtility::computeIndexOfChunk(
   return idx;
 }
 
+/// Return an upper (Upper=true) or lower (Upper=false) bound of S over all
+/// iterations of the loops in Loops, which is invariant in those loops, or
+/// nullptr if none could be found. Loops pairs every loop with its backedge
+/// taken count, which may itself depend on the other loops in Loops.
+static const SCEV *
+boundOverLoops(ScalarEvolution &SE, const SCEV *S, bool Upper,
+               ArrayRef<std::pair<const Loop *, const SCEV *>> Loops,
+               unsigned Depth = 0) {
+  if (Depth > 8)
+    return nullptr;
+  if (llvm::all_of(Loops, [&](const std::pair<const Loop *, const SCEV *> &P) {
+        return SE.isLoopInvariant(S, P.first);
+      }))
+    return S;
+
+  // Bound every operand of N and fold the bounds with Combine. The binary
+  // ScalarEvolution builders are used since the n-ary ones changed their
+  // operand type across LLVM versions.
+  auto boundOps =
+      [&](const SCEVNAryExpr *N, bool U,
+          function_ref<const SCEV *(const SCEV *, const SCEV *)> Combine)
+      -> const SCEV * {
+    const SCEV *Res = nullptr;
+    for (const SCEV *Op : N->operands()) {
+      auto B = boundOverLoops(SE, Op, U, Loops, Depth + 1);
+      if (!B)
+        return nullptr;
+      Res = Res ? Combine(Res, B) : B;
+    }
+    return Res;
+  };
+  auto Add = [&](const SCEV *L, const SCEV *R) { return SE.getAddExpr(L, R); };
+  auto SMax = [&](const SCEV *L, const SCEV *R) {
+    return SE.getSMaxExpr(L, R);
+  };
+  auto SMin = [&](const SCEV *L, const SCEV *R) {
+    return SE.getSMinExpr(L, R);
+  };
+
+  if (auto AR = dyn_cast<SCEVAddRecExpr>(S)) {
+    if (!AR->isAffine())
+      return nullptr;
+    const SCEV *BTC = nullptr;
+    for (auto &P : Loops)
+      if (P.first == AR->getLoop())
+        BTC = P.second;
+    if (!BTC)
+      return nullptr;
+    const SCEV *Step = AR->getStepRecurrence(SE);
+    if (!llvm::all_of(Loops,
+                      [&](const std::pair<const Loop *, const SCEV *> &P) {
+                        return SE.isLoopInvariant(Step, P.first);
+                      }))
+      return nullptr;
+    bool Increasing;
+    if (SE.isKnownNonNegative(Step))
+      Increasing = true;
+    else if (SE.isKnownNonPositive(Step))
+      Increasing = false;
+    else
+      return nullptr;
+    auto Start = boundOverLoops(SE, AR->getStart(), Upper, Loops, Depth + 1);
+    if (!Start)
+      return nullptr;
+    // The bound is attained in the first iteration.
+    if (Increasing != Upper)
+      return Start;
+    // The bound is attained in the last iteration, which is only monotone in
+    // the iteration count if the recurrence does not wrap.
+    if (!AR->hasNoSignedWrap())
+      return nullptr;
+    auto Iters = boundOverLoops(SE, BTC, /*Upper*/ true, Loops, Depth + 1);
+    if (!Iters)
+      return nullptr;
+    if (SE.getTypeSizeInBits(Iters->getType()) >
+        SE.getTypeSizeInBits(Step->getType()))
+      return nullptr;
+    Iters = SE.getNoopOrZeroExtend(Iters, Step->getType());
+    return SE.getAddExpr(Start, SE.getMulExpr(Step, Iters));
+  }
+
+  if (auto A = dyn_cast<SCEVAddExpr>(S)) {
+    return boundOps(A, Upper, Add);
+  }
+
+  if (auto M = dyn_cast<SCEVMulExpr>(S)) {
+    if (M->getNumOperands() != 2)
+      return nullptr;
+    auto C = dyn_cast<SCEVConstant>(M->getOperand(0));
+    if (!C)
+      return nullptr;
+    auto B = boundOverLoops(SE, M->getOperand(1),
+                            C->getAPInt().isNegative() ? !Upper : Upper, Loops,
+                            Depth + 1);
+    if (!B)
+      return nullptr;
+    return SE.getMulExpr(C, B);
+  }
+
+  if (isa<SCEVSMaxExpr>(S) || isa<SCEVSMinExpr>(S) || isa<SCEVUMaxExpr>(S) ||
+      isa<SCEVUMinExpr>(S)) {
+    auto N = cast<SCEVNAryExpr>(S);
+    bool Signed = isa<SCEVSMaxExpr>(S) || isa<SCEVSMinExpr>(S);
+    // Unsigned min/max only order like the signed (affine) bounds computed
+    // here if all operands are non-negative.
+    if (!Signed && !llvm::all_of(N->operands(), [&](const SCEV *Op) {
+          return SE.isKnownNonNegative(Op);
+        }))
+      return nullptr;
+    if (isa<SCEVSMaxExpr>(S) || isa<SCEVUMaxExpr>(S))
+      return boundOps(N, Upper, SMax);
+    return boundOps(N, Upper, SMin);
+  }
+
+  if (auto C = dyn_cast<SCEVCastExpr>(S)) {
+    // A zero extension of a non-negative value is its sign extension.
+    if (isa<SCEVSignExtendExpr>(C) ||
+        (isa<SCEVZeroExtendExpr>(C) &&
+         SE.isKnownNonNegative(C->getOperand(0)))) {
+      auto B = boundOverLoops(SE, C->getOperand(0), Upper, Loops, Depth + 1);
+      if (!B)
+        return nullptr;
+      return SE.getSignExtendExpr(B, C->getType());
+    }
+    return nullptr;
+  }
+
+  // A select (that SCEV could not express as a min/max) is bounded by the
+  // bounds of both of its values.
+  if (auto U = dyn_cast<SCEVUnknown>(S))
+    if (auto SI = dyn_cast<SelectInst>(U->getValue())) {
+      auto T = boundOverLoops(SE, SE.getSCEV(SI->getTrueValue()), Upper, Loops,
+                              Depth + 1);
+      if (!T)
+        return nullptr;
+      auto F = boundOverLoops(SE, SE.getSCEV(SI->getFalseValue()), Upper, Loops,
+                              Depth + 1);
+      if (!F)
+        return nullptr;
+      return Upper ? SE.getSMaxExpr(T, F) : SE.getSMinExpr(T, F);
+    }
+
+  return nullptr;
+}
+
+Value *CacheUtility::computeMaxLimitOverChunk(Value *limit,
+                                              ArrayRef<LoopContext> contexts,
+                                              unsigned i,
+                                              BasicBlock *allocationPreheader) {
+  if (!SE.isSCEVable(limit->getType()))
+    return nullptr;
+
+  auto key = std::make_pair(limit, allocationPreheader);
+  auto found = MaxLimitCache.find(key);
+  if (found != MaxLimitCache.end())
+    return found->second;
+  WeakTrackingVH &result = MaxLimitCache[key];
+
+  // The loops enclosing loop i whose iterations share the allocation made at
+  // allocationPreheader, each with its backedge taken count.
+  SmallVector<std::pair<const Loop *, const SCEV *>, 2> loops;
+  for (unsigned j = i + 1; j < contexts.size(); ++j) {
+    if (!contexts[j].maxLimit)
+      return nullptr;
+    const Loop *OL = LI.getLoopFor(contexts[j].header);
+    assert(OL && OL->getHeader() == contexts[j].header);
+    loops.emplace_back(OL, SE.getSCEV(contexts[j].maxLimit));
+    if (contexts[j].preheader == allocationPreheader)
+      break;
+  }
+  if (loops.empty() ||
+      contexts[i + loops.size()].preheader != allocationPreheader)
+    return nullptr;
+
+  const SCEV *S = SE.getSCEV(limit);
+  S = boundOverLoops(SE, S, /*Upper*/ true, loops);
+  if (!S || isa<SCEVCouldNotCompute>(S))
+    return nullptr;
+  if (!SE.isAvailableAtLoopEntry(S, loops.back().first))
+    return nullptr;
+  // The bound is evaluated even if loop i never runs, in which case it may be
+  // negative.
+  S = SE.getSMaxExpr(S, SE.getZero(S->getType()));
+
+#if LLVM_VERSION_MAJOR >= 22
+  SCEVExpander Exp(SE, "enzyme");
+#else
+  SCEVExpander Exp(SE, newFunc->getParent()->getDataLayout(), "enzyme");
+#endif
+  result = Exp.expandCodeFor(S, limit->getType(),
+                             allocationPreheader->getTerminator());
+  return result;
+}
+
 /// Given a LimitContext ctx, representing a location inside a loop nest,
 /// break each of the loops up into chunks of loops where each chunk's number
 /// of iterations can be computed at the chunk preheader. Every dynamic loop
@@ -1574,8 +1768,13 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
 
       // We have a loop with static bounds, but whose limit is not available
       // to be computed at the current loop preheader (such as the innermost
-      // loop of triangular iteration domain) Handle this case like a dynamic
-      // loop and create a new chunk.
+      // loop of triangular iteration domain). If possible, allocate the
+      // maximum number of iterations of this loop over the enclosing loops.
+      if (limitMinus1 == nullptr)
+        limitMinus1 = computeMaxLimitOverChunk(limit, contexts, i,
+                                               allocationPreheaders[i]);
+
+      // Otherwise handle this case like a dynamic loop and create a new chunk.
       if (limitMinus1 == nullptr) {
         EmitWarning("NoOuterLimit", *cast<Instruction>(&*limit),
                     "Could not compute outermost loop limit by moving value ",
