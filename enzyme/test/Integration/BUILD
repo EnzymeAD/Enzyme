@@ -39,6 +39,7 @@ stdlib_tests = [
             "@llvm-project//llvm:FileCheck",
             "@llvm-project//llvm:count",
             "@llvm-project//llvm:lli",
+            "@llvm-project//llvm:llvm-link",
             "@llvm-project//llvm:not",
         ] + glob(["**/*.h"]),
     )
