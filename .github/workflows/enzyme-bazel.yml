@@ -44,6 +44,10 @@ jobs:
           - Release
     timeout-minutes: 500
 
+    # Download Bazel where setup-bazel's bazelisk cache looks for it.
+    env:
+      BAZELISK_HOME: /root/.cache/bazelisk
+
     container:
       image: ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674
 
@@ -56,6 +60,11 @@ jobs:
             apt-get install -y python3-pip
           fi
           python3 -m pip install lit || python3 -m pip install --break-system-packages lit
+      # Headers some Integration tests include.
+      - name: Install test dependencies
+        run: |
+          apt-get update
+          apt-get install -y libeigen3-dev libboost-dev
       - name: Checkout Enzyme repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
