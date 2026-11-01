@@ -22,7 +22,10 @@ inline void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
+  // complex values are passed by pointers not value in CBLAS ABI
+  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\" || "
+        "(blas.prefix == \"cblas_\" && (blas.floatType == \"c\" || "
+        "blas.floatType == \"z\"));\n";
   os << "(void)byRefFloat;\n";
   if (lv23)
     os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
