@@ -65,31 +65,31 @@ attributes #4 = { nounwind }
 ; CHECK: define internal double @fwddiffesquare(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"x.addr'ipa" = alloca double, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"x.addr'ipa", align 8
+; CHECK-NEXT:   store double 0.000000e+00, {{ptr|double\*}} %"x.addr'ipa", align 8
 ; CHECK-NEXT:   %x.addr = alloca double, align 8
 ; CHECK-NEXT:   %"y'ipa" = alloca double, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"y'ipa", align 8
+; CHECK-NEXT:   store double 0.000000e+00, {{ptr|double\*}} %"y'ipa", align 8
 ; CHECK-NEXT:   %y = alloca double, align 8
-; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipa", align 8
-; CHECK-NEXT:   store double %x, double* %x.addr, align 8
-; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* %y, double* %"y'ipa")
-; CHECK-NEXT:   %[[ipl:.+]] = load double, double* %"y'ipa", align 8
-; CHECK-NEXT:   %[[i0:.+]] = load double, double* %y
+; CHECK-NEXT:   store double %"x'", {{ptr|double\*}} %"x.addr'ipa", align 8
+; CHECK-NEXT:   store double %x, {{ptr|double\*}} %x.addr, align 8
+; CHECK-NEXT:   call void @fwddiffesquare_({{ptr|double\*}} %x.addr, {{ptr|double\*}} %"x.addr'ipa", {{ptr|double\*}} %y, {{ptr|double\*}} %"y'ipa")
+; CHECK-NEXT:   %[[ipl:.+]] = load double, {{ptr|double\*}} %"y'ipa", align 8
+; CHECK-NEXT:   %[[i0:.+]] = load double, {{ptr|double\*}} %y
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[ipl]], %[[i0]]
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[ipl]], %[[i0]]
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i1]], %[[i2]]
 ; CHECK-NEXT:   ret double %[[i3]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @fwddiffesquare_(double* nocapture readonly %src, double* nocapture %"src'", double* nocapture writeonly %dest, double* nocapture %"dest'")
+; CHECK: define internal void @fwddiffesquare_({{ptr|double\*}} {{readonly captures\(none\)|nocapture readonly}} %src, {{ptr|double\*}} {{captures\(none\)|nocapture}} %"src'", {{ptr|double\*}} {{writeonly captures\(none\)|nocapture writeonly}} %dest, {{ptr|double\*}} {{captures\(none\)|nocapture}} %"dest'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"src'", align 8
-; CHECK-NEXT:   %0 = load double, double* %src, align 8
+; CHECK-NEXT:   %[[i1:.+]] = load double, {{ptr|double\*}} %"src'", align 8
+; CHECK-NEXT:   %0 = load double, {{ptr|double\*}} %src, align 8
 ; CHECK-NEXT:   %mul = fmul double %0, %0
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
-; CHECK-NEXT:   store double %[[i4]], double* %"dest'", align 8
-; CHECK-NEXT:   store double %mul, double* %dest
+; CHECK-NEXT:   store double %[[i4]], {{ptr|double\*}} %"dest'", align 8
+; CHECK-NEXT:   store double %mul, {{ptr|double\*}} %dest
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
