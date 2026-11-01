@@ -44,10 +44,6 @@ jobs:
           - Release
     timeout-minutes: 500
 
-    # Download Bazel where setup-bazel's bazelisk cache looks for it.
-    env:
-      BAZELISK_HOME: /root/.cache/bazelisk
-
     container:
       image: ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674
 
@@ -80,10 +76,14 @@ jobs:
       - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
         name: Set up Bazel
         with:
-          bazelisk-cache: true
+          # Downloading Bazel takes under a second, faster than restoring a cache.
+          bazelisk-cache: false
           disk-cache: ${{ github.workflow }}-${{ matrix.os }}-${{ matrix.build }}-${{ matrix.llbuild }}
           repository-cache: true
           bazelisk-version: 1.x
+          # Keep the runner's PATH out of action keys so the disk cache hits across runs.
+          bazelrc: |
+            build --incompatible_strict_action_env
       - name: Build Enzyme
         run: |
           cd enzyme
