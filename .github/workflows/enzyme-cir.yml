@@ -26,7 +26,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [linux-x86-n2-32]
+        os: [linux-x86-n4-32]
 
     timeout-minutes: 500
 
@@ -80,7 +80,7 @@ jobs:
 
     - name: MLIR+CIR build
       if: steps.cache-mlir-cir.outputs.cache-hit != 'true'
-      working-directory: ${{ env.BASE_DIR }}/'llvm-project'
+      working-directory: ${{ env.BASE_DIR }}/llvm-project
       run: |
         mkdir mlir-cir-build && cd mlir-cir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir" -DLLVM_ENABLE_RUNTIMES=openmp -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
@@ -89,7 +89,7 @@ jobs:
         -DLLVM_OPTIMIZED_TABLEGEN=ON -DCLANG_ENABLE_CIR=ON && ninja || echo "already built"
 
     - name: Enzyme build
-      working-directory: ${{ env.BASE_DIR }}/'Enzyme'
+      working-directory: ${{ env.BASE_DIR }}/Enzyme
       run: |
           mkdir enzyme-build && cd enzyme-build
           cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-cir-build -DENZYME_MLIR=ON -DENZME_CIR=ON
