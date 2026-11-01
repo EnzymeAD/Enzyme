@@ -154,12 +154,10 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     case ArgType::uplo:
     case ArgType::trans:
-      os << "  updateAnalysis(call.getArgOperand(" << i
-         << " + offset), ttChar, &call);\n";
-      break;
     case ArgType::diag:
     case ArgType::side:
-      // TODO
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << " + offset), ttChar, &call);\n";
       break;
     }
   }
