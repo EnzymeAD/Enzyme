@@ -85,9 +85,11 @@ static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
 //       not write to active memory.
 //    3. Does not propagate active data nor pointers (via side effects)
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
-  if (!llvm::all_of(op->getResults(),
-                    [gutils](Value v) { return gutils->isConstantValue(v); }))
-    return false;
+  for (auto v : op->getResults()) {
+    if (!gutils->isConstantValue(v)) {
+      return false;
+    }
+  }
 
   if (!gutils->isConstantInstruction(op))
     return false;
