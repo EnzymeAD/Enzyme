@@ -20,9 +20,11 @@ def MemTransferOpInterface : OpInterface<"MemTransferOpInterface"> {
 
   let methods = [
     InterfaceMethod<
+      "Returns the pointer the memory is copied into.",
       "::mlir::Value", "getTransferDest", (ins)
     >,
     InterfaceMethod<
+      "Returns the pointer the memory is copied from.",
       "::mlir::Value", "getTransferSource", (ins)
     >
   ];
