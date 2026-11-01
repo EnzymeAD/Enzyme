@@ -21,10 +21,11 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @cbrt(double %x)
-; CHECK-DAG:    [[REG1:%[0-9]+]] = fmul fast double 3.000000e+00, %x
-; CHECK-DAG:    [[REG2:%[0-9]+]] = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %3 = fdiv fast double [[REG2]], [[REG1]]
-; CHECK-NEXT:   %4 = insertvalue { double } undef, double %3, 0
-; CHECK-NEXT:   ret { double } %4
+; CHECK-NEXT:   %0 = call double @cbrt(double %x)
+; CHECK-DAG:    [[REG1:%[0-9]+]] = fmul double 3.000000e+00, %x
+; CHECK-DAG:    [[REG2:%[0-9]+]] = fmul double %differeturn, %0
+; CHECK-NEXT:   %3 = fdiv double [[REG2]], [[REG1]]
+; CHECK-NEXT:   %4 = fadd double 0.000000e+00, %3
+; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
+; CHECK-NEXT:   ret { double } %5
 ; CHECK-NEXT: }

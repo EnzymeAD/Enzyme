@@ -42,6 +42,6 @@ declare i8* @__enzyme_virtualreverse(...)
 ; CHECK: define internal { double } @diffemygamma(double %x, double %differeturn, {{i8\*|ptr}} %tapeArg)
 
 ; CHECK: invertloop2:
-; CHECK:   %[[divadj:.+]] = fdiv fast double %"z.div'de.0", %{{.+}}
-; CHECK-NEXT:   %[[muladj:.+]] = fmul fast double %z.mul, %[[divadj]]
+; CHECK:   %[[divadj:.+]] = fdiv double %"z.div'de.0", %{{.+}}
+; CHECK-NEXT:   %[[muladj:.+]] = fmul double %z.mul, %[[divadj]]
 

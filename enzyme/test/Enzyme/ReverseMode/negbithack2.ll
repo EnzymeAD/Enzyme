@@ -21,7 +21,9 @@ declare <2 x double> @__enzyme_autodiff(<2 x double> (<2 x double>)*, ...)
 
 ; CHECK: define internal { <2 x double> } @diffetester(<2 x double> %x, <2 x double> %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = {{(fsub fast <2 x double> <double \-?0.000000e\+00, double \-?0.000000e\+00>,|fneg fast <2 x double>)}} %differeturn
-; CHECK-NEXT:   %1 = insertvalue { <2 x double> } undef, <2 x double> %0, 0
-; CHECK-NEXT:   ret { <2 x double> } %1
+; CHECK-NEXT:   %0 = fadd <2 x double> zeroinitializer, %differeturn
+; CHECK-NEXT:   %1 = {{(fsub <2 x double> <double \-?0.000000e\+00, double \-?0.000000e\+00>,|fneg <2 x double>)}} %0
+; CHECK-NEXT:   %2 = fadd <2 x double> zeroinitializer, %1
+; CHECK-NEXT:   %3 = insertvalue { <2 x double> } undef, <2 x double> %2, 0
+; CHECK-NEXT:   ret { <2 x double> } %3
 ; CHECK-NEXT: }

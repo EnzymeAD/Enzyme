@@ -19,6 +19,6 @@ entry:
 
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'", i32 %exp)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[v:.+]] = call fast double @scalbn(double %"x'", i32 %exp)
+; CHECK-NEXT:   %[[v:.+]] = call double @scalbn(double %"x'", i32 %exp)
 ; CHECK-NEXT:   ret double %[[v]]
 ; CHECK-NEXT: }

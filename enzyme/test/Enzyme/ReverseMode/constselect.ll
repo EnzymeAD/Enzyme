@@ -44,7 +44,8 @@ attributes #4 = { nounwind }
 ; CHECK: define internal { double } @diffefun2(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp.inv = fcmp oge double %x, 0.000000e+00
-; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %cmp.inv, double %differeturn, double 0.000000e+00
-; CHECK-NEXT:   %1 = insertvalue { double } undef, double %0, 0
-; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT:   %0 = fadd double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %cmp.inv, double %0, double 0.000000e+00
+; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
+; CHECK-NEXT:   ret { double } %2
 ; CHECK-NEXT: }

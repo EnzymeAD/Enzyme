@@ -50,7 +50,7 @@ entry:
 ; CHECK-NEXT:   ret { double } %0
 
 ; CHECK: invertb1:                                         ; preds = %b1
-; CHECK-NEXT:   %1 = fmul fast double %differeturn, %q
-; CHECK-NEXT:   %2 = fadd fast double 0.000000e+00, %1
+; CHECK-NEXT:   %1 = fmul double %differeturn, %q
+; CHECK-NEXT:   %2 = fadd double 0.000000e+00, %1
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK-NEXT: }

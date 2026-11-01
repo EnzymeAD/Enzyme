@@ -19,7 +19,8 @@ entry:
 
 ; CHECK: define internal { double } @diffetest(double %x, i32 %exp, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[v:.+]] = call fast double @scalbn(double %differeturn, i32 %exp)
-; CHECK-NEXT:   %[[r4:.+]] = insertvalue { double } undef, double %[[v]], 0
+; CHECK-NEXT:   %[[v:.+]] = call double @scalbn(double %differeturn, i32 %exp)
+; CHECK-NEXT:   %[[acc:.+]] = fadd double 0.000000e+00, %[[v]]
+; CHECK-NEXT:   %[[r4:.+]] = insertvalue { double } undef, double %[[acc]], 0
 ; CHECK-NEXT:   ret { double } %[[r4]]
 ; CHECK-NEXT: }

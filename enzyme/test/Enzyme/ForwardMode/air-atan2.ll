@@ -24,12 +24,13 @@ declare float @__enzyme_fwddiff(...)
 
 ; CHECK-LABEL: define internal float @fwddiffetester(
 ; CHECK-NEXT: entry:
-; CHECK-DAG:   %[[a3:.+]] = fmul fast float %"y'", %x
-; CHECK-DAG:    %[[a1:.+]] = fmul fast float %x, %x
-; CHECK-DAG:    %[[a0:.+]] = fmul fast float %y, %y
-; CHECK-DAG:   %[[a2:.+]] = fadd fast float %[[a1]], %[[a0]]
-; CHECK-DAG:   %[[a4:.+]] = fmul fast float %"x'", %y
-; CHECK-DAG:   %[[a5:.+]] = fsub fast float %[[a3]], %[[a4]]
-; CHECK-DAG:   %[[a6:.+]] = fdiv fast float %[[a5]], %[[a2]]
-; CHECK-NEXT:   ret float %[[a6]]
+; CHECK-DAG:   %[[a3:.+]] = fmul float %"y'", %x
+; CHECK-DAG:    %[[a1:.+]] = fmul float %x, %x
+; CHECK-DAG:    %[[a0:.+]] = fmul float %y, %y
+; CHECK-DAG:   %[[a2:.+]] = fadd float %[[a1]], %[[a0]]
+; CHECK-DAG:   %[[a7:.+]] = fdiv float %[[a3]], %[[a2]]
+; CHECK-DAG:   %[[a4:.+]] = fmul float %"x'", %y
+; CHECK-DAG:   %[[a8:.+]] = fdiv float %[[a4]], %[[a2]]
+; CHECK-DAG:   %[[a5:.+]] = fsub float %[[a7]], %[[a8]]
+; CHECK-NEXT:   ret float %[[a5]]
 ; CHECK-NEXT: }

@@ -21,6 +21,6 @@ declare float @__enzyme_fwddiff(float (float, <4 x float>)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}float @fwddiffetester(float %start_value, float %"start_value'", <4 x float> %input, <4 x float> %"input'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast float @llvm.vector.reduce.fadd.v4f32(float %"start_value'", <4 x float> %"input'")
+; CHECK-NEXT:   %0 = call float @llvm.vector.reduce.fadd.v4f32(float %"start_value'", <4 x float> %"input'")
 ; CHECK-NEXT:   ret float %0
 ; CHECK-NEXT: }
