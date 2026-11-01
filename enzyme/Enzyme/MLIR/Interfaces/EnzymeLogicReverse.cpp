@@ -94,10 +94,10 @@ static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
   if (!gutils->isConstantInstruction(op))
     return false;
 
-  if (!isa<ReverseAutoDiffOpInterface>(op) && !mayWriteActiveMemory(op, gutils))
-    return true;
+  if (isa<ReverseAutoDiffOpInterface>(op))
+    return oputils::isReadOnly(op);
 
-  return oputils::isReadOnly(op);
+  return !mayWriteActiveMemory(op, gutils);
 }
 
 /*
