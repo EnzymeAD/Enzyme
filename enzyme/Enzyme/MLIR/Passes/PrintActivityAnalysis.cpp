@@ -26,6 +26,10 @@
 
 #include "llvm/ADT/TypeSwitch.h"
 
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRTypes.h"
+#endif
+
 #include "llvm/Demangle/Demangle.h"
 
 using namespace mlir;
@@ -51,6 +55,13 @@ enzyme::Activity getDefaultActivity(Type argType) {
 
   if (isa<LLVM::LLVMPointerType, MemRefType>(argType))
     return enzyme::Activity::enzyme_dup;
+
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (isa<cir::FPTypeInterface, cir::ComplexType>(argType))
+    return enzyme::Activity::enzyme_active;
+  if (isa<cir::PointerType>(argType))
+    return enzyme::Activity::enzyme_dup;
+#endif
 
   return enzyme::Activity::enzyme_const;
 }

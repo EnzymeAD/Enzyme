@@ -54,64 +54,61 @@ module {
 // CHECK-SAME:      %[[ARG1:[a-zA-Z0-9$._-]+]]: !cir.double,
 // CHECK-SAME:      %[[ARG2:[a-zA-Z0-9$._-]+]]: !cir.double,
 // CHECK-SAME:      %[[ARG3:[a-zA-Z0-9$._-]+]]: !cir.double) -> !cir.double {
-// CHECK:           %[[CONST_0:.*]] = cir.const #cir.int<0> : !s32i
-// CHECK:           %[[CONST_1:.*]] = cir.const #cir.int<1> : !s32i
-// CHECK:           %[[CONST_2:.*]] = cir.const #cir.fp<2.000000e+00> : !cir.double
+// CHECK:           %[[CONST_0:.*]] = cir.const #cir.int<1> : !s32i
+// CHECK:           %[[CONST_1:.*]] = cir.const #cir.fp<2.000000e+00> : !cir.double
 // CHECK:           %[[ALLOCA_0:.*]] = cir.alloca "__cleanup_dest_slot" align(4) cleanup_dest_slot : !cir.ptr<!s32i>
-// CHECK:           %[[ALLOCA_1:.*]] = cir.alloca "__cleanup_dest_slot" align(4) cleanup_dest_slot : !cir.ptr<!s32i>
+// CHECK:           %[[ALLOCA_1:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_2:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_3:.*]] = cir.alloca "x" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_3:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_4:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_5:.*]] = cir.alloca "y" align(8) init : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_5:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_6:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_7:.*]] = cir.alloca "__retval" align(8) : !cir.ptr<!cir.double>
+// CHECK:           %[[ALLOCA_7:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
 // CHECK:           %[[ALLOCA_8:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           %[[ALLOCA_9:.*]] = cir.alloca "t" align(8) init : !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[ARG1]], %[[ALLOCA_2]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[ARG0]], %[[ALLOCA_3]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[ARG3]], %[[ALLOCA_4]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[ARG2]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[ARG1]], %[[ALLOCA_1]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[ARG0]], %[[ALLOCA_2]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[ARG3]], %[[ALLOCA_3]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[ARG2]], %[[ALLOCA_4]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.lifetime.start %[[ALLOCA_7]] : !cir.ptr<!cir.double>
 // CHECK:           cir.lifetime.start %[[ALLOCA_8]] : !cir.ptr<!cir.double>
-// CHECK:           cir.lifetime.start %[[ALLOCA_9]] : !cir.ptr<!cir.double>
-// CHECK:           %[[LOAD_0:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[LOAD_1:.*]] = cir.load align(8) %[[ALLOCA_3]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[LOAD_2:.*]] = cir.load align(8) %[[ALLOCA_4]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[LOAD_3:.*]] = cir.load align(8) %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_0:.*]] = cir.load align(8) %[[ALLOCA_1]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_1:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_2:.*]] = cir.load align(8) %[[ALLOCA_3]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_3:.*]] = cir.load align(8) %[[ALLOCA_4]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FMUL_0:.*]] = cir.fmul %[[LOAD_0]], %[[LOAD_3]] : !cir.double
 // CHECK:           %[[FMUL_1:.*]] = cir.fmul %[[LOAD_2]], %[[LOAD_1]] : !cir.double
 // CHECK:           %[[FADD_0:.*]] = cir.fadd %[[FMUL_0]], %[[FMUL_1]] : !cir.double
-// CHECK:           %[[FMULADD_0:.*]] = cir.fmuladd %[[LOAD_1]], %[[LOAD_3]], %[[CONST_2]] : !cir.double
-// CHECK:           cir.store align(8) %[[FADD_0]], %[[ALLOCA_8]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store align(8) %[[FMULADD_0]], %[[ALLOCA_9]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           %[[LOAD_4:.*]] = cir.load align(8) %[[ALLOCA_8]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[LOAD_5:.*]] = cir.load align(8) %[[ALLOCA_9]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[FMULADD_0:.*]] = cir.fmuladd %[[LOAD_1]], %[[LOAD_3]], %[[CONST_1]] : !cir.double
+// CHECK:           cir.store align(8) %[[FADD_0]], %[[ALLOCA_7]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store align(8) %[[FMULADD_0]], %[[ALLOCA_8]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           %[[LOAD_4:.*]] = cir.load align(8) %[[ALLOCA_7]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_5:.*]] = cir.load align(8) %[[ALLOCA_8]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[COS_0:.*]] = cir.cos %[[LOAD_5]] : !cir.double
 // CHECK:           %[[FMUL_2:.*]] = cir.fmul %[[LOAD_4]], %[[COS_0]] : !cir.double
 // CHECK:           %[[SIN_0:.*]] = cir.sin %[[LOAD_5]] : !cir.double
-// CHECK:           %[[LOAD_6:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
-// CHECK:           %[[LOAD_7:.*]] = cir.load align(8) %[[ALLOCA_3]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_6:.*]] = cir.load align(8) %[[ALLOCA_1]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_7:.*]] = cir.load align(8) %[[ALLOCA_2]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FMUL_3:.*]] = cir.fmul %[[FMUL_2]], %[[LOAD_7]] : !cir.double
 // CHECK:           %[[FMUL_4:.*]] = cir.fmul %[[LOAD_6]], %[[SIN_0]] : !cir.double
 // CHECK:           %[[FSUB_0:.*]] = cir.fsub %[[FMUL_3]], %[[FMUL_4]] : !cir.double
 // CHECK:           %[[FMUL_5:.*]] = cir.fmul %[[LOAD_7]], %[[LOAD_7]] : !cir.double
 // CHECK:           %[[FDIV_0:.*]] = cir.fdiv %[[FSUB_0]], %[[FMUL_5]] : !cir.double
 // CHECK:           %[[FDIV_1:.*]] = cir.fdiv %[[SIN_0]], %[[LOAD_7]] : !cir.double
-// CHECK:           cir.store %[[FDIV_0]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cir.store %[[FDIV_1]], %[[ALLOCA_7]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[FDIV_0]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
+// CHECK:           cir.store %[[FDIV_1]], %[[ALLOCA_6]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           cir.store %[[CONST_0]], %[[ALLOCA_0]] : !s32i, !cir.ptr<!s32i>
-// CHECK:           cir.store %[[CONST_1]], %[[ALLOCA_1]] : !s32i, !cir.ptr<!s32i>
+// CHECK:           cir.lifetime.end %[[ALLOCA_7]] : !cir.ptr<!cir.double>
 // CHECK:           cir.lifetime.end %[[ALLOCA_8]] : !cir.ptr<!cir.double>
-// CHECK:           cir.lifetime.end %[[ALLOCA_9]] : !cir.ptr<!cir.double>
-// CHECK:           %[[LOAD_8:.*]] = cir.load %[[ALLOCA_1]] : !cir.ptr<!s32i>, !s32i
+// CHECK:           %[[LOAD_8:.*]] = cir.load %[[ALLOCA_0]] : !cir.ptr<!s32i>, !s32i
 // CHECK:           cir.switch.flat %[[LOAD_8]] : !s32i, ^bb3 [
 // CHECK:             0: ^bb1,
 // CHECK:             1: ^bb2
 // CHECK:           ]
 // CHECK:         ^bb1:
-// CHECK:           %[[LOAD_9:.*]] = cir.load %[[ALLOCA_6]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_9:.*]] = cir.load %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           cir.return %[[LOAD_9]] : !cir.double
 // CHECK:         ^bb2:
-// CHECK:           %[[LOAD_10:.*]] = cir.load %[[ALLOCA_6]] : !cir.ptr<!cir.double>, !cir.double
+// CHECK:           %[[LOAD_10:.*]] = cir.load %[[ALLOCA_5]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           cir.return %[[LOAD_10]] : !cir.double
 // CHECK:         ^bb3:
 // CHECK:           cir.unreachable
