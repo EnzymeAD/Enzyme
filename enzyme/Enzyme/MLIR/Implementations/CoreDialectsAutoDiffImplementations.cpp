@@ -22,9 +22,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -93,6 +95,33 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     llvm::errs() << " unsupported type: " << type << "\n";
     llvm_unreachable("unsupported eltype");
   }
+}
+
+mlir::Attribute mlir::enzyme::getComplexConstantAttr(mlir::Type type,
+                                                     llvm::StringRef re,
+                                                     llvm::StringRef im) {
+  using namespace mlir;
+
+  if (auto T = dyn_cast<ComplexType>(type)) {
+    auto F = cast<FloatType>(T.getElementType());
+    APFloat revalue(F.getFloatSemantics(), re);
+    APFloat imvalue(F.getFloatSemantics(), im);
+    return mlir::ArrayAttr::get(
+        type.getContext(),
+        {FloatAttr::get(F, revalue), FloatAttr::get(F, imvalue)});
+  } else if (auto T = dyn_cast<TensorType>(type)) {
+    if (auto CET = dyn_cast<ComplexType>(T.getElementType())) {
+      auto ET = cast<FloatType>(CET.getElementType());
+      APFloat revalue(ET.getFloatSemantics(), re);
+      APFloat imvalue(ET.getFloatSemantics(), im);
+      mlir::Complex<APFloat> values[] = {
+          mlir::Complex<APFloat>(revalue, imvalue)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<mlir::Complex<APFloat>>(values));
+    }
+  }
+  llvm::errs() << " unsupported type: " << type << "\n";
+  llvm_unreachable("unsupported eltype");
 }
 
 bool mlir::enzyme::allResultsActive(Operation *op,

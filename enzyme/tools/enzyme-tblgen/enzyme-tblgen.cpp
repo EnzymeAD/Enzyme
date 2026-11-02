@@ -658,13 +658,26 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << ", ";
         auto typeCast =
             dyn_cast<StringInit>(Def->getValueInit("type"))->getValue();
-        if (typeCast != "")
-          os << "(" << typeCast << ")";
-        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType()";
+        bool isComplex = Def->isSubClassOf("ConstantCFP");
+        if (isComplex) {
+          os << "cast<"
+             << (typeCast == "" ? StringRef("mlir::ArrayAttr") : typeCast)
+             << ">(mlir::enzyme::getComplexConstantAttr(";
+        } else {
+          if (typeCast != "")
+            os << "(" << typeCast << ")";
+          os << "mlir::enzyme::getConstantAttr(";
+        }
+        os << ord << ".getType()";
         if (shadowType)
           os << ")";
         os << ", ";
-        os << "\"" << value->getValue() << "\"))";
+        os << "\"" << value->getValue() << "\"";
+        if (isComplex)
+          os << ", \""
+             << cast<StringInit>(Def->getValueInit("imag"))->getValue()
+             << "\")";
+        os << "))";
       } else {
         if (resultRoot->getNumArgs() != 1)
           PrintFatalError(pattern->getLoc(),
