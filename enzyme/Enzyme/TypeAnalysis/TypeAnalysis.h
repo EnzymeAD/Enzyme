@@ -446,4 +446,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer = true);
 FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                     llvm::Function *todiff);
+bool getTypeHintMemoryTree(const llvm::CallBase &call, llvm::StringRef Name,
+                           const llvm::DataLayout &DL, TypeTree &TT,
+                           int64_t *Extent = nullptr);
 #endif
