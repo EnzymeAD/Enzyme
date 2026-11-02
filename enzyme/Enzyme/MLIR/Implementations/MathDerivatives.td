@@ -249,16 +249,16 @@ def : MLIRDerivative<"math", "ErfcOp", (Op $x),
 def : MLIRDerivative<"math", "ClampFOp", (Op $x, $min, $max),
                     [
                       (Arith_Select (CmpF (Arith_OLT), $x, $min),
-                        (ConstantFP<"0", "arith", "ConstantOp"> (Shadow $x)),
+                        (ConstantFP<"0", "arith", "ConstantOp"> $x),
                         (Arith_Select (CmpF (Arith_OGE), $x, $max),
-                          (ConstantFP<"0", "arith", "ConstantOp"> (Shadow $x)), 
+                          (ConstantFP<"0", "arith", "ConstantOp"> $x), 
                           (DiffeRet))),
                       (Arith_Select (CmpF (Arith_OLT), $x, $min),
                         (DiffeRet),
-                        (ConstantFP<"0", "arith", "ConstantOp"> (Shadow $min))),
+                        (ConstantFP<"0", "arith", "ConstantOp"> $min)),
                       (Arith_Select (CmpF (Arith_OGE), $x, $max),
                         (DiffeRet),
-                        (ConstantFP<"0", "arith", "ConstantOp"> (Shadow $max)))
+                        (ConstantFP<"0", "arith", "ConstantOp"> $max))
                     ]
                   >;
 def : MathInactiveOp<"CeilOp">;
