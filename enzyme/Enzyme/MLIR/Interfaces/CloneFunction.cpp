@@ -253,10 +253,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
   cast<AutoDiffFunctionInterface>(*NewF).detachFromPrimalDefinition();
-  // Like the dialect-specific part above, drop what names the primal rather
-  // than the derivative: `enzyme_math` is the primal's forward call handler
-  // key, so a derivative that kept it would be treated as the primal when a
-  // call to it is differentiated again.
+  // A call to the derivative must not reach the primal's call handler.
   NewF->removeAttr("enzyme_math");
 
   cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);

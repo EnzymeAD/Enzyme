@@ -49,15 +49,11 @@
 
 using namespace mlir;
 
-// For tests of forward call handlers, which a frontend would otherwise
-// provide. The handler registered under `<key>` calls `@<key>_fwd_dup` instead
-// of differentiating the callee. That function takes every operand followed by
-// its shadow (zero for an inactive operand), and returns every result followed
-// by its shadow. With `<key>:fwd`, the call's clone stays to compute the primal
-// results, and `@<key>_fwd` takes the same arguments and returns only the
-// shadows. With `<key>:primal-first`, the primal results are first replaced by
-// those of `@<key>_primal`, which takes only the operands; then `@<key>_fwd` is
-// called.
+/// Test forward call handlers. `<key>` replaces the call with
+/// `@<key>_fwd_dup`, which takes each operand and its shadow and returns each
+/// result and its shadow. `<key>:fwd` keeps the call and gets the shadows from
+/// `@<key>_fwd`. `<key>:primal-first` replaces the call with `@<key>_primal`
+/// before calling `@<key>_fwd`.
 enum class TestForwardCallHandlerKind { FwdDup, Fwd, PrimalFirst };
 
 static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
@@ -146,11 +142,11 @@ static llvm::cl::list<std::string> TestForwardCallHandlers(
       else if (key.consume_back(":primal-first"))
         kind = TestForwardCallHandlerKind::PrimalFirst;
       std::string name = key.str();
-      enzyme::registerForwardCallHandler(
-          key, [name, kind](Operation *orig, OpBuilder &builder,
-                            enzyme::MGradientUtils *gutils) {
+      enzyme::forwardCallHandlers[key] =
+          [name, kind](Operation *orig, OpBuilder &builder,
+                       enzyme::MGradientUtils *gutils) {
             return testForwardCallHandler(orig, builder, gutils, name, kind);
-          });
+          };
     }));
 
 class MemRefInsider

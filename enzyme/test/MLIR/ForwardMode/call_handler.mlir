@@ -1,10 +1,7 @@
-// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:fwd --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme-test-forward-call-handler=shared --enzyme-test-forward-call-handler=act --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:fwd --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme-test-forward-call-handler=shared --enzyme %s | FileCheck %s
 
-// A call whose `enzyme_math` key, on the call or on the callee, has a
-// registered forward call handler is differentiated by that handler, not
-// through the callee's body. The test handlers call @<key>_fwd_dup (or
-// @<key>_fwd) instead. Their tangents are deliberately not the derivatives of
-// the bodies, so the output shows which one was used.
+// The rules' tangents differ from the callees' derivatives, so the output shows
+// whether the handler or the body was used.
 
 module {
   func.func private @cube(%x: f64) -> f64 attributes {enzyme_math = "cube"} {
@@ -20,8 +17,7 @@ module {
     return %x3, %dy : f64, f64
   }
 
-  // The handler runs for an active call; a call with only constant operands
-  // and results is left as it is.
+  // A call with only constant operands and results is left as it is.
   func.func @f(%x: f64, %c: f64) -> f64 {
     %y = func.call @cube(%x) : (f64) -> f64
     %k = func.call @cube(%c) : (f64) -> f64
@@ -112,23 +108,19 @@ module {
     return %r#0, %r#1 : f64, f64
   }
 
-  // Handlers are keyed on calls: differentiating @cube itself goes through
-  // its body.
+  // Differentiating @cube itself goes through its body.
   func.func @dcube(%x: f64, %dx: f64) -> f64 {
     %r = enzyme.fwddiff @cube(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
     return %r : f64
   }
 
-  // A derivative does not inherit its function's key. Differentiating @dcube,
-  // which calls the derivative of @cube, goes through that derivative's body,
-  // not through @cube's handler.
+  // The derivative of @cube does not inherit its key.
   func.func @ddcube(%x: f64, %ddx: f64, %dx: f64) -> f64 {
     %r = enzyme.fwddiff @dcube(%x, %ddx, %dx) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_const>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64, f64) -> f64
     return %r : f64
   }
 
-  // A handler may ask for the zero shadow of a constant result of a call that
-  // was differentiated (and so replaced) before it.
+  // Zero shadow of a constant result of an already replaced call.
   func.func private @split(%x: f64) -> (f64, i1) {
     %y = arith.mulf %x, %x : f64
     %zero = arith.constant 0.0 : f64
@@ -180,8 +172,7 @@ module {
     return %r : f64
   }
 
-  // Callees with the same `enzyme_math` key share its handler; the key on the
-  // call takes precedence over the callee's.
+  // Callees with the same key share its handler; the call's key wins.
   func.func private @alpha(%x: f64) -> f64 attributes {enzyme_math = "shared"} {
     %y = arith.mulf %x, %x : f64
     return %y : f64
@@ -212,9 +203,8 @@ module {
     return %r : f64
   }
 
-  // The callee's name is not a key: @shared has no `enzyme_math`, so it is
-  // differentiated through its body although a handler is registered under
-  // "shared". @delta's key has no handler, so the same holds for it.
+  // Without `enzyme_math`, the callee's name is the key. @delta's key has no
+  // handler, so its name is not used.
   func.func private @shared(%x: f64) -> f64 {
     %y = arith.mulf %x, %x : f64
     return %y : f64
@@ -232,54 +222,7 @@ module {
     %r = enzyme.fwddiff @e(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
     return %r : f64
   }
-
-  // In nested modules, one name can refer to different functions. Only the
-  // callee that carries the key uses its handler.
-  module @inner_a {
-    func.func private @act(%x: f64) -> f64 attributes {enzyme_math = "act"} {
-      %y = arith.mulf %x, %x : f64
-      return %y : f64
-    }
-    func.func private @act_fwd_dup(%x: f64, %dx: f64) -> (f64, f64) {
-      %y = arith.mulf %x, %x : f64
-      return %y, %dx : f64, f64
-    }
-    func.func @fa(%x: f64) -> f64 {
-      %y = func.call @act(%x) : (f64) -> f64
-      return %y : f64
-    }
-    func.func @dfa(%x: f64, %dx: f64) -> f64 {
-      %r = enzyme.fwddiff @fa(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
-      return %r : f64
-    }
-  }
-  module @inner_b {
-    func.func private @act(%x: f64) -> f64 {
-      %y = arith.mulf %x, %x : f64
-      return %y : f64
-    }
-    func.func @fb(%x: f64) -> f64 {
-      %y = func.call @act(%x) : (f64) -> f64
-      return %y : f64
-    }
-    func.func @dfb(%x: f64, %dx: f64) -> f64 {
-      %r = enzyme.fwddiff @fb(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
-      return %r : f64
-    }
-  }
 }
-
-// The derivatives in nested modules come first. Only @inner_a's @act carries
-// the key.
-// CHECK-LABEL: func.func private @fwddiffefa(
-// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
-// CHECK-NEXT:    %[[y:.+]]:2 = call @act_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    return %[[y]]#1 : f64
-
-// CHECK-LABEL: func.func private @fwddiffefb(
-// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
-// CHECK-NEXT:    %[[y:.+]]:2 = call @fwddiffeact(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    return %[[y]]#1 : f64
 
 // CHECK-LABEL: func.func private @fwddiffef(
 // CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64, %[[c:.+]]: f64) -> f64 {
@@ -325,8 +268,6 @@ module {
 // CHECK-NEXT:    %[[r:.+]]:2 = call @fwddiffefwddiffecube(%[[x]], %[[ddx]], %[[dx]]) : (f64, f64, f64) -> (f64, f64)
 // CHECK-NEXT:    return %[[r]]#1 : f64
 
-// The zero shadow of the constant result goes before the call that replaced
-// @split's.
 // CHECK-LABEL: func.func private @fwddiffes(
 // CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
 // CHECK-NEXT:    %[[false:.+]] = arith.constant false
@@ -352,6 +293,6 @@ module {
 
 // CHECK-LABEL: func.func private @fwddiffee(
 // CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
-// CHECK-NEXT:    %[[y:.+]]:2 = call @fwddiffeshared(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    %[[y:.+]]:2 = call @shared_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    %[[z:.+]]:2 = call @fwddiffedelta(%[[y]]#0, %[[y]]#1) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    return %[[z]]#1 : f64

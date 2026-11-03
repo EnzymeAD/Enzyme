@@ -20,7 +20,7 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <functional>
 
@@ -34,39 +34,22 @@ namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
 
-// A frontend's own forward-mode derivative for calls, the counterpart of
-// Enzyme's customFwdCallHandlers. Handlers are registered under a key. A
-// direct call of a flat symbol uses the handler for its key: the `enzyme_math`
-// string attribute on the call, or else the one on the callee. If there is no
-// such attribute, or no handler for the key, the call is differentiated as
-// usual. Unlike on Enzyme's LLVM side, the callee's name is not used as a key:
-// MLIR symbol tables can be nested, so one name can refer to different
-// functions. Callees that share a key share its handler, which can tell them
-// apart itself. A callee with a handler does not need a body.
-//
-// A handler is called like AutoDiffOpInterface::createForwardModeTangent. The
-// builder is positioned before the call's clone in the derivative. The handler
-// sets the shadow of every active result (setDiffe). It either keeps the clone
-// to compute the primal results or replaces them (replaceForwardCall).
+/// Forward-mode derivative of a call, called like
+/// AutoDiffOpInterface::createForwardModeTangent with `builder` before the
+/// call's clone. It must set the shadow of every active result.
 using ForwardCallHandler = std::function<LogicalResult(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
 
-// Replaces the results of the call `orig` in the derivative with `values` and
-// erases the call's clone. If `builder` points at the clone, as a handler's
-// builder does, it is moved to the position after the clone, so the handler
-// can continue to insert ops there.
+/// Forward-mode handlers for direct calls of a flat symbol, keyed by the
+/// `enzyme_math` attribute of the call or its callee, else by the callee's
+/// name, which nested modules can reuse. The callee needs no body. Not
+/// synchronized.
+extern llvm::StringMap<ForwardCallHandler> forwardCallHandlers;
+
+/// Replaces the results of `orig` with `values` and erases its clone, moving
+/// `builder` past the clone if it points there.
 void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
                         MGradientUtils *gutils);
-
-// Registers `handler` under `key`, replacing any previous one. The registry is
-// process-wide and not synchronized, as on Enzyme's LLVM side: register and
-// unregister handlers only while no pass that looks them up is running, e.g. at
-// startup.
-void registerForwardCallHandler(llvm::StringRef key,
-                                ForwardCallHandler handler);
-void unregisterForwardCallHandler(llvm::StringRef key);
-// The handler registered for `key`, or null.
-const ForwardCallHandler *lookupForwardCallHandler(llvm::StringRef key);
 
 namespace detail {
 // Non-template implementation of

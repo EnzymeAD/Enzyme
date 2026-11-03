@@ -141,10 +141,8 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     if (auto iface =
             dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()))) {
       OpBuilder::InsertionGuard guard(Builder2);
-      // Insert the zero right before the definition of the value that v was
-      // mapped to, so that it dominates every use of v. Do not use the clone of
-      // v's defining op for this: a derivative rule, such as the one for calls,
-      // may already have replaced and erased that clone.
+      // The clone of v's defining op may already be replaced and erased, so
+      // anchor at the value v maps to.
       Value nv = getNewFromOriginal(v);
       if (auto op = nv.getDefiningOp())
         Builder2.setInsertionPoint(op);
