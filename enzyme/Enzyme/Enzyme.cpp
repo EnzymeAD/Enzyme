@@ -2480,11 +2480,11 @@ public:
             moveBeforeInst(CI, B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
-              IRBuilder<> P(getFirstNonPHI(post));
-              auto merge = P.CreatePHI(CI->getType(), 2);
-              CI->replaceAllUsesWith(merge);
-              merge->addIncoming(cloned, sel1);
-              merge->addIncoming(CI, sel2);
+              IRBuilder<> PhiBuilder(post, getFirstNonPHIIt(post));
+              auto *MergePhi = PhiBuilder.CreatePHI(CI->getType(), 2);
+              CI->replaceAllUsesWith(MergePhi);
+              MergePhi->addIncoming(cloned, sel1);
+              MergePhi->addIncoming(CI, sel2);
             }
             goto retry;
           }

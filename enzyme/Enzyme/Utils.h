@@ -2687,6 +2687,41 @@ static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
 #endif
 }
 
+/// Return an iterator to the first non-PHI instruction in `Block` positioned
+/// before any `DbgRecord`s attached to that instruction, suitable for
+/// inserting `PHINode`s at the end of the PHI list.
+static inline llvm::BasicBlock::iterator
+getFirstNonPHIIt(llvm::BasicBlock *Block) {
+#if LLVM_VERSION_MAJOR >= 18
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return Block->getFirstNonPHIIt();
+#else
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return Block->getFirstNonPHI()->getIterator();
+#endif
+}
+
+/// Create a temporary `PHINode` at `Builder`'s current insertion point before
+/// any `DbgRecord`s attached to that instruction, restoring `Builder`'s
+/// head-inclusive bit afterwards.
+static inline llvm::PHINode *
+createPlaceholderPHI(llvm::IRBuilder<> &Builder, llvm::Type *PhiType,
+                     unsigned NumReservedValues, const llvm::Twine &Name = "") {
+#if LLVM_VERSION_MAJOR >= 18
+  auto InsertPoint = Builder.GetInsertPoint();
+  bool PreviousHeadBit = InsertPoint.getHeadBit();
+  InsertPoint.setHeadBit(true);
+  Builder.SetInsertPoint(Builder.GetInsertBlock(), InsertPoint);
+#endif
+  llvm::PHINode *Phi = Builder.CreatePHI(PhiType, NumReservedValues, Name);
+#if LLVM_VERSION_MAJOR >= 18
+  InsertPoint = Builder.GetInsertPoint();
+  InsertPoint.setHeadBit(PreviousHeadBit);
+  Builder.SetInsertPoint(Builder.GetInsertBlock(), InsertPoint);
+#endif
+  return Phi;
+}
+
 // LLVM 24 dropped the llvm::Instruction* overloads of insertBefore and
 // moveBefore in favour of ones taking a position in the instruction list.
 static inline void insertBeforeInst(llvm::Instruction *I,

@@ -431,7 +431,7 @@ void RecursivelyReplaceAddressSpace(
           continue;
         }
       } else {
-        IRBuilder<> B(getFirstNonPHIOrDbgOrLifetime(P->getParent()));
+        IRBuilder<> B(P->getParent(), getFirstNonPHIIt(P->getParent()));
         auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
         for (size_t i = 0; i < NumOperands; i++) {
           nP->addIncoming(replacedOperands[i], P->getIncomingBlock(i));
@@ -1246,7 +1246,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
             ToConvert.push_back(CI);
             IRBuilder<> B(CI->getNextNode());
             T = cast<IntegerType>(CI->getArgOperand(1)->getType());
-            reallocSizes[CI] = B.CreatePHI(T, 0);
+            reallocSizes[CI] = createPlaceholderPHI(B, T, 0);
           }
         }
       }
@@ -1314,7 +1314,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
     // else
     //   return { p, old }
-    B.SetInsertPoint(&*nextBlock->begin());
+    B.SetInsertPoint(nextBlock, nextBlock->begin());
 
     PHINode *retPtr = B.CreatePHI(CI->getType(), 2);
     retPtr->addIncoming(p, splitParent);
@@ -1323,6 +1323,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     std::string nam = CI->getName().str();
     CI->setName("");
     retPtr->setName(nam);
+    B.SetInsertPoint(getFirstNonPHI(nextBlock));
     Value *nextSize = B.CreateSelect(cmp, old, req);
     reallocSizes[CI]->replaceAllUsesWith(nextSize);
     cast<PHINode>(reallocSizes[CI])->eraseFromParent();
@@ -1821,9 +1822,12 @@ void SplitPHIs(llvm::Function &F) {
     SmallVector<Value *, 1> replacements;
     for (size_t i = 0, e = ST->getNumElements(); i < e; i++) {
       if (auto cur2 = dyn_cast<PHINode>(cur)) {
-        auto nPhi =
-            B.CreatePHI(ST->getElementType(i), cur2->getNumIncomingValues(),
-                        cur->getName() + ".extract." + std::to_string(i));
+        IRBuilder<> PhiBuilder(cur2->getParent(),
+                               getFirstNonPHIIt(cur2->getParent()));
+        PhiBuilder.SetCurrentDebugLocation(cur2->getDebugLoc());
+        auto nPhi = PhiBuilder.CreatePHI(
+            ST->getElementType(i), cur2->getNumIncomingValues(),
+            cur->getName() + ".extract." + std::to_string(i));
         for (auto &&[blk, val] :
              llvm::zip(cur2->blocks(), cur2->incoming_values())) {
           IRBuilder B2(blk->getTerminator());
@@ -7921,6 +7925,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
   if (auto PN = dyn_cast<PHINode>(cur)) {
     B.SetInsertPoint(getFirstNonPHI(PN->getParent()));
+    IRBuilder<> PhiBuilder(PN->getParent(), getFirstNonPHIIt(PN->getParent()));
+    PhiBuilder.SetCurrentDebugLocation(B.getCurrentDebugLocation());
+    PhiBuilder.setFastMathFlags(B.getFastMathFlags());
     if (SE.isSCEVable(PN->getType())) {
       auto S = SE.getSCEV(PN);
 
@@ -7946,7 +7953,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           push(U);
         }
         auto point = getFirstNonPHI(PN->getParent());
-        auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
+        auto tmp =
+            cast<PHINode>(pushcse(PhiBuilder.CreatePHI(cur->getType(), 1)));
         cur->replaceAllUsesWith(tmp);
         cur->eraseFromParent();
 
@@ -8069,8 +8077,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         legal = false;
       }
       if (legal) {
-        auto PN2 = cast<PHINode>(
-            pushcse(B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues())));
+        auto PN2 = cast<PHINode>(pushcse(
+            PhiBuilder.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues())));
         PN2->takeName(PN);
         for (auto val : llvm::enumerate(negOps))
           PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
@@ -8336,12 +8344,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
 
         if (legal && changed) {
-          auto lhsPN = cast<PHINode>(pushcse(
-              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues())));
+          auto lhsPN = cast<PHINode>(pushcse(PhiBuilder.CreatePHI(
+              lhsOps[0]->getType(), PN->getNumIncomingValues())));
           PHINode *rhsPN = nullptr;
           if (numOps == 2)
-            rhsPN = cast<PHINode>(pushcse(
-                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues())));
+            rhsPN = cast<PHINode>(pushcse(PhiBuilder.CreatePHI(
+                rhsOps[0]->getType(), PN->getNumIncomingValues())));
 
           for (auto val : llvm::enumerate(lhsOps))
             lhsPN->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
@@ -9971,8 +9979,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     if (forSparsification.count(L) == 0) {
       {
         IRBuilder<> PB(preheader->getTerminator());
-        auto loopIdxPhi = PB.CreatePHI(idx->getType(), 0, "loop.idx");
-        auto phIdxPhi = PB.CreatePHI(idx->getType(), 0, "ph.idx");
+        auto loopIdxPhi =
+            createPlaceholderPHI(PB, idx->getType(), 0, "loop.idx");
+        auto phIdxPhi = createPlaceholderPHI(PB, idx->getType(), 0, "ph.idx");
         forSparsification[L].first = std::make_pair(phIdxPhi, loopIdxPhi);
       }
 

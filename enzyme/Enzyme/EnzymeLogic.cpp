@@ -3621,8 +3621,9 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                   gutils->getOriginalFromNew(loopContext.preheader));
               BasicBlock *pred = loopContext.preheader;
               if (replacePHIs.find(pred) == replacePHIs.end()) {
-                replacePHIs[pred] = Builder.CreatePHI(
-                    Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
+                replacePHIs[pred] = createPlaceholderPHI(
+                    Builder, Type::getInt1Ty(pred->getContext()), 1,
+                    "replacePHI");
                 if (!setphi) {
                   phibuilder.SetInsertPoint(replacePHIs[pred]);
                   setphi = true;
@@ -3677,8 +3678,9 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                 gutils->getOriginalFromNew(loopContext.preheader));
             BasicBlock *pred = loopContext.preheader;
             if (replacePHIs.find(pred) == replacePHIs.end()) {
-              replacePHIs[pred] = Builder.CreatePHI(
-                  Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
+              replacePHIs[pred] = createPlaceholderPHI(
+                  Builder, Type::getInt1Ty(pred->getContext()), 1,
+                  "replacePHI");
               if (!setphi) {
                 phibuilder.SetInsertPoint(replacePHIs[pred]);
                 setphi = true;
@@ -3740,8 +3742,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       } else {
         BasicBlock *pred = cast<BasicBlock>(gutils->getNewFromOriginal(opred));
         if (replacePHIs.find(pred) == replacePHIs.end()) {
-          replacePHIs[pred] = Builder.CreatePHI(
-              Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
+          replacePHIs[pred] = createPlaceholderPHI(
+              Builder, Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
           if (!setphi) {
             phibuilder.SetInsertPoint(replacePHIs[pred]);
             setphi = true;
