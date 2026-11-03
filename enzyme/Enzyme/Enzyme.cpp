@@ -929,6 +929,25 @@ public:
                  : ((interleaved == -1) ? whatType(PTy, mode) : last_ty);
       last_ty = ty;
 
+      // enzyme_out asks for the derivative of a value to be returned, which
+      // only makes sense for an argument passed by value. A pointer (or C++
+      // reference) parameter holds memory that must be shadowed with
+      // enzyme_dup instead; a byval pointer is a struct passed by value and
+      // is fine. Reject the misuse here, rather than failing later with an
+      // unrelated error from inside the derivative.
+      if (ty == DIFFE_TYPE::OUT_DIFF && PTy->isPointerTy() &&
+          !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+        StringRef fnName = fn->getName();
+        EmitFailure(
+            "IllegalOutDiffPointer", CI->getDebugLoc(), CI,
+            "enzyme_out applied to argument ", truei, " of ", fnName,
+            ", which is a pointer (or reference) rather than a value passed by "
+            "value. Pass the pointer with enzyme_dup followed by a shadow "
+            "pointer that receives the derivative, or with enzyme_const if "
+            "it is inactive");
+        return {};
+      }
+
       constants.push_back(ty);
 
       assert(truei < FT->getNumParams());
