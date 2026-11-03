@@ -2574,9 +2574,11 @@ reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
 
   static std::optional<SmallVector<Value>>
   tryCacheValues(OpName forOp, Operation *op, MGradientUtilsReverse *gutils) {
+    // Online checkpointing is for loops with unknown trip count (scf.while).
+    // For scf.for the bounds are materializable, so binomial/periodic is
+    // strictly better.  needsOnlineCheckpointing is intentionally absent here.
     if (!FinalClass::needsBinomialCheckpointing(forOp) &&
-        !FinalClass::needsCheckpointing(forOp) &&
-        !FinalClass::needsOnlineCheckpointing(forOp))
+        !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
     // Both schemes build their bookkeeping scaffold (budget/recompute loops,
@@ -2620,27 +2622,6 @@ reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
       return cacheBinomial(forOp, *budget, gutils);
     }
 
-    if (FinalClass::needsOnlineCheckpointing(forOp)) {
-      auto budget = FinalClass::getCheckpointBudget(forOp);
-      if (!budget || *budget <= 1) {
-        Operation *newOp = gutils->getNewFromOriginal(op);
-        OpBuilder cacheBuilder(newOp);
-        Location loc = forOp.getLoc();
-        SmallVector<Value> dummyCaches;
-        dummyCaches.push_back(gutils->initAndPushCache(
-            FinalClass::materializeLowerBound(cacheBuilder, loc, forOp, gutils),
-            cacheBuilder));
-        dummyCaches.push_back(gutils->initAndPushCache(
-            FinalClass::materializeUpperBound(cacheBuilder, loc, forOp, gutils),
-            cacheBuilder));
-        dummyCaches.push_back(gutils->initAndPushCache(
-            FinalClass::materializeStep(cacheBuilder, loc, forOp, gutils),
-            cacheBuilder));
-        return dummyCaches;
-      }
-      return cacheOnline(forOp, *budget, gutils);
-    }
-
     if (FinalClass::needsCheckpointing(forOp))
       return cachePeriodic(forOp, op, gutils);
 
@@ -2652,8 +2633,7 @@ reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
       MGradientUtilsReverse *gutils, SmallVector<Value> caches,
       ArrayRef<bool> operandsActive, ArrayRef<Value> incomingGradients) {
     if (!FinalClass::needsBinomialCheckpointing(forOp) &&
-        !FinalClass::needsCheckpointing(forOp) &&
-        !FinalClass::needsOnlineCheckpointing(forOp))
+        !FinalClass::needsCheckpointing(forOp))
       return std::nullopt;
 
     // Mirrors the guard in tryCacheValues; already reported there, but
@@ -2673,18 +2653,6 @@ reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
       }
       return reverseBinomial(forOp, *budget, builder, gutils, caches,
                              operandsActive, incomingGradients);
-    }
-
-    if (FinalClass::needsOnlineCheckpointing(forOp)) {
-      auto budget = FinalClass::getCheckpointBudget(forOp);
-      if (!budget || *budget <= 1) {
-        op->emitError() << "online checkpointing requires a "
-                        << FinalClass::checkpointPeriodAttrName()
-                        << " attribute greater than 1";
-        return failure();
-      }
-      return reverseOnline(forOp, *budget, builder, gutils, caches,
-                           operandsActive, incomingGradients);
     }
 
     if (FinalClass::needsCheckpointing(forOp))

@@ -13,7 +13,6 @@
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Implementations/LoopCheckpointing.h"
-#include "Implementations/WhileCheckpointing.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
@@ -1236,10 +1235,14 @@ struct WhileOpInterfaceReverse
 
   // Attribute name helpers (replicated from LoopCheckpointing defaults).
   static bool needsOnlineCheckpointing(scf::WhileOp op) {
-    return mlir::enzyme::whileNeedsOnlineCheckpointing(op);
+    auto enabled = op->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing");
+    return enabled && enabled.getValue() &&
+           op->hasAttr("enzyme.online_checkpointing");
   }
   static std::optional<int64_t> getCheckpointBudget(scf::WhileOp op) {
-    return mlir::enzyme::whileGetCheckpointBudget(op);
+    if (auto a = op->getAttrOfType<IntegerAttr>("enzyme.checkpoint_period"))
+      return a.getInt();
+    return std::nullopt;
   }
   static void preserveAttributesButCheckpointing(Operation *newOp,
                                                  Operation *oldOp) {
