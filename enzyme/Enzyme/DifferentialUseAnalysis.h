@@ -134,6 +134,9 @@ inline bool is_value_needed_in_reverse(
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
     if (funcName == "julia.get_pgcstack" || funcName == "julia.ptls_states")
       return seen[idx] = true;
+    if (VT == QueryType::Primal &&
+        (funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait"))
+      return seen[idx] = true;
   }
 
   bool inst_cv = gutils->isConstantValue(const_cast<Value *>(inst));

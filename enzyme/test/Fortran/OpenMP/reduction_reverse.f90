@@ -1,4 +1,7 @@
 ! REQUIRES: fortran
+! Intel ifx lowers OpenMP parallel regions via Intel-specific runtime entry
+! points (e.g. __kmpc_ok_to_fork / __kmpc_serialized_parallel) rather than
+! LLVM's OpenMPIRBuilder __kmpc_fork_call convention handled by Enzyme.
 ! UNSUPPORTED: ifx
 ! RUN: %fc -flto -O1 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O1 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O3 -fopenmp -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O3 -fopenmp %t.ll -o %t1 && %t1 | FileCheck %s

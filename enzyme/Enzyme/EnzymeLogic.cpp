@@ -450,6 +450,52 @@ struct CacheAnalysis {
     // Check if pointer operand is overwritten after this function returns.
     bool can_modref = is_origin_overwritten(obj);
 
+    // An OpenMP private reduction variable is overwritten in-place by
+    // __kmpc_reduce{_nowait} in the primal pass, which is not re-executed in
+    // the reverse pass's forward skeleton; loads of it after the reduction
+    // (such as in case 1 for max/min) must therefore be cached if needed.
+    if (!can_modref && checkFunction && isa<AllocaInst>(obj) &&
+        mode != DerivativeMode::ReverseModeCombined &&
+        mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError) {
+      for (User *U : obj->users()) {
+        auto *SI = dyn_cast<StoreInst>(U);
+        if (!SI) {
+          if (auto *CE = dyn_cast<CastInst>(U)) {
+            for (User *CU : CE->users()) {
+              if (auto *CSI = dyn_cast<StoreInst>(CU)) {
+                SI = CSI;
+                break;
+              }
+            }
+          }
+        }
+        if (!SI || getBaseObject(SI->getValueOperand()) != obj)
+          continue;
+        Value *redArr = getBaseObject(SI->getPointerOperand());
+        for (BasicBlock &BB : *oldFunc) {
+          for (Instruction &I : BB) {
+            if (auto *CI = dyn_cast<CallInst>(&I)) {
+              if (Function *F = CI->getCalledFunction()) {
+                if ((F->getName() == "__kmpc_reduce" ||
+                     F->getName() == "__kmpc_reduce_nowait") &&
+                    CI->arg_size() == 7 &&
+                    (getBaseObject(CI->getArgOperand(4)) == redArr ||
+                     getBaseObject(CI->getArgOperand(4)) == obj)) {
+                  can_modref = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (can_modref)
+            break;
+        }
+        if (can_modref)
+          break;
+      }
+    }
+
     if (!can_modref && checkFunction) {
       allFollowersOf(&li, [&](Instruction *inst2) {
         if (!inst2->mayWriteToMemory())
@@ -463,7 +509,11 @@ struct CacheAnalysis {
         }
         if (auto CI = dyn_cast<CallInst>(inst2)) {
           if (auto F = CI->getCalledFunction()) {
-            if (F->getName() == "__kmpc_for_static_fini") {
+            if (F->getName() == "__kmpc_for_static_fini" ||
+                F->getName() == "__kmpc_end_reduce" ||
+                F->getName() == "__kmpc_end_reduce_nowait" ||
+                F->getName() == "__kmpc_critical" ||
+                F->getName() == "__kmpc_end_critical") {
               return false;
             }
           }
@@ -615,7 +665,12 @@ struct CacheAnalysis {
     if (funcName == "__kmpc_for_static_init_4" ||
         funcName == "__kmpc_for_static_init_4u" ||
         funcName == "__kmpc_for_static_init_8" ||
-        funcName == "__kmpc_for_static_init_8u") {
+        funcName == "__kmpc_for_static_init_8u" ||
+        funcName == "__kmpc_for_static_fini" || funcName == "__kmpc_barrier" ||
+        funcName == "__kmpc_critical" || funcName == "__kmpc_end_critical" ||
+        funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait" ||
+        funcName == "__kmpc_end_reduce" ||
+        funcName == "__kmpc_end_reduce_nowait") {
       return {};
     }
 
@@ -674,7 +729,11 @@ struct CacheAnalysis {
           return false;
         }
 
-        if (sfuncName == "__kmpc_for_static_fini") {
+        if (sfuncName == "__kmpc_for_static_fini" ||
+            sfuncName == "__kmpc_end_reduce" ||
+            sfuncName == "__kmpc_end_reduce_nowait" ||
+            sfuncName == "__kmpc_critical" ||
+            sfuncName == "__kmpc_end_critical") {
           return false;
         }
 

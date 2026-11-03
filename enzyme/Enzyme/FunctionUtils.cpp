@@ -1389,18 +1389,21 @@ Function *CreateMPIWrapper(Function *F) {
   return W;
 }
 
-/// Lower OpenMP reductions to critical sections. The runtime may combine
-/// the private copies of other threads itself, by calling the reduction
-/// function a tree reduction passes to __kmpc_reduce, which leaves that
-/// combination invisible to differentiation. As a critical section, every
-/// thread combines its own private copy into the shared variable in code
-/// Enzyme sees, and whose critical section it mirrors in the reverse pass.
-static void ReplaceOMPReductions(Function &NewF) {
+/// Canonicalize OpenMP reductions before differentiation:
+/// 1. Clear KMP_IDENT_ATOMIC_REDUCE (0x10) on the ident_t flags passed to
+///    __kmpc_reduce{_nowait} and __kmpc_end_reduce{_nowait}, and prune case 2
+///    (the runtime's atomic fallback path) so __kmpc_reduce{_nowait} only
+///    uses the O(log P) tree reduction or single-thread/critical path
+///    (returning 0 or 1).
+/// 2. Convert blocking __kmpc_reduce + __kmpc_end_reduce pairs into
+///    __kmpc_reduce_nowait + __kmpc_end_reduce_nowait followed by an explicit
+///    __kmpc_barrier at the reduction join block.
+static bool CanonicalizeOMPReductions(Function &NewF) {
   SmallVector<CallInst *, 2> Reduces, EndReduces;
-  for (auto &BB : NewF)
-    for (auto &I : BB)
-      if (auto CI = dyn_cast<CallInst>(&I))
-        if (auto Fn = CI->getCalledFunction()) {
+  for (auto &BB : NewF) {
+    for (auto &I : BB) {
+      if (auto *CI = dyn_cast<CallInst>(&I)) {
+        if (auto *Fn = CI->getCalledFunction()) {
           auto name = Fn->getName();
           if ((name == "__kmpc_reduce" || name == "__kmpc_reduce_nowait") &&
               CI->arg_size() == 7)
@@ -1410,50 +1413,277 @@ static void ReplaceOMPReductions(Function &NewF) {
                    CI->arg_size() == 3)
             EndReduces.push_back(CI);
         }
-  if (Reduces.empty() && EndReduces.empty())
-    return;
-
-  auto &M = *NewF.getParent();
-  auto VoidTy = Type::getVoidTy(NewF.getContext());
-
-  for (auto CI : Reduces) {
-    IRBuilder<> B(CI);
-    // __kmpc_reduce(loc, gtid, num_vars, size, data, reduce_func, lck)
-    Value *Args[] = {CI->getArgOperand(0), CI->getArgOperand(1),
-                     CI->getArgOperand(6)};
-    auto Critical = M.getOrInsertFunction(
-        "__kmpc_critical",
-        FunctionType::get(
-            VoidTy,
-            {Args[0]->getType(), Args[1]->getType(), Args[2]->getType()},
-            false));
-    B.CreateCall(Critical, Args)->setDebugLoc(CI->getDebugLoc());
-    // 1: this thread combines its private copy into the shared variable.
-    CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 1));
-    CI->eraseFromParent();
-  }
-  for (auto CI : EndReduces) {
-    IRBuilder<> B(CI);
-    // __kmpc_end_reduce(loc, gtid, lck)
-    Value *Args[] = {CI->getArgOperand(0), CI->getArgOperand(1),
-                     CI->getArgOperand(2)};
-    auto EndCritical = M.getOrInsertFunction(
-        "__kmpc_end_critical",
-        FunctionType::get(
-            VoidTy,
-            {Args[0]->getType(), Args[1]->getType(), Args[2]->getType()},
-            false));
-    B.CreateCall(EndCritical, Args)->setDebugLoc(CI->getDebugLoc());
-    // The blocking variant ends with a barrier.
-    if (CI->getCalledFunction()->getName() == "__kmpc_end_reduce") {
-      auto Barrier = M.getOrInsertFunction(
-          "__kmpc_barrier",
-          FunctionType::get(VoidTy, {Args[0]->getType(), Args[1]->getType()},
-                            false));
-      B.CreateCall(Barrier, {Args[0], Args[1]})->setDebugLoc(CI->getDebugLoc());
+      }
     }
-    CI->eraseFromParent();
   }
+  if (Reduces.empty() && EndReduces.empty())
+    return false;
+
+  bool changed = false;
+  auto &M = *NewF.getParent();
+  auto &Ctx = NewF.getContext();
+  auto *VoidTy = Type::getVoidTy(Ctx);
+
+  DenseMap<GlobalVariable *, GlobalVariable *> NoAtomicLocs;
+  auto stripAtomicFlag = [&](Value *Loc) -> Value * {
+    auto *GV = dyn_cast<GlobalVariable>(Loc->stripPointerCasts());
+    if (!GV || !GV->hasInitializer())
+      return Loc;
+    auto *CS = dyn_cast<ConstantStruct>(GV->getInitializer());
+    if (!CS || CS->getNumOperands() < 2)
+      return Loc;
+    auto *FlagsCI = dyn_cast<ConstantInt>(CS->getOperand(1));
+    if (!FlagsCI)
+      return Loc;
+    uint64_t Flags = FlagsCI->getZExtValue();
+    if ((Flags & 0x10) == 0)
+      return Loc;
+    GlobalVariable *&NewGV = NoAtomicLocs[GV];
+    if (!NewGV) {
+      SmallVector<Constant *, 5> Ops;
+      for (unsigned i = 0; i < CS->getNumOperands(); ++i)
+        Ops.push_back(CS->getOperand(i));
+      Ops[1] = ConstantInt::get(FlagsCI->getType(), Flags & ~uint64_t(0x10));
+      Constant *NewInit = ConstantStruct::get(CS->getType(), Ops);
+      NewGV = new GlobalVariable(M, GV->getValueType(), /*isConstant=*/true,
+                                 GlobalValue::PrivateLinkage, NewInit,
+                                 GV->getName() + ".noatomic");
+      NewGV->setUnnamedAddr(GV->getUnnamedAddr());
+      if (GV->getAlign())
+        NewGV->setAlignment(*GV->getAlign());
+    }
+    if (NewGV->getType() == Loc->getType())
+      return NewGV;
+    return ConstantExpr::getPointerCast(NewGV, Loc->getType());
+  };
+
+  for (CallInst *CI : Reduces) {
+    Value *NewLoc = stripAtomicFlag(CI->getArgOperand(0));
+    if (NewLoc != CI->getArgOperand(0)) {
+      CI->setArgOperand(0, NewLoc);
+      changed = true;
+    }
+  }
+  for (CallInst *CI : EndReduces) {
+    Value *NewLoc = stripAtomicFlag(CI->getArgOperand(0));
+    if (NewLoc != CI->getArgOperand(0)) {
+      CI->setArgOperand(0, NewLoc);
+      changed = true;
+    }
+  }
+
+  bool prunedUnreachable = false;
+  for (CallInst *CI : Reduces) {
+    auto *IntTy = dyn_cast<IntegerType>(CI->getType());
+    if (!IntTy)
+      continue;
+    SmallVector<User *, 4> Users(CI->users());
+    for (User *U : Users) {
+      if (auto *SI = dyn_cast<SwitchInst>(U)) {
+        auto CaseIt = SI->findCaseValue(ConstantInt::get(IntTy, 2));
+        if (CaseIt != SI->case_default()) {
+          BasicBlock *CaseSucc = CaseIt->getCaseSuccessor();
+          CaseSucc->removePredecessor(SI->getParent());
+          SI->removeCase(CaseIt);
+          changed = true;
+          prunedUnreachable = true;
+        }
+      } else if (auto *IC = dyn_cast<ICmpInst>(U)) {
+        if (IC->getOperand(0) == CI) {
+          if (auto *C = dyn_cast<ConstantInt>(IC->getOperand(1))) {
+            if (C->equalsInt(2) && (IC->getPredicate() == ICmpInst::ICMP_EQ ||
+                                    IC->getPredicate() == ICmpInst::ICMP_NE)) {
+              SmallVector<BasicBlock *, 2> TermBBs;
+              for (User *ICU : IC->users())
+                if (auto *BI = dyn_cast<BranchInst>(ICU))
+                  TermBBs.push_back(BI->getParent());
+              Value *Repl = IC->getPredicate() == ICmpInst::ICMP_EQ
+                                ? ConstantInt::getFalse(IC->getType())
+                                : ConstantInt::getTrue(IC->getType());
+              IC->replaceAllUsesWith(Repl);
+              IC->eraseFromParent();
+              for (BasicBlock *TBB : TermBBs)
+                if (ConstantFoldTerminator(TBB))
+                  prunedUnreachable = true;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (prunedUnreachable)
+    EliminateUnreachableBlocks(NewF);
+
+  auto retargetCall = [&](CallInst *OrigCI, StringRef TargetName) {
+    FunctionCallee Callee =
+        M.getOrInsertFunction(TargetName, OrigCI->getFunctionType());
+    if (auto *Fn = dyn_cast<Function>(Callee.getCallee()->stripPointerCasts()))
+      attributeKnownFunctions(*Fn);
+    if (Callee.getCallee()->getType() ==
+        OrigCI->getCalledOperand()->getType()) {
+      OrigCI->setCalledFunction(Callee);
+      return;
+    }
+    IRBuilder<> B(OrigCI);
+    FunctionType *FT = Callee.getFunctionType();
+    SmallVector<Value *, 8> NewArgs;
+    for (unsigned i = 0; i < OrigCI->arg_size(); ++i) {
+      Value *V = OrigCI->getArgOperand(i);
+      if (V->getType() != FT->getParamType(i))
+        V = B.CreatePointerCast(V, FT->getParamType(i));
+      NewArgs.push_back(V);
+    }
+    CallInst *Repl = B.CreateCall(Callee, NewArgs);
+    Repl->setDebugLoc(OrigCI->getDebugLoc());
+    OrigCI->replaceAllUsesWith(Repl);
+    OrigCI->eraseFromParent();
+  };
+
+  SmallVector<CallInst *, 2> BlockingReduces;
+  for (auto &BB : NewF) {
+    for (auto &I : BB) {
+      if (auto *CI = dyn_cast<CallInst>(&I)) {
+        if (auto *Fn = CI->getCalledFunction()) {
+          if (Fn->getName() == "__kmpc_reduce" && CI->arg_size() == 7)
+            BlockingReduces.push_back(CI);
+        }
+      }
+    }
+  }
+
+  for (CallInst *CI : BlockingReduces) {
+    BasicBlock *SwitchBB = CI->getParent();
+    if (!hasTerminator(SwitchBB))
+      continue;
+    Instruction *Term = SwitchBB->getTerminator();
+    BasicBlock *Case1BB = nullptr;
+    BasicBlock *ContBB = nullptr;
+    if (auto *SI = dyn_cast<SwitchInst>(Term)) {
+      if (SI->getCondition() == CI && SI->getNumCases() == 1 &&
+          SI->case_begin()->getCaseValue()->equalsInt(1)) {
+        Case1BB = SI->case_begin()->getCaseSuccessor();
+        ContBB = SI->getDefaultDest();
+      }
+    } else if (auto *BI = dyn_cast<BranchInst>(Term)) {
+      if (BI->isConditional()) {
+        if (auto *IC = dyn_cast<ICmpInst>(BI->getCondition())) {
+          if (IC->getOperand(0) == CI) {
+            if (auto *C = dyn_cast<ConstantInt>(IC->getOperand(1))) {
+              if ((IC->getPredicate() == ICmpInst::ICMP_EQ &&
+                   C->equalsInt(1)) ||
+                  (IC->getPredicate() == ICmpInst::ICMP_NE &&
+                   C->equalsInt(0))) {
+                Case1BB = BI->getSuccessor(0);
+                ContBB = BI->getSuccessor(1);
+              } else if ((IC->getPredicate() == ICmpInst::ICMP_NE &&
+                          C->equalsInt(1)) ||
+                         (IC->getPredicate() == ICmpInst::ICMP_EQ &&
+                          C->equalsInt(0))) {
+                Case1BB = BI->getSuccessor(1);
+                ContBB = BI->getSuccessor(0);
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!Case1BB || !ContBB || Case1BB == ContBB)
+      continue;
+
+    SmallVector<BasicBlock *, 4> Work = {Case1BB};
+    SmallPtrSet<BasicBlock *, 4> Visited = {SwitchBB, ContBB};
+    SmallVector<CallInst *, 2> FoundEnds;
+    SmallVector<BasicBlock *, 2> Case1ExitPreds;
+    while (!Work.empty()) {
+      BasicBlock *Cur = Work.pop_back_val();
+      if (!Visited.insert(Cur).second)
+        continue;
+      for (Instruction &I : *Cur) {
+        if (auto *ECI = dyn_cast<CallInst>(&I)) {
+          if (auto *EFn = ECI->getCalledFunction()) {
+            if (EFn->getName() == "__kmpc_end_reduce" && ECI->arg_size() == 3)
+              FoundEnds.push_back(ECI);
+          }
+        }
+      }
+      if (!hasTerminator(Cur))
+        continue;
+      Instruction *CurTerm = Cur->getTerminator();
+      for (unsigned s = 0; s < CurTerm->getNumSuccessors(); ++s) {
+        BasicBlock *Succ = CurTerm->getSuccessor(s);
+        if (Succ == ContBB)
+          Case1ExitPreds.push_back(Cur);
+        else if (!Visited.count(Succ))
+          Work.push_back(Succ);
+      }
+    }
+    if (FoundEnds.size() != 1 || Case1ExitPreds.size() != 1)
+      continue;
+
+    CallInst *EndCI = FoundEnds[0];
+    BasicBlock *EndTermBB = Case1ExitPreds[0];
+
+    bool hasOtherPred = false;
+    for (BasicBlock *Pred : predecessors(ContBB)) {
+      if (Pred != SwitchBB && Pred != EndTermBB) {
+        hasOtherPred = true;
+        break;
+      }
+    }
+
+    BasicBlock *BarrierBB = ContBB;
+    if (hasOtherPred) {
+      BarrierBB = BasicBlock::Create(Ctx, "omp.reduce.merge", &NewF, ContBB);
+      SmallVector<PHINode *, 4> ContPHIs;
+      for (PHINode &PN : ContBB->phis())
+        ContPHIs.push_back(&PN);
+      IRBuilder<> MergeB(BarrierBB);
+      for (PHINode *PN : ContPHIs) {
+        PHINode *MPN =
+            MergeB.CreatePHI(PN->getType(), 2, PN->getName() + ".merge");
+        Value *VSwitch = PN->getIncomingValueForBlock(SwitchBB);
+        Value *VEnd = PN->getIncomingValueForBlock(EndTermBB);
+        MPN->addIncoming(VSwitch, SwitchBB);
+        MPN->addIncoming(VEnd, EndTermBB);
+        int SwitchIdx = PN->getBasicBlockIndex(SwitchBB);
+        PN->setIncomingBlock(SwitchIdx, BarrierBB);
+        PN->setIncomingValue(SwitchIdx, MPN);
+        PN->removeIncomingValue(EndTermBB, /*DeletePHIIfEmpty=*/false);
+      }
+      for (unsigned s = 0; s < Term->getNumSuccessors(); ++s)
+        if (Term->getSuccessor(s) == ContBB)
+          Term->setSuccessor(s, BarrierBB);
+      Instruction *EndTerm = EndTermBB->getTerminator();
+      for (unsigned s = 0; s < EndTerm->getNumSuccessors(); ++s)
+        if (EndTerm->getSuccessor(s) == ContBB)
+          EndTerm->setSuccessor(s, BarrierBB);
+      MergeB.CreateBr(ContBB);
+    }
+
+    IRBuilder<> BarB(getFirstNonPHI(BarrierBB));
+    Value *BarLoc = CI->getArgOperand(0);
+    Value *BarGtid = CI->getArgOperand(1);
+    FunctionCallee BarrierFn = M.getOrInsertFunction(
+        "__kmpc_barrier",
+        FunctionType::get(VoidTy, {BarLoc->getType(), BarGtid->getType()},
+                          false));
+    if (auto *BFn =
+            dyn_cast<Function>(BarrierFn.getCallee()->stripPointerCasts()))
+      attributeKnownFunctions(*BFn);
+    FunctionType *BarFT = BarrierFn.getFunctionType();
+    if (BarLoc->getType() != BarFT->getParamType(0))
+      BarLoc = BarB.CreatePointerCast(BarLoc, BarFT->getParamType(0));
+    CallInst *BarCall = BarB.CreateCall(BarrierFn, {BarLoc, BarGtid});
+    BarCall->setDebugLoc(EndCI->getDebugLoc());
+
+    retargetCall(CI, "__kmpc_reduce_nowait");
+    retargetCall(EndCI, "__kmpc_end_reduce_nowait");
+    changed = true;
+  }
+
+  return changed;
 }
 
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
@@ -3830,10 +4060,12 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   SimplifyMPIQueries(*NewF, FAM);
-  ReplaceOMPReductions(*NewF);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
+  }
+  if (CanonicalizeOMPReductions(*NewF)) {
+    FAM.invalidate(*NewF, PreservedAnalyses::none());
   }
 
   if (EnzymeLowerGlobals) {
