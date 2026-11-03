@@ -11,4 +11,6 @@ add_lit_testsuite(
   ARGS
   -v)
 
-set_target_properties(check-enzyme-integration-fortran PROPERTIES FOLDER "Tests")
+set_target_properties(
+  check-enzyme-integration-fortran
+  PROPERTIES FOLDER "Tests")

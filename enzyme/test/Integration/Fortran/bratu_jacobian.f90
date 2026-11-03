@@ -24,8 +24,8 @@ module bratu_jac
   integer, parameter :: dp = kind(1.0d0)
   ! DVODE would carry these on the solver object (an extension of dvode_t);
   ! module variables stand in for that here.
-  real(dp), save :: dx = 0.0_dp
-  real(dp), save :: lambda = 0.0_dp
+  real(dp) :: dx = 0.0_dp
+  real(dp) :: lambda = 0.0_dp
 contains
 
   ! DVODE's f_func: ydot = f(t, y) for the Bratu method-of-lines system.

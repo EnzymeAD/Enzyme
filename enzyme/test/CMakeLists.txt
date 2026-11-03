@@ -54,17 +54,33 @@ set(ENZYME_CVODE_LINK_FLAGS "")
 if(ENZYME_FORTRAN)
   find_package(SUNDIALS CONFIG QUIET)
   if(SUNDIALS_FOUND AND TARGET SUNDIALS::fcvode_mod)
-    # SUNDIALS_DIR is <libdir>/cmake/sundials; the modules are in <prefix>/fortran.
-    get_filename_component(_enzyme_sundials_libdir "${SUNDIALS_DIR}/../.." ABSOLUTE)
-    get_filename_component(_enzyme_sundials_prefix "${_enzyme_sundials_libdir}/.." ABSOLUTE)
+    # SUNDIALS_DIR is <libdir>/cmake/sundials; the modules are in
+    # <prefix>/fortran.
+    get_filename_component(
+      _enzyme_sundials_libdir "${SUNDIALS_DIR}/../.."
+      ABSOLUTE)
+    get_filename_component(
+      _enzyme_sundials_prefix "${_enzyme_sundials_libdir}/.."
+      ABSOLUTE)
     if(EXISTS "${_enzyme_sundials_prefix}/fortran/fcvode_mod.mod")
       set(ENZYME_CVODE_FORTRAN_ENABLED 1)
       set(ENZYME_CVODE_INCLUDE_FLAGS "-I${_enzyme_sundials_prefix}/fortran")
       set(ENZYME_CVODE_LINK_FLAGS
           "-L${_enzyme_sundials_libdir} -Wl,-rpath,${_enzyme_sundials_libdir}")
-      foreach(lib fcvode_mod cvode fnvecserial_mod nvecserial fsunlinsolspgmr_mod
-                  sunlinsolspgmr fsunlinsoldense_mod sunlinsoldense fsunmatrixdense_mod
-                  sunmatrixdense fcore_mod core)
+      foreach(
+        lib
+        fcvode_mod
+        cvode
+        fnvecserial_mod
+        nvecserial
+        fsunlinsolspgmr_mod
+        sunlinsolspgmr
+        fsunlinsoldense_mod
+        sunlinsoldense
+        fsunmatrixdense_mod
+        sunmatrixdense
+        fcore_mod
+        core)
         string(APPEND ENZYME_CVODE_LINK_FLAGS " -lsundials_${lib}")
       endforeach()
       message(
@@ -74,7 +90,8 @@ if(ENZYME_FORTRAN)
   endif()
   if(NOT ENZYME_CVODE_FORTRAN_ENABLED)
     message(
-      STATUS "SUNDIALS Fortran modules not found: CVODE Fortran tests unsupported")
+      STATUS
+        "SUNDIALS Fortran modules not found: CVODE Fortran tests unsupported")
   endif()
 endif()
 
