@@ -3607,8 +3607,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
         if (offset + valSz <= suboff)
           continue;
 
-        if (valSz <= storeSz) {
-          assert(offset >= suboff);
+        if (offset >= suboff && offset + valSz <= suboff + storeSz) {
           options.emplace_back(SI->getValueOperand(), offset - suboff);
           continue;
         }
@@ -3719,13 +3718,18 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
     if (!legal) {
       return nullptr;
     }
+    const DataLayout &DL = LI->getModule()->getDataLayout();
     std::set<Value *> res;
     for (auto &&[opt, startOff] : opts) {
       Value *v2 = simplifyLoad(opt, valSz, startOff);
-      if (v2)
+      if (v2) {
         res.insert(v2);
-      else
-        res.insert(opt);
+        continue;
+      }
+      size_t optSizeInBytes = (DL.getTypeSizeInBits(opt->getType()) + 7) / 8;
+      if (startOff != 0 || optSizeInBytes != valSz)
+        return nullptr;
+      res.insert(opt);
     }
     if (res.size() != 1) {
       return nullptr;
