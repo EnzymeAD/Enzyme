@@ -606,20 +606,20 @@ void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
   gutils->erase(newOp);
 }
 
-/// Returns the key of `op` in forwardCallHandlers, or an empty string if `op`
-/// is not a direct call of a flat symbol.
+/// Returns the key of the call `op` in forwardCallHandlers, or an empty string
+/// if it has none.
 static StringRef getForwardCallHandlerKey(Operation *op) {
   auto callOp = dyn_cast<CallOpInterface>(op);
   if (!callOp)
     return {};
+  if (auto key = op->getAttrOfType<StringAttr>("enzyme_math"))
+    return key.getValue();
   auto callee = dyn_cast_if_present<FlatSymbolRefAttr>(
       dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee()));
   if (!callee)
     return {};
-  if (auto key = op->getAttrOfType<StringAttr>("enzyme_math"))
-    return key.getValue();
-  if (Operation *fn = SymbolTable::lookupNearestSymbolFrom(op, callee))
-    if (auto key = fn->getAttrOfType<StringAttr>("enzyme_math"))
+  if (Operation *calleeOp = SymbolTable::lookupNearestSymbolFrom(op, callee))
+    if (auto key = calleeOp->getAttrOfType<StringAttr>("enzyme_math"))
       return key.getValue();
   return callee.getValue();
 }

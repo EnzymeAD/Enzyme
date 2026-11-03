@@ -162,11 +162,12 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
       OpBuilder::InsertionGuard guard(Builder2);
       // The clone of v's defining op may already be replaced and erased, so
       // anchor at the value v maps to.
-      Value nv = getNewFromOriginal(v);
-      if (auto op = nv.getDefiningOp())
+      Value newValue = getNewFromOriginal(v);
+      if (Operation *op = newValue.getDefiningOp())
         Builder2.setInsertionPoint(op);
       else
-        Builder2.setInsertionPointToStart(cast<BlockArgument>(nv).getOwner());
+        Builder2.setInsertionPointToStart(
+            cast<BlockArgument>(newValue).getOwner());
       Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;

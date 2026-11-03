@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-test-forward-call-handler=cube --enzyme-test-forward-call-handler=scale --enzyme-test-forward-call-handler=ext --enzyme-test-forward-call-handler=wcube --enzyme-test-forward-call-handler=twice:fwd --enzyme-test-forward-call-handler=sel --enzyme-test-forward-call-handler=sq:primal-first --enzyme-test-forward-call-handler=shared --enzyme %s | FileCheck %s
+// RUN: %eopt --test-register-forward-call-handlers="handlers=cube,scale,ext,wcube,twice:fwd,sel,sq:primal-first,shared" --enzyme %s | FileCheck %s
 
 // The rules' tangents differ from the callees' derivatives, so the output shows
 // whether the handler or the body was used.
@@ -203,6 +203,16 @@ module {
     return %r : f64
   }
 
+  // A key on an indirect call selects its handler.
+  llvm.func @ind(%fp: !llvm.ptr, %x: f64) -> f64 {
+    %y = llvm.call %fp(%x) {enzyme_math = "cube"} : !llvm.ptr, (f64) -> f64
+    llvm.return %y : f64
+  }
+  llvm.func @dind(%fp: !llvm.ptr, %x: f64, %dx: f64) -> f64 {
+    %r = enzyme.fwddiff @ind(%fp, %x, %dx) <{ activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!llvm.ptr, f64, f64) -> f64
+    llvm.return %r : f64
+  }
+
   // Without `enzyme_math`, the callee's name is the key. @delta's key has no
   // handler, so its name is not used.
   func.func private @shared(%x: f64) -> f64 {
@@ -257,7 +267,6 @@ module {
 // CHECK-NEXT:    %[[z:.+]] = arith.mulf %[[y]], %[[y]] : f64
 // CHECK-NEXT:    return %[[z]], %[[dz]] : f64, f64
 
-// The derivative of @cube carries no key.
 // CHECK-LABEL: func.func private @fwddiffecube(
 // CHECK-SAME:      %{{.+}}: f64, %{{.+}}: f64) -> f64 {
 // CHECK-NOT:     call
@@ -290,6 +299,10 @@ module {
 // CHECK-NEXT:    %[[c:.+]]:2 = call @cube_fwd_dup(%[[b]]#0, %[[b]]#1) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    %[[d:.+]]:2 = call @shared_fwd_dup(%[[c]]#0, %[[c]]#1) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    return %[[d]]#1 : f64
+
+// CHECK-LABEL: llvm.func @fwddiffeind(
+// CHECK-SAME:      %{{.+}}: !llvm.ptr, %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64
+// CHECK-NEXT:    %{{.+}}:2 = func.call @cube_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
 
 // CHECK-LABEL: func.func private @fwddiffee(
 // CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {

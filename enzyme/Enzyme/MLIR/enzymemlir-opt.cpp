@@ -40,114 +40,11 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
-#include "Interfaces/GradientUtils.h"
 #include "Passes/Passes.h"
 
 #include "Dialect/Ops.h"
 
-#include "llvm/Support/CommandLine.h"
-
 using namespace mlir;
-
-/// Test forward call handlers. `<key>` replaces the call with
-/// `@<key>_fwd_dup`, which takes each operand and its shadow and returns each
-/// result and its shadow. `<key>:fwd` keeps the call and gets the shadows from
-/// `@<key>_fwd`. `<key>:primal-first` replaces the call with `@<key>_primal`
-/// before calling `@<key>_fwd`.
-enum class TestForwardCallHandlerKind { FwdDup, Fwd, PrimalFirst };
-
-static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
-                                            StringRef name, TypeRange types,
-                                            ValueRange args) {
-  if (!SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
-          orig, StringAttr::get(orig->getContext(), name))) {
-    orig->emitError() << "test forward call handler: no function @" << name;
-    return failure();
-  }
-  return func::CallOp::create(builder, orig->getLoc(), name, types, args);
-}
-
-static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
-                                            enzyme::MGradientUtils *gutils,
-                                            StringRef key,
-                                            TestForwardCallHandlerKind kind) {
-  SmallVector<Value> primalArgs, args;
-  for (Value operand : orig->getOperands()) {
-    Value primal = gutils->getNewFromOriginal(operand);
-    primalArgs.push_back(primal);
-    args.push_back(primal);
-    args.push_back(gutils->invertPointerM(operand, builder));
-  }
-  SmallVector<Type> types, shadowTypes, fwdDupTypes;
-  for (Value res : orig->getResults()) {
-    types.push_back(res.getType());
-    shadowTypes.push_back(gutils->getShadowType(res.getType()));
-    fwdDupTypes.push_back(types.back());
-    fwdDupTypes.push_back(shadowTypes.back());
-  }
-
-  SmallVector<Value> primals, shadows;
-  switch (kind) {
-  case TestForwardCallHandlerKind::FwdDup: {
-    auto call = callTestRule(orig, builder, (key + "_fwd_dup").str(),
-                             fwdDupTypes, args);
-    if (failed(call))
-      return failure();
-    for (unsigned i = 0, e = orig->getNumResults(); i < e; i++) {
-      primals.push_back(call->getResult(2 * i));
-      shadows.push_back(call->getResult(2 * i + 1));
-    }
-    break;
-  }
-  case TestForwardCallHandlerKind::Fwd: {
-    auto call =
-        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
-    if (failed(call))
-      return failure();
-    llvm::append_range(shadows, call->getResults());
-    break;
-  }
-  case TestForwardCallHandlerKind::PrimalFirst: {
-    auto primalCall =
-        callTestRule(orig, builder, (key + "_primal").str(), types, primalArgs);
-    if (failed(primalCall))
-      return failure();
-    enzyme::replaceForwardCall(orig, primalCall->getResults(), builder, gutils);
-    auto call =
-        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
-    if (failed(call))
-      return failure();
-    llvm::append_range(shadows, call->getResults());
-    break;
-  }
-  }
-
-  for (auto &&[res, shadow] : llvm::zip_equal(orig->getResults(), shadows))
-    if (!gutils->isConstantValue(res))
-      gutils->setDiffe(res, shadow, builder);
-  if (kind == TestForwardCallHandlerKind::FwdDup)
-    enzyme::replaceForwardCall(orig, primals, builder, gutils);
-  return success();
-}
-
-static llvm::cl::list<std::string> TestForwardCallHandlers(
-    "enzyme-test-forward-call-handler", llvm::cl::Hidden,
-    llvm::cl::desc("Register a test forward-mode call handler under <key> "
-                   "(or <key>:fwd, <key>:primal-first)"),
-    llvm::cl::callback([](const std::string &spec) {
-      StringRef key = spec;
-      auto kind = TestForwardCallHandlerKind::FwdDup;
-      if (key.consume_back(":fwd"))
-        kind = TestForwardCallHandlerKind::Fwd;
-      else if (key.consume_back(":primal-first"))
-        kind = TestForwardCallHandlerKind::PrimalFirst;
-      std::string name = key.str();
-      enzyme::forwardCallHandlers[key] =
-          [name, kind](Operation *orig, OpBuilder &builder,
-                       enzyme::MGradientUtils *gutils) {
-            return testForwardCallHandler(orig, builder, gutils, name, kind);
-          };
-    }));
 
 class MemRefInsider
     : public mlir::MemRefElementTypeInterface::FallbackModel<MemRefInsider> {};

@@ -35,15 +35,15 @@ namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
 
-/// Forward-mode derivative of a call, called like
-/// AutoDiffOpInterface::createForwardModeTangent with `builder` before the
-/// call's clone. It must set the shadow of every active result.
+/// Forward-mode derivative of the call `orig`. `builder` is set before the
+/// clone of `orig`. The handler must set the shadow of every active result and
+/// may replace the clone with replaceForwardCall.
 using ForwardCallHandler = std::function<LogicalResult(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
 
-/// Forward-mode handlers for direct calls of a flat symbol, keyed by the
-/// `enzyme_math` attribute of the call or its callee, else by the callee's
-/// name, which nested modules can reuse. The callee needs no body. Not
+/// Forward-mode call handlers, keyed by the `enzyme_math` attribute of the
+/// call, else of its flat symbol callee, else by the callee's symbol name (not
+/// unique across nested symbol tables). The callee needs no body. Not
 /// synchronized.
 extern llvm::StringMap<ForwardCallHandler> forwardCallHandlers;
 

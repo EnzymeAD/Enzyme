@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-test-forward-call-handler=norule --enzyme --split-input-file --verify-diagnostics %s
+// RUN: %eopt --test-register-forward-call-handlers="handlers=norule" --enzyme --split-input-file --verify-diagnostics %s
 
 // A handler's failure is the derivative's failure.
 
