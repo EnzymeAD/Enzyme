@@ -13,6 +13,7 @@
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Implementations/LoopCheckpointing.h"
+#include "Implementations/WhileCheckpointing.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
@@ -1235,16 +1236,10 @@ struct WhileOpInterfaceReverse
 
   // Attribute name helpers (replicated from LoopCheckpointing defaults).
   static bool needsOnlineCheckpointing(scf::WhileOp op) {
-    auto enabled = op->template getAttrOfType<BoolAttr>(
-        "enzyme.enable_checkpointing");
-    return enabled && enabled.getValue() &&
-           op->hasAttr("enzyme.online_checkpointing");
+    return mlir::enzyme::whileNeedsOnlineCheckpointing(op);
   }
   static std::optional<int64_t> getCheckpointBudget(scf::WhileOp op) {
-    if (auto a = op->template getAttrOfType<IntegerAttr>(
-            "enzyme.checkpoint_period"))
-      return a.getInt();
-    return std::nullopt;
+    return mlir::enzyme::whileGetCheckpointBudget(op);
   }
   static void preserveAttributesButCheckpointing(Operation *newOp,
                                                  Operation *oldOp) {
@@ -1819,6 +1814,18 @@ struct WhileOpInterfaceReverse
 
     Block *primalBefore = &whileOp.getBefore().front();
     Block *primalAfter  = &whileOp.getAfter().front();
+
+    // The forward before-block pushes on every condition evaluation, including
+    // the final failing check.  For a loop with n body iterations, the tape
+    // holds n+1 entries.  Discard the top entry (= state entering the failing
+    // check = loop output) so the reverse loop pops exactly the n pre-step
+    // states in LIFO order.
+    size_t tapeIdx1 = 1;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, primalBefore->getArguments())) {
+      if (active)
+        gutils->popCache(caches[tapeIdx1++], builder);
+    }
 
     auto revFor = H::createScaffoldForLoop(
         builder, loc, c0, numIters, c1,
