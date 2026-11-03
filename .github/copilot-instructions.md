@@ -119,9 +119,27 @@ clang-format -i path/to/file.cpp
 ### Code Organization
 
 - Header guards: Use `#ifndef HEADER_NAME_H` format
-- Include order: Local headers, then LLVM headers, then system headers
+- Include order: Module's own header first, then local headers, then LLVM/MLIR headers, then system headers
 - Prefer forward declarations to reduce header dependencies
-- Use anonymous namespaces for file-local helpers
+- Use `static` for file-local functions; restrict anonymous namespaces to file-local `class`/`struct` declarations
+
+### Agent Skills and Coding Standards Linters
+
+Detailed coding, comment, and review standards live under `.agents/skills/` (also symlinked at `.claude/skills/`):
+
+- `.agents/skills/llvm-coding-standards/`: LLVM C++ style, naming, error handling, and container/API selection for `enzyme/Enzyme/`, `enzyme/BCLoad/`, `enzyme/tools/`, and `enzyme/test/`.
+- `.agents/skills/mlir-coding-standards/`: MLIR-specific overrides (`camelBack` variables, omitting `const` on core IR handles, `Op::create`, `RewriterBase` mutations, `///` Doxygen comments, and `.mlir` FileCheck conventions) for `enzyme/Enzyme/MLIR/` and `enzyme/test/MLIR/`.
+- `.agents/skills/llvm-comment-hygiene/`: Rules for concise contract doc comments and "why"-only inline comments.
+- `.agents/skills/llvm-style-review/`: Pre-review checklist for LLVM/MLIR C++ diffs and lit tests.
+
+Run the repository linters before submitting changes:
+
+```bash
+python3 enzyme/scripts/check_llvm_coding_standards.py --diff-base origin/main enzyme/Enzyme enzyme/BCLoad enzyme/tools enzyme/test
+python3 enzyme/scripts/check_mlir_coding_standards.py --diff-base origin/main enzyme/Enzyme/MLIR enzyme/test/MLIR
+python3 enzyme/scripts/check_llvm_api.py enzyme/Enzyme
+python3 enzyme/scripts/check_emission_order.py --include-llvm-builder enzyme/Enzyme
+```
 
 ## Development Guidelines
 

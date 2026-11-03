@@ -37,6 +37,29 @@ jobs:
       run: |
         python3 enzyme/scripts/check_llvm_api.py --github enzyme/Enzyme
 
+  coding-standards:
+    name: LLVM and MLIR coding standards
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+        fetch-depth: 2
+    - name: Run coding standards linter unit tests
+      run: |
+        python3 -m unittest discover -s enzyme/scripts -p "test_*.py" -v
+    - name: Check MLIR and LLVM coding standards
+      run: |
+        DIFF_ARGS=()
+        if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && git rev-parse --verify -q HEAD^2 >/dev/null; then
+          DIFF_ARGS=(--diff-base HEAD^1)
+        fi
+        python3 enzyme/scripts/check_mlir_coding_standards.py --github "${DIFF_ARGS[@]}" \
+          enzyme/Enzyme/MLIR enzyme/test/MLIR
+        python3 enzyme/scripts/check_llvm_coding_standards.py --github "${DIFF_ARGS[@]}" \
+          enzyme/Enzyme enzyme/BCLoad enzyme/tools enzyme/test
+
   fortran-lint:
     name: Linting for Fortran source
     runs-on: ubuntu-latest
