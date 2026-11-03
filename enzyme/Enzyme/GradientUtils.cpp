@@ -838,8 +838,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                           knownRecomputeHeuristic.end()) {
             if (!knownRecomputeHeuristic[orig]) {
               assert(inst->getParent()->getParent() == newFunc);
-              auto placeholder = BuilderM.CreatePHI(
-                  val->getType(), 0, val->getName() + "_krcLFUreplacement");
+              auto placeholder =
+                  createPlaceholderPHI(BuilderM, val->getType(), 0,
+                                       val->getName() + "_krcLFUreplacement");
               unwrappedLoads[placeholder] = inst;
               SmallVector<Metadata *, 1> avail;
               for (auto pair : available)
@@ -895,8 +896,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
                       DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
                     assert(inst->getParent()->getParent() == newFunc);
-                    auto placeholder = BuilderM.CreatePHI(
-                        val->getType(), 0,
+                    auto placeholder = createPlaceholderPHI(
+                        BuilderM, val->getType(), 0,
                         val->getName() + "_krcAFUWLreplacement");
                     unwrappedLoads[placeholder] = inst;
                     SmallVector<Metadata *, 1> avail;
@@ -3090,8 +3091,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                 assert(li->getType() == replacewith->getType());
                 li->replaceAllUsesWith(replacewith);
               } else {
-                auto phi =
-                    lb.CreatePHI(li->getType(), 0, li->getName() + "_cfrphi");
+                auto phi = createPlaceholderPHI(lb, li->getType(), 0,
+                                                li->getName() + "_cfrphi");
                 unwrappedLoads[phi] = malloc;
                 li->replaceAllUsesWith(phi);
               }
@@ -6780,6 +6781,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (!isa<PHINode>(NewV) ||
           cast<PHINode>(NewV)->getNumIncomingValues() == 0) {
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
+      } else {
+#if LLVM_VERSION_MAJOR >= 18
+        auto InsertPoint = bb.GetInsertPoint();
+        InsertPoint.setHeadBit(true);
+        bb.SetInsertPoint(bb.GetInsertBlock(), InsertPoint);
+#endif
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {

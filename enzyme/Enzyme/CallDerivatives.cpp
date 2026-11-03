@@ -431,7 +431,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
-        d_reqp = BuilderZ.CreatePHI(getUnqual(impi), 0);
+        d_reqp = createPlaceholderPHI(BuilderZ, getUnqual(impi), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       } else
@@ -549,7 +549,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
-        d_reqp = BuilderZ.CreatePHI(getUnqual(reqType), 0);
+        d_reqp = createPlaceholderPHI(BuilderZ, getUnqual(reqType), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       }
@@ -3000,7 +3000,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       Type *TapeTy = ArrayType::get(I8PtrTy, N);
       Value *tape;
       if (Mode == DerivativeMode::ReverseModeGradient) {
-        tape = BuilderZ.CreatePHI(TapeTy, 0);
+        tape = createPlaceholderPHI(BuilderZ, TapeTy, 0);
       } else {
         tape = UndefValue::get(TapeTy);
         auto elems = shadowElements(BuilderZ);
@@ -4206,8 +4206,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (!primalNeededInReverse) {
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ForwardModeSplit) {
-          auto pn = BuilderZ.CreatePHI(call.getType(), 1,
-                                       call.getName() + "_replacementJ");
+          auto pn = createPlaceholderPHI(BuilderZ, call.getType(), 1,
+                                         call.getName() + "_replacementJ");
           gutils->fictiousPHIs[pn] = &call;
           gutils->replaceAWithB(newCall, pn);
           gutils->erase(newCall);
@@ -4268,8 +4268,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       // Note that here we cannot simply replace with null as users who
       // try to find the shadow pointer will use the shadow of null rather
       // than the true shadow of this
-      auto pn = BuilderZ.CreatePHI(call.getType(), 1,
-                                   call.getName() + "_replacementB");
+      auto pn = createPlaceholderPHI(BuilderZ, call.getType(), 1,
+                                     call.getName() + "_replacementB");
       gutils->fictiousPHIs[pn] = &call;
       gutils->replaceAWithB(newCall, pn);
       gutils->erase(newCall);
@@ -4500,7 +4500,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     } else if (Mode == DerivativeMode::ReverseModeGradient) {
       PHINode *toReplace =
-          BuilderZ.CreatePHI(PT, 1, call.getName() + "_psxtmp");
+          createPlaceholderPHI(BuilderZ, PT, 1, call.getName() + "_psxtmp");
       val = gutils->cacheForReverse(BuilderZ, toReplace,
                                     getIndex(&call, CacheType::Tape, BuilderZ));
     }
@@ -4653,8 +4653,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           val = gutils->cacheForReverse(
               BuilderZ, val, getIndex(&call, CacheType::Tape, BuilderZ));
       } else if (Mode == DerivativeMode::ReverseModeGradient) {
-        PHINode *toReplace = BuilderZ.CreatePHI(gutils->getShadowType(PT), 1,
-                                                call.getName() + "_psxtmp");
+        PHINode *toReplace = createPlaceholderPHI(
+            BuilderZ, gutils->getShadowType(PT), 1, call.getName() + "_psxtmp");
         val = gutils->cacheForReverse(
             BuilderZ, toReplace, getIndex(&call, CacheType::Tape, BuilderZ));
       }
