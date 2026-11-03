@@ -34,6 +34,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
+
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_LOWERONLINEPROGRESSPASS
@@ -712,3 +713,9 @@ struct LowerOnlineProgressPass
 };
 
 } // end anonymous namespace
+
+// Public entry point declared in Passes.h, called by
+// LowerCheckpointingProgressPass in LowerBinomialProgressPass.cpp.
+void mlir::enzyme::lowerOnlineProgressOp(enzyme::OnlineProgressOp op) {
+  lowerOnlineProgress(op);
+}

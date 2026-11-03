@@ -1235,14 +1235,12 @@ struct WhileOpInterfaceReverse
 
   // Attribute name helpers (replicated from LoopCheckpointing defaults).
   static bool needsOnlineCheckpointing(scf::WhileOp op) {
-    auto enabled = op->template getAttrOfType<BoolAttr>(
-        "enzyme.enable_checkpointing");
+    auto enabled = op->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing");
     return enabled && enabled.getValue() &&
            op->hasAttr("enzyme.online_checkpointing");
   }
   static std::optional<int64_t> getCheckpointBudget(scf::WhileOp op) {
-    if (auto a = op->template getAttrOfType<IntegerAttr>(
-            "enzyme.checkpoint_period"))
+    if (auto a = op->getAttrOfType<IntegerAttr>("enzyme.checkpoint_period"))
       return a.getInt();
     return std::nullopt;
   }
@@ -1264,6 +1262,22 @@ struct WhileOpInterfaceReverse
     size_t numFwdBuf() const { return immutable(numImmutable); }
     size_t size() const { return immutable(numImmutable) + 1; }
   };
+
+  // ── Helper: collect immutable outside references ──────────────────────────
+  // Uses getUsedValuesDefinedAbove which walks regions in structural order and
+  // stores results in a SetVector (insertion-ordered). The order is therefore
+  // deterministic for a fixed IR — both cacheWhileOnline and reverseWhileOnline
+  // walk the same original whileOp so the cache layout matches. Same guarantee
+  // as LoopCheckpointing::splitOutsideRefs (see its comment).
+  static SmallVector<Value> collectImmutableRefs(scf::WhileOp whileOp) {
+    SetVector<Value> outside;
+    mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
+    SmallVector<Value> refs;
+    for (auto ref : outside)
+      if (!isa<ClonableTypeInterface>(ref.getType()))
+        refs.push_back(ref);
+    return refs;
+  }
 
   // ── Helper: copy a block's ops (without terminator) into the builder ──────
   // Equivalent to LoopCheckpointing::copyBlockWithoutTerminator but also maps
@@ -1621,15 +1635,8 @@ struct WhileOpInterfaceReverse
     memref::DeallocOp::create(builder, loc, ordChBuf);
     memref::DeallocOp::create(builder, loc, numRepBuf);
 
-    // Collect immutable outside references.
-    SmallVector<Value> immutableRefs;
-    {
-      SetVector<Value> outside;
-      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
-      for (auto ref : outside)
-        if (!isa<ClonableTypeInterface>(ref.getType()))
-          immutableRefs.push_back(ref);
-    }
+    // Collect immutable outside references (deterministic — see collectImmutableRefs).
+    SmallVector<Value> immutableRefs = collectImmutableRefs(whileOp);
 
     // Build caches in WhileOnlineCacheLayout order.
     SmallVector<Value> caches;
@@ -1820,6 +1827,18 @@ struct WhileOpInterfaceReverse
     Block *primalBefore = &whileOp.getBefore().front();
     Block *primalAfter  = &whileOp.getAfter().front();
 
+    // The forward before-block pushes on every condition evaluation, including
+    // the final failing check.  For a loop with n body iterations, the tape
+    // holds n+1 entries.  Discard the top entry (= state entering the failing
+    // check = loop output) so the reverse loop pops exactly the n pre-step
+    // states in LIFO order.
+    size_t tapeIdx1 = 1;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, primalBefore->getArguments())) {
+      if (active)
+        gutils->popCache(caches[tapeIdx1++], builder);
+    }
+
     auto revFor = H::createScaffoldForLoop(
         builder, loc, c0, numIters, c1,
         SmallVector<Value>(incomingGradients.begin(), incomingGradients.end()));
@@ -1952,14 +1971,8 @@ struct WhileOpInterfaceReverse
     WhileOnlineCacheLayout layout;
     layout.numCarried = numCarried;
 
-    SmallVector<Value> immutableRefs;
-    {
-      SetVector<Value> outside;
-      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
-      for (auto ref : outside)
-        if (!isa<ClonableTypeInterface>(ref.getType()))
-          immutableRefs.push_back(ref);
-    }
+    // Collect immutable outside references (deterministic — see collectImmutableRefs).
+    SmallVector<Value> immutableRefs = collectImmutableRefs(whileOp);
     layout.numImmutable = immutableRefs.size();
 
     SmallVector<Value> stores;
