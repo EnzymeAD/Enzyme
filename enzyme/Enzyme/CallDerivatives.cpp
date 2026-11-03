@@ -2354,6 +2354,513 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+namespace {
+enum class OMPReductionOp {
+  Sum,
+  Max,
+  Min,
+  IntInactive,
+};
+
+struct OMPReductionItem {
+  int64_t byteOffset;
+  Value *origPrivPtr;
+  Type *elemTy;
+  OMPReductionOp op;
+};
+} // namespace
+
+/// Match \p V as \p Arg directly or a load from an unoptimized stack slot
+/// whose only store saves \p Arg (as Clang emits at -O0 in reduction_func).
+static bool isOMPReduceArgDataPtr(Value *V, Argument *Arg) {
+  V = V->stripPointerCasts();
+  if (V == Arg)
+    return true;
+  auto *LI = dyn_cast<LoadInst>(V);
+  if (!LI)
+    return false;
+  auto *AI = dyn_cast<AllocaInst>(LI->getPointerOperand()->stripPointerCasts());
+  if (!AI)
+    return false;
+  StoreInst *UniqueStore = nullptr;
+  for (User *U : AI->users()) {
+    if (auto *SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getPointerOperand()->stripPointerCasts() != AI)
+        return false;
+      if (UniqueStore)
+        return false;
+      UniqueStore = SI;
+    } else if (!isa<LoadInst>(U) && !isa<CastInst>(U)) {
+      return false;
+    }
+  }
+  return UniqueStore &&
+         UniqueStore->getValueOperand()->stripPointerCasts() == Arg;
+}
+
+/// Match \p V as the pointer loaded from `(char*)Arg + byteOff` in the
+/// array-of-pointers OpenMP reduction ABI.
+static bool matchOMPReduceSlotPtr(Value *V, Argument *Arg, int64_t &byteOff,
+                                  const DataLayout &DL) {
+  auto *LI = dyn_cast<LoadInst>(V->stripPointerCasts());
+  if (!LI || !LI->getType()->isPointerTy())
+    return false;
+  int64_t off = 0;
+  Value *Base =
+      GetPointerBaseWithConstantOffset(LI->getPointerOperand(), off, DL);
+  if (!isOMPReduceArgDataPtr(Base, Arg))
+    return false;
+  byteOff = off;
+  return true;
+}
+
+static bool classifyOMPMaxMinPred(FCmpInst::Predicate Pred, bool truePicksArg0,
+                                  OMPReductionOp &outOp) {
+  switch (Pred) {
+  case FCmpInst::FCMP_OGT:
+  case FCmpInst::FCMP_UGT:
+  case FCmpInst::FCMP_OGE:
+  case FCmpInst::FCMP_UGE:
+    outOp = truePicksArg0 ? OMPReductionOp::Max : OMPReductionOp::Min;
+    return true;
+  case FCmpInst::FCMP_OLT:
+  case FCmpInst::FCMP_ULT:
+  case FCmpInst::FCMP_OLE:
+  case FCmpInst::FCMP_ULE:
+    outOp = truePicksArg0 ? OMPReductionOp::Min : OMPReductionOp::Max;
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Inspect an OpenMP reduction combiner `void reduce_func(void *lhs, void
+/// *rhs)` and extract each reduced variable's caller private pointer, scalar
+/// type, and reduction operator. Returns false if any store in `reduce_func` is
+/// not a recognized reduction update.
+static bool extractOMPReductionItems(CallInst &call, Function *reduceFn,
+                                     DominatorTree *OrigDT,
+                                     const DataLayout &DL,
+                                     SmallVectorImpl<OMPReductionItem> &items) {
+  if (!reduceFn || reduceFn->empty() || reduceFn->arg_size() != 2)
+    return false;
+
+  Argument *Arg0 = reduceFn->getArg(0);
+  Argument *Arg1 = reduceFn->getArg(1);
+
+  int64_t callArrOff = 0;
+  Value *callArrBase =
+      GetPointerBaseWithConstantOffset(call.getArgOperand(4), callArrOff, DL);
+
+  auto findCallerPrivPtr = [&](int64_t slotByteOff, bool indirect) -> Value * {
+    if (!indirect) {
+      if (slotByteOff == 0)
+        return call.getArgOperand(4);
+      return nullptr;
+    }
+    int64_t targetOff = callArrOff + slotByteOff;
+    // Prefer the closest store preceding `call` in the same block, falling back
+    // to stores in strictly dominating blocks.
+    BasicBlock *CallBB = call.getParent();
+    for (auto It = call.getReverseIterator(); It != CallBB->rend(); ++It) {
+      if (&*It == &call)
+        continue;
+      if (auto *SI = dyn_cast<StoreInst>(&*It)) {
+        int64_t stOff = 0;
+        Value *stBase = GetPointerBaseWithConstantOffset(
+            SI->getPointerOperand(), stOff, DL);
+        if (stBase == callArrBase && stOff == targetOff)
+          return SI->getValueOperand()->stripPointerCasts();
+      }
+    }
+    Value *Found = nullptr;
+    for (BasicBlock &BB : *CallBB->getParent()) {
+      if (&BB == CallBB || (OrigDT && !OrigDT->dominates(&BB, CallBB)))
+        continue;
+      for (Instruction &I : BB) {
+        if (auto *SI = dyn_cast<StoreInst>(&I)) {
+          int64_t stOff = 0;
+          Value *stBase = GetPointerBaseWithConstantOffset(
+              SI->getPointerOperand(), stOff, DL);
+          if (stBase == callArrBase && stOff == targetOff)
+            Found = SI->getValueOperand()->stripPointerCasts();
+        }
+      }
+    }
+    return Found;
+  };
+
+  for (BasicBlock &BB : *reduceFn) {
+    for (Instruction &I : BB) {
+      auto *SI = dyn_cast<StoreInst>(&I);
+      if (!SI)
+        continue;
+
+      // Ignore -O0 argument-spill stores into local allocas.
+      if (isa<AllocaInst>(SI->getPointerOperand()->stripPointerCasts())) {
+        Value *Spilled = SI->getValueOperand()->stripPointerCasts();
+        if (Spilled == Arg0 || Spilled == Arg1)
+          continue;
+        return false;
+      }
+
+      int64_t byteOff = 0;
+      bool indirect = true;
+      if (!matchOMPReduceSlotPtr(SI->getPointerOperand(), Arg0, byteOff, DL)) {
+        int64_t directOff = 0;
+        Value *DirectBase = GetPointerBaseWithConstantOffset(
+            SI->getPointerOperand(), directOff, DL);
+        if (!isOMPReduceArgDataPtr(DirectBase, Arg0))
+          return false;
+        byteOff = directOff;
+        indirect = false;
+      }
+
+      Value *Val = SI->getValueOperand();
+      Type *elemTy = Val->getType();
+
+      auto isLoadOfArg = [&](Value *V, Argument *WhichArg) -> bool {
+        auto *LI = dyn_cast<LoadInst>(V);
+        if (!LI || LI->getType() != elemTy)
+          return false;
+        if (indirect) {
+          int64_t off = 0;
+          return matchOMPReduceSlotPtr(LI->getPointerOperand(), WhichArg, off,
+                                       DL) &&
+                 off == byteOff;
+        }
+        int64_t off = 0;
+        Value *Base =
+            GetPointerBaseWithConstantOffset(LI->getPointerOperand(), off, DL);
+        return isOMPReduceArgDataPtr(Base, WhichArg) && off == byteOff;
+      };
+
+      auto matchFCmpOnArgs = [&](Value *Cond,
+                                 FCmpInst::Predicate &NormPred) -> bool {
+        auto *FC = dyn_cast<FCmpInst>(Cond);
+        if (!FC)
+          return false;
+        Value *Op0 = FC->getOperand(0);
+        Value *Op1 = FC->getOperand(1);
+        if (isLoadOfArg(Op0, Arg0) && isLoadOfArg(Op1, Arg1)) {
+          NormPred = FC->getPredicate();
+          return true;
+        }
+        if (isLoadOfArg(Op0, Arg1) && isLoadOfArg(Op1, Arg0)) {
+          NormPred = FC->getSwappedPredicate();
+          return true;
+        }
+        return false;
+      };
+
+      OMPReductionOp opKind;
+      if (elemTy->isIntOrIntVectorTy()) {
+        opKind = OMPReductionOp::IntInactive;
+      } else if (!elemTy->isFloatingPointTy()) {
+        return false;
+      } else if (auto *BO = dyn_cast<BinaryOperator>(Val)) {
+        if (BO->getOpcode() == Instruction::FAdd &&
+            ((isLoadOfArg(BO->getOperand(0), Arg0) &&
+              isLoadOfArg(BO->getOperand(1), Arg1)) ||
+             (isLoadOfArg(BO->getOperand(0), Arg1) &&
+              isLoadOfArg(BO->getOperand(1), Arg0)))) {
+          opKind = OMPReductionOp::Sum;
+        } else {
+          return false;
+        }
+      } else if (auto *II = dyn_cast<IntrinsicInst>(Val)) {
+        Intrinsic::ID IID = II->getIntrinsicID();
+        if ((IID == Intrinsic::maxnum || IID == Intrinsic::maximum ||
+             IID == Intrinsic::minnum || IID == Intrinsic::minimum) &&
+            ((isLoadOfArg(II->getArgOperand(0), Arg0) &&
+              isLoadOfArg(II->getArgOperand(1), Arg1)) ||
+             (isLoadOfArg(II->getArgOperand(0), Arg1) &&
+              isLoadOfArg(II->getArgOperand(1), Arg0)))) {
+          opKind = (IID == Intrinsic::maxnum || IID == Intrinsic::maximum)
+                       ? OMPReductionOp::Max
+                       : OMPReductionOp::Min;
+        } else {
+          return false;
+        }
+      } else if (auto *Sel = dyn_cast<SelectInst>(Val)) {
+        FCmpInst::Predicate NormPred;
+        if (!matchFCmpOnArgs(Sel->getCondition(), NormPred))
+          return false;
+        bool truePicksArg0 = false;
+        if (isLoadOfArg(Sel->getTrueValue(), Arg0) &&
+            isLoadOfArg(Sel->getFalseValue(), Arg1)) {
+          truePicksArg0 = true;
+        } else if (isLoadOfArg(Sel->getTrueValue(), Arg1) &&
+                   isLoadOfArg(Sel->getFalseValue(), Arg0)) {
+          truePicksArg0 = false;
+        } else {
+          return false;
+        }
+        if (!classifyOMPMaxMinPred(NormPred, truePicksArg0, opKind))
+          return false;
+      } else if (auto *PN = dyn_cast<PHINode>(Val)) {
+        if (PN->getNumIncomingValues() != 2)
+          return false;
+        BasicBlock *B0 = PN->getIncomingBlock(0);
+        BasicBlock *B1 = PN->getIncomingBlock(1);
+        BasicBlock *Dom = B0->getSinglePredecessor();
+        if (!Dom || Dom != B1->getSinglePredecessor() || !hasTerminator(Dom))
+          return false;
+        auto *BI = dyn_cast<BranchInst>(Dom->getTerminator());
+        if (!BI || !BI->isConditional())
+          return false;
+        FCmpInst::Predicate NormPred;
+        if (!matchFCmpOnArgs(BI->getCondition(), NormPred))
+          return false;
+        Value *TrueV = (BI->getSuccessor(0) == B0) ? PN->getIncomingValue(0)
+                                                   : PN->getIncomingValue(1);
+        Value *FalseV = (BI->getSuccessor(0) == B0) ? PN->getIncomingValue(1)
+                                                    : PN->getIncomingValue(0);
+        bool truePicksArg0 = false;
+        if (isLoadOfArg(TrueV, Arg0) && isLoadOfArg(FalseV, Arg1)) {
+          truePicksArg0 = true;
+        } else if (isLoadOfArg(TrueV, Arg1) && isLoadOfArg(FalseV, Arg0)) {
+          truePicksArg0 = false;
+        } else {
+          return false;
+        }
+        if (!classifyOMPMaxMinPred(NormPred, truePicksArg0, opKind))
+          return false;
+      } else if (isLoadOfArg(Val, Arg1)) {
+        // Conditional overwrite: `if (rhs > lhs) *lhsp = rhs;`
+        BasicBlock *StoreBB = SI->getParent();
+        BasicBlock *Dom = StoreBB->getSinglePredecessor();
+        if (!Dom || !hasTerminator(Dom))
+          return false;
+        auto *BI = dyn_cast<BranchInst>(Dom->getTerminator());
+        if (!BI || !BI->isConditional() || !hasTerminator(StoreBB))
+          return false;
+        auto *StoreBr = dyn_cast<BranchInst>(StoreBB->getTerminator());
+        if (!StoreBr || StoreBr->isConditional())
+          return false;
+        BasicBlock *MergeBB = StoreBr->getSuccessor(0);
+        bool storeOnTrue = false;
+        if (BI->getSuccessor(0) == StoreBB && BI->getSuccessor(1) == MergeBB) {
+          storeOnTrue = true;
+        } else if (BI->getSuccessor(1) == StoreBB &&
+                   BI->getSuccessor(0) == MergeBB) {
+          storeOnTrue = false;
+        } else {
+          return false;
+        }
+        FCmpInst::Predicate NormPred;
+        if (!matchFCmpOnArgs(BI->getCondition(), NormPred))
+          return false;
+        if (!classifyOMPMaxMinPred(NormPred, /*truePicksArg0=*/!storeOnTrue,
+                                   opKind))
+          return false;
+      } else {
+        return false;
+      }
+
+      Value *origPriv = findCallerPrivPtr(byteOff, indirect);
+      if (!origPriv)
+        return false;
+      items.push_back({byteOff, origPriv, elemTy, opKind});
+    }
+  }
+
+  if (items.empty())
+    return false;
+  llvm::sort(items, [](const OMPReductionItem &A, const OMPReductionItem &B) {
+    return A.byteOffset < B.byteOffset;
+  });
+  for (size_t i = 1; i < items.size(); ++i)
+    if (items[i].byteOffset == items[i - 1].byteOffset)
+      return false;
+  return true;
+}
+
+static GlobalVariable *getOrCreateOMPReduceLock(Module &M, StringRef Name) {
+  if (GlobalVariable *GV = M.getGlobalVariable(Name, /*AllowInternal=*/true))
+    return GV;
+  ArrayType *LockTy = ArrayType::get(Type::getInt32Ty(M.getContext()), 8);
+  auto *GV = new GlobalVariable(M, LockTy, /*isConstant=*/false,
+                                GlobalValue::InternalLinkage,
+                                ConstantAggregateZero::get(LockTy), Name);
+  GV->setAlignment(Align(8));
+  return GV;
+}
+
+/// Build an OpenMP `void (ptr lhs_bundle, ptr rhs_bundle)` wrapper that unpacks
+/// `[primal_data, shadow_data_0, ..., shadow_data_{W-1}]` and calls Enzyme's
+/// forward-mode derivative `diffRedFn`.
+static Function *getOrCreateOMPFwdReduceWrapper(Module &M,
+                                                FunctionType *origRedFT,
+                                                Function *diffRedFn,
+                                                unsigned width) {
+  std::string Name = ("__enzyme_omp_fwd_reduce_" + diffRedFn->getName() + "_w" +
+                      std::to_string(width))
+                         .str();
+  if (Function *Existing = M.getFunction(Name))
+    return Existing;
+
+  LLVMContext &Ctx = M.getContext();
+  Function *Wrap =
+      Function::Create(origRedFT, GlobalValue::InternalLinkage, Name, &M);
+  Wrap->addFnAttr(Attribute::NoUnwind);
+  BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", Wrap);
+  IRBuilder<> B(Entry);
+
+  Type *I8PtrTy = getInt8PtrTy(Ctx);
+  ArrayType *BundleTy = ArrayType::get(I8PtrTy, 1 + width);
+  Type *BundlePtrTy = getUnqual(BundleTy);
+
+  Value *LhsBundle = Wrap->getArg(0);
+  if (LhsBundle->getType() != BundlePtrTy)
+    LhsBundle = B.CreatePointerCast(LhsBundle, BundlePtrTy);
+  Value *RhsBundle = Wrap->getArg(1);
+  if (RhsBundle->getType() != BundlePtrTy)
+    RhsBundle = B.CreatePointerCast(RhsBundle, BundlePtrTy);
+
+  FunctionType *DiffFT = diffRedFn->getFunctionType();
+  Type *PrimalParamTy0 = DiffFT->getParamType(0);
+  Type *ShadowParamTy0 = DiffFT->getParamType(1);
+  Type *PrimalParamTy1 = DiffFT->getParamType(2);
+  Type *ShadowParamTy1 = DiffFT->getParamType(3);
+
+  auto loadSlot = [&](Value *Bundle, unsigned idx, Type *TargetTy) -> Value * {
+    Value *Idxs[] = {B.getInt64(0), B.getInt64(idx)};
+    Value *GEP = B.CreateInBoundsGEP(BundleTy, Bundle, Idxs);
+    Value *Loaded = B.CreateLoad(I8PtrTy, GEP);
+    if (Loaded->getType() != TargetTy)
+      Loaded = B.CreatePointerCast(Loaded, TargetTy);
+    return Loaded;
+  };
+
+  Value *LhsPrimal = loadSlot(LhsBundle, 0, PrimalParamTy0);
+  Value *RhsPrimal = loadSlot(RhsBundle, 0, PrimalParamTy1);
+
+  Value *LhsShadow = nullptr;
+  Value *RhsShadow = nullptr;
+  if (width == 1) {
+    LhsShadow = loadSlot(LhsBundle, 1, ShadowParamTy0);
+    RhsShadow = loadSlot(RhsBundle, 1, ShadowParamTy1);
+  } else {
+    Type *LaneTy0 = cast<ArrayType>(ShadowParamTy0)->getElementType();
+    Type *LaneTy1 = cast<ArrayType>(ShadowParamTy1)->getElementType();
+    LhsShadow = UndefValue::get(ShadowParamTy0);
+    RhsShadow = UndefValue::get(ShadowParamTy1);
+    for (unsigned w = 0; w < width; ++w) {
+      Value *LW = loadSlot(LhsBundle, 1 + w, LaneTy0);
+      LhsShadow = B.CreateInsertValue(LhsShadow, LW, {w});
+      Value *RW = loadSlot(RhsBundle, 1 + w, LaneTy1);
+      RhsShadow = B.CreateInsertValue(RhsShadow, RW, {w});
+    }
+  }
+
+  Value *CallArgs[] = {LhsPrimal, LhsShadow, RhsPrimal, RhsShadow};
+  B.CreateCall(DiffFT, diffRedFn, CallArgs);
+  B.CreateRetVoid();
+  return Wrap;
+}
+
+/// Build an O(log P) reverse-mode combiner `void (ptr lhs, ptr rhs)` over a
+/// struct of `M` `{ elTy, [width x elTy], i32 win_tid, i32 init }` records.
+/// Sums `d_sum` across all threads and tracks the winning thread `win_tid`
+/// achieving the global max or min `pre_val` (ties broken by smallest `gtid`).
+static Function *getOrCreateOMPRevMaxMinReduceFn(Module &M,
+                                                 FunctionType *origRedFT,
+                                                 StructType *allMaxMinTy,
+                                                 ArrayRef<bool> itemIsMax,
+                                                 unsigned width) {
+  LLVMContext &Ctx = M.getContext();
+  std::string Sig;
+  raw_string_ostream SS(Sig);
+  SS << "__enzyme_omp_rev_maxmin_w" << width;
+  for (unsigned m = 0; m < itemIsMax.size(); ++m) {
+    auto *RecTy = cast<StructType>(allMaxMinTy->getElementType(m));
+    SS << "_" << (itemIsMax[m] ? "max" : "min") << "_"
+       << RecTy->getElementType(0)->getTypeID();
+  }
+  SS.flush();
+  if (Function *Existing = M.getFunction(Sig))
+    return Existing;
+
+  Function *Fn =
+      Function::Create(origRedFT, GlobalValue::InternalLinkage, Sig, &M);
+  Fn->addFnAttr(Attribute::NoUnwind);
+  BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", Fn);
+  IRBuilder<> B(Entry);
+
+  Type *StructPtrTy = getUnqual(allMaxMinTy);
+  Value *LhsBase = Fn->getArg(0);
+  if (LhsBase->getType() != StructPtrTy)
+    LhsBase = B.CreatePointerCast(LhsBase, StructPtrTy);
+  Value *RhsBase = Fn->getArg(1);
+  if (RhsBase->getType() != StructPtrTy)
+    RhsBase = B.CreatePointerCast(RhsBase, StructPtrTy);
+
+  Type *I32Ty = Type::getInt32Ty(Ctx);
+
+  for (unsigned m = 0; m < itemIsMax.size(); ++m) {
+    auto *RecTy = cast<StructType>(allMaxMinTy->getElementType(m));
+    auto *DArrTy = cast<ArrayType>(RecTy->getElementType(1));
+
+    Value *LhsRecPtr = B.CreateStructGEP(allMaxMinTy, LhsBase, m);
+    Value *RhsRecPtr = B.CreateStructGEP(allMaxMinTy, RhsBase, m);
+
+    Value *LhsInitPtr = B.CreateStructGEP(RecTy, LhsRecPtr, 3);
+    Value *LhsInit = B.CreateLoad(I32Ty, LhsInitPtr);
+    Value *RhsRec = B.CreateLoad(RecTy, RhsRecPtr);
+
+    Value *IsUninit = B.CreateICmpEQ(LhsInit, ConstantInt::get(I32Ty, 0));
+    BasicBlock *CopyBB = BasicBlock::Create(Ctx, "copy_rhs", Fn);
+    BasicBlock *CombineBB = BasicBlock::Create(Ctx, "combine", Fn);
+    BasicBlock *NextBB = BasicBlock::Create(Ctx, "next", Fn);
+    B.CreateCondBr(IsUninit, CopyBB, CombineBB);
+
+    B.SetInsertPoint(CopyBB);
+    B.CreateStore(RhsRec, LhsRecPtr);
+    B.CreateBr(NextBB);
+
+    B.SetInsertPoint(CombineBB);
+    Value *LhsRec = B.CreateLoad(RecTy, LhsRecPtr);
+    Value *LhsVal = B.CreateExtractValue(LhsRec, {0});
+    Value *RhsVal = B.CreateExtractValue(RhsRec, {0});
+    Value *LhsTid = B.CreateExtractValue(LhsRec, {2});
+    Value *RhsTid = B.CreateExtractValue(RhsRec, {2});
+
+    Value *StrictWin = itemIsMax[m] ? B.CreateFCmpOGT(LhsVal, RhsVal)
+                                    : B.CreateFCmpOLT(LhsVal, RhsVal);
+    Value *ValEq = B.CreateFCmpOEQ(LhsVal, RhsVal);
+    Value *TidTie = B.CreateICmpSLE(LhsTid, RhsTid);
+    Value *TieWin = B.CreateAnd(ValEq, TidTie);
+    Value *LhsWins = B.CreateOr(StrictWin, TieWin);
+
+    Value *NewVal = B.CreateSelect(LhsWins, LhsVal, RhsVal);
+    Value *NewTid = B.CreateSelect(LhsWins, LhsTid, RhsTid);
+
+    Value *LhsDArr = B.CreateExtractValue(LhsRec, {1});
+    Value *RhsDArr = B.CreateExtractValue(RhsRec, {1});
+    Value *NewDArr = UndefValue::get(DArrTy);
+    for (unsigned w = 0; w < width; ++w) {
+      Value *LD = B.CreateExtractValue(LhsDArr, {w});
+      Value *RD = B.CreateExtractValue(RhsDArr, {w});
+      Value *SumD = B.CreateFAdd(LD, RD);
+      NewDArr = B.CreateInsertValue(NewDArr, SumD, {w});
+    }
+
+    Value *Updated = UndefValue::get(RecTy);
+    Updated = B.CreateInsertValue(Updated, NewVal, {0});
+    Updated = B.CreateInsertValue(Updated, NewDArr, {1});
+    Updated = B.CreateInsertValue(Updated, NewTid, {2});
+    Updated = B.CreateInsertValue(Updated, ConstantInt::get(I32Ty, 1), {3});
+    B.CreateStore(Updated, LhsRecPtr);
+    B.CreateBr(NextBB);
+
+    B.SetInsertPoint(NextBB);
+  }
+
+  B.CreateRetVoid();
+  return Fn;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -2766,6 +3273,614 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto fcall = Builder2.CreateCall(crit2->getFunctionType(), crit2, args);
         fcall->setCallingConv(crit2->getCallingConv());
       }
+      return true;
+    }
+
+    if (funcName == "__kmpc_end_reduce" ||
+        funcName == "__kmpc_end_reduce_nowait") {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ReverseModePrimal) {
+        return true;
+      }
+      if (Mode == DerivativeMode::ForwardModeSplit) {
+        EmitNoDerivativeError(
+            "OpenMP reduction not yet supported in split forward mode", call,
+            gutils, BuilderZ);
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      }
+
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      Module &M = *called->getParent();
+      LLVMContext &Ctx = call.getContext();
+      Type *VoidTy = Type::getVoidTy(Ctx);
+
+      Value *origLoc = gutils->getNewFromOriginal(call.getArgOperand(0));
+      Value *loc = lookup(origLoc, Builder2);
+      Value *origGtid = gutils->getNewFromOriginal(call.getArgOperand(1));
+      Value *gtid = lookup(origGtid, Builder2);
+
+      if (funcName == "__kmpc_end_reduce") {
+        FunctionCallee barCallee = M.getOrInsertFunction(
+            "__kmpc_barrier",
+            FunctionType::get(VoidTy, {loc->getType(), gtid->getType()},
+                              false));
+        if (auto *barFn =
+                dyn_cast<Function>(barCallee.getCallee()->stripPointerCasts()))
+          attributeKnownFunctions(*barFn);
+        FunctionType *barFT = barCallee.getFunctionType();
+        Value *barLoc = loc;
+        if (barLoc->getType() != barFT->getParamType(0))
+          barLoc = Builder2.CreatePointerCast(barLoc, barFT->getParamType(0));
+        Value *barArgs[] = {barLoc, gtid};
+        Builder2.CreateCall(barCallee, barArgs);
+      }
+
+      Type *lckArgTy = call.getArgOperand(2)->getType();
+      GlobalVariable *critGV =
+          getOrCreateOMPReduceLock(M, "__enzyme_omp_reduce_crit_lck");
+      FunctionCallee critCallee = M.getOrInsertFunction(
+          "__kmpc_critical",
+          FunctionType::get(VoidTy, {loc->getType(), gtid->getType(), lckArgTy},
+                            false));
+      if (auto *critFn =
+              dyn_cast<Function>(critCallee.getCallee()->stripPointerCasts()))
+        attributeKnownFunctions(*critFn);
+      FunctionType *critFT = critCallee.getFunctionType();
+      Value *critLoc = loc;
+      if (critLoc->getType() != critFT->getParamType(0))
+        critLoc = Builder2.CreatePointerCast(critLoc, critFT->getParamType(0));
+      Value *critLock = critGV;
+      if (critLock->getType() != critFT->getParamType(2))
+        critLock =
+            Builder2.CreatePointerCast(critLock, critFT->getParamType(2));
+      Value *critArgs[] = {critLoc, gtid, critLock};
+      Builder2.CreateCall(critCallee, critArgs);
+      return true;
+    }
+
+    if (funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait") {
+      Module &M = *called->getParent();
+      LLVMContext &Ctx = call.getContext();
+      const DataLayout &DL = M.getDataLayout();
+      unsigned width = gutils->getWidth();
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        if (!gutils->isConstantValue(&call)) {
+          Value *zeroDiff =
+              Constant::getNullValue(gutils->getShadowType(call.getType()));
+          setDiffe(&call, zeroDiff, BuilderZ);
+        }
+        if (gutils->isConstantInstruction(&call) &&
+            gutils->isConstantValue(call.getArgOperand(4))) {
+          return true;
+        }
+        Function *reduceFn =
+            dyn_cast<Function>(call.getArgOperand(5)->stripPointerCasts());
+        if (!reduceFn || reduceFn->empty() || reduceFn->arg_size() != 2) {
+          EmitNoDerivativeError(
+              "Cannot differentiate OpenMP reduction with unknown combiner",
+              call, gutils, BuilderZ);
+          return true;
+        }
+
+        FnTypeInfo nextTypeInfo(reduceFn);
+        TypeTree argTree = TR.query(call.getArgOperand(4));
+        std::set<int64_t> argKnown =
+            TR.knownIntegralValues(call.getArgOperand(4));
+        for (Argument &arg : reduceFn->args()) {
+          nextTypeInfo.Arguments.insert(
+              std::pair<Argument *, TypeTree>(&arg, argTree));
+          nextTypeInfo.KnownValues.insert(
+              std::pair<Argument *, std::set<int64_t>>(&arg, argKnown));
+        }
+        nextTypeInfo.Return = TypeTree();
+
+        std::vector<DIFFE_TYPE> subArgs = {DIFFE_TYPE::DUP_ARG,
+                                           DIFFE_TYPE::DUP_ARG};
+        std::vector<bool> subOverwritten = {true, false};
+        Function *diffRedFn = gutils->Logic.CreateForwardDiff(
+            RequestContext(&call, &BuilderZ), reduceFn, DIFFE_TYPE::CONSTANT,
+            subArgs, TR.analyzer->interprocedural, /*returnValue*/ false, Mode,
+            /*freeMemory*/ true, gutils->runtimeActivity, gutils->strongZero,
+            width, /*additionalArg*/ nullptr, nextTypeInfo,
+            /*subsequent_calls_may_write*/ true, subOverwritten,
+            /*augmented*/ nullptr, /*omp*/ false);
+
+        Function *wrapFn = getOrCreateOMPFwdReduceWrapper(
+            M, reduceFn->getFunctionType(), diffRedFn, width);
+
+        Type *I8PtrTy = getInt8PtrTy(Ctx);
+        ArrayType *bundleTy = ArrayType::get(I8PtrTy, 1 + width);
+        IRBuilder<> allocB(gutils->inversionAllocs);
+        AllocaInst *bundleAlloca =
+            allocB.CreateAlloca(bundleTy, nullptr, "omp_fwd_reduce_bundle");
+
+        Value *primalData = gutils->getNewFromOriginal(call.getArgOperand(4));
+        if (primalData->getType() != I8PtrTy)
+          primalData = BuilderZ.CreatePointerCast(primalData, I8PtrTy);
+        Value *slot0Idxs[] = {BuilderZ.getInt64(0), BuilderZ.getInt64(0)};
+        Value *slot0Ptr =
+            BuilderZ.CreateInBoundsGEP(bundleTy, bundleAlloca, slot0Idxs);
+        BuilderZ.CreateStore(primalData, slot0Ptr);
+
+        Value *shadowData =
+            gutils->invertPointerM(call.getArgOperand(4), BuilderZ);
+        for (unsigned w = 0; w < width; ++w) {
+          Value *laneShadow =
+              (width == 1)
+                  ? shadowData
+                  : GradientUtils::extractMeta(BuilderZ, shadowData, w);
+          if (laneShadow->getType() != I8PtrTy)
+            laneShadow = BuilderZ.CreatePointerCast(laneShadow, I8PtrTy);
+          Value *slotWIdxs[] = {BuilderZ.getInt64(0), BuilderZ.getInt64(1 + w)};
+          Value *slotWPtr =
+              BuilderZ.CreateInBoundsGEP(bundleTy, bundleAlloca, slotWIdxs);
+          BuilderZ.CreateStore(laneShadow, slotWPtr);
+        }
+
+        newCall->setArgOperand(
+            2, ConstantInt::get(call.getArgOperand(2)->getType(), 1 + width));
+        uint64_t bundleBytes = DL.getTypeAllocSize(bundleTy);
+        newCall->setArgOperand(
+            3, ConstantInt::get(call.getArgOperand(3)->getType(), bundleBytes));
+        Value *bundleArg = bundleAlloca;
+        Type *dataParamTy = newCall->getFunctionType()->getParamType(4);
+        if (bundleArg->getType() != dataParamTy)
+          bundleArg = BuilderZ.CreatePointerCast(bundleArg, dataParamTy);
+        newCall->setArgOperand(4, bundleArg);
+        Value *wrapArg = wrapFn;
+        Type *fnParamTy = newCall->getFunctionType()->getParamType(5);
+        if (wrapArg->getType() != fnParamTy)
+          wrapArg = BuilderZ.CreatePointerCast(wrapArg, fnParamTy);
+        newCall->setArgOperand(5, wrapArg);
+        return true;
+      }
+
+      if (Mode == DerivativeMode::ForwardModeSplit) {
+        EmitNoDerivativeError(
+            "OpenMP reduction not yet supported in split forward mode", call,
+            gutils, BuilderZ);
+        return true;
+      }
+
+      if (!gutils->isConstantValue(&call)) {
+        resolveShadowPlaceholder(call);
+      }
+
+      Function *reduceFn =
+          dyn_cast<Function>(call.getArgOperand(5)->stripPointerCasts());
+      SmallVector<OMPReductionItem, 4> allItems;
+      bool extracted = extractOMPReductionItems(call, reduceFn, gutils->OrigDT,
+                                                DL, allItems);
+      bool callActive = !gutils->isConstantInstruction(&call) ||
+                        !gutils->isConstantValue(call.getArgOperand(4));
+      if (!extracted && callActive) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Cannot differentiate unsupported OpenMP reduction combiner in "
+              "reverse mode: "
+           << call << "\n";
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+      }
+
+      SmallVector<OMPReductionItem, 4> sumItems;
+      SmallVector<OMPReductionItem, 4> maxMinItems;
+      if (extracted) {
+        for (const OMPReductionItem &it : allItems) {
+          if (it.op == OMPReductionOp::IntInactive ||
+              gutils->isConstantValue(it.origPrivPtr))
+            continue;
+          if (it.op == OMPReductionOp::Sum)
+            sumItems.push_back(it);
+          else
+            maxMinItems.push_back(it);
+        }
+      }
+
+      Type *I32Ty = Type::getInt32Ty(Ctx);
+      Type *I64Ty = Type::getInt64Ty(Ctx);
+      Type *VoidTy = Type::getVoidTy(Ctx);
+
+      StructType *preValStructTy = nullptr;
+      StructType *allMaxMinTy = nullptr;
+      SmallVector<bool, 4> maxMinIsMax;
+      if (!maxMinItems.empty()) {
+        SmallVector<Type *, 4> preFields;
+        SmallVector<Type *, 4> recFields;
+        for (const OMPReductionItem &it : maxMinItems) {
+          preFields.push_back(it.elemTy);
+          ArrayType *dArrTy = ArrayType::get(it.elemTy, width);
+          recFields.push_back(
+              StructType::get(Ctx, {it.elemTy, dArrTy, I32Ty, I32Ty}));
+          maxMinIsMax.push_back(it.op == OMPReductionOp::Max);
+        }
+        preValStructTy = StructType::get(Ctx, preFields);
+        allMaxMinTy = StructType::get(Ctx, recFields);
+      }
+
+      StructType *scratchTy = nullptr;
+      if (!sumItems.empty() || !maxMinItems.empty()) {
+        SmallVector<Type *, 4> scratchFields;
+        for (const OMPReductionItem &it : sumItems)
+          scratchFields.push_back(ArrayType::get(it.elemTy, width));
+        if (allMaxMinTy)
+          scratchFields.push_back(allMaxMinTy);
+        scratchTy = StructType::get(Ctx, scratchFields);
+      }
+
+      Value *preValAgg = nullptr;
+      if (preValStructTy) {
+        if (Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          Value *agg = UndefValue::get(preValStructTy);
+          for (unsigned m = 0; m < maxMinItems.size(); ++m) {
+            Value *privPtr =
+                gutils->getNewFromOriginal(maxMinItems[m].origPrivPtr);
+            unsigned AS = privPtr->getType()->getPointerAddressSpace();
+            Type *elPtrTy = getPointerType(maxMinItems[m].elemTy, AS);
+            if (privPtr->getType() != elPtrTy)
+              privPtr = BuilderZ.CreatePointerCast(privPtr, elPtrTy);
+            Value *preV = BuilderZ.CreateLoad(maxMinItems[m].elemTy, privPtr,
+                                              "omp_reduce_pre");
+            agg = BuilderZ.CreateInsertValue(agg, preV, {m});
+          }
+          unsigned shIdx = getIndex(&call, CacheType::Shadow, BuilderZ);
+          preValAgg = gutils->cacheForReverse(BuilderZ, agg, shIdx);
+        } else {
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *ph = BuilderZ.CreatePHI(preValStructTy, 0, "omp_reduce_pre");
+          unsigned shIdx = getIndex(&call, CacheType::Shadow, BuilderZ);
+          preValAgg = gutils->cacheForReverse(BuilderZ, ph, shIdx);
+        }
+      }
+
+      Value *sharedScratch = nullptr;
+      if (scratchTy) {
+        BasicBlock *entryBB =
+            gutils->getNewFromOriginal(&gutils->oldFunc->getEntryBlock());
+        Value *alloc = nullptr;
+        if (Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          IRBuilder<> allocEntryB(getFirstNonPHI(entryBB));
+          alloc = CreateAllocation(allocEntryB, scratchTy,
+                                   ConstantInt::get(I64Ty, 1),
+                                   "omp_reduce_scratch");
+        } else {
+          IRBuilder<> phiB(&*entryBB->begin());
+          alloc = phiB.CreatePHI(getUnqual(scratchTy), 0, "omp_reduce_scratch");
+        }
+        IRBuilder<> entryB(getFirstNonPHI(entryBB));
+        unsigned tapeIdx = getIndex(&call, CacheType::Tape, BuilderZ);
+        bool savedOMP = gutils->omp;
+        gutils->omp = false;
+        sharedScratch = gutils->cacheForReverse(entryB, alloc, tapeIdx);
+        gutils->omp = savedOMP;
+      }
+
+      unsigned selfIdx = getIndex(&call, CacheType::Self, BuilderZ);
+      Value *cachedReduce = gutils->cacheForReverse(BuilderZ, newCall, selfIdx);
+
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        return true;
+      }
+
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      Value *origLoc = gutils->getNewFromOriginal(call.getArgOperand(0));
+      Value *loc = lookup(origLoc, Builder2);
+      Value *origGtid = gutils->getNewFromOriginal(call.getArgOperand(1));
+      Value *gtid = lookup(origGtid, Builder2);
+      Value *reduceVal = lookup(cachedReduce, Builder2);
+      Value *preValRev = preValAgg ? lookup(preValAgg, Builder2) : nullptr;
+      Value *scratchPtr =
+          sharedScratch ? lookup(sharedScratch, Builder2) : nullptr;
+      if (scratchPtr && scratchPtr->getType() != getUnqual(scratchTy)) {
+        scratchPtr =
+            Builder2.CreatePointerCast(scratchPtr, getUnqual(scratchTy));
+      }
+
+      auto lookupShadowLanePtrs = [&](const OMPReductionItem &it) {
+        SmallVector<Value *, 2> ptrs;
+        Value *inv = gutils->invertPointerM(it.origPrivPtr, Builder2);
+        inv = lookup(inv, Builder2);
+        for (unsigned w = 0; w < width; ++w) {
+          Value *lp =
+              (width == 1) ? inv : GradientUtils::extractMeta(Builder2, inv, w);
+          unsigned AS = lp->getType()->getPointerAddressSpace();
+          Type *elPtrTy = getPointerType(it.elemTy, AS);
+          if (lp->getType() != elPtrTy)
+            lp = Builder2.CreatePointerCast(lp, elPtrTy);
+          ptrs.push_back(lp);
+        }
+        return ptrs;
+      };
+
+      SmallVector<SmallVector<Value *, 2>, 4> sumShadowPtrs;
+      for (const OMPReductionItem &it : sumItems)
+        sumShadowPtrs.push_back(lookupShadowLanePtrs(it));
+      SmallVector<SmallVector<Value *, 2>, 4> maxMinShadowPtrs;
+      for (const OMPReductionItem &it : maxMinItems)
+        maxMinShadowPtrs.push_back(lookupShadowLanePtrs(it));
+
+      auto emitBarrier = [&](IRBuilder<> &B) {
+        FunctionCallee barCallee = M.getOrInsertFunction(
+            "__kmpc_barrier",
+            FunctionType::get(VoidTy, {loc->getType(), gtid->getType()},
+                              false));
+        if (auto *barFn =
+                dyn_cast<Function>(barCallee.getCallee()->stripPointerCasts()))
+          attributeKnownFunctions(*barFn);
+        FunctionType *barFT = barCallee.getFunctionType();
+        Value *barLoc = loc;
+        if (barLoc->getType() != barFT->getParamType(0))
+          barLoc = B.CreatePointerCast(barLoc, barFT->getParamType(0));
+        Value *barArgs[] = {barLoc, gtid};
+        B.CreateCall(barCallee, barArgs);
+      };
+
+      // 1. Root thread (%red == 1) publishes reduced adjoints / resets init
+      //    flags in shared scratch and closes the reverse critical section.
+      Value *oneVal = ConstantInt::get(reduceVal->getType(), 1);
+      Value *isCase1 = Builder2.CreateICmpEQ(reduceVal, oneVal);
+      BasicBlock *curBB1 = Builder2.GetInsertBlock();
+      BasicBlock *case1RevBB = gutils->addReverseBlock(
+          curBB1, curBB1->getName() + "_omp_red_case1", /*forkCache=*/true,
+          /*push=*/false);
+      BasicBlock *afterCase1BB = gutils->addReverseBlock(
+          curBB1, curBB1->getName() + "_omp_red_after_case1",
+          /*forkCache=*/true, /*push=*/true);
+      Builder2.CreateCondBr(isCase1, case1RevBB, afterCase1BB);
+
+      Builder2.SetInsertPoint(case1RevBB);
+      for (unsigned s = 0; s < sumItems.size(); ++s) {
+        Value *sumFieldPtr = Builder2.CreateStructGEP(scratchTy, scratchPtr, s);
+        ArrayType *sArrTy = ArrayType::get(sumItems[s].elemTy, width);
+        for (unsigned w = 0; w < width; ++w) {
+          Value *dVal =
+              Builder2.CreateLoad(sumItems[s].elemTy, sumShadowPtrs[s][w]);
+          Value *idxs[] = {Builder2.getInt64(0), Builder2.getInt64(w)};
+          Value *dst = Builder2.CreateInBoundsGEP(sArrTy, sumFieldPtr, idxs);
+          Builder2.CreateStore(dVal, dst);
+        }
+      }
+      if (!maxMinItems.empty()) {
+        Value *mmBasePtr =
+            Builder2.CreateStructGEP(scratchTy, scratchPtr, sumItems.size());
+        for (unsigned m = 0; m < maxMinItems.size(); ++m) {
+          auto *recTy = cast<StructType>(allMaxMinTy->getElementType(m));
+          Value *recPtr = Builder2.CreateStructGEP(allMaxMinTy, mmBasePtr, m);
+          Value *initPtr = Builder2.CreateStructGEP(recTy, recPtr, 3);
+          Builder2.CreateStore(ConstantInt::get(I32Ty, 0), initPtr);
+        }
+      }
+      {
+        Type *lckArgTy = call.getArgOperand(6)->getType();
+        GlobalVariable *critGV =
+            getOrCreateOMPReduceLock(M, "__enzyme_omp_reduce_crit_lck");
+        FunctionCallee endCritCallee = M.getOrInsertFunction(
+            "__kmpc_end_critical",
+            FunctionType::get(
+                VoidTy, {loc->getType(), gtid->getType(), lckArgTy}, false));
+        if (auto *endCritFn = dyn_cast<Function>(
+                endCritCallee.getCallee()->stripPointerCasts()))
+          attributeKnownFunctions(*endCritFn);
+        FunctionType *endCritFT = endCritCallee.getFunctionType();
+        Value *ecLoc = loc;
+        if (ecLoc->getType() != endCritFT->getParamType(0))
+          ecLoc = Builder2.CreatePointerCast(ecLoc, endCritFT->getParamType(0));
+        Value *ecLock = critGV;
+        if (ecLock->getType() != endCritFT->getParamType(2))
+          ecLock =
+              Builder2.CreatePointerCast(ecLock, endCritFT->getParamType(2));
+        Value *ecArgs[] = {ecLoc, gtid, ecLock};
+        Builder2.CreateCall(endCritCallee, ecArgs);
+      }
+      Builder2.CreateBr(afterCase1BB);
+
+      Builder2.SetInsertPoint(afterCase1BB);
+
+      if (scratchTy) {
+        emitBarrier(Builder2);
+
+        // 2. Sum reductions: broadcast d_sum to non-root threads (%red == 0).
+        if (!sumItems.empty()) {
+          Value *zeroVal = ConstantInt::get(reduceVal->getType(), 0);
+          Value *isNonRoot = Builder2.CreateICmpEQ(reduceVal, zeroVal);
+          BasicBlock *curBBSum = Builder2.GetInsertBlock();
+          BasicBlock *nonRootBB = gutils->addReverseBlock(
+              curBBSum, curBBSum->getName() + "_omp_red_sum",
+              /*forkCache=*/true, /*push=*/false);
+          BasicBlock *afterSumBB = gutils->addReverseBlock(
+              curBBSum, curBBSum->getName() + "_omp_red_after_sum",
+              /*forkCache=*/true, /*push=*/true);
+          Builder2.CreateCondBr(isNonRoot, nonRootBB, afterSumBB);
+
+          Builder2.SetInsertPoint(nonRootBB);
+          for (unsigned s = 0; s < sumItems.size(); ++s) {
+            Value *sumFieldPtr =
+                Builder2.CreateStructGEP(scratchTy, scratchPtr, s);
+            ArrayType *sArrTy = ArrayType::get(sumItems[s].elemTy, width);
+            for (unsigned w = 0; w < width; ++w) {
+              Value *idxs[] = {Builder2.getInt64(0), Builder2.getInt64(w)};
+              Value *src =
+                  Builder2.CreateInBoundsGEP(sArrTy, sumFieldPtr, idxs);
+              Value *dShared = Builder2.CreateLoad(sumItems[s].elemTy, src);
+              Value *oldD =
+                  Builder2.CreateLoad(sumItems[s].elemTy, sumShadowPtrs[s][w]);
+              Value *newD = Builder2.CreateFAdd(oldD, dShared);
+              Builder2.CreateStore(newD, sumShadowPtrs[s][w]);
+            }
+          }
+          Builder2.CreateBr(afterSumBB);
+          Builder2.SetInsertPoint(afterSumBB);
+        }
+
+        // 3. Max/Min reductions: O(log P) reverse tree reduction over
+        //    (pre_val, d_sum, gtid) to route the adjoint to the winning thread.
+        if (!maxMinItems.empty()) {
+          IRBuilder<> revAllocB(gutils->inversionAllocs);
+          AllocaInst *localMM =
+              revAllocB.CreateAlloca(allMaxMinTy, nullptr, "omp_rev_mm_local");
+          Value *gtidI32 = Builder2.CreateSExtOrTrunc(gtid, I32Ty);
+
+          for (unsigned m = 0; m < maxMinItems.size(); ++m) {
+            auto *recTy = cast<StructType>(allMaxMinTy->getElementType(m));
+            auto *dArrTy = cast<ArrayType>(recTy->getElementType(1));
+            Value *preM = Builder2.CreateExtractValue(preValRev, {m});
+            Value *myDArr = UndefValue::get(dArrTy);
+            for (unsigned w = 0; w < width; ++w) {
+              Value *myD = Builder2.CreateLoad(maxMinItems[m].elemTy,
+                                               maxMinShadowPtrs[m][w]);
+              Value *zeroElem = Constant::getNullValue(maxMinItems[m].elemTy);
+              Builder2.CreateStore(zeroElem, maxMinShadowPtrs[m][w]);
+              myDArr = Builder2.CreateInsertValue(myDArr, myD, {w});
+            }
+            Value *recVal = UndefValue::get(recTy);
+            recVal = Builder2.CreateInsertValue(recVal, preM, {0});
+            recVal = Builder2.CreateInsertValue(recVal, myDArr, {1});
+            recVal = Builder2.CreateInsertValue(recVal, gtidI32, {2});
+            recVal = Builder2.CreateInsertValue(
+                recVal, ConstantInt::get(I32Ty, 1), {3});
+            Value *localRecPtr =
+                Builder2.CreateStructGEP(allMaxMinTy, localMM, m);
+            Builder2.CreateStore(recVal, localRecPtr);
+          }
+
+          Function *revRedFn = getOrCreateOMPRevMaxMinReduceFn(
+              M, reduceFn->getFunctionType(), allMaxMinTy, maxMinIsMax, width);
+          GlobalVariable *revLockGV =
+              getOrCreateOMPReduceLock(M, "__enzyme_omp_reduce_rev_lck");
+          FunctionCallee redNowaitCallee = M.getOrInsertFunction(
+              "__kmpc_reduce_nowait", called->getFunctionType());
+          if (auto *rnFn = dyn_cast<Function>(
+                  redNowaitCallee.getCallee()->stripPointerCasts()))
+            attributeKnownFunctions(*rnFn);
+          FunctionType *rnFT = redNowaitCallee.getFunctionType();
+          Value *rnLoc = loc;
+          if (rnLoc->getType() != rnFT->getParamType(0))
+            rnLoc = Builder2.CreatePointerCast(rnLoc, rnFT->getParamType(0));
+          Value *rnNumVars =
+              ConstantInt::get(rnFT->getParamType(2), maxMinItems.size());
+          uint64_t mmBytes = DL.getTypeAllocSize(allMaxMinTy);
+          Value *rnSize = ConstantInt::get(rnFT->getParamType(3), mmBytes);
+          Value *rnData = localMM;
+          if (rnData->getType() != rnFT->getParamType(4))
+            rnData = Builder2.CreatePointerCast(rnData, rnFT->getParamType(4));
+          Value *rnFunc = revRedFn;
+          if (rnFunc->getType() != rnFT->getParamType(5))
+            rnFunc = Builder2.CreatePointerCast(rnFunc, rnFT->getParamType(5));
+          Value *rnLock = revLockGV;
+          if (rnLock->getType() != rnFT->getParamType(6))
+            rnLock = Builder2.CreatePointerCast(rnLock, rnFT->getParamType(6));
+          Value *rnArgs[] = {rnLoc,  gtid,   rnNumVars, rnSize,
+                             rnData, rnFunc, rnLock};
+          Value *revRedRes = Builder2.CreateCall(redNowaitCallee, rnArgs);
+
+          Value *revOne = ConstantInt::get(revRedRes->getType(), 1);
+          Value *isRevRoot = Builder2.CreateICmpEQ(revRedRes, revOne);
+          BasicBlock *curBBMM = Builder2.GetInsertBlock();
+          BasicBlock *revRootBB = gutils->addReverseBlock(
+              curBBMM, curBBMM->getName() + "_omp_rev_mm_root",
+              /*forkCache=*/true, /*push=*/false);
+          BasicBlock *afterRevRedBB = gutils->addReverseBlock(
+              curBBMM, curBBMM->getName() + "_omp_rev_mm_done",
+              /*forkCache=*/true, /*push=*/true);
+          Builder2.CreateCondBr(isRevRoot, revRootBB, afterRevRedBB);
+
+          Builder2.SetInsertPoint(revRootBB);
+          Value *mmSharedPtr =
+              Builder2.CreateStructGEP(scratchTy, scratchPtr, sumItems.size());
+          FunctionType *combFT = revRedFn->getFunctionType();
+          Value *combLhs = mmSharedPtr;
+          if (combLhs->getType() != combFT->getParamType(0))
+            combLhs =
+                Builder2.CreatePointerCast(combLhs, combFT->getParamType(0));
+          Value *combRhs = localMM;
+          if (combRhs->getType() != combFT->getParamType(1))
+            combRhs =
+                Builder2.CreatePointerCast(combRhs, combFT->getParamType(1));
+          Value *combArgs[] = {combLhs, combRhs};
+          Builder2.CreateCall(combFT, revRedFn, combArgs);
+
+          Type *lckParamTy = rnFT->getParamType(6);
+          FunctionCallee endRNCallee = M.getOrInsertFunction(
+              "__kmpc_end_reduce_nowait",
+              FunctionType::get(
+                  VoidTy,
+                  {rnFT->getParamType(0), rnFT->getParamType(1), lckParamTy},
+                  false));
+          if (auto *ernFn = dyn_cast<Function>(
+                  endRNCallee.getCallee()->stripPointerCasts()))
+            attributeKnownFunctions(*ernFn);
+          FunctionType *endRNFT = endRNCallee.getFunctionType();
+          Value *ernLoc = loc;
+          if (ernLoc->getType() != endRNFT->getParamType(0))
+            ernLoc =
+                Builder2.CreatePointerCast(ernLoc, endRNFT->getParamType(0));
+          Value *ernLock = revLockGV;
+          if (ernLock->getType() != endRNFT->getParamType(2))
+            ernLock =
+                Builder2.CreatePointerCast(ernLock, endRNFT->getParamType(2));
+          Value *ernArgs[] = {ernLoc, gtid, ernLock};
+          Builder2.CreateCall(endRNCallee, ernArgs);
+          Builder2.CreateBr(afterRevRedBB);
+
+          Builder2.SetInsertPoint(afterRevRedBB);
+          emitBarrier(Builder2);
+
+          Value *mmSharedBase =
+              Builder2.CreateStructGEP(scratchTy, scratchPtr, sumItems.size());
+          for (unsigned m = 0; m < maxMinItems.size(); ++m) {
+            auto *recTy = cast<StructType>(allMaxMinTy->getElementType(m));
+            auto *dArrTy = cast<ArrayType>(recTy->getElementType(1));
+            Value *recPtr =
+                Builder2.CreateStructGEP(allMaxMinTy, mmSharedBase, m);
+            Value *winTidPtr = Builder2.CreateStructGEP(recTy, recPtr, 2);
+            Value *winTid = Builder2.CreateLoad(I32Ty, winTidPtr);
+            Value *isWinner = Builder2.CreateICmpEQ(gtidI32, winTid);
+            BasicBlock *curWinBB = Builder2.GetInsertBlock();
+            BasicBlock *winBB = gutils->addReverseBlock(
+                curWinBB, curWinBB->getName() + "_omp_mm_win",
+                /*forkCache=*/true, /*push=*/false);
+            BasicBlock *afterWinBB = gutils->addReverseBlock(
+                curWinBB, curWinBB->getName() + "_omp_mm_after_win",
+                /*forkCache=*/true, /*push=*/true);
+            Builder2.CreateCondBr(isWinner, winBB, afterWinBB);
+
+            Builder2.SetInsertPoint(winBB);
+            Value *dSumPtr = Builder2.CreateStructGEP(recTy, recPtr, 1);
+            Value *dSumArr = Builder2.CreateLoad(dArrTy, dSumPtr);
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dW = Builder2.CreateExtractValue(dSumArr, {w});
+              Value *curD = Builder2.CreateLoad(maxMinItems[m].elemTy,
+                                                maxMinShadowPtrs[m][w]);
+              Value *updD = Builder2.CreateFAdd(curD, dW);
+              Builder2.CreateStore(updD, maxMinShadowPtrs[m][w]);
+            }
+            Builder2.CreateBr(afterWinBB);
+            Builder2.SetInsertPoint(afterWinBB);
+          }
+        }
+
+        emitBarrier(Builder2);
+        if (!gutils->omp && shouldFree()) {
+          CreateDealloc(Builder2, scratchPtr);
+        }
+      } else if (funcName == "__kmpc_reduce") {
+        emitBarrier(Builder2);
+      }
+
       return true;
     }
 

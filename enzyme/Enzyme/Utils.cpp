@@ -490,6 +490,10 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "__kmpc_barrier",
       "__kmpc_critical",
       "__kmpc_end_critical",
+      "__kmpc_reduce",
+      "__kmpc_reduce_nowait",
+      "__kmpc_end_reduce",
+      "__kmpc_end_reduce_nowait",
       "omp_get_thread_num",
       "omp_get_num_threads",
       "omp_get_max_threads",
@@ -500,6 +504,30 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addAttribute(
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  if (name == "__kmpc_reduce" || name == "__kmpc_reduce_nowait") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    auto FT = F.getFunctionType();
+    for (unsigned idx : {0u, 4u, 5u, 6u}) {
+      if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+        addFunctionNoCapture(&F, idx);
+        if (idx == 0 || idx == 5)
+          F.addParamAttr(idx, Attribute::ReadOnly);
+      }
+    }
+  }
+  if (name == "__kmpc_end_reduce" || name == "__kmpc_end_reduce_nowait") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    auto FT = F.getFunctionType();
+    for (unsigned idx : {0u, 2u}) {
+      if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+        addFunctionNoCapture(&F, idx);
+        if (idx == 0)
+          F.addParamAttr(idx, Attribute::ReadOnly);
+      }
+    }
   }
   changed |= attributeTablegen(F);
   return changed;

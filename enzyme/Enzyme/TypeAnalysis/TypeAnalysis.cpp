@@ -5091,6 +5091,49 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if ((funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait") &&
+        call.arg_size() == 7) {
+      TypeTree ptrOnly = TypeTree(BaseType::Pointer).Only(-1, &call);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(0), ptrOnly, &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(4), ptrOnly, &call);
+      updateAnalysis(call.getArgOperand(5), ptrOnly, &call);
+      updateAnalysis(call.getArgOperand(6), ptrOnly, &call);
+
+      Function *fn =
+          dyn_cast<Function>(call.getArgOperand(5)->stripPointerCasts());
+      if (fn && !fn->empty() && fn->arg_size() == 2 && (direction & UP)) {
+        FnTypeInfo typeInfo(fn);
+        TypeTree dataTT = getAnalysis(call.getArgOperand(4));
+        for (auto &arg : fn->args()) {
+          typeInfo.Arguments.insert(
+              std::pair<Argument *, TypeTree>(&arg, dataTT));
+          typeInfo.KnownValues.insert(
+              std::pair<Argument *, std::set<int64_t>>(&arg, {}));
+        }
+        TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+        updateAnalysis(call.getArgOperand(4), STR.query(fn->getArg(0)), &call);
+        updateAnalysis(call.getArgOperand(4), STR.query(fn->getArg(1)), &call);
+      }
+      return;
+    }
+    if ((funcName == "__kmpc_end_reduce" ||
+         funcName == "__kmpc_end_reduce_nowait" ||
+         funcName == "__kmpc_critical" || funcName == "__kmpc_end_critical") &&
+        call.arg_size() == 3) {
+      TypeTree ptrOnly = TypeTree(BaseType::Pointer).Only(-1, &call);
+      updateAnalysis(call.getArgOperand(0), ptrOnly, &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2), ptrOnly, &call);
+      return;
+    }
     if (funcName == "_ZNSt6localeC1Ev") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);

@@ -598,12 +598,27 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // Since adjoint of barrier is another barrier in reverse
     // we still need even if instruction is inactive
     if (!shadow)
-      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier") {
+      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier" ||
+          funcName == "__kmpc_critical" || funcName == "__kmpc_end_critical" ||
+          funcName == "__kmpc_end_reduce" ||
+          funcName == "__kmpc_end_reduce_nowait") {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need direct primal of " << *val
                        << " in reverse from barrier " << *user << "\n";
         return true;
       }
+
+    if (!shadow &&
+        (funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait")) {
+      if ((CI->arg_size() > 0 && CI->getArgOperand(0) == val) ||
+          (CI->arg_size() > 1 && CI->getArgOperand(1) == val) ||
+          (CI->arg_size() > 6 && CI->getArgOperand(6) == val)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from omp reduce " << *user << "\n";
+        return true;
+      }
+    }
 
     // Since adjoint of GC preserve is another preserve in reverse
     // we still need even if instruction is inactive

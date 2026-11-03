@@ -340,6 +340,10 @@ static const StringSet<> KnownInactiveFunctions = {
     "__kmpc_barrier_master",
     "__kmpc_barrier_master_nowait",
     "__kmpc_barrier_end_barrier_master",
+    "__kmpc_critical",
+    "__kmpc_end_critical",
+    "__kmpc_end_reduce",
+    "__kmpc_end_reduce_nowait",
     "__kmpc_global_thread_num",
     "omp_get_max_threads",
     "malloc_usable_size",
@@ -773,6 +777,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
     return true;
 
+  // Only the data array (arg 4) impacts activity of OpenMP reductions.
+  if (Name == "__kmpc_reduce" || Name == "__kmpc_reduce_nowait") {
+    return CI->arg_size() <= 4 || val != CI->getArgOperand(4);
+  }
+
   // Canonicalize MPI names across calling conventions (C "MPI_Recv",
   // "PMPI_Recv" and Fortran "mpi_recv_" etc.): the leading argument indices
   // match between the ABIs, the Fortran ABI only appends an `ierr` argument.
@@ -865,6 +874,13 @@ static inline void propagateArgumentInformation(
   // Only the 1-th arg impacts activity
   if (Name == "jl_reshape_array" || Name == "ijl_reshape_array") {
     propagateFromOperand(CI.getArgOperand(1));
+    return;
+  }
+
+  // Only the data array (arg 4) impacts activity of OpenMP reductions.
+  if ((Name == "__kmpc_reduce" || Name == "__kmpc_reduce_nowait") &&
+      CI.arg_size() > 4) {
+    propagateFromOperand(CI.getArgOperand(4));
     return;
   }
 
@@ -2943,7 +2959,9 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                    isDebugFunction(ci->getCalledFunction()) ||
                    isCertainPrint(funcName) ||
                    isAllocationFunction(funcName, TLI) ||
-                   isDeallocationFunction(funcName, TLI)) {
+                   isDeallocationFunction(funcName, TLI) ||
+                   funcName == "__kmpc_reduce" ||
+                   funcName == "__kmpc_reduce_nowait") {
           legalUse = true;
         }
 
