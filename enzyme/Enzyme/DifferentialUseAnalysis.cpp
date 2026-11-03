@@ -538,7 +538,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       if (shadow && val == CI->getArgOperand(0)) {
         if ((funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") &&
             mode != DerivativeMode::ReverseModeGradient) {
-          // Need shadow buffer for forward pass of irecieve
+          // Need shadow buffer for forward pass of ireceive
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
                          << *val << " in reverse as shadow MPI " << *CI << "\n";

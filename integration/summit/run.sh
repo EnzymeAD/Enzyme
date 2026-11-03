@@ -22,12 +22,16 @@ fi
 SUMMIT_URL=${SUMMIT_URL:-https://${SUMMIT_TOKEN:+x-access-token:$SUMMIT_TOKEN@}github.com/MIT-PSAAP-IV/sumMIT.git}
 # the Enzyme tests live on the enzyme-ad branch; switch to main once it lands
 SUMMIT_BRANCH=${SUMMIT_BRANCH:-enzyme-ad}
+# pyre main moves quickly and has broken this build by itself (it now requires
+# pybind11 3, newer than Ubuntu ships), so build the commit sumMIT last passed with
+PYRE_REF=${PYRE_REF:-f5883e2712968bbc4d5a0449b2e140c087a063f1}
 
 echo "CLANGV: $CLANGV"
 echo "ENZYME_DIR: $ENZYME_DIR"
 echo "LLDENZYME: $LLDENZYME"
 echo "NPROC: $NPROC"
 echo "SUMMIT_BRANCH: $SUMMIT_BRANCH"
+echo "PYRE_REF: $PYRE_REF"
 
 if [ ! -f "$LLDENZYME" ]; then
     echo "LLDEnzyme plugin not found at $LLDENZYME" >&2
@@ -52,6 +56,7 @@ echo "Building pyre"
 # pyre is not packaged for Ubuntu, so build it from source. The clone cannot be
 # shallow because pyre derives its version with git describe, which needs tags.
 git clone https://github.com/pyre/pyre.git
+git -C pyre checkout $PYRE_REF
 cmake -S pyre -B pyre-build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="/usr" \

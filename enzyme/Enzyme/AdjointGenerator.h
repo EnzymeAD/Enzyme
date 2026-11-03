@@ -1198,9 +1198,11 @@ public:
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
             if (CustomErrorHandler) {
-              diff = unwrap(CustomErrorHandler(
-                  str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
-                  wrap(orig_val), wrap(&BuilderZ)));
+              LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
+              diff = unwrap(CustomErrorHandler(str.c_str(), wrap(&I),
+                                               ErrorType::MixedActivityError,
+                                               gutils, wrap(orig_val), BR));
+              finishCallbackBuilder(BR, BuilderZ);
               if (diff)
                 needs_writebarrier = true;
             } else
@@ -1449,9 +1451,11 @@ public:
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
                   if (CustomErrorHandler) {
+                    LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
                     valueop = unwrap(CustomErrorHandler(
                         str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                        gutils, wrap(orig_val), wrap(&BuilderZ)));
+                        gutils, wrap(orig_val), BR));
+                    finishCallbackBuilder(BR, BuilderZ);
                     if (valueop)
                       needs_writebarrier = true;
                   } else

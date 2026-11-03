@@ -189,6 +189,11 @@ public:
   const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       *overwritten_args_map_ptr;
   const llvm::SmallPtrSetImpl<const llvm::Value *> *unnecessaryValuesP;
+  //! In the reverse pass of split mode, the augmented pass's unnecessary values
+  //! and recompute decisions, to answer whether the primal pass used a value.
+  const std::set<const llvm::Value *> *primalUnnecessaryValuesP = nullptr;
+  const std::map<const llvm::Value *, bool> *primalKnownRecomputeHeuristicP =
+      nullptr;
 
   llvm::SmallVector<llvm::OperandBundleDef, 2> getInvertedBundles(
       llvm::CallInst *orig, llvm::ArrayRef<ValueType> types,
@@ -429,6 +434,11 @@ public:
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP,
                                 DerivativeMode cmode) const;
+
+  //! Whether the augmented pass used the primal of \p orig. In the reverse pass
+  //! of split mode this is the augmented pass's answer rather than one from
+  //! this pass's own analysis, so it can rebuild how a call was augmented.
+  bool augmentedPrimalReturnUsed(llvm::Value *orig) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;

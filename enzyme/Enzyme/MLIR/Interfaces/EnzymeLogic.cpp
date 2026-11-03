@@ -47,7 +47,7 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
   }
 
   // In forward mode we only need to update the return value
-  if (!inst->hasTrait<OpTrait::ReturnLike>())
+  if (!mlir::enzyme::isFunctionReturnLike(inst))
     return;
 
   SmallVector<mlir::Value, 2> retargs;
@@ -69,10 +69,16 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
     }
   }
 
-  nBB->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
-                                 TypeRange(), retargs, newInst->getAttrs(),
-                                 mlir::PropertyRef(), newInst->getSuccessors(),
-                                 newInst->getNumRegions()));
+  if (auto fnIface =
+          dyn_cast<AutoDiffFunctionInterface>(gutils->newFunc.getOperation())) {
+    nBuilder.setInsertionPointToEnd(nBB);
+    fnIface.createReturn(nBuilder, newInst->getLoc(), retargs);
+  } else {
+    nBB->push_back(
+        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                        retargs, newInst->getAttrs(), mlir::PropertyRef(),
+                        newInst->getSuccessors(), newInst->getNumRegions()));
+  }
   gutils->erase(newInst);
   return;
 }

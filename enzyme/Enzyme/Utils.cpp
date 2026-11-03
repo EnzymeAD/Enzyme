@@ -111,6 +111,31 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
+
+bool isFlangRuntimeNoFree(llvm::StringRef name) {
+  for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
+                      "_FortranAModuloInteger", "_FortranAModuloReal"})
+    if (startsWith(name, prefix))
+      return true;
+  static const char *Names[] = {
+      "_FortranAFlush",
+      "_FortranAIndex1",
+      "_FortranAIndex2",
+      "_FortranAIndex4",
+      "_FortranAScan1",
+      "_FortranAScan2",
+      "_FortranAScan4",
+      "_FortranAVerify1",
+      "_FortranAVerify2",
+      "_FortranAVerify4",
+      "_FortranACharacterCompareScalar",
+      "_FortranACharacterCompareScalar1",
+      "_FortranACharacterCompareScalar2",
+      "_FortranACharacterCompareScalar4",
+  };
+  return llvm::is_contained(Names, name);
+}
+
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
@@ -410,14 +435,106 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // With -enzyme-global-activity a call to a function without body may free
+  // memory or return an allocation needed in the reverse pass, and Enzyme
+  // then differentiates even an inactive call to it.
+  // These LLVM flang runtime queries are also in KnownInactiveFunctions.
+  const char *FlangRuntimeQueries[] = {
+      // LLVM flang runtime: time
+      "_FortranACpuTime",
+      "_FortranADateAndTime",
+      "_FortranAEtime",
+      "_FortranASystemClockCount",
+      "_FortranASystemClockCountRate",
+      "_FortranASystemClockCountMax",
+      "_FortranATimef",
+      // LLVM flang runtime: command line and environment
+      "_FortranAArgumentCount",
+      "_FortranAGetCommand",
+      "_FortranAGetCommandArgument",
+      "_FortranAGetEnvVariable",
+      "_FortranAGetCwd",
+      "_FortranAHostnm",
+      "_FortranAGetPID",
+      "_FortranAGetUID",
+      "_FortranAGetGID",
+  };
+  if (llvm::is_contained(FlangRuntimeQueries, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions do not free memory of the program
+  // (see isFlangRuntimeNoFree, used by CreateNoFree) and, like the
+  // termination calls, do not return or store an allocation into it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // The OpenMP runtime calls of worksharing loops and synchronization neither
+  // free memory of the program nor hand an allocation to it.
+  const char *OpenMPRuntimeCalls[] = {
+      "__kmpc_global_thread_num",
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u",
+      "__kmpc_for_static_fini",
+      "__kmpc_barrier",
+      "__kmpc_critical",
+      "__kmpc_end_critical",
+      "omp_get_thread_num",
+      "omp_get_num_threads",
+      "omp_get_max_threads",
+  };
+  if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
+}
+
+LLVMBuilderRef startCallbackBuilder(IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  BasicBlock *BB = B.GetInsertBlock();
+  assert(BB && BB->getParent() &&
+         "a builder handed to a C callback needs an insertion point in a "
+         "function");
+  LLVMBuilderRef Ref = LLVMCreateBuilderForModule(wrap(BB->getModule()));
+  IRBuilder<> &C = *unwrap(Ref);
+  C.restoreIP(B.saveIP());
+  C.SetCurrentDebugLocation(B.getCurrentDebugLocation());
+  C.setFastMathFlags(B.getFastMathFlags());
+  return Ref;
+#else
+  return wrap(&B);
+#endif
+}
+
+void finishCallbackBuilder(LLVMBuilderRef Ref, IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  B.restoreIP(unwrap(Ref)->saveIP());
+  LLVMDisposeBuilder(Ref);
+#endif
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
                 bool isTape) {
   if (CustomZero) {
-    CustomZero(wrap(&Builder), wrap(T), wrap(obj), isTape);
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    CustomZero(BR, wrap(T), wrap(obj), isTape);
+    finishCallbackBuilder(BR, Builder);
   } else {
     Builder.CreateStore(Constant::getNullValue(T), obj);
   }
@@ -428,7 +545,9 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
   SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
     uint64_t size = 0;
-    auto ptr = EnzymePostCacheStore(wrap(SI), wrap(&B), &size);
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    auto ptr = EnzymePostCacheStore(wrap(SI), BR, &size);
+    finishCallbackBuilder(BR, B);
     for (size_t i = 0; i < size; i++) {
       res.push_back(cast<Instruction>(unwrap(ptr[i])));
     }
@@ -653,9 +772,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
-    res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
-                                 wrap(Align), isDefault,
-                                 ZeroMem ? &wzeromem : nullptr));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res = unwrap(CustomAllocator(BR, wrap(T), wrap(Count), wrap(Align),
+                                 isDefault, ZeroMem ? &wzeromem : nullptr));
+    finishCallbackBuilder(BR, Builder);
     if (isa<UndefValue>(res))
       return res;
     if (isa<Constant>(res))
@@ -781,8 +901,10 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   CallInst *res = nullptr;
 
   if (CustomDeallocator) {
-    res = dyn_cast_or_null<CallInst>(
-        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res =
+        dyn_cast_or_null<CallInst>(unwrap(CustomDeallocator(BR, wrap(ToFree))));
+    finishCallbackBuilder(BR, Builder);
   } else {
 
     ToFree =
@@ -978,7 +1100,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
+      LLVMBuilderRef BR = startCallbackBuilder(EB);
+      CustomRuntimeInactiveError(BR, wrap(msg), wrap(orig));
+      finishCallbackBuilder(BR, EB);
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -2921,7 +3045,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -2936,7 +3060,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -3890,8 +4014,10 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 
       B.SetInsertPoint(bad);
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(B);
         CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
-                           wrap(msg_ptr), wrap(&B));
+                           wrap(msg_ptr), BR);
+        finishCallbackBuilder(BR, B);
       } else {
         llvm::FunctionType *PutsFT = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
@@ -3926,9 +4052,13 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
     BuilderM.CreateCall(SanitizeFCallee, {toset, getString(*mod, stringv)});
   }
 
-  if (EnzymeSanitizeDerivatives)
-    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
-                                            wrap(&BuilderM), wrap(mask)));
+  if (EnzymeSanitizeDerivatives) {
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    Value *res = unwrap(
+        EnzymeSanitizeDerivatives(wrap(val), wrap(toset), BR, wrap(mask)));
+    finishCallbackBuilder(BR, BuilderM);
+    return res;
+  }
   return toset;
 }
 
@@ -4505,9 +4635,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::IRBuilder<> &Builder2,
                                    llvm::Value *condition) {
   if (CustomErrorHandler) {
-    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils,
-                                     wrap(condition), wrap(&Builder2)));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
+    Value *res = unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
+                                           ErrorType::NoDerivative, gutils,
+                                           wrap(condition), BR));
+    finishCallbackBuilder(BR, Builder2);
+    return res;
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4545,8 +4678,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     toshow = context.req;
   }
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR =
+        context.ip ? startCallbackBuilder(*context.ip) : nullptr;
     CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
+                       nullptr, wrap(todiff), BR);
+    if (BR)
+      finishCallbackBuilder(BR, *context.ip);
     return true;
   } else if (context.ip && EnzymeRuntimeError) {
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
@@ -4584,8 +4721,10 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
 void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
     CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
-                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+                       gutils->TR.analyzer, nullptr, BR);
+    finishCallbackBuilder(BR, Builder2);
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),

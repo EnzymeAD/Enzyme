@@ -229,6 +229,7 @@ bool isInactiveCall(CallBase &CI) {
   // clang-format off
 static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    "_FortranAio", // LLVM flang I/O
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -242,6 +243,31 @@ static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 static const StringSet<> KnownInactiveFunctions = {
+    // LLVM flang runtime: inquiries, character operations and termination
+    "_FortranASize",
+    "_FortranASizeDim",
+    "_FortranAIsContiguous",
+    "_FortranAPointerIsAssociated",
+    "_FortranAPointerIsAssociatedWith",
+    "_FortranAAllocatableCheckAllocated",
+    "_FortranAAllocatableCheckLengthParameter",
+    "_FortranAPointerCheckLengthParameter",
+    "_FortranAClassIs",
+    "_FortranASameTypeAs",
+    "_FortranAExtendsTypeOf",
+    "_FortranATrim",
+    "_FortranAIndex1",
+    "_FortranAScan1",
+    "_FortranAVerify1",
+    "_FortranAAdjustl",
+    "_FortranAAdjustr",
+    "_FortranACharacterCompareScalar1",
+    "_FortranAStopStatement",
+    "_FortranAStopStatementText",
+    "_FortranAReportFatalUserError",
+    "_FortranAExit",
+    "_FortranAAbort",
+    "_FortranAFlush",
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -374,6 +400,24 @@ static const StringSet<> KnownInactiveFunctions = {
     "__cudaPushCallConfiguration",
     "__cudaPopCallConfiguration",
     "cudaGetLastError",
+    // LLVM flang runtime: time
+    "_FortranACpuTime",
+    "_FortranADateAndTime",
+    // _FortranAEtime overwrites active memory, see CallDerivatives.cpp
+    "_FortranASystemClockCount",
+    "_FortranASystemClockCountRate",
+    "_FortranASystemClockCountMax",
+    "_FortranATimef",
+    // LLVM flang runtime: command line and environment
+    "_FortranAArgumentCount",
+    "_FortranAGetCommand",
+    "_FortranAGetCommandArgument",
+    "_FortranAGetEnvVariable",
+    "_FortranAGetCwd",
+    "_FortranAHostnm",
+    "_FortranAGetPID",
+    "_FortranAGetUID",
+    "_FortranAGetGID",
 };
 
 static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -952,7 +996,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 
   if (auto II = dyn_cast<IntrinsicInst>(I)) {
     if (isIntelSubscriptIntrinsic(*II)) {
-      // The intrinsic "llvm.intel.subscript" does not propogate deriviative
+      // The intrinsic "llvm.intel.subscript" does not propagate derivative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
       return true;
@@ -2415,7 +2459,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // if the value is created by the instruction (alloca, noalias)
     // since no potentially active store to the same location can occur
     // prior to its creation. Otherwise, check all instructions in the
-    // function as a store to an aliasing location may have occured
+    // function as a store to an aliasing location may have occurred
     // prior to the instruction generating the value.
 
     if (auto VI = dyn_cast<AllocaInst>(Val)) {
@@ -3042,15 +3086,17 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
-          SmallVector<Value *, 1> vtodo = {SI->getValueOperand()};
-          SmallSet<Value *, 1> seen;
+          // The second element records that the value was read from memory
+          // at this pointer, rather than being the pointer itself.
+          SmallVector<std::pair<Value *, bool>, 1> vtodo = {
+              {SI->getValueOperand(), false}};
+          SmallSet<std::pair<Value *, bool>, 1> seen;
           SmallSet<Value *, 1> newAllocaSet;
           while (vtodo.size()) {
-            auto TmpOrig = vtodo.back();
+            auto [TmpOrig, Indirect] = vtodo.back();
             vtodo.pop_back();
-            if (seen.count(TmpOrig))
+            if (!seen.insert({TmpOrig, Indirect}).second)
               continue;
-            seen.insert(TmpOrig);
             if (AllocaSet.count(TmpOrig)) {
               continue;
             }
@@ -3072,17 +3118,29 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               continue;
             }
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              vtodo.push_back(LI->getPointerOperand());
+              // A value loaded from memory at a pointer that was itself
+              // loaded lives in whatever that pointer points to, not in the
+              // memory of val, so it is not covered by the recursion.
+              if (Indirect) {
+                if (EnzymePrintActivity)
+                  llvm::errs()
+                      << "      -- cannot continuing indirect store from "
+                      << *val << " due to load through loaded pointer "
+                      << *TmpOrig << "\n";
+                shouldContinue = false;
+                break;
+              }
+              vtodo.push_back({LI->getPointerOperand(), true});
               continue;
             }
             if (auto CD = dyn_cast<ConstantDataSequential>(TmpOrig)) {
               for (size_t i = 0, len = CD->getNumElements(); i < len; i++)
-                vtodo.push_back(CD->getElementAsConstant(i));
+                vtodo.push_back({CD->getElementAsConstant(i), Indirect});
               continue;
             }
             if (auto CD = dyn_cast<ConstantAggregate>(TmpOrig)) {
               for (size_t i = 0, len = CD->getNumOperands(); i < len; i++)
-                vtodo.push_back(CD->getOperand(i));
+                vtodo.push_back({CD->getOperand(i), Indirect});
               continue;
             }
             if (auto GV = dyn_cast<GlobalVariable>(TmpOrig)) {
@@ -3103,7 +3161,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             auto TmpOrig_2 = getBaseObjects(TmpOrig);
             if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
               for (auto v : TmpOrig_2)
-                vtodo.push_back(v);
+                vtodo.push_back({v, Indirect});
               continue;
             }
             if (UA == PUA && TmpOrig == val) {

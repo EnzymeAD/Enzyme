@@ -54,6 +54,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "../EnzymeLogic.h"
+#include "../FlangRuntime.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -4104,6 +4105,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::sinh:
   case Intrinsic::cosh:
   case Intrinsic::tanh:
+  case Intrinsic::tan:
+  case Intrinsic::asin:
+  case Intrinsic::acos:
+  case Intrinsic::atan:
 #endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
@@ -4132,6 +4137,26 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
             .Only(-1, &I),
         &I);
     return;
+
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::sincos: {
+    // {sin(x), cos(x)}: two values of the type of x.
+    // No direction check as always valid
+    Type *T = I.getOperand(0)->getType()->getScalarType();
+    updateAnalysis(I.getOperand(0), TypeTree(ConcreteType(T)).Only(-1, &I), &I);
+    if (!I.getOperand(0)->getType()->isVectorTy()) {
+      auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
+      auto *ST = cast<StructType>(I.getType());
+      auto *SL = DL.getStructLayout(ST);
+      TypeTree res;
+      for (unsigned i = 0; i < 2; i++)
+        res |= TypeTree(ConcreteType(T))
+                   .Only((int)(size_t)SL->getElementOffset(i), &I);
+      updateAnalysis(&I, res, &I);
+    }
+    return;
+  }
+#endif
 
   case Intrinsic::lround:
   case Intrinsic::llround:
@@ -4219,6 +4244,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nvvm_fmin_d:
   case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::atan2:
+#endif
     // No direction check as always valid
     updateAnalysis(
         &I, TypeTree(ConcreteType(I.getType()->getScalarType())).Only(-1, &I),
@@ -5612,6 +5640,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(3),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
+    // The descriptor arguments of the other flang runtime functions that act
+    // on descriptors (see FlangRuntime.h).
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i : replay->shadowArgs) {
+        if (i < 0 || (unsigned)i >= call.arg_size() ||
+            !call.getOperand(i)->getType()->isPointerTy())
+          continue;
+        // The second argument of PointerAssociateScalar is a data address.
+        if (i == 1 && funcName == "_FortranAPointerAssociateScalar")
+          continue;
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
       return;
     }
 

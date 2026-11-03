@@ -216,6 +216,15 @@ extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           LLVMBuilderRef);
 }
 
+/// Hand the builder @p B to a C API callback. LLVM 24 made LLVMBuilderRef a
+/// builder the C API owns (llvm/llvm-project#234620) and removed
+/// wrap(IRBuilder<> *), so this creates a C API builder positioned where @p B
+/// is. Pass the result to finishCallbackBuilder once the callback returned: it
+/// moves @p B to where the callback left the C API builder and frees it.
+/// Before LLVM 24 both are a plain wrap of @p B.
+LLVMBuilderRef startCallbackBuilder(llvm::IRBuilder<> &B);
+void finishCallbackBuilder(LLVMBuilderRef Ref, llvm::IRBuilder<> &B);
+
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
 
@@ -1948,13 +1957,14 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 // Whether the function does not write to memory visible before the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose allocation happened
-// within the call to F (including a local alloca, a malloc call, even if .
-// returned). This is also legal to write to an sret and/or returnroots
-// parameter (which must be an alloca).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory which did not exist prior to the function call, i.e.
+//     memory allocated within the call to F (including a local alloca, or a
+//     malloc call, even if returned), and to an sret and/or returnroots
+//     parameter (which must be an alloca).
+// A call to F may thus return memory it wrote, directly or through such a
+// parameter.
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -1989,12 +1999,17 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 // Whether the function does not write to memory visible outside the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose lifetime is
-// entirely contained within F (including a local alloca, a malloc call locally
-// freed, but not .     a returned malloc call).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory whose lifetime is entirely contained within the call to
+//     F (including a local alloca, or a malloc call locally freed), but not
+//     to memory it returns or otherwise lets escape, even if allocated within
+//     it.
+// Allocating memory, even memory F returns, is not a write. A call to F thus
+// never returns memory it wrote: if it returns a pointer, derivatives can only
+// flow through the memory it points to, not through the call. A function that
+// may return memory it wrote, including memory a callee wrote and returned to
+// it, is only local read-only-or-throw.
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -2139,6 +2154,13 @@ static inline bool isNoAlias(const llvm::Value *val) {
     return true;
   return false;
 }
+
+/// LLVM flang runtime functions that neither free memory of the program nor
+/// return or store an allocation into it: I/O (which frees only the I/O
+/// statement state that _FortranAioBegin* allocated and
+/// _FortranAioEndIoStatement releases), FLUSH, the scalar character
+/// inquiries and comparison, and MOD/MODULO.
+bool isFlangRuntimeNoFree(llvm::StringRef name);
 
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
@@ -2565,7 +2587,10 @@ static inline void moveBeforeInst(llvm::Instruction *I,
 }
 
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIOrPseudoProbe();
+#elif LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
@@ -2576,7 +2601,9 @@ static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 
 static inline llvm::Instruction *
 getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  return &*B->getFirstNonPHIOrLifetime();
+#elif LLVM_VERSION_MAJOR >= 20
   return &*B->getFirstNonPHIOrDbgOrLifetime();
 #else
   return B->getFirstNonPHIOrDbgOrLifetime();
