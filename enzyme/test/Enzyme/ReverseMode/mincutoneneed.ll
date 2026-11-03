@@ -41,14 +41,14 @@ exit:                                             ; preds = %loop
   ret double %tmp60
 }
 
-; CHECK: define internal { double } @diffemid(double %x, double* %xp, double* %"xp'", double %differeturn, double* %tapeArg)
+; Only the final value of %tmp24 is used (after the loop), so the tape holds
+; just that value rather than one value per iteration.
+; CHECK: define internal { double } @diffemid(double %x, double* %xp, double* %"xp'", double %differeturn, double %tmp24)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
-; CHECK-NEXT:   %0 = getelementptr inbounds double, double* %tapeArg, i64 %iv
-; CHECK-NEXT:   %tmp24 = load double, double* %0, align 8, !invariant.group !
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %tmp27 = icmp eq i64 %iv, 16
 ; CHECK-NEXT:   br i1 %tmp27, label %invertexit, label %loop
@@ -58,8 +58,6 @@ exit:                                             ; preds = %loop
 ; CHECK-NEXT:   %[[a1:.+]] = fadd fast double %[[a0]], %[[a3:.+]]
 ; CHECK-NEXT:   store double %[[a1]], double* %"xp'", align 8
 ; CHECK-NEXT:   %[[a2:.+]] = insertvalue { double } undef, double %[[m1diffex:.+]], 0
-; CHECK-NEXT:   %4 = bitcast double* %tapeArg to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   ret { double } %[[a2]]
 
 ; CHECK: invertloop:                                       ; preds = %invertexit, %incinvertloop
