@@ -997,6 +997,38 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
             ref, gutils->popCache(caches[layout.shadow(r)], builder));
     }
 
+    return reverseReconstructionLoop(forOp, budget, builder, gutils,
+        stores, idxStore, carriedStores, mutableRefs, workClones, mutBufs,
+        immutableRefs, immutableRefsCaches, mapping, operandsActive,
+        incomingGradients, numItersV, startV, stepV, budgetV);
+
+  }
+//===--------------------------------------------------------------------===//
+// Shared Revolve reconstruction loop used by both reverseBinomial and
+// reverseOnline. All parameters have been popped from caches and resolved
+// to Values before this is called.
+//===--------------------------------------------------------------------===//
+static LogicalResult reverseReconstructionLoop(
+    OpName forOp, int64_t budget, OpBuilder &builder,
+    MGradientUtilsReverse *gutils,
+    SmallVector<Value> stores,       // checkpoint buffers (already popped)
+    size_t idxStore,                 // index of step buffer in stores
+    bool carriedStores,
+    SmallVector<Value> mutableRefs,
+    SmallVector<Value> workClones,
+    SmallVector<Value> mutBufs,
+    SmallVector<Value> immutableRefs,
+    SmallVector<Value> immutableRefsCaches,
+    IRMapping &mapping,
+    ArrayRef<bool> operandsActive,
+    ArrayRef<Value> incomingGradients,
+    Value numItersV, Value startV, Value stepV, Value budgetV) {
+  Location loc = forOp.getLoc();
+  auto numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+
+  Value c0 = FinalClass::emitConst(builder, loc, 0);
+  Value c1 = FinalClass::emitConst(builder, loc, 1);
+
     // Outer reverse loop over all N steps; carries (sp, adjoints..., [stores]).
     SmallVector<Value> outerInit;
     outerInit.push_back(budgetV); // live checkpoint count
@@ -1320,7 +1352,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     }
 
     return success(valid);
-  }
+}
+
 //===--------------------------------------------------------------------===//
 // Online (Stumm-Walther) checkpointing: when the primal trip count is
 // unknown at compile time, OnlineProgressOp drives checkpoint placement
@@ -1773,289 +1806,11 @@ reverseOnline(OpName forOp, int64_t budget, OpBuilder &builder,
           ref, gutils->popCache(caches[layout.shadow(r)], builder));
   }
 
-  // Outer reverse for loop: same as reverseBinomial.
-  // (budgetV here is sp -- the actual effective budget from the forward pass)
-  SmallVector<Value> outerInit;
-  outerInit.push_back(budgetV);
-  outerInit.append(incomingGradients.begin(), incomingGradients.end());
-  if (carriedStores)
-    outerInit.append(stores.begin(), stores.end());
+  return reverseReconstructionLoop(forOp, budget, builder, gutils,
+      stores, idxStore, carriedStores, mutableRefs, workClones, mutBufs,
+      immutableRefs, immutableRefsCaches, mapping, operandsActive,
+      incomingGradients, numItersV, startV, stepV, budgetV);
 
-  auto revOuter = FinalClass::createScaffoldForLoop(builder, loc, c0,
-                                                    numItersV, c1, outerInit);
-  FinalClass::preserveAttributesButCheckpointing(revOuter.op, forOp);
-
-  // ── Inner body: identical to reverseBinomial from its line 1001 onward ──
-  // numItersV, startV, stepV, budgetV are already set above (all dynamic).
-  // budget (static) still sizes cloneSlot / freeCloneSlots calls.
-  {
-    OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToStart(revOuter.body);
-
-    Value ivO = revOuter.getIV();
-    auto revOuterArgs = revOuter.args();
-    Value sp = revOuterArgs[0];
-    auto adjArgs = revOuterArgs.slice(1, incomingGradients.size());
-
-    SmallVector<Value> liveStores(stores);
-    if (carriedStores)
-      for (auto &&[i, arg] : llvm::enumerate(
-               revOuterArgs.slice(1 + incomingGradients.size(), stores.size())))
-        liveStores[i] = arg;
-
-    Value capo = FinalClass::emitSub(builder, loc, sp, c1);
-    Value currentRevStep = FinalClass::emitSub(builder, loc, numItersV, ivO);
-
-    // Load the top checkpoint state + its forward step.
-    SmallVector<Value> ckptState;
-    for (auto &&[store, arg] : llvm::zip_equal(
-             ArrayRef<Value>(liveStores).drop_back(),
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front()))
-      ckptState.push_back(
-          FinalClass::loadSlot(builder, loc, store, capo, arg.getType()));
-    Value ckptStep =
-        FinalClass::loadSlot(builder, loc, liveStores[idxStore], capo,
-                             FinalClass::getIndexLikeType(builder));
-
-    // Re-prime each working clone from the snapshot paired with slot `capo`.
-    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
-      auto iface = cast<ClonableTypeInterface>(ref.getType());
-      iface.copyValue(builder, workClones[r],
-                      cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
-                                mutBufs[r], capo, budget));
-    }
-
-    // Inner remat loop: reconstruct state at (currentRevStep - 1).
-    SmallVector<Value> whileInit;
-    whileInit.push_back(ckptStep);
-    whileInit.push_back(capo);
-    whileInit.append(ckptState.begin(), ckptState.end());
-    if (carriedStores)
-      whileInit.append(liveStores.begin(), liveStores.end());
-
-    auto revWhile = FinalClass::createScaffoldWhileLoop(
-        builder, loc, whileInit,
-        [&](OpBuilder &b, Location l, ValueRange args) {
-          Value posPlus1 = FinalClass::emitAdd(b, l, args[0], c1);
-          return FinalClass::emitCmpLT(b, l, posPlus1, currentRevStep);
-        });
-    {
-      FinalClass::setInsertionPointToBodyEnd(builder, revWhile.body);
-      auto wargs = revWhile.args();
-      Value pos = wargs[0];
-      Value acapo = wargs[1];
-      auto astate = wargs.slice(2, numIterArgs);
-
-      SmallVector<Value> wStores(liveStores);
-      if (carriedStores)
-        for (auto &&[i, arg] :
-             llvm::enumerate(wargs.slice(2 + numIterArgs, stores.size())))
-          wStores[i] = arg;
-
-      Value remaining = FinalClass::emitSub(builder, loc, currentRevStep, pos);
-      Value budgetRem = FinalClass::emitSub(builder, loc, budgetV, acapo);
-      budgetRem = FinalClass::emitMin(builder, loc, budgetRem, remaining);
-      Value split = enzyme::BinomialProgressOp::create(
-          builder, loc, FinalClass::getIndexLikeType(builder), remaining,
-          budgetRem);
-
-      for (auto &&[i, val] : llvm::enumerate(astate))
-        wStores[i] =
-            FinalClass::storeSlot(builder, loc, wStores[i], acapo, val);
-      wStores[idxStore] =
-          FinalClass::storeSlot(builder, loc, wStores[idxStore], acapo, pos);
-
-      for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
-        auto iface = cast<ClonableTypeInterface>(ref.getType());
-        iface.copyValue(builder,
-                        cloneSlot(builder, loc, gutils->getNewFromOriginal(ref),
-                                  mutBufs[r], acapo, budget),
-                        workClones[r]);
-      }
-
-      Value posPlusSplit = FinalClass::emitAdd(builder, loc, pos, split);
-      Value isLast =
-          FinalClass::emitCmpEQ(builder, loc, posPlusSplit, currentRevStep);
-      Value rematUB = FinalClass::emitSelect(
-          builder, loc, isLast,
-          FinalClass::emitSub(builder, loc, posPlusSplit, c1), posPlusSplit);
-
-      auto innerRemat = FinalClass::createScaffoldForLoop(
-          builder, loc, pos, rematUB, c1,
-          SmallVector<Value>(astate.begin(), astate.end()));
-      FinalClass::preserveAttributesButCheckpointing(innerRemat.op, forOp);
-
-      {
-        OpBuilder::InsertionGuard g2(builder);
-        builder.setInsertionPointToStart(innerRemat.body);
-        Value idx = FinalClass::castToType(builder, loc, innerRemat.getIV(),
-                                           stepV.getType());
-        Value iv =
-            FinalClass::emitAdd(builder, loc, startV,
-                                FinalClass::emitMul(builder, loc, stepV, idx));
-
-        Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
-        for (auto &&[oldArg, newArg] : llvm::zip_equal(
-                 origBodyBlock->getArguments().drop_front(), innerRemat.args()))
-          mapping.map(oldArg, newArg);
-        mapping.map(FinalClass::getInductionVar(forOp), iv);
-
-        copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
-
-        SmallVector<Value> yields;
-        for (auto operand : FinalClass::getCarriedTerminatorOperands(
-                 origBodyBlock->getTerminator()))
-          yields.push_back(mapping.lookupOrDefault(operand));
-        FinalClass::finalizeScaffoldLoop(builder, loc, innerRemat, yields);
-      }
-
-      Value newCapo = FinalClass::emitAdd(builder, loc, acapo, c1);
-      SmallVector<Value> afterYields;
-      afterYields.push_back(posPlusSplit);
-      afterYields.push_back(newCapo);
-      auto rematResults = innerRemat.results();
-      afterYields.append(rematResults.begin(), rematResults.end());
-      if (carriedStores)
-        afterYields.append(wStores.begin(), wStores.end());
-      FinalClass::finalizeScaffoldLoop(builder, loc, revWhile, afterYields);
-    }
-
-    FinalClass::setInsertionPointToBodyEnd(builder, revOuter.body);
-    auto whileResults = revWhile.results();
-    Value newSp = whileResults[1];
-    auto reconState = whileResults.slice(2, numIterArgs);
-    if (carriedStores)
-      for (auto &&[i, res] :
-           llvm::enumerate(whileResults.slice(2 + numIterArgs, stores.size())))
-        liveStores[i] = res;
-
-    Value stepAdj = FinalClass::emitSub(builder, loc, currentRevStep, c1);
-    Value stepAdjC =
-        FinalClass::castToType(builder, loc, stepAdj, stepV.getType());
-    Value ivAdj =
-        FinalClass::emitAdd(builder, loc, startV,
-                            FinalClass::emitMul(builder, loc, stepV, stepAdjC));
-
-    mapping = IRMapping();
-
-    for (auto [ref, cached] :
-         llvm::zip_equal(immutableRefs, immutableRefsCaches))
-      mapping.map(ref, cached);
-
-    for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
-      mapping.map(ref, workClones[r]);
-
-    for (auto &&[oldArg, newArg] : llvm::zip_equal(
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
-             reconState))
-      mapping.map(oldArg, newArg);
-    mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
-
-    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
-                               mapping);
-
-    SmallVector<Value> reseededShadowKeys;
-    {
-      OpBuilder::InsertionGuard g4(builder);
-      FinalClass::getBodyBlock(forOp)->walk([&](Operation *inner) {
-        for (Value res : inner->getResults()) {
-          if (gutils->isConstantValue(res))
-            continue;
-          Type shadowTy = gutils->getShadowType(res.getType());
-          auto iface = dyn_cast<AutoDiffTypeInterface>(shadowTy);
-          if (!iface || !iface.isMutable())
-            continue;
-          Value newRes = mapping.lookupOrNull(res);
-          if (!newRes)
-            continue;
-          if (Operation *defOp = newRes.getDefiningOp())
-            builder.setInsertionPointAfter(defOp);
-          else
-            continue;
-          auto ph =
-              enzyme::PlaceholderOp::create(builder, res.getLoc(), shadowTy);
-          gutils->invertedPointers.map(res, ph);
-          reseededShadowKeys.push_back(res);
-        }
-      });
-    }
-
-    auto term = FinalClass::getBodyBlock(forOp)->getTerminator();
-    FinalClass::primeStepGradients(builder, gutils,
-                                   FinalClass::getBodyBlock(forOp),
-                                   revOuter.body, operandsActive);
-
-    unsigned revIdx = 0;
-    for (auto &&[active, operand] : llvm::zip_equal(
-             operandsActive, FinalClass::getCarriedTerminatorOperands(term))) {
-      if (active) {
-        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
-        revIdx++;
-      }
-    }
-
-    bool valid = true;
-    auto first = FinalClass::getBodyBlock(forOp)->rbegin();
-    first++;
-    auto last = FinalClass::getBodyBlock(forOp)->rend();
-    {
-      SegmentCacheCreatorGuard cacheGuard(gutils, revWhile.op);
-      for (auto it = first; it != last; ++it)
-        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
-    }
-
-    for (Value orig : reseededShadowKeys) {
-      Value cur = gutils->invertedPointers.lookupOrNull(orig);
-      if (!cur)
-        continue;
-      auto ph = cur.getDefiningOp<enzyme::PlaceholderOp>();
-      if (ph && ph->use_empty()) {
-        gutils->invertedPointers.erase(orig);
-        ph->erase();
-      }
-    }
-
-    SmallVector<Value> newAdjoints;
-    for (auto &&[active, arg] : llvm::zip_equal(
-             operandsActive,
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front())) {
-      if (active) {
-        newAdjoints.push_back(gutils->diffe(arg, builder));
-        if (!gutils->isConstantValue(arg))
-          gutils->zeroDiffe(arg, builder);
-      }
-    }
-
-    SmallVector<Value> outerYields;
-    outerYields.push_back(newSp);
-    outerYields.append(newAdjoints.begin(), newAdjoints.end());
-    if (carriedStores)
-      outerYields.append(liveStores.begin(), liveStores.end());
-    FinalClass::finalizeScaffoldLoop(builder, loc, revOuter, outerYields);
-
-    builder.setInsertionPointAfter(revOuter.op);
-
-    revIdx = 0;
-    auto revOuterResults = revOuter.results();
-    auto forOpInits = FinalClass::getInits(forOp);
-    for (auto &&[active, arg] : llvm::zip_equal(operandsActive, forOpInits)) {
-      if (active) {
-        if (!gutils->isConstantValue(arg))
-          gutils->addToDiffe(arg, revOuterResults[revIdx + 1], builder);
-        revIdx++;
-      }
-    }
-
-    for (auto store : stores)
-      FinalClass::destroyStore(builder, loc, store);
-    for (auto &&[r, ref] : llvm::enumerate(mutableRefs)) {
-      auto iface = cast<ClonableTypeInterface>(ref.getType());
-      iface.freeClonedValue(builder, workClones[r]);
-      freeCloneSlots(builder, ref, mutBufs[r], budget);
-    }
-
-    return success(valid);
-  }
 }
 
   //===--------------------------------------------------------------------===//
