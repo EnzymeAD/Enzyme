@@ -905,6 +905,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
+
+    // Flang character literals (@_QQcl...) hold character data.
+    if (startsWith(GV->getName(), "_QQcl")) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       // Record that this global is a pointer before analyzing its initializer.
