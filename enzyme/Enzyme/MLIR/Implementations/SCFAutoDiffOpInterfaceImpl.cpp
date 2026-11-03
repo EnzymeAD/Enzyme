@@ -1263,6 +1263,22 @@ struct WhileOpInterfaceReverse
     size_t size() const { return immutable(numImmutable) + 1; }
   };
 
+  // ── Helper: collect immutable outside references ──────────────────────────
+  // Uses getUsedValuesDefinedAbove which walks regions in structural order and
+  // stores results in a SetVector (insertion-ordered). The order is therefore
+  // deterministic for a fixed IR — both cacheWhileOnline and reverseWhileOnline
+  // walk the same original whileOp so the cache layout matches. Same guarantee
+  // as LoopCheckpointing::splitOutsideRefs (see its comment).
+  static SmallVector<Value> collectImmutableRefs(scf::WhileOp whileOp) {
+    SetVector<Value> outside;
+    mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
+    SmallVector<Value> refs;
+    for (auto ref : outside)
+      if (!isa<ClonableTypeInterface>(ref.getType()))
+        refs.push_back(ref);
+    return refs;
+  }
+
   // ── Helper: copy a block's ops (without terminator) into the builder ──────
   // Equivalent to LoopCheckpointing::copyBlockWithoutTerminator but also maps
   // outside values (defined outside the block's parent regions) to their
@@ -1619,15 +1635,8 @@ struct WhileOpInterfaceReverse
     memref::DeallocOp::create(builder, loc, ordChBuf);
     memref::DeallocOp::create(builder, loc, numRepBuf);
 
-    // Collect immutable outside references.
-    SmallVector<Value> immutableRefs;
-    {
-      SetVector<Value> outside;
-      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
-      for (auto ref : outside)
-        if (!isa<ClonableTypeInterface>(ref.getType()))
-          immutableRefs.push_back(ref);
-    }
+    // Collect immutable outside references (deterministic — see collectImmutableRefs).
+    SmallVector<Value> immutableRefs = collectImmutableRefs(whileOp);
 
     // Build caches in WhileOnlineCacheLayout order.
     SmallVector<Value> caches;
@@ -1962,14 +1971,8 @@ struct WhileOpInterfaceReverse
     WhileOnlineCacheLayout layout;
     layout.numCarried = numCarried;
 
-    SmallVector<Value> immutableRefs;
-    {
-      SetVector<Value> outside;
-      mlir::getUsedValuesDefinedAbove(whileOp->getRegions(), outside);
-      for (auto ref : outside)
-        if (!isa<ClonableTypeInterface>(ref.getType()))
-          immutableRefs.push_back(ref);
-    }
+    // Collect immutable outside references (deterministic — see collectImmutableRefs).
+    SmallVector<Value> immutableRefs = collectImmutableRefs(whileOp);
     layout.numImmutable = immutableRefs.size();
 
     SmallVector<Value> stores;
