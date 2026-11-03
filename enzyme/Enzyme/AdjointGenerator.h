@@ -4902,8 +4902,14 @@ public:
           }
           assert(tape);
           SmallVector<Value *, 4> extracts;
-          if (subdata->tapeIndices.size() == 1) {
-            assert(subdata->tapeIndices.begin()->second == -1);
+          // Entry value -1 marks a single-element non-struct tape
+          // (removeTapeStruct), whereas entries <= -2 encode uncached
+          // arguments.
+          bool hasSingleElementTape =
+              llvm::any_of(subdata->tapeIndices, [](const auto &entry) {
+                return entry.second == -1;
+              });
+          if (hasSingleElementTape) {
             extracts.push_back(tape);
           } else {
             for (auto a : tape->users()) {
@@ -6861,6 +6867,8 @@ public:
         if (subretused && primalNeededInReverse) {
           if (normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
+            if (gutils->newToOriginalFn.count(normalReturn))
+              gutils->newToOriginalFn.erase(newCall);
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
@@ -6872,6 +6880,8 @@ public:
           if (normalReturn && normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
             assert(Mode != DerivativeMode::ReverseModeGradient);
+            if (gutils->newToOriginalFn.count(normalReturn))
+              gutils->newToOriginalFn.erase(newCall);
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);

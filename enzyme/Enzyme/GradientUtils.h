@@ -321,6 +321,10 @@ public:
 private:
   llvm::SmallVector<llvm::WeakTrackingVH, 4> addedTapeVals;
   unsigned tapeidx;
+  /// Most recently inserted `tapeIndices` slot during the augmented primal
+  /// pass, allowing `cacheForReverse` to rewrite the slot in place when no
+  /// physical tape storage is needed.
+  int *lastTapeIndex = nullptr;
   llvm::Value *tape;
 
   std::map<llvm::BasicBlock *,
