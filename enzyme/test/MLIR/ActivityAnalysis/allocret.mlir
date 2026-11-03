@@ -19,7 +19,7 @@ module attributes {
     %0 = llvm.mlir.constant(4 : i64) : i64
     %1 = llvm.call @malloc(%0) {tag = "malloc"} : (i64) -> !llvm.ptr
     %2 = llvm.bitcast %1 : !llvm.ptr to !llvm.ptr
-    llvm.store %arg0, %2 {alignment = 4 : i64} : f32, !llvm.ptr
+    llvm.store %arg0, %2 <alignment = 4> : f32, !llvm.ptr
     llvm.return %2 : !llvm.ptr
   }
 }

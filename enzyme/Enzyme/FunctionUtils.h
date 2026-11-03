@@ -75,6 +75,12 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
 
+namespace llvm {
+class PassBuilder;
+}
+
+llvm::PassBuilder makePassBuilder(llvm::LLVMContext &Ctx);
+
 class PreProcessCache {
 public:
   PreProcessCache();

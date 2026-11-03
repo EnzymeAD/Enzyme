@@ -22,7 +22,7 @@ module {
 // CHECK-SAME: %[[a:.+]]: f64, %[[m:[^ :]+]]: memref<?xf64>, %[[dm:[^ :]+]]: memref<?xf64>) -> f64
 // CHECK: %[[sq:.+]] = arith.mulf %[[a]], %[[a]] : f64
 // CHECK: affine.parallel
-// CHECK: enzyme.affine_atomic_rmw addf %[[sq]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
+// CHECK: enzyme.affine_atomic_rmw addf %[[sq]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> <alignment = 8> : (f64, memref<?xf64>) -> f64
 // CHECK: %[[red:.+]] = affine.parallel (%{{.+}}) = (0) to (4) reduce ("addf") -> (f64)
 // CHECK: %[[g:.+]] = affine.load %[[dm]][0] {alignment = 8 : i64} : memref<?xf64>
 // CHECK: %[[t0:.+]] = arith.mulf %[[g]], %[[a]] fastmath<fast> : f64

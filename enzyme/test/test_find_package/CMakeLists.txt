@@ -5,7 +5,10 @@ project(enzyme_consumer LANGUAGES C)
 find_package(Enzyme REQUIRED CONFIG NO_DEFAULT_PATH)
 message("found dir ${Enzyme_DIR}")
 message("found ${Enzyme_FOUND}")
-get_property(importTargetsAfter DIRECTORY "${CMAKE_SOURCE_DIR}" PROPERTY IMPORTED_TARGETS)
+get_property(
+  importTargetsAfter
+  DIRECTORY "${CMAKE_SOURCE_DIR}"
+  PROPERTY IMPORTED_TARGETS)
 message("imported targets ${importTargetsAfter}")
 
 #add_subdirectory(${Enzyme_DIR} ${PROJECT_SOURCE_DIR}/build/enzyme)

@@ -181,6 +181,11 @@ public:
   /// contained loop and return true. If BB is not in a loop, return false
   bool getContext(llvm::BasicBlock *BB, LoopContext &loopContext,
                   bool ReverseLimit);
+  /// Compute the exact backedge-taken count of L (CouldNotCompute if it is
+  /// not statically known) and the maximum number of iterations.
+  std::pair<const llvm::SCEV *, const llvm::SCEV *>
+  computeLoopLimit(llvm::Loop *L);
+
   /// Return whether the given instruction is used as necessary as part of a
   /// loop context This includes as the canonical induction variable or
   /// increment
@@ -428,8 +433,8 @@ InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
-    llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
-    llvm::Instruction *Increment, MustExitScalarEvolution &SE,
+    llvm::Loop *L, llvm::PHINode *CanonicalIV, llvm::Instruction *Increment,
+    MustExitScalarEvolution &SE,
     llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
     llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif

@@ -1,10 +1,166 @@
+//===- EnzymeMLIR.cpp - C API for Enzyme MLIR dialect ---------------------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "EnzymeMLIR.h"
 
 #include "mlir/CAPI/IR.h"
+#include "mlir/CAPI/Pass.h"
+#include "mlir/CAPI/Registration.h"
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Passes/Passes.h"
+
+MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
+                                      mlir::enzyme::EnzymeDialect)
+
+void enzymeRegisterPasses(void) {
+  mlir::enzyme::registerDifferentiatePass();
+  mlir::enzyme::registerExpandImpulsePass();
+  mlir::enzyme::registerBatchPass();
+  mlir::enzyme::registerBatchDiffPass();
+  mlir::enzyme::registerDifferentiateWrapperPass();
+  mlir::enzyme::registerInlineEnzymeIntoRegionPass();
+  mlir::enzyme::registerOutlineEnzymeFromRegionPass();
+  mlir::enzyme::registerPrintActivityAnalysisPass();
+  mlir::enzyme::registerPrintAliasAnalysisPass();
+  mlir::enzyme::registerRemoveUnusedEnzymeOpsPass();
+}
+
+void enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
+  mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
+}
+
+MlirPass enzymeCreateDifferentiatePass(void) {
+  return wrap(mlir::enzyme::createDifferentiatePass().release());
+}
+
+MlirPass enzymeCreateDifferentiatePassWithOptions(MlirStringRef postpasses,
+                                                  bool verifyPostPasses) {
+  mlir::enzyme::DifferentiatePassOptions opts;
+  opts.postpasses = std::string(postpasses.data, postpasses.length);
+  opts.verifyPostPasses = verifyPostPasses;
+  return wrap(mlir::enzyme::createDifferentiatePass(opts).release());
+}
+
+MlirPass enzymeCreateConvertEnzymeToMemRefPass(void) {
+  return wrap(mlir::enzyme::createEnzymeOpsToMemRefPass().release());
+}
+
+MlirPass enzymeCreateBatchPass(void) {
+  return wrap(mlir::enzyme::createBatchPass().release());
+}
+
+MlirPass enzymeCreateBatchDiffPass(void) {
+  return wrap(mlir::enzyme::createBatchDiffPass().release());
+}
+
+MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
+  return wrap(mlir::enzyme::createRemoveUnusedEnzymeOpsPass().release());
+}
+
+MlirAttribute enzymeActivityAttrGet(MlirContext ctx, uint32_t activity) {
+  return wrap(mlir::enzyme::ActivityAttr::get(
+      unwrap(ctx), (mlir::enzyme::Activity)activity));
+}
+
+static mlir::ArrayAttr
+activityArrayAttr(MlirContext ctx, const MlirAttribute *activity, intptr_t n) {
+  return mlir::ArrayAttr::get(
+      unwrap(ctx), llvm::ArrayRef<mlir::Attribute>(
+                       reinterpret_cast<const mlir::Attribute *>(activity), n));
+}
+
+MlirOperation
+enzymeAutoDiffOpCreate(MlirContext ctx, MlirStringRef fn,
+                       const MlirType *resultTypes, intptr_t nResults,
+                       const MlirValue *inputs, intptr_t nInputs,
+                       const MlirAttribute *activity, intptr_t nActivity,
+                       const MlirAttribute *retActivity, intptr_t nRetActivity,
+                       int64_t width, bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::AutoDiffOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
+  return wrap(op.getOperation());
+}
+
+MlirOperation enzymeForwardDiffOpCreate(
+    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
+    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
+    const MlirAttribute *activity, intptr_t nActivity,
+    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
+    bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::ForwardDiffOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
+  return wrap(op.getOperation());
+}
+
+MlirOperation
+enzymeJacobianOpCreate(MlirContext ctx, MlirStringRef fn,
+                       const MlirType *resultTypes, intptr_t nResults,
+                       const MlirValue *inputs, intptr_t nInputs,
+                       const MlirAttribute *activity, intptr_t nActivity,
+                       const MlirAttribute *retActivity, intptr_t nRetActivity,
+                       int64_t width, bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::JacobianOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
+  return wrap(op.getOperation());
+}
+
+MlirOperation enzymeBatchOpCreate(MlirContext ctx, MlirStringRef fn,
+                                  const MlirType *resultTypes,
+                                  intptr_t nResults, const MlirValue *inputs,
+                                  intptr_t nInputs, const int64_t *batchShape,
+                                  intptr_t nBatchShape, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::BatchOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              llvm::ArrayRef<int64_t>(batchShape, nBatchShape));
+  return wrap(op.getOperation());
+}
 
 MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
                                            EnzymeRngDistribution dist) {

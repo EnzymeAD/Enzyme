@@ -82,6 +82,20 @@ static inline bool isUnconditionalBranch(const llvm::Value *V) {
 #endif
 }
 
+// LLVM 23 persists every function's GUID as `!guid` metadata and
+// CloneFunctionInto copies it, so a derivative clone would share its primal's
+// GUID. LTO keys per-function state by GUID and then mishandles the pair; a
+// definition that is reachable only through the clone (e.g. a registered
+// custom rule) is dropped to a declaration and the link fails. Give a fresh
+// clone a GUID derived from its own name. No-op before LLVM 23.
+static inline void resetClonedGUID(llvm::Function *F) {
+#if LLVM_VERSION_MAJOR >= 23
+  F->reassignGUID();
+#else
+  (void)F;
+#endif
+}
+
 /// The condition of a branch isConditionalBranch says yes to.
 static inline llvm::Value *getBranchCondition(llvm::Value *V) {
 #if LLVM_VERSION_MAJOR >= 24
@@ -168,7 +182,9 @@ class TypeResults;
 
 namespace llvm {
 class ScalarEvolution;
-}
+class SCEV;
+class SCEVAddRecExpr;
+} // namespace llvm
 
 enum class ErrorType {
   NoDerivative = 0,
@@ -199,6 +215,15 @@ extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
 }
+
+/// Hand the builder @p B to a C API callback. LLVM 24 made LLVMBuilderRef a
+/// builder the C API owns (llvm/llvm-project#234620) and removed
+/// wrap(IRBuilder<> *), so this creates a C API builder positioned where @p B
+/// is. Pass the result to finishCallbackBuilder once the callback returned: it
+/// moves @p B to where the callback left the C API builder and frees it.
+/// Before LLVM 24 both are a plain wrap of @p B.
+LLVMBuilderRef startCallbackBuilder(llvm::IRBuilder<> &B);
+void finishCallbackBuilder(LLVMBuilderRef Ref, llvm::IRBuilder<> &B);
 
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
@@ -878,6 +903,12 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
 parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
+
+/// Restrict an `enzyme_truetype` annotation describing a memory region to the
+/// byte range [start, start + length), rebasing its offsets to that range.
+/// Returns nullptr if no type information covers the range.
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length);
 
 bool isAtomic(llvm::Value *origptr, bool AtomicAdd, llvm::Function *newFunc);
 
@@ -1599,19 +1630,22 @@ llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
 
+// Whether a custom derivative was registered for the function or call through
+// metadata (__enzyme_register_derivative and friends).
+template <typename T> static inline bool hasCustomRuleMetadata(const T *V) {
+  return hasMetadata(V, "enzyme_augment") ||
+         hasMetadata(V, "enzyme_gradient") ||
+         hasMetadata(V, "enzyme_derivative") ||
+         hasMetadata(V, "enzyme_splitderivative");
+}
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
 
-  if (CI->hasFnAttr("enzyme_preserve_primal") ||
-      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
-      hasMetadata(CI, "enzyme_derivative") ||
-      hasMetadata(CI, "enzyme_splitderivative") ||
-      (F &&
-       (F->hasFnAttribute("enzyme_preserve_primal") ||
-        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
-        hasMetadata(F, "enzyme_derivative") ||
-        hasMetadata(F, "enzyme_splitderivative"))) ||
+  if (CI->hasFnAttr("enzyme_preserve_primal") || hasCustomRuleMetadata(CI) ||
+      (F && (F->hasFnAttribute("enzyme_preserve_primal") ||
+             hasCustomRuleMetadata(F))) ||
       !F) {
     return true;
   }
@@ -1838,6 +1872,12 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
       continue;
     }
 
+    if (auto SI = llvm::dyn_cast<llvm::SelectInst>(obj)) {
+      todo.push_back(SI->getTrueValue());
+      todo.push_back(SI->getFalseValue());
+      continue;
+    }
+
     auto cur = getBaseObject(obj, offsetAllowed);
     if (cur != obj) {
       todo.push_back(cur);
@@ -1917,13 +1957,14 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 // Whether the function does not write to memory visible before the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose allocation happened
-// within the call to F (including a local alloca, a malloc call, even if .
-// returned). This is also legal to write to an sret and/or returnroots
-// parameter (which must be an alloca).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory which did not exist prior to the function call, i.e.
+//     memory allocated within the call to F (including a local alloca, or a
+//     malloc call, even if returned), and to an sret and/or returnroots
+//     parameter (which must be an alloca).
+// A call to F may thus return memory it wrote, directly or through such a
+// parameter.
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -1958,12 +1999,17 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 // Whether the function does not write to memory visible outside the function in
 // all cases that it doesn't error. In other words, the legal operations here
 // are:
-//.  1) Throw [in which case any operation guaranteed to throw is valid]
-//.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function
-// call. This means that one can write .     to memory whose lifetime is
-// entirely contained within F (including a local alloca, a malloc call locally
-// freed, but not .     a returned malloc call).
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory whose lifetime is entirely contained within the call to
+//     F (including a local alloca, or a malloc call locally freed), but not
+//     to memory it returns or otherwise lets escape, even if allocated within
+//     it.
+// Allocating memory, even memory F returns, is not a write. A call to F thus
+// never returns memory it wrote: if it returns a pointer, derivatives can only
+// flow through the memory it points to, not through the call. A function that
+// may return memory it wrote, including memory a callee wrote and returned to
+// it, is only local read-only-or-throw.
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -2108,6 +2154,13 @@ static inline bool isNoAlias(const llvm::Value *val) {
     return true;
   return false;
 }
+
+/// LLVM flang runtime functions that neither free memory of the program nor
+/// return or store an allocation into it: I/O (which frees only the I/O
+/// statement state that _FortranAioBegin* allocated and
+/// _FortranAioEndIoStatement releases), FLUSH, the scalar character
+/// inquiries and comparison, and MOD/MODULO.
+bool isFlangRuntimeNoFree(llvm::StringRef name);
 
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
@@ -2513,8 +2566,31 @@ static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
 #endif
 }
 
+// LLVM 24 dropped the llvm::Instruction* overloads of insertBefore and
+// moveBefore in favour of ones taking a position in the instruction list.
+static inline void insertBeforeInst(llvm::Instruction *I,
+                                    llvm::Instruction *Before) {
+#if LLVM_VERSION_MAJOR >= 24
+  I->insertBefore(Before->getIterator());
+#else
+  I->insertBefore(Before);
+#endif
+}
+
+static inline void moveBeforeInst(llvm::Instruction *I,
+                                  llvm::Instruction *Before) {
+#if LLVM_VERSION_MAJOR >= 24
+  I->moveBefore(Before->getIterator());
+#else
+  I->moveBefore(Before);
+#endif
+}
+
 static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
+  return &*B->getFirstNonPHIOrPseudoProbe();
+#elif LLVM_VERSION_MAJOR >= 20
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper
   return &*B->getFirstNonPHIOrDbg();
 #else
@@ -2525,7 +2601,9 @@ static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
 
 static inline llvm::Instruction *
 getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR >= 24
+  return &*B->getFirstNonPHIOrLifetime();
+#elif LLVM_VERSION_MAJOR >= 20
   return &*B->getFirstNonPHIOrDbgOrLifetime();
 #else
   return B->getFirstNonPHIOrDbgOrLifetime();
@@ -2627,13 +2705,15 @@ bool isNVLoad(const llvm::Value *V);
 
 //! Check if value if b captured after definition before executing inst.
 //! If checkLoadCaptured != 0, also consider catpures of any loads of the value
-//! as a capture (for the number of loads set).
+//! as a capture (for the number of loads set). With TLI, passing the value to
+//! a deallocation function is not a capture.
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured,
-                       llvm::Instruction *startinst = nullptr);
+                       llvm::Instruction *startinst = nullptr,
+                       llvm::TargetLibraryInfo *TLI = nullptr);
 
 //! Check if value if b captured
-bool notCaptured(llvm::Value *V);
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI = nullptr);
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
@@ -2826,6 +2906,14 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
     elts.push_back(llvm::Type::getInt64Ty(*C));
     return llvm::StructType::get(*C, elts);
   }
+  if (str == "test_type6") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 2> elts;
+    elts.push_back(
+        getPointerType(llvm::StructType::get(*C, {}), AddressSpace::Tracked));
+    elts.push_back(llvm::Type::getInt64Ty(*C));
+    return llvm::StructType::get(*C, elts);
+  }
   size_t idx;
   bool failed = str.consumeInteger(10, idx);
   (void)failed;
@@ -2911,5 +2999,18 @@ static bool hasTerminator(llvm::BasicBlock *BB) {
   return BB->getTerminator();
 #endif
 }
+
+/// The value of the add recurrence AR at iteration It, like
+/// SCEVAddRecExpr::evaluateAtIteration, but without the widening that its
+/// BinomialCoefficient performs: LLVM computes I*(I-1)/2 in a type one bit
+/// wider than AR so that the halving is exact, and SCEVExpander then has to
+/// materialize a canonical induction variable of that wider type, a new
+/// loop-carried phi. Here the halving is done on whichever of I and I-1 is
+/// even, in the wider of AR's and It's own types, so that every product is of
+/// exact integers and no new type appears. Recurrences of degree at most
+/// three are handled this way; higher degrees fall back to LLVM's version.
+const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
+                                                const llvm::SCEV *It,
+                                                llvm::ScalarEvolution &SE);
 
 #endif // ENZYME_UTILS_H

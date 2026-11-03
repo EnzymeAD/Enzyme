@@ -118,9 +118,11 @@ TraceUtils::FromClone(ProbProgMode mode,
     CloneFunctionInto(newFunc, oldFunc, originalToNewFn,
                       CloneFunctionChangeType::LocalChangesOnly, Returns, "",
                       nullptr);
+    resetClonedGUID(newFunc);
 #else
     CloneFunctionInto(newFunc, oldFunc, originalToNewFn, true, Returns, "",
                       nullptr);
+    resetClonedGUID(newFunc);
 #endif
   }
   if (newFunc->empty()) {

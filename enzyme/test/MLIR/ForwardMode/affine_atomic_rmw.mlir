@@ -21,5 +21,5 @@ module {
 // CHECK: %[[t1:.+]] = arith.mulf %[[da]], %[[a]] fastmath<fast> : f64
 // CHECK: %[[dv:.+]] = arith.addf %[[t0]], %[[t1]] fastmath<fast> : f64
 // CHECK: %[[v:.+]] = arith.mulf %[[a]], %[[a]] : f64
-// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[dv]], %[[dm]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
-// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[v]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> {alignment = 8 : i64} : (f64, memref<?xf64>) -> f64
+// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[dv]], %[[dm]], (#[[$MAP]]) [] monotonic fastmath<fast> <alignment = 8> : (f64, memref<?xf64>) -> f64
+// CHECK-DAG: enzyme.affine_atomic_rmw addf %[[v]], %[[m]], (#[[$MAP]]) [] monotonic fastmath<fast> <alignment = 8> : (f64, memref<?xf64>) -> f64

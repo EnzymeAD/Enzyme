@@ -14,6 +14,8 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include <type_traits>
+
 namespace mlir {
 namespace enzyme {
 
@@ -116,6 +118,25 @@ public:
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
     return iface.getShadowType(width);
+  }
+
+  /// Broadcast a primal-shaped value to the vector width so it can be combined
+  /// with a batched (shadow-shaped) value; the identity at width 1. Generated
+  /// derivative rules apply this to every operand of an op that mixes batched
+  /// and primal-shaped values, so overloads exist for a single value, a range
+  /// of values, and -- as a pass-through -- anything that is not a value
+  /// (attributes, types, enums), which width does not affect.
+  mlir::Value broadcastToWidth(mlir::OpBuilder &builder, mlir::Location loc,
+                               mlir::Value v);
+  llvm::SmallVector<mlir::Value, 1> broadcastToWidth(mlir::OpBuilder &builder,
+                                                     mlir::Location loc,
+                                                     mlir::ValueRange vs);
+  template <typename T>
+  std::enable_if_t<!std::is_convertible_v<T, mlir::Value> &&
+                       !std::is_convertible_v<T, mlir::ValueRange>,
+                   T>
+  broadcastToWidth(mlir::OpBuilder &, mlir::Location, T t) {
+    return t;
   }
 
   static llvm::SmallVector<mlir::Value, 1>

@@ -75,9 +75,14 @@ LogicalResult handleCallLikeOp(
   for (auto operand : callLike->getOperands())
     newOperands.push_back(mapper.lookup(operand));
 
-  Operation *newCallLike = builder.create(
-      callLike->getLoc(), callLike->getName().getIdentifier(), newOperands,
-      batchedFunc.getResultTypes(), callLike->getAttrs());
+  SmallVector<Type> resultTypes =
+      llvm::map_to_vector(callLike->getResultTypes(), [&](Type Ty) -> Type {
+        return applyBatchSizes(Ty, batchSizes);
+      });
+
+  Operation *newCallLike =
+      builder.create(callLike->getLoc(), callLike->getName().getIdentifier(),
+                     newOperands, resultTypes, callLike->getAttrs());
 
   newCallLike->setAttr(symbolAttrName, SymbolRefAttr::get(batchedFunc));
 

@@ -85,7 +85,7 @@ struct GenericOpInterfaceReverse
     IRRewriter rewriter(builder.getContext(), builder.getListener());
     auto failiureOrLinalgOp = generalizeNamedOp(rewriter, newOp);
     if (!failed(failiureOrLinalgOp)) {
-      linalg::GenericOp replacement = failiureOrLinalgOp.value();
+      linalg::LinalgOp replacement = failiureOrLinalgOp.value();
       auto scope = OpBuilder::InsertionGuard(builder);
       builder.setInsertionPointAfter(newOp);
       builder.insert(replacement);

@@ -744,6 +744,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (available.count(val)) {
     auto avail = available.lookup(val);
+    // A null entry marks a value as explicitly unavailable (e.g. the phi
+    // currently being unrolled, to prevent recursive unrolling).
+    if (!avail)
+      return nullptr;
     assert(avail->getType());
     if (avail->getType() != val->getType()) {
       llvm::errs() << "val: " << *val << "\n";
@@ -1850,10 +1854,23 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                if (!DT.dominates(block2, target))
+                  goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its
               // two targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
@@ -3115,7 +3132,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
         if (auto inst = dyn_cast<Instruction>(malloc)) {
-          entryBuilder.SetInsertPoint(inst->getNextNode());
+          // Store after all phis of the block when caching a phi.
+          entryBuilder.SetInsertPoint(isa<PHINode>(inst)
+                                          ? getFirstNonPHI(inst->getParent())
+                                          : inst->getNextNode());
         }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;
@@ -4567,6 +4587,25 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   return subretType;
 }
 
+bool GradientUtils::augmentedPrimalReturnUsed(llvm::Value *orig) const {
+  // In the reverse pass of split mode, answer as the augmented pass did. Its
+  // own analysis can differ, e.g. when only the augmented function returns the
+  // primal, and callers use this to rebuild how a call was augmented.
+  if (mode == DerivativeMode::ReverseModeGradient && primalUnnecessaryValuesP) {
+    bool used = !primalUnnecessaryValuesP->count(orig);
+    auto found = primalKnownRecomputeHeuristicP->find(orig);
+    if (found != primalKnownRecomputeHeuristicP->end() && !found->second)
+      used = true;
+    return used;
+  }
+  bool used = false;
+  getReturnDiffeType(orig, &used, nullptr,
+                     mode == DerivativeMode::ReverseModeGradient
+                         ? DerivativeMode::ReverseModePrimal
+                         : mode);
+  return used;
+}
+
 DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
@@ -5857,9 +5896,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             "shadow global\n";
       ss << *arg << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -5877,9 +5919,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ss << *arg << "\n";
       ss << " md: " << *md << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -6018,15 +6063,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
     } else if (arg->getOpcode() == Instruction::GetElementPtr) {
-      if (auto C = dyn_cast<Constant>(ip)) {
-        auto rule = [&arg, &C]() {
+      if (isa<Constant>(ip)) {
+        // ip holds one shadow per lane at width > 1 (an array constant)
+        auto rule = [&arg](Value *ip) {
           SmallVector<Constant *, 8> NewOps;
           for (unsigned i = 0, e = arg->getNumOperands(); i != e; ++i)
-            NewOps.push_back(i == 0 ? C : arg->getOperand(i));
+            NewOps.push_back(i == 0 ? cast<Constant>(ip) : arg->getOperand(i));
           return cast<Value>(arg->getWithOperands(NewOps));
         };
 
-        return applyChainRule(arg->getType(), bb, rule);
+        return applyChainRule(arg->getType(), bb, rule, ip);
       } else {
         SmallVector<Value *, 4> invertargs;
         for (unsigned i = 0; i < arg->getNumOperands() - 1; ++i) {
@@ -6127,11 +6173,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
                  << " const val: " << *op;
-              if (CustomErrorHandler)
+              if (CustomErrorHandler) {
+                LLVMBuilderRef BR = startCallbackBuilder(bb);
                 ivops[i] = unwrap(CustomErrorHandler(
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
-              else
+                    wrap(op), BR));
+                finishCallbackBuilder(BR, bb);
+              } else
                 EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                                   MixedActivityHint);
             }
@@ -6242,11 +6290,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(tval), wrap(&bb)));
-        else
+                                            wrap(tval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6263,11 +6313,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(fval), wrap(&bb)));
-        else
+                                            wrap(fval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6616,11 +6668,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6690,11 +6744,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6755,9 +6811,10 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    auto iv =
-        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
-                                  this, nullptr, wrap(&BuilderM)));
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    auto iv = unwrap(CustomErrorHandler(
+        str.c_str(), wrap(oval), ErrorType::NoShadow, this, nullptr, BR));
+    finishCallbackBuilder(BR, BuilderM);
     if (iv) {
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
@@ -6774,6 +6831,22 @@ end:;
   }
   assert(0 && "cannot find deal with ptr that isnt arg");
   report_fatal_error("cannot find deal with ptr that isnt arg");
+}
+
+/// Two add recurrences with the same start, step and trip count take the same
+/// sequence of values, so an access indexed by one can stand in for an access
+/// indexed by the other at the same iteration -- provided the iterations are
+/// matched up. That holds for the same loop or for loops that do not contain
+/// one another. It does not for nested loops: in the inner loop, the outer
+/// recurrence stays fixed while the inner one moves (e.g. x[i] and x[j] in
+/// `for i, for j`).
+static bool addRecsCorrespond(const SCEVAddRecExpr *ar1,
+                              const SCEVAddRecExpr *ar2) {
+  auto L1 = ar1->getLoop();
+  auto L2 = ar2->getLoop();
+  if (L1 == L2)
+    return true;
+  return !L1->contains(L2) && !L2->contains(L1);
 }
 
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
@@ -7147,7 +7220,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
                 if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
-                  if (ar1->getStart() != OrigSE->getCouldNotCompute() &&
+                  if (addRecsCorrespond(ar1, ar2) &&
+                      ar1->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
                       ar1->getStepRecurrence(*OrigSE) !=
                           OrigSE->getCouldNotCompute() &&
@@ -7533,7 +7607,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   SmallVector<Value *, 2> idxs;
                   for (auto &idx : GEP->indices()) {
                     idxs.push_back(lookupM(idx, BuilderM, available,
-                                           tryLegalRecomputeCheck));
+                                           tryLegalRecomputeCheck, scope));
                   }
 
                   auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
@@ -8121,10 +8195,26 @@ void GradientUtils::branchToCorrespondingTarget(
           BasicBlock *subblock = nullptr;
           for (auto block2 : blocks) {
             {
+              // Every path to either of the two merged targets must pass
+              // through the second split block, i.e. it must dominate both.
+              // The predecessor check below only inspects the immediate
+              // parents of block2 and misses a bypass edge further up (e.g.
+              // the short-circuit in `a || b` when bounds checks add blocks
+              // between the `a` test and the `b` load), which would reach one
+              // of the targets without ever evaluating block2's condition.
+              // The targets may be reverse blocks (absent from DT), so test
+              // the forward predecessor edges that lead into each target.
+              for (auto target : foundtargets) {
+                if (uniqueTargets.find(target) != uniqueTargets.end())
+                  continue;
+                for (const auto &predEdge : targetToPreds.find(target)->second)
+                  if (!DT.dominates(block2, predEdge.first))
+                    goto nextblock;
+              }
+
               // The second split block must not have a parent with an edge
               // to a block other than to itself, which can reach any of its two
               // targets.
-              // TODO verify this
               for (auto P : predecessors(block2)) {
                 for (auto S : successors(P)) {
                   if (S == block2)
@@ -8522,6 +8612,20 @@ nofast:;
 
 void GradientUtils::computeMinCache() {
   if (EnzymeMinCutCache) {
+    // The reverse pass needs each loop's limit, so compute the contexts of
+    // loops with a statically known limit now for the limits to be marked as
+    // required below. Loops with a dynamic limit are skipped, as creating their
+    // limit cache requires the recompute heuristic computed here.
+    for (auto BB : originalBlocks) {
+      auto L = LI.getLoopFor(BB);
+      if (!L || L->getHeader() != BB || loopContexts.count(L))
+        continue;
+      if (computeLoopLimit(L).first == SE.getCouldNotCompute())
+        continue;
+      LoopContext lc;
+      getContext(BB, lc);
+    }
+
     SetVector<Value *> Recomputes;
 
     std::map<UsageKey, bool> FullSeen;
@@ -9431,6 +9535,12 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         shadowPointerLoads.push_back(cur);
       }
       loads.push_back(load);
+
+      if (EnzymeJuliaAddrLoad && load->getType()->isPointerTy() &&
+          load->getType()->getPointerAddressSpace() == 13)
+        for (auto u : load->users())
+          if (auto I = dyn_cast<Instruction>(u))
+            todo.push_back(std::make_pair(I, (Value *)load));
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
       // TODO only add store to shadow iff non float type
       if (store->getValueOperand() == prev) {
@@ -9579,6 +9689,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         idx++;
       }
 
+    } else if (auto cmp = dyn_cast<ICmpInst>(cur);
+               cmp && isa<ConstantPointerNull>(cmp->getOperand(
+                          cmp->getOperand(0) == prev ? 1 : 0))) {
+      // A null check on the allocation (e.g. libstdc++'s deallocation path)
+      // neither reads, writes, nor captures the memory, so it says nothing
+      // about whether the contents can be recreated. Any reallocation is also
+      // non-null, so replaying it in the reverse pass yields the same result.
     } else {
       promotable = false;
       shadowpromotable = false;
@@ -9877,8 +9994,10 @@ int GradientUtils::getIndex(
     ss << "idx: " << *idx.first << ", " << idx.second << "\n";
     ss << " could not find index in mapping\n";
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR = startCallbackBuilder(B);
       CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
-                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
+                         ErrorType::GetIndexError, this, nullptr, BR);
+      finishCallbackBuilder(BR, B);
     } else {
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
                   ss.str());
@@ -10118,16 +10237,22 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    libfunc = TLI.getLibFunc(allocationfn);
+    assert(libfunc != NotLibFunc && "ought find known allocation fn");
+#else
     bool res = TLI.getLibFunc(allocationfn, libfunc);
     (void)res;
     assert(res && "ought find known allocation fn");
+#endif
   }
 
   llvm::LibFunc freefunc;
 
   switch (libfunc) {
-  case LibFunc_malloc: // malloc(unsigned int);
-  case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_malloc:        // malloc(unsigned int);
+  case LibFunc_valloc:        // valloc(unsigned int);
+  case LibFunc_aligned_alloc: // aligned_alloc(size_t align, size_t size);
     freefunc = LibFunc_free;
     break;
 

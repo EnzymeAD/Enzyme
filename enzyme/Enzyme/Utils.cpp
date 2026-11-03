@@ -111,6 +111,31 @@ llvm::cl::opt<bool> EnzymeNonPower2Cache(
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
+
+bool isFlangRuntimeNoFree(llvm::StringRef name) {
+  for (auto prefix : {"_FortranAio", "_FortranAModInteger", "_FortranAModReal",
+                      "_FortranAModuloInteger", "_FortranAModuloReal"})
+    if (startsWith(name, prefix))
+      return true;
+  static const char *Names[] = {
+      "_FortranAFlush",
+      "_FortranAIndex1",
+      "_FortranAIndex2",
+      "_FortranAIndex4",
+      "_FortranAScan1",
+      "_FortranAScan2",
+      "_FortranAScan4",
+      "_FortranAVerify1",
+      "_FortranAVerify2",
+      "_FortranAVerify4",
+      "_FortranACharacterCompareScalar",
+      "_FortranACharacterCompareScalar1",
+      "_FortranACharacterCompareScalar2",
+      "_FortranACharacterCompareScalar4",
+  };
+  return llvm::is_contained(Names, name);
+}
+
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
@@ -193,7 +218,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     // OpenMPI vs MPICH
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
-      F.addParamAttr(2, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
@@ -410,14 +435,106 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  // With -enzyme-global-activity a call to a function without body may free
+  // memory or return an allocation needed in the reverse pass, and Enzyme
+  // then differentiates even an inactive call to it.
+  // These LLVM flang runtime queries are also in KnownInactiveFunctions.
+  const char *FlangRuntimeQueries[] = {
+      // LLVM flang runtime: time
+      "_FortranACpuTime",
+      "_FortranADateAndTime",
+      "_FortranAEtime",
+      "_FortranASystemClockCount",
+      "_FortranASystemClockCountRate",
+      "_FortranASystemClockCountMax",
+      "_FortranATimef",
+      // LLVM flang runtime: command line and environment
+      "_FortranAArgumentCount",
+      "_FortranAGetCommand",
+      "_FortranAGetCommandArgument",
+      "_FortranAGetEnvVariable",
+      "_FortranAGetCwd",
+      "_FortranAHostnm",
+      "_FortranAGetPID",
+      "_FortranAGetUID",
+      "_FortranAGetGID",
+  };
+  if (llvm::is_contained(FlangRuntimeQueries, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // These LLVM flang runtime functions do not free memory of the program
+  // (see isFlangRuntimeNoFree, used by CreateNoFree) and, like the
+  // termination calls, do not return or store an allocation into it.
+  if (isFlangRuntimeNoFree(name) || name == "_FortranAStopStatement" ||
+      name == "_FortranAStopStatementText" ||
+      name == "_FortranAReportFatalUserError" || name == "_FortranAExit" ||
+      name == "_FortranAAbort") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  // The OpenMP runtime calls of worksharing loops and synchronization neither
+  // free memory of the program nor hand an allocation to it.
+  const char *OpenMPRuntimeCalls[] = {
+      "__kmpc_global_thread_num",
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u",
+      "__kmpc_for_static_fini",
+      "__kmpc_barrier",
+      "__kmpc_critical",
+      "__kmpc_end_critical",
+      "omp_get_thread_num",
+      "omp_get_num_threads",
+      "omp_get_max_threads",
+  };
+  if (llvm::is_contained(OpenMPRuntimeCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
+}
+
+LLVMBuilderRef startCallbackBuilder(IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  BasicBlock *BB = B.GetInsertBlock();
+  assert(BB && BB->getParent() &&
+         "a builder handed to a C callback needs an insertion point in a "
+         "function");
+  LLVMBuilderRef Ref = LLVMCreateBuilderForModule(wrap(BB->getModule()));
+  IRBuilder<> &C = *unwrap(Ref);
+  C.restoreIP(B.saveIP());
+  C.SetCurrentDebugLocation(B.getCurrentDebugLocation());
+  C.setFastMathFlags(B.getFastMathFlags());
+  return Ref;
+#else
+  return wrap(&B);
+#endif
+}
+
+void finishCallbackBuilder(LLVMBuilderRef Ref, IRBuilder<> &B) {
+#if LLVM_VERSION_MAJOR >= 24
+  B.restoreIP(unwrap(Ref)->saveIP());
+  LLVMDisposeBuilder(Ref);
+#endif
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
                 bool isTape) {
   if (CustomZero) {
-    CustomZero(wrap(&Builder), wrap(T), wrap(obj), isTape);
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    CustomZero(BR, wrap(T), wrap(obj), isTape);
+    finishCallbackBuilder(BR, Builder);
   } else {
     Builder.CreateStore(Constant::getNullValue(T), obj);
   }
@@ -428,7 +545,9 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
   SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
     uint64_t size = 0;
-    auto ptr = EnzymePostCacheStore(wrap(SI), wrap(&B), &size);
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    auto ptr = EnzymePostCacheStore(wrap(SI), BR, &size);
+    finishCallbackBuilder(BR, B);
     for (size_t i = 0; i < size; i++) {
       res.push_back(cast<Instruction>(unwrap(ptr[i])));
     }
@@ -653,9 +772,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   CallInst *malloccall = nullptr;
   if (CustomAllocator) {
     LLVMValueRef wzeromem = nullptr;
-    res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
-                                 wrap(Align), isDefault,
-                                 ZeroMem ? &wzeromem : nullptr));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res = unwrap(CustomAllocator(BR, wrap(T), wrap(Count), wrap(Align),
+                                 isDefault, ZeroMem ? &wzeromem : nullptr));
+    finishCallbackBuilder(BR, Builder);
     if (isa<UndefValue>(res))
       return res;
     if (isa<Constant>(res))
@@ -672,7 +792,9 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       ZeroMem = nullptr;
     }
   } else {
-#if LLVM_VERSION_MAJOR > 17
+#if LLVM_VERSION_MAJOR >= 24
+    res = Builder.CreateMalloc(AllocSizeTy, Align, AllocCount, nullptr, Name);
+#elif LLVM_VERSION_MAJOR > 17
     res =
         Builder.CreateMalloc(AllocSizeTy, T, Align, AllocCount, nullptr, Name);
 #else
@@ -779,8 +901,10 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   CallInst *res = nullptr;
 
   if (CustomDeallocator) {
-    res = dyn_cast_or_null<CallInst>(
-        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder);
+    res =
+        dyn_cast_or_null<CallInst>(unwrap(CustomDeallocator(BR, wrap(ToFree))));
+    finishCallbackBuilder(BR, Builder);
   } else {
 
     ToFree =
@@ -976,7 +1100,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.SetInsertPoint(error);
 
     if (CustomRuntimeInactiveError) {
-      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
+      LLVMBuilderRef BR = startCallbackBuilder(EB);
+      CustomRuntimeInactiveError(BR, wrap(msg), wrap(orig));
+      finishCallbackBuilder(BR, EB);
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -2705,6 +2831,54 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
   }
 }
 
+const SCEV *evaluateAtIterationWithoutExt(const SCEVAddRecExpr *AR,
+                                          const SCEV *It, ScalarEvolution &SE) {
+  Type *Ty = AR->getType();
+  unsigned N = AR->getNumOperands();
+  if (!Ty->isIntegerTy() || !It->getType()->isIntegerTy() || N > 4)
+    return AR->evaluateAtIteration(It, SE);
+
+  // The binomial coefficients are formed in the wider of the two types, so
+  // that no bit of the iteration number is dropped before the halving (the
+  // value of I*(I-1)/2 modulo 2^W depends on bit W of I).
+  Type *CalcTy = SE.getTypeSizeInBits(It->getType()) > SE.getTypeSizeInBits(Ty)
+                     ? It->getType()
+                     : Ty;
+  const SCEV *I = SE.getTruncateOrZeroExtend(It, CalcTy);
+  const SCEV *Res = AR->getOperand(0);
+  if (N > 1)
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(1), SE.getTruncateOrNoop(I, Ty)));
+  if (N > 2) {
+    // I*(I-1)/2 as (I/2)*(I-1) + (I%2)*((I-1)/2): whichever of I and I-1 is
+    // even is halved exactly, the other term is then zero.
+    const SCEV *One = SE.getOne(CalcTy);
+    const SCEV *Two = SE.getConstant(CalcTy, 2);
+    const SCEV *Half = SE.getUDivExpr(I, Two);
+    const SCEV *IM1 = SE.getMinusSCEV(I, One);
+    const SCEV *Parity = SE.getMinusSCEV(I, SE.getMulExpr(Two, Half));
+    const SCEV *Tri =
+        SE.getAddExpr(SE.getMulExpr(Half, IM1),
+                      SE.getMulExpr(Parity, SE.getUDivExpr(IM1, Two)));
+    Res = SE.getAddExpr(
+        Res, SE.getMulExpr(AR->getOperand(2), SE.getTruncateOrNoop(Tri, Ty)));
+    if (N > 3) {
+      // I*(I-1)*(I-2)/6 = (I*(I-1)/2) * (I-2) / 3, and exact division by the
+      // odd number 3 is multiplication by its inverse modulo 2^W (found by
+      // Newton iteration, which doubles the number of correct bits each step).
+      unsigned Bits = SE.getTypeSizeInBits(CalcTy);
+      APInt Three(Bits, 3), Inv(Bits, 3);
+      for (unsigned Correct = 3; Correct < Bits; Correct *= 2)
+        Inv *= APInt(Bits, 2) - Three * Inv;
+      const SCEV *Tet = SE.getMulExpr(
+          SE.getMulExpr(Tri, SE.getMinusSCEV(I, Two)), SE.getConstant(Inv));
+      Res = SE.getAddExpr(
+          Res, SE.getMulExpr(AR->getOperand(3), SE.getTruncateOrNoop(Tet, Ty)));
+    }
+  }
+  return Res;
+}
+
 bool overwritesToMemoryReadByLoop(
     llvm::ScalarEvolution &SE, llvm::LoopInfo &LI, llvm::DominatorTree &DT,
     llvm::Instruction *maybeReader, const llvm::SCEV *LoadStart,
@@ -2836,7 +3010,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
               if (ebd == SE.getCouldNotCompute())
                 break;
-              elim = endL->evaluateAtIteration(ebd, SE);
+              elim = evaluateAtIterationWithoutExt(endL, ebd, SE);
               continue;
             }
           }
@@ -2855,7 +3029,7 @@ bool overwritesToMemoryReadByLoop(
 #endif
           if (sbd == SE.getCouldNotCompute())
             break;
-          slim = startL->evaluateAtIteration(sbd, SE);
+          slim = evaluateAtIterationWithoutExt(startL, sbd, SE);
           continue;
         }
       }
@@ -2871,7 +3045,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -2886,7 +3060,7 @@ bool overwritesToMemoryReadByLoop(
     // We must have seen all common loops as induction variables
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
-    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
       if (!visitedAncestors.count(L))
         legal = false;
     }
@@ -3033,6 +3207,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         isDeallocationFunction(funcName, TLI)) {
       return false;
     }
+
+    if (isReadOnlyOrThrow(call))
+      return false;
 
     if (isMemFreeLibMFunction(funcName)) {
       return false;
@@ -3837,8 +4014,10 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 
       B.SetInsertPoint(bad);
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(B);
         CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
-                           wrap(msg_ptr), wrap(&B));
+                           wrap(msg_ptr), BR);
+        finishCallbackBuilder(BR, B);
       } else {
         llvm::FunctionType *PutsFT = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
@@ -3873,9 +4052,13 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
     BuilderM.CreateCall(SanitizeFCallee, {toset, getString(*mod, stringv)});
   }
 
-  if (EnzymeSanitizeDerivatives)
-    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
-                                            wrap(&BuilderM), wrap(mask)));
+  if (EnzymeSanitizeDerivatives) {
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    Value *res = unwrap(
+        EnzymeSanitizeDerivatives(wrap(val), wrap(toset), BR, wrap(mask)));
+    finishCallbackBuilder(BR, BuilderM);
+    return res;
+  }
   return toset;
 }
 
@@ -4452,9 +4635,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::IRBuilder<> &Builder2,
                                    llvm::Value *condition) {
   if (CustomErrorHandler) {
-    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils,
-                                     wrap(condition), wrap(&Builder2)));
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
+    Value *res = unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
+                                           ErrorType::NoDerivative, gutils,
+                                           wrap(condition), BR));
+    finishCallbackBuilder(BR, Builder2);
+    return res;
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4492,8 +4678,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     toshow = context.req;
   }
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR =
+        context.ip ? startCallbackBuilder(*context.ip) : nullptr;
     CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(todiff), wrap(context.ip));
+                       nullptr, wrap(todiff), BR);
+    if (BR)
+      finishCallbackBuilder(BR, *context.ip);
     return true;
   } else if (context.ip && EnzymeRuntimeError) {
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
@@ -4531,8 +4721,10 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
 void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR = startCallbackBuilder(Builder2);
     CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
-                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+                       gutils->TR.analyzer, nullptr, BR);
+    finishCallbackBuilder(BR, Builder2);
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4553,12 +4745,52 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     Builder2.CreateCall(ExitF,
                         ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
   } else {
+    // Without a custom handler, append the function and its type analysis.
+    // (A custom handler is given the analyzer and the instruction and can
+    // produce these itself, if and as much as it wants.)
     std::string str;
     raw_string_ostream ss(str);
     ss << message << "\n";
-    gutils->TR.dump(ss);
+    ss << "fn: " << *inst.getParent()->getParent() << "\n";
+    if (gutils)
+      gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
+}
+
+llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
+                            size_t length) {
+  // Each (type, offset) entry describes the bytes from its offset up to the
+  // next entry's offset.
+  size_t end = start + length;
+  if (end < start)
+    end = SIZE_MAX;
+  llvm::SmallVector<llvm::Metadata *, 8> out;
+  auto I64 = llvm::Type::getInt64Ty(md->getContext());
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    size_t offset =
+        llvm::cast<llvm::ConstantInt>(
+            llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                ->getValue())
+            ->getZExtValue();
+    if (offset >= end)
+      break;
+    size_t next = SIZE_MAX;
+    if (i + 3 < md->getNumOperands())
+      next = llvm::cast<llvm::ConstantInt>(
+                 llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 3))
+                     ->getValue())
+                 ->getZExtValue();
+    if (next <= start)
+      continue;
+    size_t newoff = offset <= start ? 0 : offset - start;
+    out.push_back(md->getOperand(i));
+    out.push_back(
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(I64, newoff)));
+  }
+  if (out.empty())
+    return nullptr;
+  return llvm::MDNode::get(md->getContext(), out);
 }
 
 std::vector<std::tuple<llvm::Type *, size_t, size_t>>
@@ -4655,14 +4887,16 @@ bool isNVLoad(const llvm::Value *V) {
 }
 
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
-                       size_t checkLoadCaptures, Instruction *startinst) {
+                       size_t checkLoadCaptures, Instruction *startinst,
+                       llvm::TargetLibraryInfo *TLI) {
+  // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
     VI = dyn_cast<Instruction>(V);
-  if (!VI)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  else
+  if (VI)
     VI = VI->getNextNode();
+  else if (inst)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
   if (inst) {
     SmallVector<BasicBlock *, 1> todo;
@@ -4725,6 +4959,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     }
 
     if (auto CI = dyn_cast<CallBase>(UI)) {
+      // Freeing the memory does not capture it.
+      if (TLI && level == 0 && isDeallocationCall(CI, *TLI))
+        continue;
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -4737,7 +4974,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
           return false;
         }
       }
-      return true;
+      // This call does not capture; keep checking the remaining users.
+      continue;
     }
 
     if (isa<CmpInst>(UI)) {
@@ -4763,7 +5001,9 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
-bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
+bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
+  return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
+}
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].

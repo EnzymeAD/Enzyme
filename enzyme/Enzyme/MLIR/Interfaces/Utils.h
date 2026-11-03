@@ -20,6 +20,11 @@ namespace oputils {
 
 const std::set<std::string> &getNonCapturingFunctions();
 
+// Checks whether a value escapes through its uses, following view results.
+// If seenuse is provided, sets it to true when potentialUser is encountered.
+bool isCaptured(Value v, Operation *potentialUser = nullptr,
+                bool *seenuse = nullptr);
+
 // Checks if the operation/function has any memory write effects. This enables
 // batching specific AD optimiziations(which are triggered only if the primal
 // function doesnt modify memory operands)
@@ -38,8 +43,9 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 
 // Walks a pointer-like value to the object it is derived from, looking
 // through view-like ops (memref.cast, memref.memory_space_cast, subviews),
-// llvm.getelementptr, llvm.bitcast, and llvm.addrspacecast.
-Value getBaseObject(Value v);
+// llvm.getelementptr, llvm.bitcast, and llvm.addrspacecast. If offsetAllowed is
+// false, only follow operations known to preserve the starting address.
+Value getBaseObject(Value v, bool offsetAllowed = true);
 
 // Checks if 2 values v1 and v2 may alias with each other locally
 bool mayAlias(Value v1, Value v2);

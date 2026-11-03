@@ -1,8 +1,8 @@
 // RUN: echo "mysin" > %t.inactive_sin.list; echo "mycos" > %t.inactive_cos.list
-// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - | FileCheck %s --check-prefix=CHECK-CORRECT
-// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-load-inactive-file="%t.inactive_sin.list" --enzyme-load-inactive-file="%t.inactive_cos.list" -S | %lli - | FileCheck %s --check-prefix=CHECK-INACTIVE-INCORRECT
-// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-load-inactive-file="%t.inactive_sin.list" --enzyme-load-inactive-file="%t.inactive_cos.list" -S | %lli - | FileCheck %s --check-prefix=CHECK-INACTIVE-INCORRECT
-// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-load-inactive-file="%t.inactive_sin.list" --enzyme-load-inactive-file="%t.inactive_cos.list" --enzyme-print-activity -S 2>&1 | grep -F "[activity]" | FileCheck %s --check-prefix=CHECK-PRINT
+// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - | FileCheck %s --check-prefix=CHECK-CORRECT
+// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm --enzyme-load-inactive-file="%t.inactive_sin.list" -mllvm --enzyme-load-inactive-file="%t.inactive_cos.list" | %lli - | FileCheck %s --check-prefix=CHECK-INACTIVE-INCORRECT
+// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm --enzyme-load-inactive-file="%t.inactive_sin.list" -mllvm --enzyme-load-inactive-file="%t.inactive_cos.list" | %lli - | FileCheck %s --check-prefix=CHECK-INACTIVE-INCORRECT
+// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -mllvm --enzyme-load-inactive-file="%t.inactive_sin.list" -mllvm --enzyme-load-inactive-file="%t.inactive_cos.list" -mllvm --enzyme-print-activity 2>&1 | grep -F "[activity]" | FileCheck %s --check-prefix=CHECK-PRINT
 
 #include "stdio.h"
 #include "../test_utils.h"

@@ -25,11 +25,11 @@ module attributes {
     %8 = llvm.insertelement %7, %2[%3 : i32] : vector<2xi64>
     %9 = llvm.insertelement %4, %8[%5 : i32] : vector<2xi64>
     %10 = llvm.bitcast %6 {tag = "store dest"} : !llvm.ptr to !llvm.ptr
-    llvm.store %arg0, %10 {alignment = 8 : i64} : f64, !llvm.ptr
+    llvm.store %arg0, %10 <alignment = 8> : f64, !llvm.ptr
     %11 = llvm.bitcast %9 : vector<2xi64> to i128
     %12 = llvm.trunc %11 : i128 to i64
     %13 = llvm.inttoptr %12 {tag = "load source"} : i64 to !llvm.ptr
-    %14 = llvm.load %13 {alignment = 8 : i64} : !llvm.ptr -> f64
+    %14 = llvm.load %13 <alignment = 8> : !llvm.ptr -> f64
     llvm.return %14 : f64
   }
 }

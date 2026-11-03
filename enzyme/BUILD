@@ -159,6 +159,7 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
@@ -191,6 +192,7 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
@@ -221,6 +223,7 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
@@ -783,6 +786,31 @@ gentbl_cc_library(
 )
 
 td_library(
+    name = "OffsetViewInterfaceTdFiles",
+    srcs = ["Enzyme/MLIR/Interfaces/OffsetViewInterface.td"],
+    includes = ["."],
+    deps = ["@llvm-project//mlir:ViewLikeInterfaceTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "OffsetViewInterfaceIncGen",
+    strip_include_prefix = "Enzyme",
+    tbl_outs = [
+        (
+            ["--gen-op-interface-decls"],
+            "Enzyme/MLIR/Interfaces/OffsetViewInterface.h.inc",
+        ),
+        (
+            ["--gen-op-interface-defs"],
+            "Enzyme/MLIR/Interfaces/OffsetViewInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/OffsetViewInterface.td",
+    deps = [":OffsetViewInterfaceTdFiles"],
+)
+
+td_library(
     name = "ImplementationsCommonTdFiles",
     srcs = [
         "Enzyme/MLIR/Implementations/Common.td",
@@ -963,6 +991,7 @@ cc_library(
         "Enzyme/MLIR/Analysis/*.h",
         "Enzyme/MLIR/Implementations/*.h",
         "Enzyme/EnzymeCallMarkers.h",
+        "Enzyme/PassUtils.h",
         "Enzyme/Utils.h",
         "Enzyme/TypeAnalysis/*.h",
     ]),
@@ -972,6 +1001,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":OffsetViewInterfaceIncGen",
         ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeAttributesIncGen",
         ":EnzymeEnumsIncGen",
@@ -1004,9 +1034,11 @@ cc_library(
         "@llvm-project//llvm:Demangle",
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
         "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AffineUtils",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithUtils",
@@ -1018,6 +1050,7 @@ cc_library(
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:ConversionPasses",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:FunctionInterfaces",

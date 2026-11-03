@@ -7,13 +7,36 @@ def : MLIRDerivative<"complex", "AddOp", (Op $x, $y),
                     ]
                   >;
 
-def CMul : ComplexInst<"MulOp">;
-
 def : MLIRDerivative<"complex", "MulOp", (Op $x, $y),
                     [
-                      (CMul (DiffeRet), $y),
-                      (CMul (DiffeRet), $x)
+                      (CheckedComplexMul (DiffeRet), $y),
+                      (CheckedComplexMul (DiffeRet), $x)
                     ]
+                  >;
+
+def : MLIRDerivative<"complex", "DivOp", (Op $x, $y),
+                    [
+                      (CheckedComplexDiv (DiffeRet), $y),
+                      (ComplexNeg
+                        (ComplexMul
+                          (CheckedComplexDiv (DiffeRet), $y),
+                          (ComplexDiv $x, $y)
+                        )
+                      )
+                    ],
+                    (CheckedComplexDiv
+                      (ComplexSub
+                        (SelectIfActive $x,
+                          (ComplexMul (Shadow $x), $y),
+                          (ComplexConstant<"0"> $x)
+                        ),
+                        (SelectIfActive $y,
+                          (ComplexMul (Shadow $y), $x),
+                          (ComplexConstant<"0"> $y)
+                        )
+                      ),
+                      (ComplexMul $y, $y)
+                    )
                   >;
 
 def : MLIRDerivative<"complex", "ImOp", (Op $x),

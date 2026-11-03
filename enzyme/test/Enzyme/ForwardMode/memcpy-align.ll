@@ -29,7 +29,7 @@ attributes #2 = { noinline nounwind uwtable }
 
 ; CHECK: define internal void @fwddiffememcpy_align(double* nocapture writeonly %dst, double* nocapture %"dst'", double* nocapture readonly %src, i64 %num)
 ; CHECK: entry:
-; CHECK:   tail call void @llvm.memset.p0i8.i64(i8* align 8 %{{[^,]+}}, i8 0, i64 %num, i1 true)
+; CHECK:   tail call void @llvm.memset.p0i8.i64(i8* align 8 %{{[^,]+}}, i8 0, i64 %num, i1 false)
 ; CHECK:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %{{[^,]+}}, i8* align 16 %{{[^,]+}}, i64 %num, i1 false)
 ; CHECK:   ret void
 ; CHECK: }

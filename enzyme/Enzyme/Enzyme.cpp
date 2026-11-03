@@ -101,6 +101,11 @@ using namespace llvm;
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
                                  cl::desc("Run the Enzyme pass"));
 
+llvm::cl::opt<bool> EnzymeLTOPreLink(
+    "enzyme-lto-prelink", cl::init(false), cl::Hidden,
+    cl::desc("Run Enzyme in an LTO pre-link pipeline, rather than deferring "
+             "differentiation to the post-link run"));
+
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
@@ -384,6 +389,11 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
+  // Functions whose Enzyme calls have been lowered, so postopt may inline
+  // them into their callers.
+  SmallPtrSet<Function *, 16> lowered;
+  // Functions already visited when preparing nested request targets.
+  SmallPtrSet<Function *, 16> prepared;
   EnzymeBase(bool PostOpt)
       : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
@@ -619,7 +629,7 @@ public:
       } else {
         AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
                                              nullptr, DL.getPrefTypeAlign(Ty));
-        primalA->insertBefore(CI);
+        insertBeforeInst(primalA, CI);
         primal = primalA;
       }
 
@@ -2073,6 +2083,7 @@ public:
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
+    SetVector<Function *> nestedTargets;
   retry:;
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
@@ -2110,7 +2121,10 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
 #endif
         }
-        if (Fn->getName().contains("__enzyme_float")) {
+        if (Fn->getName().contains("__enzyme_float") ||
+            Fn->getName().contains("__enzyme_integer") ||
+            Fn->getName().contains("__enzyme_double") ||
+            Fn->getName().contains("__enzyme_pointer")) {
 #if LLVM_VERSION_MAJOR >= 16
           CI->setOnlyReadsMemory();
           CI->setOnlyWritesMemory();
@@ -2119,48 +2133,8 @@ public:
 #endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_integer")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_double")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::ReadNone);
-              addCallSiteNoCapture(CI, i);
-            }
-          }
-        }
-        if (Fn->getName().contains("__enzyme_pointer")) {
-#if LLVM_VERSION_MAJOR >= 16
-          CI->setOnlyReadsMemory();
-          CI->setOnlyWritesMemory();
-#else
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#endif
-          for (size_t i = 0; i < num_args; ++i) {
-            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->removeParamAttr(i, Attribute::ReadOnly);
+              CI->removeParamAttr(i, Attribute::WriteOnly);
               CI->addParamAttr(i, Attribute::ReadNone);
               addCallSiteNoCapture(CI, i);
             }
@@ -2467,18 +2441,18 @@ public:
             IRBuilder<> S1(sel1);
             auto B1 = S1.CreateBr(post);
             CallInst *cloned = cast<CallInst>(CI->clone());
-            cloned->insertBefore(B1);
+            insertBeforeInst(cloned, B1);
             cloned->setOperand(0, si->getTrueValue());
             IRBuilder<> S2(sel2);
             auto B2 = S2.CreateBr(post);
-            CI->moveBefore(B2);
+            moveBeforeInst(CI, B2);
             CI->setOperand(0, si->getFalseValue());
             if (CI->getNumUses() != 0) {
               IRBuilder<> P(getFirstNonPHI(post));
               auto merge = P.CreatePHI(CI->getType(), 2);
+              CI->replaceAllUsesWith(merge);
               merge->addIncoming(cloned, sel1);
               merge->addIncoming(CI, sel2);
-              CI->replaceAllUsesWith(merge);
             }
             goto retry;
           }
@@ -2501,16 +2475,34 @@ public:
           } else
             toLower[CI] = derivativeMode;
 
-          if (auto dc = dyn_cast<Function>(fn)) {
-            // Force postopt on any inner functions in the nested
-            // AD case.
-            bool tmp = Logic.PostOpt;
-            Logic.PostOpt = true;
-            Changed |= lowerEnzymeCalls(*dc, done);
-            Logic.PostOpt = tmp;
-          }
+          if (auto dc = dyn_cast<Function>(fn))
+            nestedTargets.insert(dc);
         }
       }
+    }
+
+    // Differentiating a target also differentiates its callees, so first lower
+    // requests in every function reachable from the targets by direct calls.
+    // Done after the scan, since lowering with postopt may inline into F.
+    if (!nestedTargets.empty()) {
+      // Force postopt on any inner functions in the nested AD case.
+      bool tmp = Logic.PostOpt;
+      Logic.PostOpt = true;
+      SmallVector<Function *, 4> todo(nestedTargets.rbegin(),
+                                      nestedTargets.rend());
+      while (!todo.empty()) {
+        Function *cur = todo.pop_back_val();
+        if (!prepared.insert(cur).second)
+          continue;
+        for (BasicBlock &CBB : *cur)
+          for (Instruction &I : CBB)
+            if (auto CB = dyn_cast<CallBase>(&I))
+              if (auto called = getFunctionFromCall(CB))
+                if (!called->empty() && !prepared.count(called))
+                  todo.push_back(called);
+        Changed |= lowerEnzymeCalls(*cur, done);
+      }
+      Logic.PostOpt = tmp;
     }
 
     for (auto CI : InactiveCalls) {
@@ -2599,6 +2591,8 @@ public:
       HandleProbProg(call, mode, calls);
     }
 
+    lowered.insert(&F);
+
     if (Logic.PostOpt) {
       auto Params = llvm::getInlineParams();
 
@@ -2639,9 +2633,12 @@ public:
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
                 LowerSparsification(outerFunc, /*replaceAll*/ false);
+                // Copying outerFunc into its callers before its own Enzyme
+                // calls are lowered would leave the copies unlowered.
                 for (auto U : outerFunc->users()) {
                   if (auto CI = dyn_cast<CallInst>(U)) {
-                    if (CI->getCalledFunction() == outerFunc) {
+                    if (CI->getCalledFunction() == outerFunc &&
+                        lowered.count(outerFunc)) {
                       Q.insert(CI);
                     }
                   }
@@ -2770,6 +2767,8 @@ public:
     }
 
     std::set<Function *> done;
+    lowered.clear();
+    prepared.clear();
     for (Function &F : M) {
       if (F.empty())
         continue;
@@ -2955,7 +2954,7 @@ public:
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
 
-      PassBuilder PB;
+      PassBuilder PB = makePassBuilder(M.getContext());
       LoopAnalysisManager LAM;
       FunctionAnalysisManager FAM;
       CGSCCAnalysisManager CGAM;
@@ -3102,8 +3101,23 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
+#if LLVM_VERSION_MAJOR >= 24
+// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors;
+// a null LibraryOptionsContext returns the global (command-line) value.
+static unsigned EnzymeLicmMssaOptCap() {
+  return getLicmMssaOptCap(/*LibraryOptions=*/nullptr);
+}
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return getLicmMssaNoAccForPromotionCap(/*LibraryOptions=*/nullptr);
+}
+#else
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;
 extern cl::opt<unsigned> SetLicmMssaOptCap;
+static unsigned EnzymeLicmMssaOptCap() { return SetLicmMssaOptCap; }
+static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
+  return SetLicmMssaNoAccForPromotionCap;
+}
+#endif
 #define EnableLoopFlatten false
 #define EagerlyInvalidateAnalyses false
 #define RunNewGVN false
@@ -3151,7 +3165,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
 #if LLVM_VERSION_MAJOR >= 20
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+                            ThinOrFullLTOPhase Phase)
 #else
   auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
@@ -3160,6 +3174,34 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
     if (!EnzymeEnable)
       return;
+
+#if LLVM_VERSION_MAJOR >= 20
+    // An LTO pre-link pipeline only ever sees one translation unit, so a
+    // __enzyme_autodiff call here may name a function whose body lives in
+    // another object file. Differentiating now fails on exactly those calls,
+    // while the post-link run sees the whole program: for full LTO that is the
+    // FullLinkTimeOptimizationEarly callback below, for ThinLTO this same
+    // callback re-entered with ThinLTOPostLink. Defer to it, restoring the
+    // linkage PreserveNVVM changed so the bitcode exports nothing new, while
+    // still keeping the relevant functions alive until then.
+    //
+    // A ThinLTO post-link pipeline at O0 invokes no callbacks at all, so that
+    // run would never come. The pre-link run cannot know the post-link level,
+    // but the driver passes the compile -O level on to the linker, so an O0
+    // ThinLTO compile still differentiates here.
+    //
+    // This requires the plugin to be loaded by the linker as well, e.g.
+    // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
+    // restore the old behaviour when that is not possible.
+    if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
+                              (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
+                               Level != OptimizationLevel::O0))) {
+      MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
+                                    /*PreserveCustomRuleLinkage*/ true,
+                                    /*LTOPreLink*/ true));
+      return;
+    }
+#endif
 
     if (Level != OptimizationLevel::O0)
       prePass(MPM, Level);
@@ -3424,12 +3466,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     FunctionPassManager MainFPM;
 #if LLVM_VERSION_MAJOR >= 22
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true));
 #else
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
-        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+        LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
 #endif

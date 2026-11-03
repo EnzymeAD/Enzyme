@@ -123,6 +123,13 @@ public:
 
   bool shadowReturnUsed;
 
+  //! The augmented pass's unnecessary values and recompute decisions, which
+  //! determine whether it used the primal of a value. The reverse pass of
+  //! split mode answers that question from these, as its own analysis can
+  //! differ, e.g. when only the augmented function returns the primal.
+  std::set<const llvm::Value *> primalUnnecessaryValues;
+  std::map<const llvm::Value *, bool> primalKnownRecomputeHeuristic;
+
   bool isComplete;
 
   AugmentedReturn(
