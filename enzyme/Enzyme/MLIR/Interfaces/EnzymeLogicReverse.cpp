@@ -39,14 +39,65 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
   }
 }
 
+// Returns true if the operation, or any operation nested in it with recursive
+// memory effects, may have an effect other than a read on active memory. An
+// effect on an inactive value cannot touch shadow memory. An effect with no
+// known target can only reach active memory through an active operand.
+static bool mayWriteActiveMemory(Operation *op, MGradientUtils *gutils) {
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    for (const MemoryEffects::EffectInstance &it : effects) {
+      if (isa<MemoryEffects::Read>(it.getEffect()))
+        continue;
+      if (Value v = it.getValue()) {
+        if (!gutils->isConstantValue(v))
+          return true;
+        continue;
+      }
+      if (llvm::any_of(op->getOperands(), [gutils](Value v) {
+            return !gutils->isConstantValue(v);
+          }))
+        return true;
+    }
+  }
+
+  bool isRecursiveContainer =
+      op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+  if (isRecursiveContainer) {
+    for (Region &region : op->getRegions()) {
+      for (Block &block : region) {
+        for (Operation &nestedOp : block) {
+          if (mayWriteActiveMemory(&nestedOp, gutils))
+            return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 // Returns true iff the operation:
 //    1. Produces no active data nor active pointers
-//    2. Does not propagate active data nor pointers (via side effects)
+//    2. Does not need its reverse hook to update shadow memory: an op with a
+//       ReverseAutoDiffOpInterface must be read-only, an op without one must
+//       not write to active memory.
+//    3. Does not propagate active data nor pointers (via side effects)
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
-  return llvm::all_of(
-             op->getResults(),
-             [gutils](Value v) { return gutils->isConstantValue(v); }) &&
-         gutils->isConstantInstruction(op) && oputils::isReadOnly(op);
+  for (auto v : op->getResults()) {
+    if (!gutils->isConstantValue(v)) {
+      return false;
+    }
+  }
+
+  if (!gutils->isConstantInstruction(op))
+    return false;
+
+  if (isa<ReverseAutoDiffOpInterface>(op))
+    return oputils::isReadOnly(op);
+
+  return !mayWriteActiveMemory(op, gutils);
 }
 
 /*

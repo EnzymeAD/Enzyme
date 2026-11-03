@@ -3086,15 +3086,17 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
-          SmallVector<Value *, 1> vtodo = {SI->getValueOperand()};
-          SmallSet<Value *, 1> seen;
+          // The second element records that the value was read from memory
+          // at this pointer, rather than being the pointer itself.
+          SmallVector<std::pair<Value *, bool>, 1> vtodo = {
+              {SI->getValueOperand(), false}};
+          SmallSet<std::pair<Value *, bool>, 1> seen;
           SmallSet<Value *, 1> newAllocaSet;
           while (vtodo.size()) {
-            auto TmpOrig = vtodo.back();
+            auto [TmpOrig, Indirect] = vtodo.back();
             vtodo.pop_back();
-            if (seen.count(TmpOrig))
+            if (!seen.insert({TmpOrig, Indirect}).second)
               continue;
-            seen.insert(TmpOrig);
             if (AllocaSet.count(TmpOrig)) {
               continue;
             }
@@ -3116,17 +3118,29 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               continue;
             }
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              vtodo.push_back(LI->getPointerOperand());
+              // A value loaded from memory at a pointer that was itself
+              // loaded lives in whatever that pointer points to, not in the
+              // memory of val, so it is not covered by the recursion.
+              if (Indirect) {
+                if (EnzymePrintActivity)
+                  llvm::errs()
+                      << "      -- cannot continuing indirect store from "
+                      << *val << " due to load through loaded pointer "
+                      << *TmpOrig << "\n";
+                shouldContinue = false;
+                break;
+              }
+              vtodo.push_back({LI->getPointerOperand(), true});
               continue;
             }
             if (auto CD = dyn_cast<ConstantDataSequential>(TmpOrig)) {
               for (size_t i = 0, len = CD->getNumElements(); i < len; i++)
-                vtodo.push_back(CD->getElementAsConstant(i));
+                vtodo.push_back({CD->getElementAsConstant(i), Indirect});
               continue;
             }
             if (auto CD = dyn_cast<ConstantAggregate>(TmpOrig)) {
               for (size_t i = 0, len = CD->getNumOperands(); i < len; i++)
-                vtodo.push_back(CD->getOperand(i));
+                vtodo.push_back({CD->getOperand(i), Indirect});
               continue;
             }
             if (auto GV = dyn_cast<GlobalVariable>(TmpOrig)) {
@@ -3147,7 +3161,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             auto TmpOrig_2 = getBaseObjects(TmpOrig);
             if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
               for (auto v : TmpOrig_2)
-                vtodo.push_back(v);
+                vtodo.push_back({v, Indirect});
               continue;
             }
             if (UA == PUA && TmpOrig == val) {

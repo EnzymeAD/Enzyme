@@ -131,6 +131,25 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   return activityAnalyzer->isConstantValue(TR, v);
 }
 
+mlir::Value mlir::enzyme::MGradientUtils::broadcastToWidth(OpBuilder &builder,
+                                                           Location loc,
+                                                           mlir::Value v) {
+  if (width == 1)
+    return v;
+  return enzyme::BroadcastOp::create(builder, loc, v,
+                                     SmallVector<int64_t>({width}));
+}
+
+SmallVector<mlir::Value, 1>
+mlir::enzyme::MGradientUtils::broadcastToWidth(OpBuilder &builder, Location loc,
+                                               mlir::ValueRange vs) {
+  SmallVector<mlir::Value, 1> results;
+  results.reserve(vs.size());
+  for (Value v : vs)
+    results.push_back(broadcastToWidth(builder, loc, v));
+  return results;
+}
+
 mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
                                                          OpBuilder &Builder2) {
   // TODO

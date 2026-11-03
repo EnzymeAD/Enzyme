@@ -247,26 +247,22 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  const DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
-                                 bool newFromOriginal, ActionType intrinsic,
-                                 bool broadcastInputs = true) {
+                                 bool newFromOriginal, ActionType intrinsic) {
   SmallVector<bool, 1> vectorValued;
 
   size_t idx = 0;
   for (auto &&[args, names] :
        zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
     bool has_vector = false;
-    if (isa<UnsetInit>(args) && names) {
+    if (isa<UnsetInit>(args) && names && intrinsic != MLIRDerivatives) {
       auto [ord, vecValue, ext, isva] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
-      if (!vecValue && !startsWith(ord, "local") && !isva && broadcastInputs) {
+      if (!vecValue && !startsWith(ord, "local") && !isva) {
         has_vector = true;
       }
     }
     if (has_vector) {
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << "mlir::Value " << argName << "_" << idx << " = ";
-      else
-        os << curIndent << "llvm::Value* " << argName << "_" << idx << " = ";
+      os << curIndent << "llvm::Value* " << argName << "_" << idx << " = ";
     } else {
       os << curIndent << "auto " << argName << "_" << idx << " = ";
     }
@@ -305,30 +301,10 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives)) {
           os << ")";
         }
-        if (intrinsic == MLIRDerivatives) {
-          os << ";\n";
-          if (broadcastInputs) {
-            os << curIndent << "if (gutils->width != 1) {\n";
-            if (isva) {
-              os << curIndent << INDENT << "for (auto &val : " << argName << "_"
-                 << (idx - 1) << ") {\n";
-              os << curIndent << INDENT << INDENT
-                 << "val = enzyme::BroadcastOp::create(builder, op.getLoc(), "
-                    "val, "
-                    "llvm::SmallVector<int64_t>({gutils->width}));\n";
-              os << curIndent << INDENT << "}\n";
-            } else {
-              os << curIndent << " " << argName << "_" << (idx - 1)
-                 << " = enzyme::BroadcastOp::create(builder, \n"
-                 << curIndent << "   op.getLoc(),\n"
-                 << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
-                 << curIndent
-                 << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
-            }
-            os << curIndent << "}";
-            vecValue = true;
-          }
-        }
+        // In MLIR a primal operand keeps its primal shape here: the op that
+        // combines it with a batched value broadcasts it (see the Inst
+        // handling below), so primal-only subexpressions are computed once
+        // rather than width times.
 
         if (lookup && intrinsic != MLIRDerivatives)
           os << ", " << builder << ")";
@@ -615,56 +591,49 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
            << "::create(" << builder << ", op.getLoc(), ";
+        // The constant is typed after the op's result or after a named value.
+        // It is batched only when that value is itself batched: a constant
+        // typed after a primal value stays primal-shaped and is broadcast by
+        // the op that combines it with a batched value, so rules need not (and
+        // cannot) ask for the shadow type of a value here.
         std::string ord;
-        bool shadowType = false;
+        bool vectorValued = false;
         if (resultRoot->getNumArgs() == 0) {
           ord = "op->getResult(0)";
+        } else if (resultRoot->getArgName(0)) {
+          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+          auto [ord1, isVec, ext, isva] =
+              nameToOrdinal.lookup(name, pattern, resultTree);
+          assert(!ext.size());
+          assert(!isva);
+          ord = ord1;
+          vectorValued = isVec;
         } else {
-          if (resultRoot->getArgName(0)) {
-            auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-            auto [ord1, isVec, ext, isva] =
-                nameToOrdinal.lookup(name, pattern, resultTree);
-            assert(!ext.size());
-            assert(!isva);
-            ord = ord1;
-          } else {
-            bool handled = false;
-            if (auto argRoot = dyn_cast<DagInit>(resultRoot->getArg(0))) {
-              auto opName = argRoot->getOperator()->getAsString();
-              auto Def = cast<DefInit>(argRoot->getOperator())->getDef();
-              if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
-                if (argRoot->getArgName(0)) {
-                  auto name = argRoot->getArgName(0)->getAsUnquotedString();
-                  auto [ord1, isVec, ext, isva] =
-                      nameToOrdinal.lookup(name, pattern, resultTree);
-                  assert(!ext.size());
-                  assert(!isva);
-                  ord = "gutils->getShadowType(" + ord1;
-                  shadowType = true;
-                  handled = true;
-                }
-              }
-            }
-            if (!handled) {
-              PrintFatalError(pattern->getLoc(),
-                              "ConstantFP op only supports args with no type "
-                              "specified, an arg type, or shadow of arg type");
-            }
-          }
+          PrintFatalError(pattern->getLoc(),
+                          "ConstantFP op only supports no type specified or a "
+                          "named value whose type to use");
         }
-        os << ord << ".getType()";
-        if (shadowType)
-          os << ")";
-        os << ", ";
+        os << ord << ".getType(), ";
         auto typeCast =
             dyn_cast<StringInit>(Def->getValueInit("type"))->getValue();
-        if (typeCast != "")
-          os << "(" << typeCast << ")";
-        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType()";
-        if (shadowType)
-          os << ")";
-        os << ", ";
-        os << "\"" << value->getValue() << "\"))";
+        bool isComplex = Def->isSubClassOf("ConstantCFP");
+        if (isComplex) {
+          os << "cast<"
+             << (typeCast == "" ? StringRef("mlir::ArrayAttr") : typeCast)
+             << ">(mlir::enzyme::getComplexConstantAttr(";
+        } else {
+          if (typeCast != "")
+            os << "(" << typeCast << ")";
+          os << "mlir::enzyme::getConstantAttr(";
+        }
+        os << ord << ".getType(), ";
+        os << "\"" << value->getValue() << "\"";
+        if (isComplex)
+          os << ", \""
+             << cast<StringInit>(Def->getValueInit("imag"))->getValue()
+             << "\")";
+        os << "))";
+        return vectorValued;
       } else {
         if (resultRoot->getNumArgs() != 1)
           PrintFatalError(pattern->getLoc(),
@@ -1160,6 +1129,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           os << "(gutils->getWidth() == 1) ? " << argPattern << "_" << i
              << " : gutils->extractMeta(" << builder << ", " << argPattern
              << "_" << i << ", idx)";
+        else if (!vectorValued[i] && anyVector && intrinsic == MLIRDerivatives)
+          // The op mixes batched and primal-shaped operands: bring the
+          // primal-shaped ones up to the vector width. Non-value operands
+          // (attributes, types, enums) pass through this helper unchanged.
+          os << "gutils->broadcastToWidth(" << builder << ", op.getLoc(), "
+             << argPattern << "_" << i << ")";
         else
           os << argPattern << "_" << i << "";
       }
