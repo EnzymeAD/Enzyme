@@ -18,6 +18,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
@@ -34,6 +35,8 @@
 
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/StructuralHash.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <random>
@@ -310,109 +313,11 @@ paretoPrune(std::map<InstructionCost, double> &cost,
   sol = std::move(prunedSol);
 }
 
-std::string dpCachePath() {
-  if (flags::Cache.empty())
-    return std::string();
-  return flags::Cache + "/table.json";
-}
-
-static llvm::json::Object *
-openDPCacheEntry(StringRef cacheFilePath, StringRef fnName,
-                 std::optional<llvm::json::Value> &root, bool quiet) {
-  if (cacheFilePath.empty() || !llvm::sys::fs::exists(cacheFilePath))
-    return nullptr;
-  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> fileOrErr =
-      llvm::MemoryBuffer::getFile(cacheFilePath);
-  if (std::error_code ec = fileOrErr.getError())
-    report_fatal_error("Error reading DP cache file: " + Twine(ec.message()));
-  llvm::Expected<llvm::json::Value> jsonOrErr =
-      llvm::json::parse(fileOrErr.get()->getBuffer());
-  if (!jsonOrErr) {
-    // An unreadable cache is a reason to re-solve, never to fail the build
-    // (older writers emitted bare `nan` tokens); the file is left in place.
-    if (!quiet)
-      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
-                   << " is not valid JSON ("
-                   << llvm::toString(jsonOrErr.takeError())
-                   << "); ignoring it and re-solving. The file is left in "
-                      "place; delete it to stop this warning.\n";
-    else
-      llvm::consumeError(jsonOrErr.takeError());
-    return nullptr;
-  }
-  root = std::move(*jsonOrErr);
-  llvm::json::Object *jsonObj = root->getAsObject();
-  if (!jsonObj) {
-    if (!quiet)
-      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
-                   << " is not a JSON object; ignoring it and re-solving.\n";
-    root.reset();
-    return nullptr;
-  }
-
-  // A table written against a different cost model (or by a build predating
-  // the stamp) must not be replayed: every Delta-cost in it came from prices
-  // that no longer hold.
-  std::string want = std::to_string(getCostModelFingerprint());
-  std::optional<llvm::StringRef> got =
-      jsonObj->getString("costModelFingerprint");
-  if (!got || got->str() != want) {
-    if (!quiet)
-      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
-                   << " was solved against a different cost model ("
-                   << (got ? got->str() : std::string("<unstamped>"))
-                   << " != " << want << "); ignoring it and re-solving.\n";
-    root.reset();
-    return nullptr;
-  }
-
-  if (!jsonObj->getBoolean("candidateKeys").value_or(false)) {
-    if (!quiet)
-      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
-                   << " predates candidate-keyed steps; ignoring it and "
-                      "re-solving.\n";
-    root.reset();
-    return nullptr;
-  }
-
-  llvm::json::Object *funcs = jsonObj->getObject("functions");
-  if (!funcs) {
-    // Pre-keying layout: one anonymous table at the top level. It cannot be
-    // attributed to a function, and replaying it for the wrong site binds
-    // cached steps positionally into a different candidate vector.
-    if (!quiet)
-      llvm::errs() << "[poseidon] DP cache at " << cacheFilePath
-                   << " predates per-function keying (no \"functions\" map); "
-                      "ignoring it and re-solving.\n";
-    root.reset();
-    return nullptr;
-  }
-  llvm::json::Object *entry = funcs->getObject(fnName);
-  if (!entry) {
-    root.reset();
-    return nullptr;
-  }
-  return entry;
-}
-
-// Keyed on this function: a table for an earlier site says nothing about this
-// one. -poseidon-apply-rewrites names candidates by their position in a priced
-// solve's report, and only a priced compile has that list, so it never takes
-// the hit.
-bool dpCacheHasFunction(StringRef fnName) {
-  if (!flags::ApplyRewrites.empty())
-    return false;
-  std::optional<llvm::json::Value> root;
-  return openDPCacheEntry(dpCachePath(), fnName, root,
-                          /*quiet=*/true) != nullptr;
-}
-
 // A site tolerance is a per-operation relative rounding level, so everything
 // the ratio is built from has to be real and measured; a missing piece is an
 // upstream defect, never something to substitute a value for.
 static void checkToleranceInputs(StringRef siteName, double accScale,
-                                 double baseline, bool loadedFromCache,
-                                 StringRef cacheFilePath) {
+                                 double baseline) {
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
     std::string scaleStr;
     llvm::raw_string_ostream(scaleStr) << accScale;
@@ -426,21 +331,12 @@ static void checkToleranceInputs(StringRef siteName, double accScale,
         "site.");
   }
 
-  if (!std::isfinite(baseline)) {
-    if (loadedFromCache)
-      report_fatal_error(
-          Twine("Poseidon: the cached DP table for ") + siteName + " in " +
-          cacheFilePath +
-          " predates per-site accuracy tolerances and carries no baseline "
-          "accuracy cost, and a cache hit skips the pricing that would "
-          "recompute it. Delete that table.json (Herbie results are cached "
-          "separately and are not affected) and recompile.");
+  if (!std::isfinite(baseline))
     report_fatal_error(
         Twine("Poseidon: site ") + siteName +
         " was given an accuracy tolerance but its own baseline accuracy cost "
         "is not finite, so no candidate's modelled error can be placed on an "
         "absolute scale.");
-  }
 }
 
 // The DP table is anchored at the ORIGINAL program: costToAccuracyMap[0] == 0
@@ -487,112 +383,188 @@ static double baselineAccCost(ArrayRef<CandidateOutput> COs,
   return baseline;
 }
 
-static bool loadDPCache(
-    StringRef cacheFilePath, StringRef fnName,
-    SmallVector<CandidateOutput, 4> &COs,
-    SmallVector<CandidateSubgraph, 4> &CSs,
-    SmallVector<CandidateMatmul, 4> &CMs,
-    std::map<InstructionCost, double> &costToAccuracyMap,
-    std::map<InstructionCost, SmallVector<SolutionStep>> &costToSolutionMap,
-    std::optional<double> &cachedBaseline) {
-  std::optional<llvm::json::Value> root;
-  llvm::json::Object *jsonObj =
-      openDPCacheEntry(cacheFilePath, fnName, root, /*quiet=*/false);
-  if (!jsonObj)
+static std::string tablePath() { return flags::Cache + "/table.json"; }
+
+namespace {
+struct StoredStep {
+  std::string itemType, candidateKey;
+  size_t itemIndex = 0, candidateIndex = 0;
+};
+bool fromJSON(const json::Value &V, StoredStep &S, json::Path P) {
+  json::ObjectMapper O(V, P);
+  return O && O.map("itemType", S.itemType) &&
+         O.map("itemIndex", S.itemIndex) &&
+         O.map("candidateIndex", S.candidateIndex) &&
+         O.mapOptional("candidateKey", S.candidateKey);
+}
+} // namespace
+
+// Everything a site's DP table is computed from. The candidates are part of it
+// although the inputs before them decide them: a Herbie search can end
+// differently under the same inputs (a timeout), and under an accuracy target
+// the matrix products are left out of the table.
+static CacheKey solveKey(const FunctionFPState &st,
+                         ArrayRef<CandidateMatmul> CMs, StringRef profilePath) {
+  const Function &F = *st.F;
+  CacheKey key;
+  std::string body;
+  raw_string_ostream bodyOS(body);
+  bodyOS << StructuralHash(F, /*DetailedHash=*/true);
+  // StructuralHash does not see fast-math flags, and they change what a
+  // rewrite costs.
+  for (const Instruction &I : instructions(F))
+    if (isa<FPMathOperator>(I)) {
+      bodyOS << '|';
+      I.getFastMathFlags().print(bodyOS);
+    }
+  key.addContent("function body", body);
+  key.add("device", getCostModelNativeArch());
+  key.add("cost model", utohexstr(getCostModelFingerprint()));
+
+  SmallVector<std::string, 4> profilePaths = {profilePath.str()};
+  for (const std::string &dir : flags::OutputProfiles) {
+    SmallString<128> path(dir);
+    sys::path::append(path, siteProfileStem(F) + ".fpprofile");
+    profilePaths.push_back(path.str().str());
+  }
+  std::string profiles;
+  for (const std::string &path : profilePaths) {
+    auto buf = MemoryBuffer::getFile(path);
+    if (!buf)
+      report_fatal_error(Twine("Poseidon: cannot read the profile ") + path +
+                         " again to key the DP table of " + F.getName());
+    profiles += contentDigest((*buf)->getBuffer()) + "\n";
+  }
+  key.addContent("profile", profiles);
+
+  for (const auto &[name, value] : solveFlagValues())
+    key.add(("-" + name).str(), value);
+  // Only a site that sent Herbie cores depends on which Herbie answered them.
+  if (!st.COs.empty())
+    addHerbieKeyParts(key);
+
+  std::string candidates;
+  raw_string_ostream os(candidates);
+  for (const CandidateOutput &CO : st.COs) {
+    os << "CO " << CO.herbiePrecision << " " << CO.expr << "\n";
+    for (const RewriteCandidate &c : CO.candidates)
+      os << "  " << c.expr << "\n";
+  }
+  for (const CandidateSubgraph &CS : st.CSs) {
+    os << "CS\n";
+    for (const PTCandidate &c : CS.candidates)
+      os << "  " << c.desc << "\n";
+  }
+  for (const CandidateMatmul &CM : CMs) {
+    os << "CM " << CM.matmul->id << "\n";
+    for (const CandidateMatmul::Option &o : CM.candidates)
+      os << "  " << matmulOptionLabel(o) << "\n";
+  }
+  key.addContent("candidate set", candidates);
+  return key;
+}
+
+// Fills `table` from the cache when it holds a table for `fnName` under
+// table.key, and otherwise says why not unless there is none at all.
+static bool readSiteTable(StringRef fnName, SiteTable &table,
+                          MutableArrayRef<CandidateOutput> COs,
+                          MutableArrayRef<CandidateSubgraph> CSs,
+                          MutableArrayRef<CandidateMatmul> CMs) {
+  const std::string path = tablePath();
+  if (!sys::fs::exists(path))
     return false;
+  auto miss = [&](const std::string &why) {
+    llvm::errs() << "[poseidon] DP cache entry for " << fnName << " " << why
+                 << "; re-solving.\n";
+    return false;
+  };
+  auto unreadable = [&](const std::string &why) {
+    return miss("is unreadable (" + path + ": " + why + ")");
+  };
 
-  // A cache hit skips candidate pricing entirely (dpCacheHasFunction gates
-  // setUnifiedAccuracyCost), so the baseline cannot be recomputed here and has
-  // to come out of the table that was written with it.
-  cachedBaseline = jsonObj->getNumber("baselineAccCost");
+  auto buf = MemoryBuffer::getFile(path);
+  if (!buf)
+    return unreadable(buf.getError().message());
+  Expected<json::Value> root = json::parse((*buf)->getBuffer());
+  if (!root)
+    return unreadable(toString(root.takeError()));
+  json::Object *funcs = root->getAsObject()
+                            ? root->getAsObject()->getObject("functions")
+                            : nullptr;
+  if (!funcs)
+    return miss("was written in another cache format");
+  json::Object *entry = funcs->getObject(fnName);
+  if (!entry)
+    return false;
+  if (std::optional<std::string> part =
+          table.key.firstDifference(entry->getObject("key")))
+    return miss(*part == "format" ? "was written in another cache format"
+                                  : "was solved for a different " + *part);
 
-  if (llvm::json::Object *costAccMap =
-          jsonObj->getObject("costToAccuracyMap")) {
-    for (auto &pair : *costAccMap) {
-      InstructionCost compCost(std::stoll(pair.first.str()));
-      double accCost = pair.second.getAsNumber().value();
-      costToAccuracyMap[compCost] = accCost;
-    }
-  } else {
-    llvm_unreachable("Invalid costToAccuracyMap in cache file.");
+  std::map<std::string, double> accMap;
+  std::map<std::string, std::vector<StoredStep>> solMap;
+  json::Path::Root parsed;
+  const json::Value *accVal = entry->get("costToAccuracyMap");
+  const json::Value *solVal = entry->get("costToSolutionMap");
+  if (!accVal || !solVal || !fromJSON(*accVal, accMap, parsed) ||
+      !fromJSON(*solVal, solMap, parsed))
+    return unreadable("its table does not parse");
+  auto cost = [](StringRef text) -> std::optional<InstructionCost> {
+    int64_t c;
+    if (text.getAsInteger(10, c))
+      return std::nullopt;
+    return InstructionCost(c);
+  };
+  // Steps name their candidates by key: pricing drops candidates and a hit
+  // prices nothing, so a solved table's positions are not the replay's.
+  auto bind = [&](const StoredStep &s) -> std::optional<SolutionStep> {
+    if (s.itemType == "CO" && s.itemIndex < COs.size())
+      if (auto i = findCandidate(
+              ArrayRef(COs[s.itemIndex].candidates), s.candidateIndex,
+              s.candidateKey,
+              [](const RewriteCandidate &c) -> StringRef { return c.expr; }))
+        return SolutionStep(&COs[s.itemIndex], *i);
+    if (s.itemType == "CS" && s.itemIndex < CSs.size())
+      if (auto i = findCandidate(
+              ArrayRef(CSs[s.itemIndex].candidates), s.candidateIndex,
+              s.candidateKey,
+              [](const PTCandidate &c) -> StringRef { return c.desc; }))
+        return SolutionStep(&CSs[s.itemIndex], *i);
+    if (s.itemType == "CM" && s.itemIndex < CMs.size() &&
+        s.candidateIndex < CMs[s.itemIndex].candidates.size())
+      return SolutionStep(&CMs[s.itemIndex], s.candidateIndex);
+    return std::nullopt;
+  };
+  for (const auto &[text, acc] : accMap) {
+    std::optional<InstructionCost> c = cost(text);
+    if (!c)
+      return unreadable("its table does not parse");
+    table.costToAccuracyMap[*c] = acc;
   }
-
-  if (llvm::json::Object *costSolMap =
-          jsonObj->getObject("costToSolutionMap")) {
-    for (auto &pair : *costSolMap) {
-      InstructionCost compCost(std::stoll(pair.first.str()));
-      SmallVector<SolutionStep> solutionSteps;
-
-      llvm::json::Array *stepsArray = pair.second.getAsArray();
-      if (!stepsArray)
-        report_fatal_error("Invalid steps array in DP cache file");
-
-      for (llvm::json::Value &stepVal : *stepsArray) {
-        llvm::json::Object *stepObj = stepVal.getAsObject();
-        if (!stepObj)
-          llvm_unreachable("Invalid step object in cache file.");
-
-        StringRef itemType = stepObj->getString("itemType").value();
-        size_t candidateIndex = stepObj->getInteger("candidateIndex").value();
-        size_t itemIndex = stepObj->getInteger("itemIndex").value();
-        StringRef key = stepObj->getString("candidateKey").value_or("");
-
-        // Pricing was skipped for this compile, so a table that does not
-        // match its candidates cannot be re-solved here.
-        auto staleCache = [&](const char *what) -> bool {
-          report_fatal_error(
-              Twine("Poseidon: the DP cache ") + cacheFilePath + " for " +
-              fnName + " does not match this compile (" + what + ": item " +
-              Twine(itemIndex) + ", candidate " + Twine(candidateIndex) + "; " +
-              Twine(COs.size()) + " CO / " + Twine(CSs.size()) + " CS / " +
-              Twine(CMs.size()) +
-              " CM). Delete that table.json (keep the Herbie outputs) and "
-              "recompile.");
-        };
-        if (itemType == "CO") {
-          if (itemIndex >= COs.size())
-            return staleCache("CandidateOutput");
-          auto idx = findCandidate(
-              ArrayRef(COs[itemIndex].candidates), candidateIndex, key,
-              [](const RewriteCandidate &c) -> StringRef { return c.expr; });
-          if (!idx)
-            return staleCache("CandidateOutput candidate");
-          solutionSteps.emplace_back(&COs[itemIndex], *idx);
-        } else if (itemType == "CS") {
-          if (itemIndex >= CSs.size())
-            return staleCache("CandidateSubgraph");
-          auto idx = findCandidate(
-              ArrayRef(CSs[itemIndex].candidates), candidateIndex, key,
-              [](const PTCandidate &c) -> StringRef { return c.desc; });
-          if (!idx)
-            return staleCache("CandidateSubgraph candidate");
-          solutionSteps.emplace_back(&CSs[itemIndex], *idx);
-        } else if (itemType == "CM") {
-          if (itemIndex >= CMs.size())
-            return staleCache("CandidateMatmul");
-          if (candidateIndex >= CMs[itemIndex].candidates.size())
-            return staleCache("CandidateMatmul candidate");
-          solutionSteps.emplace_back(&CMs[itemIndex], candidateIndex);
-        } else {
-          llvm_unreachable("Invalid itemType in cache file.");
-        }
-      }
-
-      costToSolutionMap[compCost] = solutionSteps;
+  for (const auto &[text, steps] : solMap) {
+    std::optional<InstructionCost> c = cost(text);
+    if (!c)
+      return unreadable("its table does not parse");
+    SmallVector<SolutionStep> &bound = table.costToSolutionMap[*c];
+    for (const StoredStep &s : steps) {
+      std::optional<SolutionStep> step = bind(s);
+      if (!step)
+        return unreadable("a step names no candidate of this compile");
+      bound.push_back(*step);
     }
-  } else {
-    report_fatal_error("costToSolutionMap not found in DP cache file");
   }
+  table.baseline = entry->getNumber("baselineAccCost");
+  table.hit = true;
   return true;
 }
 
 static void
-writeDPCache(StringRef cacheFilePath, StringRef fnName,
-             const std::map<InstructionCost, double> &costToAccuracyMap,
-             const std::map<InstructionCost, SmallVector<SolutionStep>>
-                 &costToSolutionMap,
-             ArrayRef<CandidateOutput> COs, ArrayRef<CandidateSubgraph> CSs,
-             ArrayRef<CandidateMatmul> CMs, double baseline) {
+writeSiteTable(StringRef fnName, const CacheKey &key,
+               const std::map<InstructionCost, double> &costToAccuracyMap,
+               const std::map<InstructionCost, SmallVector<SolutionStep>>
+                   &costToSolutionMap,
+               ArrayRef<CandidateOutput> COs, ArrayRef<CandidateSubgraph> CSs,
+               ArrayRef<CandidateMatmul> CMs, double baseline) {
   std::unordered_map<const CandidateOutput *, size_t> coPtrToIndex;
   for (size_t i = 0; i < COs.size(); ++i)
     coPtrToIndex[&COs[i]] = i;
@@ -623,6 +595,7 @@ writeDPCache(StringRef cacheFilePath, StringRef fnName,
   }
 
   json::Object entryObj;
+  entryObj["key"] = key.toJSON();
 
   json::Object costAccMap;
   for (const auto &pair : costToAccuracyMap) {
@@ -665,47 +638,70 @@ writeDPCache(StringRef cacheFilePath, StringRef fnName,
   if (std::isfinite(baseline))
     entryObj["baselineAccCost"] = baseline;
 
-  // Read-modify-write: the file holds one table PER FUNCTION, so a later site
+  // Read-modify-write: the file holds one table per function, so a later site
   // in the same compilation unit must extend it rather than clobber the
-  // earlier sites' tables. Entries written against a different cost model are
-  // dropped wholesale (the fingerprint is a property of the whole file).
+  // earlier sites' tables. A file that does not parse is replaced.
+  const std::string path = tablePath();
   json::Object functions;
-  const std::string wantFP = std::to_string(getCostModelFingerprint());
-  if (llvm::sys::fs::exists(cacheFilePath)) {
-    if (auto fileOrErr = llvm::MemoryBuffer::getFile(cacheFilePath)) {
-      if (auto prior = llvm::json::parse(fileOrErr.get()->getBuffer())) {
-        if (json::Object *priorObj = prior->getAsObject()) {
-          std::optional<StringRef> fp =
-              priorObj->getString("costModelFingerprint");
-          if (fp && fp->str() == wantFP &&
-              priorObj->getBoolean("candidateKeys").value_or(false))
-            if (json::Object *priorFuncs = priorObj->getObject("functions"))
-              functions = *priorFuncs;
-        }
-      } else {
-        llvm::consumeError(prior.takeError());
-      }
+  if (auto fileOrErr = MemoryBuffer::getFile(path)) {
+    if (auto prior = json::parse(fileOrErr.get()->getBuffer())) {
+      if (json::Object *priorObj = prior->getAsObject())
+        if (json::Object *priorFuncs = priorObj->getObject("functions"))
+          functions = std::move(*priorFuncs);
+    } else {
+      consumeError(prior.takeError());
     }
   }
   functions[fnName] = std::move(entryObj);
 
   json::Object jsonObj;
-  // The table is a function of every price the model supplied; without the
-  // stamp a re-solve after a cost-model change would replay the previous picks.
-  jsonObj["costModelFingerprint"] = wantFP;
-  jsonObj["candidateKeys"] = true;
   jsonObj["functions"] = std::move(functions);
 
   std::error_code EC;
-  llvm::raw_fd_ostream cacheFile(cacheFilePath, EC, llvm::sys::fs::OF_Text);
+  raw_fd_ostream cacheFile(path, EC, sys::fs::OF_Text);
   if (EC) {
     llvm::errs() << "Error writing cache file: " << EC.message() << "\n";
     return;
   }
-  cacheFile << llvm::formatv("{0:2}", llvm::json::Value(std::move(jsonObj)))
-            << "\n";
+  cacheFile << formatv("{0:2}", json::Value(std::move(jsonObj))) << "\n";
   cacheFile.close();
   llvm::errs() << "DP table for " << fnName << " cached to file.\n";
+}
+
+static void priceCandidates(FunctionFPState &st) {
+  Module *M = st.F->getParent();
+  for (CandidateOutput &CO : st.COs) {
+    if (!CO.herbieAnswered)
+      continue;
+    const FastMathFlags FMF =
+        cast<Instruction>(CO.oldOutput)->getFastMathFlags();
+    for (RewriteCandidate &c : CO.candidates)
+      c.CompCost = getCompCost(c.expr, M, st.valueToNodeMap,
+                               st.symbolToValueMap, FMF, &CO.subgraph->inputs);
+    setUnifiedAccuracyCost(CO, st.valueToNodeMap, st.symbolToValueMap);
+  }
+  for (CandidateSubgraph &CS : st.CSs) {
+    for (PTCandidate &c : CS.candidates)
+      c.CompCost = getCompCost(*CS.subgraph, c);
+    setUnifiedAccuracyCost(CS, st.valueToNodeMap, st.symbolToValueMap);
+  }
+}
+
+void priceUnlessCached(FunctionFPState &st, StringRef profilePath) {
+  // A joint or a manual solve reads no table, and an accuracy target leaves
+  // the matrix products to errorBudgetSelector (fpOptimize).
+  if (!flags::Cache.empty() && !flags::JointDP &&
+      flags::ApplyRewrites.empty()) {
+    const bool target = st.errTol > 0.0 || flags::Tau > 0.0;
+    MutableArrayRef<CandidateMatmul> CMs;
+    if (!target)
+      CMs = st.CMs;
+    st.table = std::make_unique<SiteTable>();
+    st.table->key = solveKey(st, CMs, profilePath);
+    if (readSiteTable(st.F->getName(), *st.table, st.COs, st.CSs, CMs))
+      return;
+  }
+  priceCandidates(st);
 }
 
 static void
@@ -1373,7 +1369,7 @@ SmallVector<SolutionStep> accuracyDPSolver(
     SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap, double errorTol,
-    double accScale, SolveRecord *record) {
+    double accScale, SolveRecord *record, SiteTable *table) {
   llvm::errs() << "Starting accuracy DP solver with computation budget: "
                << flags::CompCostBudget << "\n";
   if (errorTol > 0.0) {
@@ -1387,20 +1383,17 @@ SmallVector<SolutionStep> accuracyDPSolver(
   CostMap costToAccuracyMap;
   SolutionMap costToSolutionMap;
 
-  std::string cacheFilePath = dpCachePath();
-  bool loadedFromCache = false;
+  const bool loadedFromCache = table && table->hit;
   std::optional<double> cachedBaseline;
 
-  if (!cacheFilePath.empty() && llvm::sys::fs::exists(cacheFilePath) &&
-      loadDPCache(cacheFilePath, F.getName(), COs, CSs, CMs, costToAccuracyMap,
-                  costToSolutionMap, cachedBaseline)) {
+  if (loadedFromCache) {
+    costToAccuracyMap = table->costToAccuracyMap;
+    costToSolutionMap = table->costToSolutionMap;
+    cachedBaseline = table->baseline;
     llvm::errs() << "Cache entry for " << F.getName()
                  << " found. Loaded DP tables from cache.\n";
-    loadedFromCache = true;
-
   } else {
-    llvm::errs() << "No cache entry for " << F.getName()
-                 << ". Proceeding to solve DP.\n";
+    llvm::errs() << "Solving the DP for " << F.getName() << ".\n";
 
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
@@ -1453,12 +1446,10 @@ SmallVector<SolutionStep> accuracyDPSolver(
                    << "\n";
     }
 
-    // Inserted before the cache write so sweep compiles reusing the cached
-    // table inherit these entries.
-
-    if (!cacheFilePath.empty())
-      writeDPCache(cacheFilePath, F.getName(), costToAccuracyMap,
-                   costToSolutionMap, COs, CSs, CMs, baselineAccCost(COs, CSs));
+    if (table)
+      writeSiteTable(F.getName(), table->key, costToAccuracyMap,
+                     costToSolutionMap, COs, CSs, CMs,
+                     baselineAccCost(COs, CSs));
   }
 
   if (flags::Print && flags::ShowTable)
@@ -1537,8 +1528,7 @@ SmallVector<SolutionStep> accuracyDPSolver(
                    << " subgraph output(s) carry no priced candidate, so the "
                       "baseline below covers only the priced ones and the "
                       "reported relative error is a lower bound.\n";
-    checkToleranceInputs(F.getName(), accScale, baseline, loadedFromCache,
-                         cacheFilePath);
+    checkToleranceInputs(F.getName(), accScale, baseline);
 
     bool foundSolution = false;
     double bestRel = 0.0;
@@ -1720,8 +1710,7 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
         names += ",";
       names += st->F ? st->F->getName().str() : std::string("<unnamed>");
     }
-    checkToleranceInputs(names, accScale, baseline,
-                         /*loadedFromCache=*/false, StringRef());
+    checkToleranceInputs(names, accScale, baseline);
 
     bool found = false;
     double bestRel = 0.0;

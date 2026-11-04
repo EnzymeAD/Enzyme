@@ -49,8 +49,8 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
   [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
   `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
   `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an existing one instead. Herbie
-  result caches are stamped with the digest of the binary that produced them
-  and are searched again under any other.
+  results are cached under the digest of the binary that produced them and
+  are searched again under any other.
 
 ## Build
 

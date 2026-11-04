@@ -32,6 +32,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "CacheKey.h"
 #include "Flags.h"
 #include "Matmul.h"
 #include "Types.h"
@@ -50,11 +51,17 @@ struct SolveRecord {
   std::optional<int64_t> selected;
 };
 
-// The DP cache holds one table per function, keyed by function identity as
-// well as the cost-model fingerprint: with several annotated sites in one
-// compilation unit an earlier site's table says nothing about a later one.
-std::string dpCachePath();
-bool dpCacheHasFunction(llvm::StringRef fnName);
+// A site's DP table in the cache: the key of what it is solved from and, when
+// the cache holds a table under that key, the table bound to this compile's
+// candidates.
+struct SiteTable {
+  CacheKey key;
+  bool hit = false;
+  std::map<llvm::InstructionCost, double> costToAccuracyMap;
+  std::map<llvm::InstructionCost, llvm::SmallVector<SolutionStep>>
+      costToSolutionMap;
+  std::optional<double> baseline;
+};
 
 // `accScale` is what a site tolerance is measured against: the site's total
 // profiled sensitivity, times whatever factor the accuracy costs were already
@@ -67,8 +74,8 @@ llvm::SmallVector<SolutionStep> accuracyDPSolver(
     llvm::SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    double errorTol = 0.0, double accScale = 0.0,
-    SolveRecord *record = nullptr);
+    double errorTol = 0.0, double accScale = 0.0, SolveRecord *record = nullptr,
+    SiteTable *table = nullptr);
 
 // Per matmul, pick the cheapest candidate whose estimated relative domain error
 // is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
@@ -102,6 +109,8 @@ struct FunctionFPState {
   llvm::SmallVector<CandidateOutput, 4> COs;
   llvm::SmallVector<CandidateSubgraph, 4> CSs;
   llvm::SmallVector<CandidateMatmul, 4> CMs;
+  // Set when the site is solved against the DP table cache.
+  std::unique_ptr<SiteTable> table;
 
   // WMMA-raise analyses. findScalarLoopMatmuls stashes a `ScalarEvolution *`
   // (and SCEVs it owns) into each ScalarLoopHandle for the materializer's
@@ -118,6 +127,10 @@ struct FunctionFPState {
 
 bool collectFPCandidates(llvm::Function &F, double errorTol,
                          unsigned sampleLogBits, FunctionFPState &st);
+
+// Prices the collected candidates, unless the site's DP table is read back
+// from the cache: the table already holds every price its solve used.
+void priceUnlessCached(FunctionFPState &st, llvm::StringRef profilePath);
 
 bool materializeFPSolution(llvm::Function &F, FunctionFPState &st,
                            llvm::ArrayRef<SolutionStep> steps);

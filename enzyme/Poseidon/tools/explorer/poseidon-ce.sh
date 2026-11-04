@@ -132,23 +132,20 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/cache"
 for dir in "$ROOT/cache" "$SHARED"; do
-  for stamp in "$dir"/cachedHerbieOutput_*.txt.input; do
-    [ -e "$stamp" ] || continue
-    entry="${stamp%.input}"
-    if [ -e "$entry" ]; then cp "$entry" "$entry".* "$work/cache/" 2>/dev/null || true; fi
+  for entry in "$dir"/cachedHerbieOutput_*.txt; do
+    [ -e "$entry" ] || continue
+    cp "$entry" "$work/cache/" 2>/dev/null || true
   done
 done
 publish() {
   exec {lock}>>"$SHARED/publish.lock" || return 0
   flock -w 10 "$lock" || { exec {lock}>&-; return 0; }
   for entry in "$work"/cache/cachedHerbieOutput_*.txt; do
-    [ -e "$entry.input" ] || continue
+    [ -e "$entry" ] || continue
     name="${entry##*/}"
     [ ! -e "$SHARED/$name" ] || continue
     ! grep -q '"status":"timeout"' "$entry" || continue
-    for f in "$entry".* "$entry"; do
-      if cp "$f" "$SHARED/.${f##*/}.$$"; then mv -f "$SHARED/.${f##*/}.$$" "$SHARED/${f##*/}" || true; fi
-    done
+    if cp "$entry" "$SHARED/.$name.$$"; then mv -f "$SHARED/.$name.$$" "$SHARED/$name" || true; fi
   done
   exec {lock}>&-
 }
@@ -162,7 +159,7 @@ diagnostics() {
   elif [ "$verbose" = 1 ]; then cat "$work/solve.err"
   else
     grep -aE "^($esc\\[[0-9;]*m)*(\\[poseidon\\]|Failed to)|No solution found|Best achievable|Applying solution for|warning: |error: |note: |remark: " "$work/solve.err" |
-      grep -vE 'Starting Floodfill|initial subgraphs|After splitting|canonical form hash|\] Finished|PT Function identified|relative error tolerance:|NONE lands on the Pareto|regime-split candidate|dropping (array )?candidate|array candidate per element|Herbie core .*: status=[a-z]+-(start|target)|Herbie cache key collision' || true
+      grep -vE 'Starting Floodfill|initial subgraphs|After splitting|canonical form hash|\] Finished|PT Function identified|relative error tolerance:|NONE lands on the Pareto|regime-split candidate|dropping (array )?candidate|array candidate per element|Herbie core .*: status=[a-z]+-(start|target)' || true
   fi | sed -E "s/^(.*:[0-9]+:[0-9]+: ($esc\\[[0-9;]*m)*)remark: /\\1note: /" >&2
 }
 

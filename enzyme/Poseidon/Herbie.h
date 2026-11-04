@@ -26,6 +26,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "CacheKey.h"
 #include "Types.h"
 
 namespace poseidon {
@@ -61,13 +62,14 @@ llvm::SmallVector<std::string, 1> fpcoreToC(
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
         nullptr);
 
-bool improveViaHerbie(
-    const std::vector<std::string> &inputExprs,
-    std::vector<CandidateOutput> &COs, llvm::Module *M,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    int subgraphIdx, llvm::StringRef funcTag, llvm::StringRef cacheKey,
-    llvm::StringRef keyTag = "");
+// The parts of a cache key that say which Herbie searched: its binary and the
+// platform it ranks candidates by.
+void addHerbieKeyParts(CacheKey &key);
+
+// Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
+bool improveViaHerbie(const std::vector<std::string> &inputExprs,
+                      std::vector<CandidateOutput> &COs, int subgraphIdx,
+                      llvm::StringRef funcTag);
 
 std::string getHerbieOperator(const llvm::Instruction &I);
 
