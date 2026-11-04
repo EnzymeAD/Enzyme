@@ -4326,8 +4326,8 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     case Intrinsic::smul_with_overflow:
     case Intrinsic::umul_with_overflow: {
       opcode = BinaryOperator::Mul;
-      // if a + b or a * b == int, then a and b must be ints
-      analysis = analysis.JustInt();
+      // Integer overflow multiplication only operates on integers
+      analysis = TypeTree(BaseType::Integer);
       break;
     }
     case Intrinsic::sadd_with_overflow:
@@ -4371,6 +4371,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    if (opcode == BinaryOperator::Mul && vd[{}] == BaseType::Unknown) {
+      vd = TypeTree(BaseType::Integer);
+    }
     TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
 
     int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;

@@ -2242,7 +2242,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::sadd_with_overflow:
+  case Intrinsic::uadd_with_overflow:
   case Intrinsic::ssub_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow:
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::abs:
 #endif

@@ -480,6 +480,8 @@ static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::prefetch,
     Intrinsic::trap,
     Intrinsic::is_constant,
+    Intrinsic::smul_with_overflow,
+    Intrinsic::umul_with_overflow,
     Intrinsic::memset};
 
 static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
