@@ -5732,13 +5732,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         IRBuilder<> bb(inversionAllocs);
         if (auto arg = dyn_cast<Instruction>(oval)) {
           arg = getNewFromOriginal(arg);
-          // Go one after since otherwise we won't be able
-          // to use in the store.
-          arg = arg->getNextNode();
-          while (auto PN = dyn_cast<PHINode>(arg)) {
-            if (PN->getNumIncomingValues() == 0)
-              break;
-            arg = PN->getNextNode();
+          // Advance past the entire leading PHI group, including zero-incoming
+          // shadow placeholder PHIs that have not been populated yet.
+          arg = getNextNonDebugInstruction(arg);
+          while (isa<PHINode>(arg) || arg->isEHPad()) {
+            arg = getNextNonDebugInstruction(arg);
           }
           bb.SetInsertPoint(arg);
         }

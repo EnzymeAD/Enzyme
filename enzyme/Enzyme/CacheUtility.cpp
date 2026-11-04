@@ -1827,15 +1827,17 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 
   // Find the correct place to issue the store
   IRBuilder<> v(inst->getParent());
-  // If this is a PHINode, we need to store after all phinodes,
-  // otherwise just after inst sufficies
+  // Shadow placeholder PHIs at the top of a block initially have zero incoming
+  // edges, whereas replacement placeholder PHIs may sit mid-block; advancing
+  // forward past contiguous PHIs handles both without splitting a PHI group.
   if (&*inst->getParent()->rbegin() != inst) {
-    auto pn = dyn_cast<PHINode>(inst);
-    Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (getFirstNonPHI(inst->getParent()))
-                                : getNextNonDebugInstruction(inst);
-    assert(putafter);
-    v.SetInsertPoint(putafter);
+    Instruction *insertionPoint = getNextNonDebugInstruction(inst);
+    if (isa<PHINode>(inst)) {
+      while (isa<PHINode>(insertionPoint) || insertionPoint->isEHPad())
+        insertionPoint = getNextNonDebugInstruction(insertionPoint);
+    }
+    assert(insertionPoint && "expected insertion point after cached value");
+    v.SetInsertPoint(insertionPoint);
   }
   v.setFastMathFlags(getFast());
   storeInstructionInCache(ctx, v, inst, cache, TBAA);
