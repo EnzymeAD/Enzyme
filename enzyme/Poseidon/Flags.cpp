@@ -9,9 +9,13 @@
 
 #include "Flags.h"
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 
+#include <memory>
 #include <string>
 
 using namespace llvm;
@@ -280,7 +284,79 @@ cl::opt<std::string> Explain(
 
 } // namespace flags
 
+namespace {
+
+std::string flagValue(const cl::opt<bool> &O) { return O ? "1" : "0"; }
+std::string flagValue(const cl::opt<double> &O) {
+  return formatv("{0:e16}", O.getValue()).str();
+}
+std::string flagValue(const cl::opt<std::string> &O) { return O; }
+std::string flagValue(const cl::list<std::string> &O) { return join(O, ","); }
+template <typename T> std::string flagValue(const cl::opt<T> &O) {
+  return std::to_string(O.getValue());
+}
+
+template <typename... Opts> FlagValues valuesOf(const Opts &...opts) {
+  FlagValues out;
+  (out.emplace_back(opts.ArgStr, flagValue(opts)), ...);
+  return out;
+}
+
+template <typename... Opts>
+SmallVector<const cl::Option *> optionsOf(const Opts &...opts) {
+  return {std::addressof(opts)...};
+}
+
+// What a solved table does not depend on: what is profiled or which sites are
+// solved, what is chosen from a solved table, a path whose contents the key
+// holds instead (profiles, cost model, Herbie binary and platform), a solve
+// that never reads a table (joint, manual), how long Herbie may run and on how
+// many workers, and output.
+SmallVector<const cl::Option *> notSolveInputs() {
+  using namespace flags;
+  return optionsOf(ProfileGenerate, ProfileUse, OutputProfiles, Kernels,
+                   MinCostShare, CompCostBudget, Tau, TauCheapest, JointDP,
+                   ApplyRewrites, CostModel, Cache, HerbieNumThreads,
+                   HerbieTimeout, HerbieSubgraphTimeout, HerbieProcesses,
+                   HerbieBinary, HerbiePlatform, Print, ShowTable, ReportPath,
+                   Explain);
+}
+
+} // namespace
+
+FlagValues solveFlagValues() {
+  using namespace flags;
+  return valuesOf(LooseCoverage, EnableHerbie, EnablePT, EnableMultifloat,
+                  ExpansionComponents, EnableThreeTier, TwoTierStep, RaiseWMMA,
+                  MaxExprLength, MinUsesSplit, MinOpsSplit, SplitCalls,
+                  EarlyPrune, AggressiveDCE, NumSamples, RandomSeed,
+                  SampleLogBits, StrictMode, MinArmSamples, ArmSearchFactor,
+                  MaxBrokenShare, ExponentPenalty, HerbieNumPts, HerbieNumIters,
+                  HerbieNumEnodes, HerbiePreFloorBits, HerbieArrays,
+                  HerbieArrayGrouping, HerbieArrayWeights, OzakiHostDispatch,
+                  InKernelCalibration);
+}
+
+static void checkFlagClassification() {
+  StringMap<unsigned> listed;
+  for (const auto &kv : solveFlagValues())
+    ++listed[kv.first];
+  for (const cl::Option *O : notSolveInputs())
+    ++listed[O->ArgStr];
+  for (const auto &kv : cl::getRegisteredOptions()) {
+    StringRef name = kv.first;
+    if (name.starts_with("poseidon-") && listed.lookup(name) != 1)
+      report_fatal_error(Twine("Poseidon: -") + name + " is in " +
+                         (listed.lookup(name) ? "both" : "neither") +
+                         " of solveFlagValues() and notSolveInputs() in "
+                         "Flags.cpp; a flag the DP table depends on goes in "
+                         "the first, any other in the second.");
+  }
+}
+
 void applyFlagDefaults() {
+  checkFlagClassification();
+
   // -poseidon-profile-use with no directory means the directory the profiling
   // run writes by default.
   if (flags::ProfileUse.getNumOccurrences() && flags::ProfileUse.empty())

@@ -757,8 +757,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
   // Names the site by what it computes, not by the kernel it was cut from: the
   // profile is only readable against the canonical form it was numbered
-  // against, and the Herbie result cache is keyed on the same digest so that
-  // renaming the kernel does not invalidate a shipped result.
+  // against.
   const std::string canonicalHash = poseidon::canonicalFormHash(F);
   if (flags::Print)
     llvm::errs() << "[poseidon] canonical form hash of " << F.getName()
@@ -1450,10 +1449,8 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         if (!inArray(E))
           emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
                         numArrayCores ? arrayCOs : newCOs);
-      if (numArrayCores &&
-          !improveViaHerbie(arrayInputs, arrayCOs, F.getParent(),
-                            valueToNodeMap, symbolToValueMap, subgraphCounter,
-                            F.getName(), canonicalHash, "_array")) {
+      if (numArrayCores && !improveViaHerbie(arrayInputs, arrayCOs,
+                                             subgraphCounter, F.getName())) {
         if (flags::Print)
           llvm::errs() << "Failed to optimize expressions using Herbie!\n";
       }
@@ -1473,9 +1470,8 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
 
       if (!herbieInputs.empty()) {
-        if (!improveViaHerbie(herbieInputs, newCOs, F.getParent(),
-                              valueToNodeMap, symbolToValueMap, subgraphCounter,
-                              F.getName(), canonicalHash)) {
+        if (!improveViaHerbie(herbieInputs, newCOs, subgraphCounter,
+                              F.getName())) {
           if (flags::Print)
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
@@ -1504,11 +1500,6 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             std::min(1.0, thr * (double)profileHeader.launchCount /
                               (double)CS.executions);
       }
-
-      // Keyed by THIS function: a cached table for an earlier site in the same
-      // compilation unit carries no deltas for these candidates, so skipping
-      // on the file's mere existence would leave them unevaluated.
-      bool skipEvaluation = dpCacheHasFunction(F.getName());
 
       const auto &PTFuncs = getPTFuncs();
       SetVector<FPLLValue *> funcsSet, allSet;
@@ -1549,8 +1540,6 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             if (changes.empty())
               return;
             PTCandidate cand{std::move(changes), std::move(desc)};
-            if (!skipEvaluation)
-              cand.CompCost = getCompCost(subgraph, cand);
             CS.candidates.push_back(std::move(cand));
           };
 
@@ -1651,10 +1640,6 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         }
       }
 
-      if (!skipEvaluation) {
-        setUnifiedAccuracyCost(CS, valueToNodeMap, symbolToValueMap);
-      }
-
       // Zero candidates for a nonempty subgraph means every tier was filtered
       // out (a configuration problem), which must not pass as a no-op frontier.
       if (CS.candidates.empty() && !subgraph.operations.empty()) {
@@ -1681,6 +1666,8 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   auto &CMs = st.CMs;
   generateMatmulCandidates(abstractMatmuls, profileMap, kDefaultConfidence,
                            st.sampleLogBits, CMs);
+
+  priceUnlessCached(st, profilePath);
 
   // Put this site's error on the application's scale. kappa is the measured
   // response of the declared quantity of interest to computing this site with a
@@ -1935,9 +1922,9 @@ bool fpOptimize(Function &F, double errorTol) {
     steps = errorBudgetSelector(st.CMs, target, kDefaultConfidence);
     if (!st.COs.empty() || !st.CSs.empty()) {
       SmallVector<CandidateMatmul, 4> noCMs;
-      SmallVector<SolutionStep> elem =
-          accuracyDPSolver(F, st.COs, st.CSs, noCMs, st.valueToNodeMap,
-                           st.symbolToValueMap, target, st.accScale, rec);
+      SmallVector<SolutionStep> elem = accuracyDPSolver(
+          F, st.COs, st.CSs, noCMs, st.valueToNodeMap, st.symbolToValueMap,
+          target, st.accScale, rec, st.table.get());
       for (const SolutionStep &e : elem) {
         // The two selectors ran independently, so the footprint rule the DP
         // applies internally is applied between their results here. Never
@@ -1956,7 +1943,8 @@ bool fpOptimize(Function &F, double errorTol) {
     record.selector = "error-budget";
   } else {
     steps = accuracyDPSolver(F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
-                             st.symbolToValueMap, target, st.accScale, rec);
+                             st.symbolToValueMap, target, st.accScale, rec,
+                             st.table.get());
   }
   if (rec)
     explainSolve(F, st, steps, record);

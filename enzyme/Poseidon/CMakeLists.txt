@@ -32,6 +32,7 @@ include(Herbie)
 
 set(POSEIDON_SRC
     Plugin.cpp
+    CacheKey.cpp
     Canonicalize.cpp
     CostModel.cpp
     Driver.cpp

@@ -21,10 +21,12 @@
 
 #include "poseidon/poseidon.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
 
 #include <cstdint>
 #include <string>
+#include <utility>
 
 namespace poseidon {
 
@@ -41,6 +43,13 @@ constexpr double kDefaultConfidence = 0.95;
 // Resolve the flag spellings that carry a default only when written without a
 // value. Idempotent; called at the entry of each phase.
 void applyFlagDefaults();
+
+// The name and value of every flag a DP table depends on, that is every flag
+// that changes the candidate set or its pricing. Every other -poseidon-* flag
+// is in notSolveInputs() in Flags.cpp, and applyFlagDefaults() fails the
+// compile when a flag is in neither list or in both.
+using FlagValues = llvm::SmallVector<std::pair<llvm::StringRef, std::string>>;
+FlagValues solveFlagValues();
 
 // One flag per line, in --help order. A flag's name is its variable name in
 // kebab case: `Tau` is -poseidon-tau, `HerbieNumPts` is

@@ -42,7 +42,6 @@
 #include "Herbie.h"
 #include "Optimize.h"
 #include "Sampling.h"
-#include "Solvers.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -696,17 +695,33 @@ fpcoreToC(const std::string &expr,
   return out;
 }
 
-bool improveViaHerbie(
-    const std::vector<std::string> &inputExprs,
-    std::vector<CandidateOutput> &COs, Module *M,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap, int subgraphIdx,
-    StringRef funcTag, StringRef cacheKey, StringRef keyTag) {
-  std::string Program = flags::HerbieBinary.empty() ? std::string(HERBIE_BINARY)
-                                                    : flags::HerbieBinary;
+static std::string herbieProgram() {
+  return flags::HerbieBinary.empty() ? std::string(HERBIE_BINARY)
+                                     : flags::HerbieBinary;
+}
+
+// The arguments that decide what Herbie returns for a core. Its timeouts and
+// worker count decide only whether and how soon it returns.
+static SmallVector<std::string> herbieSearchArgs() {
+  return {"--seed",       std::to_string(flags::RandomSeed),
+          "--num-points", std::to_string(flags::HerbieNumPts),
+          "--num-iters",  std::to_string(flags::HerbieNumIters),
+          "--num-enodes", std::to_string(flags::HerbieNumEnodes),
+          "--disable",    "generate:proofs"};
+}
+
+void addHerbieKeyParts(CacheKey &key) {
+  const HerbiePlatform &Platform = getHerbiePlatform();
+  key.add("Herbie binary", herbieBinaryDigest(herbieProgram()));
+  key.add("Herbie platform", Platform.Name + " " + Platform.Digest);
+}
+
+bool improveViaHerbie(const std::vector<std::string> &inputExprs,
+                      std::vector<CandidateOutput> &COs, int subgraphIdx,
+                      StringRef funcTag) {
+  std::string Program = herbieProgram();
   if (!flags::HerbieBinary.empty() && flags::Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << Program << "'\n";
-  const std::string BinaryDigest = herbieBinaryDigest(Program);
   llvm::errs() << "random seed: " << std::to_string(flags::RandomSeed) << "\n";
 
   // Herbie runs this subgraph's cores across flags::HerbieNumThreads workers,
@@ -739,13 +754,10 @@ bool improveViaHerbie(
   }
 
   SmallVector<std::string> BaseArgs = {
-      Program,        "report",
-      "--seed",       std::to_string(flags::RandomSeed),
-      "--timeout",    std::to_string(coreTimeout),
-      "--threads",    std::to_string(threadsPerShard),
-      "--num-points", std::to_string(flags::HerbieNumPts),
-      "--num-iters",  std::to_string(flags::HerbieNumIters),
-      "--num-enodes", std::to_string(flags::HerbieNumEnodes)};
+      Program,     "report",
+      "--timeout", std::to_string(coreTimeout),
+      "--threads", std::to_string(threadsPerShard)};
+  BaseArgs.append(herbieSearchArgs());
 
   const HerbiePlatform &Platform = getHerbiePlatform();
   // "default" is Herbie's own choice of platform, which it makes when it is
@@ -763,9 +775,6 @@ bool improveViaHerbie(
                    << "\n";
   }
 
-  BaseArgs.push_back("--disable");
-  BaseArgs.push_back("generate:proofs");
-
   SmallVector<SmallVector<std::string>> BaseArgsList;
   BaseArgsList.push_back(BaseArgs);
 
@@ -773,8 +782,7 @@ bool improveViaHerbie(
 
   bool success = false;
 
-  auto processHerbieOutput = [&](const std::string &content,
-                                 bool skipEvaluation = false) -> bool {
+  auto processHerbieOutput = [&](const std::string &content) -> bool {
     Expected<json::Value> parsed = json::parse(content);
     if (!parsed) {
       llvm::errs() << "Failed to parse Herbie result!\n";
@@ -843,12 +851,6 @@ bool improveViaHerbie(
         double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
 
         RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
-        if (!skipEvaluation) {
-          bestCandidate.CompCost =
-              getCompCost(bestExpr.str(), M, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(CO.oldOutput)->getFastMathFlags(),
-                          &CO.subgraph->inputs);
-        }
         CO.candidates.push_back(bestCandidate);
       }
 
@@ -869,17 +871,7 @@ bool improveViaHerbie(
         double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
 
         RewriteCandidate candidate(cost, accuracy, expr.str());
-        if (!skipEvaluation) {
-          candidate.CompCost =
-              getCompCost(expr.str(), M, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(CO.oldOutput)->getFastMathFlags(),
-                          &CO.subgraph->inputs);
-        }
         CO.candidates.push_back(candidate);
-      }
-
-      if (!skipEvaluation) {
-        setUnifiedAccuracyCost(CO, valueToNodeMap, symbolToValueMap);
       }
     }
     return true;
@@ -893,168 +885,60 @@ bool improveViaHerbie(
     std::string cacheFilePath;
     bool cached = false;
 
-    // The cache key is positional (function + subgraph index); the input digest
-    // stamped beside the output detects a decomposition change instead of
-    // replaying another expression's rewrite.
-    std::string inputDigest;
-    {
-      std::string joined;
-      for (const auto &expr : inputExprs) {
-        joined += expr;
-        joined += '\n';
-      }
-      inputDigest = llvm::utohexstr(llvm::xxh3_64bits(joined));
+    // A result is filed under everything that decides it: the cores, the
+    // binary, its search arguments and the platform it ranks candidates by.
+    // The platform name leads the file name so that one device's results are
+    // told apart from another's at a glance.
+    std::string joinedCores;
+    for (const auto &expr : inputExprs) {
+      joinedCores += expr;
+      joinedCores += '\n';
     }
-    std::string cacheStampPath, platformStampPath, timeoutMarkerPath;
+    CacheKey key;
+    addHerbieKeyParts(key);
+    key.add("Herbie arguments", join(herbieSearchArgs(), " "));
+    key.addContent("cores", joinedCores);
+    const std::string keyDigest = key.digest();
+    std::string timeoutMarkerPath;
 
     if (!flags::Cache.empty()) {
-      // The platform leads the key: Herbie ranks its candidates by the
-      // platform's cost table, so the same expression under another device's
-      // platform is another device's answer and must not be replayed here.
-      // There is no fallback to an entry without the component.
-      //
-      // The site's canonical-form hash is part of the key too: subgraphIdx
-      // resets per function, so two functions' subgraph 0 would otherwise
-      // share a cache file. The hash rather than the function name, so that
-      // renaming the kernel a site was cut from does not invalidate shipped
-      // results.
-      std::string keyStem = Platform.Name + "_" + cacheKey.str() + "_" +
-                            std::to_string(subgraphIdx) + keyTag.str() + "_" +
-                            std::to_string(baseArgsIndex);
+      std::string keyStem = Platform.Name + "_" + keyDigest;
       cacheFilePath = flags::Cache + "/cachedHerbieOutput_" + keyStem + ".txt";
-      cacheStampPath = cacheFilePath + ".input";
-      platformStampPath = cacheFilePath + ".platform";
-      // A positional collision (the same index reached twice in one compile)
-      // spills into a digest-qualified sibling file; the unqualified name stays
-      // the primary key so older entries are still found.
-      {
-        std::string stamped;
-        std::ifstream probeStamp(cacheStampPath);
-        if (probeStamp) {
-          std::getline(probeStamp, stamped);
-          probeStamp.close();
-        }
-        bool primaryTaken = llvm::sys::fs::exists(cacheFilePath);
-        if (primaryTaken && !stamped.empty() && stamped != inputDigest) {
-          cacheFilePath = flags::Cache + "/cachedHerbieOutput_" + keyStem +
-                          "_" + inputDigest + ".txt";
-          cacheStampPath = cacheFilePath + ".input";
-          platformStampPath = cacheFilePath + ".platform";
-          if (flags::Print)
-            llvm::errs() << "[poseidon] Herbie cache key collision on subgraph "
-                         << subgraphIdx << " of " << funcTag
-                         << " (positional entry holds digest " << stamped
-                         << ", this expression is " << inputDigest
-                         << "); using the digest-qualified entry "
-                         << cacheFilePath << "\n";
-        }
-      }
-      // A timeout gets its own digest-qualified marker file so it never looks
-      // like an empty Herbie result.
-      timeoutMarkerPath = flags::Cache + "/cachedHerbieTimeout_" + keyStem +
-                          "_" + inputDigest + ".txt";
+      // A timeout gets its own marker so it never looks like an empty result.
+      timeoutMarkerPath =
+          flags::Cache + "/cachedHerbieTimeout_" + keyStem + ".txt";
       std::ifstream cacheFile(cacheFilePath);
       if (cacheFile) {
         content.assign((std::istreambuf_iterator<char>(cacheFile)),
                        std::istreambuf_iterator<char>());
         cacheFile.close();
-        std::ifstream stampFile(cacheStampPath);
-        if (stampFile) {
-          std::string stamped;
-          std::getline(stampFile, stamped);
-          stampFile.close();
-          if (stamped != inputDigest)
-            report_fatal_error(
-                Twine("Poseidon: cached Herbie output ") + cacheFilePath +
-                " was produced for a DIFFERENT expression (input digest " +
-                stamped + ", current " + inputDigest +
-                "). The subgraph decomposition changed under a positional "
-                "cache "
-                "key; applying it would rewrite this subgraph with another "
-                "one's result. Point --poseidon-cache at a fresh directory "
-                "for this configuration; do not delete the existing Herbie "
-                "outputs.");
-        } else if (flags::Print) {
-          llvm::errs() << "Poseidon: cached Herbie output " << cacheFilePath
-                       << " predates input stamping; accepted unverified.\n";
-        }
-        // The entry's name already says which platform it was searched under.
-        // The stamp says which COSTS: a device that was recalibrated keeps its
-        // architecture and its platform name, and the rewrites Herbie ranked
-        // against the previous prices are still replayed, but not silently.
-        {
-          std::string stampedName, stampedDigest;
-          std::ifstream platformStamp(platformStampPath);
-          if (platformStamp) {
-            platformStamp >> stampedName >> stampedDigest;
-            platformStamp.close();
-          }
-          if (!stampedDigest.empty() && !Platform.Digest.empty() &&
-              stampedDigest != Platform.Digest)
-            llvm::errs()
-                << "[poseidon] WARNING: cached Herbie output " << cacheFilePath
-                << " was searched under platform '" << stampedName
-                << "' with cost digest " << stampedDigest
-                << ", but this compile's platform " << Platform.Path
-                << " digests " << Platform.Digest
-                << ". Same architecture, different measured costs: the "
-                   "replayed rewrites are the ones Herbie ranked against the "
-                   "OTHER cost table. Point -poseidon-cache at a fresh "
-                   "directory to search again under these prices.\n";
-          else if (stampedDigest.empty() && flags::Print)
-            llvm::errs() << "Poseidon: cached Herbie output " << cacheFilePath
-                         << " predates platform stamping; the platform name in "
-                            "its key is all that is checked.\n";
-        }
-        std::string stampedBinary;
-        std::ifstream bStamp(cacheFilePath + ".herbie");
-        if (bStamp)
-          std::getline(bStamp, stampedBinary);
-        if (!stampedBinary.empty() && stampedBinary != BinaryDigest) {
-          llvm::errs() << "[poseidon] cached Herbie output " << cacheFilePath
-                       << " was searched by another Herbie binary ("
-                       << stampedBinary << "; this one is " << BinaryDigest
-                       << "); searching again.\n";
-          content.clear();
-        } else {
-          llvm::errs() << "Using cached Herbie output from " << cacheFilePath
-                       << "\n";
-          cached = true;
-        }
-      }
-      if (!cached) {
+        llvm::errs() << "Using cached Herbie output from " << cacheFilePath
+                     << "\n";
+        cached = true;
+      } else {
         // A recorded timeout is a result too: without it every re-solve pays
         // the full wall-clock budget again to learn the same thing.
         std::ifstream markerFile(timeoutMarkerPath);
-        if (markerFile) {
-          std::string stamped, markerBinary;
-          unsigned spentBudget = 0;
-          markerFile >> stamped >> spentBudget >> markerBinary;
-          markerFile.close();
-          if (stamped == inputDigest && wallBudget > 0 &&
-              spentBudget >= wallBudget &&
-              (markerBinary.empty() || markerBinary == BinaryDigest)) {
-            llvm::errs()
-                << "[poseidon] Herbie subgraph " << subgraphIdx << " of "
-                << funcTag << ": cached TIMEOUT (" << spentBudget
-                << " s budget already spent on this exact input, "
-                << timeoutMarkerPath
-                << "). No algebraic candidates for this subgraph. Raise "
-                   "-poseidon-herbie-subgraph-timeout above "
-                << spentBudget << " to retry it.\n";
-            for (CandidateOutput &CO : COs)
-              CO.herbieStatus = "timeout";
-            continue;
-          }
+        unsigned spentBudget = 0;
+        if (markerFile >> spentBudget && wallBudget > 0 &&
+            spentBudget >= wallBudget) {
+          llvm::errs() << "[poseidon] Herbie subgraph " << subgraphIdx << " of "
+                       << funcTag << ": cached TIMEOUT (" << spentBudget
+                       << " s budget already spent on this exact input, "
+                       << timeoutMarkerPath
+                       << "). No algebraic candidates for this subgraph. "
+                          "Raise -poseidon-herbie-subgraph-timeout above "
+                       << spentBudget << " to retry it.\n";
+          for (CandidateOutput &CO : COs)
+            CO.herbieStatus = "timeout";
+          continue;
         }
       }
     }
 
     if (cached) {
       llvm::errs() << "Herbie output: " << content << "\n";
-      // Keyed by this function, like the DP cache itself.
-      bool skipEvaluation = dpCacheHasFunction(funcTag);
-      if (processHerbieOutput(content, skipEvaluation)) {
+      if (processHerbieOutput(content)) {
         success = true;
       }
       continue;
@@ -1112,7 +996,7 @@ bool improveViaHerbie(
                  << " s, wall budget "
                  << (wallBudget ? std::to_string(wallBudget) + " s"
                                 : std::string("unbounded"))
-                 << ", input " << inputDigest << "\n";
+                 << ", key " << keyDigest << "\n";
 
     auto herbieStart = std::chrono::steady_clock::now();
     std::string ErrMsg;
@@ -1175,8 +1059,7 @@ bool improveViaHerbie(
                        << EC.message() << "\n";
         std::ofstream markerFile(timeoutMarkerPath);
         if (markerFile) {
-          markerFile << inputDigest << " " << wallBudget << " " << BinaryDigest
-                     << "\n";
+          markerFile << wallBudget << "\n";
           markerFile.close();
           llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath
                        << "\n";
@@ -1243,36 +1126,13 @@ bool improveViaHerbie(
         llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
                      << "\n";
       }
-      // Stamp what produced it, so a later solve whose subgraph numbering has
-      // shifted cannot silently reuse this entry (checked on the read path).
-      std::ofstream stampFile(cacheStampPath);
-      if (stampFile) {
-        stampFile << inputDigest << "\n";
-        stampFile.close();
-      }
-      // And which platform ranked it, so a later solve under recalibrated
-      // prices for the same architecture is reported on the read path.
-      if (!Platform.Digest.empty()) {
-        std::ofstream pStamp(platformStampPath);
-        if (pStamp) {
-          pStamp << Platform.Name << " " << Platform.Digest << "\n";
-          pStamp.close();
-        }
-      }
-      if (!BinaryDigest.empty()) {
-        std::ofstream bStamp(cacheFilePath + ".herbie");
-        if (bStamp) {
-          bStamp << BinaryDigest << "\n";
-          bStamp.close();
-        }
-      }
       // A stale timeout marker under this key is left in place: the read path
       // consults it only when the output file is absent.
     }
     llvm::errs() << "[poseidon] Herbie subgraph " << subgraphIdx << " of "
                  << funcTag << ": completed in " << herbieSecs << " s\n";
 
-    if (processHerbieOutput(content, false)) {
+    if (processHerbieOutput(content)) {
       success = true;
     }
   }
