@@ -94,8 +94,7 @@ struct DifferentiateWrapperPass
     }
     auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
-    std::string postpasses = "";
-    bool verifyPostPasses = true;
+    PostPasses postpasses = nullptr;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
@@ -142,7 +141,7 @@ struct DifferentiateWrapperPass
           fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
           width,
           /*addedType*/ nullptr, type_args, overwritten_args,
-          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero);
+          /*augmented*/ nullptr, omp, postpasses, strongZero);
       if (!newFunc)
         return signalPassFailure();
     } else {
@@ -150,8 +149,7 @@ struct DifferentiateWrapperPass
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, atomicAdd, width,
           /*addedType*/ nullptr, type_args, overwritten_args,
-          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses, strongZero,
-          markReadonly);
+          /*augmented*/ nullptr, omp, postpasses, strongZero, markReadonly);
     }
     if (!newFunc) {
       signalPassFailure();

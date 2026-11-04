@@ -33,13 +33,6 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*description=*/"Optimization passes to apply to generated derivative functions"
     >,
     Option<
-      /*C++ variable name=*/"verifyPostPasses",
-      /*CLI argument=*/"verifyPostPasses",
-      /*type=*/"bool",
-      /*default=*/"true",
-      /*description=*/"Whether or not to run verifier for the postpasses pass manager."
-    >,
-    Option<
       /*C++ variable name=*/"dataflowActivity",
       /*CLI argument=*/"dataflow",
       /*type=*/"bool",

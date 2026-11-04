@@ -42,8 +42,8 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses,
-    bool verifyPostPasses, bool strongZero)
+    DerivativeMode mode, unsigned width, bool omp, PostPasses postpasses,
+    bool strongZero)
     : newFunc(newFunc_), Logic(Logic), AtomicAdd(false), mode(mode),
       oldFunc(oldFunc_), invertedPointers(invertedPointers_),
       originalToNewFn(originalToNewFn_),
@@ -51,10 +51,10 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,
           ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
-      postpasses(postpasses), strongZero(strongZero),
-      returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
-      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {
+      TA(TA_), TR(TR_), omp(omp), postpasses(postpasses),
+      strongZero(strongZero), returnPrimals(returnPrimals),
+      returnShadows(returnShadows), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      RetDiffeTypes(ReturnActivity) {
   if (Logic.solver) {
     dataflowSolver = std::make_unique<DataFlowSolver>(
         DataFlowConfig().setInterprocedural(false));
