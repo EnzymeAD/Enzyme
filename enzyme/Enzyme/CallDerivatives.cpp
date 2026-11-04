@@ -93,6 +93,176 @@ static void createMPIForwardCall(CallInst &call, ArrayRef<unsigned> ShadowArgs,
   }
 }
 
+/// Return true when \p statusValue is a compile-time `MPI_STATUS_IGNORE`
+/// sentinel (`0` in Open MPI or `1` in MPICH and the MPI 5.0 standard ABI).
+static bool isConstantMPIStatusIgnore(Value *statusValue) {
+  auto *constantValue = dyn_cast<Constant>(statusValue);
+  if (!constantValue)
+    return false;
+  while (auto *constantExpression = dyn_cast<ConstantExpr>(constantValue)) {
+    if (constantExpression->isCast())
+      constantValue = constantExpression->getOperand(0);
+    else
+      break;
+  }
+  if (isa<ConstantPointerNull>(constantValue))
+    return true;
+  if (auto *constantInteger = dyn_cast<ConstantInt>(constantValue))
+    return constantInteger->getValue().ule(1);
+  return false;
+}
+
+/// Emit the forward-mode derivative of a blocking MPI receive, resolving the
+/// sender rank and tag from the completed primal `MPI_Status` whenever the
+/// source or tag may be a wildcard (`MPI_ANY_SOURCE` or `MPI_ANY_TAG`) so each
+/// tangent lane receives from the exact sender and tag matched by the primal.
+static void emitMPIForwardRecv(CallInst &call, Function *called,
+                               GradientUtils *gutils, IRBuilder<> &Builder2) {
+  if (isFortranMPICall(called->getName()) || call.arg_size() < 7) {
+    createMPIForwardCall(call, {/*buf*/ 0}, gutils, Builder2);
+    return;
+  }
+
+  Value *bufferOperand = call.getArgOperand(0);
+  if (isa<Constant>(bufferOperand) && gutils->isConstantValue(bufferOperand))
+    return;
+
+  auto *constantSource = dyn_cast<ConstantInt>(call.getArgOperand(3));
+  auto *constantTag = dyn_cast<ConstantInt>(call.getArgOperand(4));
+  if (constantSource && !constantSource->isNegative() && constantTag &&
+      !constantTag->isNegative()) {
+    createMPIForwardCall(call, {/*buf*/ 0}, gutils, Builder2);
+    return;
+  }
+
+  auto *primalCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+  Value *statusOperand = call.getArgOperand(6);
+  Value *newStatusOperand = gutils->getNewFromOriginal(statusOperand);
+  Type *statusParameterType = call.getFunctionType()->getParamType(6);
+  LLVMContext &context = call.getContext();
+  Type *int32Type = Type::getInt32Ty(context);
+  Type *int64Type = Type::getInt64Ty(context);
+  ArrayType *scratchStatusType = ArrayType::get(int32Type, 8);
+
+  auto castToStatusParameter = [&](IRBuilder<> &builder,
+                                   Value *pointerValue) -> Value * {
+    if (statusParameterType->isIntegerTy())
+      return builder.CreatePtrToInt(pointerValue, statusParameterType);
+    if (pointerValue->getType() != statusParameterType)
+      return builder.CreatePointerCast(pointerValue, statusParameterType);
+    return pointerValue;
+  };
+
+  Value *primalStatusPointer = nullptr;
+  Value *tangentStatusArgument = nullptr;
+  IRBuilder<> allocaBuilder(gutils->inversionAllocs);
+
+  if (isConstantMPIStatusIgnore(newStatusOperand)) {
+    AllocaInst *primalStatusAlloca =
+        allocaBuilder.CreateAlloca(scratchStatusType, nullptr, "mpi_status");
+    primalStatusAlloca->setAlignment(Align(8));
+    IRBuilder<> beforePrimalBuilder(primalCall);
+    primalCall->setArgOperand(
+        6, castToStatusParameter(beforePrimalBuilder, primalStatusAlloca));
+    primalStatusPointer = primalStatusAlloca;
+    tangentStatusArgument = newStatusOperand;
+  } else if (isa<AllocaInst>(getBaseObject(statusOperand))) {
+    AllocaInst *tangentStatusAlloca = allocaBuilder.CreateAlloca(
+        scratchStatusType, nullptr, "mpi_tangent_status");
+    tangentStatusAlloca->setAlignment(Align(8));
+    primalStatusPointer = newStatusOperand;
+    tangentStatusArgument =
+        castToStatusParameter(Builder2, tangentStatusAlloca);
+  } else {
+    AllocaInst *primalStatusAlloca =
+        allocaBuilder.CreateAlloca(scratchStatusType, nullptr, "mpi_status");
+    primalStatusAlloca->setAlignment(Align(8));
+    AllocaInst *tangentStatusAlloca = allocaBuilder.CreateAlloca(
+        scratchStatusType, nullptr, "mpi_tangent_status");
+    tangentStatusAlloca->setAlignment(Align(8));
+
+    IRBuilder<> beforePrimalBuilder(primalCall);
+    Value *statusAddress =
+        newStatusOperand->getType()->isIntegerTy()
+            ? beforePrimalBuilder.CreateZExtOrTrunc(newStatusOperand, int64Type)
+            : beforePrimalBuilder.CreatePtrToInt(newStatusOperand, int64Type);
+    Value *isStatusIgnore = beforePrimalBuilder.CreateICmpULE(
+        statusAddress, ConstantInt::get(int64Type, 1));
+    Value *scratchStatusParameter =
+        castToStatusParameter(beforePrimalBuilder, primalStatusAlloca);
+    Value *effectivePrimalStatus = beforePrimalBuilder.CreateSelect(
+        isStatusIgnore, scratchStatusParameter, newStatusOperand);
+    primalCall->setArgOperand(6, effectivePrimalStatus);
+    primalStatusPointer = effectivePrimalStatus;
+    tangentStatusArgument =
+        castToStatusParameter(Builder2, tangentStatusAlloca);
+  }
+
+  // MPICH and ABI-compatible runtimes pass integer communicator handles in C
+  // and place MPI_SOURCE and MPI_TAG at 32-bit word indices 2 and 3 of
+  // MPI_Status (after count_lo and count_hi_and_cancelled). Open MPI and the
+  // MPI 5.0 standard ABI pass pointer communicator handles in C and place
+  // MPI_SOURCE and MPI_TAG at 32-bit word indices 0 and 1.
+  bool usesMPICHStatusLayout = call.getArgOperand(5)->getType()->isIntegerTy();
+  unsigned sourceFieldIndex = usesMPICHStatusLayout ? 2 : 0;
+  unsigned tagFieldIndex = usesMPICHStatusLayout ? 3 : 1;
+
+  if (primalStatusPointer->getType()->isIntegerTy())
+    primalStatusPointer =
+        Builder2.CreateIntToPtr(primalStatusPointer, getInt8PtrTy(context));
+  unsigned statusAddressSpace =
+      primalStatusPointer->getType()->getPointerAddressSpace();
+  Type *int32PointerType = getPointerType(int32Type, statusAddressSpace);
+  Value *statusWordsPointer =
+      Builder2.CreatePointerCast(primalStatusPointer, int32PointerType);
+  Value *sourceFieldPointer =
+      sourceFieldIndex == 0
+          ? statusWordsPointer
+          : Builder2.CreateConstInBoundsGEP1_32(int32Type, statusWordsPointer,
+                                                sourceFieldIndex);
+  Value *tagFieldPointer = Builder2.CreateConstInBoundsGEP1_32(
+      int32Type, statusWordsPointer, tagFieldIndex);
+  Value *resolvedSource = Builder2.CreateSExtOrTrunc(
+      Builder2.CreateLoad(int32Type, sourceFieldPointer),
+      call.getFunctionType()->getParamType(3));
+  Value *resolvedTag = Builder2.CreateSExtOrTrunc(
+      Builder2.CreateLoad(int32Type, tagFieldPointer),
+      call.getFunctionType()->getParamType(4));
+
+  std::vector<ValueType> bundleTypes(call.arg_size(), ValueType::Primal);
+  bundleTypes[0] = ValueType::Shadow;
+  Value *shadowBuffer = gutils->invertPointerM(bufferOperand, Builder2);
+  auto bundleDefinitions = gutils->getInvertedBundles(
+      &call, bundleTypes, Builder2, /*lookup*/ false);
+
+  for (unsigned lane = 0; lane < gutils->getWidth(); lane++) {
+    SmallVector<Value *, 8> callArguments;
+    for (auto &operand : call.args())
+      callArguments.push_back(gutils->getNewFromOriginal(operand));
+
+    Value *laneBuffer = shadowBuffer;
+    if (gutils->getWidth() > 1)
+      laneBuffer = gutils->extractMeta(Builder2, laneBuffer, lane);
+    Type *bufferParameterType = callArguments[0]->getType();
+    if (laneBuffer->getType()->isIntegerTy())
+      laneBuffer = Builder2.CreateIntToPtr(laneBuffer, bufferParameterType);
+    else if (laneBuffer->getType() != bufferParameterType)
+      laneBuffer = Builder2.CreatePointerCast(laneBuffer, bufferParameterType);
+
+    callArguments[0] = laneBuffer;
+    callArguments[3] = resolvedSource;
+    callArguments[4] = resolvedTag;
+    callArguments[6] = tangentStatusArgument;
+
+    auto *tangentCall =
+        Builder2.CreateCall(call.getFunctionType(),
+                            gutils->getNewFromOriginal(call.getCalledOperand()),
+                            callArguments, bundleDefinitions);
+    tangentCall->setCallingConv(call.getCallingConv());
+    tangentCall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+  }
+}
+
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                  llvm::StringRef funcName) {
   using namespace llvm;
@@ -792,38 +962,23 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
       if (forwardMode) {
         getForwardBuilder(Builder2);
-      } else {
-        getReverseBuilder(Builder2);
-      }
-
-      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-      if (!forwardMode)
-        shadow = lookup(shadow, Builder2);
-
-      Value *count = gutils->getNewFromOriginal(call.getOperand(1));
-      if (!forwardMode)
-        count = lookup(count, Builder2);
-
-      Value *datatype = gutils->getNewFromOriginal(call.getOperand(2));
-      if (!forwardMode)
-        datatype = lookup(datatype, Builder2);
-
-      Value *source = gutils->getNewFromOriginal(call.getOperand(3));
-      if (!forwardMode)
-        source = lookup(source, Builder2);
-
-      Value *tag = gutils->getNewFromOriginal(call.getOperand(4));
-      if (!forwardMode)
-        tag = lookup(tag, Builder2);
-
-      Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
-      if (!forwardMode)
-        comm = lookup(comm, Builder2);
-
-      if (forwardMode) {
-        createMPIForwardCall(call, {/*buf*/ 0}, gutils, Builder2);
+        emitMPIForwardRecv(call, called, gutils, Builder2);
         return;
       }
+      getReverseBuilder(Builder2);
+
+      Value *shadow = lookup(
+          gutils->invertPointerM(call.getOperand(0), Builder2), Builder2);
+      Value *count =
+          lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+      Value *datatype =
+          lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2);
+      Value *source =
+          lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2);
+      Value *tag =
+          lookup(gutils->getNewFromOriginal(call.getOperand(4)), Builder2);
+      Value *comm =
+          lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2);
 
       Value *args[] = {shadow, count, datatype, source, tag, comm};
 
