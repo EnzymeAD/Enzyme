@@ -13,6 +13,7 @@
 #include "Types.h"
 #include "Utils.h"
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Instructions.h"
@@ -20,6 +21,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <random>
@@ -30,6 +32,8 @@ namespace poseidon {
 
 static constexpr double kCancellationThreshold = 1e-12;
 static constexpr double kCancellationFraction = 0.5;
+static constexpr size_t kJointDrawFactor = 64;
+static constexpr size_t kMinJointSamples = 32;
 
 double sampleError(double goldVal, double result) {
   return std::fabs(goldVal - result);
@@ -98,6 +102,27 @@ buildCancellationPlan(const Subgraph &subgraph,
   return plan;
 }
 
+static void collectLeaves(const FPNode *node,
+                          SmallPtrSetImpl<const FPNode *> &seen,
+                          SetVector<const FPLLValue *> &leaves) {
+  if (isa<FPConst>(node) || !seen.insert(node).second)
+    return;
+  if (auto *LL = dyn_cast<FPLLValue>(node); LL && node->operands.empty()) {
+    leaves.insert(LL);
+    return;
+  }
+  for (const auto &operand : node->operands)
+    collectLeaves(operand.get(), seen, leaves);
+}
+
+// A subgraph's inputs are often functions of the same few values (in a
+// thermochemistry kernel every intermediate is a function of T), so drawing
+// each in its own profiled range pairs values that never occur together: terms
+// that cancel in the data overflow an exp, and an input and its log disagree.
+// Each sample draws the leaves the inputs are computed from (loads, arguments,
+// globals) in their profiled ranges, evaluates each input from them as the
+// program does, and is kept if every input lies in its own profiled range, the
+// box Herbie searched.
 void getSampledPoints(
     ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -108,10 +133,14 @@ void getSampledPoints(
   std::default_random_engine gen;
   gen.seed(flags::RandomSeed + seedOffset);
   std::uniform_real_distribution<> dis;
+  sampledPoints.clear();
 
-  MapVector<Value *, SmallVector<double, 2>> hypercube;
+  MapVector<Value *, SmallVector<double, 2>> box;
+  SmallPtrSet<const FPNode *, 32> seen;
+  SetVector<const FPLLValue *> leaves;
+  SmallVector<FPNode *, 8> computed;
   for (const auto input : inputs) {
-    const auto node = valueToNodeMap.at(input);
+    FPNode *node = valueToNodeMap.at(input).get();
 
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
@@ -127,77 +156,118 @@ void getSampledPoints(
                    << "]; refusing to sample it. This subgraph cannot be "
                       "priced and will keep its original body. Input value: "
                    << *input << "\n";
-      sampledPoints.clear();
       return;
     }
 
-    hypercube.insert({input, {lower, upper}});
+    box.insert({input, {lower, upper}});
+    collectLeaves(node, seen, leaves);
+    if (!node->operands.empty())
+      computed.push_back(node);
   }
 
-  sampledPoints.clear();
-  sampledPoints.resize(numSamples);
-
-  // Close-encounter stratum: each sample first draws every input independently,
-  // then overrides each cancelling pair to a common near-coincident value with
-  // one log-uniform separation scale shared across all pairs, so every
-  // subtracted difference is small together.
-  size_t numCoincidence = 0;
-  if (plan && plan->active && !plan->pairs.empty()) {
-    numCoincidence = static_cast<size_t>(kCancellationFraction *
-                                         static_cast<double>(numSamples));
-  }
-
-  double maxRange = 1.0;
-  if (numCoincidence > 0) {
-    maxRange = 0.0;
-    for (const auto &pr : plan->pairs) {
-      auto ai = hypercube.find(pr.first);
-      if (ai == hypercube.end())
-        continue;
-      double r = ai->second[1] - ai->second[0];
-      if (std::isfinite(r) && r > maxRange)
-        maxRange = r;
+  MapVector<Value *, SmallVector<double, 2>> leafBox;
+  for (const FPLLValue *leaf : leaves) {
+    double lower = leaf->getLowerBound(), upper = leaf->getUpperBound();
+    if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
+      llvm::errs() << "Poseidon: value a subgraph input is computed from has "
+                      "unprofiled bounds ["
+                   << lower << ", " << upper
+                   << "]; refusing to sample the subgraph. It cannot be priced "
+                      "and will keep its original body. Value: "
+                   << *leaf->value << "\n";
+      return;
     }
-    if (!(maxRange > 0.0) || !std::isfinite(maxRange))
-      maxRange = 1.0;
+    leafBox.insert({leaf->value, {lower, upper}});
   }
 
-  for (size_t i = 0; i < numSamples; ++i) {
-    MapVector<Value *, double> point;
-    for (const auto &entry : hypercube) {
-      Value *val = entry.first;
-      double lower = entry.second[0];
-      double upper = entry.second[1];
-      double sample = dis(gen, decltype(dis)::param_type{lower, upper});
-      point.insert({val, sample});
-    }
+  // Close-encounter stratum: two leaves the subgraph subtracts are drawn
+  // independently and never come close, so in a share of the samples each
+  // such pair is moved to a common near-coincident value, with one log-uniform
+  // separation scale shared across all pairs so every subtracted difference is
+  // small together.
+  SmallVector<std::pair<Value *, Value *>, 4> pairs;
+  if (plan && plan->active)
+    for (const auto &pr : plan->pairs)
+      if (leafBox.count(pr.first) && leafBox.count(pr.second))
+        pairs.push_back(pr);
+  const size_t numCoincidence =
+      pairs.empty() ? 0
+                    : static_cast<size_t>(kCancellationFraction *
+                                          static_cast<double>(numSamples));
+  double maxRange = 0.0;
+  for (const auto &pr : pairs) {
+    const auto &range = leafBox.find(pr.first)->second;
+    double r = range[1] - range[0];
+    if (std::isfinite(r) && r > maxRange)
+      maxRange = r;
+  }
+  if (!(maxRange > 0.0))
+    maxRange = 1.0;
 
-    if (i < numCoincidence) {
+  const size_t budget = kJointDrawFactor * numSamples;
+  size_t drawn = 0;
+  SmallVector<double, 8> results;
+  while (sampledPoints.size() < numSamples && drawn < budget) {
+    ++drawn;
+    MapVector<Value *, double> leafPoint;
+    for (const auto &entry : leafBox)
+      leafPoint.insert(
+          {entry.first, dis(gen, decltype(dis)::param_type{entry.second[0],
+                                                           entry.second[1]})});
+
+    if (sampledPoints.size() < numCoincidence) {
       const double scaleLo = 1e-18;
       double logScale = dis(gen, decltype(dis)::param_type{std::log(scaleLo),
                                                            std::log(maxRange)});
       double scale = std::exp(logScale);
-      for (const auto &pr : plan->pairs) {
-        auto bi = hypercube.find(pr.second);
-        if (bi == hypercube.end())
-          continue;
-        double anchor = point[pr.first];
+      for (const auto &pr : pairs) {
+        double anchor = leafPoint[pr.first];
         double jitter = dis(gen, decltype(dis)::param_type{0.5, 1.5});
         double sign =
             (dis(gen, decltype(dis)::param_type{0.0, 1.0}) < 0.5) ? -1.0 : 1.0;
-        double bVal = anchor + sign * scale * jitter;
-        // Clamp the coincident operand into its own profiled box so no
-        // out-of-distribution input is fabricated.
-        double bLo = bi->second[0], bHi = bi->second[1];
-        if (bVal < bLo)
-          bVal = bLo;
-        if (bVal > bHi)
-          bVal = bHi;
-        point[pr.second] = bVal;
+        // Clamped into the leaf's own profiled range so no out-of-distribution
+        // value is fabricated.
+        const auto &range = leafBox.find(pr.second)->second;
+        leafPoint[pr.second] =
+            std::clamp(anchor + sign * scale * jitter, range[0], range[1]);
       }
     }
 
-    sampledPoints[i] = point;
+    if (!computed.empty())
+      getFPValues(computed, leafPoint, results);
+
+    MapVector<Value *, double> point;
+    bool inBox = true;
+    size_t next = 0;
+    for (const auto &entry : box) {
+      FPNode *node = valueToNodeMap.at(entry.first).get();
+      double v;
+      if (!node->operands.empty())
+        v = results[next++];
+      else if (isa<FPConst>(node))
+        v = node->getLowerBound();
+      else
+        v = leafPoint.lookup(entry.first);
+      if (!(v >= entry.second[0] && v <= entry.second[1])) {
+        inBox = false;
+        break;
+      }
+      point.insert({entry.first, v});
+    }
+    if (inBox)
+      sampledPoints.push_back(std::move(point));
+  }
+
+  if (flags::Print)
+    llvm::errs() << "[poseidon] joint sampling: " << leaves.size()
+                 << " leaves, " << sampledPoints.size() << " of " << drawn
+                 << " draws inside the profiled input box\n";
+  if (sampledPoints.size() < kMinJointSamples) {
+    llvm::errs() << "Poseidon: joint sampling kept " << sampledPoints.size()
+                 << " of " << drawn
+                 << " draws inside the subgraph's profiled input box; it "
+                    "cannot be priced and will keep its original body.\n";
+    sampledPoints.clear();
   }
 }
 
