@@ -1540,7 +1540,7 @@ void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   if (args.size() == 0)
     return;
   const auto matName = args[0];
-  const auto allocName = "mat_" + matName;
+  const std::string allocName = ("mat_" + matName).str();
   os << "    {\n"
      << "      CallInst *freecall = CreateDealloc(" << builder << ", true_"
      << allocName << ");\n"
@@ -1566,8 +1566,8 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
          action == "zerotriangular" || action == "is_left");
   if (action == "product") {
     const auto matName = args[0];
-    const auto dim1 = "arg_" + args[2];
-    const auto dim2 = "arg_" + args[3];
+    const std::string dim1 = ("arg_" + args[2]).str();
+    const std::string dim2 = ("arg_" + args[3]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1577,9 +1577,9 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "is_normal") {
     assert(args.size() == 5);
     const auto vecName = args[0];
-    const auto trans = "arg_" + args[2];
-    const auto dim1 = "arg_" + args[3];
-    const auto dim2 = "arg_" + args[4];
+    const std::string trans = ("arg_" + args[2]).str();
+    const std::string dim1 = ("arg_" + args[3]).str();
+    const std::string dim2 = ("arg_" + args[4]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1590,9 +1590,9 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "is_left") {
     assert(args.size() == 5);
     const auto vecName = args[0];
-    const auto trans = "arg_" + args[2];
-    const auto dim1 = "arg_" + args[3];
-    const auto dim2 = "arg_" + args[4];
+    const std::string trans = ("arg_" + args[2]).str();
+    const std::string dim1 = ("arg_" + args[3]).str();
+    const std::string dim2 = ("arg_" + args[4]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1603,14 +1603,14 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "vector") {
     assert(args.size() == 3);
     const auto vecName = args[0];
-    const auto dim1 = "arg_" + args[2];
+    const std::string dim1 = ("arg_" + args[2]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     os << "    Value *size_" << vecName << " = len1;\n";
   } else if (action == "triangular" || action == "zerotriangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
-    const auto dim1 = "arg_" + args[2];
+    const std::string dim1 = ("arg_" + args[2]).str();
     os << "    Value *len = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     //  Size has to be (at least)
@@ -1619,7 +1619,7 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
        << ".CreateMul(len, len);\n";
   }
   const auto matName = args[0];
-  const auto allocName = "mat_" + matName;
+  const std::string allocName = ("mat_" + matName).str();
   os << "    CallInst * malloccall_" << allocName << " = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
      << ", fpType, size_" << matName << ", \"" << allocName
