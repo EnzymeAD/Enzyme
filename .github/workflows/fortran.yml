@@ -174,7 +174,9 @@ jobs:
       run: |
         curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
         export MAMBA_ROOT_PREFIX=$PWD/micromamba
-        ./bin/micromamba create -y -n lfortran -c conda-forge lfortran=0.68.0
+        # llvm-tools provides llvm-dwarfdump, which lfortran invokes after
+        # linking when compiling with -g (e.g. Debug builds)
+        ./bin/micromamba create -y -n lfortran -c conda-forge lfortran=0.68.0 llvm-tools=${{ matrix.llvm }}
         echo "$MAMBA_ROOT_PREFIX/envs/lfortran/bin" >> $GITHUB_PATH
     - name: generate build system
       run: |
