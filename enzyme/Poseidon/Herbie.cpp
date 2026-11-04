@@ -703,11 +703,14 @@ static std::string herbieProgram() {
 // The arguments that decide what Herbie returns for a core. Its timeouts and
 // worker count decide only whether and how soon it returns.
 static SmallVector<std::string> herbieSearchArgs() {
+  // Herbie prunes alternatives by tree cost unless told otherwise, paying a
+  // shared subterm once per occurrence; the emitted code computes it once.
   return {"--seed",       std::to_string(flags::RandomSeed),
           "--num-points", std::to_string(flags::HerbieNumPts),
           "--num-iters",  std::to_string(flags::HerbieNumIters),
           "--num-enodes", std::to_string(flags::HerbieNumEnodes),
-          "--disable",    "generate:proofs"};
+          "--disable",    "generate:proofs",
+          "--enable",     "reduce:dag-cost"};
 }
 
 void addHerbieKeyParts(CacheKey &key) {
