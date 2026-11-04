@@ -3,6 +3,9 @@
 ; RUN: FileCheck --check-prefix=BASE %s < %t/base.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/split -poseidon-split-calls=pow -S -o /dev/null 2> %t/split.err
 ; RUN: FileCheck --check-prefix=SPLIT %s < %t/split.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-1 -poseidon-print -poseidon-split-calls=pow -poseidon-cache=%t/herbie -S -o %t/herbie.ll 2> %t/herbie.err
+; RUN: FileCheck --check-prefix=HERBIE-CORE %s < %t/herbie.err
+; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
 ; REQUIRES: poseidon
 
 ; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
@@ -16,6 +19,12 @@
 ; The accuracy model draws the leaves the inputs are computed from (T, and y)
 ; and evaluates the inputs from them, so T and log T are drawn consistently; here
 ; every draw lands inside the profiled input box.
+;
+; The pow subgraph reads T and l = log T. Its Herbie core spells l as (log v0),
+; its definition over T, so Herbie can use pow(T, y) = exp(y log T). A (log v0)
+; in a returned rewrite maps back to %l: the fake Herbie's exact rewrite
+; exp(fma(-log T, a, b) log T) is priced without a second log (Delta CompCost
+; 256, not 768), and its pow(T, -1.62) is applied.
 ;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
@@ -68,3 +77,11 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT: [poseidon] joint sampling: 2 leaves, 1024 of 1024 draws inside the profiled input box
 ; SPLIT: Initial AccuracyCost: 1.601240e-25
 ; SPLIT: Initial AccuracyCost: 2.842171e-14
+
+; HERBIE-CORE: (FPCore (v0) {{.*}} :pre (and (<= 2.50000000000000000e+02 v0 9.70000000000000000e+03)) :name "0" (pow v0 (fma (- (log v0)) 0.017899999999999999 -1.4847999999999999)))
+; HERBIE-CORE: 1.466158e-25{{[[:space:]]+}}256{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
+; HERBIE-CORE: Applying solution for (pow v0 {{.*}} --(0)-> (pow.f64 v0 #s(literal -81/50 binary64))
+
+; HERBIE-LABEL: define void @preprocess_tester(
+; HERBIE: %l = tail call double @llvm.log.f64(double %T)
+; HERBIE-NEXT: %herbie.pow = tail call double @pow(double %T, double -1.620000e+00)

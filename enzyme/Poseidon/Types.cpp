@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
@@ -44,6 +45,7 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr unsigned kMaxExprDepth = 100;
+static constexpr unsigned kMaxInlinedOps = 3;
 
 static Type *fpTypeFromDtype(StringRef dtype, IRBuilder<> &builder) {
   if (dtype == "f16")
@@ -692,10 +694,74 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
 
 bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
 
+// Memoized: an input is consulted once per input defined over it, so a chain
+// of inputs one operation apart (T^2, T^3, ... from sympy CSE) would otherwise
+// be re-walked exponentially often.
+static unsigned inlinedOps(const FPLLValue &V, const SetVector<Value *> &inputs,
+                           DenseMap<const FPLLValue *, unsigned> &memo) {
+  if (auto it = memo.find(&V); it != memo.end())
+    return it->second;
+  unsigned ops = 0;
+  std::function<bool(const FPNode &)> over = [&](const FPNode &N) {
+    if (isa<FPConst>(N))
+      return true;
+    if (&N != &V && inputs.contains(cast<FPLLValue>(N).value) &&
+        !inlinedOps(cast<FPLLValue>(N), inputs, memo))
+      return true;
+    if (N.operands.empty() || ++ops > kMaxInlinedOps)
+      return false;
+    return llvm::all_of(N.operands, [&](const auto &O) { return over(*O); });
+  };
+  return memo[&V] = over(V) ? ops : 0;
+}
+
+unsigned inlinedOps(const FPLLValue &V, const SetVector<Value *> &inputs) {
+  DenseMap<const FPLLValue *, unsigned> memo;
+  return inlinedOps(V, inputs, memo);
+}
+
+std::shared_ptr<FPNode> existingDefinition(
+    const FPNode &N, const SetVector<Value *> &inputs,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
+  auto same = [](const FPNode &A, const FPNode &B) {
+    auto *CA = dyn_cast<FPConst>(&A), *CB = dyn_cast<FPConst>(&B);
+    return &A == &B || (CA && CB && CA->dtype == CB->dtype &&
+                        CA->getLowerBound() == CB->getLowerBound());
+  };
+  auto matches = [&](const FPNode &W, bool swapped) {
+    if (W.op != N.op || W.dtype != N.dtype ||
+        W.operands.size() != N.operands.size())
+      return false;
+    for (size_t i = 0; i < W.operands.size(); ++i)
+      if (!same(*W.operands[swapped ? W.operands.size() - 1 - i : i],
+                *N.operands[i]))
+        return false;
+    return true;
+  };
+  bool commutes = (N.op == "+" || N.op == "*") && N.operands.size() == 2;
+  for (Value *V : inputs) {
+    auto *VN = dyn_cast<FPLLValue>(valueToNodeMap.at(V).get());
+    if (!VN || !inlinedOps(*VN, inputs))
+      continue;
+    SmallVector<const FPLLValue *, 4> todo{VN};
+    while (!todo.empty()) {
+      const FPLLValue *W = todo.pop_back_val();
+      // An erased value (its output was rewritten) is recomputed instead.
+      if (W->value && (matches(*W, false) || (commutes && matches(*W, true))))
+        return valueToNodeMap.at(W->value);
+      for (const auto &O : W->operands)
+        if (auto *L = dyn_cast<FPLLValue>(O.get());
+            L && !L->operands.empty() && !inputs.contains(L->value))
+          todo.push_back(L);
+    }
+  }
+  return nullptr;
+}
+
 std::string FPLLValue::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const SetVector<Value *> &subgraphInputs, unsigned depth) {
-  if (subgraphInputs.contains(value)) {
+  if (subgraphInputs.contains(value) && !inlinedOps(*this, subgraphInputs)) {
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
   } else {
@@ -887,8 +953,9 @@ void CandidateOutput::apply(
     }
   }
 
-  auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
-                                    valueToNodeMap, symbolToValueMap);
+  auto parsedNode =
+      parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
+                      symbolToValueMap, nullptr, &subgraph->inputs);
   SmallVector<std::shared_ptr<FPNode>, 1> elements;
   if (isArray()) {
     if (parsedNode->op != "array" ||

@@ -86,6 +86,20 @@ public:
              const llvm::ValueToValueMapTy *VMap = nullptr);
 };
 
+class FPLLValue;
+// Splitting makes values that depend on each other separate inputs of one
+// subgraph. An input whose definition is a few operations over the subgraph's
+// other inputs and constants is spelled as that definition in a Herbie core,
+// so Herbie sees the relation (log T next to T): the number of operations,
+// through inputs spelled out in turn, or 0 if the input stays a variable.
+unsigned inlinedOps(const FPLLValue &V,
+                    const llvm::SetVector<llvm::Value *> &inputs);
+// The existing value a parsed rewrite node recomputes, if the node is one of
+// the operations an input was spelled as: the rewrite reuses it.
+std::shared_ptr<FPNode> existingDefinition(
+    const FPNode &N, const llvm::SetVector<llvm::Value *> &inputs,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap);
+
 class FPLLValue : public FPNode {
 private:
   double lb = std::numeric_limits<double>::infinity();
