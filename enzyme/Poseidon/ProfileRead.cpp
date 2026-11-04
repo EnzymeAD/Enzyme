@@ -21,6 +21,7 @@
 #include "Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -29,6 +30,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/VersionTuple.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -123,6 +125,56 @@ applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
                  << " profiled instruction(s) in " << functionName << " to "
                  << kSensFloorRatio << " x the site maximum sensitivity\n";
   return floored;
+}
+
+void mergeOutputProfiles(std::unordered_map<size_t, ProfileInfo> &profileMap,
+                         ArrayRef<std::string> dirs, StringRef fileName,
+                         StringRef canonicalHash, StringRef functionName) {
+  std::unordered_map<size_t, double> grad, sens;
+  for (const std::string &dir : dirs) {
+    SmallString<128> path(dir);
+    sys::path::append(path, fileName);
+    std::unordered_map<size_t, ProfileInfo> out;
+    FunctionProfileHeader header;
+    parseProfileFile(path.str().str(), out, &header);
+    double total = 0.0;
+    for (const auto &kv : out)
+      total += kv.second.sumSens;
+    if (!(total > 0.0) || !std::isfinite(total))
+      report_fatal_error(Twine("Poseidon: output profile ") + path + " of " +
+                         functionName +
+                         " is missing or carries no sensitivity; re-run "
+                         "profile generation with that output seeded.");
+    if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
+      report_fatal_error(Twine("Poseidon: output profile ") + path +
+                         " was recorded against a different canonical form "
+                         "than the site's profile; re-run profile generation.");
+    if (out.size() != profileMap.size())
+      report_fatal_error(Twine("Poseidon: output profile ") + path +
+                         " records " + Twine(out.size()) +
+                         " instructions, the site's profile " +
+                         Twine(profileMap.size()) +
+                         "; both must come from the same profiling binary.");
+    for (const auto &kv : out) {
+      if (!profileMap.count(kv.first))
+        report_fatal_error(Twine("Poseidon: output profile ") + path +
+                           " names instruction " + Twine(kv.first) +
+                           " that the site's profile does not.");
+      const ProfileInfo &p = kv.second;
+      double w = p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
+      grad[kv.first] = std::max(grad[kv.first], w / total);
+      sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
+    }
+  }
+  for (auto &kv : profileMap) {
+    ProfileInfo &p = kv.second;
+    p.sumGrad = grad[kv.first];
+    if (p.sumAbsGrad >= 0.0)
+      p.sumAbsGrad = p.sumGrad;
+    p.sumSens = sens[kv.first];
+  }
+  errs() << "[poseidon] " << functionName << ": accuracy weighted per output ("
+         << dirs.size() << " output profiles)\n";
 }
 
 void parseProfileFile(const std::string &profilePath,

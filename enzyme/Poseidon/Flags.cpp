@@ -27,6 +27,14 @@ cl::opt<std::string> ProfileUse(
     "poseidon-profile-use", cl::Hidden, cl::value_desc("directory"),
     cl::ValueOptional,
     cl::desc("FP profile directory to read from for FP optimization"));
+cl::list<std::string> OutputProfiles(
+    "poseidon-output-profiles", cl::Hidden, cl::CommaSeparated,
+    cl::value_desc("dir,dir,..."),
+    cl::desc("Profile directories of the same site, each recorded with one "
+             "output seeded alone. Each output's error is then measured "
+             "against that output's own sensitivity, and an operation is "
+             "weighted by the output it matters most to, so no output can be "
+             "traded away under a site-wide average"));
 cl::opt<std::string> Kernels(
     "poseidon-kernels", cl::init(""), cl::Hidden, cl::value_desc("regex"),
     cl::desc("Treat every kernel whose name matches this regular expression as "
