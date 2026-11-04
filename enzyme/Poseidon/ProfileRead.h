@@ -91,15 +91,19 @@ void parseProfileFile(const std::string &profilePath,
 // gradients|, so a value whose profiled gradient is ~0 is priced free; that
 // happens both when the value genuinely has no influence and when the adjoint
 // seed lies in the left null space of the site (an all-ones seed on any
-// partition-of-unity operator with a derivative). Within one site every value
-// reaches the output through a bounded chain, so per function:
-//   ref  = max over profiled instructions of |sumGrad| / exec
-//   w(v) = max(|sumGrad_v|, 1e-6 * ref * exec_v)
-// The floor is written back into sumGrad so every consumer sees it; a ratio
-// below 1e-9 is reported. Returns the number of instructions whose weight was
-// raised.
-unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
-                            llvm::StringRef functionName);
+// partition-of-unity operator with a derivative). The floor is on the
+// sensitivity |gradient x value|: the gradients of values of very different
+// magnitude are not comparable, their sensitivities are. Per function:
+//   ref      = max over profiled instructions of sumSens / exec
+//   floor(v) = 1e-6 * ref * exec_v / max |v|
+// and an instruction whose summed |gradient| is below its floor is weighted at
+// the floor, written back into sumGrad so every consumer sees it. A
+// per-execution sensitivity below 1e-9 of ref is reported. A value that is
+// always zero is left as it is. Returns the number of instructions whose
+// weight was raised.
+unsigned
+applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
+                      llvm::StringRef functionName);
 
 size_t readProfIdxMetadata(const llvm::Instruction *I);
 

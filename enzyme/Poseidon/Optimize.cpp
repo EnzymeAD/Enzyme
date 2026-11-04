@@ -784,7 +784,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     // written back into the profile records so the node table, the Herbie
     // candidate pricing, the precision-tuning per-output costs and the
     // scalar-reduction matmul gradD cells all see one consistent weight.
-    applyGradientFloor(profileMap, F.getName());
+    applySensitivityFloor(profileMap, F.getName());
     if (profileHeader.canonicalHash.empty()) {
       llvm::errs() << "Warning: " << profilePath
                    << " has no CanonicalHash field; the canonical form of "

@@ -91,8 +91,8 @@ attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; IN16: call half @llvm.fmuladd.f16(
 ; IN16: fpext half %{{.+}} to double
 
-; OUT16: Initial AccuracyCost: 6.746930e+01
-; OUT16: 5.078758e+10		-46561023		All FP64(0%) + FP32(100%)
+; OUT16: Initial AccuracyCost: 2.994823e-02
+; OUT16: 2.254356e+07		-46561023		All FP64(0%) + FP32(100%)
 ; OUT16-NOT: FP16(100%)
 ; OUT16-NOT: NOT caching the DP table
 ; OUT16: No solution found within the computation cost budget!
@@ -106,7 +106,7 @@ attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; IN32-NOT: half
 ; IN32: fptrunc double %{{.+}} to float
 
-; OUT32: Minimum accuracy cost within budget: 5.078758e+10
+; OUT32: Minimum accuracy cost within budget: 2.254356e+07
 ; OUT32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; OUT32-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; OUT32-NOT: half
