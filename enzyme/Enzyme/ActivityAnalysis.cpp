@@ -1082,6 +1082,39 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       return true;
     }
   }
+  if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(I)) {
+    auto StoreSize = (CompareExchange->getParent()
+                          ->getParent()
+                          ->getParent()
+                          ->getDataLayout()
+                          .getTypeSizeInBits(
+                              CompareExchange->getNewValOperand()->getType()) +
+                      7) /
+                     8;
+
+    bool AllIntegral = true;
+    bool SeenInteger = false;
+    auto QueryTree = TR.query(CompareExchange->getPointerOperand()).Data0();
+    for (int Index = -1; Index < (int)StoreSize; ++Index) {
+      auto DataType = QueryTree[{Index}];
+      if (DataType.isIntegral()) {
+        SeenInteger = true;
+        if (Index == -1)
+          break;
+      } else if (DataType.isKnown()) {
+        AllIntegral = false;
+        break;
+      }
+    }
+
+    if (AllIntegral && SeenInteger) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction from type analysis " << *I
+                     << '\n';
+      InsertConstantInstruction(TR, I);
+      return true;
+    }
+  }
 
   if (EnzymePrintActivity)
     llvm::errs() << "checking if is constant[" << (int)directions << "] " << *I
@@ -1304,6 +1337,11 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
       if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
+      }
+      if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(u)) {
+        if (CompareExchange->getPointerOperand() != cur &&
+            CompareExchange->getNewValOperand() != cur)
+          continue;
       }
       if (EnzymePrintActivity)
         llvm::errs() << " VALUE potentially used as pointer " << *val << " by "
@@ -1883,6 +1921,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                 TmpOrig);
           }
         }
+      } else if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(TmpOrig)) {
+        Value *PointerOperand = CompareExchange->getPointerOperand();
+        if (directions == UP) {
+          if (isConstantValue(TR, PointerOperand)) {
+            InsertConstantValue(TR, Val);
+            return true;
+          }
+        } else {
+          if (UpHypothesis->isConstantValue(TR, PointerOperand)) {
+            InsertConstantValue(TR, Val);
+            insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          }
+        }
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[PointerOperand].insert(Val);
+          if (TmpOrig != Val)
+            ReEvaluateValueIfInactiveValue[PointerOperand].insert(TmpOrig);
+        }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (isInactiveCall(*op) || op->hasFnAttr("enzyme_inactive_val") ||
             op->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
@@ -2336,7 +2393,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
-        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I)) {
+        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I) ||
+            isa<AtomicCmpXchgInst>(I)) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
@@ -2781,6 +2839,16 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as store operand is inactive "
                      << *inst << "\n";
+      return true;
+    }
+  }
+
+  if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(inst)) {
+    if (isConstantValue(TR, CompareExchange->getPointerOperand())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as compare-and-exchange pointer "
+                        "operand is inactive "
+                     << *inst << '\n';
       return true;
     }
   }

@@ -3034,6 +3034,80 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
                    getAnalysis(&I).ShiftIndices(dl, 0, size, off), &I);
 }
 
+void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
+  const DataLayout &Layout =
+      I.getParent()->getParent()->getParent()->getDataLayout();
+  Value *PointerOperand = I.getPointerOperand();
+  Value *CompareOperand = I.getCompareOperand();
+  Value *NewValueOperand = I.getNewValOperand();
+  auto ValueSize =
+      (Layout.getTypeSizeInBits(CompareOperand->getType()) + 7) / 8;
+  auto StructSize = (Layout.getTypeSizeInBits(I.getType()) + 7) / 8;
+
+  if (direction & UP) {
+    TypeTree ResultPointer =
+        getAnalysis(&I)
+            .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+            .PurgeAnything();
+    ResultPointer |= TypeTree(BaseType::Pointer);
+    updateAnalysis(PointerOperand, ResultPointer.Only(-1, &I), &I);
+
+    bool SkipCompareConstant =
+        RustTypeRules && isa<ConstantInt>(CompareOperand) &&
+        cast<ConstantInt>(CompareOperand)->getLimitedValue() ==
+            I.getAlign().value();
+    if (!SkipCompareConstant) {
+      TypeTree ComparePointer =
+          getAnalysis(CompareOperand)
+              .PurgeAnything()
+              .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+              .ReplaceMinus();
+      ComparePointer |= TypeTree(BaseType::Pointer);
+      updateAnalysis(PointerOperand, ComparePointer.Only(-1, &I), &I);
+    }
+
+    bool SkipNewValueConstant =
+        RustTypeRules && isa<ConstantInt>(NewValueOperand) &&
+        cast<ConstantInt>(NewValueOperand)->getLimitedValue() ==
+            I.getAlign().value();
+    if (!SkipNewValueConstant) {
+      TypeTree NewValuePointer =
+          getAnalysis(NewValueOperand)
+              .PurgeAnything()
+              .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+              .ReplaceMinus();
+      NewValuePointer |= TypeTree(BaseType::Pointer);
+      updateAnalysis(PointerOperand, NewValuePointer.Only(-1, &I), &I);
+    }
+
+    TypeTree PointeeType =
+        getAnalysis(PointerOperand).PurgeAnything().Lookup(ValueSize, Layout);
+    updateAnalysis(CompareOperand, PointeeType, &I);
+    updateAnalysis(NewValueOperand, PointeeType, &I);
+    if (!SkipNewValueConstant)
+      updateAnalysis(CompareOperand,
+                     getAnalysis(NewValueOperand).PurgeAnything(), &I);
+    if (!SkipCompareConstant)
+      updateAnalysis(NewValueOperand,
+                     getAnalysis(CompareOperand).PurgeAnything(), &I);
+  }
+
+  if (direction & DOWN) {
+    TypeTree LoadedType = getAnalysis(PointerOperand).Lookup(ValueSize, Layout);
+    if (CompareOperand->getType()->isIntOrIntVectorTy() &&
+        LoadedType[{-1}] == BaseType::Anything && mustRemainInteger(&I)) {
+      LoadedType = TypeTree(BaseType::Integer).Only(-1, &I);
+    }
+    TypeTree ResultType = LoadedType.ShiftIndices(Layout, /*start*/ 0,
+                                                  ValueSize, /*addOffset*/ 0);
+    ResultType |= TypeTree(BaseType::Integer)
+                      .Only(-1, &I)
+                      .ShiftIndices(Layout, /*start*/ 0, StructSize - ValueSize,
+                                    /*addOffset*/ ValueSize);
+    updateAnalysis(&I, ResultType, &I);
+  }
+}
+
 void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   auto AggTy = I.getOperand(0)->getType();
@@ -6464,6 +6538,26 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
           continue;
         }
       }
+    }
+    if (auto *ExtractValue = dyn_cast<ExtractValueInst>(u)) {
+      if (isa<AtomicCmpXchgInst>(val) &&
+          ExtractValue->getIndices().size() == 1 &&
+          ExtractValue->getIndices()[0] == 1)
+        continue;
+      if (!ExtractValue->getType()->isIntOrIntVectorTy()) {
+        seen[val].first = false;
+        continue;
+      }
+      if (!mustRemainInteger(ExtractValue, returned)) {
+        seen[val].first = false;
+        seen[val].second |= seen[ExtractValue].second;
+      }
+      continue;
+    }
+    if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(u)) {
+      if (CompareExchange->getPointerOperand() != val &&
+          CompareExchange->getNewValOperand() != val)
+        continue;
     }
     if (isa<CmpInst>(u))
       continue;
