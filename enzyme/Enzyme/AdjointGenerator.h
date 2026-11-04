@@ -1951,7 +1951,12 @@ public:
       size_t l1 = count.getKnownMinValue();
       uint64_t instidx = 0;
 
-      for (size_t idx : SVI.getShuffleMask()) {
+      for (int MaskElement : SVI.getShuffleMask()) {
+        if (MaskElement < 0) {
+          ++instidx;
+          continue;
+        }
+        size_t idx = static_cast<size_t>(MaskElement);
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
 

@@ -1912,6 +1912,10 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
               os << curIndent << INDENT << INDENT
                  << "if (gutils->getWidth() > 1) next = "
                     "gutils->extractMeta(Builder2, next, idx);\n";
+            if (intrinsic == BinopDerivatives)
+              os << curIndent << INDENT << INDENT
+                 << "next = maskUndefVectorLanes(Builder2, next, &" << origName
+                 << ");\n";
             os << curIndent << INDENT << INDENT
                << "if (prev) next = Builder2.CreateFAdd(prev, "
                   "next);\n";
