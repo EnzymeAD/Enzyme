@@ -6837,6 +6837,19 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                         "llvm.enzyme.lifetime_end",
 			"__cudaPushCallConfiguration",
 			"__cudaPopCallConfiguration",
+                        "strtol",
+                        "strtoul",
+                        "strtoll",
+                        "strtoull",
+                        "__isoc23_strtol",
+                        "__isoc23_strtoul",
+                        "__isoc23_strtoll",
+                        "__isoc23_strtoull",
+                        "open",
+                        "open64",
+                        "read",
+                        "close",
+                        "sched_getaffinity",
   };
   // clang-format on
 
