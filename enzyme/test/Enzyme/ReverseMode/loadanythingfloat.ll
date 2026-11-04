@@ -2,8 +2,9 @@
 
 ; The load's type tree has Anything bytes (struct padding) next to a float:
 ;   {[0]:Float@float, [4-7]:Anything, [8]:Float@double}
-; The adjoint of the double at offset 8 must still be propagated into the
-; shadow of %p, rather than being absorbed into an Anything run.
+; The padding joins the float run, and the adjoint of the double at offset 8
+; must still be propagated into the shadow of %p, rather than being absorbed
+; into an Anything run.
 
 declare void @__enzyme_autodiff(...)
 
@@ -21,9 +22,10 @@ entry:
 }
 
 ; CHECK: define internal void @diffef(ptr {{.*}}%p, ptr {{.*}}%"p'", double %differeturn)
-; CHECK: %[[fold:.+]] = load float, ptr %"p'", align 8
-; CHECK-NEXT: %[[fnew:.+]] = fadd fast float %[[fold]], %cast.load
-; CHECK-NEXT: store float %[[fnew]], ptr %"p'", align 8
+; CHECK: %cast.load = load <2 x float>, ptr %cast.alloca, align 8
+; CHECK-NEXT: %[[fold:.+]] = load <2 x float>, ptr %"p'", align 8
+; CHECK-NEXT: %[[fnew:.+]] = fadd fast <2 x float> %[[fold]], %cast.load
+; CHECK-NEXT: store <2 x float> %[[fnew]], ptr %"p'", align 8
 ; CHECK: %[[gep:.+]] = getelementptr inbounds i8, ptr %"p'", i64 8
 ; CHECK: %gep.load = load double, ptr %gep.ptr, align 8
 ; CHECK-NEXT: %[[dold:.+]] = load double, ptr %[[gep]], align 8

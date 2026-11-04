@@ -28,7 +28,7 @@ entry:
 ; CHECK: define internal { double } @diffef(ptr {{.*}}%p, ptr {{.*}}%"p'", double %x, double %differeturn)
 ; CHECK: %[[fadd:.+]] = fadd fast double %{{.+}}, %differeturn
 ; CHECK-NEXT: store double %[[fadd]], ptr %"gep'ipg", align 8
-; CHECK-NEXT: call void @llvm.memset.p0.i64(ptr align 8 %"p'", i8 0, i64 4, i1 false)
+; CHECK-NEXT: call void @llvm.memset.p0.i64(ptr align 8 %"p'", i8 0, i64 8, i1 false)
 ; CHECK-NEXT: %[[off:.+]] = getelementptr inbounds i8, ptr %"p'", i32 8
 ; CHECK-NEXT: call void @llvm.memset.p0.i64(ptr align 8 %[[off]], i8 0, i64 8, i1 false)
 ; CHECK-NEXT: %[[dx:.+]] = load double, ptr %"gep'ipg", align 8

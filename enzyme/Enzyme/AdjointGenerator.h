@@ -839,8 +839,12 @@ public:
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
             auto nex = vd[{(int)i}];
-            if ((nex == BaseType::Anything && dt.isFloat()) ||
-                (dt == BaseType::Anything && nex.isFloat())) {
+            // Prevent fusion of {Anything, Float} into Anything, which would
+            // drop the float. Anything after a float joins the float run; a
+            // float after Anything starts a new run at its own offset.
+            if (nex == BaseType::Anything && dt.isFloat())
+              continue;
+            if (dt == BaseType::Anything && nex.isFloat()) {
               nextStart = i;
               break;
             }
@@ -3454,8 +3458,12 @@ public:
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
             auto nex = vd[{(int)i}];
-            if ((nex == BaseType::Anything && dt.isFloat()) ||
-                (dt == BaseType::Anything && nex.isFloat())) {
+            // Prevent fusion of {Anything, Float} into Anything, which would
+            // drop the float. Anything after a float joins the float run; a
+            // float after Anything starts a new run at its own offset.
+            if (nex == BaseType::Anything && dt.isFloat())
+              continue;
+            if (dt == BaseType::Anything && nex.isFloat()) {
               nextStart = i;
               break;
             }
