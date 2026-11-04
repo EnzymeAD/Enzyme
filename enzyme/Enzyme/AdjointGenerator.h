@@ -932,7 +932,13 @@ public:
                           llvm::SyncScope::ID ssid, bool isVolatile) {
     using namespace llvm;
 
-    if (gutils->isConstantInstruction(&I) && gutils->isConstantValue(&I)) {
+    if (gutils->isConstantInstruction(&I)) {
+      if (!gutils->isConstantValue(&I) &&
+          (Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError ||
+           Mode == DerivativeMode::ForwardModeSplit)) {
+        resolveShadowPlaceholder(I);
+      }
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ForwardModeSplit) {
         eraseIfUnused(I, /*erase*/ true, /*check*/ false);
@@ -1218,8 +1224,14 @@ public:
                                 /*errifnotfound*/ nullptr,
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
+        if (!gutils->isConstantValue(&I) &&
+            (Mode == DerivativeMode::ForwardMode ||
+             Mode == DerivativeMode::ForwardModeError ||
+             Mode == DerivativeMode::ForwardModeSplit)) {
+          resolveShadowPlaceholder(I);
+        }
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModeGradient) {
+            Mode == DerivativeMode::ForwardModeSplit) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
         } else
           eraseIfUnused(I);
