@@ -226,6 +226,10 @@ def ComplexDiv : ComplexInst<"DivOp">;
 def ComplexEq : ComplexInst<"EqualOp">;
 def ComplexSub : ComplexInst<"SubOp">;
 def ComplexNeg : ComplexInst<"NegOp">;
+def ComplexSin : ComplexInst<"SinOp">;
+def ComplexCos : ComplexInst<"CosOp">;
+def ComplexAdd : ComplexInst<"AddOp">;
+def ComplexTanh : ComplexInst<"TanhOp">;
 
 
 def CheckedComplexMul : SubRoutine<(Op $diffret, $x),
