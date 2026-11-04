@@ -13,6 +13,10 @@
 ; operations only it uses (the fma and the fneg; log T stays with its other
 ; user), whatever -poseidon-min-uses-split/-poseidon-min-ops-split (99 here) say.
 ;
+; The accuracy model draws the leaves the inputs are computed from (T, and y)
+; and evaluates the inputs from them, so T and log T are drawn consistently; here
+; every draw lands inside the profiled input box.
+;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
 ; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
@@ -60,5 +64,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT: Operations (5):
 ; SPLIT-NEXT: %l = call double @llvm.log.f64(double %T)
 ; SPLIT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
-; SPLIT: Initial AccuracyCost: 1.480006e-25
-; SPLIT: Initial AccuracyCost: 1.278977e-13
+; SPLIT: [poseidon] joint sampling: 1 leaves, 1024 of 1024 draws inside the profiled input box
+; SPLIT: [poseidon] joint sampling: 2 leaves, 1024 of 1024 draws inside the profiled input box
+; SPLIT: Initial AccuracyCost: 1.601240e-25
+; SPLIT: Initial AccuracyCost: 2.842171e-14

@@ -78,9 +78,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT-NEXT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
 ; SPLIT: Initial AccuracyCost: 5.730790e-11
 ; SPLIT-NEXT: Initial ComputationCost: 1.600000e+01
-; SPLIT: Initial AccuracyCost: 1.809276e-10
+; SPLIT: Initial AccuracyCost: 2.614053e-11
 ; SPLIT-NEXT: Initial ComputationCost: 2.000000e+01
 ; SPLIT: Total candidate compositions: 3.000000e+01
-; SPLIT: Minimum accuracy cost within budget: 4.744200e-03
+; SPLIT: Minimum accuracy cost within budget: 2.672498e-03
 ; SPLIT-NEXT: Computation cost budget used: -128
 ; SPLIT: Applying solution for CS: All FP64(60%) + FP32(40%) (#3)

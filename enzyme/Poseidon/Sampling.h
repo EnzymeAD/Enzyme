@@ -8,9 +8,10 @@
 //===----------------------------------------------------------------------===//
 //
 // The accuracy model scores a candidate on sampled inputs, so what is sampled
-// decides what the score means: the profiled per-input box, plus a coincidence
-// stratum for the cancellation regimes independent marginal draws never
-// reproduce.
+// decides what the score means: inputs evaluated from leaves drawn in their
+// profiled ranges, as the program relates them, inside the profiled per-input
+// box, plus a coincidence stratum for the cancellation regimes independent
+// leaf draws never reproduce.
 //
 //===----------------------------------------------------------------------===//
 
