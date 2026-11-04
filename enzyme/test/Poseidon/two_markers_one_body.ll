@@ -33,8 +33,11 @@ declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; Both sites are served by the one profile the run recorded for @tester.
+; Both sites are served by the one profile the run recorded for @tester, and
+; the second reuses the first one's solve.
 ; CHECK-NOT: no profile at
 ; CHECK-NOT: left unchanged
 ; CHECK: [[BODY:preprocess_tester[^ :]*]]: tau=1.000000e-02
-; CHECK: [[BODY2:preprocess_tester[^ :]*]]: tau=1.000000e-02
+; CHECK: tester: same body and target as an earlier site; reusing its solve ([[BODY]])
+; CHECK-LABEL: define double @site_b(
+; CHECK: call {{.*}}@[[BODY]](

@@ -59,6 +59,7 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -423,6 +424,14 @@ SmallVector<WeakVH, 4> &siteClones() {
   return clones;
 }
 
+// Markers on the same body with the same target share one solve, as they share
+// one profile record: a body inlined at several call sites otherwise pays the
+// whole solve once per copy.
+std::map<std::pair<const Function *, double>, WeakVH> &solvedSites() {
+  static std::map<std::pair<const Function *, double>, WeakVH> solved;
+  return solved;
+}
+
 // The body a site's call targets is a device of this pass and must not reach
 // codegen as a call: under -fcuda-rdc a call that is not folded back is a real
 // ABI call, and the kernel entry then pays its register and frame budget
@@ -477,6 +486,21 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
              "or -poseidon-profile-use=<dir>. Emitting the original "
              "computation.");
   } else {
+    auto key = std::make_pair((const Function *)F, errTol);
+    auto prior = solvedSites().find(key);
+    if (!flags::JointDP && prior != solvedSites().end())
+      if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
+        GemmBodyNote ozNote;
+        if (flags::OzakiHostDispatch && getGemmBody(done, ozNote))
+          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote,
+                              flags::Cache);
+        llvm::errs() << "[poseidon] " << F->getName()
+                     << ": same body and target as an earlier site; reusing "
+                        "its solve ("
+                     << done->getName() << ")\n";
+        return emitSiteCall(CI, done, primalArgs, calls);
+      }
+
     // Kept for no-op transparency: if the solve ends up applying NOTHING to
     // this site, the wrapper must call the ORIGINAL body, not the
     // canonicalized clone (whose lowering is not guaranteed bit-identical to
@@ -545,6 +569,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
                      << " (bit-transparent no-op)\n";
         F = sourceBody;
       }
+      solvedSites()[key] = F;
     }
   }
 
@@ -1865,6 +1890,7 @@ void finalizeModule(Module &M) {
       clone->eraseFromParent();
   }
   siteClones().clear();
+  solvedSites().clear();
   restoreHostWrapperDebugInfo(M);
   // The site counter is a note the early run leaves for the late one; nothing
   // downstream reads it.
