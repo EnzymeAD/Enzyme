@@ -6027,6 +6027,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "strtol" || funcName == "strtoul" ||
+        funcName == "strtoll" || funcName == "strtoull" ||
+        funcName == "__isoc23_strtol" || funcName == "__isoc23_strtoul" ||
+        funcName == "__isoc23_strtoll" || funcName == "__isoc23_strtoull") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "open" || funcName == "open64") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "close") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "sched_getaffinity") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "gsl_sf_legendre_array_e") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;

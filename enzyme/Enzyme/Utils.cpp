@@ -501,6 +501,27 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
+  const char *SystemAndStringCalls[] = {
+      "strtol",
+      "strtoul",
+      "strtoll",
+      "strtoull",
+      "__isoc23_strtol",
+      "__isoc23_strtoul",
+      "__isoc23_strtoll",
+      "__isoc23_strtoull",
+      "open",
+      "open64",
+      "close",
+      "sched_getaffinity",
+  };
+  if (llvm::is_contained(SystemAndStringCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
