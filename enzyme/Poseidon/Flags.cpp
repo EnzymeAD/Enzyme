@@ -78,6 +78,12 @@ cl::opt<unsigned>
     MinOpsSplit("poseidon-min-ops-split", cl::init(99), cl::Hidden,
                 cl::desc("Minimum number of upstream operations of "
                          "bottleneck node to trigger split"));
+cl::list<std::string> SplitCalls(
+    "poseidon-split-calls", cl::Hidden, cl::CommaSeparated,
+    cl::value_desc("op,op,..."),
+    cl::desc("Give every call to these operators (Herbie names, e.g. pow) its "
+             "own FP subgraph with the operations only it uses, whatever "
+             "-poseidon-min-uses-split/-poseidon-min-ops-split say"));
 
 // Solver and budgets.
 cl::opt<int64_t> CompCostBudget(

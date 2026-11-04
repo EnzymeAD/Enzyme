@@ -65,6 +65,7 @@ extern llvm::cl::opt<bool> RaiseWMMA;
 extern llvm::cl::opt<unsigned> MaxExprLength;
 extern llvm::cl::opt<unsigned> MinUsesSplit;
 extern llvm::cl::opt<unsigned> MinOpsSplit;
+extern llvm::cl::list<std::string> SplitCalls;
 
 // Solver and budgets.
 extern llvm::cl::opt<int64_t> CompCostBudget;
