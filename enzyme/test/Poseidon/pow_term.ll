@@ -26,6 +26,8 @@
 ; exp(fma(-log T, a, b) log T) is priced without a second log (Delta CompCost
 ; 256, not 768), and its pow(T, -1.62) is applied.
 ;
+; A rewrite's pow is emitted as llvm.pow on the CPU, as clang emits it.
+;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
 ; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
@@ -84,4 +86,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; HERBIE-LABEL: define void @preprocess_tester(
 ; HERBIE: %l = tail call double @llvm.log.f64(double %T)
-; HERBIE-NEXT: %herbie.pow = tail call double @pow(double %T, double -1.620000e+00)
+; HERBIE-NEXT: %herbie.pow = tail call double @llvm.pow.f64(double %T, double -1.620000e+00)
