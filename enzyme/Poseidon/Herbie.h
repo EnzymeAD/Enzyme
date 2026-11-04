@@ -35,7 +35,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
-        nullptr);
+        nullptr,
+    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
 std::string dtypeOfType(llvm::Type *T);
 
@@ -85,7 +86,8 @@ double getCompCost(
     const std::string &expr, llvm::Module *M,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    const llvm::FastMathFlags &FMF);
+    const llvm::FastMathFlags &FMF,
+    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIE_H

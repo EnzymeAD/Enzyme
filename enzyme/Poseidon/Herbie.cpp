@@ -154,7 +154,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs) {
+    SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs,
+    const SetVector<Value *> *subgraphInputs) {
   std::string trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
   trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
@@ -221,7 +222,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     if (approxSpecs)
       approxSpecs->push_back({inner.substr(0, splitPos), resultPart});
     return parseHerbieExpr(resultPart, valueToNodeMap, symbolToValueMap,
-                           approxSpecs);
+                           approxSpecs, subgraphInputs);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -262,12 +263,13 @@ std::shared_ptr<FPNode> parseHerbieExpr(
         elems.push_back(body.substr(start));
       if (head == "array" && idx < elems.size())
         return parseHerbieExpr(elems[idx], valueToNodeMap, symbolToValueMap,
-                               approxSpecs);
+                               approxSpecs, subgraphInputs);
       if (head.rfind("sincos.", 0) == 0 && elems.size() == 1 && idx < 2) {
         auto node =
             std::make_shared<FPNode>(idx == 0 ? "sin" : "cos", head.substr(7));
         node->addOperand(parseHerbieExpr(elems[0], valueToNodeMap,
-                                         symbolToValueMap, approxSpecs));
+                                         symbolToValueMap, approxSpecs,
+                                         subgraphInputs));
         return node;
       }
     }
@@ -312,15 +314,20 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     if (depth == 0 && trimmedExpr[curr] == ' ') {
       node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
                                        valueToNodeMap, symbolToValueMap,
-                                       approxSpecs));
+                                       approxSpecs, subgraphInputs));
       start = curr + 1;
     }
   }
   if (start < curr) {
     node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
                                      valueToNodeMap, symbolToValueMap,
-                                     approxSpecs));
+                                     approxSpecs, subgraphInputs));
   }
+
+  if (subgraphInputs)
+    if (auto existing =
+            existingDefinition(*node, *subgraphInputs, valueToNodeMap))
+      return existing;
 
   return node;
 }
@@ -677,8 +684,8 @@ fpcoreToC(const std::string &expr,
   SmallVector<std::string, 1> out;
   if (!isRenderableFPCore(expr, symbolToValueMap))
     return out;
-  std::shared_ptr<FPNode> node =
-      parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap, approxSpecs);
+  std::shared_ptr<FPNode> node = parseHerbieExpr(
+      expr, valueToNodeMap, symbolToValueMap, approxSpecs, how.inputs);
   if (!node)
     return out;
   if (node->op == "array")
@@ -839,7 +846,8 @@ bool improveViaHerbie(
         if (!skipEvaluation) {
           bestCandidate.CompCost =
               getCompCost(bestExpr.str(), M, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(CO.oldOutput)->getFastMathFlags());
+                          cast<Instruction>(CO.oldOutput)->getFastMathFlags(),
+                          &CO.subgraph->inputs);
         }
         CO.candidates.push_back(bestCandidate);
       }
@@ -864,7 +872,8 @@ bool improveViaHerbie(
         if (!skipEvaluation) {
           candidate.CompCost =
               getCompCost(expr.str(), M, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(CO.oldOutput)->getFastMathFlags());
+                          cast<Instruction>(CO.oldOutput)->getFastMathFlags(),
+                          &CO.subgraph->inputs);
         }
         CO.candidates.push_back(candidate);
       }
@@ -1660,11 +1669,11 @@ void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
                    SmallPtrSetImpl<Value *> &used) {
   if (!seen.insert(node).second)
     return;
-  if (auto *LL = dyn_cast<FPLLValue>(node))
-    if (inputs.contains(LL->value)) {
-      used.insert(LL->value);
+  if (auto *LL = dyn_cast<FPLLValue>(node)) {
+    used.insert(LL->value);
+    if (inputs.contains(LL->value) && !inlinedOps(*LL, inputs))
       return;
-    }
+  }
   for (const auto &operand : node->operands)
     collectInputs(operand.get(), inputs, seen, used);
 }
@@ -1724,22 +1733,22 @@ void setUnifiedAccuracyCost(
     return;
   }
 
-  // An array element is spliced in at its own output, so it may only read the
-  // inputs that output's original expression read.
+  // An element is spliced in at its own output, so it may only read the values
+  // that output's original expression read: inputs, and what an input spelled
+  // as its definition is computed from.
   SmallVector<SmallPtrSet<Value *, 8>, 1> rootInputs;
-  if (CO.isArray())
-    for (Value *root : CO.roots) {
-      SmallPtrSet<const FPNode *, 32> seen;
-      SmallPtrSet<Value *, 8> used;
-      collectInputs(valueToNodeMap[root].get(), CO.subgraph->inputs, seen,
-                    used);
-      rootInputs.push_back(std::move(used));
-    }
+  for (Value *root : CO.roots) {
+    SmallPtrSet<const FPNode *, 32> seen;
+    SmallPtrSet<Value *, 8> used;
+    collectInputs(valueToNodeMap[root].get(), CO.subgraph->inputs, seen, used);
+    rootInputs.push_back(std::move(used));
+  }
 
   SmallVector<RewriteCandidate, 4> newCandidates;
   for (auto &candidate : CO.candidates) {
     std::shared_ptr<FPNode> parsedNode =
-        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
+        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
+                        nullptr, &CO.subgraph->inputs);
     SmallVector<std::shared_ptr<FPNode>, 1> elements;
     if (CO.isArray()) {
       if (parsedNode->op != "array" ||
@@ -1760,23 +1769,21 @@ void setUnifiedAccuracyCost(
     double total = 0.0;
     std::string perElement;
     for (auto [k, element] : llvm::enumerate(elements)) {
-      if (CO.isArray()) {
-        SmallPtrSet<const FPNode *, 32> seen;
-        SmallPtrSet<Value *, 8> used;
-        collectInputs(element.get(), CO.subgraph->inputs, seen, used);
-        if (!llvm::all_of(
-                used, [&](Value *V) { return rootInputs[k].contains(V); })) {
-          if (flags::Print)
-            llvm::errs() << "[poseidon] dropping array candidate: element " << k
-                         << " reads an input its output does not\n";
-          discardCandidate = true;
-          CO.dropped.push_back(
-              {candidate.expr, formatv("its element {0} reads an input that "
-                                       "output does not",
-                                       k)
-                                   .str()});
-          break;
-        }
+      SmallPtrSet<const FPNode *, 32> seen;
+      SmallPtrSet<Value *, 8> used;
+      collectInputs(element.get(), CO.subgraph->inputs, seen, used);
+      if (!llvm::all_of(used,
+                        [&](Value *V) { return rootInputs[k].contains(V); })) {
+        if (flags::Print)
+          llvm::errs() << "[poseidon] dropping candidate: element " << k
+                       << " reads a value its output does not\n";
+        discardCandidate = true;
+        CO.dropped.push_back(
+            {candidate.expr, formatv("its element {0} reads a value that "
+                                     "output does not",
+                                     k)
+                                 .str()});
+        break;
       }
       std::string why;
       std::optional<double> cost =
@@ -1811,7 +1818,7 @@ double getCompCost(
     const std::string &expr, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    const FastMathFlags &FMF) {
+    const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -1825,7 +1832,28 @@ double getCompCost(
     argNames.push_back(argStr);
   }
 
-  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap,
+                                    nullptr, subgraphInputs);
+  // An existing value a node was mapped back to is an argument no symbol names.
+  SmallVector<Value *, 2> mappedArgs;
+  if (subgraphInputs) {
+    SmallVector<FPNode *, 16> stack{parsedNode.get()};
+    SmallPtrSet<FPNode *, 16> seen;
+    while (!stack.empty()) {
+      FPNode *N = stack.pop_back_val();
+      if (!seen.insert(N).second)
+        continue;
+      if (auto *L = dyn_cast<FPLLValue>(N)) {
+        if (args.insert(L->value)) {
+          argTypes.push_back(L->value->getType());
+          mappedArgs.push_back(L->value);
+        }
+        continue;
+      }
+      for (auto &op : N->operands)
+        stack.push_back(op.get());
+    }
+  }
 
   Type *ReturnType = nullptr;
   for (Type *ArgTy : argTypes) {
@@ -1868,6 +1896,10 @@ double getCompCost(
   Function::arg_iterator AI = tempFunction->arg_begin();
   for (const auto &argStr : argNames) {
     VMap[symbolToValueMap[argStr]] = &*AI;
+    ++AI;
+  }
+  for (Value *arg : mappedArgs) {
+    VMap[arg] = &*AI;
     ++AI;
   }
 
