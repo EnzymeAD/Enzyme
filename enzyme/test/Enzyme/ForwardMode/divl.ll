@@ -21,9 +21,9 @@ declare x86_fp80 @__enzyme_fwddiff(x86_fp80 (x86_fp80, x86_fp80)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}x86_fp80 @fwddiffetester(x86_fp80 %x, x86_fp80 %"x'", x86_fp80 %y, x86_fp80 %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fdiv fast x86_fp80 %x, %y
-; CHECK-NEXT:   %1 = fmul fast x86_fp80 %"y'", %0
-; CHECK-NEXT:   %2 = fsub fast x86_fp80 %"x'", %1
-; CHECK-NEXT:   %3 = fdiv fast x86_fp80 %2, %y
+; CHECK-NEXT:   %0 = fdiv nnan ninf nsz arcp contract afn x86_fp80 %x, %y
+; CHECK-NEXT:   %1 = fmul nnan ninf nsz arcp contract afn x86_fp80 %"y'", %0
+; CHECK-NEXT:   %2 = fsub nnan ninf nsz arcp contract afn x86_fp80 %"x'", %1
+; CHECK-NEXT:   %3 = fdiv nnan ninf nsz arcp contract afn x86_fp80 %2, %y
 ; CHECK-NEXT:   ret x86_fp80 %3
 ; CHECK-NEXT: }

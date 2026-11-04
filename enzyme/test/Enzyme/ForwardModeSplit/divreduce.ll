@@ -79,10 +79,10 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"gep'ipg", align 8
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
-; CHECK-NEXT:   %[[i6:.+]] = fdiv fast double %reduce, %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[dreduce]], %[[i7]]
-; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %ld
+; CHECK-NEXT:   %[[i6:.+]] = fdiv nnan ninf nsz arcp contract afn double %reduce, %ld
+; CHECK-NEXT:   %[[i7:.+]] = fmul nnan ninf nsz arcp contract afn double %[[i5]], %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = fsub nnan ninf nsz arcp contract afn double %[[dreduce]], %[[i7]]
+; CHECK-NEXT:   %[[i10]] = fdiv nnan ninf nsz arcp contract afn double %[[i8]], %ld
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 
@@ -109,10 +109,10 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"gep'ipg", align 8
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
-; CHECK-NEXT:   %[[i6:.+]] = fdiv fast double %reduce, %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[dreduce]], %[[i7]]
-; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %ld
+; CHECK-NEXT:   %[[i6:.+]] = fdiv nnan ninf nsz arcp contract afn double %reduce, %ld
+; CHECK-NEXT:   %[[i7:.+]] = fmul nnan ninf nsz arcp contract afn double %[[i5]], %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = fsub nnan ninf nsz arcp contract afn double %[[dreduce]], %[[i7]]
+; CHECK-NEXT:   %[[i10]] = fdiv nnan ninf nsz arcp contract afn double %[[i8]], %ld
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 

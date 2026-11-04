@@ -142,7 +142,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %sub.ptr = sub i64 %endi64, %veci64
 ; CHECK-NEXT:   %num = sdiv exact i64 %sub.ptr, 8
 ; CHECK-NEXT:   %conv = uitofp i64 %num to double
-; CHECK-NEXT:   %[[d0diffeadd:.+]] = fdiv fast double %differeturn, %conv
+; CHECK-NEXT:   %[[d0diffeadd:.+]] = fdiv nnan ninf nsz arcp contract afn double %differeturn, %conv
 ; CHECK-NEXT:   br label %invertfor.cond13
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.cond13

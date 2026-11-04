@@ -21,9 +21,9 @@ declare float @__enzyme_fwddiff(float (float, float)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}float @fwddiffetester(float %x, float %"x'", float %y, float %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fdiv fast float %x, %y
-; CHECK-NEXT:   %1 = fmul fast float %"y'", %0
-; CHECK-NEXT:   %2 = fsub fast float %"x'", %1
-; CHECK-NEXT:   %3 = fdiv fast float %2, %y
+; CHECK-NEXT:   %0 = fdiv nnan ninf nsz arcp contract afn float %x, %y
+; CHECK-NEXT:   %1 = fmul nnan ninf nsz arcp contract afn float %"y'", %0
+; CHECK-NEXT:   %2 = fsub nnan ninf nsz arcp contract afn float %"x'", %1
+; CHECK-NEXT:   %3 = fdiv nnan ninf nsz arcp contract afn float %2, %y
 ; CHECK-NEXT:   ret float %3
 ; CHECK-NEXT: }

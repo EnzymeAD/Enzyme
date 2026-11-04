@@ -19,10 +19,10 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffetester(double %x, double %y, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[diffex:.+]] = fdiv fast double %[[differet]], %y
-; CHECK-NEXT:   %[[xdivy:.+]] = fdiv fast double %x, %y
-; CHECK-NEXT:   %[[xdivydret:.+]] = fmul fast double %[[diffex]], %[[xdivy]]
-; CHECK-NEXT:   %[[mxdivy2:.+]] = {{(fsub fast double 0.000000e\+00,|fneg fast double)}} %[[xdivydret]]
+; CHECK-NEXT:   %[[diffex:.+]] = fdiv nnan ninf nsz arcp contract afn double %[[differet]], %y
+; CHECK-NEXT:   %[[xdivy:.+]] = fdiv nnan ninf nsz arcp contract afn double %x, %y
+; CHECK-NEXT:   %[[xdivydret:.+]] = fmul nnan ninf nsz arcp contract afn double %[[diffex]], %[[xdivy]]
+; CHECK-NEXT:   %[[mxdivy2:.+]] = {{(fsub nnan ninf nsz arcp contract afn double 0.000000e\+00,|fneg nnan ninf nsz arcp contract afn double)}} %[[xdivydret]]
 ; CHECK-NEXT:   %[[res1:.+]] = insertvalue { double, double } undef, double %[[diffex]], 0
 ; CHECK-NEXT:   %[[res2:.+]] = insertvalue { double, double } %[[res1:.+]], double %[[mxdivy2]], 1
 ; CHECK-NEXT:   ret { double, double } %[[res2]]

@@ -279,7 +279,7 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %cmp2, label %while.body.i.i.i, label %invertexit
 
 ; CHECK: invertentry:                                      ; preds = %invertwhile.body.i.i.i
-; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv fast double %[[i5:.+]], 3.000000e+00
+; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv nnan ninf nsz arcp contract afn double %[[i5:.+]], 3.000000e+00
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 8 %"bc'ipc", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double } undef, double %[[d0diffet]], 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
