@@ -1100,7 +1100,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""], ["minimum", "11", ""], ["minimumnum", "20", ""]],
+                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet))
@@ -1109,12 +1109,41 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""], ["maximum", "11", ""], ["maximumnum", "20", ""]],
+                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))
                   ],
                   (Select (FCmpOLT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
+                  >;
+
+// Unlike minnum/maxnum, the minimum, maximum, minimumnum, and maximumnum
+// intrinsics order -0.0 below +0.0, so two operands that compare equal under
+// olt/oeq can still have a determined winner. Break the tie by the sign of
+// each operand so the derivative follows the operand the intrinsic returns.
+def OrderedLessWithSignedZero : SubRoutine<(Op $x, $y),
+                  (Or (FCmpOLT $x, $y),
+                      (And (FCmpOEQ $x, $y),
+                           (FCmpOLT (Intrinsic<"copysign"> (ConstantFP<"1"> $x), $x),
+                                    (Intrinsic<"copysign"> (ConstantFP<"1"> $y), $y))))
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["minimum", "11", ""], ["minimumnum", "20", ""]],
+                  [
+                    (Select (OrderedLessWithSignedZero $x, $y), (DiffeRet), (ConstantFP<"0"> $x)),
+                    (Select (OrderedLessWithSignedZero $x, $y), (ConstantFP<"0"> $x), (DiffeRet))
+                  ],
+                  (Select (OrderedLessWithSignedZero $x, $y), (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (Shadow $y), (Zero $y)))
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["maximum", "11", ""], ["maximumnum", "20", ""]],
+                  [
+                    (Select (OrderedLessWithSignedZero $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
+                    (Select (OrderedLessWithSignedZero $x, $y), (DiffeRet), (ConstantFP<"0"> $x))
+                  ],
+                  (Select (OrderedLessWithSignedZero $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
                   >;
 
 def : CallPattern<(Op $x, $y),
