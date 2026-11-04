@@ -3723,6 +3723,16 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
 
 void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   switch (I.getIntrinsicID()) {
+#if LLVM_VERSION_MAJOR >= 16
+  // The address of a thread-local global points at the same object as the
+  // global itself.
+  case Intrinsic::threadlocal_address:
+    if (direction & UP)
+      updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
+    if (direction & DOWN)
+      updateAnalysis(&I, getAnalysis(I.getOperand(0)), &I);
+    return;
+#endif
   case Intrinsic::ctpop:
   case Intrinsic::ctlz:
   case Intrinsic::cttz:

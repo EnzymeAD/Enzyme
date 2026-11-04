@@ -4197,7 +4197,13 @@ public:
     // not fully understood by LLVM. One of the results of this is that the ID
     // of the intrinsic is set to Intrinsic::not_intrinsic - hence we are
     // handling the intrinsic here.
-    if (isIntelSubscriptIntrinsic(II)) {
+    bool pointerIdentity = isIntelSubscriptIntrinsic(II);
+#if LLVM_VERSION_MAJOR >= 16
+    // The address of a thread-local global is a pointer whose shadow is the
+    // address of the shadow global; it carries no derivative of its own.
+    pointerIdentity |= II.getIntrinsicID() == Intrinsic::threadlocal_address;
+#endif
+    if (pointerIdentity) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
           Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardMode) {
