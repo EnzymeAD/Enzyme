@@ -1401,8 +1401,12 @@ public:
     if (!newFunc)
       return false;
 
-    Value *batch =
+    CallInst *batchCall =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    batchCall->setDebugLoc(CI->getDebugLoc());
+    if (CI->hasFnAttr(Attribute::NoInline))
+      batchCall->addFnAttr(Attribute::NoInline);
+    Value *batch = batchCall;
 
     batch = adaptReturnedVector(CI, batch, Builder, width);
 
@@ -1715,6 +1719,11 @@ public:
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
+    // A call-site noinline is the only thing that keeps a call without a
+    // !dbg location legal inside a function that has debug info.
+    if (auto *originalCall = dyn_cast<CallBase>(CI))
+      if (originalCall->hasFnAttr(Attribute::NoInline))
+        diffretc->addFnAttr(Attribute::NoInline);
 
     for (auto &&[attr, ty] : byVal) {
       diffretc->addParamAttr(
