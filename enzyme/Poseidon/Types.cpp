@@ -291,6 +291,12 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                }
              }
 
+             // The intrinsic, as clang emits pow without errno: a libcall
+             // may write errno, which keeps the loop from vectorizing and
+             // turns pow(C, x) into an errno-writing exp2 call.
+             if (!isGPUMode(*b.GetInsertBlock()->getParent()))
+               return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
+                                              nullptr, "herbie.pow");
              Type *Ty = ops[0]->getType();
              std::string funcName = libmFuncName(M, Ty, "pow", "powf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
