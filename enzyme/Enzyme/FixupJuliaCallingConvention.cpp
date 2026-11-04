@@ -2,7 +2,10 @@
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "Utils.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -11,6 +14,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
@@ -26,6 +30,80 @@ using namespace llvm;
 extern bool
 DetectPointerArgOfFn(llvm::Function &F,
                      llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
+
+// Canonicalize the extractvalues of `F` so that the same field of the same
+// aggregate is a single SSA value:
+//   1. fold chains, `extractvalue (extractvalue %a, i), j` ->
+//      `extractvalue %a, i, j`;
+//   2. CSE identical extractvalues (same aggregate, same indices), keeping the
+//      dominating one.
+// The rooting analysis matches stores into the sret against stores into the
+// returnRoots by SSA value, so this lets it see that e.g. a chained and a
+// multi-index extract of the same field are the same pointer.
+static void canonicalizeExtractValues(llvm::Function &F) {
+  // WeakVH, as folding a chain may delete inner links recorded here.
+  SmallVector<WeakVH, 16> chained;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto EVI = dyn_cast<ExtractValueInst>(&I))
+        if (isa<ExtractValueInst>(EVI->getAggregateOperand()))
+          chained.push_back(EVI);
+
+  for (auto &VH : chained) {
+    auto EVI = dyn_cast_or_null<ExtractValueInst>(VH);
+    if (!EVI)
+      continue;
+    SmallVector<unsigned, 4> path(EVI->getIndices().begin(),
+                                  EVI->getIndices().end());
+    Value *base = EVI->getAggregateOperand();
+    while (auto inner = dyn_cast<ExtractValueInst>(base)) {
+      SmallVector<unsigned, 4> outer(inner->getIndices().begin(),
+                                     inner->getIndices().end());
+      outer.append(path.begin(), path.end());
+      path = std::move(outer);
+      base = inner->getAggregateOperand();
+    }
+    Value *oldAgg = EVI->getAggregateOperand();
+    IRBuilder<> B(EVI);
+    auto flat = B.CreateExtractValue(base, path);
+    if (!isa<Constant>(flat))
+      flat->takeName(EVI);
+    EVI->replaceAllUsesWith(flat);
+    EVI->eraseFromParent();
+    // Drop the inner links of the chain if nothing else uses them.
+    RecursivelyDeleteTriviallyDeadInstructions(oldAgg);
+  }
+
+  DominatorTree DT(F);
+  std::map<std::pair<Value *, SmallVector<unsigned, 4>>,
+           SmallVector<ExtractValueInst *, 1>>
+      leaders;
+  // Visit blocks in dominator-tree preorder so that any dominating leader has
+  // already been recorded.
+  for (auto Node : depth_first(DT.getRootNode())) {
+    for (auto &I : make_early_inc_range(*Node->getBlock())) {
+      auto EVI = dyn_cast<ExtractValueInst>(&I);
+      if (!EVI)
+        continue;
+      auto &cands = leaders[std::make_pair(
+          EVI->getAggregateOperand(),
+          SmallVector<unsigned, 4>(EVI->getIndices().begin(),
+                                   EVI->getIndices().end()))];
+      ExtractValueInst *leader = nullptr;
+      for (auto cand : cands)
+        if (DT.dominates(cand, EVI)) {
+          leader = cand;
+          break;
+        }
+      if (leader) {
+        EVI->replaceAllUsesWith(leader);
+        EVI->eraseFromParent();
+      } else {
+        cands.push_back(EVI);
+      }
+    }
+  }
+}
 
 // Determine whether the tracked pointers stored into the sret-like argument
 // `arg` need to be given fresh roots. They do not if every one of them is also
@@ -596,6 +674,22 @@ static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
 void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   if (F->empty())
     return;
+
+  // The rooting analysis below matches values by SSA identity, so first make
+  // equivalent extractvalues the same value.
+  {
+    auto FAttrs = F->getAttributes();
+    for (size_t i = 0, end = F->getFunctionType()->getNumParams(); i < end;
+         i++) {
+      if (FAttrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                              Attribute::StructRet) ||
+          FAttrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                              "enzyme_sret")) {
+        canonicalizeExtractValues(*F);
+        break;
+      }
+    }
+  }
 
   auto RT = F->getReturnType();
   std::set<size_t> srets;
