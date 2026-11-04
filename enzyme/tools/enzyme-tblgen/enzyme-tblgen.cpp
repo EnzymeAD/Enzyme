@@ -94,7 +94,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -122,7 +123,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -139,7 +141,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
