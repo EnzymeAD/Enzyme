@@ -3597,73 +3597,97 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             bool constantval = isConstantValue(orig_val) ||
                                parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
 
-            // TODO allow recognition of other types that could contain
-            // pointers [e.g. {void*, void*} or <2 x i64> ]
-            auto storeSize = DL.getTypeSizeInBits(valType) / 8;
-
-            //! Storing a floating point value
-            Type *FT = nullptr;
-            if (valType->isFPOrFPVectorTy()) {
-              FT = valType->getScalarType();
-            } else if (!valType->isPointerTy()) {
-              if (looseTypeAnalysis) {
-                auto fp = TR.firstPointer(storeSize, orig_ptr, &I, this,
-                                          /*errifnotfound*/ nullptr,
-                                          /*pointerIntSame*/ true);
-                if (fp.isKnown()) {
-                  FT = fp.isFloat();
-                  llvm::errs() << "assuming type as " << fp.str()
-                               << " for store: " << I << "\n";
-                } else if (isa<ConstantInt>(orig_val) ||
-                           valType->isIntOrIntVectorTy()) {
-                  llvm::errs()
-                      << "assuming type as integral for store: " << I << "\n";
-                  FT = nullptr;
-                } else {
-                  TR.firstPointer(storeSize, orig_ptr, &I, this,
-                                  /*errifnotfound*/ &NB,
-                                  /*pointerIntSame*/ true);
-                }
-              } else {
-                FT = TR.firstPointer(storeSize, orig_ptr, &I, this,
-                                     /*errifnotfound*/ &NB,
-                                     /*pointerIntSame*/ true)
-                         .isFloat();
+            // Unread fields of a rematerialized allocation have no TypeResults
+            // entries; fall back to the stored LLVM value type so shadow store
+            // replay matches primal store lowering.
+            size_t StoreBytes = (DL.getTypeSizeInBits(valType) + 7) / 8;
+            TypeTree ValueData = TR.query(orig_ptr).Lookup(StoreBytes, DL);
+            if (!ValueData.isKnown()) {
+              ValueData = defaultTypeTreeForLLVM(valType, &I);
+              if (EmitWarningEnabled(I.getContext())) {
+                std::string WarningText;
+                raw_string_ostream WarningStream(WarningText);
+                WarningStream << "Cannot deduce type of store " << I
+                              << ", assumed " << ValueData.str() << '\n';
+                EmitWarning("CannotDeduceType", I, WarningStream.str());
               }
             }
-            if (!FT) {
-              Value *valueop = nullptr;
-              if (constantval) {
-                Value *val =
-                    lookupM(getNewFromOriginal(orig_val), NB, available);
-                valueop = val;
-                if (getWidth() > 1) {
-                  Value *array = UndefValue::get(getShadowType(val->getType()));
-                  for (unsigned i = 0; i < getWidth(); ++i) {
-                    array = NB.CreateInsertValue(array, val, {i});
+
+            SmallVector<Metadata *> PreviousScopes;
+            if (MDNode *ScopeNode =
+                    SI->getMetadata(LLVMContext::MD_alias_scope)) {
+              for (const MDOperand &Operand : ScopeNode->operands())
+                PreviousScopes.push_back(Operand);
+            }
+            SmallVector<Metadata *> PreviousNoAlias;
+            if (MDNode *NoAliasNode =
+                    SI->getMetadata(LLVMContext::MD_noalias)) {
+              for (const MDOperand &Operand : NoAliasNode->operands())
+                PreviousNoAlias.push_back(Operand);
+            }
+
+            MaybeAlign OriginalAlignment = SI->getAlign();
+            unsigned StartOffset = 0;
+            while (true) {
+              unsigned NextStartOffset = StoreBytes;
+              ConcreteType SegmentType = ValueData[{-1}];
+              for (size_t ByteOffset = StartOffset; ByteOffset < StoreBytes;
+                   ++ByteOffset) {
+                ConcreteType NextType = ValueData[{(int)ByteOffset}];
+                if ((NextType == BaseType::Anything && SegmentType.isFloat()) ||
+                    (SegmentType == BaseType::Anything && NextType.isFloat())) {
+                  NextStartOffset = ByteOffset;
+                  break;
+                }
+                bool IsLegal = true;
+                SegmentType.checkedOrIn(NextType, /*PointerIntSame*/ true,
+                                        IsLegal);
+                if (!IsLegal) {
+                  NextStartOffset = ByteOffset;
+                  break;
+                }
+              }
+              unsigned SegmentBytes = NextStartOffset - StartOffset;
+              if (!SegmentType.isKnown()) {
+                TR.firstPointer(StoreBytes, orig_ptr, &I, this,
+                                /*errifnotfound*/ &NB,
+                                /*pointerIntSame*/ true);
+                break;
+              }
+              if (!SegmentType.isFloat()) {
+                MaybeAlign SegmentAlignment;
+                if (OriginalAlignment) {
+                  SegmentAlignment =
+                      (StartOffset % OriginalAlignment->value() == 0)
+                          ? OriginalAlignment
+                          : Align(1);
+                }
+                Value *ShadowOperand = nullptr;
+                if (constantval) {
+                  Value *PrimalOperand =
+                      lookupM(getNewFromOriginal(orig_val), NB, available);
+                  ShadowOperand = PrimalOperand;
+                  if (getWidth() > 1) {
+                    Value *ShadowVector = UndefValue::get(
+                        getShadowType(PrimalOperand->getType()));
+                    for (unsigned Lane = 0; Lane < getWidth(); ++Lane) {
+                      ShadowVector = NB.CreateInsertValue(
+                          ShadowVector, PrimalOperand, {Lane});
+                    }
+                    ShadowOperand = ShadowVector;
                   }
-                  valueop = array;
+                } else {
+                  ShadowOperand = lookupM(
+                      invertPointerM(orig_val, NB, ValueData), NB, available);
                 }
-              } else {
-                valueop = lookupM(invertPointerM(orig_val, NB), NB, available);
+                setPtrDiffe(SI, orig_ptr, ShadowOperand, NB, SegmentAlignment,
+                            StartOffset, SegmentBytes, SI->isVolatile(),
+                            SI->getOrdering(), SI->getSyncScopeID(),
+                            /*mask*/ nullptr, PreviousNoAlias, PreviousScopes);
               }
-              SmallVector<Metadata *, 1> prevScopes;
-              if (auto prev = SI->getMetadata(LLVMContext::MD_alias_scope)) {
-                for (auto &M : cast<MDNode>(prev)->operands()) {
-                  prevScopes.push_back(M);
-                }
-              }
-              SmallVector<Metadata *, 1> prevNoAlias;
-              if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
-                for (auto &M : cast<MDNode>(prev)->operands()) {
-                  prevNoAlias.push_back(M);
-                }
-              }
-              auto align = SI->getAlign();
-              setPtrDiffe(SI, orig_ptr, valueop, NB, align, 0, storeSize,
-                          SI->isVolatile(), SI->getOrdering(),
-                          SI->getSyncScopeID(),
-                          /*mask*/ nullptr, prevNoAlias, prevScopes);
+              if (NextStartOffset == StoreBytes)
+                break;
+              StartOffset = NextStartOffset;
             }
             // TODO shadow memtransfer
           } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
