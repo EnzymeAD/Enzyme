@@ -95,6 +95,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT: Initial AccuracyCost: 4.027094e-18
 ; SPLIT: Initial AccuracyCost: 2.842284e-14
 
+; HERBIE-CORE: fake-herbie: {{.*}} --enable reduce:dag-cost
 ; HERBIE-CORE: (FPCore (v0) {{.*}} :pre (and (<= 2.50000000000000000e+02 v0 9.70000000000000000e+03)) :name "0" (pow v0 (fma (- (log v0)) 0.017899999999999999 -1.4847999999999999)))
 ; HERBIE-CORE: 3.687364e-18{{[[:space:]]+}}256{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
 ; HERBIE-CORE: Applying solution for (pow v0 {{.*}} --(0)-> (pow.f64 v0 #s(literal -81/50 binary64))

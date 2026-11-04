@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/arrays -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=ARRAY %s
 ; RUN: env FAKE_HERBIE_ARRAY=timeout %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/fallback -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=FALLBACK %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/off -S 2>&1 | FileCheck --check-prefix=OFF %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/off -poseidon-herbie-arrays=false -S 2>&1 | FileCheck --check-prefix=OFF %s
 ; REQUIRES: poseidon
 
 ; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the
@@ -10,8 +10,8 @@
 ; rewrite covers both outputs and is lowered with the shared subterm computed
 ; once. %z reads x alone, so it is no element of that array; its per-output
 ; cores go to Herbie in the same invocation as the array cores. An array core
-; that returns nothing is replaced by the per-output cores sent without the
-; flag.
+; that returns nothing is replaced by the per-output cores sent with
+; -poseidon-herbie-arrays=false.
 
 define void @tester(double %x, double %y, ptr %o1, ptr %o2, ptr %o3) #0 {
 entry:

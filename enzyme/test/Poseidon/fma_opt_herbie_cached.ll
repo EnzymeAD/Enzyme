@@ -27,7 +27,7 @@ declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; CHECK: Using cached Herbie output from {{.*}}cachedHerbieOutput_default_9156F8131BE6AB6F.txt
+; CHECK: Using cached Herbie output from {{.*}}cachedHerbieOutput_default_06F0ECDBFA1A458D.txt
 
 ; The selection line reports the tolerance in the unit it is compared in: the
 ; original FP64 body sits at A0/S = 1.08e-15, the chosen point at `rel`.

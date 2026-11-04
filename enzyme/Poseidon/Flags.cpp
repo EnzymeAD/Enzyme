@@ -233,7 +233,7 @@ cl::opt<std::string> HerbiePlatform(
 // subterms they share let*-bound: Herbie searches them jointly and the rewrite
 // is priced as one unit, so work the outputs share is costed and erased once.
 cl::opt<bool> HerbieArrays(
-    "poseidon-herbie-arrays", cl::init(false), cl::Hidden,
+    "poseidon-herbie-arrays", cl::init(true), cl::Hidden,
     cl::desc("Send a multi-output subgraph to Herbie as one array FPCore per "
              "precision; per-output cores are sent only for an array core "
              "that returns nothing."));

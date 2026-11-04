@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t/cache %t/nocm
-; RUN: cp %S/Inputs/fma_opt_cache/cachedHerbieOutput_default_9156F8131BE6AB6F.txt %t/cache/cachedHerbieOutput_cuda-sm120_4DB342667BA7BDF5.txt
+; RUN: cp %S/Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/cache/cachedHerbieOutput_cuda-sm120_B8F90965B34ECC31.txt
 ; RUN: sed "s/sm_120/sm_90/" %s > %t/sm90.ll
 ; RUN: cp %S/Inputs/cm_gpu_fixture_x1e6.csv %t/nocm/
 ; RUN: mkdir -p %t/recal && cp %S/Inputs/cm_gpu_fixture_x1e6.csv %S/Inputs/cm_gpu_fixture_x1e6.herbie.rkt %t/recal/ && echo ";; recalibrated" >> %t/recal/cm_gpu_fixture_x1e6.herbie.rkt
@@ -44,7 +44,7 @@ declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="sm_120" }
 
-; MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_4DB342667BA7BDF5.txt
+; MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_B8F90965B34ECC31.txt
 ; MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; OTHERARCH-NOT: Using cached Herbie output
