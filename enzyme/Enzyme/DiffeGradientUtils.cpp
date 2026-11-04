@@ -670,6 +670,75 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
   if (old->getType()->isIntOrIntVectorTy() || old->getType()->isPointerTy()) {
+    if (old->getType()->isIntOrIntVectorTy() &&
+        old->getType()->getScalarSizeInBits() < 16)
+      return addedSelects;
+
+    auto &DL = oldFunc->getParent()->getDataLayout();
+    size_t byteOffset = 0;
+    bool hasConstantOffset = true;
+    Type *subType = val->getType();
+    ArrayRef<Value *> valueIndices =
+        (getWidth() > 1 && !idxs.empty()) ? idxs.drop_front(1) : idxs;
+    for (Value *indexValue : valueIndices) {
+      auto *constantIndex = dyn_cast<ConstantInt>(indexValue);
+      if (!constantIndex) {
+        hasConstantOffset = false;
+        break;
+      }
+      uint64_t elementIndex = constantIndex->getZExtValue();
+      if (auto *structType = dyn_cast<StructType>(subType)) {
+        byteOffset +=
+            DL.getStructLayout(structType)->getElementOffset(elementIndex);
+        subType = structType->getElementType(elementIndex);
+      } else if (auto *arrayType = dyn_cast<ArrayType>(subType)) {
+        subType = arrayType->getElementType();
+        byteOffset += elementIndex * ((DL.getTypeSizeInBits(subType) + 7) / 8);
+      } else if (auto *vectorType = dyn_cast<VectorType>(subType)) {
+        subType = vectorType->getElementType();
+        byteOffset += elementIndex * ((DL.getTypeSizeInBits(subType) + 7) / 8);
+      } else {
+        hasConstantOffset = false;
+        break;
+      }
+    }
+
+    if (hasConstantOffset) {
+      size_t subSize = (DL.getTypeSizeInBits(old->getType()) + 7) / 8;
+      const auto &valueTypes = TR.query(val);
+      bool allNonFloat = subSize > 0;
+      for (size_t byteIndex = 0; byteIndex < subSize;) {
+        ConcreteType dataType = valueTypes[{(int)(byteOffset + byteIndex)}];
+        if (dataType == BaseType::Integer) {
+          byteIndex++;
+          continue;
+        }
+        if (dataType == BaseType::Pointer) {
+          byteIndex += DL.getPointerSize(0);
+          continue;
+        }
+        allNonFloat = false;
+        break;
+      }
+      if (allNonFloat)
+        return addedSelects;
+
+      if (!addingType) {
+        ConcreteType sliceType(BaseType::Unknown);
+        bool legalSlice = true;
+        for (size_t byteIndex = 0; byteIndex < subSize; ++byteIndex) {
+          ConcreteType dataType = valueTypes[{(int)(byteOffset + byteIndex)}];
+          if (!dataType.isFloat())
+            continue;
+          sliceType.checkedOrIn(dataType, /*PointerIntSame*/ true, legalSlice);
+          if (!legalSlice)
+            break;
+        }
+        if (legalSlice)
+          addingType = sliceType.isFloat();
+      }
+    }
+
     if (!addingType) {
       if (looseTypeAnalysis) {
         if (old->getType()->isIntegerTy(64))
