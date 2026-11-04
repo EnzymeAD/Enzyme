@@ -6670,6 +6670,27 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     switch (II->getIntrinsicID()) {
     default:
       goto end;
+#if LLVM_VERSION_MAJOR >= 16
+    // The address of a thread-local global is the address of the shadow
+    // thread-local global, which keeps the same TLS mode.
+    case Intrinsic::threadlocal_address: {
+      Value *globalShadow = invertPointerM(II->getArgOperand(0), bb);
+      Value *shadow = applyChainRule(
+          II->getType(), bb,
+          [&](Value *shadowGlobal) -> Value * {
+            // A shadow materialized as a local allocation rather than a
+            // thread-local global is already the per-thread storage.
+            auto *shadowGlobalValue = dyn_cast<GlobalValue>(shadowGlobal);
+            if (!shadowGlobalValue || !shadowGlobalValue->isThreadLocal())
+              return shadowGlobal;
+            return bb.CreateCall(II->getCalledFunction(), shadowGlobal);
+          },
+          globalShadow);
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+      return shadow;
+    }
+#endif
 #if LLVM_VERSION_MAJOR < 20
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:

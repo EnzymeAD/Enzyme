@@ -1706,6 +1706,13 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName == "julia.gc_loaded") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 16
+    if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+      if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::threadlocal_address) {
+        return true;
+      }
+    }
+#endif
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
@@ -1771,6 +1778,15 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         V = Call->getArgOperand(1);
         continue;
       }
+#if LLVM_VERSION_MAJOR >= 16
+      if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+        if (Intrinsic->getIntrinsicID() ==
+            llvm::Intrinsic::threadlocal_address) {
+          V = Call->getArgOperand(0);
+          continue;
+        }
+      }
+#endif
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
         V = Call->getArgOperand(1);
         continue;
