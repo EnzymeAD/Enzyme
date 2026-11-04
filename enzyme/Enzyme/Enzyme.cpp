@@ -2094,11 +2094,15 @@ public:
     MapVector<CallInst *, DerivativeMode> toLower;
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
-    SmallVector<CallInst *, 4> toBatch;
-    SmallVector<CallInst *, 4> toTruncateFuncMem;
-    SmallVector<CallInst *, 4> toTruncateFuncOp;
-    SmallVector<CallInst *, 4> toTruncateValue;
-    SmallVector<CallInst *, 4> toExpandValue;
+    // Splitting a select-based call target below restarts the scan from
+    // `retry`, which revisits every call already recorded; sets keep each
+    // request lowered exactly once rather than touching a call that an
+    // earlier lowering of the same entry has erased.
+    SetVector<CallInst *> toBatch;
+    SetVector<CallInst *> toTruncateFuncMem;
+    SetVector<CallInst *> toTruncateFuncOp;
+    SetVector<CallInst *> toTruncateValue;
+    SetVector<CallInst *> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2480,15 +2484,15 @@ public:
           else if (sizeOnly)
             toSize[CI] = derivativeMode;
           else if (batch)
-            toBatch.push_back(CI);
+            toBatch.insert(CI);
           else if (truncateFuncOp)
-            toTruncateFuncOp.push_back(CI);
+            toTruncateFuncOp.insert(CI);
           else if (truncateFuncMem)
-            toTruncateFuncMem.push_back(CI);
+            toTruncateFuncMem.insert(CI);
           else if (truncateValue)
-            toTruncateValue.push_back(CI);
+            toTruncateValue.insert(CI);
           else if (expandValue)
-            toExpandValue.push_back(CI);
+            toExpandValue.insert(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
           } else
