@@ -4,7 +4,7 @@ on:
   # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
     branches:
-    - main
+      - main
     paths: &paths
       - '.github/workflows/enzyme-mlir.yml'
       - 'enzyme/**'
