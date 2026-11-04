@@ -146,3 +146,45 @@ jobs:
         . ../spack/share/spack/setup-env.sh
         spack load openmpi
         ninja check-enzyme-fortran
+  build-and-test-fortran-lfortran:
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.llvm}}
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [Release, Debug]
+        os: [ubuntu-26.04]
+        compiler: [lfortran]
+        # The conda-forge lfortran 0.68.0 package is built against LLVM 21
+        llvm: [21]
+    timeout-minutes: 60
+    steps:
+    - name: add llvm without clang and flang
+      run: |
+        set -eo pipefail
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm-snapshot.gpg
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip openmpi-bin libopenmpi-dev
+        sudo python3 -m pip install --upgrade pip lit
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
+    - name: install lfortran 0.68.0 via conda
+      run: |
+        curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
+        export MAMBA_ROOT_PREFIX=$PWD/micromamba
+        ./bin/micromamba create -y -n lfortran -c conda-forge lfortran=0.68.0
+        echo "$MAMBA_ROOT_PREFIX/envs/lfortran/bin" >> $GITHUB_PATH
+    - name: generate build system
+      run: |
+        rm -rf build && mkdir build && cd build
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}
+    - name: build enzyme
+      working-directory: 'build'
+      run: |
+        ninja LLVMEnzyme-${{ matrix.llvm }} EnzymeFortran
+    - name: run Fortran tests
+      working-directory: 'build'
+      run: |
+        ninja check-enzyme-fortran
