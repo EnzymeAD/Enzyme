@@ -50,6 +50,7 @@ namespace flags {
 // Profiling.
 extern llvm::cl::opt<bool> ProfileGenerate;
 extern llvm::cl::opt<std::string> ProfileUse;
+extern llvm::cl::list<std::string> OutputProfiles;
 extern llvm::cl::opt<std::string> Kernels;
 extern llvm::cl::opt<double> MinCostShare;
 extern llvm::cl::opt<bool> LooseCoverage;

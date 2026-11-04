@@ -6,6 +6,9 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-1 -poseidon-print -poseidon-split-calls=pow -poseidon-cache=%t/herbie -S -o %t/herbie.ll 2> %t/herbie.err
 ; RUN: FileCheck --check-prefix=HERBIE-CORE %s < %t/herbie.err
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/Inputs/pow_term/out0,%S/Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
+; RUN: FileCheck --check-prefix=PO %s < %t/po.err
+; RUN: not --crash %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
 ; REQUIRES: poseidon
 
 ; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
@@ -32,9 +35,15 @@
 ; |gradient x value| is at least 1e-6 of the site's largest: the r1 chain, about
 ; 1e-29 of r2, is lifted (5 of 8 instructions).
 ;
+; -poseidon-output-profiles reads one profile per output, each recorded with that
+; output seeded alone, and weights each instruction by the largest of its
+; gradients divided by that output's total sensitivity. Each output's chain is
+; then within 1e-6 of its own output, and no instruction is lifted.
+;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
 ; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
+; out0, out1: the same binary run as `driver 0` and `driver 1`.
 
 define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
 entry:
@@ -93,3 +102,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; HERBIE-LABEL: define void @preprocess_tester(
 ; HERBIE: %l = tail call double @llvm.log.f64(double %T)
 ; HERBIE-NEXT: %herbie.pow = tail call double @llvm.pow.f64(double %T, double -1.620000e+00)
+
+; PO: [poseidon] preprocess_tester: accuracy weighted per output (2 output profiles)
+; PO-NOT: sensitivity floor raised
+; PO: Initial AccuracyCost: 2.600950e-17
+
+; PO-MISSING: LLVM ERROR: Poseidon: output profile {{.*}}none/preprocess_tester.fpprofile of preprocess_tester is missing or carries no sensitivity

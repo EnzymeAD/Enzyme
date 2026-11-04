@@ -773,6 +773,10 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       llvm::errs() << "Warning: No profile data found in " << profilePath
                    << "\n";
     }
+    if (!flags::OutputProfiles.empty())
+      mergeOutputProfiles(profileMap, flags::OutputProfiles,
+                          siteProfileStem(F) + ".fpprofile", canonicalHash,
+                          F.getName());
     // Before the floor below, which would hide the exact zeros.
     if (flags::AggressiveDCE)
       for (const auto &kv : profileMap) {
@@ -1691,6 +1695,15 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     double siteSumSens = 0.0;
     for (const auto &kv : profileMap)
       siteSumSens += kv.second.sumSens;
+    // Per-output weights are already divided by each output's own total.
+    if (!flags::OutputProfiles.empty()) {
+      if (profileHeader.hasKappa)
+        report_fatal_error(
+            Twine("Poseidon: the profile of ") + F.getName() +
+            " carries a measured condition number, which scales one site-wide "
+            "error; it cannot be combined with -poseidon-output-profiles.");
+      siteSumSens = 1.0;
+    }
 
     double factor = 1.0;
     if (profileHeader.hasKappa) {

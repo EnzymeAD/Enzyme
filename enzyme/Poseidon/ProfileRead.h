@@ -15,6 +15,7 @@
 #ifndef POSEIDON_PROFILE_READ_H
 #define POSEIDON_PROFILE_READ_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
@@ -104,6 +105,18 @@ void parseProfileFile(const std::string &profilePath,
 unsigned
 applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
                       llvm::StringRef functionName);
+
+// Per-output accounting (-poseidon-output-profiles). Each directory holds this
+// site's profile recorded with one output seeded alone. An output's modelled
+// error is its first-order error over its own total sensitivity, so every
+// instruction is weighted by the largest of its per-output gradients, each
+// divided by that output's total; summed over a site this bounds the worst
+// output's error, and the site's accuracy scale is 1.
+void mergeOutputProfiles(std::unordered_map<size_t, ProfileInfo> &profileMap,
+                         llvm::ArrayRef<std::string> dirs,
+                         llvm::StringRef fileName,
+                         llvm::StringRef canonicalHash,
+                         llvm::StringRef functionName);
 
 size_t readProfIdxMetadata(const llvm::Instruction *I);
 
