@@ -1,0 +1,64 @@
+; RUN: rm -rf %t && mkdir -p %t
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/base -S -o /dev/null 2> %t/base.err
+; RUN: FileCheck --check-prefix=BASE %s < %t/base.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/split -poseidon-split-calls=pow -S -o /dev/null 2> %t/split.err
+; RUN: FileCheck --check-prefix=SPLIT %s < %t/split.err
+; REQUIRES: poseidon
+
+; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
+; source has nine): pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T
+; also used by the second output.
+;
+; -poseidon-split-calls=pow gives the pow call its own FP subgraph with the
+; operations only it uses (the fma and the fneg; log T stays with its other
+; user), whatever -poseidon-min-uses-split/-poseidon-min-ops-split (99 here) say.
+;
+; profiles: this module through the host profiler (opt
+; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
+; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
+
+define void @tester(double %T, double %y, ptr %o1, ptr %o2) #0 {
+entry:
+  %l = call double @llvm.log.f64(double %T)
+  %nl = fneg double %l
+  %e = call double @llvm.fma.f64(double %nl, double 1.790000e-02, double -1.484800e+00)
+  %p = call double @llvm.pow.f64(double %T, double %e)
+  %k = fmul double %p, 1.000000e-20
+  %r1 = fmul double %k, %y
+  %h = fmul double %nl, %y
+  %r2 = fadd double %h, %T
+  store double %r1, ptr %o1, align 8
+  store double %r2, ptr %o2, align 8
+  ret void
+}
+
+define void @site(double %T, double %y, ptr %o1, ptr %do1, ptr %o2, ptr %do2) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester, double %T, double %y, metadata !"enzyme_dup", ptr %o1, ptr %do1, metadata !"enzyme_dup", ptr %o2, ptr %do2)
+  ret void
+}
+
+declare double @llvm.log.f64(double)
+declare double @llvm.fma.f64(double, double, double)
+declare double @llvm.pow.f64(double, double)
+declare void @__poseidon_fp_optimize(ptr, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+; BASE: Found a subgraph with 8 operations and 2 inputs and 2 outputs
+; BASE-NOT: Bottleneck:
+; BASE: [poseidon] After splitting, have 1 subgraphs in preprocess_tester
+
+; SPLIT: Bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
+; SPLIT: === Splitting subgraph at bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
+; SPLIT-NEXT: New subgraph:
+; SPLIT: Operations (3):
+; SPLIT-NEXT: %p = call double @llvm.pow.f64
+; SPLIT-NEXT: %e = call double @llvm.fma.f64
+; SPLIT-NEXT: %nl = fneg double %l
+; SPLIT: Remaining subgraph:
+; SPLIT: Operations (5):
+; SPLIT-NEXT: %l = call double @llvm.log.f64(double %T)
+; SPLIT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
+; SPLIT: Initial AccuracyCost: 1.480006e-25
+; SPLIT: Initial AccuracyCost: 1.278977e-13

@@ -60,6 +60,7 @@
 #include "llvm/Support/Debug.h"
 
 #include "Flags.h"
+#include "Herbie.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -273,6 +274,8 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
   if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
     return false;
   }
+  const bool forced = isa<CallInst>(I) &&
+                      is_contained(flags::SplitCalls, getHerbieOperator(*I));
 
   unsigned internalUses = 0;
   for (auto *U : I->users()) {
@@ -283,7 +286,7 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  if (internalUses < flags::MinUsesSplit) {
+  if (!forced && internalUses < flags::MinUsesSplit) {
     return false;
   }
 
@@ -360,7 +363,7 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  bool isBottleneck = movedOps.size() >= flags::MinOpsSplit;
+  bool isBottleneck = forced || movedOps.size() >= flags::MinOpsSplit;
   if (flags::Print && isBottleneck) {
     llvm::errs() << "Bottleneck: " << *I << "\n";
     llvm::errs() << "Num of operations that would be moved: " << movedOps.size()
