@@ -9765,6 +9765,18 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     if (notForAnalysis.count(cur->getParent()))
       continue;
     if (isPointerArithmeticInst(cur)) {
+      if (auto *phiNode = dyn_cast<PHINode>(cur)) {
+        Loop *headerLoop = OrigLI->isLoopHeader(phiNode->getParent())
+                               ? OrigLI->getLoopFor(phiNode->getParent())
+                               : nullptr;
+        if (headerLoop && headerLoop->contains(V->getParent())) {
+          promotable = false;
+          shadowpromotable = false;
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                      *V, " due to loop-carried phi ", *cur);
+          break;
+        }
+      }
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
@@ -9833,6 +9845,26 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);
       if (isDeallocationFunction(funcName, TLI)) {
+        if (CI->arg_size() > 0) {
+          Value *canonicalAllocation = getBaseObject(V);
+          bool freesOtherObject = false;
+          for (Value *baseObject : getBaseObjects(CI->getArgOperand(0))) {
+            if (isa<UndefValue>(baseObject) ||
+                isa<ConstantPointerNull>(baseObject))
+              continue;
+            if (baseObject != canonicalAllocation) {
+              freesOtherObject = true;
+              break;
+            }
+          }
+          if (freesOtherObject) {
+            promotable = false;
+            shadowpromotable = false;
+            EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                        *V, " due to shared deallocation ", *cur);
+            break;
+          }
+        }
         frees.insert(CI);
         continue;
       }
@@ -10285,6 +10317,7 @@ void GradientUtils::computeGuaranteedFrees() {
     }
   }
 
+  SmallVector<CallInst *, 4> deallocationCalls;
   for (auto &BB : *oldFunc) {
     if (notForAnalysis.count(&BB))
       continue;
@@ -10298,25 +10331,8 @@ void GradientUtils::computeGuaranteedFrees() {
 
       StringRef funcName = getFuncNameFromCall(CI);
 
-      if (isDeallocationFunction(funcName, TLI)) {
-        llvm::Value *val = getBaseObject(CI->getArgOperand(0));
-
-        if (auto dc = dyn_cast<CallInst>(val)) {
-          StringRef sfuncName = getFuncNameFromCall(dc);
-          if (isAllocationFunction(sfuncName, TLI)) {
-
-            bool hasPDFree = false;
-            if (dc->getParent() == CI->getParent() ||
-                OrigPDT->dominates(CI->getParent(), dc->getParent())) {
-              hasPDFree = true;
-            }
-
-            if (hasPDFree) {
-              allocationsWithGuaranteedFree[dc].insert(CI);
-            }
-          }
-        }
-      }
+      if (isDeallocationFunction(funcName, TLI) && CI->arg_size() > 0)
+        deallocationCalls.push_back(CI);
       if (auto MD = CI->getMetadata("enzyme_cache_alloc")) {
         if (MD->getNumOperands() > 0) {
           Metadata *id = MD->getOperand(0);
@@ -10341,6 +10357,235 @@ void GradientUtils::computeGuaranteedFrees() {
             cast<PointerType>(CI->getType())->getAddressSpace() == 10) {
         }
       }
+    }
+  }
+
+  if (!deallocationCalls.empty()) {
+    DenseMap<CallInst *, SetVector<CallInst *>> deallocationInputs;
+    SmallPtrSet<CallInst *, 4> validDeallocations;
+    SetVector<CallInst *> candidateAllocations;
+
+    for (CallInst *deallocationCall : deallocationCalls) {
+      SmallVector<Value *, 4> worklist = {deallocationCall->getArgOperand(0)};
+      SmallPtrSet<Value *, 8> visitedValues;
+      SetVector<CallInst *> baseAllocations;
+      bool allInputsAreAllocations = true;
+
+      while (!worklist.empty()) {
+        Value *currentValue = getBaseObject(worklist.pop_back_val());
+        if (!visitedValues.insert(currentValue).second)
+          continue;
+        if (auto *phiNode = dyn_cast<PHINode>(currentValue)) {
+          if (notForAnalysis.count(phiNode->getParent()))
+            continue;
+          for (unsigned edgeIndex = 0,
+                        numEdges = phiNode->getNumIncomingValues();
+               edgeIndex < numEdges; ++edgeIndex) {
+            BasicBlock *incomingBlock = phiNode->getIncomingBlock(edgeIndex);
+            if (notForAnalysis.count(incomingBlock))
+              continue;
+            worklist.push_back(phiNode->getIncomingValue(edgeIndex));
+          }
+          continue;
+        }
+        if (isa<UndefValue>(currentValue) ||
+            isa<ConstantPointerNull>(currentValue))
+          continue;
+        auto *allocationCall = dyn_cast<CallInst>(currentValue);
+        if (!allocationCall ||
+            notForAnalysis.count(allocationCall->getParent()) ||
+            !isAllocationFunction(getFuncNameFromCall(allocationCall), TLI)) {
+          allInputsAreAllocations = false;
+          break;
+        }
+        baseAllocations.insert(allocationCall);
+      }
+
+      if (allInputsAreAllocations && !baseAllocations.empty()) {
+        for (CallInst *allocationCall : baseAllocations)
+          candidateAllocations.insert(allocationCall);
+        deallocationInputs[deallocationCall] = std::move(baseAllocations);
+        validDeallocations.insert(deallocationCall);
+      }
+    }
+
+    auto findGuaranteedFrees =
+        [&](CallInst *allocationCall,
+            const SmallPtrSetImpl<CallInst *> &allowedDeallocations,
+            SetVector<CallInst *> &matchedDeallocations) -> bool {
+      Value *canonicalAllocation = getBaseObject(allocationCall);
+      struct AliasState {
+        BasicBlock *block;
+        bool startsAfterAllocation;
+        SmallVector<Value *, 2> aliases;
+      };
+      SmallVector<AliasState, 8> states;
+      SmallVector<bool, 8> stateIsFreed;
+      SmallVector<SmallVector<size_t, 2>, 8> statePredecessors;
+      DenseMap<BasicBlock *, SmallVector<size_t, 2>> blockStates;
+
+      auto getOrCreateState =
+          [&](BasicBlock *block, bool startsAfterAllocation,
+              SmallVector<Value *, 2> aliases) -> std::optional<size_t> {
+        auto &indices = blockStates[block];
+        for (size_t index : indices) {
+          if (states[index].startsAfterAllocation == startsAfterAllocation &&
+              states[index].aliases == aliases)
+            return index;
+        }
+        if (states.size() >= 1024)
+          return std::nullopt;
+        size_t newIndex = states.size();
+        states.push_back({block, startsAfterAllocation, std::move(aliases)});
+        stateIsFreed.push_back(false);
+        statePredecessors.emplace_back();
+        indices.push_back(newIndex);
+        return newIndex;
+      };
+
+      getOrCreateState(allocationCall->getParent(),
+                       /*startsAfterAllocation=*/true, {canonicalAllocation});
+
+      for (size_t stateIndex = 0; stateIndex < states.size(); ++stateIndex) {
+        BasicBlock *currentBlock = states[stateIndex].block;
+        SmallVector<Value *, 2> currentAliases = states[stateIndex].aliases;
+        Instruction *startInstruction = states[stateIndex].startsAfterAllocation
+                                            ? allocationCall->getNextNode()
+                                            : getFirstNonPHI(currentBlock);
+
+        for (Instruction *instruction = startInstruction;
+             instruction != nullptr; instruction = instruction->getNextNode()) {
+          if (instruction == allocationCall) {
+            llvm::erase_if(currentAliases, [&](Value *alias) {
+              return alias == canonicalAllocation;
+            });
+            if (currentAliases.empty())
+              return false;
+          }
+          auto *callInst = dyn_cast<CallInst>(instruction);
+          if (!callInst || !allowedDeallocations.count(callInst))
+            continue;
+          Value *freedObject = getBaseObject(callInst->getArgOperand(0));
+          if (llvm::is_contained(currentAliases, freedObject)) {
+            matchedDeallocations.insert(callInst);
+            stateIsFreed[stateIndex] = true;
+            break;
+          }
+        }
+
+        if (stateIsFreed[stateIndex])
+          continue;
+
+        Instruction *terminator = currentBlock->getTerminator();
+        if (terminator->getNumSuccessors() == 0)
+          return false;
+
+        bool hasReachableSuccessor = false;
+        for (BasicBlock *successorBlock : successors(currentBlock)) {
+          if (notForAnalysis.count(successorBlock))
+            continue;
+          hasReachableSuccessor = true;
+
+          SmallVector<Value *, 2> nextAliases;
+          for (PHINode &phiNode : successorBlock->phis()) {
+            Value *incomingBase =
+                getBaseObject(phiNode.getIncomingValueForBlock(currentBlock));
+            if (llvm::is_contained(currentAliases, incomingBase))
+              nextAliases.push_back(getBaseObject(&phiNode));
+          }
+          for (Value *alias : currentAliases) {
+            auto *aliasInst = dyn_cast<Instruction>(alias);
+            if (!aliasInst)
+              continue;
+            BasicBlock *definitionBlock = aliasInst->getParent();
+            if (successorBlock != definitionBlock &&
+                OrigDT->dominates(definitionBlock, successorBlock))
+              nextAliases.push_back(alias);
+          }
+          llvm::sort(nextAliases);
+          nextAliases.erase(std::unique(nextAliases.begin(), nextAliases.end()),
+                            nextAliases.end());
+          if (nextAliases.empty())
+            return false;
+
+          std::optional<size_t> nextIndex =
+              getOrCreateState(successorBlock, /*startsAfterAllocation=*/false,
+                               std::move(nextAliases));
+          if (!nextIndex)
+            return false;
+          statePredecessors[*nextIndex].push_back(stateIndex);
+        }
+
+        if (!hasReachableSuccessor)
+          stateIsFreed[stateIndex] = true;
+      }
+
+      // Reject paths that can get trapped in a cycle without ever reaching a
+      // deallocation of this allocation.
+      SmallVector<bool, 8> canReachFree(states.size(), false);
+      SmallVector<size_t, 8> reverseWorklist;
+      for (size_t index = 0; index < states.size(); ++index) {
+        if (stateIsFreed[index]) {
+          canReachFree[index] = true;
+          reverseWorklist.push_back(index);
+        }
+      }
+      while (!reverseWorklist.empty()) {
+        size_t currentIndex = reverseWorklist.pop_back_val();
+        for (size_t predecessorIndex : statePredecessors[currentIndex]) {
+          if (!canReachFree[predecessorIndex]) {
+            canReachFree[predecessorIndex] = true;
+            reverseWorklist.push_back(predecessorIndex);
+          }
+        }
+      }
+      for (bool reachesFree : canReachFree) {
+        if (!reachesFree)
+          return false;
+      }
+      return !matchedDeallocations.empty();
+    };
+
+    // Shared deallocations (for example freeing a PHI of multiple allocations)
+    // can only be managed as guaranteed frees when every allocation reaching
+    // them also has a guaranteed free.
+    DenseMap<CallInst *, SetVector<CallInst *>> matchedByAllocation;
+    while (!validDeallocations.empty()) {
+      matchedByAllocation.clear();
+      for (CallInst *allocationCall : candidateAllocations) {
+        SetVector<CallInst *> matched;
+        if (findGuaranteedFrees(allocationCall, validDeallocations, matched))
+          matchedByAllocation[allocationCall] = std::move(matched);
+      }
+
+      bool removedDeallocation = false;
+      for (CallInst *deallocationCall : deallocationCalls) {
+        if (!validDeallocations.count(deallocationCall))
+          continue;
+        bool allInputsGuaranteed = true;
+        for (CallInst *allocationCall : deallocationInputs[deallocationCall]) {
+          auto found = matchedByAllocation.find(allocationCall);
+          if (found == matchedByAllocation.end() ||
+              !found->second.count(deallocationCall)) {
+            allInputsGuaranteed = false;
+            break;
+          }
+        }
+        if (!allInputsGuaranteed) {
+          validDeallocations.erase(deallocationCall);
+          removedDeallocation = true;
+        }
+      }
+      if (!removedDeallocation)
+        break;
+    }
+
+    for (CallInst *allocationCall : candidateAllocations) {
+      auto found = matchedByAllocation.find(allocationCall);
+      if (found == matchedByAllocation.end())
+        continue;
+      for (CallInst *deallocationCall : found->second)
+        allocationsWithGuaranteedFree[allocationCall].insert(deallocationCall);
     }
   }
   for (CallInst *V : allocsToPromote) {
