@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -2387,11 +2388,160 @@ static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
   return Builder2.CreateSelect(cmp, tval, fval, Name);
 }
 
+/// Populate `UndefLanes` with the fixed-vector lane indices of `PrimalValue`
+/// that are statically guaranteed to be `undef` or `poison`.
+static inline void
+getGuaranteedUndefVectorLanes(const llvm::Value *PrimalValue,
+                              llvm::SmallBitVector &UndefLanes,
+                              unsigned Depth = 0) {
+  auto *VectorValueType =
+      llvm::dyn_cast<llvm::FixedVectorType>(PrimalValue->getType());
+  if (!VectorValueType) {
+    UndefLanes.clear();
+    return;
+  }
+  unsigned ElementCount = VectorValueType->getNumElements();
+  UndefLanes.clear();
+  UndefLanes.resize(ElementCount, false);
+  if (Depth > 8)
+    return;
+
+  if (llvm::isa<llvm::UndefValue>(PrimalValue)) {
+    UndefLanes.set();
+    return;
+  }
+  if (const auto *ConstantValue = llvm::dyn_cast<llvm::Constant>(PrimalValue)) {
+    for (unsigned Index = 0; Index < ElementCount; ++Index) {
+      if (llvm::Value *Element = ConstantValue->getAggregateElement(Index)) {
+        if (llvm::isa<llvm::UndefValue>(Element))
+          UndefLanes.set(Index);
+      }
+    }
+    return;
+  }
+  if (const auto *InsertElement =
+          llvm::dyn_cast<llvm::InsertElementInst>(PrimalValue)) {
+    getGuaranteedUndefVectorLanes(InsertElement->getOperand(0), UndefLanes,
+                                  Depth + 1);
+    if (const auto *ConstantIndex =
+            llvm::dyn_cast<llvm::ConstantInt>(InsertElement->getOperand(2))) {
+      if (ConstantIndex->getValue().ult(ElementCount)) {
+        unsigned Lane = ConstantIndex->getZExtValue();
+        if (llvm::isa<llvm::UndefValue>(InsertElement->getOperand(1)))
+          UndefLanes.set(Lane);
+        else
+          UndefLanes.reset(Lane);
+      }
+    } else if (!llvm::isa<llvm::UndefValue>(InsertElement->getOperand(1))) {
+      UndefLanes.reset();
+    }
+    return;
+  }
+  if (const auto *Shuffle =
+          llvm::dyn_cast<llvm::ShuffleVectorInst>(PrimalValue)) {
+    auto *OperandVectorType = llvm::dyn_cast<llvm::FixedVectorType>(
+        Shuffle->getOperand(0)->getType());
+    if (!OperandVectorType)
+      return;
+    unsigned OperandElements = OperandVectorType->getNumElements();
+    llvm::SmallBitVector LeftUndefLanes;
+    llvm::SmallBitVector RightUndefLanes;
+    getGuaranteedUndefVectorLanes(Shuffle->getOperand(0), LeftUndefLanes,
+                                  Depth + 1);
+    getGuaranteedUndefVectorLanes(Shuffle->getOperand(1), RightUndefLanes,
+                                  Depth + 1);
+    llvm::ArrayRef<int> Mask = Shuffle->getShuffleMask();
+    for (unsigned Index = 0; Index < ElementCount; ++Index) {
+      int MaskIndex = Mask[Index];
+      if (MaskIndex < 0) {
+        UndefLanes.set(Index);
+      } else if (static_cast<unsigned>(MaskIndex) < OperandElements) {
+        if (LeftUndefLanes.test(static_cast<unsigned>(MaskIndex)))
+          UndefLanes.set(Index);
+      } else if (static_cast<unsigned>(MaskIndex) - OperandElements <
+                 OperandElements) {
+        if (RightUndefLanes.test(static_cast<unsigned>(MaskIndex) -
+                                 OperandElements))
+          UndefLanes.set(Index);
+      }
+    }
+    return;
+  }
+  if (const auto *UnaryOperation =
+          llvm::dyn_cast<llvm::UnaryOperator>(PrimalValue)) {
+    if (UnaryOperation->getOpcode() == llvm::Instruction::FNeg)
+      getGuaranteedUndefVectorLanes(UnaryOperation->getOperand(0), UndefLanes,
+                                    Depth + 1);
+    return;
+  }
+  if (const auto *BinaryOperation =
+          llvm::dyn_cast<llvm::BinaryOperator>(PrimalValue)) {
+    switch (BinaryOperation->getOpcode()) {
+    case llvm::Instruction::FAdd:
+    case llvm::Instruction::FSub:
+    case llvm::Instruction::FMul:
+    case llvm::Instruction::FDiv:
+    case llvm::Instruction::FRem: {
+      llvm::SmallBitVector LeftUndefLanes;
+      llvm::SmallBitVector RightUndefLanes;
+      getGuaranteedUndefVectorLanes(BinaryOperation->getOperand(0),
+                                    LeftUndefLanes, Depth + 1);
+      getGuaranteedUndefVectorLanes(BinaryOperation->getOperand(1),
+                                    RightUndefLanes, Depth + 1);
+      UndefLanes = LeftUndefLanes;
+      UndefLanes |= RightUndefLanes;
+      return;
+    }
+    default:
+      return;
+    }
+  }
+  if (const auto *BitCast = llvm::dyn_cast<llvm::BitCastInst>(PrimalValue)) {
+    if (auto *SourceVectorType = llvm::dyn_cast<llvm::FixedVectorType>(
+            BitCast->getOperand(0)->getType())) {
+      if (SourceVectorType->getNumElements() == ElementCount)
+        getGuaranteedUndefVectorLanes(BitCast->getOperand(0), UndefLanes,
+                                      Depth + 1);
+    }
+    return;
+  }
+}
+
+/// Replace any fixed-vector lanes of `Differential` whose corresponding lanes
+/// in `PrimalSource` are guaranteed `undef` or `poison` with zero.
+static inline llvm::Value *
+maskUndefVectorLanes(llvm::IRBuilder<> &Builder, llvm::Value *Differential,
+                     const llvm::Value *PrimalSource) {
+  if (Differential->getType() != PrimalSource->getType())
+    return Differential;
+  auto *VectorValueType =
+      llvm::dyn_cast<llvm::FixedVectorType>(Differential->getType());
+  if (!VectorValueType)
+    return Differential;
+  llvm::SmallBitVector UndefLanes;
+  getGuaranteedUndefVectorLanes(PrimalSource, UndefLanes);
+  if (UndefLanes.none())
+    return Differential;
+  if (UndefLanes.all())
+    return llvm::Constant::getNullValue(VectorValueType);
+  unsigned ElementCount = VectorValueType->getNumElements();
+  llvm::SmallVector<int> ShuffleMask;
+  ShuffleMask.reserve(ElementCount);
+  for (unsigned Index = 0; Index < ElementCount; ++Index) {
+    ShuffleMask.push_back(UndefLanes.test(Index)
+                              ? static_cast<int>(ElementCount + Index)
+                              : static_cast<int>(Index));
+  }
+  return Builder.CreateShuffleVector(
+      Differential, llvm::Constant::getNullValue(VectorValueType), ShuffleMask);
+}
+
 static inline llvm::Value *checkedMul(bool strongZero,
                                       llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
+  res = maskUndefVectorLanes(Builder2, res, pres);
   if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
     if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
@@ -2406,6 +2556,7 @@ static inline llvm::Value *checkedDiv(bool strongZero,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
+  res = maskUndefVectorLanes(Builder2, res, pres);
   if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
     if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
