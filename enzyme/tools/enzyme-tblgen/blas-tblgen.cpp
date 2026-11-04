@@ -1752,6 +1752,327 @@ void emit_if_rule_condition(const TGPattern &pattern, const DagInit *ruleDag,
   os << ") {\n";
 }
 
+/// Emit forward-mode accumulation of `d_beta * C` into `d_C` across all active
+/// columns or rows of a general or triangular BLAS matrix via unit-stride
+/// `axpy` calls inside an always-inlined internal helper function.
+static void emitMatrixAxpy(bool forward, const DagInit *ruleDag,
+                           const TGPattern &pattern, ssize_t activeArg,
+                           raw_ostream &os, const StringMap<Twine> &vars) {
+  assert(forward && "MatrixAxpy is only supported in forward mode");
+  if (ruleDag->getNumArgs() != 7)
+    PrintFatalError(pattern.getLoc(), "MatrixAxpy expects 7 arguments");
+
+  const Record *operatorDef = cast<DefInit>(ruleDag->getOperator())->getDef();
+  const bool isGeneral = operatorDef->getValueAsBit("isGeneral");
+
+  emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
+  os << "        {\n";
+  for (size_t i = 0; i < 7; i++) {
+    os << "        SmallVector<Value *, 2> matrixAxpyArg_" << i << ";\n";
+    os << "        for (auto item : ";
+    rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+    os << ") matrixAxpyArg_" << i << ".push_back(item);\n";
+  }
+
+  os << "        const auto invertedBundles = "
+        "gutils->getInvertedBundles(&call, {"
+     << ValueType_helper(pattern, activeArg, ruleDag)
+     << "}, Builder2, /* lookup */ false);\n";
+
+  os << "        Value *isRowMajorValue = cblas\n"
+     << "            ? Builder2.CreateICmpEQ(\n"
+     << "                  matrixAxpyArg_0[0],\n"
+     << "                  ConstantInt::get(matrixAxpyArg_0[0]->getType(), "
+        "101))\n"
+     << "            : Builder2.getFalse();\n";
+  if (isGeneral) {
+    os << "        Value *rowValue = load_if_ref(Builder2, intType, "
+          "matrixAxpyArg_1[0], byRef);\n";
+    os << "        Value *columnValue = load_if_ref(Builder2, intType, "
+          "matrixAxpyArg_2[0], byRef);\n";
+  } else {
+    os << "        Value *columnValue = load_if_ref(Builder2, intType, "
+          "matrixAxpyArg_2[0], byRef);\n";
+    os << "        Value *rowValue = columnValue;\n";
+    os << "        Value *isLowerValue = is_lower(Builder2, "
+          "matrixAxpyArg_1[0], "
+          "byRef, cublas);\n";
+  }
+  os << "        IntegerType *matrixIntType = "
+        "cast<IntegerType>(columnValue->getType());\n";
+  if (isGeneral) {
+    os << "        if (rowValue->getType() != matrixIntType)\n"
+       << "          rowValue = Builder2.CreateZExtOrTrunc(rowValue, "
+          "matrixIntType);\n";
+  }
+  os << "        Value *scaleValue = matrixAxpyArg_3[0];\n";
+  os << "        Value *sourceMatrix = matrixAxpyArg_4[0];\n";
+  os << "        Value *sourceStride = load_if_ref(Builder2, intType, "
+        "matrixAxpyArg_5[0], byRef);\n";
+  os << "        if (sourceStride->getType() != matrixIntType)\n"
+     << "          sourceStride = "
+        "Builder2.CreateZExtOrTrunc(sourceStride, matrixIntType);\n";
+  os << "        Value *destinationMatrix = matrixAxpyArg_6[0];\n";
+  os << "        Value *destinationStride = load_if_ref(Builder2, intType, "
+        "matrixAxpyArg_6[1], byRef);\n";
+  os << "        if (destinationStride->getType() != matrixIntType)\n"
+     << "          destinationStride = "
+        "Builder2.CreateZExtOrTrunc(destinationStride, matrixIntType);\n";
+
+  os << "        SmallVector<Value *, 9> helperArguments;\n";
+  os << "        if (cublas)\n"
+     << "          helperArguments.push_back(arg_handle);\n";
+  os << "        helperArguments.push_back(isRowMajorValue);\n";
+  if (isGeneral)
+    os << "        helperArguments.push_back(rowValue);\n";
+  else
+    os << "        helperArguments.push_back(isLowerValue);\n";
+  os << "        helperArguments.push_back(columnValue);\n";
+  os << "        helperArguments.push_back(scaleValue);\n";
+  os << "        helperArguments.push_back(sourceMatrix);\n";
+  os << "        helperArguments.push_back(sourceStride);\n";
+  os << "        helperArguments.push_back(destinationMatrix);\n";
+  os << "        helperArguments.push_back(destinationStride);\n";
+
+  os << "        SmallVector<Type *, 9> helperParameterTypes;\n";
+  os << "        for (Value *helperArgument : helperArguments)\n"
+     << "          "
+        "helperParameterTypes.push_back(helperArgument->getType());\n";
+
+  os << "        Module &parentModule = *gutils->oldFunc->getParent();\n";
+  os << "        std::string axpyBaseName = blas.prefix + blas.floatType + "
+        "\"axpy\" + blas.suffix;\n";
+  os << "        std::string axpyCalleeName = "
+        "getRenamedPerCallingConv(called->getName(), axpyBaseName);\n";
+  os << "        std::string helperFunctionName = "
+        "std::string(\"__enzyme_matrix_axpy_\") + \""
+     << (isGeneral ? "general_" : "triangular_")
+     << "\" + (byRef ? \"byref_\" : \"byval_\") + (cublas ? \"cublas_\" : \"\")"
+        " + blas.floatType + \"_\" + axpyCalleeName;\n";
+  os << "        {\n"
+     << "          llvm::raw_string_ostream nameStream(helperFunctionName);\n"
+     << "          nameStream << \"_\";\n"
+     << "          blasIntType->print(nameStream);\n"
+     << "          for (Type *parameterType : helperParameterTypes) {\n"
+     << "            nameStream << \"_\";\n"
+     << "            parameterType->print(nameStream);\n"
+     << "          }\n"
+     << "        }\n";
+  os << "        FunctionType *helperFunctionType = FunctionType::get("
+        "Builder2.getVoidTy(), helperParameterTypes, false);\n";
+  os << "        Function *helperFunction = cast<Function>("
+        "parentModule.getOrInsertFunction(helperFunctionName, "
+        "helperFunctionType).getCallee());\n";
+  os << "        if (helperFunction->empty()) {\n";
+  os << "          auto argumentIterator = helperFunction->arg_begin();\n";
+  os << "          Argument *handleArgument = nullptr;\n";
+  os << "          if (cublas) {\n"
+     << "            handleArgument = &*argumentIterator++;\n"
+     << "            handleArgument->setName(\"handle\");\n"
+     << "          }\n";
+  os << "          Argument *isRowMajorArgument = &*argumentIterator++;\n"
+     << "          isRowMajorArgument->setName(\"is_row_major\");\n";
+  if (isGeneral) {
+    os << "          Argument *rowArgument = &*argumentIterator++;\n"
+       << "          rowArgument->setName(\"rows\");\n";
+  } else {
+    os << "          Argument *isLowerArgument = &*argumentIterator++;\n"
+       << "          isLowerArgument->setName(\"is_lower\");\n";
+  }
+  os << "          Argument *columnArgument = &*argumentIterator++;\n"
+     << "          columnArgument->setName(\"columns\");\n";
+  if (!isGeneral)
+    os << "          Argument *rowArgument = columnArgument;\n";
+  os << "          unsigned scaleParameterIndex = argumentIterator - "
+        "helperFunction->arg_begin();\n"
+     << "          Argument *scaleArgument = &*argumentIterator++;\n"
+     << "          scaleArgument->setName(\"scale\");\n"
+     << "          unsigned sourceParameterIndex = argumentIterator - "
+        "helperFunction->arg_begin();\n"
+     << "          Argument *sourceArgument = &*argumentIterator++;\n"
+     << "          sourceArgument->setName(\"source\");\n"
+     << "          Argument *sourceStrideArgument = &*argumentIterator++;\n"
+     << "          sourceStrideArgument->setName(\"source_stride\");\n"
+     << "          unsigned destinationParameterIndex = argumentIterator - "
+        "helperFunction->arg_begin();\n"
+     << "          Argument *destinationArgument = &*argumentIterator++;\n"
+     << "          destinationArgument->setName(\"destination\");\n"
+     << "          Argument *destinationStrideArgument = "
+        "&*argumentIterator++;\n"
+     << "          "
+        "destinationStrideArgument->setName(\"destination_stride\");\n";
+
+  os << "          helperFunction->setLinkage("
+        "Function::LinkageTypes::InternalLinkage);\n"
+     << "#if LLVM_VERSION_MAJOR >= 16\n"
+     << "          helperFunction->setOnlyAccessesArgMemory();\n"
+     << "#else\n"
+     << "          helperFunction->addFnAttr(Attribute::ArgMemOnly);\n"
+     << "#endif\n"
+     << "          helperFunction->addFnAttr(Attribute::NoUnwind);\n"
+     << "          helperFunction->addFnAttr(Attribute::AlwaysInline);\n"
+     << "          if (byRefFloat && scaleArgument->getType()->isPointerTy()) "
+        "{\n"
+     << "            addFunctionNoCapture(helperFunction, "
+        "scaleParameterIndex);\n"
+     << "            helperFunction->addParamAttr(scaleParameterIndex, "
+        "Attribute::ReadOnly);\n"
+     << "          }\n"
+     << "          if (sourceArgument->getType()->isPointerTy()) {\n"
+     << "            addFunctionNoCapture(helperFunction, "
+        "sourceParameterIndex);\n"
+     << "            helperFunction->addParamAttr(sourceParameterIndex, "
+        "Attribute::ReadOnly);\n"
+     << "          }\n"
+     << "          if (destinationArgument->getType()->isPointerTy())\n"
+     << "            addFunctionNoCapture(helperFunction, "
+        "destinationParameterIndex);\n";
+
+  os << "          BasicBlock *entryBlock = BasicBlock::Create("
+        "parentModule.getContext(), \"entry\", helperFunction);\n"
+     << "          BasicBlock *loopBlock = BasicBlock::Create("
+        "parentModule.getContext(), \"for.body\", helperFunction);\n"
+     << "          BasicBlock *endBlock = BasicBlock::Create("
+        "parentModule.getContext(), \"for.end\", helperFunction);\n";
+
+  os << "          IRBuilder<> entryBuilder(entryBlock);\n"
+     << "          Value *zeroValue = ConstantInt::get(matrixIntType, 0);\n"
+     << "          Value *oneValue = ConstantInt::get(matrixIntType, 1);\n"
+     << "          Value *lengthAlloca = nullptr;\n"
+     << "          Value *blasLength = nullptr;\n"
+     << "          Value *blasOneValue = oneValue;\n"
+     << "          if (byRef) {\n"
+     << "            lengthAlloca = entryBuilder.CreateAlloca("
+        "matrixIntType, nullptr, \"byref.axpy.n\");\n"
+     << "            blasLength = lengthAlloca;\n"
+     << "            if (blasIntType->isIntegerTy())\n"
+     << "              blasLength = entryBuilder.CreatePtrToInt("
+        "blasLength, blasIntType);\n"
+     << "            else if (blasLength->getType() != blasIntType)\n"
+     << "              blasLength = entryBuilder.CreatePointerCast("
+        "blasLength, blasIntType);\n"
+     << "            Value *oneAlloca = entryBuilder.CreateAlloca("
+        "matrixIntType, nullptr, \"byref.axpy.one\");\n"
+     << "            entryBuilder.CreateStore(oneValue, oneAlloca);\n"
+     << "            blasOneValue = oneAlloca;\n"
+     << "            if (blasIntType->isIntegerTy())\n"
+     << "              blasOneValue = entryBuilder.CreatePtrToInt("
+        "blasOneValue, blasIntType);\n"
+     << "            else if (blasOneValue->getType() != blasIntType)\n"
+     << "              blasOneValue = entryBuilder.CreatePointerCast("
+        "blasOneValue, blasIntType);\n"
+     << "          }\n";
+
+  if (isGeneral) {
+    os << "          Value *outerLimit = CreateSelect("
+          "entryBuilder, isRowMajorArgument, rowArgument, columnArgument);\n"
+       << "          Value *fullLength = CreateSelect("
+          "entryBuilder, isRowMajorArgument, columnArgument, rowArgument);\n"
+       << "          Value *rowNonPositive = entryBuilder.CreateICmpSLE("
+          "rowArgument, zeroValue);\n"
+       << "          Value *columnNonPositive = entryBuilder.CreateICmpSLE("
+          "columnArgument, zeroValue);\n"
+       << "          Value *emptyMatrix = entryBuilder.CreateOr("
+          "rowNonPositive, columnNonPositive);\n";
+  } else {
+    os << "          Value *outerLimit = columnArgument;\n"
+       << "          Value *startsAtDiagonal = entryBuilder.CreateXor("
+          "isLowerArgument, isRowMajorArgument);\n"
+       << "          Value *emptyMatrix = entryBuilder.CreateICmpSLE("
+          "columnArgument, zeroValue);\n";
+  }
+  os << "          entryBuilder.CreateCondBr("
+        "emptyMatrix, endBlock, loopBlock);\n";
+
+  os << "          IRBuilder<> loopBuilder(loopBlock);\n"
+     << "          PHINode *loopIndex = loopBuilder.CreatePHI("
+        "matrixIntType, 2, \"index\");\n"
+     << "          loopIndex->addIncoming(zeroValue, entryBlock);\n"
+     << "          Value *nextIndex = loopBuilder.CreateAdd("
+        "loopIndex, oneValue, \"index.next\", true, true);\n"
+     << "          loopIndex->addIncoming(nextIndex, loopBlock);\n";
+
+  if (isGeneral) {
+    os << "          Value *vectorLength = fullLength;\n";
+  } else {
+    os << "          Value *remainingLength = loopBuilder.CreateSub("
+          "columnArgument, loopIndex);\n"
+       << "          Value *vectorLength = CreateSelect("
+          "loopBuilder, startsAtDiagonal, remainingLength, nextIndex);\n"
+       << "          Value *extraShift = CreateSelect("
+          "loopBuilder, startsAtDiagonal, loopIndex, zeroValue);\n";
+  }
+
+  os << "          if (byRef)\n"
+     << "            loopBuilder.CreateStore(vectorLength, lengthAlloca);\n"
+     << "          else\n"
+     << "            blasLength = vectorLength;\n";
+
+  os << "          Value *sourceBaseOffset = loopBuilder.CreateMul("
+        "loopIndex, sourceStrideArgument);\n";
+  if (isGeneral) {
+    os << "          Value *sourceOffset = sourceBaseOffset;\n";
+  } else {
+    os << "          Value *sourceOffset = loopBuilder.CreateAdd("
+          "sourceBaseOffset, extraShift);\n";
+  }
+  os << "          Value *sourcePointer = lookup_with_layout("
+        "loopBuilder, fpType, nullptr, sourceArgument, oneValue, sourceOffset, "
+        "nullptr);\n";
+
+  os << "          Value *destinationBaseOffset = loopBuilder.CreateMul("
+        "loopIndex, destinationStrideArgument);\n";
+  if (isGeneral) {
+    os << "          Value *destinationOffset = destinationBaseOffset;\n";
+  } else {
+    os << "          Value *destinationOffset = loopBuilder.CreateAdd("
+          "destinationBaseOffset, extraShift);\n";
+  }
+  os << "          Value *destinationPointer = lookup_with_layout("
+        "loopBuilder, fpType, nullptr, destinationArgument, oneValue, "
+        "destinationOffset, nullptr);\n";
+
+  os << "          SmallVector<Value *, 7> axpyArguments;\n"
+     << "          if (cublas)\n"
+     << "            axpyArguments.push_back(handleArgument);\n"
+     << "          axpyArguments.push_back(blasLength);\n"
+     << "          axpyArguments.push_back(scaleArgument);\n"
+     << "          axpyArguments.push_back(sourcePointer);\n"
+     << "          axpyArguments.push_back(blasOneValue);\n"
+     << "          axpyArguments.push_back(destinationPointer);\n"
+     << "          axpyArguments.push_back(blasOneValue);\n"
+     << "          SmallVector<Type *, 7> axpyParameterTypes;\n"
+     << "          for (Value *axpyArgument : axpyArguments)\n"
+     << "            axpyParameterTypes.push_back(axpyArgument->getType());\n"
+     << "          Function *existingAxpy = "
+        "parentModule.getFunction(axpyCalleeName);\n"
+     << "          Type *axpyReturnType = existingAxpy ? "
+        "existingAxpy->getReturnType() : loopBuilder.getVoidTy();\n"
+     << "          FunctionType *axpyFunctionType = FunctionType::get("
+        "axpyReturnType, axpyParameterTypes, false);\n"
+     << "          FunctionCallee axpyCallee = "
+        "parentModule.getOrInsertFunction(axpyCalleeName, axpyFunctionType);\n"
+     << "          if (Function *axpyFunction = "
+        "dyn_cast<Function>(axpyCallee.getCallee())) {\n"
+     << "            axpyFunction->addFnAttr(\"enzyme_math\", axpyBaseName);\n"
+     << "            Constant *attributedAxpy = "
+        "attribute_axpy(blas, axpyFunction);\n"
+     << "            axpyCallee = FunctionCallee("
+        "axpyCallee.getFunctionType(), attributedAxpy);\n"
+     << "          }\n"
+     << "          loopBuilder.CreateCall(axpyCallee, axpyArguments);\n"
+     << "          Value *loopDone = loopBuilder.CreateICmpEQ("
+        "nextIndex, outerLimit);\n"
+     << "          loopBuilder.CreateCondBr(loopDone, endBlock, loopBlock);\n"
+     << "          IRBuilder<> endBuilder(endBlock);\n"
+     << "          endBuilder.CreateRetVoid();\n"
+     << "        }\n"
+     << "        Builder2.CreateCall(helperFunction, helperArguments, "
+        "invertedBundles);\n"
+     << "        }\n"
+     << "      }\n";
+}
+
 void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
               Twine argPrefix, raw_ostream &os, StringRef argName,
               ssize_t actArg, const TGPattern &pattern, bool runtimeChecked,
@@ -1934,6 +2255,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2", true, os);
     os << "        }\n";
+    return;
+  }
+  if (Def->isSubClassOf("MatrixAxpy")) {
+    emitMatrixAxpy(forward, ruleDag, pattern, actArg, os, vars);
     return;
   }
   if (Def->isSubClassOf("CopyLowerToUpper")) {

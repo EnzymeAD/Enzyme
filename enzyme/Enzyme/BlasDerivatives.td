@@ -162,6 +162,10 @@ class CopyLowerToUpper<string _tmp> {
   string unused = _tmp;
 }
 
+class MatrixAxpy<bit isGeneral_> {
+  bit isGeneral = isGeneral_;
+}
+
 class MemcpyMatAdd<bit _shouldZero> {
   bit shouldZero = _shouldZero;
 }
@@ -397,11 +401,11 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   ],
                   // FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
                   (Seq<[], ["beta1"], 1>
-                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
                     (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, (ld $A, $transa, $lda, $k, $m),          (Shadow $B),                        (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
                     (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, (Shadow $A),                                 $B, (ld $B, $transb, $ldb, $n, $k), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
                     (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, (Shadow $alpha), $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $n, $k), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
-                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>))
+                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)),
+                    (MatrixAxpy<1> $layout, $m, $n, (Shadow $beta), $C, (ld $C, Char<"N">, $ldc, $m, $m), (Shadow $C))
                   )
                   >;
 
@@ -494,11 +498,11 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                    ],
                   // FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
                   (Seq<[], ["beta1"], 1>
-                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
                     (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m),          (Shadow $B),                        (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
                     (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, (Shadow $A),                                 $B, (ld $B, Char<"N">, $ldb, $m, $m), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
                     (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, (Shadow $alpha), $A, (ld $A, (side_to_trans $side), $lda, $n, $m), $B, (ld $B, Char<"N">, $ldb, $m, $m), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
-                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>))
+                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)),
+                    (MatrixAxpy<1> $layout, $m, $n, (Shadow $beta), $C, (ld $C, Char<"N">, $ldc, $m, $m), (Shadow $C))
                   )
                   >;
 
@@ -625,10 +629,10 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   /* C     */ (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $n, (Shadow $C), Alloca<1>)
                   ],
                   (Seq<[], ["beta1"], 1>
-                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
                     (BlasCall<"syr2k"> $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, (Shadow $A), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
                     (BlasCall<"syrk"> $layout, $uplo, $trans, $n, $k, (Shadow $alpha), $A, $lda, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
-                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $n, (Shadow $C), Alloca<1>))
+                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $n, (Shadow $C), Alloca<1>)),
+                    (MatrixAxpy<0> $layout, $uplo, $n, (Shadow $beta), $C, (ld $C, Char<"N">, $ldc, $n, $n), (Shadow $C))
                   )
                   >;
 
