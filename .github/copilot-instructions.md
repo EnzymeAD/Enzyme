@@ -135,6 +135,12 @@ Detailed coding, comment, and review standards live under `.agents/skills/` (als
 Run the repository linters before submitting changes:
 
 ```bash
+# C++ AST coding standards via clang-tidy (requires clang-tidy >= 21 with --experimental-custom-checks
+# and an Enzyme build directory with compile_commands.json):
+python3 enzyme/scripts/run_clang_tidy.py -p enzyme/build --diff-base origin/main \
+  enzyme/Enzyme enzyme/tools
+
+# Non-AST checks (lit/FileCheck conventions, assertion messages, Doxygen ///, #include comments, ASCII):
 python3 enzyme/scripts/check_llvm_coding_standards.py --diff-base origin/main enzyme/Enzyme enzyme/BCLoad enzyme/tools enzyme/test
 python3 enzyme/scripts/check_mlir_coding_standards.py --diff-base origin/main enzyme/Enzyme/MLIR enzyme/test/MLIR
 python3 enzyme/scripts/check_llvm_api.py enzyme/Enzyme

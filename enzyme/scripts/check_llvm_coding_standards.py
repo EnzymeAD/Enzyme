@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Check C++, TableGen, and LLVM lit test files against LLVM coding standards.
+"""Check C++, TableGen, and LLVM lit test files for non-AST LLVM coding standards.
 
-This linter enforces statically checkable rules from:
-- `.agents/skills/llvm-coding-standards/`
-- `.agents/skills/llvm-comment-hygiene/`
-- `.agents/skills/llvm-style-review/`
+C++ AST-level LLVM checks are enforced via `clang-tidy` (`enzyme/.clang-tidy` and
+`enzyme/scripts/run_clang_tidy.py`). This linter enforces the 6 remaining
+text/preprocessor/lit-test checks that `clang-query` AST matchers cannot inspect
+(or that compile away under `-DNDEBUG`):
 
-Checks are split into two tiers:
-- Whole-tree checks (`whole_tree=True`): invariants that hold across the entire
-  codebase and are always enforced on all scanned files.
-- Diff-scoped checks (`whole_tree=False`): style, comment, and test-hygiene
-  rules enforced on added/modified lines when `--diff-base <rev>` is supplied,
-  or across all lines when `--all-checks` is passed.
+- Whole-tree checks (`whole_tree=True`):
+  1. `llvm-lit-stderr-devnull` (`.ll` files)
+- Diff-scoped checks (`whole_tree=False`):
+  2. `llvm-lit-pinned-ssa` (`.ll` files)
+  3. `llvm-assert-false` (`.cpp`/`.cc`/`.h`/`.hpp` raw macro text)
+  4. `llvm-assert-no-message` (`.cpp`/`.cc`/`.h`/`.hpp` raw macro text)
+  5. `llvm-include-comment` (`.cpp`/`.cc`/`.h`/`.hpp` `#include` trailing comment)
+  6. `llvm-non-ascii` (`.cpp`/`.cc`/`.h`/`.hpp`/`.td`/`.ll`)
 
 Suppress an intentional exception with `// NOLINT(<check>)` (or
 `; NOLINT(<check>)` in `.ll` files) on the flagged line, or
@@ -24,7 +26,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set
 
 CPP_SUFFIXES = (".cpp", ".cc", ".h", ".hpp")
 TD_SUFFIXES = (".td",)
@@ -142,80 +144,26 @@ def iter_files(roots: Iterable[str]) -> Iterable[str]:
 
 
 # ---------------------------------------------------------------------------
-# Regex definitions for LLVM C++, TableGen, and `.ll` checks
+# Regex definitions for non-AST LLVM C++, TableGen, and `.ll` checks
 # ---------------------------------------------------------------------------
 
-IOSTREAM_INCLUDE_RE = re.compile(r"^\s*#\s*include\s*<\s*iostream\s*>")
-IOSTREAM_SYMBOL_RE = re.compile(r"\bstd::(?:cout|cerr|clog|endl)\b")
-
-RTTI_EXCEPTIONS_RE = re.compile(
-    r"\bdynamic_cast\s*<|\bthrow\b|\btry\s*\{|\bcatch\s*\("
-)
-
-# Local variable, return type, or member of type Twine (never allowed; Twine is
-# valid ONLY as `const Twine &` in a function parameter list).
-TWINE_DECL_RE = re.compile(
-    r"^\s*(?:const\s+)?(?:llvm::)?Twine\s+[A-Za-z_]\w*\s*(?:=|\(|;|\{)"
-)
-
-STD_SORT_RE = re.compile(r"\bstd::sort\s*\(")
-
-VECTOR_BOOL_RE = re.compile(r"\bstd::vector\s*<\s*bool\s*(?:,|>)\s*")
-
-# `SmallVector<T, N> &` in function parameters instead of `SmallVectorImpl<T> &`
-# or `ArrayRef<T>`.
-SMALLVECTOR_PARAM_RE = re.compile(
-    r"(?:[(,]\s*)(?:const\s+)?(?:llvm::)?SmallVector\s*<[^<>]+,\s*\d+\s*>\s*&"
-)
-
-# `const std::string &` in function parameters instead of `StringRef`.
-CONST_STD_STRING_PARAM_RE = re.compile(
-    r"(?:[(,]\s*)const\s+std::string\s*&"
-)
+ASSERT_TOKEN_RE = re.compile(r"\bassert\s*\(")
 
 # `assert(false ...)` / `assert(0 ...)` instead of `llvm_unreachable(...)`.
-ASSERT_FALSE_RE = re.compile(
-    r"\bassert\s*\(\s*(?:false|0|!\"[^\"]*\")\b"
-)
+ASSERT_FALSE_RE = re.compile(r'\bassert\s*\(\s*(?:false|0|!"[^"]*")\b')
 
 # Single-line `assert(...)` call on raw text so string message literals remain visible.
 RAW_SINGLE_LINE_ASSERT_RE = re.compile(r"\bassert\s*\((.+)\)\s*;")
 
-PRAGMA_ONCE_RE = re.compile(r"^\s*#\s*pragma\s+once\b")
-
 # `#include` lines with trailing explanatory comments (allow IWYU, clang-format, NOLINT).
 INCLUDE_COMMENT_RE = re.compile(
-    r"^\s*#\s*include\s+[<\"][^>\"]+[>\"]\s*(//.*)$"
+    r'^\s*#\s*include\s+[<"][^>"]+[>"]\s*(//.*)$'
 )
 ALLOWED_INCLUDE_PRAGMA_RE = re.compile(
     r"^//\s*(?:IWYU\s+pragma:|clang-format\b|NOLINT\b)"
 )
 
-# Streaming `"\n"` to raw_ostream instead of `'\n'`.
-RAW_OSTREAM_DOUBLE_QUOTE_NL_RE = re.compile(
-    r"(?:\b(?:errs|outs|dbgs)\s*\(\s*\)|\bOS\b|\bos\b|\bss\b)[^\n;]*<<\s*\"\\n\""
-)
-
 NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
-
-# Anonymous namespace free function detection helpers.
-ANON_NS_OPEN_RE = re.compile(r"\bnamespace\s*\{")
-TYPE_BODY_OPEN_RE = re.compile(r"\b(?:class|struct|union|enum)\b[^;{}]*\{")
-FREE_FUNC_DEF_RE = re.compile(
-    r"^\s*(?:template\s*<[^>]+>\s*)?"
-    r"(?:(?:inline|constexpr)\s+)*"
-    r"(?!static\b|class\b|struct\b|union\b|enum\b|namespace\b|using\b|typedef\b|if\b|for\b|while\b|switch\b)"
-    r"[\w:]+(?:<[^;{}]+>)?[\s*&]+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{?\s*$"
-)
-
-# `else` immediately after an unconditional `return` / `break` / `continue` /
-# `llvm_unreachable` in the preceding `if` branch (excluding `if constexpr`).
-UNCONDITIONAL_EXIT_RE = re.compile(
-    r"^\s*(?:return\b|break\s*;|continue\s*;|llvm_unreachable\s*\()"
-)
-ELSE_AFTER_BRACE_RE = re.compile(r"^\s*\}\s*else\b")
-STANDALONE_ELSE_RE = re.compile(r"^\s*else\b")
-IF_HEADER_RE = re.compile(r"\bif\s*(constexpr\s*)?\(")
 
 # `.ll` lit test patterns.
 LL_RUN_LINE_RE = re.compile(r"^\s*;\s*RUN\s*:(.*)$")
@@ -227,69 +175,24 @@ LL_ATTR_GROUP_RE = re.compile(r"(?<=\s)#\d+\b")
 
 CHECK_SPECS: List[CheckSpec] = [
     CheckSpec(
-        "llvm-no-rtti-exceptions",
-        True,
-        "Do not use C++ RTTI (`dynamic_cast`) or exceptions (`try`/`catch`/`throw`); use `isa`/`cast`/`dyn_cast` and `llvm::Error`/`LogicalResult`.",
-    ),
-    CheckSpec(
-        "llvm-twine-local",
-        True,
-        "Never store `Twine` in a local variable or field (dangling temporary references); use `Twine` only as a `const Twine &` parameter.",
-    ),
-    CheckSpec(
-        "llvm-std-sort",
-        True,
-        "Use `llvm::sort(...)` instead of `std::sort(...)`.",
-    ),
-    CheckSpec(
         "llvm-lit-stderr-devnull",
         True,
         "Do not redirect stderr to `/dev/null` (`2>/dev/null`) on lit `RUN:` lines.",
     ),
     CheckSpec(
-        "llvm-no-iostream",
-        True,
-        "Do not use `<iostream>` (`std::cout`, `std::cerr`, `std::endl`); use `llvm/Support/raw_ostream.h` (`llvm::outs()`, `llvm::errs()`, `'\\n'`).",
-    ),
-    CheckSpec(
-        "llvm-vector-bool",
+        "llvm-lit-pinned-ssa",
         False,
-        "Do not use `std::vector<bool>`; use `llvm::BitVector` or `llvm::SmallBitVector`.",
-    ),
-    CheckSpec(
-        "llvm-smallvector-param",
-        False,
-        "Do not pin inline size `SmallVector<T, N> &` in function parameters; use `SmallVectorImpl<T> &` (mutating) or `ArrayRef<T>` (read-only).",
-    ),
-    CheckSpec(
-        "llvm-const-std-string-param",
-        False,
-        "Prefer `llvm::StringRef` (by value) over `const std::string &` in function parameters.",
+        "Avoid hardcoded numeric SSA values (`%0`, `%1`) or unstable attribute groups (`#0`) in LLVM IR `CHECK` lines.",
     ),
     CheckSpec(
         "llvm-assert-false",
         False,
-        "Use `llvm_unreachable(\"reason\")` instead of `assert(false ...)` / `assert(0 ...)`.",
+        'Use `llvm_unreachable("reason")` instead of `assert(false ...)` / `assert(0 ...)`.',
     ),
     CheckSpec(
         "llvm-assert-no-message",
         False,
-        "Include an explanatory message in assertions: `assert(Cond && \"explanation\")`.",
-    ),
-    CheckSpec(
-        "llvm-pragma-once",
-        False,
-        "Use standard `#ifndef ... #define ... #endif` header guards instead of `#pragma once`.",
-    ),
-    CheckSpec(
-        "llvm-else-after-return",
-        False,
-        "Do not use `else` or `else if` after an unconditional `return`, `break`, `continue`, or `llvm_unreachable`.",
-    ),
-    CheckSpec(
-        "llvm-anon-namespace-func",
-        False,
-        "Declare file-local free functions `static` outside anonymous namespaces; reserve `namespace { ... }` for `class`/`struct` types.",
+        'Include an explanatory message in assertions: `assert(Cond && "explanation")`.',
     ),
     CheckSpec(
         "llvm-include-comment",
@@ -297,44 +200,20 @@ CHECK_SPECS: List[CheckSpec] = [
         "Do not attach explanatory comments to `#include` lines (tool pragmas like `IWYU pragma` are allowed).",
     ),
     CheckSpec(
-        "llvm-ostream-string-newline",
-        False,
-        "Prefer `'\\n'` over `\"\\n\"` when streaming a single newline to `raw_ostream`.",
-    ),
-    CheckSpec(
         "llvm-non-ascii",
         False,
         "Keep source, comments, and tests ASCII-only (use `--` and `->`, never Unicode dashes or arrows).",
-    ),
-    CheckSpec(
-        "llvm-lit-pinned-ssa",
-        False,
-        "Avoid hardcoded numeric SSA values (`%0`, `%1`) or unstable attribute groups (`#0`) in LLVM IR `CHECK` lines.",
     ),
 ]
 
 SPEC_BY_NAME: Dict[str, CheckSpec] = {spec.name: spec for spec in CHECK_SPECS}
 
 
-def _find_matching_brace(clean: str, open_pos: int) -> int:
-    depth = 0
-    for pos in range(open_pos, len(clean)):
-        if clean[pos] == "{":
-            depth += 1
-        elif clean[pos] == "}":
-            depth -= 1
-            if depth == 0:
-                return pos
-    return len(clean) - 1
-
-
 def check_cpp_or_td(path: str, raw: str) -> List[Finding]:
     findings: List[Finding] = []
     raw_lines = raw.splitlines()
-    clean = strip_noise(raw)
-    clean_lines = clean.splitlines()
+    clean_lines = strip_noise(raw).splitlines()
     is_cpp = path.endswith(CPP_SUFFIXES)
-    is_header = path.endswith((".h", ".hpp"))
     norm_path = path.replace("\\", "/")
     is_lit_test_cpp = "/test/" in norm_path or norm_path.startswith("test/")
 
@@ -359,165 +238,35 @@ def check_cpp_or_td(path: str, raw: str) -> List[Finding]:
     if not is_cpp:
         return findings
 
-    # Compute anonymous-namespace top-level line numbers (inside `namespace { ... }`,
-    # at depth 1 of that namespace and NOT inside a nested `class`/`struct`).
-    anon_top_lines: Set[int] = set()
-    for m in ANON_NS_OPEN_RE.finditer(clean):
-        open_pos = m.end() - 1
-        close_pos = _find_matching_brace(clean, open_pos)
-        start_line = clean.count("\n", 0, open_pos)  # 0-based
-        end_line = clean.count("\n", 0, close_pos)
-        rel_depth = 0
-        for lno in range(start_line, end_line + 1):
-            line_segment = clean_lines[lno]
-            if lno == start_line:
-                brace_idx = line_segment.find("{")
-                if rel_depth == 1:
-                    anon_top_lines.add(lno)
-                for ch in line_segment[brace_idx:]:
-                    if ch == "{":
-                        rel_depth += 1
-                    elif ch == "}":
-                        rel_depth -= 1
-                continue
-            if rel_depth == 1:
-                anon_top_lines.add(lno)
-            for ch in line_segment:
-                if ch == "{":
-                    rel_depth += 1
-                elif ch == "}":
-                    rel_depth -= 1
-
     for idx, line in enumerate(clean_lines):
         rline = raw_lines[idx]
 
-        if IOSTREAM_INCLUDE_RE.search(line) or IOSTREAM_SYMBOL_RE.search(line):
-            if not is_lit_test_cpp:
-                add(idx, "llvm-no-iostream", SPEC_BY_NAME["llvm-no-iostream"].description)
-
-        if not is_lit_test_cpp and RTTI_EXCEPTIONS_RE.search(line):
-            add(
-                idx,
-                "llvm-no-rtti-exceptions",
-                SPEC_BY_NAME["llvm-no-rtti-exceptions"].description,
-            )
-
-        if TWINE_DECL_RE.search(line):
-            add(idx, "llvm-twine-local", SPEC_BY_NAME["llvm-twine-local"].description)
-
-        if not is_lit_test_cpp and STD_SORT_RE.search(line):
-            add(idx, "llvm-std-sort", SPEC_BY_NAME["llvm-std-sort"].description)
-
-        if VECTOR_BOOL_RE.search(line):
-            add(idx, "llvm-vector-bool", SPEC_BY_NAME["llvm-vector-bool"].description)
-
-        if SMALLVECTOR_PARAM_RE.search(line):
-            add(
-                idx,
-                "llvm-smallvector-param",
-                SPEC_BY_NAME["llvm-smallvector-param"].description,
-            )
-
-        if CONST_STD_STRING_PARAM_RE.search(line):
-            add(
-                idx,
-                "llvm-const-std-string-param",
-                SPEC_BY_NAME["llvm-const-std-string-param"].description,
-            )
-
-        if ASSERT_FALSE_RE.search(rline):
-            add(idx, "llvm-assert-false", SPEC_BY_NAME["llvm-assert-false"].description)
-        elif not is_lit_test_cpp:
-            m_assert = RAW_SINGLE_LINE_ASSERT_RE.search(rline)
-            if m_assert:
-                cond_text = m_assert.group(1)
-                if '"' not in cond_text:
-                    add(
-                        idx,
-                        "llvm-assert-no-message",
-                        SPEC_BY_NAME["llvm-assert-no-message"].description,
-                    )
-
-        if is_header and PRAGMA_ONCE_RE.search(line):
-            add(idx, "llvm-pragma-once", SPEC_BY_NAME["llvm-pragma-once"].description)
-
-        m_inc = INCLUDE_COMMENT_RE.match(rline)
-        if m_inc and not ALLOWED_INCLUDE_PRAGMA_RE.match(m_inc.group(1)):
-            add(
-                idx,
-                "llvm-include-comment",
-                SPEC_BY_NAME["llvm-include-comment"].description,
-            )
-
-        if RAW_OSTREAM_DOUBLE_QUOTE_NL_RE.search(rline):
-            add(
-                idx,
-                "llvm-ostream-string-newline",
-                SPEC_BY_NAME["llvm-ostream-string-newline"].description,
-            )
-
-        # `else` after unconditional `return`/`break`/`continue`/`llvm_unreachable`.
-        if ELSE_AFTER_BRACE_RE.match(line) and idx >= 2:
-            prev_stmt = clean_lines[idx - 1]
-            # If the line before `return` is an unbraced `if (...)` / `for (...)` / `while (...)`,
-            # then `return` is conditional, not unconditional for the enclosing `{ ... }` block!
-            prev_ctrl_re = re.compile(r"\b(?:if|for|while)\s*\([^;{}]*\)\s*$")
-            if UNCONDITIONAL_EXIT_RE.match(prev_stmt) and not prev_ctrl_re.search(
-                clean_lines[idx - 2]
-            ):
-                # Walk backwards from the `}` on `line` to find its matching `{`.
-                balance = 0
-                open_line: Optional[int] = None
-                close_col = line.find("}")
-                for lno in range(idx, -1, -1):
-                    seg = clean_lines[lno][: close_col + 1] if lno == idx else clean_lines[lno]
-                    for ch in reversed(seg):
-                        if ch == "}":
-                            balance += 1
-                        elif ch == "{":
-                            balance -= 1
-                            if balance == 0:
-                                open_line = lno
-                                break
-                    if open_line is not None:
-                        break
-                if open_line is not None:
-                    header_ctx = " ".join(
-                        clean_lines[max(0, open_line - 2) : open_line + 1]
-                    )
-                    m_if = IF_HEADER_RE.search(header_ctx)
-                    if m_if and not m_if.group(1):
+        if ASSERT_TOKEN_RE.search(line):
+            if ASSERT_FALSE_RE.search(rline):
+                add(
+                    idx,
+                    "llvm-assert-false",
+                    SPEC_BY_NAME["llvm-assert-false"].description,
+                )
+            elif not is_lit_test_cpp:
+                m_assert = RAW_SINGLE_LINE_ASSERT_RE.search(rline)
+                if m_assert:
+                    cond_text = m_assert.group(1)
+                    if '"' not in cond_text:
                         add(
                             idx,
-                            "llvm-else-after-return",
-                            SPEC_BY_NAME["llvm-else-after-return"].description,
+                            "llvm-assert-no-message",
+                            SPEC_BY_NAME["llvm-assert-no-message"].description,
                         )
-        elif STANDALONE_ELSE_RE.match(line) and idx >= 2:
-            if UNCONDITIONAL_EXIT_RE.match(clean_lines[idx - 1]):
-                m_if = IF_HEADER_RE.search(clean_lines[idx - 2])
-                if m_if and not m_if.group(1):
-                    add(
-                        idx,
-                        "llvm-else-after-return",
-                        SPEC_BY_NAME["llvm-else-after-return"].description,
-                    )
 
-        # Anonymous-namespace free function definition.
-        if idx in anon_top_lines and not TYPE_BODY_OPEN_RE.search(line):
-            m_fn = FREE_FUNC_DEF_RE.match(line)
-            if m_fn:
-                has_body = "{" in line or (
-                    idx + 1 < len(clean_lines)
-                    and "{" in clean_lines[idx + 1]
-                    and ";" not in clean_lines[idx + 1]
+        if line.lstrip().startswith("#"):
+            m_inc = INCLUDE_COMMENT_RE.match(rline)
+            if m_inc and not ALLOWED_INCLUDE_PRAGMA_RE.match(m_inc.group(1)):
+                add(
+                    idx,
+                    "llvm-include-comment",
+                    SPEC_BY_NAME["llvm-include-comment"].description,
                 )
-                if has_body:
-                    fn_name = m_fn.group(1)
-                    add(
-                        idx,
-                        "llvm-anon-namespace-func",
-                        f"Free function `{fn_name}` is inside `namespace {{ ... }}`; move it out and mark it `static`.",
-                    )
 
     return findings
 
@@ -586,7 +335,16 @@ def compute_changed_lines(diff_base: str, cwd: Optional[str] = None) -> Dict[str
         ["git", "rev-parse", "--show-toplevel"], cwd=cwd, text=True
     ).strip()
     diff_out = subprocess.check_output(
-        ["git", "diff", "--unified=0", "--no-color", diff_base],
+        [
+            "git",
+            "-c",
+            "diff.noprefix=false",
+            "diff",
+            "--no-ext-diff",
+            "--unified=0",
+            "--no-color",
+            diff_base,
+        ],
         cwd=top,
         text=True,
     )

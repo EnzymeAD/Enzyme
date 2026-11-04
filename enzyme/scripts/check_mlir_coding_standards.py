@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Check MLIR C++ and lit test files against MLIR coding standards.
+"""Check MLIR C++ and lit test files for non-AST MLIR coding standards.
 
-This linter enforces statically checkable rules from
-`.agents/skills/mlir-coding-standards/` across MLIR C++ sources (`.cpp`, `.cc`,
-`.h`, `.hpp`, `.inc`) and MLIR lit tests (`.mlir`).
+C++ AST-level MLIR checks are enforced via `clang-tidy`
+(`enzyme/Enzyme/MLIR/.clang-tidy`, `enzyme/Enzyme/MLIR/Passes/.clang-tidy`, and
+`enzyme/scripts/run_clang_tidy.py`). This linter enforces the 5 remaining
+comment-syntax and `.mlir` lit-test rules that `clang-query` AST matchers cannot
+inspect:
 
-Checks are split into two tiers:
-- Whole-tree checks (`whole_tree=True`): invariants that hold across the entire
-  MLIR subtree and are always enforced on all scanned files.
-- Diff-scoped checks (`whole_tree=False`): style and test-hygiene rules that
-  are enforced on added/modified lines when `--diff-base <rev>` is supplied, or
-  across all lines when `--all-checks` is passed.
+- Whole-tree checks (`whole_tree=True`):
+  1. `mlir-lit-stderr-devnull` (`.mlir` files)
+  2. `mlir-lit-negative-func-name` (`.mlir` files)
+- Diff-scoped checks (`whole_tree=False`):
+  3. `mlir-lit-pinned-ssa` (`.mlir` files)
+  4. `mlir-lit-closing-brace` (`.mlir` files)
+  5. `mlir-doxygen-comment` (`.cpp`/`.cc`/`.h`/`.hpp` `//` vs `///` doc comments)
 
 Suppress an intentional exception with `// NOLINT(<check>)` on the flagged line
 or `// NOLINTNEXTLINE(<check>)` on the preceding line.
@@ -22,7 +25,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set
 
 CPP_SUFFIXES = (".cpp", ".cc", ".h", ".hpp")
 MLIR_TEST_SUFFIXES = (".mlir",)
@@ -77,8 +80,7 @@ def strip_noise(src: str) -> str:
             if j < n and src[j] == "(":
                 delim = src[i + 2 : j]
                 end_seq = ")" + delim + '"'
-                out[i] = " "
-                for k in range(i + 1, j + 1):
+                for k in range(i, j + 1):
                     out[k] = " "
                 i = j + 1
                 end_pos = src.find(end_seq, i)
@@ -116,48 +118,11 @@ def strip_noise(src: str) -> str:
 
 def suppressed(raw_lines: List[str], idx: int, check: str) -> bool:
     """Return True if 0-based line `idx` carries a NOLINT marker for `check`."""
-    marker = r"NOLINT(?:NEXTLINE)?\(\s*(?:\*|" + re.escape(check) + r")\s*\)"
     same = re.compile(r"NOLINT\(\s*(?:\*|" + re.escape(check) + r")\s*\)")
     prev = re.compile(r"NOLINTNEXTLINE\(\s*(?:\*|" + re.escape(check) + r")\s*\)")
     if same.search(raw_lines[idx]):
         return True
-    if idx > 0 and prev.search(raw_lines[idx - 1]):
-        return True
-    _ = marker
-    return False
-
-
-def find_matching_brace(clean: str, open_pos: int) -> int:
-    """Given index of '{' in `clean`, return index of matching '}' or len(clean) - 1."""
-    depth = 0
-    for pos in range(open_pos, len(clean)):
-        ch = clean[pos]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return pos
-    return len(clean) - 1
-
-
-def offset_to_lineno(text: str, offset: int) -> int:
-    """Convert 0-based character offset to 1-based line number."""
-    return text.count("\n", 0, offset) + 1
-
-
-def find_bodied_blocks(clean: str, header_re: re.Pattern) -> List[Tuple[int, int]]:
-    """Return 1-based inclusive (start_line, end_line) ranges for matched `{ ... }` bodies."""
-    ranges: List[Tuple[int, int]] = []
-    for m in header_re.finditer(clean):
-        open_pos = m.end() - 1
-        if open_pos < 0 or clean[open_pos] != "{":
-            continue
-        close_pos = find_matching_brace(clean, open_pos)
-        ranges.append(
-            (offset_to_lineno(clean, open_pos), offset_to_lineno(clean, close_pos))
-        )
-    return ranges
+    return idx > 0 and bool(prev.search(raw_lines[idx - 1]))
 
 
 def iter_files(roots: Iterable[str]) -> Iterable[str]:
@@ -178,101 +143,10 @@ def iter_files(roots: Iterable[str]) -> Iterable[str]:
 
 
 # ---------------------------------------------------------------------------
-# Regex definitions for MLIR C++ and lit checks
+# Regex definitions for non-AST MLIR doc-comment and `.mlir` lit checks
 # ---------------------------------------------------------------------------
 
-# 1. `const` on pointer IR units: Operation, Block, Region.
-CONST_IR_PTR_RE = re.compile(
-    r"\bconst\s+(?:mlir::)?(?:Operation|Block|Region)\s*\*"
-    r"|\b(?:mlir::)?(?:Operation|Block|Region)\s+const\s*\*"
-)
-
-# 2. `const` on value-semantic IR handles (excluding pointer-to-const arrays
-# such as `const mlir::Value *values` used by C APIs).
-IR_HANDLE_TYPES = (
-    r"(?:Value|Type|Attribute|Location|OpFoldResult|AffineMap|AffineExpr|"
-    r"IntegerSet|ValueRange|TypeRange|[A-Z]\w*Op|[A-Z]\w*Attr|[A-Z]\w*Type)"
-)
-CONST_IR_VALUE_RE = re.compile(
-    r"\bconst\s+(?:mlir::)?" + IR_HANDLE_TYPES + r"\b(?!\s*(?:\*|::))"
-)
-
-# 3. Passing small value-semantic MLIR handles by const-ref in parameters
-# (excluding operator== / operator!= / operator< / DenseMapInfo).
-PASS_IR_BY_CONST_REF_RE = re.compile(
-    r"\bconst\s+(?:mlir::)?(?:Value|Type|Attribute|Location|OpFoldResult|"
-    r"AffineMap|AffineExpr|IntegerSet|ValueRange|TypeRange|StringRef|"
-    r"ArrayRef<[^>()]+>|[A-Z]\w*Op)\s*&"
-)
-COMPARISON_SIG_RE = re.compile(r"\b(?:operator\s*(?:==|!=|<|<=|>|>=)|DenseMapInfo)\b")
-
-# 4. Builder / Rewriter passed by value in function signatures, or raw OpBuilder
-# constructed inside `matchAndRewrite`.
-BUILDER_TYPES = (
-    r"(?:OpBuilder|RewriterBase|PatternRewriter|IRRewriter|"
-    r"ConversionPatternRewriter|ImplicitLocOpBuilder)"
-)
-BUILDER_BY_VALUE_PARAM_RE = re.compile(
-    r"(?:[(,]\s*)(?:const\s+)?(?:mlir::)?"
-    + BUILDER_TYPES
-    + r"\s+[A-Za-z_]\w*\s*(?:=[^{,)]+)?(?=[,)])"
-)
-RAW_OPBUILDER_IN_REWRITE_RE = re.compile(
-    r"\b(?:mlir::)?(?:OpBuilder|IRRewriter)\s+[A-Za-z_]\w*\s*(?:\(|\{|=)"
-)
-
-# 5. Direct IR mutation inside `matchAndRewrite` bypassing `RewriterBase`.
-MATCH_AND_REWRITE_HEADER_RE = re.compile(
-    r"\bmatchAndRewrite\s*\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?(?:final\s*)?\{"
-)
-DIRECT_ERASE_OR_MOVE_RE = re.compile(
-    r"(?:->|\.)\s*erase\s*\(\s*\)"
-    r"|->\s*(?:moveBefore|moveAfter|remove)\s*\("
-)
-DIRECT_RAUW_RE = re.compile(r"(\w+)\s*(?:->|\.)\s*replaceAllUsesWith\s*\(")
-
-# 6. Deprecated `builder.create<Op>(...)` instead of `Op::create(builder, ...)`.
-BUILDER_CREATE_RE = re.compile(r"(?:->|\.)\s*create\s*<\s*[A-Za-z_][\w:]*\s*>\s*\(")
-
-# 7. Non-local def-use chain inspection inside `Op::verify()` / `verifyRegions()`.
-VERIFY_HEADER_RE = re.compile(
-    r"::\s*verify(?:Regions)?\s*\(\s*\)\s*(?:const\s*)?\{"
-)
-NON_LOCAL_DEF_USE_RE = re.compile(
-    r"(?:->|\.)\s*(?:getDefiningOp|getUsers|getUses|use_empty|hasOneUse)\s*(?:\(|<)"
-)
-
-# 8. Global `cl::opt` / `cl::list` inside MLIR pass implementations.
-PASS_CL_OPT_RE = re.compile(r"\b(?:llvm::)?cl::(?:opt|list)\s*<")
-
-# 9. Crashing/aborting inside `runOnOperation()` instead of `signalPassFailure()`.
-RUN_ON_OP_HEADER_RE = re.compile(
-    r"\brunOnOperation\s*\(\s*\)\s*(?:override\s*)?(?:final\s*)?\{"
-)
-PASS_ABORT_RE = re.compile(
-    r"\b(?:llvm::)?report_fatal_error\s*\(|\b(?:std::)?(?:abort|exit|_Exit)\s*\("
-)
-
-# 10. Boolean error signaling (`FailureOr<bool>` or `bool matchAndRewrite/verify`).
-BOOL_ERROR_RETURN_RE = re.compile(
-    r"\b(?:mlir::)?FailureOr\s*<\s*bool\s*>"
-    r"|\bbool\s+(?:\w+::)?(?:matchAndRewrite|verify|verifyRegions|verifySymbolUses)\s*\("
-)
-
-# 11. Explicit `static inline` in `.cpp` files.
-STATIC_INLINE_CPP_RE = re.compile(r"\bstatic\s+inline\b|\binline\s+static\b")
-
-# 12. `camelBack` variable naming in MLIR C++ files: flag obvious local variable
-# declarations of common MLIR/LLVM types that use `UpperCamelCase` or `snake_case`.
-CAMELBACK_LOCAL_DECL_RE = re.compile(
-    r"^\s*(?:const\s+)?(?:mlir::|llvm::)?"
-    r"(?:Value|Type|Attribute|Location|Operation\s*\*|Block\s*\*|Region\s*\*|"
-    r"LogicalResult|SmallVector<[^;={}]+>|DenseMap<[^;={}]+>|ArrayRef<[^;={}]+>|"
-    r"StringRef|OpFoldResult|auto\s*\*?|unsigned|int|size_t|int64_t|uint64_t|bool)"
-    r"\s+([A-Za-z_]\w*)\s*(?:=|\{)"
-)
-
-# 13. Non-Doxygen `//` doc comments immediately preceding top-level/member
+# Non-Doxygen `//` doc comments immediately preceding top-level/member
 # function or class/struct declarations in MLIR headers/sources.
 DOC_COMMENT_TARGET_RE = re.compile(
     r"^\s*(?:template\s*<[^>]+>\s*)?"
@@ -280,15 +154,7 @@ DOC_COMMENT_TARGET_RE = re.compile(
     r"(?:class|struct|(?:[\w:]+(?:<[^;{}]+>)?\s+[*&]?\s*[A-Za-z_]\w*\s*\())"
 )
 
-# 14. Overuse of `auto` when the type is not obvious from the RHS.
-AUTO_NON_OBVIOUS_RE = re.compile(
-    r"^\s*(?:const\s+)?auto\s*(?:&|\*)?\s+[A-Za-z_]\w*\s*=\s*"
-    r"(?:[A-Za-z_]\w*(?:->|\.))*"
-    r"(?:getOperand|getResult|getType|getLoc|getContext|getNumOperands|"
-    r"getNumResults|getName|size|empty|front|back)\s*\("
-)
-
-# 15-18. MLIR `.mlir` lit test checks.
+# MLIR `.mlir` lit test checks.
 MLIR_CHECK_LINE_RE = re.compile(
     r"^\s*//\s*CHECK(?:-[A-Z]+)?(?:\{[A-Z]+\})?\s*:(.*)$"
 )
@@ -303,26 +169,6 @@ NEGATIVE_FUNC_SUFFIX_RE = re.compile(
 
 CHECK_SPECS: List[CheckSpec] = [
     CheckSpec(
-        "mlir-const-ir-pointer",
-        True,
-        "Do not qualify MLIR pointer IR units (`Operation *`, `Block *`, `Region *`) with `const`.",
-    ),
-    CheckSpec(
-        "mlir-builder-by-value",
-        True,
-        "Pass `OpBuilder`/`RewriterBase` subclasses by reference (`&`), never by value.",
-    ),
-    CheckSpec(
-        "mlir-verifier-non-local",
-        True,
-        "Op/region verifiers must check local properties only; do not walk unverified SSA def-use chains (`getDefiningOp`, `getUsers`, `getUses`).",
-    ),
-    CheckSpec(
-        "mlir-bool-error-return",
-        True,
-        "Do not use `FailureOr<bool>` or return `bool` from `matchAndRewrite`/`verify*`; return `LogicalResult`.",
-    ),
-    CheckSpec(
         "mlir-lit-stderr-devnull",
         True,
         "Do not redirect stderr to `/dev/null` (`2>/dev/null`) on lit `RUN:` lines.",
@@ -331,61 +177,6 @@ CHECK_SPECS: List[CheckSpec] = [
         "mlir-lit-negative-func-name",
         True,
         "Prefix negative diagnostic test functions with `@negative_...` (or `@invalid_...`) instead of a `@..._fail` suffix.",
-    ),
-    CheckSpec(
-        "mlir-raw-builder-in-rewrite",
-        False,
-        "Do not construct a raw `OpBuilder`/`IRRewriter` inside `matchAndRewrite`; insert through the provided `PatternRewriter`.",
-    ),
-    CheckSpec(
-        "mlir-direct-ir-mutation",
-        False,
-        "Do not mutate IR directly (`->erase()`, `replaceAllUsesWith`, `->moveBefore`) inside `matchAndRewrite`; go through `RewriterBase`.",
-    ),
-    CheckSpec(
-        "mlir-pass-no-abort",
-        False,
-        "Passes must report errors via diagnostics + `signalPassFailure()`, never `report_fatal_error`/`abort`/`exit` inside `runOnOperation()`.",
-    ),
-    CheckSpec(
-        "mlir-const-ir-value",
-        False,
-        "Do not qualify MLIR value-handle IR types (`Value`, `Type`, `Attribute`, `*Op`) with `const`.",
-    ),
-    CheckSpec(
-        "mlir-pass-ir-by-value",
-        False,
-        "Pass small value-semantic MLIR handles (`Value`, `Type`, `Attribute`, `StringRef`, `ArrayRef`, `*Op`) by value, not `const &`.",
-    ),
-    CheckSpec(
-        "mlir-op-create",
-        False,
-        "Prefer `Op::create(builder, loc, ...)` over deprecated `builder.create<Op>(loc, ...)`.",
-    ),
-    CheckSpec(
-        "mlir-pass-cl-opt",
-        False,
-        "Do not declare global `cl::opt`/`cl::list` options in MLIR pass files; define TableGen pass options instead.",
-    ),
-    CheckSpec(
-        "mlir-explicit-inline",
-        False,
-        "Omit `inline` on `static` functions in `.cpp` files (`static` alone lets the compiler inline).",
-    ),
-    CheckSpec(
-        "mlir-camelback-naming",
-        False,
-        "Use `camelBack` for variable names in MLIR C++ code (neither `UpperCamelCase` nor `snake_case`).",
-    ),
-    CheckSpec(
-        "mlir-doxygen-comment",
-        False,
-        "Use `///` Doxygen comments (not plain `//`) for doc comments on functions, classes, and structs in MLIR.",
-    ),
-    CheckSpec(
-        "mlir-auto-overuse",
-        False,
-        "Spell out the concrete MLIR type instead of `auto` when the type does not appear on the right-hand side.",
     ),
     CheckSpec(
         "mlir-lit-pinned-ssa",
@@ -397,36 +188,20 @@ CHECK_SPECS: List[CheckSpec] = [
         False,
         "Avoid `CHECK-NEXT: }` lines that only assert `FuncOp`/module printer boilerplate.",
     ),
+    CheckSpec(
+        "mlir-doxygen-comment",
+        False,
+        "Use `///` Doxygen comments (not plain `//`) for doc comments on functions, classes, and structs in MLIR.",
+    ),
 ]
 
 SPEC_BY_NAME: Dict[str, CheckSpec] = {spec.name: spec for spec in CHECK_SPECS}
 
 
-def _in_ranges(lineno: int, ranges: List[Tuple[int, int]]) -> bool:
-    return any(start <= lineno <= end for start, end in ranges)
-
-
-def _is_camel_back(ident: str) -> bool:
-    if not ident or ident.startswith("_"):
-        return True
-    if "_" in ident:
-        return False
-    return ident[0].islower()
-
-
 def check_cpp_source(path: str, raw: str) -> List[Finding]:
     findings: List[Finding] = []
     raw_lines = raw.splitlines()
-    clean = strip_noise(raw)
-    clean_lines = clean.splitlines()
-
-    rewrite_ranges = find_bodied_blocks(clean, MATCH_AND_REWRITE_HEADER_RE)
-    verify_ranges = find_bodied_blocks(clean, VERIFY_HEADER_RE)
-    run_on_op_ranges = find_bodied_blocks(clean, RUN_ON_OP_HEADER_RE)
-
-    is_cpp_impl = path.endswith((".cpp", ".cc"))
-    norm_path = path.replace("\\", "/")
-    is_pass_file = "/Passes/" in norm_path or norm_path.startswith("Passes/")
+    clean_lines = strip_noise(raw).splitlines()
 
     def add(idx: int, check: str, msg: str) -> None:
         if suppressed(raw_lines, idx, check):
@@ -441,8 +216,8 @@ def check_cpp_source(path: str, raw: str) -> List[Finding]:
             )
         )
 
-    # Track brace depth per line so doc-comment check only inspects namespace/class
-    # scope, never inline comments inside function bodies.
+    # Track brace depth per line so doc-comment check only inspects top-level or
+    # class scope, never inline comments inside function bodies.
     line_depths: List[int] = []
     in_class_scope: List[bool] = []
     depth = 0
@@ -464,65 +239,6 @@ def check_cpp_source(path: str, raw: str) -> List[Finding]:
                 depth = max(0, depth - 1)
 
     for idx, line in enumerate(clean_lines):
-        lineno = idx + 1
-
-        if CONST_IR_PTR_RE.search(line):
-            add(idx, "mlir-const-ir-pointer", SPEC_BY_NAME["mlir-const-ir-pointer"].description)
-
-        if CONST_IR_VALUE_RE.search(line):
-            add(idx, "mlir-const-ir-value", SPEC_BY_NAME["mlir-const-ir-value"].description)
-
-        if PASS_IR_BY_CONST_REF_RE.search(line) and not COMPARISON_SIG_RE.search(line):
-            # Only flag function parameter lists (lines with `(` or `,` context, not local refs).
-            if "(" in line or (idx > 0 and "(" in clean_lines[idx - 1]):
-                add(idx, "mlir-pass-ir-by-value", SPEC_BY_NAME["mlir-pass-ir-by-value"].description)
-
-        if BUILDER_BY_VALUE_PARAM_RE.search(line):
-            add(idx, "mlir-builder-by-value", SPEC_BY_NAME["mlir-builder-by-value"].description)
-        elif _in_ranges(lineno, rewrite_ranges) and RAW_OPBUILDER_IN_REWRITE_RE.search(line):
-            add(idx, "mlir-raw-builder-in-rewrite", SPEC_BY_NAME["mlir-raw-builder-in-rewrite"].description)
-
-        if _in_ranges(lineno, rewrite_ranges):
-            if DIRECT_ERASE_OR_MOVE_RE.search(line):
-                add(idx, "mlir-direct-ir-mutation", SPEC_BY_NAME["mlir-direct-ir-mutation"].description)
-            else:
-                rauw = DIRECT_RAUW_RE.search(line)
-                if rauw and "rewriter" not in rauw.group(1).lower():
-                    add(idx, "mlir-direct-ir-mutation", SPEC_BY_NAME["mlir-direct-ir-mutation"].description)
-
-        if BUILDER_CREATE_RE.search(line):
-            add(idx, "mlir-op-create", SPEC_BY_NAME["mlir-op-create"].description)
-
-        if _in_ranges(lineno, verify_ranges) and NON_LOCAL_DEF_USE_RE.search(line):
-            add(idx, "mlir-verifier-non-local", SPEC_BY_NAME["mlir-verifier-non-local"].description)
-
-        if is_pass_file and PASS_CL_OPT_RE.search(line):
-            add(idx, "mlir-pass-cl-opt", SPEC_BY_NAME["mlir-pass-cl-opt"].description)
-
-        if _in_ranges(lineno, run_on_op_ranges) and PASS_ABORT_RE.search(line):
-            add(idx, "mlir-pass-no-abort", SPEC_BY_NAME["mlir-pass-no-abort"].description)
-
-        if BOOL_ERROR_RETURN_RE.search(line):
-            add(idx, "mlir-bool-error-return", SPEC_BY_NAME["mlir-bool-error-return"].description)
-
-        if is_cpp_impl and STATIC_INLINE_CPP_RE.search(line):
-            add(idx, "mlir-explicit-inline", SPEC_BY_NAME["mlir-explicit-inline"].description)
-
-        m_var = CAMELBACK_LOCAL_DECL_RE.match(line)
-        if m_var:
-            ident = m_var.group(1)
-            if not _is_camel_back(ident):
-                add(
-                    idx,
-                    "mlir-camelback-naming",
-                    f"Variable `{ident}` should use `camelBack` naming in MLIR C++ code.",
-                )
-
-        if AUTO_NON_OBVIOUS_RE.search(line):
-            add(idx, "mlir-auto-overuse", SPEC_BY_NAME["mlir-auto-overuse"].description)
-
-        # Doxygen `///` check: non-Doxygen `//` comment at top-level or class scope
-        # directly above a function/class/struct declaration.
         if idx > 0 and (line_depths[idx] == 0 or in_class_scope[idx]):
             if DOC_COMMENT_TARGET_RE.match(line) and not line.lstrip().startswith("return "):
                 prev_raw = raw_lines[idx - 1].lstrip()
@@ -573,10 +289,18 @@ def check_mlir_lit_test(path: str, raw: str) -> List[Finding]:
     for idx, line in enumerate(raw_lines):
         m_run = MLIR_RUN_LINE_RE.match(line)
         if m_run and STDERR_DEVNULL_RE.search(m_run.group(1)):
-            add(idx, "mlir-lit-stderr-devnull", SPEC_BY_NAME["mlir-lit-stderr-devnull"].description)
+            add(
+                idx,
+                "mlir-lit-stderr-devnull",
+                SPEC_BY_NAME["mlir-lit-stderr-devnull"].description,
+            )
 
         if MLIR_CLOSING_BRACE_CHECK_RE.match(line):
-            add(idx, "mlir-lit-closing-brace", SPEC_BY_NAME["mlir-lit-closing-brace"].description)
+            add(
+                idx,
+                "mlir-lit-closing-brace",
+                SPEC_BY_NAME["mlir-lit-closing-brace"].description,
+            )
 
         m_check = MLIR_CHECK_LINE_RE.match(line)
         if m_check:
@@ -617,7 +341,16 @@ def compute_changed_lines(diff_base: str, cwd: Optional[str] = None) -> Dict[str
         ["git", "rev-parse", "--show-toplevel"], cwd=cwd, text=True
     ).strip()
     diff_out = subprocess.check_output(
-        ["git", "diff", "--unified=0", "--no-color", diff_base],
+        [
+            "git",
+            "-c",
+            "diff.noprefix=false",
+            "diff",
+            "--no-ext-diff",
+            "--unified=0",
+            "--no-color",
+            diff_base,
+        ],
         cwd=top,
         text=True,
     )
@@ -701,7 +434,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     changed_lines: Optional[Dict[str, Set[int]]] = None
     if args.diff_base and not args.all_checks:
         first_root = args.roots[0]
-        git_cwd = first_root if os.path.isdir(first_root) else os.path.dirname(os.path.abspath(first_root))
+        git_cwd = (
+            first_root
+            if os.path.isdir(first_root)
+            else os.path.dirname(os.path.abspath(first_root))
+        )
         changed_lines = compute_changed_lines(args.diff_base, cwd=git_cwd)
 
     files = list(iter_files(args.roots))
