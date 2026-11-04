@@ -2906,6 +2906,36 @@ public:
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
+          Constant *ActiveLaneMask = nullptr;
+          if (clearsSignBitOfFloat(BO.getOperand(i), eFT, dl, &FT,
+                                   &ActiveLaneMask)) {
+            setDiffe(
+                &BO,
+                Constant::getNullValue(gutils->getShadowType(BO.getType())),
+                Builder2);
+            if (!gutils->isConstantValue(BO.getOperand(1 - i))) {
+              Value *InputBits = lookup(
+                  gutils->getNewFromOriginal(BO.getOperand(1 - i)), Builder2);
+              Value *InputFloat = Builder2.CreateBitCast(InputBits, FT);
+              Value *IsNegative = Builder2.CreateFCmpOLT(
+                  InputFloat, Constant::getNullValue(FT));
+              auto rule = [&](Value *idiff) {
+                Value *DiffFloat = Builder2.CreateBitCast(idiff, FT);
+                Value *NegatedDiff = Builder2.CreateFNeg(DiffFloat);
+                Value *SignedDiff =
+                    CreateSelect(Builder2, IsNegative, NegatedDiff, DiffFloat);
+                if (ActiveLaneMask)
+                  SignedDiff =
+                      CreateSelect(Builder2, ActiveLaneMask, SignedDiff,
+                                   Constant::getNullValue(FT));
+                return Builder2.CreateBitCast(SignedDiff, BO.getType());
+              };
+              Value *ResultDiff = applyChainRule(
+                  BO.getOperand(1 - i)->getType(), Builder2, rule, idiff);
+              addToDiffe(BO.getOperand(1 - i), ResultDiff, Builder2, FT);
+            }
+            return;
+          }
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -3202,8 +3232,39 @@ public:
 
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
-      if (FT)
+      if (FT) {
+        Value *OperandDiffs[2] = {
+            constantval0 ? nullptr : diffe(orig_op0, Builder2),
+            constantval1 ? nullptr : diffe(orig_op1, Builder2)};
         for (int i = 0; i < 2; ++i) {
+          Constant *ActiveLaneMask = nullptr;
+          if (clearsSignBitOfFloat(BO.getOperand(i), eFT, dl, &FT,
+                                   &ActiveLaneMask) &&
+              !OperandDiffs[i]) {
+            if (!OperandDiffs[1 - i]) {
+              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
+              return;
+            }
+            Value *InputBits = gutils->getNewFromOriginal(BO.getOperand(1 - i));
+            Value *InputFloat = Builder2.CreateBitCast(InputBits, FT);
+            Value *IsNegative =
+                Builder2.CreateFCmpOLT(InputFloat, Constant::getNullValue(FT));
+            auto rule = [&](Value *idiff) {
+              Value *DiffFloat = Builder2.CreateBitCast(idiff, FT);
+              Value *NegatedDiff = Builder2.CreateFNeg(DiffFloat);
+              Value *SignedDiff =
+                  CreateSelect(Builder2, IsNegative, NegatedDiff, DiffFloat);
+              if (ActiveLaneMask)
+                SignedDiff = CreateSelect(Builder2, ActiveLaneMask, SignedDiff,
+                                          Constant::getNullValue(FT));
+              return Builder2.CreateBitCast(SignedDiff, BO.getType());
+            };
+            Value *ResultDiff =
+                applyChainRule(BO.getOperand(1 - i)->getType(), Builder2, rule,
+                               OperandDiffs[1 - i]);
+            setDiffe(&BO, ResultDiff, Builder2);
+            return;
+          }
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -3215,6 +3276,7 @@ public:
             }
           }
         }
+      }
       if (looseTypeAnalysis) {
         forwardModeInvertedPointerFallback(BO);
         llvm::errs() << "warning: binary operator is integer and constant: "

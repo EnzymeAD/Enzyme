@@ -2528,6 +2528,112 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   return false;
 }
 
+/// Return true if bitwise-anding a floating-point value of element type
+/// `ScalarFloatType` with `Mask` clears the IEEE sign bit in at least one lane
+/// and leaves every other lane either sign-cleared, zero, or undef. When
+/// `VectorFloatType` is non-null, populate the matching scalar or vector float
+/// type; when `ActiveLaneMask` is non-null and at least one vector lane is
+/// zero or undef, populate an `i1` vector mask selecting the sign-cleared
+/// lanes.
+static inline bool
+clearsSignBitOfFloat(const llvm::Value *Mask, llvm::Type *ScalarFloatType,
+                     const llvm::DataLayout &Layout,
+                     llvm::Type **VectorFloatType = nullptr,
+                     llvm::Constant **ActiveLaneMask = nullptr) {
+  using namespace llvm;
+  if (ActiveLaneMask)
+    *ActiveLaneMask = nullptr;
+  if (!Mask || !ScalarFloatType)
+    return false;
+
+  const uint64_t FloatBits = Layout.getTypeSizeInBits(ScalarFloatType);
+  if (auto *ConstantMask = dyn_cast<ConstantInt>(Mask)) {
+    if (FloatBits == Layout.getTypeSizeInBits(ConstantMask->getType()) &&
+        ConstantMask->getValue().isMaxSignedValue()) {
+      if (VectorFloatType)
+        *VectorFloatType = ScalarFloatType;
+      return true;
+    }
+    return false;
+  }
+
+  if (auto *VectorMask = dyn_cast<ConstantVector>(Mask)) {
+    unsigned ElementCount = VectorMask->getNumOperands();
+    bool HasSignClearLane = false;
+    bool HasInactiveLane = false;
+    SmallVector<Constant *> ActiveLanes;
+    ActiveLanes.reserve(ElementCount);
+    Type *BoolType = Type::getInt1Ty(ScalarFloatType->getContext());
+    for (unsigned ElementIndex = 0; ElementIndex < ElementCount;
+         ++ElementIndex) {
+      Value *Element = VectorMask->getOperand(ElementIndex);
+      if (isa<UndefValue>(Element)) {
+        HasInactiveLane = true;
+        ActiveLanes.push_back(ConstantInt::getFalse(BoolType));
+        continue;
+      }
+      auto *ElementInt = dyn_cast<ConstantInt>(Element);
+      if (!ElementInt)
+        return false;
+      if (ElementInt->isZero()) {
+        HasInactiveLane = true;
+        ActiveLanes.push_back(ConstantInt::getFalse(BoolType));
+        continue;
+      }
+      if (FloatBits != Layout.getTypeSizeInBits(ElementInt->getType()) ||
+          !ElementInt->getValue().isMaxSignedValue())
+        return false;
+      HasSignClearLane = true;
+      ActiveLanes.push_back(ConstantInt::getTrue(BoolType));
+    }
+    if (!HasSignClearLane)
+      return false;
+    if (VectorFloatType)
+      *VectorFloatType = VectorType::get(
+          ScalarFloatType, VectorMask->getType()->getElementCount());
+    if (ActiveLaneMask && HasInactiveLane)
+      *ActiveLaneMask = ConstantVector::get(ActiveLanes);
+    return true;
+  }
+
+  if (auto *DataVector = dyn_cast<ConstantDataVector>(Mask)) {
+    unsigned ElementCount = DataVector->getNumElements();
+    bool HasSignClearLane = false;
+    bool HasInactiveLane = false;
+    SmallVector<Constant *> ActiveLanes;
+    ActiveLanes.reserve(ElementCount);
+    Type *BoolType = Type::getInt1Ty(ScalarFloatType->getContext());
+    for (unsigned ElementIndex = 0; ElementIndex < ElementCount;
+         ++ElementIndex) {
+      APInt ElementMask = DataVector->getElementAsAPInt(ElementIndex);
+#if LLVM_VERSION_MAJOR > 16
+      if (ElementMask.isZero()) {
+#else
+      if (ElementMask.isNullValue()) {
+#endif
+        HasInactiveLane = true;
+        ActiveLanes.push_back(ConstantInt::getFalse(BoolType));
+        continue;
+      }
+      if (FloatBits != Layout.getTypeSizeInBits(DataVector->getElementType()) ||
+          !ElementMask.isMaxSignedValue())
+        return false;
+      HasSignClearLane = true;
+      ActiveLanes.push_back(ConstantInt::getTrue(BoolType));
+    }
+    if (!HasSignClearLane)
+      return false;
+    if (VectorFloatType)
+      *VectorFloatType = VectorType::get(
+          ScalarFloatType, DataVector->getType()->getElementCount());
+    if (ActiveLaneMask && HasInactiveLane)
+      *ActiveLaneMask = ConstantVector::get(ActiveLanes);
+    return true;
+  }
+
+  return false;
+}
+
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
