@@ -22,20 +22,18 @@ entry:
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %y
-; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %y
+; CHECK-NEXT:   %[[i0:.+]] = fdiv fast double %x, %y
 ; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %x
-; CHECK-NEXT:   %[[i6:.+]] = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i6]], %x
-; CHECK-NEXT:   %[[i4:.+]] = fsub fast double %[[i2]], %[[i3]]
-; CHECK-NEXT:   %[[i9:.+]] = fsub fast double %[[i7]], %[[i8]]
-; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %y, %y
-; CHECK-NEXT:   %[[i11:.+]] = fdiv fast double %[[i4]], %[[i10]]
-; CHECK-NEXT:   %[[i12:.+]] = insertvalue [2 x double] undef, double %[[i11]], 0
-; CHECK-NEXT:   %[[i13:.+]] = fdiv fast double %[[i9]], %[[i10]]
-; CHECK-NEXT:   %[[i14:.+]] = insertvalue [2 x double] %[[i12]], double %[[i13]], 1
-; CHECK-NEXT:   ret [2 x double] %[[i14]]
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %[[i3]], %[[i0]]
+; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[i6:.+]] = fsub fast double %[[i5]], %[[i2]]
+; CHECK-NEXT:   %[[i7:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i7]], %[[i4]]
+; CHECK-NEXT:   %[[i9:.+]] = fdiv fast double %[[i6]], %y
+; CHECK-NEXT:   %[[i10:.+]] = insertvalue [2 x double] undef, double %[[i9]], 0
+; CHECK-NEXT:   %[[i11:.+]] = fdiv fast double %[[i8]], %y
+; CHECK-NEXT:   %[[i12:.+]] = insertvalue [2 x double] %[[i10]], double %[[i11]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i12]]
 ; CHECK-NEXT: }

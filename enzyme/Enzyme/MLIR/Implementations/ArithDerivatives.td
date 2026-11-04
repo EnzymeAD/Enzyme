@@ -29,7 +29,9 @@ def : MLIRDerivative<"arith", "DivFOp", (Op $x, $y),
                       (CheckedDivF (DiffeRet), $y),
                       (NegF (MulF (CheckedDivF (DiffeRet), $y), (DivF $x, $y)))
                     ],
-                    (CheckedDivF (SubF (SelectIfActive $x, (MulF (Shadow $x), $y), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), $x), (ConstantFP<"0","arith","ConstantOp"> $y))), (MulF $y, $y))
+                    // (dx - dy * (x / y)) / y rather than (dx * y - dy * x) / (y * y), see the
+                    // FDiv rule in InstructionDerivatives.td.
+                    (CheckedDivF (SubF (SelectIfActive $x, (Shadow $x), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), (DivF $x, $y)), (ConstantFP<"0","arith","ConstantOp"> $y))), $y)
                   >;
 def : MLIRDerivative<"arith", "MaxNumFOp", (Op $x, $y),
                     [
