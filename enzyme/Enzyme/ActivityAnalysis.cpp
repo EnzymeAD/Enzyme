@@ -606,6 +606,10 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     if (StringRef(iasm->getAsmString()).contains("exit") ||
         StringRef(iasm->getAsmString()).contains("cpuid"))
       return true;
+    NoOpInlineAsmKind AsmKind = classifyNoOpInlineAsm(&CI);
+    if (AsmKind == NoOpInlineAsmKind::BarrierOnly ||
+        AsmKind == NoOpInlineAsmKind::IndirectMemoryBarrier)
+      return true;
   }
 
   if (auto F = getFunctionFromCall(&CI)) {
@@ -2774,6 +2778,16 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
           llvm::errs() << " constant instruction from known cpuid instruction "
                        << *inst << "\n";
         return true;
+      }
+      switch (classifyNoOpInlineAsm(call)) {
+      case NoOpInlineAsmKind::BarrierOnly:
+      case NoOpInlineAsmKind::IndirectMemoryBarrier:
+        return true;
+      case NoOpInlineAsmKind::DirectPassthrough:
+      case NoOpInlineAsmKind::IndirectTiedStore:
+        return isConstantValue(TR, call->getArgOperand(0));
+      case NoOpInlineAsmKind::None:
+        break;
       }
     }
   }
