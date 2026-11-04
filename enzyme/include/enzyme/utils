@@ -395,14 +395,14 @@ namespace enzyme {
           using type = Active<double>;
         };
 
-        template<>
-        struct default_ret_activity<ForwardMode, float> {
-          using type = DuplicatedNoNeed<float>;
-        };
-
-        template<>
-        struct default_ret_activity<ForwardMode, double> {
-          using type = DuplicatedNoNeed<double>;
+        // Aggregates may carry active fields, while non-class scalars stay constant.
+        template <typename T>
+        struct default_ret_activity<ForwardMode, T> {
+          using value_type = typename remove_cvref<T>::type;
+          using type = typename std::conditional<
+              std::is_floating_point<value_type>::value ||
+                  std::is_class<value_type>::value,
+              DuplicatedNoNeed<T>, Const<T>>::type;
         };
 
         template < typename T >
