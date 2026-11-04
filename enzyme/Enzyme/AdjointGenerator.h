@@ -3408,49 +3408,95 @@ public:
               if (arg->hasStructRetAttr())
                 undefMemory = true;
             if (undefMemory) {
-              Instruction *cur = MS.getPrevNode();
+              MemoryLocation MemsetLocation =
+                  isa<MemIntrinsic>(&MS)
+                      ? MemoryLocation::getForDest(cast<MemIntrinsic>(&MS))
+                      : MemoryLocation(
+                            MS.getArgOperand(0),
+                            isa<ConstantInt>(MS.getArgOperand(2))
+                                ? LocationSize::precise(
+                                      cast<ConstantInt>(MS.getArgOperand(2))
+                                          ->getLimitedValue())
+                                : LocationSize::afterPointer());
+              auto coversMemsetRange = [&](Value *LifetimePointer,
+                                           const APInt &LifetimeSize,
+                                           const APInt &MemsetSize) {
+                unsigned OffsetBits =
+                    DL.getIndexTypeSizeInBits(MS.getArgOperand(0)->getType());
+                APInt MemsetOffset(OffsetBits, 0);
+                APInt LifetimeOffset(OffsetBits, 0);
+                Value *MemsetBase =
+                    MS.getArgOperand(0)->stripAndAccumulateConstantOffsets(
+                        DL, MemsetOffset, /*AllowNonInbounds=*/true);
+                Value *LifetimeBase =
+                    LifetimePointer->stripAndAccumulateConstantOffsets(
+                        DL, LifetimeOffset, /*AllowNonInbounds=*/true);
+                if (MemsetBase != LifetimeBase ||
+                    MemsetOffset.slt(LifetimeOffset))
+                  return false;
+                APInt RelativeOffset = MemsetOffset - LifetimeOffset;
+                unsigned CombinedWidth =
+                    std::max({OffsetBits, LifetimeSize.getBitWidth(),
+                              MemsetSize.getBitWidth()}) +
+                    1;
+                return (RelativeOffset.zext(CombinedWidth) +
+                        MemsetSize.zext(CombinedWidth))
+                    .ule(LifetimeSize.zext(CombinedWidth));
+              };
+              BasicBlock *CurrentBlock = MS.getParent();
+              SmallPtrSet<BasicBlock *, 4> VisitedBlocks;
+              VisitedBlocks.insert(CurrentBlock);
+              auto advanceBackward =
+                  [&](Instruction *Current) -> Instruction * {
+                Instruction *Previous = Current->getPrevNode();
+                while (Previous == nullptr) {
+                  BasicBlock *SinglePredecessor =
+                      CurrentBlock->getSinglePredecessor();
+                  if (!SinglePredecessor ||
+                      !VisitedBlocks.insert(SinglePredecessor).second) {
+                    if (!(isa<Argument>(root) &&
+                          CurrentBlock ==
+                              &CurrentBlock->getParent()->getEntryBlock() &&
+                          pred_empty(CurrentBlock)))
+                      writtenTo = true;
+                    return nullptr;
+                  }
+                  CurrentBlock = SinglePredecessor;
+                  Previous = CurrentBlock->getTerminator();
+                }
+                return Previous;
+              };
+              Instruction *cur = advanceBackward(&MS);
               while (cur) {
                 if (cur == root)
                   break;
                 if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
                   if (auto II = dyn_cast<IntrinsicInst>(cur)) {
                     if (II->getCalledFunction()->getName() ==
-                        "llvm.enzyme.lifetime_start") {
+                            "llvm.enzyme.lifetime_start" ||
+                        II->getIntrinsicID() == Intrinsic::lifetime_start) {
                       if (getBaseObject(II->getOperand(1)) == root) {
                         if (auto CI2 =
                                 dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
+                          if (coversMemsetRange(II->getOperand(1),
+                                                CI2->getValue(),
+                                                MCI->getValue()))
                             break;
                         }
                       }
-                      cur = cur->getPrevNode();
-                      continue;
-                    }
-                    // If the start of the lifetime for more memory than being
-                    // memset, its valid.
-                    if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
-                      if (getBaseObject(II->getOperand(1)) == root) {
-                        if (auto CI2 =
-                                dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
-                            break;
-                        }
-                      }
-                      cur = cur->getPrevNode();
+                      cur = advanceBackward(cur);
                       continue;
                     }
                   }
                 }
-                if (cur->mayWriteToMemory()) {
+                if (cur->mayWriteToMemory() &&
+                    (!gutils->OrigAA ||
+                     llvm::isModSet(
+                         gutils->OrigAA->getModRefInfo(cur, MemsetLocation)))) {
                   writtenTo = true;
                   break;
                 }
-                cur = cur->getPrevNode();
-                // We've hit the start of the block, assume written to by a
-                // previous block.
-                if (cur == nullptr) {
-                  writtenTo = true;
-                }
+                cur = advanceBackward(cur);
               }
 
               if (!writtenTo) {
