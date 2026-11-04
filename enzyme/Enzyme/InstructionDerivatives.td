@@ -851,20 +851,20 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__mulsc3", "__muldc3", "__multc3", "__mulxc3"],
                   [
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
-                      (ExtractValue<[1]> $r0)
+                      (FMul (DiffeRet), $yre),
+                      (FMul (DiffeRet), $yim)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
-                      (ExtractValue<[1]> $r1)
+                      (FNeg (FMul (DiffeRet), $yim)),
+                      (FMul (DiffeRet), $yre)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), $xre),
+                      (FMul (DiffeRet), $xim)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xre))):$r3),
-                      (ExtractValue<[1]> $r3)
+                      (FNeg (FMul (DiffeRet), $xim)),
+                      (FMul (DiffeRet), $xre)
                     )
 // Alternate variant calling the same func (but likely much slower, per calling each one)
 // This would simply replace the cfmul call, the arrayret/extract code would also need to be
@@ -893,30 +893,31 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__divsc3", "__divdc3", "__divtc3", "__divxc3"],
                   [
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
-                      (ExtractValue<[1]> $r0)
+                      (FMul (DiffeRet), (FDiv $yre, (FAdd (FMul $yre, $yre), (FMul $yim, $yim)):$yNormSquared0)),
+                      (FMul (DiffeRet), (FDiv (FNeg $yim), $yNormSquared0))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
-                      (ExtractValue<[1]> $r1)
+                      (FMul (DiffeRet), (FDiv $yim, (FAdd (FMul $yre, $yre), (FMul $yim, $yim)):$yNormSquared1)),
+                      (FMul (DiffeRet), (FDiv $yre, $yNormSquared1))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFNeg (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)), (CFMul_splat $yre, $yim, $yre, $yim))):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim)):$negXOverYSquared0)),
+                      (FMul (DiffeRet), (ExtractValue<[1]> $negXOverYSquared0))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xim))), (CFMul_splat $yre, $yim, $yre, $yim)):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), (FNeg (ExtractValue<[1]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim)):$negXOverYSquared1))),
+                      (FMul (DiffeRet), (ExtractValue<[0]> $negXOverYSquared1))
                     )
                   ],
-                  (ToStruct2 (CFAdd  (CFDiv_splat 
+                  (ToStruct2 (CFAdd (CFDiv_splat
                             (SelectIfActive $xre, (Shadow $xre), (Zero $xre)),
                             (SelectIfActive $xim, (Shadow $xim), (Zero $xim)),
                             $yre, $yim),
-                          (CFMul_splat
-                            (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
-                            (SelectIfActive $yim, (Shadow $yim), (Zero $yim)),
-                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) )),
+                          (CFMul
+                            (ArrayRet
+                              (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
+                              (SelectIfActive $yim, (Shadow $yim), (Zero $yim))),
+                            (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))))),
                   [ReadNone, NoUnwind]
                   >;
 
