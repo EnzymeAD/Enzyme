@@ -54,6 +54,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "../EnzymeLogic.h"
+#include "../FlangRuntime.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -898,6 +899,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+
+    // Flang character literals (@_QQcl...) hold character data.
+    if (startsWith(GV->getName(), "_QQcl")) {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Integer);
@@ -4316,8 +4326,8 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     case Intrinsic::smul_with_overflow:
     case Intrinsic::umul_with_overflow: {
       opcode = BinaryOperator::Mul;
-      // if a + b or a * b == int, then a and b must be ints
-      analysis = analysis.JustInt();
+      // Integer overflow multiplication only operates on integers
+      analysis = TypeTree(BaseType::Integer);
       break;
     }
     case Intrinsic::sadd_with_overflow:
@@ -4361,6 +4371,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    if (opcode == BinaryOperator::Mul && vd[{}] == BaseType::Unknown) {
+      vd = TypeTree(BaseType::Integer);
+    }
     TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
 
     int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
@@ -5642,6 +5655,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // The descriptor arguments of the other flang runtime functions that act
+    // on descriptors (see FlangRuntime.h).
+    if (auto replay = getFlangShadowReplay(funcName)) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      for (int i : replay->shadowArgs) {
+        if (i < 0 || (unsigned)i >= call.arg_size() ||
+            !call.getOperand(i)->getType()->isPointerTy())
+          continue;
+        // The second argument of PointerAssociateScalar is a data address.
+        if (i == 1 && funcName == "_FortranAPointerAssociateScalar")
+          continue;
+        updateAnalysis(call.getOperand(i),
+                       fortranDescriptorTree(call.getOperand(i), DL), &call);
+      }
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
@@ -5998,6 +6028,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "strtol" || funcName == "strtoul" ||
+        funcName == "strtoll" || funcName == "strtoull" ||
+        funcName == "__isoc23_strtol" || funcName == "__isoc23_strtoul" ||
+        funcName == "__isoc23_strtoll" || funcName == "__isoc23_strtoull") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "open" || funcName == "open64") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "close") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "sched_getaffinity") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
     if (funcName == "gsl_sf_legendre_array_e") {

@@ -22,9 +22,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -93,6 +95,33 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     llvm::errs() << " unsupported type: " << type << "\n";
     llvm_unreachable("unsupported eltype");
   }
+}
+
+mlir::Attribute mlir::enzyme::getComplexConstantAttr(mlir::Type type,
+                                                     llvm::StringRef re,
+                                                     llvm::StringRef im) {
+  using namespace mlir;
+
+  if (auto T = dyn_cast<ComplexType>(type)) {
+    auto F = cast<FloatType>(T.getElementType());
+    APFloat revalue(F.getFloatSemantics(), re);
+    APFloat imvalue(F.getFloatSemantics(), im);
+    return mlir::ArrayAttr::get(
+        type.getContext(),
+        {FloatAttr::get(F, revalue), FloatAttr::get(F, imvalue)});
+  } else if (auto T = dyn_cast<TensorType>(type)) {
+    if (auto CET = dyn_cast<ComplexType>(T.getElementType())) {
+      auto ET = cast<FloatType>(CET.getElementType());
+      APFloat revalue(ET.getFloatSemantics(), re);
+      APFloat imvalue(ET.getFloatSemantics(), im);
+      mlir::Complex<APFloat> values[] = {
+          mlir::Complex<APFloat>(revalue, imvalue)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<mlir::Complex<APFloat>>(values));
+    }
+  }
+  llvm::errs() << " unsupported type: " << type << "\n";
+  llvm_unreachable("unsupported eltype");
 }
 
 bool mlir::enzyme::allResultsActive(Operation *op,
@@ -201,6 +230,27 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     ArrayRef<int> storedVals) {
   auto iface = cast<ActivityOpInterface>(orig);
 
+  bool allStored = contains(storedVals, -1);
+  bool needsShadow = false;
+  for (Value v : orig->getResults()) {
+    if (!gutils->isConstantValue(v)) {
+      needsShadow = true;
+      break;
+    }
+  }
+  if (!needsShadow && !allStored) {
+    for (OpOperand &operand : orig->getOpOperands()) {
+      unsigned idx = operand.getOperandNumber();
+      if (!iface.isArgInactive(idx) && !contains(storedVals, idx) &&
+          !gutils->isConstantValue(operand.get())) {
+        needsShadow = true;
+        break;
+      }
+    }
+  }
+  if (!needsShadow)
+    return success();
+
   SmallVector<Value> newOperands;
   newOperands.reserve(orig->getNumOperands());
   SmallVector<bool> inverted(orig->getNumOperands(), false);
@@ -210,8 +260,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     } else {
       if (gutils->isConstantValue(operand.get())) {
 
-        if (contains(storedVals, operand.getOperandNumber()) ||
-            contains(storedVals, -1)) {
+        if (allStored || contains(storedVals, operand.getOperandNumber())) {
           if (isa<AutoDiffTypeInterface>(operand.get().getType())) {
             // Zero for an immutable value; for a mutable value -- an
             // inactive pointer -- the primal is its own shadow.
@@ -282,6 +331,9 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
 LogicalResult mlir::enzyme::detail::allocationForwardHandler(
     Operation *orig, OpBuilder &builder, MGradientUtils *gutils, bool zero) {
+  // An inactive allocation has no shadow.
+  if (gutils->isConstantValue(orig->getResult(0)))
+    return success();
 
   Operation *primal = gutils->getNewFromOriginal(orig);
   Operation *shadow = builder.clone(*primal);

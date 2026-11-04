@@ -2775,11 +2775,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << *ri
                    << " const val: " << *orig_oldval;
-                if (CustomErrorHandler)
+                if (CustomErrorHandler) {
+                  LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
                   invertri = unwrap(CustomErrorHandler(
                       str.c_str(), wrap(ri), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_oldval), wrap(&BuilderZ)));
-                else
+                      gutils, wrap(orig_oldval), BR));
+                  finishCallbackBuilder(BR, BuilderZ);
+                } else
                   EmitWarningAlways("MixedActivityError", *ri, ss.str(),
                                     MixedActivityHint);
               }
@@ -2884,8 +2886,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (removeTapeStruct) {
     tapeType = MallocTypes[0];
 
-    for (auto &a : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
-      a.second = -1;
+    for (auto &entry : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
+      // Negative entries <= -2 encode uncached arguments rather than physical
+      // tape slots, so only rewrite physical slot index 0 to -1.
+      if (entry.second >= 0)
+        entry.second = -1;
     }
   }
 
@@ -3167,8 +3172,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
         ggep->setIsInBounds(true);
       }
-      if (EnzymeFixupReturn)
-        actualrv = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(actualrv)));
+      if (EnzymeFixupReturn) {
+        LLVMBuilderRef BR = startCallbackBuilder(ib);
+        actualrv = unwrap(EnzymeFixupReturn(BR, wrap(actualrv)));
+        finishCallbackBuilder(BR, ib);
+      }
       auto storeinst = ib.CreateStore(actualrv, gep);
       PostCacheStore(storeinst, ib);
     }
@@ -3196,8 +3204,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           assert(found != VMap.end());
           shadowRV = found->second;
         }
-        if (EnzymeFixupReturn)
-          shadowRV = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(shadowRV)));
+        if (EnzymeFixupReturn) {
+          LLVMBuilderRef BR = startCallbackBuilder(ib);
+          shadowRV = unwrap(EnzymeFixupReturn(BR, wrap(shadowRV)));
+          finishCallbackBuilder(BR, ib);
+        }
         auto storeinst = ib.CreateStore(shadowRV, gep);
         PostCacheStore(storeinst, ib);
       }
@@ -3368,11 +3379,13 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *inst
                << " const val: " << *ret;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(nBuilder);
               invertedPtr = unwrap(CustomErrorHandler(
                   str.c_str(), wrap(inst), ErrorType::MixedActivityError,
-                  gutils, wrap(ret), wrap(&nBuilder)));
-            else
+                  gutils, wrap(ret), BR));
+              finishCallbackBuilder(BR, nBuilder);
+            } else
               EmitWarningAlways("MixedActivityError", *inst, ss.str(),
                                 MixedActivityHint);
           }
@@ -5540,8 +5553,10 @@ public:
     ss << "cannot handle unknown instruction\n" << I;
     if (CustomErrorHandler) {
       IRBuilder<> Builder2(getNewFromOriginal(&I));
+      LLVMBuilderRef BR = startCallbackBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
-                         this, nullptr, wrap(&Builder2));
+                         this, nullptr, BR);
+      finishCallbackBuilder(BR, Builder2);
       return;
     } else {
       EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
@@ -5923,9 +5938,12 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
       ss << *totrunc << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(totrunc), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       return NewF;
     }
     if (context.req) {
@@ -6013,9 +6031,12 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       ss << *tobatch << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(tobatch),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(tobatch), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       return NewF;
     }
     if (context.req) {
@@ -6309,9 +6330,12 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
       ss << *totrace << "\n";
     }
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR =
+          context.ip ? startCallbackBuilder(*context.ip) : nullptr;
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrace),
-                         wrap(context.ip));
+                         ErrorType::NoDerivative, nullptr, wrap(totrace), BR);
+      if (BR)
+        finishCallbackBuilder(BR, *context.ip);
       auto newFunc = tutils->newFunc;
       delete tracer;
       delete tutils;
@@ -6813,6 +6837,19 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                         "llvm.enzyme.lifetime_end",
 			"__cudaPushCallConfiguration",
 			"__cudaPopCallConfiguration",
+                        "strtol",
+                        "strtoul",
+                        "strtoll",
+                        "strtoull",
+                        "__isoc23_strtol",
+                        "__isoc23_strtoul",
+                        "__isoc23_strtoll",
+                        "__isoc23_strtoull",
+                        "open",
+                        "open64",
+                        "read",
+                        "close",
+                        "sched_getaffinity",
   };
   // clang-format on
 

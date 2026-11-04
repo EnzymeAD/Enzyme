@@ -28,7 +28,9 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "GradientUtils.h"
 #include "MustExitScalarEvolution.h"
@@ -233,6 +235,7 @@ GradientUtils::GradientUtils(
   }
   tape = nullptr;
   tapeidx = 0;
+  lastTapeIndex = nullptr;
   assert(originalBlocks.size() > 0);
 
   SmallVector<BasicBlock *, 4> ReturningBlocks;
@@ -2696,6 +2699,78 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
   return lcssaPHI;
 }
 
+namespace {
+/// Identifies an argument of `oldFunc` (either its primal clone or its shadow)
+/// that is available directly in the split consumer pass without storing
+/// anything in the tape.
+struct UncachedTapeArg {
+  unsigned argNo;
+  bool isShadow;
+};
+} // namespace
+
+/// Returns true if `idx` encodes an `UncachedTapeArg` rather than a physical
+/// tape slot (`>= -1` or `IndexMappingError`).
+static bool isUncachedTapeArg(int idx) { return idx <= -2; }
+
+/// Encodes `arg` as a negative `tapeIndices` entry `<= -2` so it is disjoint
+/// from struct tape indices (`>= 0`), single-element non-struct tapes (`-1`),
+/// and `IndexMappingError`.
+static int encodeUncachedTapeArg(UncachedTapeArg arg) {
+  assert(arg.argNo < (1U << 30) &&
+         "argument index out of range for tape encoding");
+  unsigned packed = (arg.argNo << 1) | (arg.isShadow ? 1U : 0U);
+  return -2 - static_cast<int>(packed);
+}
+
+/// Decodes an `UncachedTapeArg` previously produced by `encodeUncachedTapeArg`.
+static UncachedTapeArg decodeUncachedTapeArg(int idx) {
+  assert(isUncachedTapeArg(idx) && "expected uncached tape arg index");
+  unsigned packed = static_cast<unsigned>(-(idx + 2));
+  return UncachedTapeArg{packed >> 1, (packed & 1U) != 0};
+}
+
+/// If `val` is an argument of `gutils.newFunc` corresponding to a primal or
+/// shadow argument of `gutils.oldFunc`, returns its `UncachedTapeArg`
+/// descriptor; otherwise returns `std::nullopt`.
+static std::optional<UncachedTapeArg> findUncachedTapeArg(GradientUtils &gutils,
+                                                          Value *val) {
+  auto *arg = dyn_cast<Argument>(val);
+  if (!arg || arg->getParent() != gutils.newFunc)
+    return std::nullopt;
+
+  auto foundOrig = gutils.newToOriginalFn.find(arg);
+  if (foundOrig != gutils.newToOriginalFn.end()) {
+    Value *origVal = foundOrig->second;
+    if (auto *origArg = dyn_cast_or_null<Argument>(origVal))
+      return UncachedTapeArg{origArg->getArgNo(), /*isShadow=*/false};
+  }
+
+  for (Argument &origArg : gutils.oldFunc->args()) {
+    auto foundShadow = gutils.invertedPointers.find(&origArg);
+    if (foundShadow != gutils.invertedPointers.end() &&
+        &*foundShadow->second == arg)
+      return UncachedTapeArg{origArg.getArgNo(), /*isShadow=*/true};
+  }
+  return std::nullopt;
+}
+
+/// Rebuilds the primal or shadow argument in `gutils.newFunc` corresponding to
+/// `arg` on `gutils.oldFunc`.
+static Value *rebuildUncachedTapeArg(GradientUtils &gutils,
+                                     UncachedTapeArg arg) {
+  assert(arg.argNo < gutils.oldFunc->arg_size() &&
+         "encoded original argument index out of range");
+  Argument *origArg = gutils.oldFunc->getArg(arg.argNo);
+  if (!arg.isShadow)
+    return gutils.getNewFromOriginal(static_cast<Value *>(origArg));
+
+  auto foundShadow = gutils.invertedPointers.find(origArg);
+  assert(foundShadow != gutils.invertedPointers.end() &&
+         "missing shadow argument in split consumer pass");
+  return &*foundShadow->second;
+}
+
 Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                                       int idx, bool replace) {
   assert(malloc);
@@ -2731,11 +2806,39 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     assert(!T.derived);
   }
 
-  if (tape) {
+  if (tape || mode == DerivativeMode::ReverseModeGradient ||
+      mode == DerivativeMode::ForwardModeSplit) {
     if (idx == IndexMappingError) {
       assert(malloc);
       return UndefValue::get(malloc->getType());
     }
+    if (isUncachedTapeArg(idx)) {
+      // The augmented primal stored nothing at this key because the value is
+      // an argument of the function; rebuild it directly from `oldFunc`'s
+      // argument mapping rather than reading from a tape.
+      Value *rebuiltArg =
+          rebuildUncachedTapeArg(*this, decodeUncachedTapeArg(idx));
+      assert(rebuiltArg->getType() == malloc->getType() &&
+             "rebuilt argument type must match requested cache type");
+      if (auto *mallocInst =
+              replace ? dyn_cast<Instruction>(malloc) : nullptr) {
+        Value *origVal = nullptr;
+        auto foundOrig = newToOriginalFn.find(mallocInst);
+        if (foundOrig != newToOriginalFn.end()) {
+          origVal = foundOrig->second;
+          newToOriginalFn.erase(foundOrig);
+        }
+        mallocInst->replaceAllUsesWith(rebuiltArg);
+        if (BuilderQ.GetInsertPoint() != BuilderQ.GetInsertBlock()->end() &&
+            &*BuilderQ.GetInsertPoint() == mallocInst)
+          BuilderQ.SetInsertPoint(mallocInst->getNextNode());
+        erase(mallocInst);
+        if (origVal)
+          originalToNewFn[origVal] = rebuiltArg;
+      }
+      return rebuiltArg;
+    }
+    assert(tape && "expected non-null tape for cached value");
     if (idx >= 0 && !tape->getType()->isStructTy()) {
       llvm::errs() << "cacheForReverse incorrect tape type: " << *tape
                    << " idx: " << idx << "\n";
@@ -3093,10 +3196,26 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   } else {
     assert(malloc);
 
+    if (isUncachedTapeArg(idx))
+      return malloc;
+
     assert(idx >= 0 && (unsigned)idx == addedTapeVals.size());
 
     if (isa<UndefValue>(malloc)) {
       addedTapeVals.push_back(malloc);
+      return malloc;
+    }
+
+    // An argument of the function being differentiated is available unchanged
+    // in the split consumer pass, so encode its original argument identity
+    // directly in `tapeIndices` without allocating a tape slot.
+    if (std::optional<UncachedTapeArg> uncachedArg =
+            findUncachedTapeArg(*this, malloc)) {
+      assert(lastTapeIndex && *lastTapeIndex == idx &&
+             "expected newly inserted tapeIndices slot for uncached argument");
+      *lastTapeIndex = encodeUncachedTapeArg(*uncachedArg);
+      lastTapeIndex = nullptr;
+      --tapeidx;
       return malloc;
     }
 
@@ -5896,9 +6015,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             "shadow global\n";
       ss << *arg << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -5916,9 +6038,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ss << *arg << "\n";
       ss << " md: " << *md << "\n";
       if (CustomErrorHandler) {
-        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
-                                         ErrorType::NoShadow, this, nullptr,
-                                         wrap(&BuilderM)));
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+        Value *res =
+            unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                      ErrorType::NoShadow, this, nullptr, BR));
+        finishCallbackBuilder(BR, BuilderM);
+        return res;
       } else {
         EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
                     ss.str());
@@ -6167,11 +6292,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
                  << " const val: " << *op;
-              if (CustomErrorHandler)
+              if (CustomErrorHandler) {
+                LLVMBuilderRef BR = startCallbackBuilder(bb);
                 ivops[i] = unwrap(CustomErrorHandler(
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
-                    wrap(op), wrap(&bb)));
-              else
+                    wrap(op), BR));
+                finishCallbackBuilder(BR, bb);
+              } else
                 EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                                   MixedActivityHint);
             }
@@ -6282,11 +6409,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(tval), wrap(&bb)));
-        else
+                                            wrap(tval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6303,11 +6432,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        if (CustomErrorHandler)
+        if (CustomErrorHandler) {
+          LLVMBuilderRef BR = startCallbackBuilder(bb);
           ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                             ErrorType::MixedActivityError, this,
-                                            wrap(fval), wrap(&bb)));
-        else
+                                            wrap(fval), BR));
+          finishCallbackBuilder(BR, bb);
+        } else
           EmitWarningAlways("MixedActivityError", *arg, ss.str(),
                             MixedActivityHint);
       }
@@ -6656,11 +6787,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6730,11 +6863,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
+              LLVMBuilderRef BR = startCallbackBuilder(pre);
               val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                               ErrorType::MixedActivityError,
-                                              this, wrap(preval), wrap(&pre)));
-            else
+                                              this, wrap(preval), BR));
+              finishCallbackBuilder(BR, pre);
+            } else
               EmitWarningAlways("MixedActivityError", *phi, ss.str(),
                                 MixedActivityHint);
           }
@@ -6795,9 +6930,10 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    auto iv =
-        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
-                                  this, nullptr, wrap(&BuilderM)));
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
+    auto iv = unwrap(CustomErrorHandler(
+        str.c_str(), wrap(oval), ErrorType::NoShadow, this, nullptr, BR));
+    finishCallbackBuilder(BR, BuilderM);
     if (iv) {
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
@@ -9961,7 +10097,9 @@ int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
     const std::map<std::pair<Instruction *, CacheType>, int> &mapping,
     IRBuilder<> &B) {
-  assert(tape);
+  assert((tape || mode == DerivativeMode::ReverseModeGradient ||
+          mode == DerivativeMode::ForwardModeSplit) &&
+         "expected split consumer mode when looking up tape index");
   auto found = mapping.find(idx);
   if (found == mapping.end()) {
     std::string s;
@@ -9977,8 +10115,10 @@ int GradientUtils::getIndex(
     ss << "idx: " << *idx.first << ", " << idx.second << "\n";
     ss << " could not find index in mapping\n";
     if (CustomErrorHandler) {
+      LLVMBuilderRef BR = startCallbackBuilder(B);
       CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
-                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
+                         ErrorType::GetIndexError, this, nullptr, BR);
+      finishCallbackBuilder(BR, B);
     } else {
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
                   ss.str());
@@ -9992,18 +10132,15 @@ int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
     std::map<std::pair<Instruction *, CacheType>, int> &mapping,
     IRBuilder<> &B) {
-  if (tape) {
-    return getIndex(
-        idx,
-        (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping, B);
-  } else {
-    if (mapping.find(idx) != mapping.end()) {
-      return mapping[idx];
-    }
-    mapping[idx] = tapeidx;
+  if (tape || mode == DerivativeMode::ReverseModeGradient ||
+      mode == DerivativeMode::ForwardModeSplit)
+    return getIndex(idx, std::as_const(mapping), B);
+  auto [it, inserted] = mapping.emplace(idx, static_cast<int>(tapeidx));
+  if (inserted) {
     ++tapeidx;
-    return mapping[idx];
+    lastTapeIndex = &it->second;
   }
+  return it->second;
 }
 
 void GradientUtils::computeGuaranteedFrees() {

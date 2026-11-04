@@ -357,13 +357,19 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
     SmallVector<LLVMValueRef, 3> refs;
     for (auto a : Args)
       refs.push_back(wrap(a));
-    return unwrap(
-        AHandle(wrap(&B), wrap(CI), Args.size(), refs.data(), gutils));
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    Value *res =
+        unwrap(AHandle(BR, wrap(CI), Args.size(), refs.data(), gutils));
+    finishCallbackBuilder(BR, B);
+    return res;
   };
   if (FHandle)
     shadowErasers[Name] = [=](IRBuilder<> &B,
                               Value *ToFree) -> llvm::CallInst * {
-      return cast_or_null<CallInst>(unwrap(FHandle(wrap(&B), wrap(ToFree))));
+      LLVMBuilderRef BR = startCallbackBuilder(B);
+      auto res = cast_or_null<CallInst>(unwrap(FHandle(BR, wrap(ToFree))));
+      finishCallbackBuilder(BR, B);
+      return res;
     };
 }
 
@@ -377,8 +383,10 @@ void EnzymeRegisterCallHandler(const char *Name,
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
     LLVMValueRef tapeR = wrap(tape);
+    LLVMBuilderRef BR = startCallbackBuilder(B);
     uint8_t noMod =
-        FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
+        FwdHandle(BR, wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
+    finishCallbackBuilder(BR, B);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
     tape = unwrap(tapeR);
@@ -386,7 +394,9 @@ void EnzymeRegisterCallHandler(const char *Name,
   };
   pair.second = [=](IRBuilder<> &B, CallInst *CI, DiffeGradientUtils &gutils,
                     Value *tape) {
-    RevHandle(wrap(&B), wrap(CI), &gutils, wrap(tape));
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    RevHandle(BR, wrap(CI), &gutils, wrap(tape));
+    finishCallbackBuilder(BR, B);
   };
 }
 
@@ -396,7 +406,9 @@ void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
              Value *&normalReturn, Value *&shadowReturn) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
-    uint8_t noMod = FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
+    LLVMBuilderRef BR = startCallbackBuilder(B);
+    uint8_t noMod = FwdHandle(BR, wrap(CI), &gutils, &normalR, &shadowR);
+    finishCallbackBuilder(BR, B);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
     return noMod != 0;

@@ -216,6 +216,15 @@ extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           LLVMBuilderRef);
 }
 
+/// Hand the builder @p B to a C API callback. LLVM 24 made LLVMBuilderRef a
+/// builder the C API owns (llvm/llvm-project#234620) and removed
+/// wrap(IRBuilder<> *), so this creates a C API builder positioned where @p B
+/// is. Pass the result to finishCallbackBuilder once the callback returned: it
+/// moves @p B to where the callback left the C API builder and frees it.
+/// Before LLVM 24 both are a plain wrap of @p B.
+LLVMBuilderRef startCallbackBuilder(llvm::IRBuilder<> &B);
+void finishCallbackBuilder(LLVMBuilderRef Ref, llvm::IRBuilder<> &B);
+
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
 
@@ -2233,7 +2242,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::sadd_with_overflow:
+  case Intrinsic::uadd_with_overflow:
   case Intrinsic::ssub_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow:
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::abs:
 #endif
@@ -2320,6 +2333,40 @@ static inline llvm::Value *checkedDiv(bool strongZero,
     res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
   }
   return res;
+}
+
+/// Bits of the integer value V that are zero by construction, whatever the
+/// values of its operands: the high bits of a zext and the low bits of a shl by
+/// a constant. The shadow of V is computed by the same zext or shl of the
+/// shadow of the operand, so these bits are zero in the shadow as well. Returns
+/// an empty mask otherwise.
+static inline llvm::APInt structurallyZeroBits(const llvm::Value *V) {
+  auto IT = llvm::dyn_cast<llvm::IntegerType>(V->getType());
+  if (!IT)
+    return llvm::APInt();
+  unsigned bits = IT->getBitWidth();
+  if (auto ZE = llvm::dyn_cast<llvm::ZExtInst>(V)) {
+    unsigned from = ZE->getOperand(0)->getType()->getScalarSizeInBits();
+    return llvm::APInt::getHighBitsSet(bits, bits - from);
+  }
+  if (auto BO = llvm::dyn_cast<llvm::BinaryOperator>(V))
+    if (BO->getOpcode() == llvm::Instruction::Shl)
+      if (auto CI = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1)))
+        if (CI->getValue().ult(bits))
+          return llvm::APInt::getLowBitsSet(bits, CI->getZExtValue());
+  return llvm::APInt(bits, 0);
+}
+
+/// Whether `or` of V0 and V1 only combines disjoint bit fields that are zero by
+/// construction (e.g. two floats packed into one integer by zext, shl and or).
+/// The shadows of such an `or` are then combined by `or` as well.
+static inline bool isStructurallyDisjointOr(const llvm::Value *V0,
+                                            const llvm::Value *V1) {
+  auto m0 = structurallyZeroBits(V0);
+  auto m1 = structurallyZeroBits(V1);
+  if (m0.getBitWidth() == 0 || m0.getBitWidth() != m1.getBitWidth())
+    return false;
+  return (m0 | m1).isAllOnes();
 }
 
 static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,

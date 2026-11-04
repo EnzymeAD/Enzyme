@@ -544,3 +544,28 @@ func.func @datan2(%y: f64, %x: f64, %dr: f64) -> (f64, f64) {
 // CHECK-NEXT:    %[[gx:.+]] = arith.mulf %[[dr]], %[[fx]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[gy]], %[[gx]] : f64, f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @clampf(%x: f64, %lo: f64, %hi: f64) -> f64 {
+  %res = math.clampf %x to [%lo, %hi] : f64
+  return %res : f64
+}
+
+func.func @dclampf(%x: f64, %lo: f64, %hi: f64, %dr: f64) -> (f64, f64, f64) {
+  %0:3 = enzyme.autodiff @clampf(%x, %lo, %hi, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (f64, f64, f64, f64) -> (f64, f64, f64)
+  return %0#0, %0#1, %0#2 : f64, f64, f64
+}
+
+// CHECK: func.func private @diffeclampf(%[[x:.+]]: f64, %[[lo:.+]]: f64, %[[hi:.+]]: f64, %[[dr:.+]]: f64) -> (f64, f64, f64) {
+// CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[below:.+]] = arith.cmpf olt, %[[x]], %[[lo]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[above:.+]] = arith.cmpf oge, %[[x]], %[[hi]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[inner:.+]] = arith.select %[[above]], %[[zero]], %[[dr]] : f64
+// CHECK-NEXT:    %[[gx:.+]] = arith.select %[[below]], %[[zero]], %[[inner]] : f64
+// CHECK-NEXT:    %[[below2:.+]] = arith.cmpf olt, %[[x]], %[[lo]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[glo:.+]] = arith.select %[[below2]], %[[dr]], %[[zero]] : f64
+// CHECK-NEXT:    %[[above2:.+]] = arith.cmpf oge, %[[x]], %[[hi]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[ghi:.+]] = arith.select %[[above2]], %[[dr]], %[[zero]] : f64
+// CHECK-NEXT:    return %[[gx]], %[[glo]], %[[ghi]] : f64, f64, f64
+// CHECK-NEXT:  }

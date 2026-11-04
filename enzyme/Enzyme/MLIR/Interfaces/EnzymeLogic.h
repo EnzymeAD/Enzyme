@@ -3,10 +3,14 @@
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "llvm/Support/CommandLine.h"
 
-#include "../../TypeAnalysis/TypeAnalysis.h"
+#include "../../TypeAnalysis/TypeTree.h"
 #include "../../Utils.h"
 #include <functional>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace mlir {
 namespace enzyme {
@@ -27,21 +31,78 @@ public:
   }
 };
 
+} // namespace enzyme
+} // namespace mlir
+
+template <> struct ConcreteTypeTraits<mlir::Type> {
+  static bool isFloatingPoint(mlir::Type T) { return static_cast<bool>(T); }
+
+  static void print(llvm::raw_ostream &OS, mlir::Type T) { OS << T; }
+
+  static std::string floatName(mlir::Type T) {
+    std::string S;
+    llvm::raw_string_ostream OS(S);
+    OS << T;
+    return S;
+  }
+
+  static bool less(mlir::Type A, mlir::Type B) {
+    return A.getAsOpaquePointer() < B.getAsOpaquePointer();
+  }
+};
+
+template <> struct TypeTreeTraits<mlir::Type> {
+  using Origin = mlir::Operation *;
+
+  template <typename T>
+  static llvm::cl::opt<T> *registeredOption(llvm::StringRef Name) {
+    auto &Opts = llvm::cl::getRegisteredOptions();
+    auto It = Opts.find(Name);
+    return It == Opts.end() ? nullptr
+                            : static_cast<llvm::cl::opt<T> *>(It->second);
+  }
+
+  static unsigned maxDepth() {
+    static auto *Opt = registeredOption<unsigned>("enzyme-max-type-depth");
+    return Opt ? *Opt : 6;
+  }
+
+  static int maxOffset() {
+    static auto *Opt = registeredOption<int>("enzyme-max-type-offset");
+    return Opt ? *Opt : 500;
+  }
+
+  template <typename TreeT>
+  static void depthLimitExceeded(const TreeT &Tree, Origin Orig,
+                                 const llvm::Twine &Detail) {
+    std::string Msg = ("not handling more than " + llvm::Twine(maxDepth()) +
+                       " pointer lookups deep dt:" + Tree.str() + Detail)
+                          .str();
+    if (Orig)
+      Orig->emitWarning(Msg);
+    else
+      llvm::errs() << Msg << "\n";
+  }
+};
+
+namespace mlir {
+namespace enzyme {
+
+using MConcreteType = GenericConcreteType<mlir::Type>;
+
+using MTypeTree = GenericTypeTree<mlir::Type>;
+
+// The MLIR counterpart of TypeResults. There is no type analysis behind it.
 class MTypeResults {
 public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
-  TypeTree query(Value) const { return TypeTree(); }
-  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
-                       bool pointerIntSame = false) const {
-    if (isa<IntegerType, IndexType>(val.getType())) {
-      return BaseType::Integer;
-    }
-    if (errIfNotFound) {
-      llvm_unreachable("something happened");
-    }
-    return BaseType::Unknown;
-  }
+  MTypeTree query(Value val) const;
+
+  /// What the value itself is.
+  MConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
+                        bool pointerIntSame = false) const;
+
+  MConcreteType firstPointer(size_t num, Value val, bool errIfNotFound = true,
+                             bool pointerIntSame = false) const;
 };
 
 class MEnzymeLogic {
