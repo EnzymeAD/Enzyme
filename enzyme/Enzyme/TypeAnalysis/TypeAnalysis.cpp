@@ -6267,6 +6267,18 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
         }
+      } else if (auto *VectorReturnType = dyn_cast<VectorType>(T)) {
+        if (VectorReturnType->getElementType()->isFloatingPointTy()) {
+          updateAnalysis(
+              &call,
+              TypeTree(ConcreteType(
+                           VectorReturnType->getElementType()->getScalarType()))
+                  .Only(-1, &call),
+              &call);
+        } else {
+          llvm::errs() << *T << " - " << call << '\n';
+          llvm_unreachable("Unknown type for libm");
+        }
       } else {
         llvm::errs() << *T << " - " << call << "\n";
         llvm_unreachable("Unknown type for libm");
