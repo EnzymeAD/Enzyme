@@ -709,6 +709,20 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
     }
+    // Unlike realloc, allocating a replacement buffer and copying into it does
+    // not release the superseded buffer; skip the initial growth where ptr has
+    // no prior allocation.
+    if (!custom || CustomDeallocator) {
+      BasicBlock *freePrevious =
+          BasicBlock::Create(M.getContext(), "freeprev", F);
+      BasicBlock *afterFree =
+          BasicBlock::Create(M.getContext(), "afterfree", F);
+      B.CreateCondBr(isFirstSize, afterFree, freePrevious);
+      B.SetInsertPoint(freePrevious);
+      CreateDealloc(B, ptr);
+      B.CreateBr(afterFree);
+      B.SetInsertPoint(afterFree);
+    }
   }
 
   if (ZeroInit) {
@@ -722,10 +736,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
 
+  BasicBlock *growthEnd = B.GetInsertBlock();
   B.CreateBr(ok);
   B.SetInsertPoint(ok);
   auto phi = B.CreatePHI(ptr->getType(), 2);
-  phi->addIncoming(gVal, grow);
+  phi->addIncoming(gVal, growthEnd);
   phi->addIncoming(ptr, entry);
   B.CreateRet(phi);
   return F;
