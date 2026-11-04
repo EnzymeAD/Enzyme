@@ -6195,8 +6195,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
     return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
+    if (arg->getOpcode() == Instruction::BitCast &&
+        (mode == DerivativeMode::ReverseModePrimal ||
+         mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModeGradient) &&
+        arg->getOperand(0)->getType()->isFPOrFPVectorTy()) {
+      return Constant::getNullValue(getShadowType(arg->getType()));
+    }
     IRBuilder<> bb(getNewFromOriginal(arg));
-    Value *invertOp = invertPointerM(arg->getOperand(0), bb, TT);
+    TypeTree opTT = TR.query(arg->getOperand(0)).PurgeAnything();
+    Value *invertOp =
+        invertPointerM(arg->getOperand(0), bb, opTT.isKnown() ? opTT : TT);
     Type *shadowTy = arg->getDestTy();
 
     auto rule = [&](Value *invertOp) {
@@ -6621,7 +6630,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeCombined ||
         mode == DerivativeMode::ReverseModeGradient) {
-      if (TT.allFloat(arg, DL)) {
+      if (TT.allFloat(arg, DL) || arg->getType()->isFPOrFPVectorTy()) {
         return Constant::getNullValue(getShadowType(arg->getType()));
       }
     }

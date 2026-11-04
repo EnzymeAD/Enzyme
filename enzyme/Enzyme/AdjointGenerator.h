@@ -1353,10 +1353,23 @@ public:
     auto storeSize = (DL.getTypeSizeInBits(valType) + 7) / 8;
 
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
+    if (!vd.isKnown() && orig_val) {
+      auto valTT = TR.query(orig_val).PurgeAnything();
+      if (valTT.isKnown()) {
+        vd = valTT.ShiftIndices(DL, /*start*/ 0, storeSize, /*addOffset*/ 0);
+      }
+    }
 
     if (!vd.isKnown()) {
       if (looseTypeAnalysis || true) {
-        vd = defaultTypeTreeForLLVM(valType, &I);
+        Type *guessType = valType;
+        if (orig_val) {
+          Value *uncast = orig_val;
+          while (auto *BC = dyn_cast<BitCastInst>(uncast))
+            uncast = BC->getOperand(0);
+          guessType = uncast->getType();
+        }
+        vd = defaultTypeTreeForLLVM(guessType, &I);
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I << ", assumed " << vd.str();

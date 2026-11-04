@@ -2531,11 +2531,56 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
         vals.push_back(sel->getOperand(2));
         continue;
       }
+      if (auto *bc = dyn_cast<BitCastInst>(todo)) {
+        vals.push_back(bc->getOperand(0));
+        continue;
+      }
+      if (auto *li = dyn_cast<LoadInst>(todo)) {
+        if (auto *AI = dyn_cast<AllocaInst>(li->getPointerOperand())) {
+          const DataLayout &DL =
+              fntypeinfo.Function->getParent()->getDataLayout();
+          auto loadBits = DL.getTypeSizeInBits(li->getType());
+          if (auto *arrSz = dyn_cast<ConstantInt>(AI->getArraySize())) {
+            if (arrSz->isOne() &&
+                DL.getTypeSizeInBits(AI->getAllocatedType()) == loadBits) {
+              SmallVector<Value *, 2> storedVals;
+              bool onlyScalarSlotAccesses = true;
+              for (User *U : AI->users()) {
+                if (auto *LI2 = dyn_cast<LoadInst>(U)) {
+                  if (DL.getTypeSizeInBits(LI2->getType()) != loadBits) {
+                    onlyScalarSlotAccesses = false;
+                    break;
+                  }
+                  continue;
+                }
+                if (auto *SI2 = dyn_cast<StoreInst>(U)) {
+                  if (SI2->getPointerOperand() != AI ||
+                      SI2->getValueOperand() == AI ||
+                      DL.getTypeSizeInBits(SI2->getValueOperand()->getType()) !=
+                          loadBits) {
+                    onlyScalarSlotAccesses = false;
+                    break;
+                  }
+                  storedVals.push_back(SI2->getValueOperand());
+                  continue;
+                }
+                onlyScalarSlotAccesses = false;
+                break;
+              }
+              if (onlyScalarSlotAccesses && !storedVals.empty()) {
+                for (Value *sv : storedVals)
+                  vals.push_back(sv);
+                continue;
+              }
+            }
+          }
+        }
+      }
       UniqueValues.push_back(todo);
     }
 
     TypeTree PhiTypes;
-    bool set = false;
+    bool set = UniqueValues.empty();
 
     for (size_t i = 0, size = UniqueValues.size(); i < size; ++i) {
       TypeTree newData = getAnalysis(UniqueValues[i]);
