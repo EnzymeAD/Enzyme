@@ -3001,16 +3001,22 @@ bool overwritesToMemoryReadByLoop(
             // they must be in the same loop, or one loop must dominate
             // the other.
             if (!eskip) {
-
-              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                auto EH = endL->getLoop()->getHeader();
-                if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = startL->getLoop()->getHeader();
-                  if (EH != SH && !DT.dominates(EH, SH) &&
-                      !DT.dominates(SH, EH))
-                    eskip = true;
-                }
-              }
+              eskip = SCEVExprContains(elim, [&](const SCEV *endExpr) {
+                const auto *endRec = dyn_cast<SCEVAddRecExpr>(endExpr);
+                if (!endRec)
+                  return false;
+                const BasicBlock *endHeader = endRec->getLoop()->getHeader();
+                return SCEVExprContains(slim, [&](const SCEV *startExpr) {
+                  const auto *startRec = dyn_cast<SCEVAddRecExpr>(startExpr);
+                  if (!startRec)
+                    return false;
+                  const BasicBlock *startHeader =
+                      startRec->getLoop()->getHeader();
+                  return endHeader != startHeader &&
+                         !DT.dominates(endHeader, startHeader) &&
+                         !DT.dominates(startHeader, endHeader);
+                });
+              });
             }
             if (!eskip) {
               auto sub = SE.getMinusSCEV(slim, elim);
