@@ -3379,6 +3379,11 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
         return false;
+      NoOpInlineAsmKind AsmKind = classifyNoOpInlineAsm(call);
+      if (AsmKind == NoOpInlineAsmKind::BarrierOnly ||
+          AsmKind == NoOpInlineAsmKind::DirectPassthrough ||
+          AsmKind == NoOpInlineAsmKind::IndirectMemoryBarrier)
+        return false;
     }
   }
   if (auto call = dyn_cast<CallInst>(maybeReader)) {
@@ -3435,6 +3440,11 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
+        return false;
+      NoOpInlineAsmKind AsmKind = classifyNoOpInlineAsm(call);
+      if (AsmKind == NoOpInlineAsmKind::BarrierOnly ||
+          AsmKind == NoOpInlineAsmKind::DirectPassthrough ||
+          AsmKind == NoOpInlineAsmKind::IndirectMemoryBarrier)
         return false;
     }
   }

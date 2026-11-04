@@ -4793,6 +4793,48 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       {
         updateAnalysis(arg, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       }
+      return;
+    }
+    switch (classifyNoOpInlineAsm(&call)) {
+    case NoOpInlineAsmKind::BarrierOnly:
+      return;
+    case NoOpInlineAsmKind::IndirectMemoryBarrier:
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    case NoOpInlineAsmKind::DirectPassthrough:
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      return;
+    case NoOpInlineAsmKind::IndirectTiedStore: {
+      auto &Layout =
+          call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PointerOperand = call.getArgOperand(0);
+      Value *ValueOperand = call.getArgOperand(1);
+      size_t StoreSize =
+          (Layout.getTypeSizeInBits(ValueOperand->getType()) + 7) / 8;
+      TypeTree PointerTree(BaseType::Pointer);
+      PointerTree |= getAnalysis(ValueOperand)
+                         .PurgeAnything()
+                         .ShiftIndices(Layout, /*start*/ 0, StoreSize,
+                                       /*addOffset*/ 0)
+                         .ReplaceMinus();
+      if (direction & UP) {
+        updateAnalysis(PointerOperand, PointerTree.Only(-1, &call), &call);
+        updateAnalysis(ValueOperand,
+                       getAnalysis(PointerOperand)
+                           .PurgeAnything()
+                           .Lookup(StoreSize, Layout),
+                       &call);
+      }
+      return;
+    }
+    case NoOpInlineAsmKind::None:
+      break;
     }
   }
 

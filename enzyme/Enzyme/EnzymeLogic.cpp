@@ -681,6 +681,11 @@ struct CacheAnalysis {
         if (auto iasm = dyn_cast<InlineAsm>(obj_op->getCalledOperand())) {
           if (StringRef(iasm->getAsmString()).contains("exit"))
             return false;
+          NoOpInlineAsmKind AsmKind = classifyNoOpInlineAsm(obj_op);
+          if (AsmKind == NoOpInlineAsmKind::BarrierOnly ||
+              AsmKind == NoOpInlineAsmKind::DirectPassthrough ||
+              AsmKind == NoOpInlineAsmKind::IndirectMemoryBarrier)
+            return false;
         }
       }
 
