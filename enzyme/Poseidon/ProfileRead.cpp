@@ -58,11 +58,12 @@ size_t readProfIdxMetadata(const Instruction *I) {
   return out;
 }
 
-static constexpr double kGradFloorRatio = 1e-6;
-static constexpr double kGradNullRatio = 1e-9;
+static constexpr double kSensFloorRatio = 1e-6;
+static constexpr double kSensNullRatio = 1e-9;
 
-unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
-                            llvm::StringRef functionName) {
+unsigned
+applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
+                      llvm::StringRef functionName) {
   if (profileMap.empty())
     return 0;
 
@@ -76,7 +77,7 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
   for (const auto &kv : profileMap) {
     if (kv.second.exec == 0)
       continue;
-    ref = std::max(ref, weightOf(kv.second) / (double)kv.second.exec);
+    ref = std::max(ref, kv.second.sumSens / (double)kv.second.exec);
   }
   if (!(ref > 0.0) || !std::isfinite(ref))
     return 0;
@@ -86,19 +87,27 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
     ProfileInfo &p = kv.second;
     if (p.exec == 0)
       continue;
-    const double perExec = weightOf(p) / (double)p.exec;
+    // A value that is always zero has no sensitivity to floor or report.
+    const double mag = std::max(std::fabs(p.minRes), std::fabs(p.maxRes));
+    if (!(mag > 0.0) || !std::isfinite(mag))
+      continue;
+    const double perExec = p.sumSens / (double)p.exec;
     const double ratio = perExec / ref;
-    if (ratio < kGradNullRatio) {
-      llvm::errs() << "Poseidon: profiled instruction " << kv.first << " of "
-                   << functionName << " has per-execution gradient " << perExec
-                   << ", " << ratio
-                   << " of this site's largest. A connected site cannot "
-                      "produce that spread; the adjoint seed most likely lies "
-                      "in the left null space of the operator (a constant seed "
-                      "does for any partition-of-unity basis with a derivative "
-                      "contraction). Re-profile with a non-degenerate seed.\n";
+    if (ratio < kSensNullRatio) {
+      llvm::errs()
+          << "Poseidon: profiled instruction " << kv.first << " of "
+          << functionName << " has per-execution sensitivity " << perExec
+          << ", " << ratio
+          << " of this site's largest. Either the value is negligible where "
+             "it is used, the largest is amplified by a cancellation, or the "
+             "adjoint seed lies in the left null space of the operator (a "
+             "constant seed does for any partition-of-unity basis with a "
+             "derivative contraction); in the last case re-profile with a "
+             "non-degenerate seed.\n";
     }
-    const double floorW = kGradFloorRatio * ref * (double)p.exec;
+    // The weight multiplies an absolute error, so the gradient a sensitivity
+    // floor implies scales with 1 / the value's magnitude.
+    const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
     if (weightOf(p) < floorW) {
       // Write the floor back through sumGrad, which is what every consumer
       // reads (FPNode::grad, CandidateOutput::grad, MatmulProfile::gradD).
@@ -109,10 +118,10 @@ unsigned applyGradientFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
     }
   }
   if (floored)
-    llvm::errs() << "Poseidon: gradient floor raised the accuracy weight of "
+    llvm::errs() << "Poseidon: sensitivity floor raised the accuracy weight of "
                  << floored << " of " << profileMap.size()
                  << " profiled instruction(s) in " << functionName << " to "
-                 << kGradFloorRatio << " x the site maximum\n";
+                 << kSensFloorRatio << " x the site maximum sensitivity\n";
   return floored;
 }
 

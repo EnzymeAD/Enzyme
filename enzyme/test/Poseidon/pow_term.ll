@@ -28,6 +28,10 @@
 ;
 ; A rewrite's pow is emitted as llvm.pow on the CPU, as clang emits it.
 ;
+; The accuracy weight of an instruction is floored so its sensitivity
+; |gradient x value| is at least 1e-6 of the site's largest: the r1 chain, about
+; 1e-29 of r2, is lifted (5 of 8 instructions).
+;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with
 ; libposeidon_profile_host.a, libposeidon_profile.a and Inputs/pow_term/driver.c).
@@ -60,9 +64,11 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
+; BASE: Poseidon: sensitivity floor raised the accuracy weight of 5 of 8 profiled instruction(s) in preprocess_tester to 1.000000e-06 x the site maximum sensitivity
 ; BASE: Found a subgraph with 8 operations and 2 inputs and 2 outputs
 ; BASE-NOT: Bottleneck:
 ; BASE: [poseidon] After splitting, have 1 subgraphs in preprocess_tester
+; BASE: Initial AccuracyCost: 2.843141e-14
 
 ; SPLIT: Bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
 ; SPLIT: === Splitting subgraph at bottleneck:   %p = call double @llvm.pow.f64(double %T, double %e)
@@ -77,11 +83,11 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT: [poseidon] After splitting, have 2 subgraphs in preprocess_tester
 ; SPLIT: [poseidon] joint sampling: 1 leaves, 1024 of 1024 draws inside the profiled input box
 ; SPLIT: [poseidon] joint sampling: 2 leaves, 1024 of 1024 draws inside the profiled input box
-; SPLIT: Initial AccuracyCost: 1.601240e-25
-; SPLIT: Initial AccuracyCost: 2.842171e-14
+; SPLIT: Initial AccuracyCost: 4.027094e-18
+; SPLIT: Initial AccuracyCost: 2.842284e-14
 
 ; HERBIE-CORE: (FPCore (v0) {{.*}} :pre (and (<= 2.50000000000000000e+02 v0 9.70000000000000000e+03)) :name "0" (pow v0 (fma (- (log v0)) 0.017899999999999999 -1.4847999999999999)))
-; HERBIE-CORE: 1.466158e-25{{[[:space:]]+}}256{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
+; HERBIE-CORE: 3.687364e-18{{[[:space:]]+}}256{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
 ; HERBIE-CORE: Applying solution for (pow v0 {{.*}} --(0)-> (pow.f64 v0 #s(literal -81/50 binary64))
 
 ; HERBIE-LABEL: define void @preprocess_tester(
