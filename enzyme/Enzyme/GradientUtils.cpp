@@ -5376,6 +5376,10 @@ Type *GradientUtils::extractMeta(Type *T, ArrayRef<unsigned> off) {
       T = AT->getElementType();
       continue;
     }
+    if (auto *VectorValueType = dyn_cast<VectorType>(T)) {
+      T = VectorValueType->getElementType();
+      continue;
+    }
     if (auto ST = dyn_cast<StructType>(T)) {
       T = ST->getElementType(idx);
       continue;
@@ -5435,10 +5439,42 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   if (!fallback)
     return nullptr;
 
-  if (Agg->getType()->isVectorTy() && off.size() == 1)
-    return Builder.CreateExtractElement(Agg, off[0], name);
+  return createExtractMeta(Builder, Agg, off, name);
+}
 
-  return Builder.CreateExtractValue(Agg, off, name);
+Value *GradientUtils::createExtractMeta(IRBuilder<> &Builder, Value *Aggregate,
+                                        ArrayRef<unsigned> Offsets,
+                                        const Twine &Name) {
+  if (Offsets.empty())
+    return Aggregate;
+  if (Offsets.size() == 1 && Aggregate->getType()->isVectorTy())
+    return Builder.CreateExtractElement(Aggregate, Offsets[0], Name);
+  if (Offsets.size() > 1 &&
+      extractMeta(Aggregate->getType(), Offsets.drop_back())->isVectorTy()) {
+    Value *InnerVector =
+        Builder.CreateExtractValue(Aggregate, Offsets.drop_back());
+    return Builder.CreateExtractElement(InnerVector, Offsets.back(), Name);
+  }
+  return Builder.CreateExtractValue(Aggregate, Offsets, Name);
+}
+
+Value *GradientUtils::insertMeta(IRBuilder<> &Builder, Value *Aggregate,
+                                 Value *Inserted, ArrayRef<unsigned> Offsets,
+                                 const Twine &Name) {
+  if (Offsets.empty())
+    return Inserted;
+  if (Offsets.size() == 1 && Aggregate->getType()->isVectorTy())
+    return Builder.CreateInsertElement(Aggregate, Inserted, Offsets[0], Name);
+  if (Offsets.size() > 1 &&
+      extractMeta(Aggregate->getType(), Offsets.drop_back())->isVectorTy()) {
+    Value *InnerVector =
+        createExtractMeta(Builder, Aggregate, Offsets.drop_back());
+    InnerVector =
+        Builder.CreateInsertElement(InnerVector, Inserted, Offsets.back());
+    return Builder.CreateInsertValue(Aggregate, InnerVector,
+                                     Offsets.drop_back(), Name);
+  }
+  return Builder.CreateInsertValue(Aggregate, Inserted, Offsets, Name);
 }
 
 llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
@@ -5489,7 +5525,7 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
     }
     if (lhs_off.size()) {
       assert(prev);
-      res = B.CreateInsertValue(prev, res, lhs_off);
+      res = insertMeta(B, prev, res, lhs_off);
     }
     return res;
   } else if (isa<ArrayType>(lhs_ty) || isa<StructType>(lhs_ty)) {

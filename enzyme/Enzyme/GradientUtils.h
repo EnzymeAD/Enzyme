@@ -601,6 +601,22 @@ public:
   //! Helper routine to get the type of an extraction
   static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
 
+  /// Emit extraction instructions along `Offsets`, using `extractelement` when
+  /// the innermost container is a vector and `extractvalue` otherwise, without
+  /// folding through prior `insertvalue` or `insertelement` instructions.
+  static llvm::Value *createExtractMeta(llvm::IRBuilder<> &Builder,
+                                        llvm::Value *Aggregate,
+                                        llvm::ArrayRef<unsigned> Offsets,
+                                        const llvm::Twine &Name = "");
+
+  /// Insert a value at the nested aggregate/vector path `Offsets`, emitting
+  /// `insertelement` when the innermost container is a vector and `insertvalue`
+  /// otherwise.
+  static llvm::Value *insertMeta(llvm::IRBuilder<> &Builder,
+                                 llvm::Value *Aggregate, llvm::Value *Inserted,
+                                 llvm::ArrayRef<unsigned> Offsets,
+                                 const llvm::Twine &Name = "");
+
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,
                                     llvm::ArrayRef<unsigned> lhs_off = {},
