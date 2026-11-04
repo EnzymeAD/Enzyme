@@ -7833,7 +7833,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         Value *newIV = nullptr;
         {
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
           SCEVExpander Exp(SE, "sparseenzyme");
 #else
           SCEVExpander Exp(SE, DL, "sparseenzyme");
@@ -9861,7 +9861,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
       IRBuilder<> B(getFirstNonPHI(L->getHeader()));
       {
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
         SCEVExpander Exp(SE, "sparseenzyme");
 #else
         SCEVExpander Exp(SE, DL, "sparseenzyme");
@@ -10036,7 +10036,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
       SCEVExpander Exp(SE, "sparseenzyme", /*preservelcssa*/ false);
 #else
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);

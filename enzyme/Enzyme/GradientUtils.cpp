@@ -7808,7 +7808,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 Value *start0;
                 SmallVector<Instruction *, 32> InsertedInstructions;
                 {
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
                   SCEVExpander OrigExp(*OrigSE, "enzyme",
                                        /*PreserveLCSSA = */ false);
 #else

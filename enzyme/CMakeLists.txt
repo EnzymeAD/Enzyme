@@ -270,6 +270,8 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
+# The LLVM of ROCm 7.2 (22.0.0git) is a snapshot of LLVM 22 that predates some API changes of the LLVM 22 release: with
+# ENZYME_ROCM_VERSION, the code takes the LLVM 21 branch where the two differ (intrinsic names, SCEVExpander, PassPlugin.h).
 option(ENZYME_ROCM_VERSION "Build for non-version compliant ROCM" OFF)
 if(ENZYME_ROCM_VERSION)
   add_definitions(-DROCM=1)

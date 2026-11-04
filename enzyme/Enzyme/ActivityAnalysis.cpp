@@ -451,7 +451,7 @@ static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::nvvm_barrier_cta_sync_aligned_all,
     Intrinsic::nvvm_barrier_cta_sync_aligned_count,
 #endif 
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ROCM)
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,

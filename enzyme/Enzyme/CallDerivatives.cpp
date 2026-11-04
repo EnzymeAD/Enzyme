@@ -3713,7 +3713,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                         cast<CallInst>(gutils->getNewFromOriginal(&call));
                     cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                     cal->addDereferenceableRetAttr(derefBytes);
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
                     AttrBuilder B(ci->getContext());
 #else
                     AttrBuilder B;
