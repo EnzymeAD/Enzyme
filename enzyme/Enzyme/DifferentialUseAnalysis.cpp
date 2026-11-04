@@ -605,15 +605,26 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    // Since adjoint of GC preserve is another preserve in reverse
-    // we still need even if instruction is inactive
-    if (!shadow)
-      if (funcName == "llvm.julia.gc_preserve_begin") {
+    // Since adjoint of GC preserve is another preserve in reverse (and forward
+    // must also preserve shadows of active GC objects whose raw data pointers
+    // were extracted separately, e.g. Julia 1.11+ MemoryRef), we need both the
+    // primal and any active shadow even though the intrinsic itself is
+    // inactive.
+    if (funcName == "llvm.julia.gc_preserve_begin") {
+      if (!shadow) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need direct primal of " << *val
-                       << " in reverse from gc " << *CI << "\n";
+                       << " in reverse from gc " << *CI << '\n';
         return true;
       }
+      if (mode != DerivativeMode::ForwardModeSplit &&
+          !gutils->isConstantValue(const_cast<Value *>(val))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: shadow of " << *val
+                       << " in gc_preserve_begin " << *CI << '\n';
+        return true;
+      }
+    }
 
     if (funcName == "julia.write_barrier" ||
         funcName == "julia.write_barrier_binding") {
@@ -754,6 +765,23 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // is a constant instruction, but needed in the forward. However,
     // if the value [and from above also the instruction] is constant
     // we don't need it.
+    if (shadow && mode != DerivativeMode::ForwardModeSplit &&
+        !gutils->isConstantValue(const_cast<Value *>(val))) {
+      if (auto *LI = dyn_cast<LoadInst>(user)) {
+        for (const User *U : LI->users()) {
+          if (auto *CI = dyn_cast<CallInst>(U)) {
+            if (getFuncNameFromCall(const_cast<CallInst *>(CI)) ==
+                "llvm.julia.gc_preserve_begin") {
+              if (EnzymePrintDiffUse)
+                llvm::errs() << " Need: shadow of " << *val
+                             << " in gc_preserve_begin load " << *LI << '\n';
+              return true;
+            }
+          }
+        }
+      }
+    }
+
     if (gutils->isConstantValue(
             const_cast<Value *>((const llvm::Value *)user))) {
       return false;
