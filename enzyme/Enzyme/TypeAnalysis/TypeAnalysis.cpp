@@ -1693,6 +1693,10 @@ void TypeAnalyzer::considerTBAA() {
                    call->getCalledFunction()->getIntrinsicID() ==
                        Intrinsic::masked_store) {
           // TODO use mask to propagate up to relevant pointer
+        } else if (isMemFreeLibMFunction(getFuncNameFromCall(call))) {
+          // Clang 20 and later tag libm calls with the TBAA of errno, the only
+          // memory such a call may touch; it describes neither an operand nor
+          // the returned value, so there is nothing to record.
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
