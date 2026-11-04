@@ -1426,11 +1426,21 @@ struct ArmStats {
 
 namespace {
 
+// One round of the regime-arm search. A round's points and the original's
+// gold value and error at each depend only on the root and the round's seed, so
+// every regime-split candidate of the root shares them.
+struct ArmRound {
+  SmallVector<MapVector<Value *, double>, 4> points;
+  SmallVector<double, 4> gold, origError;
+  SmallVector<bool, 4> priced;
+};
+
 struct RootSamples {
   Value *root = nullptr;
   double grad = 0.0;
   SmallVector<double, 4> goldVals, origErrors, origVals;
   double origCost = 0.0;
+  mutable std::vector<ArmRound> armRounds;
 };
 
 bool sampleRoot(
@@ -1560,14 +1570,22 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
     unsigned round = 0;
     std::shared_ptr<FPNode> origNode = valueToNodeMap[R.root];
     while (starved() && drawn < budget) {
-      SmallVector<MapVector<Value *, double>, 4> extra;
-      getSampledPoints(subgraph.inputs.getArrayRef(), valueToNodeMap,
-                       symbolToValueMap, extra, nullptr,
-                       flags::NumSamples.getValue(), ++round);
-      if (extra.empty())
+      if (R.armRounds.size() <= round) {
+        ArmRound fresh;
+        getSampledPoints(subgraph.inputs.getArrayRef(), valueToNodeMap,
+                         symbolToValueMap, fresh.points, nullptr,
+                         flags::NumSamples.getValue(), round + 1);
+        fresh.gold.resize(fresh.points.size());
+        fresh.origError.resize(fresh.points.size());
+        fresh.priced.resize(fresh.points.size(), false);
+        R.armRounds.push_back(std::move(fresh));
+      }
+      ArmRound &rd = R.armRounds[round++];
+      if (rd.points.empty())
         break;
-      drawn += extra.size();
-      for (const auto &point : extra) {
+      drawn += rd.points.size();
+      for (size_t p = 0; p < rd.points.size(); ++p) {
+        const auto &point = rd.points[p];
         SmallVector<RegimeArm, 4> arms = takenArms(parsedNode.get(), point);
         bool wanted = false;
         for (const RegimeArm &arm : arms)
@@ -1576,10 +1594,15 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
         if (!wanted)
           continue;
         SmallVector<double, 1> r;
-        getMPFRValues({origNode.get()}, point, r, true, 53);
-        double goldVal = r[0];
-        getFPValues({origNode.get()}, point, r);
-        double origError = sampleError(goldVal, r[0]);
+        if (!rd.priced[p]) {
+          getMPFRValues({origNode.get()}, point, r, true, 53);
+          rd.gold[p] = r[0];
+          getFPValues({origNode.get()}, point, r);
+          rd.origError[p] = sampleError(rd.gold[p], r[0]);
+          rd.priced[p] = true;
+        }
+        double goldVal = rd.gold[p];
+        double origError = rd.origError[p];
         getFPValues({parsedNode.get()}, point, r);
         double error = sampleError(goldVal, r[0]);
         if (std::isnan(error) || std::isnan(origError))
