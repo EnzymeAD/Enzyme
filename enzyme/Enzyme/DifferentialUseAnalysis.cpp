@@ -1335,8 +1335,8 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
       // instructions).
       if (!isa<Instruction>(Pstart))
         break;
-      Intermediates.insert(Pstart);
-      todo.push_back(Pstart);
+      if (Intermediates.count(Pstart))
+        todo.push_back(Pstart);
       if (auto phi = dyn_cast<PHINode>(Pstart)) {
         if (phi->getNumIncomingValues() == 1)
           Pstart = phi->getIncomingValue(0);
