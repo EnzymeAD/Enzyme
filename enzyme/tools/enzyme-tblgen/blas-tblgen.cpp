@@ -2423,7 +2423,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << ", toadd, (isa<Instruction>(toadd) && "
             "cast<Instruction>(toadd)->getNextNode()) ? Builder3 : Builder2);\n"
          << "          } else {\n"
-         << "            addToDiffe(arg_" << name
+         << "            addToDiffe(orig_" << name
          << ", toadd, (isa<Instruction>(toadd) && "
             "cast<Instruction>(toadd)->getNextNode()) ? Builder3 : Builder2, "
             "type_"
