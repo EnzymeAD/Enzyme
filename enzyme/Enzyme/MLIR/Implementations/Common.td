@@ -86,10 +86,10 @@ class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
   bit usesCustom = usesCustom_;
 }
 
-class DiffeRetIndex<list<int> indices_> {
-  list<int> indices = indices_;
+class DiffeRetIndex<int index_> {
+  int index = index_;
 }
-def DiffeRet : DiffeRetIndex<[-1]>;
+def DiffeRet : DiffeRetIndex<0>;
 
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
