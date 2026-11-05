@@ -3042,7 +3042,6 @@ void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
   Value *NewValueOperand = I.getNewValOperand();
   auto ValueSize =
       (Layout.getTypeSizeInBits(CompareOperand->getType()) + 7) / 8;
-  auto StructSize = (Layout.getTypeSizeInBits(I.getType()) + 7) / 8;
 
   if (direction & UP) {
     TypeTree ResultPointer =
@@ -3100,10 +3099,8 @@ void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
     }
     TypeTree ResultType = LoadedType.ShiftIndices(Layout, /*start*/ 0,
                                                   ValueSize, /*addOffset*/ 0);
-    ResultType |= TypeTree(BaseType::Integer)
-                      .Only(-1, &I)
-                      .ShiftIndices(Layout, /*start*/ 0, StructSize - ValueSize,
-                                    /*addOffset*/ ValueSize);
+    int FlagOffset = (int)getAggregateElementOffset(Layout, I.getType(), {1});
+    ResultType |= TypeTree(BaseType::Integer).Only(FlagOffset, &I);
     updateAnalysis(&I, ResultType, &I);
   }
 }
@@ -6538,26 +6535,6 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
           continue;
         }
       }
-    }
-    if (auto *ExtractValue = dyn_cast<ExtractValueInst>(u)) {
-      if (isa<AtomicCmpXchgInst>(val) &&
-          ExtractValue->getIndices().size() == 1 &&
-          ExtractValue->getIndices()[0] == 1)
-        continue;
-      if (!ExtractValue->getType()->isIntOrIntVectorTy()) {
-        seen[val].first = false;
-        continue;
-      }
-      if (!mustRemainInteger(ExtractValue, returned)) {
-        seen[val].first = false;
-        seen[val].second |= seen[ExtractValue].second;
-      }
-      continue;
-    }
-    if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(u)) {
-      if (CompareExchange->getPointerOperand() != val &&
-          CompareExchange->getNewValOperand() != val)
-        continue;
     }
     if (isa<CmpInst>(u))
       continue;

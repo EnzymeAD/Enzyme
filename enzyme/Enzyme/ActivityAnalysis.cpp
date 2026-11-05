@@ -925,6 +925,30 @@ static inline void propagateArgumentInformation(
   }
 }
 
+/// Whether the first sizeof(AccessType) bytes behind Pointer are known to
+/// hold only integer data, so a write of that size cannot move an active
+/// floating point value.
+static bool isAllIntegralMemory(TypeResults const &TR, Value *Pointer,
+                                Type *AccessType) {
+  const DataLayout &Layout = TR.getFunction()->getParent()->getDataLayout();
+  auto AccessSize = (Layout.getTypeSizeInBits(AccessType) + 7) / 8;
+
+  bool SeenInteger = false;
+  auto PointeeTree = TR.query(Pointer).Data0();
+  for (int Index = -1; Index < (int)AccessSize; ++Index) {
+    auto DataType = PointeeTree[{Index}];
+    if (DataType.isIntegral() || DataType == BaseType::Anything) {
+      SeenInteger = true;
+      if (Index == -1)
+        break;
+      continue;
+    }
+    if (DataType.isKnown())
+      return false;
+  }
+  return SeenInteger;
+}
+
 /// Return whether this instruction is known not to propagate adjoints
 /// Note that instructions could return an active pointer, but
 /// do not propagate adjoints themselves
@@ -1022,95 +1046,28 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return false;
 
   /// A store into all integral memory is inactive
-  if (auto SI = dyn_cast<StoreInst>(I)) {
-    auto StoreSize = SI->getParent()
-                         ->getParent()
-                         ->getParent()
-                         ->getDataLayout()
-                         .getTypeSizeInBits(SI->getValueOperand()->getType()) /
-                     8;
-
-    bool AllIntegral = true;
-    bool SeenInteger = false;
-    auto q = TR.query(SI->getPointerOperand()).Data0();
-    for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
-      if (dt.isIntegral() || dt == BaseType::Anything) {
-        SeenInteger = true;
-        if (i == -1)
-          break;
-      } else if (dt.isKnown()) {
-        AllIntegral = false;
-        break;
-      }
-    }
-
-    if (AllIntegral && SeenInteger) {
+  if (auto *SI = dyn_cast<StoreInst>(I)) {
+    if (isAllIntegralMemory(TR, SI->getPointerOperand(),
+                            SI->getValueOperand()->getType())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction from TA " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
     }
   }
-  if (auto SI = dyn_cast<AtomicRMWInst>(I)) {
-    auto StoreSize = SI->getParent()
-                         ->getParent()
-                         ->getParent()
-                         ->getDataLayout()
-                         .getTypeSizeInBits(I->getType()) /
-                     8;
-
-    bool AllIntegral = true;
-    bool SeenInteger = false;
-    auto q = TR.query(SI->getOperand(0)).Data0();
-    for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
-      if (dt.isIntegral() || dt == BaseType::Anything) {
-        SeenInteger = true;
-        if (i == -1)
-          break;
-      } else if (dt.isKnown()) {
-        AllIntegral = false;
-        break;
-      }
-    }
-
-    if (AllIntegral && SeenInteger) {
+  if (auto *RMW = dyn_cast<AtomicRMWInst>(I)) {
+    if (isAllIntegralMemory(TR, RMW->getPointerOperand(), I->getType())) {
       if (EnzymePrintActivity)
-        llvm::errs() << " constant instruction from TA " << *I << "\n";
+        llvm::errs() << " constant instruction from TA " << *I << '\n';
       InsertConstantInstruction(TR, I);
       return true;
     }
   }
   if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(I)) {
-    auto StoreSize = (CompareExchange->getParent()
-                          ->getParent()
-                          ->getParent()
-                          ->getDataLayout()
-                          .getTypeSizeInBits(
-                              CompareExchange->getNewValOperand()->getType()) +
-                      7) /
-                     8;
-
-    bool AllIntegral = true;
-    bool SeenInteger = false;
-    auto QueryTree = TR.query(CompareExchange->getPointerOperand()).Data0();
-    for (int Index = -1; Index < (int)StoreSize; ++Index) {
-      auto DataType = QueryTree[{Index}];
-      if (DataType.isIntegral()) {
-        SeenInteger = true;
-        if (Index == -1)
-          break;
-      } else if (DataType.isKnown()) {
-        AllIntegral = false;
-        break;
-      }
-    }
-
-    if (AllIntegral && SeenInteger) {
+    if (isAllIntegralMemory(TR, CompareExchange->getPointerOperand(),
+                            CompareExchange->getNewValOperand()->getType())) {
       if (EnzymePrintActivity)
-        llvm::errs() << " constant instruction from type analysis " << *I
-                     << '\n';
+        llvm::errs() << " constant instruction from TA " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
     }
