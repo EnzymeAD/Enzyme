@@ -63,6 +63,7 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "FunctionUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
@@ -618,6 +619,11 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosInactiveCall(Name, NormDem))
+      return true;
+  }
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -732,6 +738,14 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     return true;
   }
 
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+    if (enzyme_kokkos::isKokkosSerialInternalCtor(funcName, NormDem) ||
+        enzyme_kokkos::isKokkosSerialInternalDtor(funcName, NormDem) ||
+        enzyme_kokkos::isKokkosSerialResizeTeamData(funcName, NormDem))
+      return true;
+  }
+
   return false;
 }
 
@@ -779,6 +793,14 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosSerialInternalCtor(Name, NormDem) ||
+        enzyme_kokkos::isKokkosSerialInternalDtor(Name, NormDem) ||
+        enzyme_kokkos::isKokkosSerialResizeTeamData(Name, NormDem))
+      return true;
+  }
 
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
@@ -893,6 +915,20 @@ static inline void propagateArgumentInformation(
       Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
       Name == "__cxa_guard_abort")
     return;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosSerialDefaultCtor(Name, NormDem)) {
+      unsigned ThisIdx = Name == "__enzyme_kokkos_serial_init_d" ? 1 : 0;
+      if (CI.arg_size() > ThisIdx)
+        propagateFromOperand(CI.getArgOperand(ThisIdx));
+      return;
+    }
+    if (enzyme_kokkos::isKokkosSerialInternalCtor(Name, NormDem) ||
+        enzyme_kokkos::isKokkosSerialInternalDtor(Name, NormDem) ||
+        enzyme_kokkos::isKokkosSerialResizeTeamData(Name, NormDem))
+      return;
+  }
 
   auto F = getFunctionFromCall(&CI);
 
@@ -1478,7 +1514,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
 
       if (GI->getName().contains("enzyme_const") ||
-          InactiveGlobals.count(GI->getName())) {
+          InactiveGlobals.count(GI->getName()) ||
+          startsWith(GI->getName(), "__enzyme_kokkos_serial_d_instance")) {
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -2905,12 +2942,19 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       return true;
     }
 
+    bool IsKokkosSerialCtor = false;
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      IsKokkosSerialCtor =
+          enzyme_kokkos::isKokkosSerialDefaultCtor(funcName, NormDem);
+    }
+
     // If requesting empty unknown functions to be considered inactive, abide
     // by those rules
     if (called && EnzymeEmptyFnInactive && called->empty() &&
         !hasMetadata(called, "enzyme_gradient") &&
         !hasMetadata(called, "enzyme_derivative") &&
-        !isAllocationFunction(funcName, TLI) &&
+        !isAllocationFunction(funcName, TLI) && !IsKokkosSerialCtor &&
         !isDeallocationFunction(funcName, TLI) && !isa<IntrinsicInst>(op)) {
       if (EnzymePrintActivity)
         llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
@@ -3472,6 +3516,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (F->getIntrinsicID() == Intrinsic::memset &&
             UA != UseActivity::AllStores) {
           continue;
+        }
+        if (UA == UseActivity::OnlyLoads) {
+          StringRef FnName = getFuncNameFromCall(call);
+          if (enzyme_kokkos::mayBeKokkosRelevantSymbol(FnName)) {
+            std::string NormDem = ENZYME_KOKKOS_DEMANGLE(FnName);
+            if (enzyme_kokkos::isKokkosSerialDefaultCtor(FnName, NormDem))
+              continue;
+          }
         }
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {

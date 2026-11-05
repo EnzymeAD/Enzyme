@@ -3134,4 +3134,175 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// Names of Kokkos runtime structs whose pointer-typed fields never point to
+/// differentiable data (execution-space instances, policies, profiling tool
+/// responses, allocation trackers/records, shared pointers to instances).
+static inline bool isKokkosRuntimeStructName(llvm::StringRef Name) {
+  if (!Name.contains("Kokkos"))
+    return false;
+  return Name.contains("Kokkos::Serial") || Name.contains("Kokkos::Threads") ||
+         Name.contains("Kokkos::OpenMP") || Name.contains("Kokkos::Cuda") ||
+         Name.contains("Kokkos::HIP") ||
+         Name.contains("Kokkos::Experimental::SYCL") ||
+         Name.contains("Kokkos::RangePolicy") ||
+         Name.contains("Kokkos::MDRangePolicy") ||
+         Name.contains("Kokkos::TeamPolicy") ||
+         Name.contains("Kokkos::Impl::TeamPolicyInternal") ||
+         Name.contains("Kokkos::Tools::") ||
+         Name.contains("Kokkos::Impl::HostSharedPtr") ||
+         Name.contains("Kokkos::Impl::SharedAllocationTracker") ||
+         Name.contains("Kokkos::Impl::SharedAllocationRecord") ||
+         Name.contains("Kokkos::Impl::SerialInternal") ||
+         Name.contains("Kokkos::Impl::ThreadsInternal") ||
+         Name.contains("Kokkos::Impl::OpenMPInternal") ||
+         Name.contains("Kokkos::Impl::CudaInternal") ||
+         Name.contains("Kokkos::Impl::HIPInternal") ||
+         Name.contains("Kokkos::Impl::HostThreadTeamData") ||
+         Name.contains("Kokkos::Impl::HostThreadTeamMember") ||
+         Name.contains("Kokkos::ScratchMemorySpace") ||
+         Name.contains("Kokkos::Impl::ViewTracker");
+}
+
+/// Returns true if the byte range [Offset, Offset + Size) in \p T lies within
+/// a (possibly nested) struct whose name identifies a Kokkos runtime type
+/// (see `isKokkosRuntimeStructName`). `Kokkos::View` itself is not a runtime
+/// type, but its embedded `ViewTracker` / `SharedAllocationTracker` is.
+static inline bool isKokkosRuntimeSlice(llvm::Type *T, uint64_t Offset,
+                                        uint64_t Size,
+                                        const llvm::DataLayout &DL) {
+  if (!T || Size == 0)
+    return false;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    llvm::Type *ET = AT->getElementType();
+    uint64_t ESize = DL.getTypeAllocSize(ET);
+    if (ESize == 0 || AT->getNumElements() == 0)
+      return false;
+    uint64_t first = Offset / ESize;
+    uint64_t last = (Offset + Size - 1) / ESize;
+    if (last >= AT->getNumElements() || first != last)
+      return false;
+    return isKokkosRuntimeSlice(ET, Offset - first * ESize, Size, DL);
+  }
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    const llvm::StructLayout *SL = DL.getStructLayout(ST);
+    if (Offset + Size > SL->getSizeInBytes())
+      return false;
+    if (!ST->isLiteral() && isKokkosRuntimeStructName(ST->getName()))
+      return true;
+    unsigned idx = SL->getElementContainingOffset(Offset);
+    uint64_t EStart = SL->getElementOffset(idx);
+    llvm::Type *ET = ST->getElementType(idx);
+    if (Offset + Size > EStart + DL.getTypeAllocSize(ET))
+      return false;
+    return isKokkosRuntimeSlice(ET, Offset - EStart, Size, DL);
+  }
+  return false;
+}
+
+/// If \p V is an `enzyme_fromstack`-upgraded `malloc` `CallInst`, returns its
+/// original stack `AllocaInst` element type (and sets \p OutElemCount when
+/// non-null).
+static inline llvm::Type *
+extractEnzymeFromStackType(const llvm::Value *V,
+                           const llvm::DataLayout *DL = nullptr,
+                           uint64_t *OutElemCount = nullptr) {
+  if (OutElemCount)
+    *OutElemCount = 1;
+  const auto *MCI = llvm::dyn_cast_or_null<llvm::CallInst>(V);
+  if (!MCI)
+    return nullptr;
+  auto *MD = hasMetadata(MCI, "enzyme_fromstack");
+  if (!MD || MD->getNumOperands() < 2)
+    return nullptr;
+  auto *CAM = llvm::dyn_cast<llvm::ConstantAsMetadata>(MD->getOperand(1));
+  if (!CAM)
+    return nullptr;
+  auto *CIVal = llvm::dyn_cast<llvm::ConstantInt>(CAM->getValue());
+  if (!CIVal)
+    return nullptr;
+  auto *ElTy = reinterpret_cast<llvm::Type *>(CIVal->getLimitedValue());
+  if (ElTy && DL && OutElemCount && MCI->arg_size() >= 1) {
+    if (auto *ByteSz =
+            llvm::dyn_cast<llvm::ConstantInt>(MCI->getArgOperand(0))) {
+      uint64_t ElemBytes = DL->getTypeAllocSize(ElTy);
+      uint64_t TotalBytes = ByteSz->getZExtValue();
+      if (ElemBytes > 0 && TotalBytes >= ElemBytes &&
+          TotalBytes % ElemBytes == 0)
+        *OutElemCount = TotalBytes / ElemBytes;
+    }
+  }
+  return ElTy;
+}
+
+/// Returns true if \p Ptr addresses \p Size bytes inside a Kokkos runtime
+/// struct (via `AllocaInst`, `enzyme_fromstack` allocation, GEP source element
+/// type, or `sret`/`byval` parameter; see `isKokkosRuntimeSlice`).
+static inline bool isAllocaSliceKokkosRuntime(const llvm::Value *Ptr,
+                                              uint64_t Size,
+                                              const llvm::DataLayout &DL) {
+  if (!Ptr || Size == 0 || !Ptr->getType()->isPointerTy())
+    return false;
+  const llvm::Value *Cur = Ptr;
+  int64_t AccOff = 0;
+  llvm::SmallPtrSet<const llvm::Value *, 8> Visited;
+  while (Cur && Visited.insert(Cur).second) {
+    Cur = Cur->stripPointerCasts();
+    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Cur)) {
+      llvm::APInt GepOff(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+      if (GEP->accumulateConstantOffset(DL, GepOff)) {
+        int64_t Step = GepOff.getSExtValue();
+        int64_t TotalFromGepSrc = Step + AccOff;
+        if (TotalFromGepSrc >= 0 &&
+            isKokkosRuntimeSlice(GEP->getSourceElementType(),
+                                 static_cast<uint64_t>(TotalFromGepSrc), Size,
+                                 DL))
+          return true;
+        AccOff += Step;
+        Cur = GEP->getPointerOperand();
+        continue;
+      }
+      return false;
+    }
+    break;
+  }
+  if (AccOff < 0)
+    return false;
+  uint64_t Off = static_cast<uint64_t>(AccOff);
+  if (const auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Cur)) {
+    if (!llvm::isa<llvm::ConstantInt>(AI->getArraySize()))
+      return false;
+    llvm::Type *ATy = AI->getAllocatedType();
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >=
+        llvm::cast<llvm::ConstantInt>(AI->getArraySize())->getLimitedValue())
+      return false;
+    return isKokkosRuntimeSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  uint64_t FromStackCount = 1;
+  if (llvm::Type *ATy = extractEnzymeFromStackType(Cur, &DL, &FromStackCount)) {
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >= FromStackCount)
+      return false;
+    return isKokkosRuntimeSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
+    llvm::Type *ParamTy = nullptr;
+    if (Arg->hasStructRetAttr())
+      ParamTy = Arg->getParamStructRetType();
+    else if (Arg->hasByValAttr())
+      ParamTy = Arg->getParamByValType();
+    if (ParamTy && isKokkosRuntimeSlice(ParamTy, Off, Size, DL))
+      return true;
+  }
+  return false;
+}
+
 #endif // ENZYME_UTILS_H
