@@ -221,7 +221,7 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all,
     llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_count,
 #endif
-#if LLVM_VERSION_MAJOR < 22 || defined(ROCM)
+#if LLVM_VERSION_MAJOR < 22 || (defined(ROCM) && ROCM < 70300)
     llvm::Intrinsic::nvvm_barrier0_popc,
     llvm::Intrinsic::nvvm_barrier0_and,
     llvm::Intrinsic::nvvm_barrier0_or,

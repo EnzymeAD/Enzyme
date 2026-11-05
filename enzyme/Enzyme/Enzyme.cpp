@@ -3052,7 +3052,7 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
 }
 
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
+#if LLVM_VERSION_MAJOR >= 22 && !(defined(ROCM) && ROCM < 70300)
 #include "llvm/Plugins/PassPlugin.h"
 #else
 #include "llvm/Passes/PassPlugin.h"

@@ -2211,7 +2211,7 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
   case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
-#if LLVM_VERSION_MAJOR < 22 || defined(ROCM)
+#if LLVM_VERSION_MAJOR < 22 || (defined(ROCM) && ROCM < 70300)
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:

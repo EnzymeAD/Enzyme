@@ -17,7 +17,7 @@ mi300 - HIP:
     - |
       uenv run $UENV --view=default -- bash -euxc '
         LLVM_MAJOR=$(llvm-config --version | cut -d. -f1)
-        cmake -S enzyme -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENZYME_ROCM_VERSION=ON \
+        cmake -S enzyme -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENZYME_ROCM_VERSION=$(cat $ROCM_PATH/.info/version) \
           -DLLVM_DIR=$ROCM_PATH/lib/cmake/llvm -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
         ninja -C build ClangEnzyme-$LLVM_MAJOR
         clang++ -x hip --offload-arch=$OFFLOAD_ARCH --rocm-path=$ROCM_PATH -O2 -fplugin=build/Enzyme/ClangEnzyme-$LLVM_MAJOR.so \

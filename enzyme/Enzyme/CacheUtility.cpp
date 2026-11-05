@@ -577,7 +577,7 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
+#if LLVM_VERSION_MAJOR >= 22 && !(defined(ROCM) && ROCM < 70300)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
@@ -1074,7 +1074,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
+#if LLVM_VERSION_MAJOR >= 22 && !(defined(ROCM) && ROCM < 70300)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -1115,7 +1115,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ROCM)
+#if LLVM_VERSION_MAJOR >= 22 && !(defined(ROCM) && ROCM < 70300)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),

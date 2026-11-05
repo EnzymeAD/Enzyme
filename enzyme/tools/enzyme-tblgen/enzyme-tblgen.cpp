@@ -35,8 +35,8 @@
 using namespace llvm;
 
 // LLVM version against which the version ranges of intrinsic names are checked.
-#if defined(ROCM) && LLVM_VERSION_MAJOR == 22
-// ROCm's LLVM 22 has the intrinsic names of LLVM 21 (see ENZYME_ROCM_VERSION).
+#if defined(ROCM) && ROCM < 70300 && LLVM_VERSION_MAJOR == 22
+// The LLVM 22 of ROCm < 7.3 has the intrinsic names of LLVM 21 (see ENZYME_ROCM_VERSION).
 static constexpr int intrVersion = 21;
 #else
 static constexpr int intrVersion = LLVM_VERSION_MAJOR;

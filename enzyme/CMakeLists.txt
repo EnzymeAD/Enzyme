@@ -270,11 +270,22 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
-# The LLVM of ROCm 7.2 (22.0.0git) is a snapshot of LLVM 22 that predates some API changes of the LLVM 22 release: with
-# ENZYME_ROCM_VERSION, the code takes the LLVM 21 branch where the two differ (intrinsic names, SCEVExpander, PassPlugin.h).
-option(ENZYME_ROCM_VERSION "Build for non-version compliant ROCM" OFF)
+# The LLVM of ROCm is a snapshot whose API can differ from the LLVM release of the same version: ENZYME_ROCM_VERSION (e.g. 7.2.3)
+# is passed to the code as ROCM = major * 10000 + minor * 100 + patch. The LLVM of ROCm < 7.3 (22.0.0git) predates some API
+# changes of the LLVM 22 release: the code takes the LLVM 21 branch where the two differ (intrinsic names, SCEVExpander,
+# PassPlugin.h).
+set(ENZYME_ROCM_VERSION "" CACHE STRING "Version of ROCm (e.g. 7.2.3) when building against its non-version compliant LLVM")
 if(ENZYME_ROCM_VERSION)
-  add_definitions(-DROCM=1)
+  if(NOT ENZYME_ROCM_VERSION MATCHES "^([0-9]+)\\.([0-9]+)(\\.([0-9]+))?$")
+    message(FATAL_ERROR "ENZYME_ROCM_VERSION must be a ROCm version such as 7.2.3, not '${ENZYME_ROCM_VERSION}'")
+  endif()
+  set(ROCM_PATCH 0)
+  if(CMAKE_MATCH_4)
+    set(ROCM_PATCH ${CMAKE_MATCH_4})
+  endif()
+  math(EXPR ROCM "${CMAKE_MATCH_1} * 10000 + ${CMAKE_MATCH_2} * 100 + ${ROCM_PATCH}")
+  message("building for ROCm ${ENZYME_ROCM_VERSION} (ROCM=${ROCM})")
+  add_definitions(-DROCM=${ROCM})
 endif()
 
 # Offer the user the choice of overriding the installation directories
