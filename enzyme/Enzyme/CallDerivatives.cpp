@@ -2354,10 +2354,558 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+static void markKokkosInternalHelper(Function *F) {
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr("enzyme_inactive");
+  F->addFnAttr("enzyme_ta_norecur");
+}
+
+static Function *getOrCreateKokkosDevDeepCopyAccumHelper(Module &M, bool IsHip,
+                                                         Type *ElemFlt) {
+  std::string HelperName = std::string("__enzyme_kokkos_dev_dc_accum_") +
+                           (IsHip ? "hip_" : "cuda_") +
+                           (ElemFlt->isFloatTy() ? "f32" : "f64");
+  if (Function *Existing = M.getFunction(HelperName))
+    return Existing;
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  PointerType *PtrTy = getUnqual(Type::getInt8Ty(Ctx));
+  FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy, I64}, false);
+  Function *F =
+      Function::Create(FT, GlobalValue::InternalLinkage, HelperName, &M);
+  markKokkosInternalHelper(F);
+
+  FunctionCallee DevMemcpy = M.getOrInsertFunction(
+      IsHip ? "hipMemcpy" : "cudaMemcpy",
+      FunctionType::get(I32, {PtrTy, PtrTy, I64, I32}, false));
+  FunctionCallee MallocFn =
+      M.getOrInsertFunction("malloc", FunctionType::get(PtrTy, {I64}, false));
+  FunctionCallee FreeFn =
+      M.getOrInsertFunction("free", FunctionType::get(VoidTy, {PtrTy}, false));
+
+  uint64_t ElemSz = M.getDataLayout().getTypeAllocSize(ElemFlt);
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+  BasicBlock *DoneBB = BasicBlock::Create(Ctx, "done", F);
+
+  Value *LDst = F->getArg(0);
+  Value *LSrc = F->getArg(1);
+  Value *Len64 = F->getArg(2);
+
+  IRBuilder<> B(EntryBB);
+  Value *TmpDst = B.CreateCall(MallocFn, {Len64});
+  Value *TmpSrc = B.CreateCall(MallocFn, {Len64});
+  B.CreateCall(DevMemcpy, {TmpDst, LDst, Len64, ConstantInt::get(I32, 4)});
+  B.CreateCall(DevMemcpy, {TmpSrc, LSrc, Len64, ConstantInt::get(I32, 4)});
+  Value *Count = B.CreateUDiv(Len64, ConstantInt::get(I64, ElemSz));
+  B.CreateCondBr(B.CreateICmpUGT(Count, ConstantInt::get(I64, 0)), LoopBB,
+                 DoneBB);
+
+  B.SetInsertPoint(LoopBB);
+  PHINode *IV = B.CreatePHI(I64, 2);
+  IV->addIncoming(ConstantInt::get(I64, 0), EntryBB);
+  Value *DP = B.CreateInBoundsGEP(ElemFlt, TmpDst, IV);
+  Value *SP = B.CreateInBoundsGEP(ElemFlt, TmpSrc, IV);
+  Value *SrcElem = B.CreateLoad(ElemFlt, SP);
+  Value *DstElem = B.CreateLoad(ElemFlt, DP);
+  B.CreateStore(B.CreateFAdd(SrcElem, DstElem), SP);
+  Value *NextIV = B.CreateAdd(IV, ConstantInt::get(I64, 1));
+  IV->addIncoming(NextIV, LoopBB);
+  B.CreateCondBr(B.CreateICmpULT(NextIV, Count), LoopBB, DoneBB);
+
+  B.SetInsertPoint(DoneBB);
+  B.CreateCall(DevMemcpy, {LSrc, TmpSrc, Len64, ConstantInt::get(I32, 4)});
+  B.CreateCall(FreeFn, {TmpDst});
+  B.CreateCall(FreeFn, {TmpSrc});
+  B.CreateRetVoid();
+  return F;
+}
+
+/// Reverse of a host deep copy of `Len` bytes of floating point data of type
+/// \p ElemFlt: `d_src[i] += d_dst[i]; d_dst[i] = 0`.
+/// Signature: void(ptr d_dst, ptr d_src, i64 bytes).
+static Function *getOrCreateKokkosHostDeepCopyAccumHelper(Module &M,
+                                                          Type *ElemFlt) {
+  std::string HelperName = std::string("__enzyme_kokkos_host_dc_accum_") +
+                           (ElemFlt->isFloatTy() ? "f32" : "f64");
+  if (Function *Existing = M.getFunction(HelperName))
+    return Existing;
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  PointerType *PtrTy = getUnqual(Type::getInt8Ty(Ctx));
+  FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy, I64}, false);
+  Function *F =
+      Function::Create(FT, GlobalValue::InternalLinkage, HelperName, &M);
+  markKokkosInternalHelper(F);
+
+  uint64_t ElemSz = M.getDataLayout().getTypeAllocSize(ElemFlt);
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+  BasicBlock *DoneBB = BasicBlock::Create(Ctx, "done", F);
+
+  Value *LDst = F->getArg(0);
+  Value *LSrc = F->getArg(1);
+  Value *Len64 = F->getArg(2);
+
+  IRBuilder<> B(EntryBB);
+  Value *Count = B.CreateUDiv(Len64, ConstantInt::get(I64, ElemSz));
+  B.CreateCondBr(B.CreateICmpUGT(Count, ConstantInt::get(I64, 0)), LoopBB,
+                 DoneBB);
+
+  B.SetInsertPoint(LoopBB);
+  PHINode *IV = B.CreatePHI(I64, 2);
+  IV->addIncoming(ConstantInt::get(I64, 0), EntryBB);
+  Value *DP = B.CreateInBoundsGEP(ElemFlt, LDst, IV);
+  Value *SP = B.CreateInBoundsGEP(ElemFlt, LSrc, IV);
+  Value *SrcElem = B.CreateLoad(ElemFlt, SP);
+  Value *DstElem = B.CreateLoad(ElemFlt, DP);
+  B.CreateStore(B.CreateFAdd(SrcElem, DstElem), SP);
+  B.CreateStore(Constant::getNullValue(ElemFlt), DP);
+  Value *NextIV = B.CreateAdd(IV, ConstantInt::get(I64, 1));
+  IV->addIncoming(NextIV, LoopBB);
+  B.CreateCondBr(B.CreateICmpULT(NextIV, Count), LoopBB, DoneBB);
+
+  B.SetInsertPoint(DoneBB);
+  B.CreateRetVoid();
+  return F;
+}
+
+/// Infer the floating point element type of a Kokkos View from a demangled
+/// name mentioning `Kokkos::View<[const ]double|float`.
+static Type *inferKokkosViewElemFloatType(StringRef Dem, LLVMContext &Ctx) {
+  size_t Pos = 0;
+  while ((Pos = Dem.find("View<", Pos)) != StringRef::npos) {
+    StringRef Rest = Dem.substr(Pos + 5);
+    Rest = Rest.ltrim(' ');
+    if (Rest.consume_front("const"))
+      Rest = Rest.ltrim(' ');
+    if (startsWith(Rest, "double"))
+      return Type::getDoubleTy(Ctx);
+    if (startsWith(Rest, "float"))
+      return Type::getFloatTy(Ctx);
+    Pos += 5;
+  }
+  return nullptr;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivatives(CallInst &call,
+                                                   Function *called,
+                                                   StringRef funcName,
+                                                   CallInst *const newCall) {
+  SmallVector<Instruction *, 2> DeferredErase;
+  bool Res = handleKokkosCallDerivativesImpl(call, called, funcName, newCall,
+                                             DeferredErase);
+  for (Instruction *I : DeferredErase) {
+    assert(I->use_empty() && "Deferred shadow placeholder must have no uses");
+    gutils->erase(I);
+  }
+  return Res;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivativesImpl(
+    CallInst &call, Function *called, StringRef funcName,
+    CallInst *const newCall, SmallVectorImpl<Instruction *> &DeferredErase) {
+  bool subretused = false;
+  bool shadowReturnUsed = false;
+  gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+
+  IRBuilder<> BuilderZ(newCall);
+  BuilderZ.setFastMathFlags(getFast());
+  LLVMContext &Ctx = call.getContext();
+  Module &M = *gutils->newFunc->getParent();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+  unsigned Width = gutils->getWidth();
+
+  // The shadow placeholder of `call` (if any) is the instruction immediately
+  // following `newCall`, which is exactly where the `AfterB` builders below
+  // insert. Erasing it eagerly would invalidate those builders, so defer.
+  auto resolveShadowPlaceholder = [&](Instruction &I, Value *shadow = nullptr) {
+    auto ifound = gutils->invertedPointers.find(&I);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    if (!shadow)
+      shadow = Constant::getNullValue(gutils->getShadowType(I.getType()));
+    auto placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    gutils->replaceAWithB(placeholder, shadow);
+    DeferredErase.push_back(placeholder);
+    gutils->invertedPointers.insert(
+        std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  };
+
+  // Keep side-effecting primal call in forward pass; cache return if needed in
+  // reverse; erase duplicate primal from ReverseModeGradient /
+  // ForwardModeSplit.
+  auto keepPrimalInForwardOnly = [&](Value *valToCache = nullptr) {
+    bool shouldCache = false;
+    if ((Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ForwardModeSplit) &&
+        augmentedReturn) {
+      shouldCache = augmentedReturn->tapeIndices.find(std::make_pair(
+                        (Instruction *)&call, CacheType::Self)) !=
+                    augmentedReturn->tapeIndices.end();
+    } else if (Mode == DerivativeMode::ReverseModePrimal) {
+      bool primalNeededInReverse = subretused;
+      if (!primalNeededInReverse) {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      shouldCache = primalNeededInReverse && !call.getType()->isVoidTy() &&
+                    !gutils->unnecessaryIntermediates.count(&call);
+    }
+    if (shouldCache && !call.getType()->isVoidTy()) {
+      Value *V = valToCache ? valToCache : (Value *)newCall;
+      Instruction *InsertAfter =
+          isa<Instruction>(V) ? cast<Instruction>(V) : (Instruction *)newCall;
+      IRBuilder<> AfterB(InsertAfter->getNextNode());
+      gutils->cacheForReverse(AfterB, V,
+                              getIndex(&call, CacheType::Self, AfterB));
+    } else if (Mode == DerivativeMode::ReverseModeGradient ||
+               Mode == DerivativeMode::ForwardModeSplit) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    }
+  };
+
+  // Replace invertedPointers placeholder on &call (and cache shadow if needed).
+
+  // 2. NVVM address-space predicate intrinsics & inactive libatomic CAS helpers
+  if (startsWith(funcName, "llvm.nvvm.isspacep")) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  if (!enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName))
+    return false;
+
+  std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+
+  // 4b. Team barriers: replay the same barrier (same team member / team data)
+  // in the reverse pass so reverse team loops stay synchronized.
+  if (enzyme_kokkos::isKokkosTeamBarrierCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    if ((Mode == DerivativeMode::ReverseModeCombined ||
+         Mode == DerivativeMode::ReverseModeGradient) &&
+        called) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      SmallVector<Value *, 2> RevArgs;
+      for (unsigned i = 0; i < call.arg_size(); ++i)
+        RevArgs.push_back(lookup(
+            gutils->getNewFromOriginal(call.getArgOperand(i)), Builder2));
+      Builder2.CreateCall(call.getFunctionType(), called, RevArgs);
+    }
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 5. Synchronization / fence calls across Kokkos, Desul, CUDA, and HIP.
+  // Never pass primal std::string temporaries in the reverse pass because
+  // temporary label strings are destroyed immediately after the forward fence.
+  if (enzyme_kokkos::isKokkosFenceCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      if (funcName == "cudaDeviceSynchronize" ||
+          normDem.find("Kokkos::Cuda::") != std::string::npos ||
+          normDem.find("Kokkos::Impl::CudaInternal::") != std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "cudaDeviceSynchronize", FunctionType::get(I32, {}, false));
+        Builder2.CreateCall(Sync);
+      } else if (funcName == "cudaStreamSynchronize" && call.arg_size() >= 1) {
+        Value *St =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "cudaStreamSynchronize",
+            FunctionType::get(I32, {St->getType()}, false));
+        Builder2.CreateCall(Sync, {St});
+      } else if (funcName == "hipDeviceSynchronize" ||
+                 normDem.find("Kokkos::HIP::") != std::string::npos ||
+                 normDem.find("Kokkos::Impl::HIPInternal::") !=
+                     std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "hipDeviceSynchronize", FunctionType::get(I32, {}, false));
+        Builder2.CreateCall(Sync);
+      } else if (funcName == "hipStreamSynchronize" && call.arg_size() >= 1) {
+        Value *St =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "hipStreamSynchronize",
+            FunctionType::get(I32, {St->getType()}, false));
+        Builder2.CreateCall(Sync, {St});
+      } else if (normDem.find("Threads") != std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "_ZN6Kokkos4Impl15ThreadsInternal14internal_fenceEv",
+            FunctionType::get(VoidTy, {}, false));
+        Builder2.CreateCall(Sync);
+      } else {
+        Builder2.CreateFence(AtomicOrdering::SequentiallyConsistent);
+      }
+    }
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 8. Remaining inactive Kokkos / runtime / Tools / mutex functions
+  if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 11. Kokkos / CUDA / HIP DeepCopy & ZeroMemset
+  {
+    if (auto CopyInfo =
+            enzyme_kokkos::getKokkosDeepCopyInfo(call, funcName, normDem)) {
+      unsigned dstIdx = CopyInfo->DstIdx, srcIdx = CopyInfo->SrcIdx,
+               lenIdx = CopyInfo->LenIdx;
+      bool isDev = CopyInfo->IsDeviceRuntimeCopy;
+      resolveShadowPlaceholder(call);
+      Value *OrigDst = call.getArgOperand(dstIdx);
+      Value *OrigSrc = call.getArgOperand(srcIdx);
+      Value *OrigLen = call.getArgOperand(lenIdx);
+      bool DstConst = gutils->isConstantValue(OrigDst);
+      bool SrcConst = gutils->isConstantValue(OrigSrc);
+      if (DstConst && SrcConst) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        if (!DstConst) {
+          IRBuilder<> AfterB(newCall->getNextNode());
+          Value *DDst = gutils->invertPointerM(OrigDst, AfterB);
+          Value *DSrc =
+              SrcConst ? nullptr : gutils->invertPointerM(OrigSrc, AfterB);
+          Value *NewLen = gutils->getNewFromOriginal(OrigLen);
+          for (unsigned w = 0; w < Width; ++w) {
+            Value *LDst =
+                Width == 1 ? DDst : AfterB.CreateExtractValue(DDst, {w});
+            if (DSrc) {
+              Value *LSrc =
+                  Width == 1 ? DSrc : AfterB.CreateExtractValue(DSrc, {w});
+              SmallVector<Value *, 5> Args;
+              for (unsigned i = 0; i < call.arg_size(); ++i) {
+                if (i == dstIdx)
+                  Args.push_back(
+                      AfterB.CreatePointerCast(LDst, OrigDst->getType()));
+                else if (i == srcIdx)
+                  Args.push_back(
+                      AfterB.CreatePointerCast(LSrc, OrigSrc->getType()));
+                else
+                  Args.push_back(
+                      gutils->getNewFromOriginal(call.getArgOperand(i)));
+              }
+              AfterB.CreateCall(call.getFunctionType(), called, Args);
+            } else if (isDev || normDem.find("Cuda") != std::string::npos) {
+              FunctionCallee CudaMemset = M.getOrInsertFunction(
+                  "cudaMemset",
+                  FunctionType::get(I32, {PtrTy, I32, I64}, false));
+              AfterB.CreateCall(CudaMemset,
+                                {LDst, ConstantInt::get(I32, 0),
+                                 AfterB.CreateZExtOrTrunc(NewLen, I64)});
+            } else {
+              AfterB.CreateMemSet(LDst, ConstantInt::get(I8, 0), NewLen,
+                                  MaybeAlign());
+            }
+          }
+        }
+        return true;
+      }
+
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+
+      // ReverseModeCombined / ReverseModeGradient
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      if (!DstConst) {
+        Value *DDst =
+            lookup(gutils->invertPointerM(OrigDst, Builder2), Builder2);
+        Value *DSrc =
+            SrcConst
+                ? nullptr
+                : lookup(gutils->invertPointerM(OrigSrc, Builder2), Builder2);
+        Value *RevLen = lookup(gutils->getNewFromOriginal(OrigLen), Builder2);
+
+        if (!isDev && normDem.find("Cuda") == std::string::npos &&
+            normDem.find("HIP") == std::string::npos) {
+          // Host deep_copy: use Enzyme's exact DifferentiableMemCopyFloats +
+          // zero d_dst!
+          // Type-erased copies (`hostspace_parallel_deepcopy(void*, const
+          // void*, long)`) frequently carry no pointee type information in
+          // type analysis; recover the element type from the View types in
+          // the enclosing `Kokkos::deep_copy<View<...>, View<...>>` instead.
+          Type *KnownFlt = nullptr;
+          {
+            auto vdD = TR.query(OrigDst).Data0();
+            auto vdS = TR.query(OrigSrc).Data0();
+            if (Type *ft = vdD[{0}].isFloat())
+              KnownFlt = ft;
+            else if (Type *ft = vdD[{-1}].isFloat())
+              KnownFlt = ft;
+            else if (Type *ft = vdS[{0}].isFloat())
+              KnownFlt = ft;
+            else if (Type *ft = vdS[{-1}].isFloat())
+              KnownFlt = ft;
+          }
+          Type *InferredFlt = nullptr;
+          if (!KnownFlt) {
+            InferredFlt = inferKokkosViewElemFloatType(normDem, Ctx);
+            if (!InferredFlt) {
+              StringRef Enclosing = gutils->oldFunc->getName();
+              Enclosing.consume_front("preprocess_");
+              InferredFlt = inferKokkosViewElemFloatType(
+                  ENZYME_KOKKOS_DEMANGLE(Enclosing), Ctx);
+            }
+          }
+          for (unsigned w = 0; w < Width; ++w) {
+            Value *LDst =
+                Width == 1 ? DDst : Builder2.CreateExtractValue(DDst, {w});
+            if (DSrc) {
+              Value *LSrc =
+                  Width == 1 ? DSrc : Builder2.CreateExtractValue(DSrc, {w});
+              if (!KnownFlt && InferredFlt) {
+                Function *Accum =
+                    getOrCreateKokkosHostDeepCopyAccumHelper(M, InferredFlt);
+                Builder2.CreateCall(Accum,
+                                    {Builder2.CreatePointerCast(LDst, PtrTy),
+                                     Builder2.CreatePointerCast(LSrc, PtrTy),
+                                     Builder2.CreateZExtOrTrunc(RevLen, I64)});
+              } else {
+                DifferentiableMemCopyFloats(call, OrigDst, LDst, LSrc, RevLen,
+                                            Builder2, {});
+              }
+            } else {
+              Builder2.CreateMemSet(LDst, ConstantInt::get(I8, 0), RevLen,
+                                    MaybeAlign());
+            }
+          }
+        } else {
+          // Device / Host<->Device copy: stage onto host via internal helper if
+          // accumulating into d_src, then zero d_dst via cudaMemset/hipMemset.
+          bool IsHip = startsWith(funcName, "hip") ||
+                       normDem.find("HIP") != std::string::npos;
+          FunctionCallee DevMemset = M.getOrInsertFunction(
+              IsHip ? "hipMemset" : "cudaMemset",
+              FunctionType::get(I32, {PtrTy, I32, I64}, false));
+          Value *Len64 = Builder2.CreateZExtOrTrunc(RevLen, I64);
+          // Infer float element type (default double if unknown, float if f32)
+          Type *ElemFlt = Type::getDoubleTy(Ctx);
+          auto vd = TR.query(OrigDst).Data0();
+          if (Type *ft = vd[{0}].isFloat())
+            ElemFlt = ft;
+          else if (Type *ft2 = TR.query(OrigSrc).Data0()[{0}].isFloat())
+            ElemFlt = ft2;
+          Function *AccumHelper =
+              DSrc ? getOrCreateKokkosDevDeepCopyAccumHelper(M, IsHip, ElemFlt)
+                   : nullptr;
+
+          for (unsigned w = 0; w < Width; ++w) {
+            Value *LDst =
+                Width == 1 ? DDst : Builder2.CreateExtractValue(DDst, {w});
+            if (DSrc) {
+              Value *LSrc =
+                  Width == 1 ? DSrc : Builder2.CreateExtractValue(DSrc, {w});
+              Builder2.CreateCall(AccumHelper,
+                                  {Builder2.CreatePointerCast(LDst, PtrTy),
+                                   Builder2.CreatePointerCast(LSrc, PtrTy),
+                                   Len64});
+            }
+            Builder2.CreateCall(DevMemset,
+                                {Builder2.CreatePointerCast(LDst, PtrTy),
+                                 ConstantInt::get(I32, 0), Len64});
+          }
+        }
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+
+    if (auto MemsetInfo =
+            enzyme_kokkos::getKokkosZeroMemsetInfo(call, funcName, normDem)) {
+      unsigned dstIdx = MemsetInfo->DstIdx, lenIdx = MemsetInfo->LenIdx;
+      resolveShadowPlaceholder(call);
+      Value *OrigDst = call.getArgOperand(dstIdx);
+      Value *OrigLen = call.getArgOperand(lenIdx);
+      if (gutils->isConstantValue(OrigDst)) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+
+      auto emitZeroShadow = [&](IRBuilder<> &B, Value *DDst, Value *LenVal) {
+        Value *Len64 = B.CreateZExtOrTrunc(LenVal, I64);
+        bool IsHip = startsWith(funcName, "hip") ||
+                     normDem.find("HIP") != std::string::npos;
+        bool IsCuda = startsWith(funcName, "cuda") ||
+                      normDem.find("Cuda") != std::string::npos;
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *LDst = Width == 1 ? DDst : B.CreateExtractValue(DDst, {w});
+          if (IsCuda || IsHip) {
+            FunctionCallee DevMemset = M.getOrInsertFunction(
+                IsHip ? "hipMemset" : "cudaMemset",
+                FunctionType::get(I32, {PtrTy, I32, I64}, false));
+            B.CreateCall(DevMemset, {LDst, ConstantInt::get(I32, 0), Len64});
+          } else {
+            B.CreateMemSet(LDst, ConstantInt::get(I8, 0), Len64, MaybeAlign());
+          }
+        }
+      };
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        emitZeroShadow(AfterB, gutils->invertPointerM(OrigDst, AfterB),
+                       gutils->getNewFromOriginal(OrigLen));
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        bool forwardsShadow = true, backwardsShadow = false;
+        shadowStoreSchedule(call, OrigDst, forwardsShadow, backwardsShadow);
+        if (forwardsShadow) {
+          IRBuilder<> AfterB(newCall->getNextNode());
+          emitZeroShadow(AfterB, gutils->invertPointerM(OrigDst, AfterB),
+                         gutils->getNewFromOriginal(OrigLen));
+        }
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        emitZeroShadow(
+            Builder2,
+            lookup(gutils->invertPointerM(OrigDst, Builder2), Builder2),
+            lookup(gutils->getNewFromOriginal(OrigLen), Builder2));
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
     CallInst *const newCall) {
+  if (handleKokkosCallDerivatives(call, called, funcName, newCall))
+    return true;
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =

@@ -63,6 +63,7 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "FunctionUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
@@ -618,6 +619,13 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (startsWith(Name, "llvm.nvvm.isspacep"))
+    return true;
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosInactiveCall(Name, NormDem))
+      return true;
+  }
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -779,6 +787,17 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (auto CopyInfo =
+            enzyme_kokkos::getKokkosDeepCopyInfo(*CI, Name, NormDem))
+      return val != CI->getArgOperand(CopyInfo->DstIdx) &&
+             val != CI->getArgOperand(CopyInfo->SrcIdx);
+    if (auto MemsetInfo =
+            enzyme_kokkos::getKokkosZeroMemsetInfo(*CI, Name, NormDem))
+      return val != CI->getArgOperand(MemsetInfo->DstIdx);
+  }
 
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
