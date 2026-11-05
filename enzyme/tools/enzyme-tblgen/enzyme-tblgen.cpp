@@ -1965,10 +1965,15 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
       os << curIndent << INDENT << "if (toadd) gutils->addToDiffe(" << origName
          << "->getOperand(" << argIdx << "), toadd, builder);\n";
     } else {
-      os << curIndent << INDENT << "if (toadd) addToDiffe(" << origName
-         << ".getOperand(" << argIdx << "), toadd";
-      os << ", Builder2, " << origName << ".getOperand(" << argIdx
-         << ")->getType());\n";
+      // An active integer operand holds the bits of a float (e.g. the umax of
+      // the bits of nonnegative doubles), so add in the type it was deduced as.
+      std::string op =
+          (Twine(origName) + ".getOperand(" + Twine(argIdx) + ")").str();
+      os << curIndent << INDENT << "if (toadd) addToDiffe(" << op
+         << ", toadd, Builder2, " << op << "->getType()->isFPOrFPVectorTy() ? "
+         << op << "->getType() : TR.addingType((gutils->newFunc->getParent()"
+         << "->getDataLayout().getTypeSizeInBits(" << op
+         << "->getType()) + 7) / 8, " << op << "));\n";
     }
     os << curIndent << "}\n";
   }
