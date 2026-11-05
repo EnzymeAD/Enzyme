@@ -5715,6 +5715,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           shouldNullShadow = true;
         }
       }
+    } else if (auto *LI = dyn_cast<LoadInst>(oval)) {
+      if (isPtrSliceKokkosSharedAllocTracker(
+              LI->getPointerOperand(), DL.getPointerSize(0), DL, oldFunc)) {
+        shouldNullShadow = false;
+        if (knownRecomputeHeuristic.count(LI) && !knownRecomputeHeuristic[LI])
+          shouldNullShadow = true;
+      }
     }
   }
 

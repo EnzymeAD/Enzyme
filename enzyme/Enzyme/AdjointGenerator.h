@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -44,6 +45,7 @@
 #include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
@@ -179,6 +181,345 @@ public:
     gutils->erase(placeholder);
     gutils->invertedPointers.insert(
         std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  }
+
+  /// Extract the shadow `SharedAllocationRecord*` (or tagged `m_record_bits`
+  /// integer) corresponding to \p V when \p V flows through Kokkos
+  /// `SharedAllocationTracker` / `ViewTracker` slots, or return nullptr if \p V
+  /// carries no distinct shadow allocation record.
+  llvm::Value *extractKokkosShadowTrackerValueImpl(
+      llvm::Value *V, llvm::IRBuilder<> &FallbackB,
+      llvm::DenseMap<llvm::Value *, llvm::Value *> &MemoRec) {
+    using namespace llvm;
+    auto FoundMemo = MemoRec.find(V);
+    if (FoundMemo != MemoRec.end())
+      return FoundMemo->second;
+    MemoRec[V] = nullptr;
+
+    auto makeConstantArmFallback = [&](Value *OrigArm,
+                                       IRBuilder<> &B) -> Value * {
+      if (isa<ConstantInt>(OrigArm) || isa<ConstantPointerNull>(OrigArm) ||
+          isa<UndefValue>(OrigArm)) {
+        Value *NewArm = gutils->getNewFromOriginal(OrigArm);
+        return applyChainRule(OrigArm->getType(), B,
+                              [&]() -> Value * { return NewArm; });
+      }
+      return Constant::getNullValue(gutils->getShadowType(OrigArm->getType()));
+    };
+
+    if (auto *CI = dyn_cast<CastInst>(V)) {
+      if (Value *Sub = extractKokkosShadowTrackerValueImpl(
+              CI->getOperand(0), FallbackB, MemoRec)) {
+        if (auto *NewCI =
+                dyn_cast<Instruction>(gutils->getNewFromOriginal(CI))) {
+          IRBuilder<> InstB(NewCI);
+          Value *Res = applyChainRule(
+              V->getType(), InstB,
+              [&](Value *s) -> Value * {
+                return InstB.CreateCast(CI->getOpcode(), s, V->getType());
+              },
+              Sub);
+          MemoRec[V] = Res;
+          return Res;
+        }
+      }
+      return nullptr;
+    }
+    if (auto *BO = dyn_cast<BinaryOperator>(V)) {
+      if (BO->getOpcode() == Instruction::And ||
+          BO->getOpcode() == Instruction::Or) {
+        int varIdx = isa<ConstantInt>(BO->getOperand(1))
+                         ? 0
+                         : (isa<ConstantInt>(BO->getOperand(0)) ? 1 : -1);
+        if (varIdx >= 0) {
+          if (Value *Sub = extractKokkosShadowTrackerValueImpl(
+                  BO->getOperand(varIdx), FallbackB, MemoRec)) {
+            if (auto *NewBO =
+                    dyn_cast<Instruction>(gutils->getNewFromOriginal(BO))) {
+              IRBuilder<> InstB(NewBO);
+              Value *ConstOp = BO->getOperand(1 - varIdx);
+              Value *Res = applyChainRule(
+                  V->getType(), InstB,
+                  [&](Value *s) -> Value * {
+                    return varIdx == 0
+                               ? InstB.CreateBinOp(BO->getOpcode(), s, ConstOp)
+                               : InstB.CreateBinOp(BO->getOpcode(), ConstOp, s);
+                  },
+                  Sub);
+              MemoRec[V] = Res;
+              return Res;
+            }
+          }
+        }
+      }
+      return nullptr;
+    }
+    if (auto *SI = dyn_cast<SelectInst>(V)) {
+      Value *SubT = extractKokkosShadowTrackerValueImpl(SI->getTrueValue(),
+                                                        FallbackB, MemoRec);
+      Value *SubF = extractKokkosShadowTrackerValueImpl(SI->getFalseValue(),
+                                                        FallbackB, MemoRec);
+      if (SubT || SubF) {
+        if (auto *NewSI =
+                dyn_cast<Instruction>(gutils->getNewFromOriginal(SI))) {
+          IRBuilder<> InstB(NewSI);
+          if (!SubT)
+            SubT = makeConstantArmFallback(SI->getTrueValue(), InstB);
+          if (!SubF)
+            SubF = makeConstantArmFallback(SI->getFalseValue(), InstB);
+          Value *Cond = gutils->getNewFromOriginal(SI->getCondition());
+          Value *Res = applyChainRule(
+              V->getType(), InstB,
+              [&](Value *t, Value *f) -> Value * {
+                return InstB.CreateSelect(Cond, t, f);
+              },
+              SubT, SubF);
+          MemoRec[V] = Res;
+          return Res;
+        }
+      }
+      return nullptr;
+    }
+    if (auto *PN = dyn_cast<PHINode>(V)) {
+      if (auto *NewPN = dyn_cast<PHINode>(gutils->getNewFromOriginal(PN))) {
+        if (NewPN->getNumIncomingValues() == PN->getNumIncomingValues()) {
+          Type *ShTy = gutils->getShadowType(PN->getType());
+          PHINode *ShadowPN =
+              IRBuilder<>(NewPN).CreatePHI(ShTy, PN->getNumIncomingValues());
+          MemoRec[V] = ShadowPN;
+          SmallVector<Value *, 4> InVals;
+          bool AnyNonNull = false;
+          for (unsigned i = 0, e = PN->getNumIncomingValues(); i < e; ++i) {
+            Value *Sub = extractKokkosShadowTrackerValueImpl(
+                PN->getIncomingValue(i), FallbackB, MemoRec);
+            if (Sub && Sub != ShadowPN)
+              AnyNonNull = true;
+            InVals.push_back(Sub);
+          }
+          if (!AnyNonNull) {
+            MemoRec[V] = nullptr;
+            ShadowPN->eraseFromParent();
+            return nullptr;
+          }
+          for (unsigned i = 0, e = PN->getNumIncomingValues(); i < e; ++i) {
+            BasicBlock *InBB = NewPN->getIncomingBlock(i);
+            Value *Val = InVals[i];
+            if (!Val) {
+              IRBuilder<> TermB(InBB->getTerminator());
+              Val = makeConstantArmFallback(PN->getIncomingValue(i), TermB);
+            }
+            ShadowPN->addIncoming(Val, InBB);
+          }
+          return ShadowPN;
+        }
+      }
+      return nullptr;
+    }
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(V)) {
+      if (Value *Sub = extractKokkosShadowTrackerValueImpl(
+              GEP->getPointerOperand(), FallbackB, MemoRec)) {
+        if (auto *NewGEP =
+                dyn_cast<Instruction>(gutils->getNewFromOriginal(GEP))) {
+          IRBuilder<> InstB(NewGEP);
+          SmallVector<Value *, 4> Idxs;
+          for (Value *Idx : GEP->indices())
+            Idxs.push_back(gutils->getNewFromOriginal(Idx));
+          Value *Res = applyChainRule(
+              V->getType(), InstB,
+              [&](Value *s) -> Value * {
+                return InstB.CreateGEP(GEP->getSourceElementType(), s, Idxs, "",
+                                       GEP->isInBounds());
+              },
+              Sub);
+          MemoRec[V] = Res;
+          return Res;
+        }
+      }
+      return nullptr;
+    }
+    if (auto *EVI = dyn_cast<ExtractValueInst>(V)) {
+      if (!gutils->isConstantValue(EVI->getAggregateOperand())) {
+        if (Value *Sub = extractKokkosShadowTrackerValueImpl(
+                EVI->getAggregateOperand(), FallbackB, MemoRec)) {
+          if (auto *NewEVI =
+                  dyn_cast<Instruction>(gutils->getNewFromOriginal(EVI))) {
+            IRBuilder<> InstB(NewEVI);
+            SmallVector<unsigned, 4> Idxs(EVI->idx_begin(), EVI->idx_end());
+            Value *Res = applyChainRule(
+                V->getType(), InstB,
+                [&](Value *a) -> Value * {
+                  return InstB.CreateExtractValue(a, Idxs);
+                },
+                Sub);
+            MemoRec[V] = Res;
+            return Res;
+          }
+        }
+      }
+      return nullptr;
+    }
+    if (auto *LI = dyn_cast<LoadInst>(V)) {
+      const DataLayout &DL = gutils->oldFunc->getParent()->getDataLayout();
+      if (LI->getType()->isPointerTy() ||
+          LI->getType()->isIntegerTy(DL.getPointerSizeInBits())) {
+        if (Value *SubPtr = extractKokkosShadowTrackerValueImpl(
+                LI->getPointerOperand(), FallbackB, MemoRec)) {
+          if (auto *NewLI =
+                  dyn_cast<Instruction>(gutils->getNewFromOriginal(LI))) {
+            IRBuilder<> InstB(NewLI);
+            Type *LoadPtrTy = LI->getPointerOperand()->getType();
+            Value *Res = applyChainRule(
+                LI->getType(), InstB,
+                [&](Value *p) -> Value * {
+                  auto *SLI = InstB.CreateLoad(
+                      LI->getType(), InstB.CreatePointerCast(p, LoadPtrTy));
+                  SLI->setAlignment(LI->getAlign());
+                  return SLI;
+                },
+                SubPtr);
+            MemoRec[V] = Res;
+            return Res;
+          }
+        }
+        // If SROA split a temporary tracker/data-handle stack slot into a
+        // constant scalar slot, trace through the unique non-null store into
+        // that local slot to recover the active shadow SharedAllocationRecord.
+        const Value *SlotCur = LI->getPointerOperand()->stripPointerCasts();
+        APInt StepOff(DL.getIndexTypeSizeInBits(SlotCur->getType()), 0);
+        SlotCur = SlotCur->stripAndAccumulateConstantOffsets(DL, StepOff, true);
+        if (StepOff.isNonNegative() &&
+            (isa<AllocaInst>(SlotCur) ||
+             extractEnzymeFromStackType(SlotCur, &DL) != nullptr)) {
+          uint64_t TargetOff = StepOff.getZExtValue();
+          uint64_t LoadBytes = DL.getTypeStoreSize(LI->getType());
+          Value *UniqueWriterVal = nullptr;
+          bool SafeSingleWriter = true;
+          SmallVector<std::pair<const Value *, uint64_t>, 4> SW = {
+              {SlotCur, 0}};
+          SmallPtrSet<const Value *, 8> SS;
+          while (!SW.empty() && SafeSingleWriter) {
+            auto [SC, SO] = SW.pop_back_val();
+            if (!SS.insert(SC).second)
+              continue;
+            for (const User *SU : SC->users()) {
+              const auto *SUI = dyn_cast<Instruction>(SU);
+              if (!SUI) {
+                SafeSingleWriter = false;
+                break;
+              }
+              if (isa<BitCastInst>(SUI) || isa<AddrSpaceCastInst>(SUI) ||
+                  isa<FreezeInst>(SUI)) {
+                SW.emplace_back(SUI, SO);
+                continue;
+              }
+              if (const auto *SGEP = dyn_cast<GetElementPtrInst>(SUI)) {
+                APInt GO(DL.getIndexTypeSizeInBits(SGEP->getType()), 0);
+                if (!SGEP->accumulateConstantOffset(DL, GO) ||
+                    static_cast<int64_t>(SO) + GO.getSExtValue() < 0) {
+                  SafeSingleWriter = false;
+                  break;
+                }
+                SW.emplace_back(SGEP,
+                                static_cast<uint64_t>(static_cast<int64_t>(SO) +
+                                                      GO.getSExtValue()));
+                continue;
+              }
+              if (isa<LoadInst>(SUI) || isa<ICmpInst>(SUI) ||
+                  isa<PtrToIntInst>(SUI)) {
+                continue;
+              }
+              if (const auto *SII = dyn_cast<IntrinsicInst>(SUI)) {
+                if (SII->isLifetimeStartOrEnd() ||
+                    SII->isAssumeLikeIntrinsic() || isa<DbgInfoIntrinsic>(SII))
+                  continue;
+                if (const auto *MSI = dyn_cast<MemSetInst>(SII)) {
+                  if (const auto *Fill =
+                          dyn_cast<ConstantInt>(MSI->getArgOperand(1)))
+                    if (Fill->isZero())
+                      continue;
+                }
+                SafeSingleWriter = false;
+                break;
+              }
+              if (const auto *SSI = dyn_cast<StoreInst>(SUI)) {
+                if (SSI->getValueOperand() == SC) {
+                  SafeSingleWriter = false;
+                  break;
+                }
+                uint64_t StBytes =
+                    DL.getTypeStoreSize(SSI->getValueOperand()->getType());
+                if (SO < TargetOff + LoadBytes && TargetOff < SO + StBytes) {
+                  Value *SV = const_cast<Value *>(SSI->getValueOperand());
+                  if (isa<ConstantPointerNull>(SV) ||
+                      (isa<ConstantInt>(SV) && cast<ConstantInt>(SV)->isZero()))
+                    continue;
+                  if (SO == TargetOff && StBytes == LoadBytes &&
+                      (!UniqueWriterVal || UniqueWriterVal == SV)) {
+                    UniqueWriterVal = SV;
+                  } else {
+                    SafeSingleWriter = false;
+                    break;
+                  }
+                }
+                continue;
+              }
+              if (const auto *SCB = dyn_cast<CallBase>(SUI)) {
+                StringRef SCN =
+                    getFuncNameFromCall(const_cast<CallBase *>(SCB));
+                if (SCN == "llvm.enzyme.lifetime_start" ||
+                    SCN == "llvm.enzyme.lifetime_end" || SCB->onlyReadsMemory())
+                  continue;
+                SafeSingleWriter = false;
+                break;
+              }
+              SafeSingleWriter = false;
+              break;
+            }
+          }
+          if (SafeSingleWriter && UniqueWriterVal &&
+              LI->getType() == UniqueWriterVal->getType()) {
+            if (Value *SubVal = extractKokkosShadowTrackerValueImpl(
+                    UniqueWriterVal, FallbackB, MemoRec)) {
+              MemoRec[V] = SubVal;
+              return SubVal;
+            }
+          }
+        }
+      }
+      return nullptr;
+    }
+    if (!gutils->isConstantValue(V) &&
+        (V->getType()->isPointerTy() || V->getType()->isAggregateType())) {
+      Value *Res = nullptr;
+      if (auto *VI = dyn_cast<Instruction>(V)) {
+        Value *NewV = gutils->getNewFromOriginal(VI);
+        if (auto *NewPN = dyn_cast<PHINode>(NewV)) {
+          IRBuilder<> VB(NewPN->getParent(),
+                         NewPN->getParent()->getFirstInsertionPt());
+          Res = gutils->invertPointerM(V, VB);
+        } else if (auto *NewI = dyn_cast<Instruction>(NewV)) {
+          IRBuilder<> VB(NewI->getNextNode());
+          Res = gutils->invertPointerM(V, VB);
+        } else {
+          Res = gutils->invertPointerM(V, FallbackB);
+        }
+      } else {
+        IRBuilder<> VB(
+            &*gutils->newFunc->getEntryBlock().getFirstInsertionPt());
+        Res = gutils->invertPointerM(V, VB);
+      }
+      if (gutils->getWidth() == 1 && Res == gutils->getNewFromOriginal(V))
+        return nullptr;
+      MemoRec[V] = Res;
+      return Res;
+    }
+    return nullptr;
+  }
+
+  llvm::Value *extractKokkosShadowTrackerValue(llvm::Value *V,
+                                               llvm::IRBuilder<> &FallbackB) {
+    llvm::DenseMap<llvm::Value *, llvm::Value *> MemoRec;
+    return extractKokkosShadowTrackerValueImpl(V, FallbackB, MemoRec);
   }
 
   /// The ordering with which the reverse pass may read a location that the
@@ -1125,6 +1466,102 @@ public:
     // TODO allow recognition of other types that could contain pointers [e.g.
     // {void*, void*} or <2 x i64> ]
     auto storeSize = (DL.getTypeSizeInBits(valType) + 7) / 8;
+    auto isKokkosTrackerLoadSource = [&](const Value *Root) -> bool {
+      SmallVector<const Value *, 4> TW = {Root};
+      SmallPtrSet<const Value *, 8> TS;
+      while (!TW.empty()) {
+        const Value *V = TW.pop_back_val();
+        if (!V || !TS.insert(V).second)
+          continue;
+        while (isa<CastInst>(V) || isa<FreezeInst>(V))
+          V = cast<Instruction>(V)->getOperand(0);
+        if (isa<Constant>(V))
+          continue;
+        for (const User *U : V->users()) {
+          if (const auto *UCB = dyn_cast<CallBase>(U)) {
+            StringRef UN = getFuncNameFromCall(const_cast<CallBase *>(UCB));
+            if (enzyme_kokkos::mayBeKokkosRelevantSymbol(UN)) {
+              auto AK = enzyme_kokkos::classifyKokkosAllocCall(
+                  UN, ENZYME_KOKKOS_DEMANGLE(UN));
+              if (AK == enzyme_kokkos::KokkosAllocKind::
+                            SharedAllocRecordIncrement ||
+                  AK == enzyme_kokkos::KokkosAllocKind::
+                            SharedAllocRecordDecrement ||
+                  AK == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData)
+                return true;
+            }
+          }
+        }
+        if (const auto *BO = dyn_cast<BinaryOperator>(V)) {
+          if (BO->getOpcode() == Instruction::And ||
+              BO->getOpcode() == Instruction::Or) {
+            if (isa<ConstantInt>(BO->getOperand(0)))
+              TW.push_back(BO->getOperand(1));
+            else if (isa<ConstantInt>(BO->getOperand(1)))
+              TW.push_back(BO->getOperand(0));
+          }
+          continue;
+        }
+        if (const auto *SI = dyn_cast<SelectInst>(V)) {
+          TW.push_back(SI->getTrueValue());
+          TW.push_back(SI->getFalseValue());
+          continue;
+        }
+        if (const auto *PN = dyn_cast<PHINode>(V)) {
+          for (const Value *InV : PN->incoming_values())
+            TW.push_back(InV);
+          continue;
+        }
+        if (const auto *CB = dyn_cast<CallBase>(V)) {
+          StringRef CN = getFuncNameFromCall(const_cast<CallBase *>(CB));
+          if (enzyme_kokkos::mayBeKokkosRelevantSymbol(CN)) {
+            auto AK = enzyme_kokkos::classifyKokkosAllocCall(
+                CN, ENZYME_KOKKOS_DEMANGLE(CN));
+            if (AK == enzyme_kokkos::KokkosAllocKind::MakeSharedAllocRecord ||
+                AK == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordAllocate)
+              return true;
+          }
+          for (const User *CU : CB->users()) {
+            if (const auto *UCB = dyn_cast<CallBase>(CU)) {
+              StringRef UN = getFuncNameFromCall(const_cast<CallBase *>(UCB));
+              if (enzyme_kokkos::mayBeKokkosRelevantSymbol(UN)) {
+                auto AK = enzyme_kokkos::classifyKokkosAllocCall(
+                    UN, ENZYME_KOKKOS_DEMANGLE(UN));
+                if (AK == enzyme_kokkos::KokkosAllocKind::
+                              SharedAllocRecordCommonCtor ||
+                    AK == enzyme_kokkos::KokkosAllocKind::
+                              SharedAllocRecordBaseCtor)
+                  return true;
+              }
+            }
+          }
+          continue;
+        }
+        if (const auto *LI = dyn_cast<LoadInst>(V)) {
+          if (isPtrSliceKokkosSharedAllocTracker(
+                  LI->getPointerOperand(), storeSize, DL, gutils->oldFunc))
+            return true;
+          const Value *SC = LI->getPointerOperand()->stripPointerCasts();
+          if (isa<AllocaInst>(SC)) {
+            for (const User *SU : SC->users()) {
+              if (const auto *SSI = dyn_cast<StoreInst>(SU))
+                if (SSI->getPointerOperand()->stripPointerCasts() == SC)
+                  TW.push_back(SSI->getValueOperand());
+            }
+          }
+        }
+      }
+      return false;
+    };
+    bool IsKokkosTrackerStore =
+        Mode != DerivativeMode::ReverseModeGradient &&
+        Mode != DerivativeMode::ForwardModeSplit &&
+        storeSize == DL.getPointerSize(0) &&
+        (valType->isPointerTy() ||
+         valType->isIntegerTy(DL.getPointerSizeInBits())) &&
+        (isPtrSliceKokkosSharedAllocTracker(orig_ptr, storeSize, DL,
+                                            gutils->oldFunc) ||
+         (constantval && isKokkosTrackerLoadSource(orig_val)));
 
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
@@ -1189,7 +1626,12 @@ public:
 
       Value *diff = nullptr;
       bool needs_writebarrier = false;
-      if (!gutils->runtimeActivity && constantval) {
+      if (IsKokkosTrackerStore) {
+        diff = extractKokkosShadowTrackerValue(orig_val, BuilderZ);
+        if (!diff && isa<ConstantInt>(orig_val))
+          diff = applyChainRule(valType, BuilderZ, [&]() { return val; });
+      }
+      if (!diff && !gutils->runtimeActivity && constantval) {
         if (anyPointer && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
@@ -1441,7 +1883,13 @@ public:
           Value *valueop = nullptr;
 
           bool needs_writebarrier = false;
-          if (constantval) {
+          if (IsKokkosTrackerStore) {
+            valueop = extractKokkosShadowTrackerValue(orig_val, BuilderZ);
+            if (!valueop && isa<ConstantInt>(orig_val))
+              valueop =
+                  applyChainRule(valType, BuilderZ, [&]() { return val; });
+          }
+          if (!valueop && constantval) {
             if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
@@ -1475,7 +1923,7 @@ public:
                 valueop = array;
               }
             }
-          } else {
+          } else if (!valueop) {
             valueop = gutils->invertPointerM(orig_val, BuilderZ, vd);
           }
           gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
@@ -3513,6 +3961,16 @@ public:
         }
       }
       if (!vd.isKnownPastPointer()) {
+        if (gutils->oldFunc->getName().contains("Kokkos")) {
+          bool AnyFloat = false;
+          for (const auto &P : vd.getMapping())
+            if (P.second.isFloat())
+              AnyFloat = true;
+          if (!AnyFloat) {
+            vd = TypeTree(BaseType::Integer).Only(-1, &MS);
+            goto known;
+          }
+        }
         if (looseTypeAnalysis) {
 #if LLVM_VERSION_MAJOR < 17
           if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
@@ -3833,6 +4291,17 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        if (isa<ConstantInt>(new_size) &&
+            gutils->oldFunc->getName().contains("Kokkos")) {
+          bool AnyFloat = false;
+          for (const auto &P : vd.getMapping())
+            if (P.second.isFloat())
+              AnyFloat = true;
+          if (!AnyFloat) {
+            vd = TypeTree(BaseType::Integer).Only(-1, &MTI);
+            goto known;
+          }
+        }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
@@ -6722,6 +7191,15 @@ public:
 
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
+
+  bool handleKokkosCallDerivatives(llvm::CallInst &Call, llvm::Function *Called,
+                                   llvm::StringRef FuncName,
+                                   llvm::CallInst *const NewCall);
+
+  bool handleKokkosCallDerivativesImpl(
+      llvm::CallInst &Call, llvm::Function *Called, llvm::StringRef FuncName,
+      llvm::CallInst *const NewCall,
+      llvm::SmallVectorImpl<llvm::Instruction *> &DeferredErase);
 
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,
