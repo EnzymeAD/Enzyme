@@ -1709,13 +1709,25 @@ public:
             gutils->getContext(gutils->getNewFromOriginal(P0->getParent()),
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
+          auto L = gutils->OrigLI->getLoopFor(P0->getParent());
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          L->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&SI != P0->getIncomingValueForBlock(Latch)) {
               allIncoming = false;
               break;
+            }
+          }
+          if (allIncoming) {
+            for (auto u : SI.users()) {
+              auto UI = cast<Instruction>(u);
+              if (UI != P0 && L->contains(UI) &&
+                  (!gutils->isConstantInstruction(UI) ||
+                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                allIncoming = false;
+                break;
+              }
             }
           }
           if (allIncoming && lc.exitBlocks.size() == 1) {
@@ -2483,13 +2495,25 @@ public:
             gutils->getContext(gutils->getNewFromOriginal(P0->getParent()),
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
+          auto L = gutils->OrigLI->getLoopFor(P0->getParent());
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          L->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&BO != P0->getIncomingValueForBlock(Latch)) {
               allIncoming = false;
               break;
+            }
+          }
+          if (allIncoming) {
+            for (auto u : BO.users()) {
+              auto UI = cast<Instruction>(u);
+              if (UI != P0 && L->contains(UI) &&
+                  (!gutils->isConstantInstruction(UI) ||
+                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                allIncoming = false;
+                break;
+              }
             }
           }
           if (allIncoming && lc.exitBlocks.size() == 1) {
