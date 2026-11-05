@@ -30,8 +30,10 @@
 #include <set>
 
 #include "DifferentialUseAnalysis.h"
+#include "KokkosUtils.h"
 #include "Utils.h"
 
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -614,6 +616,27 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                        << " in reverse from gc " << *CI << "\n";
         return true;
       }
+
+    if (shadow && mode != DerivativeMode::ReverseModeGradient &&
+        mode != DerivativeMode::ForwardModeSplit &&
+        enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName) &&
+        !gutils->isConstantValue(const_cast<Value *>(val))) {
+      std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if ((enzyme_kokkos::isKokkosSerialDefaultCtor(funcName, NormDem) &&
+           CI->arg_size() >
+               (funcName == "__enzyme_kokkos_serial_init_d" ? 1u : 0u) &&
+           val == CI->getArgOperand(
+                      funcName == "__enzyme_kokkos_serial_init_d" ? 1 : 0)) ||
+          ((enzyme_kokkos::isKokkosSerialInternalCtor(funcName, NormDem) ||
+            enzyme_kokkos::isKokkosSerialInternalDtor(funcName, NormDem) ||
+            enzyme_kokkos::isKokkosSerialResizeTeamData(funcName, NormDem)) &&
+           CI->arg_size() >= 1 && val == CI->getArgOperand(0))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need shadow of " << *val
+                       << " in forward from Kokkos Serial op " << *CI << "\n";
+        return true;
+      }
+    }
 
     if (funcName == "julia.write_barrier" ||
         funcName == "julia.write_barrier_binding") {
