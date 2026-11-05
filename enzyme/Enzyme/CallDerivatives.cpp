@@ -2354,10 +2354,670 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+static void markKokkosInternalHelper(Function *F) {
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr("enzyme_inactive");
+  F->addFnAttr("enzyme_ta_norecur");
+}
+
+static Function *
+getOrCreateKokkosDesulSpinLockHelper(Module &M, StringRef LockFnName,
+                                     ArrayRef<Type *> ParamTys) {
+  std::string HelperName =
+      (Twine("__enzyme_kokkos_desul_spinlock_") + LockFnName).str();
+  if (Function *Existing = M.getFunction(HelperName))
+    return Existing;
+  LLVMContext &Ctx = M.getContext();
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(Ctx), ParamTys, false);
+  Function *F =
+      Function::Create(FT, GlobalValue::InternalLinkage, HelperName, &M);
+  markKokkosInternalHelper(F);
+
+  FunctionCallee LockFn = M.getOrInsertFunction(
+      LockFnName, FunctionType::get(Type::getInt1Ty(Ctx), ParamTys, false));
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *SpinBB = BasicBlock::Create(Ctx, "spin", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  SmallVector<Value *, 2> ForwardedArgs;
+  for (Argument &A : F->args())
+    ForwardedArgs.push_back(&A);
+
+  IRBuilder<> B(EntryBB);
+  B.CreateBr(SpinBB);
+
+  B.SetInsertPoint(SpinBB);
+  Value *Got = B.CreateCall(LockFn, ForwardedArgs);
+  B.CreateCondBr(Got, ExitBB, SpinBB);
+
+  B.SetInsertPoint(ExitBB);
+  B.CreateFence(AtomicOrdering::Acquire);
+  B.CreateRetVoid();
+  return F;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivatives(CallInst &call,
+                                                   Function *called,
+                                                   StringRef funcName,
+                                                   CallInst *const newCall) {
+  SmallVector<Instruction *, 2> DeferredErase;
+  bool Res = handleKokkosCallDerivativesImpl(call, called, funcName, newCall,
+                                             DeferredErase);
+  for (Instruction *I : DeferredErase) {
+    assert(I->use_empty() && "Deferred shadow placeholder must have no uses");
+    gutils->erase(I);
+  }
+  return Res;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivativesImpl(
+    CallInst &call, Function *called, StringRef funcName,
+    CallInst *const newCall, SmallVectorImpl<Instruction *> &DeferredErase) {
+  bool subretused = false;
+  bool shadowReturnUsed = false;
+  gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+
+  IRBuilder<> BuilderZ(newCall);
+  BuilderZ.setFastMathFlags(getFast());
+  LLVMContext &Ctx = call.getContext();
+  Module &M = *gutils->newFunc->getParent();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+  unsigned Width = gutils->getWidth();
+
+  // The shadow placeholder of `call` (if any) is the instruction immediately
+  // following `newCall`, which is exactly where the `AfterB` builders below
+  // insert. Erasing it eagerly would invalidate those builders, so defer.
+  auto resolveShadowPlaceholder = [&](Instruction &I, Value *shadow = nullptr) {
+    auto ifound = gutils->invertedPointers.find(&I);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    if (!shadow)
+      shadow = Constant::getNullValue(gutils->getShadowType(I.getType()));
+    auto placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    gutils->replaceAWithB(placeholder, shadow);
+    DeferredErase.push_back(placeholder);
+    gutils->invertedPointers.insert(
+        std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  };
+
+  // Keep side-effecting primal call in forward pass; cache return if needed in
+  // reverse; erase duplicate primal from ReverseModeGradient /
+  // ForwardModeSplit.
+  auto keepPrimalInForwardOnly = [&](Value *valToCache = nullptr) {
+    bool shouldCache = false;
+    if ((Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ForwardModeSplit) &&
+        augmentedReturn) {
+      shouldCache = augmentedReturn->tapeIndices.find(std::make_pair(
+                        (Instruction *)&call, CacheType::Self)) !=
+                    augmentedReturn->tapeIndices.end();
+    } else if (Mode == DerivativeMode::ReverseModePrimal) {
+      bool primalNeededInReverse = subretused;
+      if (!primalNeededInReverse) {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      shouldCache = primalNeededInReverse && !call.getType()->isVoidTy() &&
+                    !gutils->unnecessaryIntermediates.count(&call);
+    }
+    if (shouldCache && !call.getType()->isVoidTy()) {
+      Value *V = valToCache ? valToCache : (Value *)newCall;
+      Instruction *InsertAfter =
+          isa<Instruction>(V) ? cast<Instruction>(V) : (Instruction *)newCall;
+      IRBuilder<> AfterB(InsertAfter->getNextNode());
+      gutils->cacheForReverse(AfterB, V,
+                              getIndex(&call, CacheType::Self, AfterB));
+    } else if (Mode == DerivativeMode::ReverseModeGradient ||
+               Mode == DerivativeMode::ForwardModeSplit) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    }
+  };
+
+  // Replace invertedPointers placeholder on &call (and cache shadow if needed).
+  // 1. Desul PTX inline assembly (membar/fence, atom.add/red.add, atomic ld/st)
+  if (auto *IA = dyn_cast<InlineAsm>(call.getCalledOperand())) {
+    auto PTXInfo = enzyme_kokkos::classifyDesulPTXInlineAsm(IA);
+    auto ptxKind = PTXInfo.Kind;
+    unsigned ptxBits = PTXInfo.BitWidth;
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Fence) {
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Builder2.CreateFence(AtomicOrdering::SequentiallyConsistent);
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Add &&
+        call.arg_size() >= 2) {
+      Value *OrigPtr = call.getArgOperand(0);
+      Value *OrigVal = call.getArgOperand(1);
+      Type *FltTy = StringRef(IA->getAsmString()).contains(".f32")
+                        ? Type::getFloatTy(Ctx)
+                        : Type::getDoubleTy(Ctx);
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        Value *IP = gutils->isConstantValue(OrigPtr)
+                        ? nullptr
+                        : gutils->invertPointerM(OrigPtr, BuilderZ);
+        Value *DV = gutils->isConstantValue(OrigVal) ? nullptr
+                                                     : diffe(OrigVal, BuilderZ);
+        auto rule = [&](Value *p, Value *dval) -> Value * {
+          Value *zero = Constant::getNullValue(FltTy);
+          if (!dval)
+            dval = zero;
+          else
+            dval = BuilderZ.CreateBitCast(dval, FltTy);
+          if (!p)
+            return zero;
+          return BuilderZ.CreateAtomicRMW(
+              AtomicRMWInst::FAdd, p, dval, MaybeAlign(),
+              AtomicOrdering::Monotonic, SyncScope::System);
+        };
+        Value *Diff = applyChainRule(FltTy, BuilderZ, rule, IP, DV);
+        if (!call.getType()->isVoidTy() && !gutils->isConstantValue(&call))
+          setDiffe(&call, Diff, BuilderZ);
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      Value *DRet = nullptr;
+      if (!call.getType()->isVoidTy() && !gutils->isConstantValue(&call)) {
+        DRet = diffe(&call, Builder2);
+        setDiffe(&call,
+                 Constant::getNullValue(gutils->getShadowType(call.getType())),
+                 Builder2);
+      }
+      if (!gutils->isConstantValue(OrigVal) &&
+          !gutils->isConstantValue(OrigPtr)) {
+        addAtomicRMWValueAdjoint(call, OrigPtr, OrigVal, FltTy, FltTy,
+                                 /*negate*/ false,
+                                 Align(FltTy->isFloatTy() ? 4 : 8),
+                                 AtomicOrdering::Monotonic, SyncScope::System,
+                                 /*isVolatile*/ false);
+      }
+      if (DRet && !gutils->isConstantValue(OrigPtr)) {
+        Value *IP = lookup(gutils->invertPointerM(OrigPtr, Builder2), Builder2);
+        auto addRet = [&](Value *p, Value *dr) {
+          Builder2.CreateAtomicRMW(
+              AtomicRMWInst::FAdd, p, Builder2.CreateBitCast(dr, FltTy),
+              MaybeAlign(), AtomicOrdering::Monotonic, SyncScope::System);
+        };
+        applyChainRule(Builder2, addRet, IP, DRet);
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Load &&
+        call.arg_size() >= 1 && (ptxBits == 32 || ptxBits == 64)) {
+      if (gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call)) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      Value *OrigPtr = call.getArgOperand(0);
+      Type *FltTy =
+          ptxBits == 32 ? Type::getFloatTy(Ctx) : Type::getDoubleTy(Ctx);
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        if (!gutils->isConstantValue(&call)) {
+          Value *IP = gutils->isConstantValue(OrigPtr)
+                          ? nullptr
+                          : gutils->invertPointerM(OrigPtr, BuilderZ);
+          auto rule = [&](Value *p) -> Value * {
+            if (!p)
+              return Constant::getNullValue(call.getType());
+            auto *ld =
+                BuilderZ.CreateLoad(call.getType(), p, /*isVolatile*/ true);
+            return ld;
+          };
+          Value *Diff = applyChainRule(call.getType(), BuilderZ, rule, IP);
+          setDiffe(&call, Diff, BuilderZ);
+        }
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        if (!gutils->isConstantValue(&call) &&
+            !gutils->isConstantValue(OrigPtr)) {
+          Value *DRet = diffe(&call, Builder2);
+          setDiffe(
+              &call,
+              Constant::getNullValue(gutils->getShadowType(call.getType())),
+              Builder2);
+          Value *IP =
+              lookup(gutils->invertPointerM(OrigPtr, Builder2), Builder2);
+          auto rule = [&](Value *p, Value *dr) {
+            Builder2.CreateAtomicRMW(
+                AtomicRMWInst::FAdd, p, Builder2.CreateBitCast(dr, FltTy),
+                MaybeAlign(), AtomicOrdering::Monotonic, SyncScope::System);
+          };
+          applyChainRule(Builder2, rule, IP, DRet);
+        }
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+  }
+
+  if (!enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName))
+    return false;
+
+  std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+
+  if (enzyme_kokkos::isKokkosFenceCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      Builder2.CreateFence(AtomicOrdering::SequentiallyConsistent);
+    }
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 6. Desul address spinlocks: swap lock_address <-> unlock_address in reverse
+  {
+    if (auto UnlockOpt =
+            enzyme_kokkos::getDesulLockIsUnlock(funcName, normDem)) {
+      bool isUnlock = *UnlockOpt;
+      resolveShadowPlaceholder(call);
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeGradient) &&
+          call.arg_size() >= 1) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        std::string CounterpartName = funcName.str();
+        if (isUnlock) {
+          size_t pos = CounterpartName.find("14unlock_address");
+          if (pos != std::string::npos)
+            CounterpartName.replace(pos, 16, "12lock_address");
+          else if ((pos = CounterpartName.find("unlock_address")) !=
+                   std::string::npos)
+            CounterpartName.replace(pos, 14, "lock_address");
+        } else {
+          size_t pos = CounterpartName.find("12lock_address");
+          if (pos != std::string::npos)
+            CounterpartName.replace(pos, 14, "14unlock_address");
+          else if ((pos = CounterpartName.find("lock_address")) !=
+                   std::string::npos)
+            CounterpartName.replace(pos, 12, "unlock_address");
+        }
+        // Function templates mangle their return type after the template
+        // argument list: `lock_address<Scope>` returns bool (`...EEEbPvT_`)
+        // whereas `unlock_address<Scope>` returns void (`...EEEvPvT_`). Prefer
+        // the definition already present in the module (matched by demangled
+        // signature); otherwise patch the return-type code of the mangled
+        // name.
+        {
+          std::string WantDem = normDem;
+          {
+            size_t p =
+                WantDem.find(isUnlock ? "unlock_address" : "lock_address");
+            if (p != std::string::npos)
+              WantDem.replace(p, isUnlock ? 14 : 12,
+                              isUnlock ? "lock_address" : "unlock_address");
+          }
+          StringRef WantSig = enzyme_kokkos::stripReturnTypeToNamespace(
+              WantDem, "desul::Impl::");
+          Function *Found = nullptr;
+          if (!WantSig.empty()) {
+            for (Function &F : M) {
+              if (!F.getName().contains("desul"))
+                continue;
+              std::string D = ENZYME_KOKKOS_DEMANGLE(F.getName());
+              if (enzyme_kokkos::stripReturnTypeToNamespace(
+                      D, "desul::Impl::") == WantSig) {
+                Found = &F;
+                break;
+              }
+            }
+          }
+          if (Found) {
+            CounterpartName = Found->getName().str();
+          } else {
+            const char *From = isUnlock ? "EEEvPv" : "EEEbPv";
+            const char *To = isUnlock ? "EEEbPv" : "EEEvPv";
+            size_t p = CounterpartName.find(From);
+            if (p != std::string::npos)
+              CounterpartName.replace(p, 6, To);
+          }
+        }
+        SmallVector<Type *, 2> ParamTys;
+        SmallVector<Value *, 2> RevArgs;
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
+          Value *V = lookup(gutils->getNewFromOriginal(call.getArgOperand(i)),
+                            Builder2);
+          ParamTys.push_back(V->getType());
+          RevArgs.push_back(V);
+        }
+        if (isUnlock) {
+          // Reverse of unlock_address is while (!lock_address(ptr, scope)) {}
+          // via an internal module helper so newFunc's CFG is unchanged.
+          Function *SpinHelper = getOrCreateKokkosDesulSpinLockHelper(
+              M, CounterpartName, ParamTys);
+          Builder2.CreateCall(SpinHelper, RevArgs);
+        } else {
+          // Reverse of lock_address is release fence + unlock_address(ptr,
+          // scope)
+          Builder2.CreateFence(AtomicOrdering::Release);
+          FunctionCallee UnlockFn = M.getOrInsertFunction(
+              CounterpartName, FunctionType::get(VoidTy, ParamTys, false));
+          Builder2.CreateCall(UnlockFn, RevArgs);
+        }
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+  }
+
+  // 8. Remaining inactive Kokkos / runtime / Tools / mutex functions
+  if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  auto desulOp = enzyme_kokkos::classifyDesulAtomicFetchOper(normDem);
+  if (desulOp == enzyme_kokkos::DesulAtomicOpKind::Add ||
+      desulOp == enzyme_kokkos::DesulAtomicOpKind::Sub) {
+    if (gutils->isConstantInstruction(&call) &&
+        gutils->isConstantValue(&call)) {
+      resolveShadowPlaceholder(call);
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    unsigned Base = call.hasStructRetAttr() ? 1 : 0;
+    if (call.arg_size() >= Base + 3 && !call.hasStructRetAttr()) {
+      Value *OrigDest = call.getArgOperand(Base + 1);
+      Type *RetTy = call.getType();
+
+      if (RetTy->isFloatingPointTy() &&
+          call.getArgOperand(Base + 2)->getType() == RetTy) {
+        Value *OrigVal = call.getArgOperand(Base + 2);
+        bool DestConst = gutils->isConstantValue(OrigDest);
+        bool ValConst = gutils->isConstantValue(OrigVal);
+        bool RetConst = gutils->isConstantValue(&call);
+
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
+          IRBuilder<> AfterB(newCall->getNextNode());
+          AfterB.setFastMathFlags(getFast());
+          Value *DDest =
+              DestConst ? nullptr : gutils->invertPointerM(OrigDest, AfterB);
+          Value *DVal = ValConst ? nullptr : diffe(OrigVal, AfterB);
+          auto fwdRule = [&](Value *dp, Value *dv) -> Value * {
+            Value *Zero = Constant::getNullValue(RetTy);
+            if (!dp)
+              return Zero;
+            if (!dv)
+              dv = Zero;
+            return AfterB.CreateAtomicRMW(
+                desulOp == enzyme_kokkos::DesulAtomicOpKind::Sub
+                    ? AtomicRMWInst::FSub
+                    : AtomicRMWInst::FAdd,
+                dp, dv, MaybeAlign(), AtomicOrdering::Monotonic,
+                SyncScope::System);
+          };
+          Value *Diff = applyChainRule(RetTy, AfterB, fwdRule, DDest, DVal);
+          if (!RetConst)
+            setDiffe(&call, Diff, AfterB);
+          return true;
+        }
+
+        if (Mode == DerivativeMode::ReverseModePrimal) {
+          keepPrimalInForwardOnly();
+          return true;
+        }
+
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Value *DRet = nullptr;
+        if (!RetConst) {
+          DRet = diffe(&call, Builder2);
+          setDiffe(&call, Constant::getNullValue(gutils->getShadowType(RetTy)),
+                   Builder2);
+        }
+        if (!ValConst && !DestConst) {
+          addAtomicRMWValueAdjoint(
+              call, OrigDest, OrigVal, RetTy, RetTy,
+              /*negate*/ desulOp == enzyme_kokkos::DesulAtomicOpKind::Sub,
+              Align(M.getDataLayout().getTypeAllocSize(RetTy)),
+              AtomicOrdering::Monotonic, SyncScope::System,
+              /*isVolatile*/ false);
+        }
+        if (DRet && !DestConst) {
+          Value *DDest =
+              lookup(gutils->invertPointerM(OrigDest, Builder2), Builder2);
+          auto addRet = [&](Value *dp, Value *dr) {
+            Builder2.CreateAtomicRMW(AtomicRMWInst::FAdd, dp, dr, MaybeAlign(),
+                                     AtomicOrdering::Monotonic,
+                                     SyncScope::System);
+          };
+          applyChainRule(Builder2, addRet, DDest, DRet);
+        }
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      if (desulOp == enzyme_kokkos::DesulAtomicOpKind::Add ||
+          desulOp == enzyme_kokkos::DesulAtomicOpKind::Sub) {
+        bool Negate = desulOp == enzyme_kokkos::DesulAtomicOpKind::Sub;
+        // Case A: <2 x float> vector-coerced complex<float>
+        if (auto *VT = dyn_cast<FixedVectorType>(RetTy)) {
+          if (VT->getNumElements() == 2 &&
+              VT->getElementType()->isFloatingPointTy() &&
+              call.getArgOperand(Base + 2)->getType() == RetTy) {
+            Type *ElemTy = VT->getElementType();
+            Value *OrigVal = call.getArgOperand(Base + 2);
+            if (Mode == DerivativeMode::ForwardMode ||
+                Mode == DerivativeMode::ForwardModeError) {
+              IRBuilder<> AfterB(newCall->getNextNode());
+              Value *DDest = gutils->isConstantValue(OrigDest)
+                                 ? nullptr
+                                 : gutils->invertPointerM(OrigDest, AfterB);
+              Value *DVal = gutils->isConstantValue(OrigVal)
+                                ? nullptr
+                                : diffe(OrigVal, AfterB);
+              auto rule = [&](Value *dp, Value *dv) -> Value * {
+                Value *Res = UndefValue::get(RetTy);
+                for (unsigned c = 0; c < 2; ++c) {
+                  Value *Comp = dv ? AfterB.CreateExtractElement(dv, c)
+                                   : Constant::getNullValue(ElemTy);
+                  Value *CPtr =
+                      dp ? AfterB.CreateConstInBoundsGEP1_64(ElemTy, dp, c)
+                         : nullptr;
+                  Value *OldC =
+                      CPtr ? (Value *)AfterB.CreateAtomicRMW(
+                                 Negate ? AtomicRMWInst::FSub
+                                        : AtomicRMWInst::FAdd,
+                                 CPtr, Comp, MaybeAlign(),
+                                 AtomicOrdering::Monotonic, SyncScope::System)
+                           : Constant::getNullValue(ElemTy);
+                  Res = AfterB.CreateInsertElement(Res, OldC, c);
+                }
+                return Res;
+              };
+              Value *Diff = applyChainRule(RetTy, AfterB, rule, DDest, DVal);
+              if (!gutils->isConstantValue(&call))
+                setDiffe(&call, Diff, AfterB);
+              return true;
+            }
+            if (Mode == DerivativeMode::ReverseModePrimal) {
+              keepPrimalInForwardOnly();
+              return true;
+            }
+            IRBuilder<> Builder2(&call);
+            getReverseBuilder(Builder2);
+            Value *DRet = nullptr;
+            if (!gutils->isConstantValue(&call)) {
+              DRet = diffe(&call, Builder2);
+              setDiffe(&call,
+                       Constant::getNullValue(gutils->getShadowType(RetTy)),
+                       Builder2);
+            }
+            Value *DDest =
+                gutils->isConstantValue(OrigDest)
+                    ? nullptr
+                    : lookup(gutils->invertPointerM(OrigDest, Builder2),
+                             Builder2);
+            auto revRule = [&](Value *dp, Value *dr) -> Value * {
+              Value *DV = UndefValue::get(RetTy);
+              for (unsigned c = 0; c < 2; ++c) {
+                Value *CPtr =
+                    dp ? Builder2.CreateConstInBoundsGEP1_64(ElemTy, dp, c)
+                       : nullptr;
+                Value *DC = CPtr ? (Value *)Builder2.CreateLoad(ElemTy, CPtr)
+                                 : Constant::getNullValue(ElemTy);
+                if (Negate)
+                  DC = Builder2.CreateFNeg(DC);
+                DV = Builder2.CreateInsertElement(DV, DC, c);
+                if (CPtr && dr) {
+                  Builder2.CreateAtomicRMW(
+                      AtomicRMWInst::FAdd, CPtr,
+                      Builder2.CreateExtractElement(dr, c), MaybeAlign(),
+                      AtomicOrdering::Monotonic, SyncScope::System);
+                }
+              }
+              return DV;
+            };
+            Value *VD = applyChainRule(RetTy, Builder2, revRule, DDest, DRet);
+            if (!gutils->isConstantValue(OrigVal))
+              addToDiffe(OrigVal, VD, Builder2, ElemTy);
+            keepPrimalInForwardOnly();
+            return true;
+          }
+        }
+        // Case B: { double, double } struct-coerced complex<double>
+        if (auto *ST = dyn_cast<StructType>(RetTy)) {
+          if (ST->getNumElements() == 2 &&
+              ST->getElementType(0)->isFloatingPointTy() &&
+              ST->getElementType(0) == ST->getElementType(1) &&
+              call.arg_size() >= Base + 4 &&
+              call.getArgOperand(Base + 2)->getType() ==
+                  ST->getElementType(0) &&
+              call.getArgOperand(Base + 3)->getType() ==
+                  ST->getElementType(1)) {
+            Type *ElemTy = ST->getElementType(0);
+            Value *OrigRe = call.getArgOperand(Base + 2);
+            Value *OrigIm = call.getArgOperand(Base + 3);
+            if (Mode == DerivativeMode::ForwardMode ||
+                Mode == DerivativeMode::ForwardModeError) {
+              IRBuilder<> AfterB(newCall->getNextNode());
+              Value *DDest = gutils->isConstantValue(OrigDest)
+                                 ? nullptr
+                                 : gutils->invertPointerM(OrigDest, AfterB);
+              Value *DRe = gutils->isConstantValue(OrigRe)
+                               ? nullptr
+                               : diffe(OrigRe, AfterB);
+              Value *DIm = gutils->isConstantValue(OrigIm)
+                               ? nullptr
+                               : diffe(OrigIm, AfterB);
+              auto rule = [&](Value *dp, Value *dre, Value *dim) -> Value * {
+                Value *Res = UndefValue::get(RetTy);
+                Value *Comps[2] = {dre ? dre : Constant::getNullValue(ElemTy),
+                                   dim ? dim : Constant::getNullValue(ElemTy)};
+                for (unsigned c = 0; c < 2; ++c) {
+                  Value *CPtr =
+                      dp ? AfterB.CreateConstInBoundsGEP1_64(ElemTy, dp, c)
+                         : nullptr;
+                  Value *OldC =
+                      CPtr ? (Value *)AfterB.CreateAtomicRMW(
+                                 Negate ? AtomicRMWInst::FSub
+                                        : AtomicRMWInst::FAdd,
+                                 CPtr, Comps[c], MaybeAlign(),
+                                 AtomicOrdering::Monotonic, SyncScope::System)
+                           : Constant::getNullValue(ElemTy);
+                  Res = AfterB.CreateInsertValue(Res, OldC, {c});
+                }
+                return Res;
+              };
+              Value *Diff =
+                  applyChainRule(RetTy, AfterB, rule, DDest, DRe, DIm);
+              if (!gutils->isConstantValue(&call))
+                setDiffe(&call, Diff, AfterB);
+              return true;
+            }
+            if (Mode == DerivativeMode::ReverseModePrimal) {
+              keepPrimalInForwardOnly();
+              return true;
+            }
+            IRBuilder<> Builder2(&call);
+            getReverseBuilder(Builder2);
+            Value *DRet = nullptr;
+            if (!gutils->isConstantValue(&call)) {
+              DRet = diffe(&call, Builder2);
+              setDiffe(&call,
+                       Constant::getNullValue(gutils->getShadowType(RetTy)),
+                       Builder2);
+            }
+            if (!gutils->isConstantValue(OrigDest)) {
+              Value *DDest =
+                  lookup(gutils->invertPointerM(OrigDest, Builder2), Builder2);
+              for (unsigned c = 0; c < 2; ++c) {
+                Value *OrigComp = (c == 0) ? OrigRe : OrigIm;
+                if (!gutils->isConstantValue(OrigComp)) {
+                  auto compRule = [&](Value *dp) -> Value * {
+                    Value *CPtr =
+                        Builder2.CreateConstInBoundsGEP1_64(ElemTy, dp, c);
+                    Value *DC = Builder2.CreateLoad(ElemTy, CPtr);
+                    return Negate ? Builder2.CreateFNeg(DC) : DC;
+                  };
+                  Value *CDiff =
+                      applyChainRule(ElemTy, Builder2, compRule, DDest);
+                  addToDiffe(OrigComp, CDiff, Builder2, ElemTy);
+                }
+              }
+              if (DRet) {
+                auto retRule = [&](Value *dp, Value *dr) {
+                  for (unsigned c = 0; c < 2; ++c) {
+                    Value *CPtr =
+                        Builder2.CreateConstInBoundsGEP1_64(ElemTy, dp, c);
+                    Builder2.CreateAtomicRMW(
+                        AtomicRMWInst::FAdd, CPtr,
+                        Builder2.CreateExtractValue(dr, {c}), MaybeAlign(),
+                        AtomicOrdering::Monotonic, SyncScope::System);
+                  }
+                };
+                applyChainRule(Builder2, retRule, DDest, DRet);
+              }
+            }
+            keepPrimalInForwardOnly();
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
     CallInst *const newCall) {
+  if (handleKokkosCallDerivatives(call, called, funcName, newCall))
+    return true;
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =

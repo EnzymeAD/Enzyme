@@ -63,6 +63,7 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "FunctionUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
@@ -606,6 +607,9 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     if (StringRef(iasm->getAsmString()).contains("exit") ||
         StringRef(iasm->getAsmString()).contains("cpuid"))
       return true;
+    if (enzyme_kokkos::classifyDesulPTXInlineAsm(iasm).Kind ==
+        enzyme_kokkos::DesulPTXAtomicKind::Fence)
+      return true;
   }
 
   if (auto F = getFunctionFromCall(&CI)) {
@@ -618,6 +622,12 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosInactiveCall(Name, NormDem) ||
+        enzyme_kokkos::getDesulLockIsUnlock(Name, NormDem).has_value())
+      return true;
+  }
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -774,6 +784,16 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::classifyDesulAtomicFetchOper(NormDem) !=
+        enzyme_kokkos::DesulAtomicOpKind::None) {
+      unsigned Base = CI->hasStructRetAttr() ? 1 : 0;
+      if (Base < CI->arg_size() && val == CI->getArgOperand(Base))
+        return true;
+    }
+  }
 
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
@@ -1478,7 +1498,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
 
       if (GI->getName().contains("enzyme_const") ||
-          InactiveGlobals.count(GI->getName())) {
+          InactiveGlobals.count(GI->getName()) ||
+          GI->getName().contains("HOST_SPACE_ATOMIC_LOCKS") ||
+          GI->getName().contains("CUDA_SPACE_ATOMIC_LOCKS") ||
+          GI->getName().contains("HIP_SPACE_ATOMIC_LOCKS")) {
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -2764,7 +2787,9 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   // cpuid is explicitly an inactive instruction
   if (auto call = dyn_cast<CallInst>(inst)) {
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
-      if (StringRef(iasm->getAsmString()).contains("cpuid")) {
+      if (StringRef(iasm->getAsmString()).contains("cpuid") ||
+          enzyme_kokkos::classifyDesulPTXInlineAsm(iasm).Kind ==
+              enzyme_kokkos::DesulPTXAtomicKind::Fence) {
         if (EnzymePrintActivity)
           llvm::errs() << " constant instruction from known cpuid instruction "
                        << *inst << "\n";

@@ -55,6 +55,7 @@
 
 #include "../EnzymeLogic.h"
 #include "../FlangRuntime.h"
+#include "../KokkosUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -4794,6 +4795,43 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         updateAnalysis(arg, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       }
     }
+    auto PTXInfo = enzyme_kokkos::classifyDesulPTXInlineAsm(iasm);
+    auto ptxKind = PTXInfo.Kind;
+    unsigned ptxBits = PTXInfo.BitWidth;
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Fence)
+      return;
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Add &&
+        call.arg_size() >= 2) {
+      StringRef asmStr = iasm->getAsmString();
+      Type *fltTy = asmStr.contains(".f32")
+                        ? Type::getFloatTy(call.getContext())
+                        : Type::getDoubleTy(call.getContext());
+      TypeTree fltTT((ConcreteType(fltTy)));
+      TypeTree ptrTT = fltTT.Only(0, &call);
+      ptrTT.insert({}, BaseType::Pointer);
+      updateAnalysis(call.getArgOperand(0), ptrTT.Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1), fltTT.Only(-1, &call), &call);
+      if (!call.getType()->isVoidTy())
+        updateAnalysis(&call, fltTT.Only(-1, &call), &call);
+      return;
+    }
+    if (ptxKind == enzyme_kokkos::DesulPTXAtomicKind::Load &&
+        call.arg_size() >= 1 && (ptxBits == 32 || ptxBits == 64)) {
+      auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
+      size_t sz = ptxBits / 8;
+      Value *ptr = call.getArgOperand(0);
+      updateAnalysis(ptr, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(ptr).Lookup(sz, dl).Only(-1, &call),
+                       &call);
+      if (direction & UP) {
+        TypeTree p =
+            getAnalysis(&call).ShiftIndices(dl, 0, sz, 0).PurgeAnything();
+        p.insert({}, BaseType::Pointer);
+        updateAnalysis(ptr, p.Only(-1, &call), &call);
+      }
+      return;
+    }
   }
 
   if (call.hasFnAttr("enzyme_ta_norecur"))
@@ -5049,6 +5087,89 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       for (int i : {5, 6, 8, 10, 11})
         updateAnalysis(call.getArgOperand(i), ptrdbl, &call);
       return;
+    }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if (enzyme_kokkos::isKokkosMutexCall(funcName, normDem)) {
+        if (call.arg_size() >= 1 &&
+            call.getArgOperand(0)->getType()->isPointerTy()) {
+          updateAnalysis(call.getArgOperand(0),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        }
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (enzyme_kokkos::getDesulLockIsUnlock(funcName, normDem).has_value()) {
+        if (call.arg_size() >= 1 &&
+            call.getArgOperand(0)->getType()->isPointerTy())
+          updateAnalysis(call.getArgOperand(0),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        else if (call.getType()->isPointerTy())
+          updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      auto desulOp = enzyme_kokkos::classifyDesulAtomicFetchOper(normDem);
+      if (desulOp != enzyme_kokkos::DesulAtomicOpKind::None) {
+        auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
+        unsigned base = call.hasStructRetAttr() ? 1 : 0;
+        if (call.arg_size() >= base + 3) {
+          updateAnalysis(call.getArgOperand(base),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          Value *dest = call.getArgOperand(base + 1);
+          updateAnalysis(dest, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+          Type *retTy = call.hasStructRetAttr() ? call.getParamStructRetType(0)
+                                                : call.getType();
+          if (retTy && retTy->isSized() && !retTy->isVoidTy()) {
+            size_t sz = (dl.getTypeSizeInBits(retTy) + 7) / 8;
+            TypeTree elemTT;
+            if (retTy->isFPOrFPVectorTy()) {
+              elemTT.insert({-1}, ConcreteType(retTy->getScalarType()));
+            } else if (auto *ST = dyn_cast<StructType>(retTy)) {
+              const auto *SL = dl.getStructLayout(ST);
+              for (unsigned f = 0; f < ST->getNumElements(); ++f) {
+                Type *et = ST->getElementType(f);
+                if (et->isFPOrFPVectorTy())
+                  elemTT.insert({(int)SL->getElementOffset(f)},
+                                ConcreteType(et->getScalarType()));
+              }
+            }
+            if (elemTT.isKnown()) {
+              if (!call.hasStructRetAttr())
+                updateAnalysis(&call, elemTT, &call);
+              TypeTree ptrTT = elemTT.ShiftIndices(dl, 0, sz, 0);
+              ptrTT.insert({}, BaseType::Pointer);
+              updateAnalysis(dest, ptrTT.Only(-1, &call), &call);
+              for (unsigned ai = base + 2; ai < call.arg_size(); ++ai) {
+                Type *at = call.getArgOperand(ai)->getType();
+                if (at->isFPOrFPVectorTy())
+                  updateAnalysis(call.getArgOperand(ai),
+                                 TypeTree(ConcreteType(at->getScalarType()))
+                                     .Only(-1, &call),
+                                 &call);
+              }
+            } else {
+              TypeTree pt = getAnalysis(dest).Lookup(sz, dl).PurgeAnything();
+              if (!call.hasStructRetAttr() && (direction & DOWN))
+                updateAnalysis(&call, pt, &call);
+            }
+          }
+          return;
+        }
+      }
     }
 
     if (funcName == "__kmpc_fork_call") {
