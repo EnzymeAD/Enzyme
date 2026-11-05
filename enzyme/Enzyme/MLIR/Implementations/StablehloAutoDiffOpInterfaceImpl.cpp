@@ -228,29 +228,29 @@ static Value shSub(OpBuilder &b, Location loc, Value l, Value r) {
 }
 // stablehlo.compare (signed) → tensor<i1>.
 static Value shCmpEQ(OpBuilder &b, Location loc, Value l, Value r) {
-  auto ty = RankedTensorType::get({}, b.getI1Type());
-  return stablehlo::CompareOp::create(b, loc, ty, l, r,
-      stablehlo::ComparisonDirection::EQ, stablehlo::ComparisonType::SIGNED);
+  return stablehlo::CompareOp::create(
+      b, loc, (mlir::Value)l, (mlir::Value)r,
+      stablehlo::ComparisonDirection::EQ);
 }
 static Value shCmpNE(OpBuilder &b, Location loc, Value l, Value r) {
-  auto ty = RankedTensorType::get({}, b.getI1Type());
-  return stablehlo::CompareOp::create(b, loc, ty, l, r,
-      stablehlo::ComparisonDirection::NE, stablehlo::ComparisonType::SIGNED);
+  return stablehlo::CompareOp::create(
+      b, loc, (mlir::Value)l, (mlir::Value)r,
+      stablehlo::ComparisonDirection::NE);
 }
 static Value shCmpLT(OpBuilder &b, Location loc, Value l, Value r) {
-  auto ty = RankedTensorType::get({}, b.getI1Type());
-  return stablehlo::CompareOp::create(b, loc, ty, l, r,
-      stablehlo::ComparisonDirection::LT, stablehlo::ComparisonType::SIGNED);
+  return stablehlo::CompareOp::create(
+      b, loc, (mlir::Value)l, (mlir::Value)r,
+      stablehlo::ComparisonDirection::LT);
 }
 static Value shCmpLE(OpBuilder &b, Location loc, Value l, Value r) {
-  auto ty = RankedTensorType::get({}, b.getI1Type());
-  return stablehlo::CompareOp::create(b, loc, ty, l, r,
-      stablehlo::ComparisonDirection::LE, stablehlo::ComparisonType::SIGNED);
+  return stablehlo::CompareOp::create(
+      b, loc, (mlir::Value)l, (mlir::Value)r,
+      stablehlo::ComparisonDirection::LE);
 }
 static Value shCmpGE(OpBuilder &b, Location loc, Value l, Value r) {
-  auto ty = RankedTensorType::get({}, b.getI1Type());
-  return stablehlo::CompareOp::create(b, loc, ty, l, r,
-      stablehlo::ComparisonDirection::GE, stablehlo::ComparisonType::SIGNED);
+  return stablehlo::CompareOp::create(
+      b, loc, (mlir::Value)l, (mlir::Value)r,
+      stablehlo::ComparisonDirection::GE);
 }
 // stablehlo.select.
 static Value shSel(OpBuilder &b, Location loc, Value cond, Value t, Value f) {
@@ -411,19 +411,12 @@ struct SMResult {
 };
 
 // Inline the Online_r2 state machine in pure StableHLO.
-// All inputs/outputs are tensor<i64> (scalars) or tensor<smSize×i64> (arrays).
-// snaps = shC(budget), budget_v = shC(budget).
+// Flat implementation — all scalar outputs via shSel, array mutations via
+// sequential shStore calls. No nested builder aliasing.
 static SMResult shInlineSM(OpBuilder &b, Location loc,
     Value check, Value capo, Value oldcapoO, Value t, Value incr,
     Value iter, Value oldind, Value ind, Value old_f, Value offset,
     Value snaps, Value ch, Value ord_ch, Value num_rep, int64_t smSize) {
-
-  auto i64ty0 = RankedTensorType::get({}, b.getI64Type());
-  auto i1ty0  = RankedTensorType::get({}, b.getI1Type());
-  auto arrTy  = RankedTensorType::get({smSize}, b.getI64Type());
-  SmallVector<Type> smTys(11, i64ty0);
-  smTys.push_back(arrTy); smTys.push_back(arrTy); smTys.push_back(arrTy);
-  // 14 total: 11 scalars + 3 arrays
 
   Value zero  = shC(b, loc, 0);
   Value one   = shC(b, loc, 1);
@@ -438,408 +431,330 @@ static SMResult shInlineSM(OpBuilder &b, Location loc,
   Value snapsP1 = shAdd(b, loc, snaps, one);
   Value snapsP2 = shAdd(b, loc, snaps, two);
 
-  // ch[check] with safe (non-negative) index.
+  // ── Top-level condition: takeshot r=1? ─────────────────────────────────────
   Value checkLtZero = shCmpLT(b, loc, check, zero);
   Value safeCheck   = shSel(b, loc, checkLtZero, zero, check);
   Value chAtCheck   = shLoad(b, loc, ch, safeCheck);
-
-  // Top-level: takeshot r=1 when (check<0) OR (ch[check]!=capo AND capo<=snaps-1)
   Value chNeqCapo    = shCmpNE(b, loc, chAtCheck, capo);
   Value capoLeSnapsM1 = shCmpLE(b, loc, capo, snapsM1);
   Value isTakeshotR1 = shOr(b, loc, checkLtZero,
                             shAnd(b, loc, chNeqCapo, capoLeSnapsM1));
 
-  // ── Outer if: takeshot r=1 vs else ─────────────────────────────────────────
-  auto outerIf = shIf(b, loc, isTakeshotR1, smTys,
+  // ── Pre-compute everything we'll need for all branches ─────────────────────
+  // These are all emitted unconditionally; shSel picks the right ones.
 
-    // ── Branch 1: TAKESHOT r=1 ─────────────────────────────────────────────
-    [&](OpBuilder &b2, Location l2) -> SmallVector<Value> {
-      Value newCheck = shAdd(b2, l2, check, shC(b2, l2, 1));
-      Value newCh    = shStore(b2, l2, ch, newCheck, capo);
+  // --- Branch 2: advance r=1 ---
+  Value capoLtSnapsM1 = shCmpLT(b, loc, capo, snapsM1);
+  Value b2Capo = shAdd(b, loc, oldcapoO, one);  // capo = oldcapo_o + 1
 
-      // Init arrays: depends on snaps < 4.
-      Value snapsLt4 = shCmpLT(b2, l2, snaps, shC(b2, l2, 4));
+  // --- Branch 3: r=2 ---
+  Value chCheck = shLoad(b, loc, ch, check);
+  Value r2AdvCond = shCmpEQ(b, loc, chCheck, capo);
 
-      // Both branches fill num_rep and ord_ch with loops.
-      // We build them with stablehlo.while.
-      // Carry: (i, num_rep, ord_ch)
-      Value snapsI = snaps; // tensor<i64>
-      auto arrTy2 = arrTy;
-      auto fillLoop = [&](Value fillVal) -> std::pair<Value,Value> {
-        // Fill num_rep[i]=fillVal, ord_ch[i]=i for i in [0, snaps)
-        SmallVector<Value> initA = {shC(b2, l2, 0), num_rep, newCh/*ord_ch placeholder*/};
-        // Actually we need separate loops for num_rep and ord_ch since they're
-        // separate tensors. Use a single loop carrying (i, num_rep, ord_ch).
-        SmallVector<Value> initB = {shC(b2, l2, 0), num_rep, ord_ch};
-        auto w2 = shWhile(b2, l2, initB,
-          [&](OpBuilder &b3, Location l3, ValueRange a) -> Value {
-            return shCmpLT(b3, l3, a[0], snapsI);
-          },
-          [&](OpBuilder &b3, Location l3, ValueRange a) -> SmallVector<Value> {
-            Value i = a[0], nr = a[1], oc = a[2];
-            Value newNr = shStore(b3, l3, nr, i, fillVal);
-            Value newOc = shStore(b3, l3, oc, i, i); // ord_ch[i]=i
-            return {shAdd(b3, l3, i, shC(b3, l3, 1)), newNr, newOc};
-          });
-        return {w2->getResult(1), w2->getResult(2)};
-      };
+  // Branch 3a: advance r=2 (ch[check] == capo)
+  // case 1: capo = very large sentinel
+  Value infCapo = shC(b, loc, 4611686018427387903LL); // max/4
 
-      // For snaps<4: fillVal=2, incr=2, iter=1, oldind=snaps-1
-      // For snaps>=4: fillVal=1, incr=1, iter=1, oldind=1, offset=snaps-1
-      auto initIfOp = shIf(b2, l2, snapsLt4,
-          {i64ty0, i64ty0, i64ty0, i64ty0, arrTy, arrTy},
-          [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-            auto [newNr, newOc] = fillLoop(shC(b3, l3, 2));
-            return {shC(b3, l3, 2)/*incr*/, shC(b3, l3, 1)/*iter*/,
-                    shSub(b3, l3, snaps, shC(b3, l3, 1))/*oldind*/,
-                    offset/*unchanged*/, newNr, newOc};
-          },
-          [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-            auto [newNr, newOc] = fillLoop(shC(b3, l3, 1));
-            return {shC(b3, l3, 1)/*incr*/, shC(b3, l3, 1)/*iter*/,
-                    shC(b3, l3, 1)/*oldind*/,
-                    shSub(b3, l3, snaps, shC(b3, l3, 1))/*offset=snaps-1*/,
-                    newNr, newOc};
-          });
+  // case 2: capo = ch[1] + incr
+  Value ch1 = shLoad(b, loc, ch, one);
+  Value case2Capo = shAdd(b, loc, ch1, incr);
 
-      Value newIncr   = initIfOp.getResult(0);
-      Value newIter   = initIfOp.getResult(1);
-      Value newOldind = initIfOp.getResult(2);
-      Value newOffset = initIfOp.getResult(3);
-      Value newNumRep = initIfOp.getResult(4);
-      Value newOrdCh  = initIfOp.getResult(5);
+  // case 3: dispatch on iter==0
+  Value iterIsZero = shCmpEQ(b, loc, iter, zero);
+  Value chOldind = shLoad(b, loc, ch, oldind);
+  // iter==0 path: loop (t+1)/2+1 times; use shWhile
+  Value tP1Div2 = shDiv(b, loc, shAdd(b, loc, t, one), two);
+  Value loopUBc3 = shAdd(b, loc, tP1Div2, one);
+  // Build the loop: carry (i, capo_acc, incr_acc, iter_acc)
+  auto c3Loop = shWhile(b, loc,
+      SmallVector<Value>{zero, chOldind, incr, iter},
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> Value {
+        return shCmpLT(b2, l2, a[0], loopUBc3);
+      },
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> SmallVector<Value> {
+        return {shAdd(b2, l2, a[0], shC(b2, l2, 1)),
+                shAdd(b2, l2, a[1], a[2]),
+                shAdd(b2, l2, a[2], shC(b2, l2, 1)),
+                shAdd(b2, l2, a[3], shC(b2, l2, 1))};
+      });
+  Value c3LoopCapo = c3Loop->getResult(1);
+  Value c3LoopIncr = c3Loop->getResult(2);
+  Value c3LoopIter = c3Loop->getResult(3);
 
-      // if capo == snaps-1: ind=2, old_f=1
-      Value capoEqSnapsM1 = shCmpEQ(b2, l2, capo, shSub(b2, l2, snaps, shC(b2, l2, 1)));
-      Value newInd  = shSel(b2, l2, capoEqSnapsM1, shC(b2, l2, 2), ind);
-      Value newOldF = shSel(b2, l2, capoEqSnapsM1, shC(b2, l2, 1), old_f);
+  // iter!=0 path: capo=ch[ind]+incr; iter++; incr++
+  Value chInd = shLoad(b, loc, ch, ind);
+  Value c3ne0Capo = shAdd(b, loc, chInd, incr);
+  Value c3ne0Incr = shAdd(b, loc, incr, one);
+  Value c3ne0Iter = shAdd(b, loc, iter, one);
 
-      return {actTakeshot,
-              newCheck, capo, capo/*oldcapo_o=capo*/, zero/*t=0*/,
-              newIncr, newIter, newOldind, newInd, newOldF, newOffset,
-              newCh, newOrdCh, newNumRep};
-    },
+  Value case3Capo = shSel(b, loc, iterIsZero, c3LoopCapo, c3ne0Capo);
+  Value case3Incr = shSel(b, loc, iterIsZero, c3LoopIncr, c3ne0Incr);
+  Value case3Iter = shSel(b, loc, iterIsZero, c3LoopIter, c3ne0Iter);
 
-    // ── Else: advance r=1 or r=2 ──────────────────────────────────────────
-    [&](OpBuilder &b2, Location l2) -> SmallVector<Value> {
-      // Branch 2: capo < snaps-1 → advance r=1
-      Value capoLtSnapsM1 = shCmpLT(b2, l2, capo, shSub(b2, l2, snaps, shC(b2, l2, 1)));
+  // 3a default: complex with capoEqSnapsM1/tIsZero/iterLtOffset
+  Value capoEqSnapsM1_d = shCmpEQ(b, loc, capo, snapsM1);
+  Value tIsZero_d        = shCmpEQ(b, loc, t, zero);
+  Value iterLtOffset_d   = shCmpLT(b, loc, iter, offset);
+  Value offsetIs1_d      = shCmpEQ(b, loc, offset, one);
+  Value defCapoSnapsM1 = shAdd(b, loc, capo, two);
+  Value defCapoT0      = shSel(b, loc, iterLtOffset_d,
+                            shAdd(b, loc, capo, one), shAdd(b, loc, capo, two));
+  Value defTNew        = shSel(b, loc, offsetIs1_d, shAdd(b, loc, t, one), t);
+  Value defActD        = shSel(b, loc, capoEqSnapsM1_d, actAdvance,
+                            shSel(b, loc, tIsZero_d, actAdvance, actTerminate));
+  Value defCapoD       = shSel(b, loc, capoEqSnapsM1_d, defCapoSnapsM1,
+                            shSel(b, loc, tIsZero_d, defCapoT0, capo));
+  Value defIndD        = shSel(b, loc, capoEqSnapsM1_d, snapsM1, ind);
+  Value defTD          = shSel(b, loc, capoEqSnapsM1_d, t,
+                            shSel(b, loc, tIsZero_d, defTNew, t));
 
-      auto branch23 = shIf(b2, l2, capoLtSnapsM1, smTys,
-        // Branch 2: advance r=1
-        [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-          return {actAdvance,
-                  check, shAdd(b3, l3, oldcapoO, shC(b3, l3, 1)), oldcapoO,
-                  t, incr, iter, oldind, ind, old_f, offset,
-                  ch, ord_ch, num_rep};
-        },
-        // Branch 3: r=2 — dispatch on ch[check] == capo
-        [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-          Value chCheck   = shLoad(b3, l3, ch, check);
-          Value r2AdvCond = shCmpEQ(b3, l3, chCheck, capo);
+  Value is1 = shCmpEQ(b, loc, snaps, one);
+  Value is2 = shCmpEQ(b, loc, snaps, two);
+  Value is3 = shCmpEQ(b, loc, snaps, three);
+  Value notIs123 = shAnd(b, loc,
+                     shAnd(b, loc, shCmpNE(b, loc, snaps, one),
+                                   shCmpNE(b, loc, snaps, two)),
+                     shCmpNE(b, loc, snaps, three));
 
-          auto r2If = shIf(b3, l3, r2AdvCond, smTys,
+  Value a3aFinalCapo = shSel(b, loc, is1, infCapo,
+                         shSel(b, loc, is2, case2Capo,
+                         shSel(b, loc, is3, case3Capo, defCapoD)));
+  Value a3aFinalIncr = shSel(b, loc, is3, case3Incr, incr);
+  Value a3aFinalIter = shSel(b, loc, is3, case3Iter, iter);
+  Value a3aFinalInd  = shSel(b, loc, notIs123, defIndD, ind);
+  Value a3aFinalT    = shSel(b, loc, notIs123, defTD, t);
+  Value a3aFinalAct  = shSel(b, loc, notIs123, defActD, actAdvance);
+  // ch/ord_ch/num_rep unchanged in 3a advance
 
-            // Branch 3a: advance r=2
-            [&](OpBuilder &b4, Location l4) -> SmallVector<Value> {
-              Value is1 = shCmpEQ(b4, l4, snaps, shC(b4, l4, 1));
-              Value is2 = shCmpEQ(b4, l4, snaps, shC(b4, l4, 2));
-              Value is3 = shCmpEQ(b4, l4, snaps, shC(b4, l4, 3));
+  // Branch 3b: takeshot r=2 (ch[check] != capo)
+  // case 2: ch[1]=capo; incr++
+  Value b3b_is2_ch  = shStore(b, loc, ch, one, capo);  // ch[1]=capo
+  Value b3b_is2_incr = shAdd(b, loc, incr, one);
 
-              // case 1: capo = very large sentinel
-              Value infCapo = shC(b4, l4, std::numeric_limits<int64_t>::max() / 4);
+  // case 3: ch[ind]=capo; check=ind; nr1-based updates
+  Value b3b_is3_ch    = shStore(b, loc, ch, ind, capo);  // ch[ind]=capo
+  Value numRep1       = shLoad(b, loc, num_rep, one);
+  Value iterEqNR1     = shCmpEQ(b, loc, iter, numRep1);
+  Value newNR1        = shAdd(b, loc, numRep1, one);
+  Value newNr_upd     = shStore(b, loc, num_rep, one, newNR1);
+  Value remVal        = shRem(b, loc, newNR1, two);
+  Value newIndNR1     = shSub(b, loc, two, remVal);
+  Value nr1_iter      = shSel(b, loc, iterEqNR1, zero, iter);
+  Value nr1_t         = shSel(b, loc, iterEqNR1, shAdd(b, loc, t, one), t);
+  Value nr1_oldind    = shSel(b, loc, iterEqNR1, ind, oldind);
+  Value nr1_ind       = shSel(b, loc, iterEqNR1, newIndNR1, ind);
+  Value nr1_incr      = shSel(b, loc, iterEqNR1, one, incr);
+  Value nr1_num_rep   = shSel(b, loc, iterEqNR1, newNr_upd, num_rep);
+  Value b3b_is3_check = ind;  // check=ind
+  // ch: b3b_is3_ch (ch[ind]=capo)
 
-              // case 2: capo = ch[1] + incr
-              Value ch1      = shLoad(b4, l4, ch, shC(b4, l4, 1));
-              Value case2Capo = shAdd(b4, l4, ch1, incr);
+  // default (snaps>=4): sub-case A (capo < snaps+2)
+  Value isDefault_b = shAnd(b, loc, shCmpNE(b, loc, snaps, two),
+                                    shCmpNE(b, loc, snaps, three));
+  Value capoLtSnapsP2 = shCmpLT(b, loc, capo, snapsP2);
+  Value capoEqSnapsP1 = shCmpEQ(b, loc, capo, snapsP1);
 
-              // case 3: iter==0 → loop; iter!=0 → ch[ind]+incr
-              Value iterIsZero = shCmpEQ(b4, l4, iter, shC(b4, l4, 0));
-              auto case3If = shIf(b4, l4, iterIsZero,
-                  {i64ty0, i64ty0, i64ty0},
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    // iter==0: capo=ch[oldind]; loop (t+1)/2+1 times
-                    Value chOldind = shLoad(b5, l5, ch, oldind);
-                    Value tP1Div2  = shDiv(b5, l5, shAdd(b5, l5, t, shC(b5, l5, 1)),
-                                                   shC(b5, l5, 2));
-                    Value loopUBc3 = shAdd(b5, l5, tP1Div2, shC(b5, l5, 1));
-                    // Loop carry: (i, capo, incr, iter)
-                    SmallVector<Value> initC3 = {shC(b5, l5, 0), chOldind, incr, iter};
-                    auto wC3 = shWhile(b5, l5, initC3,
-                      [&](OpBuilder &b6, Location l6, ValueRange a) -> Value {
-                        return shCmpLT(b6, l6, a[0], loopUBc3);
-                      },
-                      [&](OpBuilder &b6, Location l6, ValueRange a) -> SmallVector<Value> {
-                        return {shAdd(b6, l6, a[0], shC(b6, l6, 1)),
-                                shAdd(b6, l6, a[1], a[2]),
-                                shAdd(b6, l6, a[2], shC(b6, l6, 1)),
-                                shAdd(b6, l6, a[3], shC(b6, l6, 1))};
-                      });
-                    return {wC3->getResult(1), wC3->getResult(2), wC3->getResult(3)};
-                  },
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    // iter!=0: capo=ch[ind]+incr
-                    Value chInd = shLoad(b5, l5, ch, ind);
-                    return {shAdd(b5, l5, chInd, incr),
-                            shAdd(b5, l5, incr, shC(b5, l5, 1)),
-                            shAdd(b5, l5, iter, shC(b5, l5, 1))};
-                  });
-              Value case3Capo = case3If.getResult(0);
-              Value case3Incr = case3If.getResult(1);
-              Value case3Iter = case3If.getResult(2);
+  // subA: ch[ind]=capo
+  Value defA_ch = shStore(b, loc, ch, ind, capo);
 
-              // default: complex with capoEqSnapsM1 / tIsZero / iterLtOffset
-              Value capoEqSnapsM1b = shCmpEQ(b4, l4, capo, shSub(b4, l4, snaps, shC(b4, l4, 1)));
-              Value tIsZero_d      = shCmpEQ(b4, l4, t, shC(b4, l4, 0));
-              Value iterLtOffset   = shCmpLT(b4, l4, iter, offset);
-              Value offsetIs1      = shCmpEQ(b4, l4, offset, shC(b4, l4, 1));
+  // rot1: ordSnapsM1=ord_ch[snaps-1]; shift; ord_ch[1]=ordSnapsM1; check=ind; incr=2; ind=2
+  Value ordSnapsM1 = shLoad(b, loc, ord_ch, snapsM1);
+  // Shift ord_ch right for rot1 (kLow=1): ord_ch[k]=ord_ch[k-1] for k=snaps-1 downto 2
+  Value rot1OrdCh = shOrdChShiftRight(b, loc, snaps, one, ord_ch, smSize);
+  Value rot1OrdCh2 = shStore(b, loc, rot1OrdCh, one, ordSnapsM1);
+  Value rot1Check = ind;
+  Value rot1Incr = two;
+  Value rot1Oldind = ordSnapsM1;
+  Value rot1Ind = two;
+  // subA check/incr/oldind/ind: pick rot1 if capo==snaps+1, else keep (ind, incr, oldind, ind)
+  Value defA_check  = shSel(b, loc, capoEqSnapsP1, rot1Check, ind);
+  Value defA_incr   = shSel(b, loc, capoEqSnapsP1, rot1Incr, incr);
+  Value defA_oldind = shSel(b, loc, capoEqSnapsP1, rot1Oldind, oldind);
+  Value defA_ind    = shSel(b, loc, capoEqSnapsP1, rot1Ind, ind);
+  Value defA_ordCh  = shSel(b, loc, capoEqSnapsP1, rot1OrdCh2, ord_ch);
 
-              Value defCapoSnapsM1 = shAdd(b4, l4, capo, shC(b4, l4, 2));
-              Value defCapoT0      = shSel(b4, l4, iterLtOffset,
-                                      shAdd(b4, l4, capo, shC(b4, l4, 1)),
-                                      shAdd(b4, l4, capo, shC(b4, l4, 2)));
-              Value defTNew        = shSel(b4, l4, offsetIs1,
-                                      shAdd(b4, l4, t, shC(b4, l4, 1)), t);
-              Value defAction      = shSel(b4, l4, capoEqSnapsM1b, actAdvance,
-                                      shSel(b4, l4, tIsZero_d, actAdvance, actTerminate));
-              Value defCapo        = shSel(b4, l4, capoEqSnapsM1b, defCapoSnapsM1,
-                                      shSel(b4, l4, tIsZero_d, defCapoT0, capo));
-              Value defInd_d       = shSel(b4, l4, capoEqSnapsM1b,
-                                      shSub(b4, l4, snaps, shC(b4, l4, 1)), ind);
-              Value defT_d         = shSel(b4, l4, capoEqSnapsM1b, t,
-                                      shSel(b4, l4, tIsZero_d, defTNew, t));
+  // subB (capo>=snaps+2): rot2 or simple store or terminate
+  Value tIsZero_b = shCmpEQ(b, loc, t, zero);
+  Value iterEqOff_b = shCmpEQ(b, loc, iter, offset);
+  // rot2: ord_ch[snaps-1]=capo; shift(kLow=incr); ord_ch[incr]=ord_ch[snaps-1]; incr++; ind=newIncr; iter=1
+  Value rot2Ch = shStore(b, loc, ch, ordSnapsM1, capo);
+  Value rot2OrdCh  = shOrdChShiftRight(b, loc, snaps, incr, ord_ch, smSize);
+  Value rot2OrdCh2 = shStore(b, loc, rot2OrdCh, incr, ordSnapsM1);
+  Value rot2Incr = shAdd(b, loc, incr, one);
+  Value rot2Ind  = rot2Incr;
 
-              Value notIs123 = shAnd(b4, l4,
-                                 shAnd(b4, l4, shCmpNE(b4, l4, snaps, shC(b4, l4, 1)),
-                                              shCmpNE(b4, l4, snaps, shC(b4, l4, 2))),
-                                 shCmpNE(b4, l4, snaps, shC(b4, l4, 3)));
+  // simple store: ch[ord_ch[ind]]=capo; check=ord_ch[ind]; iter++; ind++
+  Value ordChInd_b = shLoad(b, loc, ord_ch, ind);
+  Value simCh = shStore(b, loc, ch, ordChInd_b, capo);
+  Value simIter = shAdd(b, loc, iter, one);
+  Value simInd  = shAdd(b, loc, ind, one);
 
-              Value finalCapo = shSel(b4, l4, is1, infCapo,
-                                shSel(b4, l4, is2, case2Capo,
-                                shSel(b4, l4, is3, case3Capo, defCapo)));
-              Value finalIncr = shSel(b4, l4, is3, case3Incr, incr);
-              Value finalIter = shSel(b4, l4, is3, case3Iter, iter);
-              Value finalInd  = shSel(b4, l4, notIs123, defInd_d, ind);
-              Value finalT    = shSel(b4, l4, notIs123, defT_d, t);
-              Value finalAct  = shSel(b4, l4, notIs123, defAction, actAdvance);
+  // subB results (tIsZero && iterEqOff → rot2; tIsZero && !iterEqOff → simple; else terminate)
+  Value tIsZeroAndIterEqOff = shAnd(b, loc, tIsZero_b, iterEqOff_b);
+  Value tIsZeroAndNotOff    = shAnd(b, loc, tIsZero_b, shNot(b, loc, iterEqOff_b));
+  // tIsZero, iterEqOff → rot2
+  // tIsZero, !iterEqOff → simple store
+  // !tIsZero → terminate
+  Value defB_act   = shSel(b, loc, tIsZero_b, actTakeshot, actTerminate);
+  Value defB_check = shSel(b, loc, tIsZeroAndIterEqOff, ordSnapsM1,
+                       shSel(b, loc, tIsZeroAndNotOff, ordChInd_b, check));
+  Value defB_incr  = shSel(b, loc, tIsZeroAndIterEqOff, rot2Incr, incr);
+  Value defB_iter  = shSel(b, loc, tIsZeroAndIterEqOff, one,
+                       shSel(b, loc, tIsZeroAndNotOff, simIter, iter));
+  Value defB_oldind = shSel(b, loc, tIsZeroAndIterEqOff, ordSnapsM1, oldind);
+  Value defB_ind   = shSel(b, loc, tIsZeroAndIterEqOff, rot2Ind,
+                       shSel(b, loc, tIsZeroAndNotOff, simInd, ind));
+  Value defB_t     = t; // t unchanged in all subB paths
+  Value defB_ch    = shSel(b, loc, tIsZeroAndIterEqOff, rot2Ch,
+                       shSel(b, loc, tIsZeroAndNotOff, simCh, ch));
+  Value defB_ordCh = shSel(b, loc, tIsZeroAndIterEqOff, rot2OrdCh2, ord_ch);
 
-              return {finalAct,
-                      check, finalCapo, oldcapoO, finalT, finalIncr, finalIter,
-                      oldind, finalInd, old_f, offset,
-                      ch, ord_ch, num_rep};
-            },
+  // subA vs subB (capoLtSnapsP2 → subA, else → subB), all within isDefault_b
+  Value def_act   = shSel(b, loc, capoLtSnapsP2, actTakeshot, defB_act);
+  Value def_check = shSel(b, loc, capoLtSnapsP2, defA_check, defB_check);
+  Value def_incr  = shSel(b, loc, capoLtSnapsP2, defA_incr, defB_incr);
+  Value def_iter  = shSel(b, loc, capoLtSnapsP2, iter, defB_iter);
+  Value def_oldind = shSel(b, loc, capoLtSnapsP2, defA_oldind, defB_oldind);
+  Value def_ind   = shSel(b, loc, capoLtSnapsP2, defA_ind, defB_ind);
+  Value def_t     = shSel(b, loc, capoLtSnapsP2, t, defB_t);
+  Value def_ch    = shSel(b, loc, capoLtSnapsP2, defA_ch, defB_ch);
+  Value def_ordCh = shSel(b, loc, capoLtSnapsP2, defA_ordCh, defB_ordCh);
 
-            // Branch 3b: takeshot r=2
-            [&](OpBuilder &b4, Location l4) -> SmallVector<Value> {
-              Value is1_b = shCmpEQ(b4, l4, snaps, shC(b4, l4, 1));
-              Value is2_b = shCmpEQ(b4, l4, snaps, shC(b4, l4, 2));
-              Value is3_b = shCmpEQ(b4, l4, snaps, shC(b4, l4, 3));
+  // rot2 offset decrement (only in rot2 path within default)
+  Value capoGeSnapsP2 = shCmpGE(b, loc, capo, snapsP2);
+  Value rot2Cond = shAnd(b, loc,
+                     shAnd(b, loc, isDefault_b, capoGeSnapsP2),
+                     shAnd(b, loc, tIsZero_b, iterEqOff_b));
+  Value def_offset = shSel(b, loc, rot2Cond, shSub(b, loc, offset, one), offset);
 
-              // case 2: ch[1]=capo; incr++
-              auto case2IfB = shIf(b4, l4, is2_b, {i64ty0, arrTy},
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    Value newCh5 = shStore(b5, l5, ch, shC(b5, l5, 1), capo);
-                    return {shAdd(b5, l5, incr, shC(b5, l5, 1)), newCh5};
-                  },
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    return {incr, ch};
-                  });
-              Value case2Incr_b = case2IfB.getResult(0);
-              Value case2Ch_b   = case2IfB.getResult(1);
+  // 3b: merge case2 / case3 / default
+  // ch merges: case2 updates ch[1], case3 updates ch[ind], default updates various
+  // Use is2/is3/isDefault to pick:
+  Value b3b_ch = shSel(b, loc, is2, b3b_is2_ch,
+                   shSel(b, loc, is3, b3b_is3_ch,
+                   shSel(b, loc, isDefault_b, def_ch, ch)));
+  Value b3b_ordCh = shSel(b, loc, isDefault_b, def_ordCh, ord_ch);
+  Value b3b_numRep = shSel(b, loc, is3, nr1_num_rep, num_rep);
 
-              // case 3: ch[ind]=capo; check=ind; maybe update num_rep/ind
-              auto case3IfB = shIf(b4, l4, is3_b,
-                  {i64ty0/*check*/, i64ty0/*iter*/, i64ty0/*t*/, i64ty0/*oldind*/,
-                   i64ty0/*ind*/, i64ty0/*incr*/, arrTy/*ch*/, arrTy/*num_rep*/},
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    Value newCh5 = shStore(b5, l5, ch, ind, capo);
-                    Value numRep1 = shLoad(b5, l5, num_rep, shC(b5, l5, 1));
-                    Value iterEqNR1 = shCmpEQ(b5, l5, iter, numRep1);
-                    auto nr1If = shIf(b5, l5, iterEqNR1,
-                        {i64ty0, i64ty0, i64ty0, i64ty0, i64ty0, arrTy},
-                        [&](OpBuilder &b6, Location l6) -> SmallVector<Value> {
-                          Value newNR1 = shAdd(b6, l6, numRep1, shC(b6, l6, 1));
-                          Value newNr6 = shStore(b6, l6, num_rep, shC(b6, l6, 1), newNR1);
-                          Value remVal = shRem(b6, l6, newNR1, shC(b6, l6, 2));
-                          Value newInd6 = shSub(b6, l6, shC(b6, l6, 2), remVal);
-                          return {shC(b6, l6, 0)/*iter=0*/,
-                                  shAdd(b6, l6, t, shC(b6, l6, 1)),
-                                  ind/*old ind→oldind*/, newInd6, shC(b6, l6, 1)/*incr=1*/,
-                                  newNr6};
-                        },
-                        [&](OpBuilder &b6, Location l6) -> SmallVector<Value> {
-                          return {iter, t, oldind, ind, incr, num_rep};
-                        });
-                    return {ind/*check=ind*/,
-                            nr1If.getResult(0), nr1If.getResult(1), nr1If.getResult(2),
-                            nr1If.getResult(3), nr1If.getResult(4),
-                            newCh5, nr1If.getResult(5)};
-                  },
-                  [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                    return {check, iter, t, oldind, ind, incr, ch, num_rep};
-                  });
-              Value case3Check_b  = case3IfB.getResult(0);
-              Value case3Iter_b   = case3IfB.getResult(1);
-              Value case3T_b      = case3IfB.getResult(2);
-              Value case3Oldind_b = case3IfB.getResult(3);
-              Value case3Ind_b    = case3IfB.getResult(4);
-              Value case3Incr_b   = case3IfB.getResult(5);
-              Value case3Ch_b     = case3IfB.getResult(6);
-              Value case3Nr_b     = case3IfB.getResult(7);
+  Value is1b = shCmpEQ(b, loc, snaps, one);
+  Value b3b_act   = shSel(b, loc, is1b, actAdvance,
+                      shSel(b, loc, isDefault_b, def_act, actTakeshot));
+  Value b3b_check = shSel(b, loc, is3, b3b_is3_check,
+                      shSel(b, loc, isDefault_b, def_check, check));
+  Value b3b_incr  = shSel(b, loc, is2, b3b_is2_incr,
+                      shSel(b, loc, is3, nr1_incr,
+                      shSel(b, loc, isDefault_b, def_incr, incr)));
+  Value b3b_iter  = shSel(b, loc, is3, nr1_iter,
+                      shSel(b, loc, isDefault_b, def_iter, iter));
+  Value b3b_oldind = shSel(b, loc, is3, nr1_oldind,
+                       shSel(b, loc, isDefault_b, def_oldind, oldind));
+  Value b3b_ind   = shSel(b, loc, is3, nr1_ind,
+                      shSel(b, loc, isDefault_b, def_ind, ind));
+  Value b3b_t     = shSel(b, loc, is3, nr1_t,
+                      shSel(b, loc, isDefault_b, def_t, t));
+  Value b3b_offset = shSel(b, loc, isDefault_b, def_offset, offset);
 
-              // default (snaps >= 4)
-              Value isDefault_b = shAnd(b4, l4,
-                                    shCmpNE(b4, l4, snaps, shC(b4, l4, 2)),
-                                    shCmpNE(b4, l4, snaps, shC(b4, l4, 3)));
-              Value tIsZeroForOffset_b = shCmpEQ(b4, l4, t, shC(b4, l4, 0));
-              Value iterEqOffset_b     = shCmpEQ(b4, l4, iter, offset);
-              Value capoGeSnapsP2_b    = shCmpGE(b4, l4, capo,
-                                            shAdd(b4, l4, snaps, shC(b4, l4, 2)));
-              Value rot2Cond_b = shAnd(b4, l4,
-                                  shAnd(b4, l4, isDefault_b, capoGeSnapsP2_b),
-                                  shAnd(b4, l4, tIsZeroForOffset_b, iterEqOffset_b));
+  // ── Branch 1: TAKESHOT r=1 ─────────────────────────────────────────────
+  Value b1_newCheck = shAdd(b, loc, check, one);
+  Value b1_ch = shStore(b, loc, ch, b1_newCheck, capo);
 
-              // defIf: 7 scalars + 2 arrays
-              SmallVector<Type> defTys = {i64ty0/*act*/, i64ty0/*check*/,
-                  i64ty0/*incr*/, i64ty0/*iter*/, i64ty0/*oldind*/,
-                  i64ty0/*ind*/, i64ty0/*t*/, arrTy/*ch*/, arrTy/*ord_ch*/};
-              auto defIf = shIf(b4, l4, isDefault_b, defTys,
-                [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                  Value snapsP2b = shAdd(b5, l5, snaps, shC(b5, l5, 2));
-                  Value snapsP1b = shAdd(b5, l5, snaps, shC(b5, l5, 1));
-                  Value capoLtSnapsP2b = shCmpLT(b5, l5, capo, snapsP2b);
+  // Fill num_rep and ord_ch arrays using shWhile loops.
+  // Loop 1: fill with value 2 (for snaps<4)
+  auto fill2 = shWhile(b, loc,
+      SmallVector<Value>{zero, num_rep, ord_ch},
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> Value {
+        return shCmpLT(b2, l2, a[0], snaps);
+      },
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> SmallVector<Value> {
+        Value i = a[0], nr = a[1], oc = a[2];
+        return {shAdd(b2, l2, i, shC(b2, l2, 1)),
+                shStore(b2, l2, nr, i, shC(b2, l2, 2)),
+                shStore(b2, l2, oc, i, i)};
+      });
+  Value fill2_nr = fill2->getResult(1);
+  Value fill2_oc = fill2->getResult(2);
 
-                  auto subA = shIf(b5, l5, capoLtSnapsP2b, defTys,
-                    [&](OpBuilder &b6, Location l6) -> SmallVector<Value> {
-                      // Sub-case A: capo < snaps+2
-                      Value newCh6 = shStore(b6, l6, ch, ind, capo);
-                      Value capoEqSnapsP1b = shCmpEQ(b6, l6, capo, shAdd(b6, l6, snaps, shC(b6, l6, 1)));
+  // Loop 2: fill with value 1 (for snaps>=4)
+  auto fill1 = shWhile(b, loc,
+      SmallVector<Value>{zero, num_rep, ord_ch},
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> Value {
+        return shCmpLT(b2, l2, a[0], snaps);
+      },
+      [&](OpBuilder &b2, Location l2, ValueRange a) -> SmallVector<Value> {
+        Value i = a[0], nr = a[1], oc = a[2];
+        return {shAdd(b2, l2, i, shC(b2, l2, 1)),
+                shStore(b2, l2, nr, i, shC(b2, l2, 1)),
+                shStore(b2, l2, oc, i, i)};
+      });
+  Value fill1_nr = fill1->getResult(1);
+  Value fill1_oc = fill1->getResult(2);
 
-                      auto rot1If = shIf(b6, l6, capoEqSnapsP1b,
-                          {i64ty0/*check*/, i64ty0/*incr*/, i64ty0/*oldind*/, i64ty0/*ind*/, arrTy/*ch*/, arrTy/*ord_ch*/},
-                          [&](OpBuilder &b7, Location l7) -> SmallVector<Value> {
-                            // Rotation 1
-                            Value snapsM1b2 = shSub(b7, l7, snaps, shC(b7, l7, 1));
-                            Value ordSnapsM1 = shLoad(b7, l7, ord_ch, snapsM1b2);
-                            Value newOrdCh7 = shOrdChShiftRight(b7, l7, snaps,
-                                shC(b7, l7, 1), ord_ch, smSize);
-                            Value newOrdCh7b = shStore(b7, l7, newOrdCh7,
-                                shC(b7, l7, 1), ordSnapsM1);
-                            return {ind/*check=old ind*/, shC(b7, l7, 2)/*incr*/,
-                                    ordSnapsM1/*oldind*/, shC(b7, l7, 2)/*ind*/,
-                                    newCh6, newOrdCh7b};
-                          },
-                          [&](OpBuilder &b7, Location l7) -> SmallVector<Value> {
-                            return {ind, incr, oldind, ind, newCh6, ord_ch};
-                          });
+  Value snapsLt4 = shCmpLT(b, loc, snaps, shC(b, loc, 4));
+  Value b1_numRep = shSel(b, loc, snapsLt4, fill2_nr, fill1_nr);
+  Value b1_ordCh  = shSel(b, loc, snapsLt4, fill2_oc, fill1_oc);
+  Value b1_incr   = shSel(b, loc, snapsLt4, two, one);
+  Value b1_iter   = one;
+  Value b1_oldind = shSel(b, loc, snapsLt4, snapsM1, one);
+  Value b1_offset = shSel(b, loc, snapsLt4, offset, snapsM1);
+  Value capoEqSnapsM1_b1 = shCmpEQ(b, loc, capo, snapsM1);
+  Value b1_ind   = shSel(b, loc, capoEqSnapsM1_b1, two, ind);
+  Value b1_oldF  = shSel(b, loc, capoEqSnapsM1_b1, one, old_f);
 
-                      return {actTakeshot,
-                              rot1If.getResult(0), rot1If.getResult(1), iter,
-                              rot1If.getResult(2), rot1If.getResult(3), t,
-                              rot1If.getResult(4), rot1If.getResult(5)};
-                    },
-                    [&](OpBuilder &b6, Location l6) -> SmallVector<Value> {
-                      // Sub-case B: capo >= snaps+2
-                      Value tIsZerob6 = shCmpEQ(b6, l6, t, shC(b6, l6, 0));
-                      auto tZeroIf = shIf(b6, l6, tIsZerob6, defTys,
-                        [&](OpBuilder &b7, Location l7) -> SmallVector<Value> {
-                          Value iterEqOff = shCmpEQ(b7, l7, iter, offset);
-                          auto iteIf = shIf(b7, l7, iterEqOff, defTys,
-                            [&](OpBuilder &b8, Location l8) -> SmallVector<Value> {
-                              // rotation2
-                              Value snapsM1b3 = shSub(b8, l8, snaps, shC(b8, l8, 1));
-                              Value ordSnapsM1b = shLoad(b8, l8, ord_ch, snapsM1b3);
-                              Value newCh8 = shStore(b8, l8, ch, ordSnapsM1b, capo);
-                              Value newOrdCh8 = shOrdChShiftRight(b8, l8, snaps,
-                                  incr, ord_ch, smSize);
-                              Value newOrdCh8b = shStore(b8, l8, newOrdCh8, incr, ordSnapsM1b);
-                              Value newIncr8 = shAdd(b8, l8, incr, shC(b8, l8, 1));
-                              return {actTakeshot,
-                                      ordSnapsM1b/*check*/, newIncr8, shC(b8, l8, 1)/*iter=1*/,
-                                      ordSnapsM1b/*oldind*/, newIncr8/*ind=newIncr*/,
-                                      t, newCh8, newOrdCh8b};
-                            },
-                            [&](OpBuilder &b8, Location l8) -> SmallVector<Value> {
-                              // iter != offset: ch[ord_ch[ind]]=capo; check=ord_ch[ind]; iter++; ind++
-                              Value ordChInd = shLoad(b8, l8, ord_ch, ind);
-                              Value newCh8 = shStore(b8, l8, ch, ordChInd, capo);
-                              return {actTakeshot,
-                                      ordChInd/*check*/, incr,
-                                      shAdd(b8, l8, iter, shC(b8, l8, 1)),
-                                      oldind, shAdd(b8, l8, ind, shC(b8, l8, 1)),
-                                      t, newCh8, ord_ch};
-                            });
-                          return SmallVector<Value>(iteIf.getResults().begin(),
-                                                   iteIf.getResults().end());
-                        },
-                        [&](OpBuilder &b7, Location l7) -> SmallVector<Value> {
-                          // t != 0: terminate
-                          return {actTerminate, check, incr, iter, oldind, ind, t, ch, ord_ch};
-                        });
-                      return SmallVector<Value>(tZeroIf.getResults().begin(),
-                                               tZeroIf.getResults().end());
-                    });
-                  return SmallVector<Value>(subA.getResults().begin(),
-                                           subA.getResults().end());
-                },
-                [&](OpBuilder &b5, Location l5) -> SmallVector<Value> {
-                  return {actTakeshot, check, incr, iter, oldind, ind, t, ch, ord_ch};
-                });
+  // ── Merge all branches ──────────────────────────────────────────────────
+  // Branch 3 (r=2): r2AdvCond → 3a, else → 3b
+  Value brIsNotR1 = shNot(b, loc, isTakeshotR1);
+  // Among the not-r1 cases: branch2 or branch3
+  // branch2 cond: !isTakeshotR1 && capoLtSnapsM1
+  // branch3 cond: !isTakeshotR1 && !capoLtSnapsM1; then r2AdvCond → 3a, else → 3b
 
-              // Merge case2 / case3 / default
-              Value is1b2 = shCmpEQ(b4, l4, snaps, shC(b4, l4, 1));
-              Value tsAction_b = shSel(b4, l4, is1b2, actAdvance,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(0), actTakeshot));
-              Value tsCheck_b  = shSel(b4, l4, is3_b, case3Check_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(1), check));
-              Value tsIncr_b   = shSel(b4, l4, is2_b, case2Incr_b,
-                                   shSel(b4, l4, is3_b, case3Incr_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(2), incr)));
-              Value tsIter_b   = shSel(b4, l4, is3_b, case3Iter_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(3), iter));
-              Value tsOldind_b = shSel(b4, l4, is3_b, case3Oldind_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(4), oldind));
-              Value tsInd_b    = shSel(b4, l4, is3_b, case3Ind_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(5), ind));
-              Value tsT_b      = shSel(b4, l4, is3_b, case3T_b,
-                                   shSel(b4, l4, isDefault_b, defIf.getResult(6), t));
-              Value tsOffset_b = shSel(b4, l4, rot2Cond_b,
-                                   shSub(b4, l4, offset, shC(b4, l4, 1)), offset);
+  // 3a scalars: a3aFinalCapo, a3aFinalIncr, a3aFinalIter, a3aFinalInd, a3aFinalT, a3aFinalAct
+  // 3b scalars: b3b_act, b3b_check, b3b_incr, b3b_iter, b3b_oldind, b3b_ind, b3b_t, b3b_offset
+  // Note: 3a doesn't change check, oldind, offset (from original)
 
-              // Merge ch arrays: case2 may update ch[1], case3 may update ch[ind], default updates
-              Value tsCh = shSel(b4, l4, is2_b, case2Ch_b,
-                             shSel(b4, l4, is3_b, case3Ch_b,
-                             shSel(b4, l4, isDefault_b, defIf.getResult(7), ch)));
-              Value tsOrdCh = shSel(b4, l4, isDefault_b, defIf.getResult(8), ord_ch);
-              Value tsNumRep = shSel(b4, l4, is3_b, case3Nr_b, num_rep);
+  Value inR2 = shAnd(b, loc, brIsNotR1, shNot(b, loc, capoLtSnapsM1));
+  Value r3_act   = shSel(b, loc, r2AdvCond, a3aFinalAct, b3b_act);
+  Value r3_check = shSel(b, loc, r2AdvCond, check, b3b_check);
+  Value r3_capo  = shSel(b, loc, r2AdvCond, a3aFinalCapo, capo);
+  Value r3_t     = shSel(b, loc, r2AdvCond, a3aFinalT, b3b_t);
+  Value r3_incr  = shSel(b, loc, r2AdvCond, a3aFinalIncr, b3b_incr);
+  Value r3_iter  = shSel(b, loc, r2AdvCond, a3aFinalIter, b3b_iter);
+  Value r3_oldind = shSel(b, loc, r2AdvCond, oldind, b3b_oldind);
+  Value r3_ind   = shSel(b, loc, r2AdvCond, a3aFinalInd, b3b_ind);
+  Value r3_offset = shSel(b, loc, r2AdvCond, offset, b3b_offset);
+  Value r3_ch    = shSel(b, loc, r2AdvCond, ch, b3b_ch);     // 3a: ch unchanged
+  Value r3_ordCh = shSel(b, loc, r2AdvCond, ord_ch, b3b_ordCh);
+  Value r3_numRep = shSel(b, loc, r2AdvCond, num_rep, b3b_numRep);
 
-              return {tsAction_b,
-                      tsCheck_b, capo, oldcapoO, tsT_b, tsIncr_b, tsIter_b,
-                      tsOldind_b, tsInd_b, old_f, tsOffset_b,
-                      tsCh, tsOrdCh, tsNumRep};
-            }); // end r2If
+  // Branch 2 vs Branch 3
+  Value notR1_act   = shSel(b, loc, capoLtSnapsM1, actAdvance, r3_act);
+  Value notR1_check = shSel(b, loc, capoLtSnapsM1, check, r3_check);
+  Value notR1_capo  = shSel(b, loc, capoLtSnapsM1, b2Capo, r3_capo);
+  Value notR1_t     = shSel(b, loc, capoLtSnapsM1, t, r3_t);
+  Value notR1_incr  = shSel(b, loc, capoLtSnapsM1, incr, r3_incr);
+  Value notR1_iter  = shSel(b, loc, capoLtSnapsM1, iter, r3_iter);
+  Value notR1_oldind = shSel(b, loc, capoLtSnapsM1, oldind, r3_oldind);
+  Value notR1_ind   = shSel(b, loc, capoLtSnapsM1, ind, r3_ind);
+  Value notR1_offset = shSel(b, loc, capoLtSnapsM1, offset, r3_offset);
+  Value notR1_ch    = shSel(b, loc, capoLtSnapsM1, ch, r3_ch);
+  Value notR1_ordCh = shSel(b, loc, capoLtSnapsM1, ord_ch, r3_ordCh);
+  Value notR1_numRep = shSel(b, loc, capoLtSnapsM1, num_rep, r3_numRep);
 
-          return SmallVector<Value>(r2If.getResults().begin(), r2If.getResults().end());
-        }); // end branch23
-
-      return SmallVector<Value>(branch23.getResults().begin(), branch23.getResults().end());
-    }); // end outerIf
-
+  // Branch 1 vs (Branch 2/3)
   SMResult res;
-  res.action    = outerIf.getResult(0);
-  res.check     = outerIf.getResult(1);
-  res.capo      = outerIf.getResult(2);
-  res.oldcapoO  = outerIf.getResult(3);
-  res.t         = outerIf.getResult(4);
-  res.incr      = outerIf.getResult(5);
-  res.iter      = outerIf.getResult(6);
-  res.oldind    = outerIf.getResult(7);
-  res.ind       = outerIf.getResult(8);
-  res.old_f     = outerIf.getResult(9);
-  res.offset    = outerIf.getResult(10);
-  res.ch        = outerIf.getResult(11);
-  res.ord_ch    = outerIf.getResult(12);
-  res.num_rep   = outerIf.getResult(13);
+  res.action   = shSel(b, loc, isTakeshotR1, actTakeshot, notR1_act);
+  res.check    = shSel(b, loc, isTakeshotR1, b1_newCheck, notR1_check);
+  res.capo     = shSel(b, loc, isTakeshotR1, capo, notR1_capo);
+  res.oldcapoO = shSel(b, loc, isTakeshotR1, capo, oldcapoO); // b1: oldcapo_o=capo
+  res.t        = shSel(b, loc, isTakeshotR1, zero, notR1_t);  // b1: t=0
+  res.incr     = shSel(b, loc, isTakeshotR1, b1_incr, notR1_incr);
+  res.iter     = shSel(b, loc, isTakeshotR1, b1_iter, notR1_iter);
+  res.oldind   = shSel(b, loc, isTakeshotR1, b1_oldind, notR1_oldind);
+  res.ind      = shSel(b, loc, isTakeshotR1, b1_ind, notR1_ind);
+  res.old_f    = shSel(b, loc, isTakeshotR1, b1_oldF, old_f);
+  res.offset   = shSel(b, loc, isTakeshotR1, b1_offset, notR1_offset);
+  res.ch       = shSel(b, loc, isTakeshotR1, b1_ch, notR1_ch);
+  res.ord_ch   = shSel(b, loc, isTakeshotR1, b1_ordCh, notR1_ordCh);
+  res.num_rep  = shSel(b, loc, isTakeshotR1, b1_numRep, notR1_numRep);
   return res;
 }
 
