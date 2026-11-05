@@ -501,6 +501,28 @@ public:
     bool subsequent_calls_may_write;
   };
 
+  /// Return whether element `ElementIdx` of `ST` is synthetic `[N x i8]`
+  /// alignment tail padding emitted by Clang for a packed C++ record layout.
+  static bool isPackedStructTailPadding(const DataLayout &DL, StructType *ST,
+                                        const StructLayout *Layout,
+                                        unsigned ElementIdx) {
+    if (!ST->isPacked() || ElementIdx == 0)
+      return false;
+    auto *ArrTy = dyn_cast<ArrayType>(ST->getElementType(ElementIdx));
+    if (!ArrTy || !ArrTy->getElementType()->isIntegerTy(8) ||
+        ArrTy->getNumElements() == 0)
+      return false;
+    Align MaxPrevAlign(1);
+    for (unsigned Idx = 0; Idx < ElementIdx; ++Idx) {
+      MaxPrevAlign =
+          std::max(MaxPrevAlign, DL.getABITypeAlign(ST->getElementType(Idx)));
+    }
+    uint64_t ElemOffset = Layout->getElementOffset(ElementIdx);
+    uint64_t AllocBytes = DL.getTypeAllocSize(ST);
+    return ElemOffset < AllocBytes &&
+           alignTo(ElemOffset, MaxPrevAlign) == AllocBytes;
+  }
+
   /// Return the byte offset immediately after the last non-padding element of
   /// `Ty`, so ABI unpacking stops before trailing struct alignment padding.
   static uint64_t getUnpaddedTypeSizeInBytes(const DataLayout &DL, Type *Ty) {
@@ -509,6 +531,9 @@ public:
         return 0;
       const StructLayout *Layout = DL.getStructLayout(ST);
       unsigned LastElement = ST->getNumElements() - 1;
+      while (LastElement > 0 &&
+             isPackedStructTailPadding(DL, ST, Layout, LastElement))
+        --LastElement;
       return Layout->getElementOffset(LastElement) +
              getUnpaddedTypeSizeInBytes(DL, ST->getElementType(LastElement));
     }
