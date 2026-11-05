@@ -56,6 +56,7 @@
 
 #include "../EnzymeLogic.h"
 #include "../FlangRuntime.h"
+#include "../KokkosUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -2043,6 +2044,43 @@ void TypeAnalyzer::visitCmpInst(CmpInst &cmp) {
   }
 }
 
+static bool typeContainsKokkosStruct(Type *T, SmallPtrSetImpl<Type *> &Visited);
+
+static bool isKokkosPurelyWideIntegerType(Type *T) {
+  if (!T)
+    return false;
+  if (auto *IT = dyn_cast<IntegerType>(T))
+    return IT->getBitWidth() >= 16;
+  if (auto *AT = dyn_cast<ArrayType>(T))
+    return AT->getNumElements() > 0 &&
+           isKokkosPurelyWideIntegerType(AT->getElementType());
+  if (auto *ST = dyn_cast<StructType>(T)) {
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    if (!ST->isLiteral() && ST->getName().contains("Tracker"))
+      return false;
+    bool AnyWide = false;
+    for (Type *ET : ST->elements()) {
+      if (auto *EAT = dyn_cast<ArrayType>(ET))
+        if (EAT->getElementType()->isIntegerTy(8))
+          continue;
+      if (!isKokkosPurelyWideIntegerType(ET))
+        return false;
+      AnyWide = true;
+    }
+    return AnyWide;
+  }
+  return false;
+}
+
+static bool isKokkosWideIntegerAlloca(AllocaInst &I) {
+  Type *T = I.getAllocatedType();
+  if (!isKokkosPurelyWideIntegerType(T))
+    return false;
+  SmallPtrSet<Type *, 8> Visited;
+  return typeContainsKokkosStruct(T, Visited);
+}
+
 void TypeAnalyzer::visitAllocaInst(AllocaInst &I) {
   // No directionality check needed as always true
   updateAnalysis(I.getArraySize(), TypeTree(BaseType::Integer).Only(-1, &I),
@@ -2056,6 +2094,14 @@ void TypeAnalyzer::visitAllocaInst(AllocaInst &I) {
                     (DL.getTypeSizeInBits(I.getAllocatedType()) + 7) / 8;
     // Only propagate mappings in range that aren't "Anything" into the pointer
     ptr |= getAnalysis(&I).Lookup(LoadSize, DL);
+    if (LoadSize > 0 && LoadSize <= 256 && isKokkosWideIntegerAlloca(I)) {
+      for (size_t b = 0; b < LoadSize; ++b) {
+        bool Legal = true;
+        ptr.checkedOrIn({(int)b}, BaseType::Integer, /*PointerIntSame*/ true,
+                        Legal);
+        (void)Legal;
+      }
+    }
   }
   updateAnalysis(&I, ptr.Only(-1, &I), &I);
 }
@@ -2108,6 +2154,114 @@ void TypeAnalyzer::visitLoadInst(LoadInst &I) {
     updateAnalysis(&I, getAnalysis(I.getOperand(0)).Lookup(LoadSize, DL), &I);
 }
 
+static bool typeContainsKokkosStruct(Type *T,
+                                     SmallPtrSetImpl<Type *> &Visited) {
+  if (!T || !Visited.insert(T).second)
+    return false;
+  if (auto *ST = dyn_cast<StructType>(T)) {
+    if (!ST->isLiteral() && ST->getName().contains("Kokkos"))
+      return true;
+    for (Type *ET : ST->elements())
+      if (typeContainsKokkosStruct(ET, Visited))
+        return true;
+    return false;
+  }
+  if (auto *AT = dyn_cast<ArrayType>(T))
+    return typeContainsKokkosStruct(AT->getElementType(), Visited);
+  return false;
+}
+
+static bool mayBeKokkosTrackerSentinelStore(StoreInst &I, const DataLayout &DL,
+                                            TypeAnalyzer &TA) {
+  auto *CI = dyn_cast<ConstantInt>(I.getValueOperand());
+  if (!CI || !CI->isOne() ||
+      !CI->getType()->isIntegerTy(DL.getPointerSizeInBits()) ||
+      I.getAlign().value() < DL.getPointerSize())
+    return false;
+
+  Value *Ptr = I.getPointerOperand();
+  if (TA.getAnalysis(Ptr).Data0()[{0}] == BaseType::Pointer)
+    return true;
+
+  if (Function *Fn = I.getFunction()) {
+    if (Fn->getName().contains("Kokkos"))
+      return true;
+  }
+
+  SmallPtrSet<Type *, 8> VisitedTypes;
+  Value *Cur = Ptr;
+  while (Cur) {
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(Cur)) {
+      if (typeContainsKokkosStruct(GEP->getSourceElementType(), VisitedTypes))
+        return true;
+      Cur = GEP->getPointerOperand();
+      continue;
+    }
+    if (auto *BC = dyn_cast<BitCastInst>(Cur)) {
+      Cur = BC->getOperand(0);
+      continue;
+    }
+    if (auto *ASC = dyn_cast<AddrSpaceCastInst>(Cur)) {
+      Cur = ASC->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  if (auto *AI = dyn_cast_or_null<AllocaInst>(Cur)) {
+    if (typeContainsKokkosStruct(AI->getAllocatedType(), VisitedTypes))
+      return true;
+  }
+
+  auto checkPtrUsers = [&](Value *P) {
+    if (!P || isa<Constant>(P))
+      return false;
+    for (User *U : P->users()) {
+      if (U == &I)
+        continue;
+      if (auto *LI = dyn_cast<LoadInst>(U)) {
+        if (LI->getType()->isPointerTy())
+          return true;
+        if (LI->getType()->isIntegerTy(DL.getPointerSizeInBits())) {
+          if (TA.getAnalysis(LI)[{-1}] == BaseType::Pointer)
+            return true;
+          for (User *LU : LI->users()) {
+            if (isa<IntToPtrInst>(LU))
+              return true;
+            if (auto *BO = dyn_cast<BinaryOperator>(LU)) {
+              if (BO->getOpcode() == Instruction::And ||
+                  BO->getOpcode() == Instruction::Or) {
+                if (auto *Mask = dyn_cast<ConstantInt>(BO->getOperand(1))) {
+                  if (Mask->isOne() ||
+                      (Mask->getValue().getSignificantBits() <= 64 &&
+                       Mask->getSExtValue() == -2))
+                    return true;
+                }
+              }
+            }
+          }
+        }
+      } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+        if (SI->getPointerOperand() == P) {
+          Value *SV = SI->getValueOperand();
+          if (SV->getType()->isPointerTy() ||
+              TA.getAnalysis(SV)[{-1}] == BaseType::Pointer)
+            return true;
+        }
+      } else if (auto *CB = dyn_cast<CallBase>(U)) {
+        if (Function *Callee = CB->getCalledFunction()) {
+          if (Callee->getName().contains("Kokkos"))
+            return true;
+        }
+      }
+    }
+    return false;
+  };
+  if (checkPtrUsers(Ptr) || (Cur && Cur != Ptr && checkPtrUsers(Cur)))
+    return true;
+
+  return false;
+}
+
 void TypeAnalyzer::visitStoreInst(StoreInst &I) {
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
   auto StoreSize =
@@ -2127,6 +2281,17 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
 
   if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
     return;
+  // Kokkos SharedAllocationTracker union stores DO_NOT_DEREF_FLAG
+  // (uintptr_t(1)) into a pointer-aligned Record* slot on default/move
+  // construction and clear(). Treat the pointer operand as a pointer without
+  // stamping Integer onto its pointee bytes.
+  if (mayBeKokkosTrackerSentinelStore(I, DL, *this)) {
+    if (direction & UP) {
+      updateAnalysis(I.getPointerOperand(),
+                     TypeTree(BaseType::Pointer).Only(-1, &I), &I);
+    }
+    return;
+  }
 
   // Only propagate mappings in range that aren't "Anything" into the pointer
   auto ptr = TypeTree(BaseType::Pointer);
@@ -5239,6 +5404,120 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       for (int i : {5, 6, 8, 10, 11})
         updateAnalysis(call.getArgOperand(i), ptrdbl, &call);
       return;
+    }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      auto allocKind =
+          enzyme_kokkos::classifyKokkosAllocCall(funcName, normDem);
+      if (allocKind != enzyme_kokkos::KokkosAllocKind::None) {
+        switch (allocKind) {
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDtor:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDeallocateTracked:
+        case enzyme_kokkos::KokkosAllocKind::SpaceDeallocate:
+          if (call.arg_size() >= 1 &&
+              call.getArgOperand(0)->getType()->isPointerTy())
+            updateAnalysis(call.getArgOperand(0),
+                           TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          if (call.getType()->isPointerTy())
+            updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+          return;
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor: {
+          if (call.arg_size() >= 1 &&
+              call.getArgOperand(0)->getType()->isPointerTy()) {
+            TypeTree recTT;
+            recTT.insert({-1}, BaseType::Pointer);
+            recTT.insert({-1, 8}, BaseType::Pointer);
+            updateAnalysis(call.getArgOperand(0), recTT, &call);
+          }
+          if (allocKind ==
+              enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor) {
+            unsigned allocPtrIdx = call.arg_size() >= 6 ? 2 : 1;
+            if (allocPtrIdx < call.arg_size() &&
+                call.getArgOperand(allocPtrIdx)->getType()->isPointerTy()) {
+              updateAnalysis(call.getArgOperand(allocPtrIdx),
+                             TypeTree(BaseType::Pointer).Only(-1, &call),
+                             &call);
+            }
+          }
+          for (unsigned idx = 1; idx < call.arg_size(); ++idx) {
+            if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+              updateAnalysis(call.getArgOperand(idx),
+                             TypeTree(BaseType::Integer).Only(-1, &call),
+                             &call);
+          }
+          return;
+        }
+        case enzyme_kokkos::KokkosAllocKind::MakeSharedAllocRecord: {
+          if (call.getType()->isPointerTy())
+            updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+          if (call.arg_size() >= 1 &&
+              call.getArgOperand(0)->getType()->isPointerTy()) {
+            TypeTree ptrInt;
+            ptrInt.insert({-1}, BaseType::Pointer);
+            for (int b = 0; b < 8; ++b)
+              ptrInt.insert({-1, b}, BaseType::Integer);
+            updateAnalysis(call.getArgOperand(0), ptrInt, &call);
+          }
+          for (unsigned idx = 1; idx < call.arg_size(); ++idx) {
+            Type *at = call.getArgOperand(idx)->getType();
+            if (at->isPointerTy())
+              updateAnalysis(call.getArgOperand(idx),
+                             TypeTree(BaseType::Pointer).Only(-1, &call),
+                             &call);
+            else if (at->isIntOrIntVectorTy())
+              updateAnalysis(call.getArgOperand(idx),
+                             TypeTree(BaseType::Integer).Only(-1, &call),
+                             &call);
+          }
+          return;
+        }
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData: {
+          if (call.getType()->isPointerTy())
+            updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+          if (call.arg_size() >= 1 &&
+              call.getArgOperand(0)->getType()->isPointerTy()) {
+            TypeTree recTT;
+            recTT.insert({-1}, BaseType::Pointer);
+            recTT.insert({-1, 8}, BaseType::Pointer);
+            updateAnalysis(call.getArgOperand(0), recTT, &call);
+          }
+          return;
+        }
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordAllocate:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordAllocateTracked:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordReallocateTracked:
+        case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordGetRecord:
+        case enzyme_kokkos::KokkosAllocKind::SpaceAllocate:
+          if (call.getType()->isPointerTy())
+            updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+          for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+            if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+              updateAnalysis(call.getArgOperand(idx),
+                             TypeTree(BaseType::Integer).Only(-1, &call),
+                             &call);
+          }
+          return;
+        case enzyme_kokkos::KokkosAllocKind::None:
+          break;
+        }
+      }
+      if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        else if (call.getType()->isPointerTy())
+          updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+        return;
+      }
     }
 
     if (funcName == "__kmpc_fork_call") {

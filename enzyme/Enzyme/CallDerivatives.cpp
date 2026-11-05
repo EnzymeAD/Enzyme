@@ -2354,10 +2354,989 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+static void markKokkosInternalHelper(Function *F) {
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr("enzyme_inactive");
+  F->addFnAttr("enzyme_ta_norecur");
+}
+
+static Function *getOrCreateKokkosRecordRefHelper(Module &M, bool IsIncrement) {
+  StringRef HelperName = IsIncrement ? "__enzyme_kokkos_record_inc_d"
+                                     : "__enzyme_kokkos_record_dec_d";
+  if (Function *Existing = M.getFunction(HelperName))
+    return Existing;
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  PointerType *PtrTy = getUnqual(I8);
+  FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
+  Function *F =
+      Function::Create(FT, GlobalValue::InternalLinkage, HelperName, &M);
+  markKokkosInternalHelper(F);
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *CheckVptrBB = BasicBlock::Create(Ctx, "check.vptr", F);
+  BasicBlock *CallBB = BasicBlock::Create(Ctx, "do.ref", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  Value *Rec = F->getArg(0);
+  Value *SkipRec = F->getArg(1);
+
+  IRBuilder<> B(EntryBB);
+  Value *NonNull = B.CreateICmpNE(Rec, ConstantPointerNull::get(PtrTy));
+  Value *Bits = B.CreatePtrToInt(Rec, I64);
+  Value *Untagged = B.CreateICmpEQ(B.CreateAnd(Bits, ConstantInt::get(I64, 1)),
+                                   ConstantInt::get(I64, 0));
+  Value *NotSkip = B.CreateICmpNE(Rec, SkipRec);
+  B.CreateCondBr(B.CreateAnd(B.CreateAnd(NonNull, Untagged), NotSkip),
+                 CheckVptrBB, ExitBB);
+
+  B.SetInsertPoint(CheckVptrBB);
+  Value *Vptr = B.CreateLoad(PtrTy, Rec);
+  B.CreateCondBr(B.CreateICmpNE(Vptr, ConstantPointerNull::get(PtrTy)), CallBB,
+                 ExitBB);
+
+  B.SetInsertPoint(CallBB);
+  if (IsIncrement) {
+    FunctionCallee IncFn = M.getOrInsertFunction(
+        "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9incrementEPS2_",
+        FunctionType::get(VoidTy, {PtrTy}, false));
+    B.CreateCall(IncFn, {Rec});
+  } else {
+    FunctionCallee DecFn = M.getOrInsertFunction(
+        "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9decrementEPS2_",
+        FunctionType::get(PtrTy, {PtrTy}, false));
+    B.CreateCall(DecFn, {Rec});
+  }
+  B.CreateBr(ExitBB);
+
+  B.SetInsertPoint(ExitBB);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateKokkosZeroRecordDataHelper(
+    Module &M, enzyme_kokkos::KokkosMemSpaceKind MemSpace) {
+  const char *Suffix = "host";
+  if (MemSpace == enzyme_kokkos::KokkosMemSpaceKind::Cuda ||
+      MemSpace == enzyme_kokkos::KokkosMemSpaceKind::CudaUVM)
+    Suffix = "cuda";
+  else if (MemSpace == enzyme_kokkos::KokkosMemSpaceKind::Hip)
+    Suffix = "hip";
+  std::string HelperName =
+      std::string("__enzyme_kokkos_zero_record_data_") + Suffix;
+  if (Function *Existing = M.getFunction(HelperName))
+    return Existing;
+
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  PointerType *PtrTy = getUnqual(I8);
+  FunctionType *FT = FunctionType::get(VoidTy, {PtrTy}, false);
+  Function *F =
+      Function::Create(FT, GlobalValue::InternalLinkage, HelperName, &M);
+  markKokkosInternalHelper(F);
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *CheckAllocBB = BasicBlock::Create(Ctx, "check.alloc", F);
+  BasicBlock *ZeroBB = BasicBlock::Create(Ctx, "zero", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  Value *Rec = F->getArg(0);
+  uint64_t HdrSz =
+      MemSpace == enzyme_kokkos::KokkosMemSpaceKind::Hip ? 256 : 128;
+
+  IRBuilder<> B(EntryBB);
+  Value *NonNull = B.CreateICmpNE(Rec, ConstantPointerNull::get(PtrTy));
+  Value *Untagged = B.CreateICmpEQ(
+      B.CreateAnd(B.CreatePtrToInt(Rec, I64), ConstantInt::get(I64, 1)),
+      ConstantInt::get(I64, 0));
+  B.CreateCondBr(B.CreateAnd(NonNull, Untagged), CheckAllocBB, ExitBB);
+
+  B.SetInsertPoint(CheckAllocBB);
+  Value *AllocPtr =
+      B.CreateLoad(PtrTy, B.CreateConstInBoundsGEP1_64(I8, Rec, 8));
+  Value *AllocSz = B.CreateLoad(I64, B.CreateConstInBoundsGEP1_64(I8, Rec, 16));
+  Value *HasPtr = B.CreateICmpNE(AllocPtr, ConstantPointerNull::get(PtrTy));
+  Value *HasBytes = B.CreateICmpUGT(AllocSz, ConstantInt::get(I64, HdrSz));
+  B.CreateCondBr(B.CreateAnd(HasPtr, HasBytes), ZeroBB, ExitBB);
+
+  B.SetInsertPoint(ZeroBB);
+  Value *DataPtr = B.CreateConstInBoundsGEP1_64(I8, AllocPtr, HdrSz);
+  Value *DataSz = B.CreateSub(AllocSz, ConstantInt::get(I64, HdrSz));
+  if (MemSpace == enzyme_kokkos::KokkosMemSpaceKind::Cuda ||
+      MemSpace == enzyme_kokkos::KokkosMemSpaceKind::CudaUVM) {
+    FunctionCallee CudaMemset = M.getOrInsertFunction(
+        "cudaMemset", FunctionType::get(I32, {PtrTy, I32, I64}, false));
+    B.CreateCall(CudaMemset, {DataPtr, ConstantInt::get(I32, 0), DataSz});
+  } else if (MemSpace == enzyme_kokkos::KokkosMemSpaceKind::Hip) {
+    FunctionCallee HipMemset = M.getOrInsertFunction(
+        "hipMemset", FunctionType::get(I32, {PtrTy, I32, I64}, false));
+    B.CreateCall(HipMemset, {DataPtr, ConstantInt::get(I32, 0), DataSz});
+  } else {
+    B.CreateMemSet(DataPtr, ConstantInt::get(I8, 0), DataSz, MaybeAlign());
+  }
+  B.CreateBr(ExitBB);
+
+  B.SetInsertPoint(ExitBB);
+  B.CreateRetVoid();
+  return F;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivatives(CallInst &call,
+                                                   Function *called,
+                                                   StringRef funcName,
+                                                   CallInst *const newCall) {
+  SmallVector<Instruction *, 2> DeferredErase;
+  bool Res = handleKokkosCallDerivativesImpl(call, called, funcName, newCall,
+                                             DeferredErase);
+  for (Instruction *I : DeferredErase) {
+    assert(I->use_empty() && "Deferred shadow placeholder must have no uses");
+    gutils->erase(I);
+  }
+  return Res;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivativesImpl(
+    CallInst &call, Function *called, StringRef funcName,
+    CallInst *const newCall, SmallVectorImpl<Instruction *> &DeferredErase) {
+  bool subretused = false;
+  bool shadowReturnUsed = false;
+  gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+
+  IRBuilder<> BuilderZ(newCall);
+  BuilderZ.setFastMathFlags(getFast());
+  LLVMContext &Ctx = call.getContext();
+  Module &M = *gutils->newFunc->getParent();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+  unsigned Width = gutils->getWidth();
+
+  // The shadow placeholder of `call` (if any) is the instruction immediately
+  // following `newCall`, which is exactly where the `AfterB` builders below
+  // insert. Erasing it eagerly would invalidate those builders, so defer.
+  auto resolveShadowPlaceholder = [&](Instruction &I, Value *shadow = nullptr) {
+    auto ifound = gutils->invertedPointers.find(&I);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    if (!shadow)
+      shadow = Constant::getNullValue(gutils->getShadowType(I.getType()));
+    auto placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    gutils->replaceAWithB(placeholder, shadow);
+    DeferredErase.push_back(placeholder);
+    gutils->invertedPointers.insert(
+        std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  };
+
+  // Keep side-effecting primal call in forward pass; cache return if needed in
+  // reverse; erase duplicate primal from ReverseModeGradient /
+  // ForwardModeSplit.
+  auto keepPrimalInForwardOnly = [&](Value *valToCache = nullptr) {
+    bool shouldCache = false;
+    if ((Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ForwardModeSplit) &&
+        augmentedReturn) {
+      shouldCache = augmentedReturn->tapeIndices.find(std::make_pair(
+                        (Instruction *)&call, CacheType::Self)) !=
+                    augmentedReturn->tapeIndices.end();
+    } else if (Mode == DerivativeMode::ReverseModePrimal) {
+      bool primalNeededInReverse = subretused;
+      if (!primalNeededInReverse) {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      shouldCache = primalNeededInReverse && !call.getType()->isVoidTy() &&
+                    !gutils->unnecessaryIntermediates.count(&call);
+    }
+    if (shouldCache && !call.getType()->isVoidTy()) {
+      Value *V = valToCache ? valToCache : (Value *)newCall;
+      Instruction *InsertAfter =
+          isa<Instruction>(V) ? cast<Instruction>(V) : (Instruction *)newCall;
+      IRBuilder<> AfterB(InsertAfter->getNextNode());
+      gutils->cacheForReverse(AfterB, V,
+                              getIndex(&call, CacheType::Self, AfterB));
+    } else if (Mode == DerivativeMode::ReverseModeGradient ||
+               Mode == DerivativeMode::ForwardModeSplit) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    }
+  };
+
+  // Replace invertedPointers placeholder on &call (and cache shadow if needed).
+  auto assignShadowPointerResult = [&](Value *ShadowRes) {
+    auto ifound = gutils->invertedPointers.find(&call);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    PHINode *Placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    bool cachedShadowInTape = (Mode == DerivativeMode::ReverseModeGradient ||
+                               Mode == DerivativeMode::ForwardModeSplit) &&
+                              augmentedReturn &&
+                              augmentedReturn->tapeIndices.find(std::make_pair(
+                                  (Instruction *)&call, CacheType::Shadow)) !=
+                                  augmentedReturn->tapeIndices.end();
+    if ((!shadowReturnUsed && !cachedShadowInTape) || !ShadowRes) {
+      gutils->replaceAWithB(
+          Placeholder,
+          Constant::getNullValue(gutils->getShadowType(call.getType())));
+      DeferredErase.push_back(Placeholder);
+      return;
+    }
+    if (Mode == DerivativeMode::ReverseModePrimal || cachedShadowInTape) {
+      ShadowRes = gutils->cacheForReverse(
+          BuilderZ, ShadowRes, getIndex(&call, CacheType::Shadow, BuilderZ));
+    }
+    gutils->replaceAWithB(Placeholder, ShadowRes);
+    DeferredErase.push_back(Placeholder);
+    gutils->invertedPointers.insert(std::make_pair(
+        (const Value *)&call, InvertedPointerVH(gutils, ShadowRes)));
+  };
+
+  auto unpackShadowPointerResultInReverse = [&](Type *ShTy, const Twine &Name) {
+    bool cachedShadowInTape =
+        augmentedReturn && augmentedReturn->tapeIndices.find(std::make_pair(
+                               (Instruction *)&call, CacheType::Shadow)) !=
+                               augmentedReturn->tapeIndices.end();
+    if (cachedShadowInTape) {
+#if LLVM_VERSION_MAJOR >= 18
+      auto It = BuilderZ.GetInsertPoint();
+      It.setHeadBit(true);
+      BuilderZ.SetInsertPoint(It);
+#endif
+      PHINode *ShPN = BuilderZ.CreatePHI(ShTy, 0, Name);
+      assignShadowPointerResult(ShPN);
+    } else {
+      resolveShadowPlaceholder(call);
+    }
+  };
+
+  if (!enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName))
+    return false;
+
+  std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+
+  // 7. Kokkos allocation & reference-counting methods
+  auto allocKind = enzyme_kokkos::classifyKokkosAllocCall(funcName, normDem);
+  if (allocKind != enzyme_kokkos::KokkosAllocKind::None) {
+    auto memSpace = enzyme_kokkos::inferKokkosMemSpace(normDem);
+
+    auto emitShadowSpaceAlloc = [&](IRBuilder<> &B,
+                                    Value *ByteSize) -> Value * {
+      Value *Total = B.CreateAdd(B.CreateZExtOrTrunc(ByteSize, I64),
+                                 ConstantInt::get(I64, 256), "kokkos.d_bytes");
+      if (memSpace == enzyme_kokkos::KokkosMemSpaceKind::Cuda ||
+          memSpace == enzyme_kokkos::KokkosMemSpaceKind::CudaUVM) {
+        AllocaInst *OutPtr =
+            IRBuilder<>(gutils->inversionAllocs).CreateAlloca(PtrTy);
+        if (memSpace == enzyme_kokkos::KokkosMemSpaceKind::CudaUVM) {
+          FunctionCallee CudaMallocManaged = M.getOrInsertFunction(
+              "cudaMallocManaged",
+              FunctionType::get(I32, {getUnqual(PtrTy), I64, I32}, false));
+          B.CreateCall(CudaMallocManaged,
+                       {OutPtr, Total, ConstantInt::get(I32, 1)});
+        } else {
+          FunctionCallee CudaMalloc = M.getOrInsertFunction(
+              "cudaMalloc",
+              FunctionType::get(I32, {getUnqual(PtrTy), I64}, false));
+          B.CreateCall(CudaMalloc, {OutPtr, Total});
+        }
+        Value *DPtr = B.CreateLoad(PtrTy, OutPtr);
+        FunctionCallee CudaMemset = M.getOrInsertFunction(
+            "cudaMemset", FunctionType::get(I32, {PtrTy, I32, I64}, false));
+        B.CreateCall(CudaMemset, {DPtr, ConstantInt::get(I32, 0), Total});
+        return DPtr;
+      }
+      if (memSpace == enzyme_kokkos::KokkosMemSpaceKind::Hip) {
+        AllocaInst *OutPtr =
+            IRBuilder<>(gutils->inversionAllocs).CreateAlloca(PtrTy);
+        FunctionCallee HipMalloc = M.getOrInsertFunction(
+            "hipMalloc",
+            FunctionType::get(I32, {getUnqual(PtrTy), I64}, false));
+        B.CreateCall(HipMalloc, {OutPtr, Total});
+        Value *DPtr = B.CreateLoad(PtrTy, OutPtr);
+        FunctionCallee HipMemset = M.getOrInsertFunction(
+            "hipMemset", FunctionType::get(I32, {PtrTy, I32, I64}, false));
+        B.CreateCall(HipMemset, {DPtr, ConstantInt::get(I32, 0), Total});
+        return DPtr;
+      }
+      FunctionCallee CallocFn = M.getOrInsertFunction(
+          "calloc", FunctionType::get(PtrTy, {I64, I64}, false));
+      return B.CreateCall(CallocFn, {ConstantInt::get(I64, 1), Total},
+                          "kokkos.d_buf");
+    };
+
+    auto emitShadowSpaceFree = [&](IRBuilder<> &B, Value *DPtr) {
+      if (memSpace == enzyme_kokkos::KokkosMemSpaceKind::Cuda ||
+          memSpace == enzyme_kokkos::KokkosMemSpaceKind::CudaUVM) {
+        FunctionCallee CudaFree = M.getOrInsertFunction(
+            "cudaFree", FunctionType::get(I32, {PtrTy}, false));
+        B.CreateCall(CudaFree, {DPtr});
+      } else if (memSpace == enzyme_kokkos::KokkosMemSpaceKind::Hip) {
+        FunctionCallee HipFree = M.getOrInsertFunction(
+            "hipFree", FunctionType::get(I32, {PtrTy}, false));
+        B.CreateCall(HipFree, {DPtr});
+      } else {
+        FunctionCallee FreeFn = M.getOrInsertFunction(
+            "free", FunctionType::get(VoidTy, {PtrTy}, false));
+        B.CreateCall(FreeFn, {DPtr});
+      }
+    };
+
+    switch (allocKind) {
+    case enzyme_kokkos::KokkosAllocKind::MakeSharedAllocRecord: {
+      if (gutils->isConstantValue(&call) || !called) {
+        resolveShadowPlaceholder(call);
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      Type *RecPtrTy = call.getType();
+      Function *ZeroDataHelper =
+          getOrCreateKokkosZeroRecordDataHelper(M, memSpace);
+
+      auto emitMakeShadowRecord = [&](IRBuilder<> &B) -> Value * {
+        SmallVector<Value *, 8> FwdArgs;
+        for (unsigned i = 0; i < call.arg_size(); ++i)
+          FwdArgs.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+        CallInst *DCall = B.CreateCall(call.getFunctionType(), called, FwdArgs);
+        DCall->setCallingConv(newCall->getCallingConv());
+        DCall->setAttributes(newCall->getAttributes());
+        B.CreateCall(ZeroDataHelper, {B.CreatePointerCast(DCall, PtrTy)});
+        return DCall;
+      };
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *DRec = nullptr;
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *R = emitMakeShadowRecord(AfterB);
+          DRec =
+              (Width == 1)
+                  ? R
+                  : (DRec
+                         ? AfterB.CreateInsertValue(DRec, R, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RecPtrTy, Width)),
+                               R, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DRec);
+        return true;
+      }
+
+      Value *DRec = nullptr;
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Function *IncHelper =
+            getOrCreateKokkosRecordRefHelper(M, /*IsIncrement*/ true);
+        Value *NullRec = ConstantPointerNull::get(cast<PointerType>(PtrTy));
+        Value *PCasted = AfterB.CreatePointerCast(newCall, PtrTy);
+        // Pin primal and shadow SharedAllocationRecords by +1 across the
+        // forward->reverse boundary so local/resized Views remain valid in the
+        // reverse pass and are released cleanly when the reverse pass finishes.
+        AfterB.CreateCall(IncHelper, {PCasted, NullRec});
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *R = emitMakeShadowRecord(AfterB);
+          AfterB.CreateCall(IncHelper,
+                            {AfterB.CreatePointerCast(R, PtrTy), PCasted});
+          DRec =
+              (Width == 1)
+                  ? R
+                  : (DRec
+                         ? AfterB.CreateInsertValue(DRec, R, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RecPtrTy, Width)),
+                               R, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DRec);
+        Type *TapeTy =
+            StructType::get(Ctx, {RecPtrTy, gutils->getShadowType(RecPtrTy)});
+        Value *TVal = UndefValue::get(TapeTy);
+        TVal = AfterB.CreateInsertValue(TVal, newCall, {0});
+        TVal = AfterB.CreateInsertValue(TVal, DRec, {1});
+        gutils->cacheForReverse(AfterB, TVal,
+                                getIndex(&call, CacheType::Tape, AfterB));
+        if (Mode == DerivativeMode::ReverseModePrimal)
+          keepPrimalInForwardOnly();
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        Type *ShTy = gutils->getShadowType(RecPtrTy);
+        Type *TapeTy = StructType::get(Ctx, {RecPtrTy, ShTy});
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Value *TVal = nullptr;
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          unpackShadowPointerResultInReverse(ShTy, "kokkos_make_drec_sh");
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *TPN = BuilderZ.CreatePHI(TapeTy, 0, "kokkos_make_drec_tape");
+          TVal = gutils->cacheForReverse(
+              BuilderZ, TPN, getIndex(&call, CacheType::Tape, BuilderZ),
+              /*ignoreType*/ true);
+          keepPrimalInForwardOnly();
+          TVal = lookup(TVal, Builder2);
+        } else {
+          Value *PRec = lookup(newCall, Builder2);
+          Value *SRec = lookup(DRec, Builder2);
+          TVal = UndefValue::get(TapeTy);
+          TVal = Builder2.CreateInsertValue(TVal, PRec, {0});
+          TVal = Builder2.CreateInsertValue(TVal, SRec, {1});
+        }
+        if (shouldFree()) {
+          Function *DecHelper =
+              getOrCreateKokkosRecordRefHelper(M, /*IsIncrement*/ false);
+          Value *NullRec = ConstantPointerNull::get(cast<PointerType>(PtrTy));
+          Value *PRec = Builder2.CreatePointerCast(
+              Builder2.CreateExtractValue(TVal, {0}), PtrTy);
+          Value *SRec = Builder2.CreateExtractValue(TVal, {1});
+          applyChainRule(
+              Builder2,
+              [&](Value *r) {
+                Builder2.CreateCall(
+                    DecHelper, {Builder2.CreatePointerCast(r, PtrTy), PRec});
+              },
+              SRec);
+          Builder2.CreateCall(DecHelper, {PRec, NullRec});
+        }
+      }
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData: {
+      if (gutils->isConstantValue(&call) || call.arg_size() < 1 ||
+          gutils->isConstantValue(call.getArgOperand(0)) || !called) {
+        resolveShadowPlaceholder(call);
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      Type *RetPtrTy = call.getType();
+      if (Mode != DerivativeMode::ReverseModeGradient &&
+          Mode != DerivativeMode::ForwardModeSplit) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *DThis = gutils->invertPointerM(call.getArgOperand(0), AfterB);
+        auto dataRule = [&](Value *drec) -> Value * {
+          CallInst *DC =
+              AfterB.CreateCall(call.getFunctionType(), called,
+                                {AfterB.CreatePointerCast(
+                                    drec, call.getArgOperand(0)->getType())});
+          DC->setCallingConv(newCall->getCallingConv());
+          return DC;
+        };
+        Value *DData = applyChainRule(RetPtrTy, AfterB, dataRule, DThis);
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DData);
+        if (Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ReverseModeCombined)
+          keepPrimalInForwardOnly();
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        unpackShadowPointerResultInReverse(gutils->getShadowType(RetPtrTy),
+                                           "kokkos_rec_data_sh");
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      resolveShadowPlaceholder(call);
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement:
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement:
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDtor: {
+      // Mirror increment/decrement on genuine C++ shadow
+      // SharedAllocationRecords (checking vptr != null to skip synthetic calloc
+      // records).
+      if ((allocKind ==
+               enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement ||
+           allocKind ==
+               enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement) &&
+          call.arg_size() >= 1 && Mode != DerivativeMode::ReverseModeGradient &&
+          Mode != DerivativeMode::ForwardModeSplit) {
+        // An increment accompanies storing the record into a new tracker. If
+        // every such destination is inactive memory (e.g. a functor copy whose
+        // Views are never dereferenced), no shadow tracker takes ownership and
+        // the matching shadow decrement can never be located, so do not take
+        // a shadow reference either.
+        bool skipShadowRef = false;
+        if (allocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement) {
+          bool anyStore = false, anyActiveStore = false;
+          SmallVector<Value *, 8> RW = {call.getArgOperand(0)};
+          SmallPtrSet<Value *, 16> RS;
+          while (!RW.empty()) {
+            Value *RV = RW.pop_back_val();
+            if (!RV || isa<Constant>(RV) || !RS.insert(RV).second)
+              continue;
+            if (auto *CI = dyn_cast<CastInst>(RV))
+              RW.push_back(CI->getOperand(0));
+            if (auto *RPN = dyn_cast<PHINode>(RV))
+              for (Value *In : RPN->incoming_values())
+                RW.push_back(In);
+            if (auto *RSI = dyn_cast<SelectInst>(RV)) {
+              RW.push_back(RSI->getTrueValue());
+              RW.push_back(RSI->getFalseValue());
+            }
+            if (auto *RBO = dyn_cast<BinaryOperator>(RV))
+              if (RBO->getOpcode() == Instruction::Or ||
+                  RBO->getOpcode() == Instruction::And) {
+                if (isa<ConstantInt>(RBO->getOperand(1)))
+                  RW.push_back(RBO->getOperand(0));
+                else if (isa<ConstantInt>(RBO->getOperand(0)))
+                  RW.push_back(RBO->getOperand(1));
+              }
+            for (User *U : RV->users()) {
+              if (auto *SI = dyn_cast<StoreInst>(U)) {
+                if (SI->getValueOperand() == RV) {
+                  Value *Dst = SI->getPointerOperand();
+                  if (!gutils->isConstantValue(Dst)) {
+                    anyStore = true;
+                    anyActiveStore = true;
+                    continue;
+                  }
+                  // A constant scalar stack slot (e.g. an SROA'd temporary
+                  // data handle) merely forwards the record: follow the
+                  // values reloaded from the same slot.
+                  Value *DstBase = Dst->stripPointerCasts();
+                  bool forwarded = false;
+                  if (isa<AllocaInst>(DstBase) ||
+                      extractEnzymeFromStackType(DstBase) != nullptr) {
+                    for (User *DU : Dst->users())
+                      if (auto *DLI = dyn_cast<LoadInst>(DU))
+                        if (DLI->getPointerOperand() == Dst) {
+                          RW.push_back(DLI);
+                          forwarded = true;
+                        }
+                  }
+                  if (!forwarded)
+                    anyStore = true;
+                }
+              } else if (isa<CastInst>(U)) {
+                RW.push_back(U);
+              }
+              // Note: `or`/`and`/`phi` users (re-tagging the bits) belong to
+              // the next copy of the tracker and are deliberately not
+              // followed.
+            }
+          }
+          skipShadowRef = anyStore && !anyActiveStore;
+        }
+        IRBuilder<> AfterB(newCall->getNextNode());
+        if (!skipShadowRef)
+          if (Value *DRec = extractKokkosShadowTrackerValue(
+                  call.getArgOperand(0), AfterB)) {
+            Function *RefHelper = getOrCreateKokkosRecordRefHelper(
+                M,
+                allocKind ==
+                    enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement);
+            Value *PRec = AfterB.CreatePointerCast(
+                gutils->getNewFromOriginal(call.getArgOperand(0)), PtrTy);
+            applyChainRule(
+                AfterB,
+                [&](Value *r) {
+                  AfterB.CreateCall(RefHelper,
+                                    {AfterB.CreatePointerCast(r, PtrTy), PRec});
+                },
+                DRec);
+          }
+      }
+      if (allocKind ==
+              enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement &&
+          shadowReturnUsed) {
+        assignShadowPointerResult(
+            Constant::getNullValue(gutils->getShadowType(call.getType())));
+      } else {
+        resolveShadowPlaceholder(call);
+      }
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor:
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor: {
+      resolveShadowPlaceholder(call);
+      Value *OrigThis = call.getArgOperand(0);
+      if (gutils->isConstantValue(OrigThis)) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      // Find byte-size operand:
+      // CommonCtor: (this, [exec,] space, label, size, dealloc) -> idx 3 or 4
+      // BaseCtor: (this, [root,] alloc_ptr, alloc_size, dealloc, label) -> idx
+      // 2 or 3
+      unsigned SizeIdx = 0;
+      for (unsigned idx = 1; idx < call.arg_size(); ++idx) {
+        if (call.getArgOperand(idx)->getType()->isIntegerTy(64) ||
+            call.getArgOperand(idx)->getType()->isIntegerTy(32)) {
+          SizeIdx = idx;
+          break;
+        }
+      }
+      Value *OrigSize = SizeIdx > 0 ? call.getArgOperand(SizeIdx)
+                                    : ConstantInt::get(I64, 4096);
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        Value *DThis = gutils->invertPointerM(OrigThis, AfterB);
+        auto rule = [&](Value *drec) {
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          // SharedAllocationRecord<void, void>::m_alloc_ptr is at offset 8
+          AfterB.CreateStore(DBuf,
+                             AfterB.CreateConstInBoundsGEP1_64(I8, drec, 8));
+        };
+        applyChainRule(AfterB, rule, DThis);
+        return true;
+      }
+
+      Type *ShadowBufTapeTy =
+          Width == 1 ? (Type *)PtrTy : (Type *)ArrayType::get(PtrTy, Width);
+      Value *SavedDBufs = nullptr;
+
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewThis = gutils->getNewFromOriginal(OrigThis);
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        Value *DThis = gutils->invertPointerM(OrigThis, AfterB);
+
+        // Pin primal SharedAllocationRecord by +1 so local ~View() in forward
+        // pass drops 2 -> 1 instead of freeing primal data before reverse pass.
+        FunctionCallee IncFn = M.getOrInsertFunction(
+            "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9incrementEPS2_",
+            FunctionType::get(VoidTy, {PtrTy}, false));
+        AfterB.CreateCall(IncFn, {AfterB.CreatePointerCast(NewThis, PtrTy)});
+
+        auto allocRule = [&](Value *drec) -> Value * {
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          AfterB.CreateStore(DBuf,
+                             AfterB.CreateConstInBoundsGEP1_64(I8, drec, 8));
+          return DBuf;
+        };
+        SavedDBufs = applyChainRule(PtrTy, AfterB, allocRule, DThis);
+        gutils->cacheForReverse(AfterB, SavedDBufs,
+                                getIndex(&call, CacheType::Tape, AfterB));
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *PN = BuilderZ.CreatePHI(ShadowBufTapeTy, 0, "kokkos_dbuf");
+          SavedDBufs = gutils->cacheForReverse(
+              BuilderZ, PN, getIndex(&call, CacheType::Tape, BuilderZ),
+              /*ignoreType*/ true);
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        }
+        SavedDBufs = lookup(SavedDBufs, Builder2);
+        if (shouldFree()) {
+          auto freeRule = [&](Value *dbuf) {
+            emitShadowSpaceFree(Builder2, dbuf);
+          };
+          applyChainRule(Builder2, freeRule, SavedDBufs);
+          Value *RevThis =
+              lookup(gutils->getNewFromOriginal(OrigThis), Builder2);
+          FunctionCallee DecFn = M.getOrInsertFunction(
+              "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9decrementEPS2_",
+              FunctionType::get(PtrTy, {PtrTy}, false));
+          Builder2.CreateCall(DecFn,
+                              {Builder2.CreatePointerCast(RevThis, PtrTy)});
+        }
+      }
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordAllocate: {
+      // Uninlined SharedAllocationRecord*::allocate([exec,] space, label, size)
+      if (gutils->isConstantValue(&call)) {
+        resolveShadowPlaceholder(call);
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      unsigned SizeIdx = call.arg_size() - 1;
+      Value *OrigSize = call.getArgOperand(SizeIdx);
+      FunctionCallee CallocFn = M.getOrInsertFunction(
+          "calloc", FunctionType::get(PtrTy, {I64, I64}, false));
+      Type *RecPtrTy = call.getType();
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        Value *DRec = nullptr;
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *R = AfterB.CreateCall(
+              CallocFn, {ConstantInt::get(I64, 1), ConstantInt::get(I64, 128)});
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          AfterB.CreateStore(DBuf, AfterB.CreateConstInBoundsGEP1_64(I8, R, 8));
+          Value *RCasted = AfterB.CreatePointerCast(R, RecPtrTy);
+          DRec =
+              (Width == 1)
+                  ? RCasted
+                  : (DRec
+                         ? AfterB.CreateInsertValue(DRec, RCasted, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RecPtrTy, Width)),
+                               RCasted, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DRec);
+        return true;
+      }
+
+      Value *DRec = nullptr;
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        FunctionCallee IncFn = M.getOrInsertFunction(
+            "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9incrementEPS2_",
+            FunctionType::get(VoidTy, {PtrTy}, false));
+        AfterB.CreateCall(IncFn, {AfterB.CreatePointerCast(newCall, PtrTy)});
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *R = AfterB.CreateCall(
+              CallocFn, {ConstantInt::get(I64, 1), ConstantInt::get(I64, 128)});
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          AfterB.CreateStore(DBuf, AfterB.CreateConstInBoundsGEP1_64(I8, R, 8));
+          Value *RCasted = AfterB.CreatePointerCast(R, RecPtrTy);
+          DRec =
+              (Width == 1)
+                  ? RCasted
+                  : (DRec
+                         ? AfterB.CreateInsertValue(DRec, RCasted, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RecPtrTy, Width)),
+                               RCasted, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DRec);
+        Type *TapeTy =
+            StructType::get(Ctx, {RecPtrTy, gutils->getShadowType(RecPtrTy)});
+        Value *TVal = UndefValue::get(TapeTy);
+        TVal = AfterB.CreateInsertValue(TVal, newCall, {0});
+        TVal = AfterB.CreateInsertValue(TVal, DRec, {1});
+        gutils->cacheForReverse(AfterB, TVal,
+                                getIndex(&call, CacheType::Tape, AfterB));
+        if (Mode == DerivativeMode::ReverseModePrimal)
+          keepPrimalInForwardOnly();
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        Type *ShTy = gutils->getShadowType(RecPtrTy);
+        Type *TapeTy = StructType::get(Ctx, {RecPtrTy, ShTy});
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Value *TVal = nullptr;
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          unpackShadowPointerResultInReverse(ShTy, "kokkos_drec_sh");
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *TPN = BuilderZ.CreatePHI(TapeTy, 0, "kokkos_drec_tape");
+          TVal = gutils->cacheForReverse(
+              BuilderZ, TPN, getIndex(&call, CacheType::Tape, BuilderZ),
+              /*ignoreType*/ true);
+          keepPrimalInForwardOnly();
+          TVal = lookup(TVal, Builder2);
+        } else {
+          Value *PRec = lookup(newCall, Builder2);
+          Value *SRec = lookup(DRec, Builder2);
+          TVal = UndefValue::get(TapeTy);
+          TVal = Builder2.CreateInsertValue(TVal, PRec, {0});
+          TVal = Builder2.CreateInsertValue(TVal, SRec, {1});
+        }
+        if (shouldFree()) {
+          Value *PRec = Builder2.CreateExtractValue(TVal, {0});
+          Value *SRec = Builder2.CreateExtractValue(TVal, {1});
+          FunctionCallee FreeFn = M.getOrInsertFunction(
+              "free", FunctionType::get(VoidTy, {PtrTy}, false));
+          auto freeRecRule = [&](Value *r) {
+            Value *DBuf = Builder2.CreateLoad(
+                PtrTy, Builder2.CreateConstInBoundsGEP1_64(I8, r, 8));
+            emitShadowSpaceFree(Builder2, DBuf);
+            Builder2.CreateCall(FreeFn, {r});
+          };
+          applyChainRule(Builder2, freeRecRule, SRec);
+          FunctionCallee DecFn = M.getOrInsertFunction(
+              "_ZN6Kokkos4Impl22SharedAllocationRecordIvvE9decrementEPS2_",
+              FunctionType::get(PtrTy, {PtrTy}, false));
+          Builder2.CreateCall(DecFn, {Builder2.CreatePointerCast(PRec, PtrTy)});
+        }
+      }
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordAllocateTracked:
+    case enzyme_kokkos::KokkosAllocKind::SpaceAllocate: {
+      if (gutils->isConstantValue(&call)) {
+        resolveShadowPlaceholder(call);
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      unsigned SizeIdx = 0;
+      for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+        if (call.getArgOperand(idx)->getType()->isIntegerTy())
+          SizeIdx = idx;
+      }
+      Value *OrigSize = call.getArgOperand(SizeIdx);
+      Type *RetPtrTy = call.getType();
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        Value *DData = nullptr;
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          // Offset +128 so get_record(d_data) header region before d_data is
+          // valid if inspected; store base DBuf at d_data - 8 for free.
+          Value *Data = AfterB.CreateConstInBoundsGEP1_64(I8, DBuf, 128);
+          AfterB.CreateStore(DBuf,
+                             AfterB.CreateConstInBoundsGEP1_64(I8, DBuf, 120));
+          Value *Casted = AfterB.CreatePointerCast(Data, RetPtrTy);
+          DData =
+              (Width == 1)
+                  ? Casted
+                  : (DData
+                         ? AfterB.CreateInsertValue(DData, Casted, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RetPtrTy, Width)),
+                               Casted, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DData);
+        return true;
+      }
+
+      Value *SavedDBufs = nullptr;
+      Type *ShTy = gutils->getShadowType(RetPtrTy);
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *NewSize = gutils->getNewFromOriginal(OrigSize);
+        Value *DData = nullptr;
+        for (unsigned w = 0; w < Width; ++w) {
+          Value *DBuf = emitShadowSpaceAlloc(AfterB, NewSize);
+          Value *Data = AfterB.CreateConstInBoundsGEP1_64(I8, DBuf, 128);
+          Value *Casted = AfterB.CreatePointerCast(Data, RetPtrTy);
+          DData =
+              (Width == 1)
+                  ? Casted
+                  : (DData
+                         ? AfterB.CreateInsertValue(DData, Casted, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(RetPtrTy, Width)),
+                               Casted, {w}));
+          SavedDBufs =
+              (Width == 1)
+                  ? DBuf
+                  : (SavedDBufs
+                         ? AfterB.CreateInsertValue(SavedDBufs, DBuf, {w})
+                         : AfterB.CreateInsertValue(
+                               UndefValue::get(ArrayType::get(PtrTy, Width)),
+                               DBuf, {w}));
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(DData);
+        gutils->cacheForReverse(AfterB, SavedDBufs,
+                                getIndex(&call, CacheType::Tape, AfterB));
+        if (Mode == DerivativeMode::ReverseModePrimal)
+          keepPrimalInForwardOnly();
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        Type *BufTapeTy =
+            Width == 1 ? (Type *)PtrTy : (Type *)ArrayType::get(PtrTy, Width);
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          unpackShadowPointerResultInReverse(ShTy, "kokkos_dalloc_sh");
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *TPN = BuilderZ.CreatePHI(BufTapeTy, 0, "kokkos_dalloc_tape");
+          SavedDBufs = gutils->cacheForReverse(
+              BuilderZ, TPN, getIndex(&call, CacheType::Tape, BuilderZ),
+              /*ignoreType*/ true);
+          keepPrimalInForwardOnly();
+        }
+        SavedDBufs = lookup(SavedDBufs, Builder2);
+        if (shouldFree()) {
+          auto freeRule = [&](Value *dbuf) {
+            emitShadowSpaceFree(Builder2, dbuf);
+          };
+          applyChainRule(Builder2, freeRule, SavedDBufs);
+        }
+      }
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDeallocateTracked:
+    case enzyme_kokkos::KokkosAllocKind::SpaceDeallocate: {
+      resolveShadowPlaceholder(call);
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordGetRecord: {
+      // If called on a tracked pointer allocated via SharedAllocationRecord,
+      // return null shadow or synthetic shadow record if needed.
+      if (shadowReturnUsed)
+        assignShadowPointerResult(
+            Constant::getNullValue(gutils->getShadowType(call.getType())));
+      else
+        resolveShadowPlaceholder(call);
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    case enzyme_kokkos::KokkosAllocKind::SharedAllocRecordReallocateTracked:
+    case enzyme_kokkos::KokkosAllocKind::None:
+      break;
+    }
+  }
+
+  // 8. Remaining inactive Kokkos / runtime / Tools / mutex functions
+  if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  return false;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
     CallInst *const newCall) {
+  if (handleKokkosCallDerivatives(call, called, funcName, newCall))
+    return true;
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =
@@ -4227,8 +5206,27 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    if (EnzymeFreeInternalAllocations)
-      hasPDFree = true;
+    if (EnzymeFreeInternalAllocations) {
+      bool IsKokkosManagedRecord = false;
+      for (auto *U : call.users()) {
+        if (auto *UCI = dyn_cast<CallInst>(U)) {
+          StringRef UName = getFuncNameFromCall(UCI);
+          if (enzyme_kokkos::mayBeKokkosRelevantSymbol(UName)) {
+            auto AK = enzyme_kokkos::classifyKokkosAllocCall(
+                UName, ENZYME_KOKKOS_DEMANGLE(UName));
+            if (AK == enzyme_kokkos::KokkosAllocKind::
+                          SharedAllocRecordCommonCtor ||
+                AK ==
+                    enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor) {
+              IsKokkosManagedRecord = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!IsKokkosManagedRecord)
+        hasPDFree = true;
+    }
 
     // TODO enable this if we need to free the memory
     // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE
