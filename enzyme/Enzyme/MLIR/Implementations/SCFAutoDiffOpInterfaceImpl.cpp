@@ -453,10 +453,11 @@ public:
     for (auto &&[active, arg] :
          llvm::zip_equal(operandsActive, forOp.getInitArgs())) {
       if (active) {
-        if (!gutils->isConstantValue(arg)) {
+        // Every active carried value has a result in the reverse loop, so
+        // advance the index even when the init itself is constant.
+        if (!gutils->isConstantValue(arg))
           gutils->addToDiffe(arg, repFor.getResult(resIdx), builder);
-          resIdx++;
-        }
+        resIdx++;
       }
     }
 
