@@ -1849,6 +1849,50 @@ bool DetectPointerArgOfFn(llvm::Function &F,
         }
         if (auto SI = dyn_cast<StoreInst>(I)) {
           if (SI->getValueOperand() == cur) {
+            if (SI->isSimple()) {
+              if (auto *AI = dyn_cast<AllocaInst>(SI->getPointerOperand())) {
+                if (!AI->isArrayAllocation() &&
+                    AI->getAllocatedType() == cur->getType()) {
+                  bool SlotSafe = true;
+                  SmallVector<LoadInst *, 4> SlotLoads;
+                  for (Use &AllocaUse : AI->uses()) {
+                    auto *AllocaUser =
+                        dyn_cast<Instruction>(AllocaUse.getUser());
+                    if (!AllocaUser) {
+                      SlotSafe = false;
+                      break;
+                    }
+                    if (auto *StoreUser = dyn_cast<StoreInst>(AllocaUser)) {
+                      if (StoreUser->isSimple() &&
+                          AllocaUse.getOperandNo() ==
+                              StoreInst::getPointerOperandIndex() &&
+                          StoreUser->getValueOperand() != AI)
+                        continue;
+                    }
+                    if (auto *LoadUser = dyn_cast<LoadInst>(AllocaUser)) {
+                      if (LoadUser->isSimple() &&
+                          AllocaUse.getOperandNo() ==
+                              LoadInst::getPointerOperandIndex() &&
+                          LoadUser->getType() == cur->getType()) {
+                        SlotLoads.push_back(LoadUser);
+                        continue;
+                      }
+                    }
+                    if (auto *CallUser = dyn_cast<CallBase>(AllocaUser)) {
+                      if (isDebugFunction(CallUser->getCalledFunction()))
+                        continue;
+                    }
+                    SlotSafe = false;
+                    break;
+                  }
+                  if (SlotSafe) {
+                    for (LoadInst *LoadUser : SlotLoads)
+                      todo.push_back(LoadUser);
+                    continue;
+                  }
+                }
+              }
+            }
             captured = true;
             read = true;
             written = true;
