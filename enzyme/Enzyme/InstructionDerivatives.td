@@ -1222,7 +1222,7 @@ def : BinopPattern<(Op $x, $y), "FDiv", 0, 0,
                       (CheckedDiv (DiffeRet), $y),
                       (FNeg (CheckedMul (CheckedDiv (DiffeRet), $y), (FDiv $x, $y)))
                     ],
-                    (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                    (CheckedDiv (FSub (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (CheckedMul (Shadow $y), (FDiv $x, $y)), (Zero $y))), $y)
                   >;
 
 def : BinopPattern<(Op $x, $y), "FRem", 0, 0,
