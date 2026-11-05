@@ -9645,12 +9645,30 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
   QueueType Q(DT, LI);
   {
+    SmallPtrSet<BasicBlock *, 8> LiveBlocks;
+    for (auto &Block : F)
+      LiveBlocks.insert(&Block);
     llvm::SetVector<BasicBlock *> todoBlocks;
     for (auto b : toDenseBlocks) {
-      auto L = LI.getLoopFor(b);
-      if (L) {
-        for (auto B : L->getBlocks())
-          todoBlocks.insert(B);
+      if (!LiveBlocks.contains(b))
+        continue;
+      if (auto *TargetLoop = LI.getLoopFor(b)) {
+        for (auto *LoopBlock : TargetLoop->getBlocks())
+          todoBlocks.insert(LoopBlock);
+      }
+    }
+    for (auto &Block : F) {
+      for (auto &Inst : Block) {
+        auto *Call = dyn_cast<CallInst>(&Inst);
+        if (!Call)
+          continue;
+        auto *Callee = Call->getCalledFunction();
+        if (!Callee || !Callee->hasFnAttribute("enzyme_sparse_accumulate"))
+          continue;
+        if (auto *TargetLoop = LI.getLoopFor(&Block)) {
+          for (auto *LoopBlock : TargetLoop->getBlocks())
+            todoBlocks.insert(LoopBlock);
+        }
       }
     }
     for (auto BB : todoBlocks)
@@ -9951,6 +9969,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     SetVector<Value *> Inputs, Outputs;
     auto F2 = ext.extractCodeRegion(cache, Inputs, Outputs);
     assert(F2);
+    F2->removeFnAttr(Attribute::NoInline);
+    F2->removeFnAttr(Attribute::OptimizeNone);
     F2->addFnAttr(Attribute::AlwaysInline);
 
     for (auto U : F2->users())
@@ -10386,6 +10406,93 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
 bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
+  bool HasToDense = false;
+  for (auto &Block : *F) {
+    for (auto &Inst : Block) {
+      auto *Call = dyn_cast<CallInst>(&Inst);
+      if (!Call)
+        continue;
+      auto FunctionName = getFuncNameFromCall(Call);
+      if (FunctionName.contains("__enzyme_todense") ||
+          FunctionName.contains("__enzyme_post_sparse_todense")) {
+        HasToDense = true;
+        break;
+      }
+    }
+    if (HasToDense)
+      break;
+  }
+  if (!HasToDense)
+    return false;
+
+  if (F->hasFnAttribute(Attribute::OptimizeNone))
+    F->removeFnAttr(Attribute::OptimizeNone);
+
+  auto addPromoteAndSROA = [](FunctionPassManager &PassPipeline) {
+    PassPipeline.addPass(PromotePass());
+#if LLVM_VERSION_MAJOR >= 16
+    PassPipeline.addPass(SROAPass(llvm::SROAOptions::PreserveCFG));
+#else
+    PassPipeline.addPass(SROAPass());
+#endif
+  };
+
+  // Only promote local allocas here; __enzyme_todense is marked memory(none)
+  // until replaceToDense rewrites dense proxy accesses into callback calls, so
+  // alias-based passes like GVN or DSE would fold away accumulator loads.
+  auto runPromoteAndSROA = [&]() {
+    PassBuilder Builder = makePassBuilder(F->getContext());
+    LoopAnalysisManager LoopAnalyses;
+    FunctionAnalysisManager FunctionAnalyses;
+    CGSCCAnalysisManager CGSCCAnalyses;
+    ModuleAnalysisManager ModuleAnalyses;
+    Builder.registerModuleAnalyses(ModuleAnalyses);
+    Builder.registerFunctionAnalyses(FunctionAnalyses);
+    Builder.registerLoopAnalyses(LoopAnalyses);
+    Builder.registerCGSCCAnalyses(CGSCCAnalyses);
+    Builder.crossRegisterProxies(LoopAnalyses, FunctionAnalyses, CGSCCAnalyses,
+                                 ModuleAnalyses);
+
+    FunctionPassManager PassPipeline;
+    addPromoteAndSROA(PassPipeline);
+    PassPipeline.run(*F, FunctionAnalyses);
+  };
+
+  runPromoteAndSROA();
+
+  while (true) {
+    SmallVector<CallInst *, 1> CallsToInline;
+    SmallPtrSet<CallInst *, 4> SeenCalls;
+    for (auto &Block : *F) {
+      for (auto &Inst : Block) {
+        auto *Call = dyn_cast<CallInst>(&Inst);
+        if (!Call || !getFuncNameFromCall(Call).contains("__enzyme_todense"))
+          continue;
+        for (auto *User : Call->users()) {
+          auto *UserCall = dyn_cast<CallInst>(User);
+          if (!UserCall || UserCall == Call)
+            continue;
+          auto *Callee = UserCall->getCalledFunction();
+          if (!Callee || Callee->empty() || Callee == F)
+            continue;
+          if (SeenCalls.insert(UserCall).second)
+            CallsToInline.push_back(UserCall);
+        }
+      }
+    }
+    if (CallsToInline.empty())
+      break;
+    bool InlinedAny = false;
+    for (auto *UserCall : CallsToInline) {
+      InlineFunctionInfo InlineInfo;
+      if (InlineFunction(*UserCall, InlineInfo).isSuccess())
+        InlinedAny = true;
+    }
+    if (!InlinedAny)
+      break;
+    runPromoteAndSROA();
+  }
+
   SmallVector<CallBase *, 1> todo;
   SetVector<BasicBlock *> toDenseBlocks;
   for (auto &BB : *F) {
@@ -10416,10 +10523,19 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     PB.registerCGSCCAnalyses(CGAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-    SimplifyCFGPass(SimplifyCFGOptions()).run(*F, FAM);
-    InstCombinePass().run(*F, FAM);
+    // Promote callback allocas and fold constant loop-carried adjoint PHIs
+    // left over at -O0 before fixSparseIndices extracts single loop iterations.
+    FunctionPassManager PassPipeline;
+    addPromoteAndSROA(PassPipeline);
+    PassPipeline.addPass(SimplifyCFGPass(SimplifyCFGOptions()));
+    PassPipeline.addPass(InstCombinePass());
+    PassPipeline.addPass(CorrelatedValuePropagationPass());
+    PassPipeline.addPass(GVNPass());
+    PassPipeline.addPass(DSEPass());
+    PassPipeline.addPass(InstCombinePass());
     // required to make preheaders
-    LoopSimplifyPass().run(*F, FAM);
+    PassPipeline.addPass(LoopSimplifyPass());
+    PassPipeline.run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
   }
 
