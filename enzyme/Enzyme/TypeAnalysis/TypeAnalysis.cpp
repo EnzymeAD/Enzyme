@@ -1435,6 +1435,67 @@ static void checkEnzymeTypeExtent(TypeAnalyzer *TA, const TypeTree &TT,
   }
 }
 
+/// The types that an __enzyme_float, __enzyme_double, __enzyme_integer or
+/// __enzyme_pointer hint, called as `hint(ptr[, size])`, gives the memory ptr
+/// points to. Returns false if Name is not one of these hints. If Extent is
+/// given, it is set to the number of bytes the hint covers from ptr, or to -1
+/// if it covers every offset.
+bool getTypeHintMemoryTree(const CallBase &call, StringRef Name,
+                           const DataLayout &DL, TypeTree &TT,
+                           int64_t *Extent) {
+  enum { Float, Double, Integer, Pointer } Kind;
+  if (Name.contains("__enzyme_float"))
+    Kind = Float;
+  else if (Name.contains("__enzyme_double"))
+    Kind = Double;
+  else if (Name.contains("__enzyme_integer"))
+    Kind = Integer;
+  else if (Name.contains("__enzyme_pointer"))
+    Kind = Pointer;
+  else
+    return false;
+
+  size_t num_args = call.arg_size();
+  assert(num_args == 1 || num_args == 2);
+  assert(call.getArgOperand(0)->getType()->isPointerTy());
+  int64_t num = 1;
+  if (num_args == 2) {
+    assert(isa<ConstantInt>(call.getArgOperand(1)));
+    auto CI = cast<ConstantInt>(call.getArgOperand(1));
+    if (Kind == Float && CI->isNegative())
+      num = -1;
+    else
+      num = CI->getLimitedValue();
+  }
+
+  auto &Ctx = call.getContext();
+  TT = TypeTree();
+  switch (Kind) {
+  case Float:
+    if (num == -1)
+      TT.insert({-1}, Type::getFloatTy(Ctx));
+    else
+      for (int64_t i = 0; i < num; i += 4)
+        TT.insert({(int)i}, Type::getFloatTy(Ctx));
+    break;
+  case Double:
+    for (int64_t i = 0; i < num; i += 8)
+      TT.insert({(int)i}, Type::getDoubleTy(Ctx));
+    break;
+  case Integer:
+    for (int64_t i = 0; i < num; i++)
+      TT.insert({(int)i}, BaseType::Integer);
+    break;
+  case Pointer:
+    for (int64_t i = 0; i < num; i += (DL.getPointerSizeInBits() + 7) / 8)
+      TT.insert({(int)i}, BaseType::Pointer);
+    break;
+  }
+  if (Extent)
+    *Extent = num;
+  return true;
+}
+
 /// Analyze type info given by the TBAA, possibly adding to work queue
 void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
@@ -1519,69 +1580,12 @@ void TypeAnalyzer::considerTBAA() {
               F = fn;
             }
         }
-        if (F && F->getName().contains("__enzyme_float")) {
-          assert(num_args == 1 || num_args == 2);
-          assert(call->getArgOperand(0)->getType()->isPointerTy());
+        if (F) {
           TypeTree TT;
-          ssize_t num = 1;
-          if (num_args == 2) {
-            assert(isa<ConstantInt>(call->getArgOperand(1)));
-            auto CI = cast<ConstantInt>(call->getArgOperand(1));
-            if (CI->isNegative())
-              num = -1;
-            else
-              num = CI->getLimitedValue();
+          if (getTypeHintMemoryTree(*call, F->getName(), DL, TT)) {
+            TT.insert({}, BaseType::Pointer);
+            updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
           }
-          if (num == -1)
-            TT.insert({(int)num}, Type::getFloatTy(call->getContext()));
-          else
-            for (size_t i = 0; i < (size_t)num; i += 4)
-              TT.insert({(int)i}, Type::getFloatTy(call->getContext()));
-          TT.insert({}, BaseType::Pointer);
-          updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
-        }
-        if (F && F->getName().contains("__enzyme_double")) {
-          assert(num_args == 1 || num_args == 2);
-          assert(call->getArgOperand(0)->getType()->isPointerTy());
-          TypeTree TT;
-          size_t num = 1;
-          if (num_args == 2) {
-            assert(isa<ConstantInt>(call->getArgOperand(1)));
-            num = cast<ConstantInt>(call->getArgOperand(1))->getLimitedValue();
-          }
-          for (size_t i = 0; i < num; i += 8)
-            TT.insert({(int)i}, Type::getDoubleTy(call->getContext()));
-          TT.insert({}, BaseType::Pointer);
-          updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
-        }
-        if (F && F->getName().contains("__enzyme_integer")) {
-          assert(num_args == 1 || num_args == 2);
-          assert(call->getArgOperand(0)->getType()->isPointerTy());
-          size_t num = 1;
-          if (num_args == 2) {
-            assert(isa<ConstantInt>(call->getArgOperand(1)));
-            num = cast<ConstantInt>(call->getArgOperand(1))->getLimitedValue();
-          }
-          TypeTree TT;
-          for (size_t i = 0; i < num; i++)
-            TT.insert({(int)i}, BaseType::Integer);
-          TT.insert({}, BaseType::Pointer);
-          updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
-        }
-        if (F && F->getName().contains("__enzyme_pointer")) {
-          assert(num_args == 1 || num_args == 2);
-          assert(call->getArgOperand(0)->getType()->isPointerTy());
-          TypeTree TT;
-          size_t num = 1;
-          if (num_args == 2) {
-            assert(isa<ConstantInt>(call->getArgOperand(1)));
-            num = cast<ConstantInt>(call->getArgOperand(1))->getLimitedValue();
-          }
-          for (size_t i = 0; i < num;
-               i += ((DL.getPointerSizeInBits() + 7) / 8))
-            TT.insert({(int)i}, BaseType::Pointer);
-          TT.insert({}, BaseType::Pointer);
-          updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
           static const StringSet<> JuliaKnownTypes = {

@@ -81,6 +81,7 @@
 #include "PassUtils.h"
 #include "TraceInterface.h"
 #include "TraceUtils.h"
+#include "TypeHintsToValues.h"
 #include "Utils.h"
 
 #include "InstructionBatcher.h"
@@ -2751,7 +2752,7 @@ public:
       attributeKnownFunctions(F);
     }
 
-    bool changed = false;
+    bool changed = lowerTypedValues(M);
     for (Function &F : M) {
       if (F.empty())
         continue;
@@ -3268,6 +3269,15 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
+
+  // Type hints on an alloca that does not otherwise escape would keep SROA
+  // from promoting it. Move them onto the loaded values once inlining has
+  // brought the reads of the alloca into one function, before the late SROA.
+  PB.registerPeepholeEPCallback(
+      [](FunctionPassManager &FPM, OptimizationLevel) {
+        if (EnzymeEnable)
+          FPM.addPass(TypeHintsToValuesNewPM());
+      });
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
@@ -3584,6 +3594,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "simple-gvn") {
           FPM.addPass(SimpleGVNNewPM());
+          return true;
+        }
+        if (Name == "type-hints-to-values") {
+          FPM.addPass(TypeHintsToValuesNewPM());
           return true;
         }
         return false;
