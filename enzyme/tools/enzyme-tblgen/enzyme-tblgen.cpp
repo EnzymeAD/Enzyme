@@ -1450,6 +1450,24 @@ void handleUse(
   }
 }
 
+static bool dagReferencesShadow(const DagInit *dag, StringRef argName) {
+  auto opName = dag->getOperator()->getAsString();
+  const auto *defInit = dyn_cast<DefInit>(dag->getOperator());
+  if ((opName == "Shadow" ||
+       (defInit && defInit->getDef()->isSubClassOf("Shadow"))) &&
+      dag->getNumArgs() == 1 && dag->getArgName(0) &&
+      dag->getArgName(0)->getAsUnquotedString() == argName) {
+    return true;
+  }
+  for (const Init *arg : dag->getArgs()) {
+    if (const auto *subDag = dyn_cast<DagInit>(arg)) {
+      if (dagReferencesShadow(subDag, argName))
+        return true;
+    }
+  }
+  return false;
+}
+
 static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
                                       StringRef origName) {
   VariableSetting nameToOrdinal;
@@ -1773,8 +1791,15 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
             os << "  return failure();\n";
             os << "  }\n";
           } else {
-            os << " assert(gutils->isConstantValue(" << origName
-               << ".getOperand(" << argIdx << ")));\n";
+            os << formatv(
+                " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                "   std::string s;\n"
+                "   llvm::raw_string_ostream ss(s);\n"
+                "   ss << \"Unimplemented derivative for argument {1} in "
+                "reverse mode for \" << {0};\n"
+                "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                " }\n",
+                origName, argIdx);
           }
         }
         continue;
@@ -2186,6 +2211,45 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getForwardBuilder(Builder2);\n";
     }
+    for (auto argOpEn : enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      StringRef argName =
+          argIdx < tree->getNumArgs() ? tree->getArgNameStr(argIdx) : "";
+      if (!argName.empty() && dagReferencesShadow(duals, argName))
+        continue;
+      if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        auto opName = resultRoot->getOperator()->getAsString();
+        auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+        if ((opName == "InactiveArgSpec" ||
+             Def->isSubClassOf("InactiveArgSpec")) &&
+            Def->getValueAsBit("asserting")) {
+          if (intrinsic == MLIRDerivatives) {
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}->getOperand({1}))) "
+                "{{\n"
+                "          {0}->emitError() << \"Unimplemented derivative for "
+                "argument {1} in forward mode for op \" << *{0} << \"\\n\";\n"
+                "          return failure();\n"
+                "        }\n",
+                origName, argIdx);
+          } else {
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}.getOperand({1}))) "
+                "{{\n"
+                "          std::string s;\n"
+                "          llvm::raw_string_ostream ss(s);\n"
+                "          ss << \"Unimplemented derivative for argument {1} "
+                "in "
+                "forward mode for \" << {0};\n"
+                "          EmitNoDerivativeError(ss.str(), {0}, gutils, "
+                "Builder2);\n"
+                "        }\n",
+                origName, argIdx);
+          }
+        }
+      }
+    }
+
     // TODO
     bool multiResult = false;
     if (duals->getOperator()->getAsString() ==
@@ -2221,12 +2285,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         const char *curIndent = "        ";
 
         if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-          auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
-            if (Def->getValueAsBit("asserting"))
-              os << " assert(gutils->isConstantValue(" << origName
-                 << ".getOperand(" << argIdx << ")));\n";
             continue;
           }
         }
@@ -2400,12 +2460,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         const char *curIndent = "        ";
 
         if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-          auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
-            if (Def->getValueAsBit("asserting"))
-              os << " assert(gutils->isConstantValue(" << origName
-                 << ".getOperand(" << argIdx << ")));\n";
+            if (Def->getValueAsBit("asserting")) {
+              os << formatv(
+                  " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                  "   std::string s;\n"
+                  "   llvm::raw_string_ostream ss(s);\n"
+                  "   ss << \"Unimplemented derivative for argument {1} in "
+                  "forward mode for \" << {0};\n"
+                  "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                  " }\n",
+                  origName, argIdx);
+            }
             continue;
           }
         }
