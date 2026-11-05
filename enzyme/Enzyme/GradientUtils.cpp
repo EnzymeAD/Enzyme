@@ -1028,6 +1028,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<CastInst>(val)) {
+    // Keep backstack address-space casts opaque until post-differentiation
+    // stack-lowering decides whether the allocation stays on the stack.
+    if (hasMetadata(op, "enzyme_backstack"))
+      goto endCheck;
     auto op0 = getOp(op->getOperand(0));
     if (op0 == nullptr)
       goto endCheck;
@@ -3544,7 +3548,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
           }
           auto cache = found->second.first;
-          if (auto MD = hasMetadata(&I, "enzyme_fromstack")) {
+          if (auto MD = hasMetadata(&I, "enzyme_fromstack");
+              MD && cast<PointerType>(I.getType())->getAddressSpace() == 0) {
             auto replacement = NB.CreateAlloca(
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
@@ -3579,6 +3584,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             ToCopy2.push_back(LLVMContext::MD_noalias);
             ToCopy2.push_back(LLVMContext::MD_alias_scope);
             cal->copyMetadata(*CI, ToCopy2);
+            cal->setMetadata("enzyme_fromstack", nullptr);
             cal->setName("remat_" + CI->getName());
             cal->setAttributes(CI->getAttributes());
             cal->setCallingConv(CI->getCallingConv());
@@ -3789,7 +3795,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
 
               anti = applyChainRule(orig->getType(), NB, rule);
 
-              if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
+              if (auto MD = hasMetadata(orig, "enzyme_fromstack");
+                  MD &&
+                  cast<PointerType>(orig->getType())->getAddressSpace() == 0) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
