@@ -3518,6 +3518,20 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               (i == 0 ? AnalysisRHS : AnalysisLHS)[{}] == BaseType::Integer) {
             Result = TypeTree(BaseType::Integer);
           }
+          // Multiplying by a (non-trivial) known integer yields an integer: a
+          // product of a pointer, or of float bits, by a runtime integer is
+          // meaningless. (Multiplication by the constants 0/1/-1 is folded
+          // before type analysis runs and excluded for safety.)
+          if (Args[1 - i] &&
+              (i == 0 ? AnalysisLHS : AnalysisRHS)[{}] == BaseType::Integer) {
+            bool Trivial = false;
+            if (auto *CI = dyn_cast<ConstantInt>(Args[1 - i]))
+              Trivial = CI->isZero() || CI->isOne() || CI->isMinusOne();
+            if (auto *CI = dyn_cast<ConstantInt>(Args[i]))
+              Trivial |= CI->isZero() || CI->isOne() || CI->isMinusOne();
+            if (!Trivial)
+              Result = TypeTree(BaseType::Integer);
+          }
         }
       } else if (Opcode == BinaryOperator::URem) {
         if (auto CI = dyn_cast_or_null<ConstantInt>(Args[1])) {
