@@ -3383,35 +3383,32 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (isDebugFunction(F))
         continue;
 
-      size_t idx = 0;
-      for (auto &arg : call->args()) {
-        if (arg != parent) {
-          idx++;
+      for (size_t Idx = 0; Idx < call->arg_size(); ++Idx) {
+        if (call->getArgOperand(Idx) != parent)
           continue;
-        }
 
-        bool NoCapture = isNoCapture(call, idx);
+        bool NoCapture = isNoCapture(call, Idx);
 
         mayCapture |= !NoCapture;
 
-        bool ReadOnly = isReadOnly(call, idx);
+        bool ReadOnly = isReadOnly(call, Idx);
 
         if (!ReadOnly && isLocalReadOnlyOrThrow(call) &&
             !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
-                                            idx,
+                                            Idx,
                                         "enzymejl_sret_union_bytes")
                   .isValid()) &&
             !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
-                                            idx,
+                                            Idx,
                                         "enzymejl_returnRoots")
                   .isValid()) &&
-            !(idx == 0 && call->hasStructRetAttr())) {
+            !(Idx == 0 && call->hasStructRetAttr())) {
           ReadOnly = true;
         }
 
         mayWrite |= !ReadOnly;
 
-        bool WriteOnly = isWriteOnly(call, idx);
+        bool WriteOnly = isWriteOnly(call, Idx);
 
         mayRead |= !WriteOnly;
       }
