@@ -615,7 +615,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    if (funcName == "julia.write_barrier" ||
+    if (isJuliaWriteBarrier(funcName) ||
         funcName == "julia.write_barrier_binding") {
       // Use in a write barrier requires the shadow in the forward, even
       // though the instruction is active.
@@ -629,9 +629,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       if (shadow) {
         auto sz = CI->arg_size();
         bool isStored = false;
-        // First pointer is the destination
-        for (size_t i = 1; i < sz; i++)
-          isStored |= val == CI->getArgOperand(i);
+        for (size_t i = 0; i < sz; i++)
+          isStored |= isJuliaWriteBarrierChild(funcName, i) &&
+                      val == CI->getArgOperand(i);
         bool rematerialized = false;
         if (isStored)
           for (auto pair : gutils->backwardsOnlyShadows)

@@ -3402,7 +3402,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     if (called) {
-      if (funcName == "julia.write_barrier" ||
+      if (isJuliaWriteBarrier(funcName) ||
           funcName == "julia.write_barrier_binding") {
         std::map<UsageKey, bool> Seen =
             gutils->populateSeenFromKnownRecompute();
@@ -3429,6 +3429,32 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
           for (size_t i = 0; i < gutils->getWidth(); i++) {
             SmallVector<Value *, 1> iargs;
+            if (isJuliaFieldWriteBarrier(funcName)) {
+              // Keep every slot: a snapshot GC must see each overwritten
+              // slot, even when the stored child is inactive.
+              if (gutils->isConstantValue(call.getArgOperand(0)))
+                continue;
+              for (size_t j = 0; j < call.arg_size(); j++) {
+                Value *arg = call.getArgOperand(j);
+                Value *sarg;
+                if (!gutils->isConstantValue(arg)) {
+                  sarg = gutils->invertPointerM(arg, BuilderZ);
+                  if (gutils->getWidth() > 1)
+                    sarg = gutils->extractMeta(BuilderZ, sarg, i);
+                } else if (isJuliaWriteBarrierChild(funcName, j)) {
+                  sarg = gutils->getNewFromOriginal(arg);
+                } else {
+                  // An inactive slot is not written in the shadow; skip it
+                  // and its child.
+                  ++j;
+                  continue;
+                }
+                iargs.push_back(sarg);
+              }
+              if (iargs.size() > 1)
+                BuilderZ.CreateCall(called, iargs);
+              continue;
+            }
             bool first = true;
             for (auto &arg : call.args()) {
               if (!gutils->isConstantValue(arg)) {

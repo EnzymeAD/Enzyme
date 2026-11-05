@@ -118,6 +118,11 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeJuliaFieldWriteBarrier(
+    "enzyme-julia-field-write-barrier", cl::init(false), cl::Hidden,
+    cl::desc("Emit Julia's object and field write barriers (Julia 1.14+) "
+             "instead of julia.write_barrier"));
+
 cl::opt<bool> EnzymeAssumeUnknownNoFree(
     "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
     cl::desc("Assume unknown instructions are nofree as needed"));
@@ -584,7 +589,7 @@ struct CacheAnalysis {
     if (funcName == "julia.gc_loaded")
       return {};
 
-    if (funcName == "julia.write_barrier")
+    if (isJuliaWriteBarrier(funcName))
       return {};
 
     if (funcName == "julia.write_barrier_binding")
@@ -934,7 +939,7 @@ void calculateUnusedValuesInFunction(
               todo.push_back(&*u);
               continue;
             } else if (auto CI = dyn_cast<CallInst>(u)) {
-              if (getFuncNameFromCall(CI) == "julia.write_barrier") {
+              if (isJuliaWriteBarrier(getFuncNameFromCall(CI))) {
                 continue;
               }
               if (getFuncNameFromCall(CI) == "julia.write_barrier_binding") {
@@ -1199,7 +1204,7 @@ void calculateUnusedValuesInFunction(
           const Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
-              isa<MemSetInst>(inst) || funcName == "julia.write_barrier" ||
+              isa<MemSetInst>(inst) || isJuliaWriteBarrier(funcName) ||
               funcName == "julia.write_barrier_binding") {
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
