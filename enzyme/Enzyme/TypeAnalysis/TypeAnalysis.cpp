@@ -1718,7 +1718,7 @@ void TypeAnalyzer::considerTBAA() {
                        SI);
         TypeTree req = vdptr.Only(-1, SI);
         updateAnalysis(SI->getValueOperand(), req.Lookup(StoreSize, DL), SI);
-      } else if (auto LI = dyn_cast<LoadInst>(&I)) {
+      } else if (auto *LI = dyn_cast<LoadInst>(&I)) {
         auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 7) / 8;
         updateAnalysis(LI->getPointerOperand(),
                        vdptr
@@ -1732,6 +1732,49 @@ void TypeAnalyzer::considerTBAA() {
                        LI);
         TypeTree req = vdptr.Only(-1, LI);
         updateAnalysis(LI, req.Lookup(LoadSize, DL), LI);
+      } else if (auto *atomicModify = dyn_cast<AtomicRMWInst>(&I)) {
+        auto accessSize =
+            (DL.getTypeSizeInBits(atomicModify->getValOperand()->getType()) +
+             7) /
+            8;
+        updateAnalysis(atomicModify->getPointerOperand(),
+                       vdptr.PurgeAnything()
+                           .ShiftIndices(DL, /*init offset*/ 0,
+                                         /*max size*/ accessSize,
+                                         /*new offset*/ 0)
+                           .Only(-1, atomicModify),
+                       atomicModify);
+        TypeTree valueType =
+            vdptr.Only(-1, atomicModify).Lookup(accessSize, DL);
+        if (atomicModify->getOperation() == AtomicRMWInst::Xchg)
+          updateAnalysis(atomicModify->getValOperand(), valueType,
+                         atomicModify);
+        updateAnalysis(atomicModify, valueType, atomicModify);
+      } else if (auto *compareExchange = dyn_cast<AtomicCmpXchgInst>(&I)) {
+        auto accessSize = (DL.getTypeSizeInBits(
+                               compareExchange->getNewValOperand()->getType()) +
+                           7) /
+                          8;
+        updateAnalysis(compareExchange->getPointerOperand(),
+                       vdptr.PurgeAnything()
+                           .ShiftIndices(DL, /*init offset*/ 0,
+                                         /*max size*/ accessSize,
+                                         /*new offset*/ 0)
+                           .Only(-1, compareExchange),
+                       compareExchange);
+        TypeTree valueType =
+            vdptr.Only(-1, compareExchange).Lookup(accessSize, DL);
+        updateAnalysis(compareExchange->getCompareOperand(), valueType,
+                       compareExchange);
+        updateAnalysis(compareExchange->getNewValOperand(), valueType,
+                       compareExchange);
+        TypeTree resultType = valueType.ShiftIndices(
+            DL, /*init offset*/ 0, /*max size*/ accessSize, /*new offset*/ 0);
+        int flagOffset =
+            (int)getAggregateElementOffset(DL, compareExchange->getType(), {1});
+        resultType |=
+            TypeTree(BaseType::Integer).Only(flagOffset, compareExchange);
+        updateAnalysis(compareExchange, resultType, compareExchange);
       } else {
         llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
         assert(0 && "unknown tbaa instruction user");
