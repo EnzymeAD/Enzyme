@@ -10313,7 +10313,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "jl_alloc_genericmemory" ||
       allocationfn == "ijl_alloc_genericmemory" ||
       allocationfn == "jl_alloc_genericmemory_unchecked" ||
-      allocationfn == "ijl_alloc_genericmemory_unchecked")
+      allocationfn == "ijl_alloc_genericmemory_unchecked" ||
+      allocationfn == "julia.gc_alloc_memory")
     return nullptr;
 
   if (allocationfn == "enzyme_allocator") {

@@ -2207,7 +2207,8 @@ bool ReadOnlyOrThrowDetector::isJuliaMemoryAllocation(Value *V) {
   return name == "jl_alloc_genericmemory" ||
          name == "ijl_alloc_genericmemory" ||
          name == "jl_alloc_genericmemory_unchecked" ||
-         name == "ijl_alloc_genericmemory_unchecked";
+         name == "ijl_alloc_genericmemory_unchecked" ||
+         name == "julia.gc_alloc_memory";
 }
 bool ReadOnlyOrThrowDetector::isJuliaArrayAllocation(Value *V) {
   auto CB = dyn_cast<CallBase>(V);
