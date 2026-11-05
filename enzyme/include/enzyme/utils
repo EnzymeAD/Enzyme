@@ -454,18 +454,145 @@ namespace enzyme {
           static constexpr int* value = &enzyme_primal_return;
         };
 
+        constexpr bool cstr_starts_with(const char* str, std::size_t len,
+                                        const char* prefix) {
+          std::size_t i = 0;
+          for (; prefix[i] != '\0'; ++i) {
+            if (i >= len || str[i] != prefix[i]) {
+              return false;
+            }
+          }
+          return true;
+        }
+
+        template <typename T>
+        constexpr bool is_named_kokkos_view() {
+#if defined(__clang__) || defined(__GNUC__) || defined(__NVCC__) || defined(__HIPCC__)
+          const char* sig = __PRETTY_FUNCTION__;
+          std::size_t i = 0;
+          while (sig[i] != '\0' &&
+                 !(sig[i] == 'T' && sig[i + 1] == ' ' && sig[i + 2] == '=' &&
+                   sig[i + 3] == ' ')) {
+            ++i;
+          }
+          if (sig[i] == '\0') {
+            return false;
+          }
+          i += 4;
+          std::size_t end = i;
+          while (sig[end] != '\0') {
+            ++end;
+          }
+          while (end > i && sig[end - 1] != ']') {
+            --end;
+          }
+          if (end > i) {
+            --end;
+          }
+#elif defined(_MSC_VER)
+          const char* sig = __FUNCSIG__;
+          std::size_t i = 0;
+          const char* marker = "is_named_kokkos_view<";
+          while (sig[i] != '\0') {
+            std::size_t m = 0;
+            while (marker[m] != '\0' && sig[i + m] == marker[m]) {
+              ++m;
+            }
+            if (marker[m] == '\0') {
+              i += m;
+              break;
+            }
+            ++i;
+          }
+          if (sig[i] == '\0') {
+            return false;
+          }
+          if (cstr_starts_with(sig + i, 6, "class ")) {
+            i += 6;
+          } else if (cstr_starts_with(sig + i, 7, "struct ")) {
+            i += 7;
+          }
+          std::size_t end = i;
+          while (sig[end] != '\0') {
+            ++end;
+          }
+#else
+          return false;
+#endif
+          if (i + 2 <= end && sig[i] == ':' && sig[i + 1] == ':') {
+            i += 2;
+          }
+          const char* name = sig + i;
+          const std::size_t len = end - i;
+          return cstr_starts_with(name, len, "Kokkos::View<") ||
+                 cstr_starts_with(name, len, "Kokkos::Experimental::View<") ||
+                 cstr_starts_with(name, len, "Kokkos::Impl::BV::BasicView<") ||
+                 cstr_starts_with(name, len, "Kokkos::DualView<") ||
+                 cstr_starts_with(name, len, "Kokkos::DynRankView<") ||
+                 cstr_starts_with(name, len, "Kokkos::DynamicView<") ||
+                 cstr_starts_with(name, len, "Kokkos::Experimental::DynamicView<") ||
+                 cstr_starts_with(name, len, "Kokkos::OffsetView<") ||
+                 cstr_starts_with(name, len, "Kokkos::Experimental::OffsetView<") ||
+                 cstr_starts_with(name, len, "Kokkos::ScatterView<") ||
+                 cstr_starts_with(name, len, "Kokkos::Experimental::ScatterView<") ||
+                 cstr_starts_with(name, len, "Kokkos::UnorderedMap<");
+        }
+
+        template <typename T, typename = void>
+        struct has_kokkos_view_traits : std::false_type {};
+
+        template <typename T>
+        struct has_kokkos_view_traits<
+            T, std::void_t<typename T::value_type, typename T::execution_space,
+                           typename T::memory_space>>
+            : std::true_type {};
+
+        template <typename T, typename = void>
+        struct has_mdspan_traits : std::false_type {};
+
+        template <typename T>
+        struct has_mdspan_traits<
+            T, std::void_t<typename T::data_handle_type, typename T::mapping_type,
+                           typename T::accessor_type>> : std::true_type {};
+
+        template <typename T, typename = void>
+        struct has_span_traits : std::false_type {};
+
+        template <typename T>
+        struct has_span_traits<
+            T, std::void_t<typename T::element_type, typename T::pointer,
+                           decltype(std::declval<const T&>().data()),
+                           decltype(std::declval<const T&>().size())>>
+            : std::bool_constant<std::is_trivially_copyable_v<T>> {};
+
+        template <typename T>
+        struct is_view_like
+            : std::bool_constant<is_named_kokkos_view<T>() ||
+                                 has_kokkos_view_traits<T>::value ||
+                                 has_mdspan_traits<T>::value ||
+                                 has_span_traits<T>::value> {};
+    }  // namespace detail
+
+    template <typename T>
+    struct is_view : detail::is_view_like<remove_cvref_t<T>> {};
+
+    template <typename T>
+    static constexpr bool is_view_v = is_view<T>::value;
+
+    namespace detail {
         template <typename T, typename... Args>
         struct verify_dup_args {
           static constexpr bool value = true;
         };
 
-        template <typename... Args>
-        struct verify_dup_args<enzyme::Reverse, Args...> {
+        template <bool ReturnPrimal, typename... Args>
+        struct verify_dup_args<ReverseMode<ReturnPrimal>, Args...> {
           static constexpr bool value = (
             (
-              !type_info<Args>::is_duplicated
-              || std::is_reference_v<typename type_info<Args>::type>
-              || std::is_pointer_v<typename type_info<Args>::type>
+              !type_info<remove_cvref_t<Args>>::is_duplicated
+              || std::is_reference_v<typename type_info<remove_cvref_t<Args>>::type>
+              || std::is_pointer_v<typename type_info<remove_cvref_t<Args>>::type>
+              || is_view<remove_cvref_t<typename type_info<remove_cvref_t<Args>>::type>>::value
             ) && ...
           );
         };
