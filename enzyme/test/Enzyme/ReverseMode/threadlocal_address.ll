@@ -1,5 +1,7 @@
 ; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify),verify" -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,verify" -S | %lli - | FileCheck %s --check-prefix=EVAL; fi
+; MCJIT cannot relocate thread_local globals on Darwin, so only execute the
+; EVAL run line on other hosts.
+; RUN: if [ %llvmver -ge 16 ] && [ "$(uname)" != "Darwin" ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,verify" -S | %lli - | FileCheck %s --check-prefix=EVAL; fi
 ; EVAL: 3.000000 3.000000 3.000000
 
 ; llvm.threadlocal.address (emitted by Clang 16+ for thread_local globals) is a
