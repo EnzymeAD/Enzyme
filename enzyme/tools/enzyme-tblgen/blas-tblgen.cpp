@@ -2176,6 +2176,14 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "                                                    \n"
      << "    auto callval = call.getCalledOperand();       \n\n";
 
+  // cuBLAS may be reading and writing its scalars in device memory; run the
+  // derivative with the handle forced to host mode so the stack slots below
+  // are what it expects, and stage the caller's scalars around it.
+  os << "    Value *cublas_saved_mode = nullptr;\n"
+     << "    if (cublas)\n"
+     << "      cublas_saved_mode = emitCublasBeginHostMode(Builder2, called, "
+        "arg_handle, allocationBuilder);\n";
+
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
@@ -2202,6 +2210,17 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
          << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
          << "     : nullptr;\n";
       os << "    }\n";
+      os << "    if (cublas) {\n"
+         << "      arg_" << name
+         << " = emitCublasLoadScalar(Builder2, called, arg_handle, "
+            "cublas_saved_mode, arg_"
+         << name << ", fpType, allocationBuilder, \"" << name << "\");\n"
+         << "      if (d_" << name << " && !isa<Constant>(d_" << name << "))\n"
+         << "        d_" << name
+         << " = emitCublasLoadScalar(Builder2, called, arg_handle, "
+            "cublas_saved_mode, d_"
+         << name << ", fpType, allocationBuilder, \"d" << name << "\");\n"
+         << "    }\n";
     }
   }
 
@@ -2243,8 +2262,35 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
     first = false;
   }
   os << ");\n";
-  os << "    if (!gutils->isConstantValue(&call))\n";
-  os << "      setDiffe(&call, dres, Builder2);\n";
+  if (get_blas_ret_ty(pattern.getName()) == "fpType") {
+    // A cublas _v2 entry point hands its result back through a trailing
+    // pointer instead of the call's return value, so that pointer's shadow is
+    // where the tangent belongs -- setDiffe on the call itself would drop it,
+    // the call being an inactive status code.
+    os << "    if (cublasv2) {\n"
+       << "      auto orig_ret = call.getArgOperand(" << nameVec.size()
+       << " + offset);\n"
+       << "      if (!gutils->isConstantValue(orig_ret)) {\n"
+       << "        auto d_ret = gutils->invertPointerM(orig_ret, Builder2);\n"
+       << "        applyChainRule(\n"
+       << "            Builder2,\n"
+       << "            [&](Value *d_ret, Value *dres) {\n"
+       << "              emitCublasStoreScalar(Builder2, called, arg_handle,\n"
+       << "                                    cublas_saved_mode, d_ret, "
+          "dres,\n"
+       << "                                    allocationBuilder);\n"
+       << "            },\n"
+       << "            d_ret, dres);\n"
+       << "      }\n"
+       << "    } else if (!gutils->isConstantValue(&call))\n"
+       << "      setDiffe(&call, dres, Builder2);\n";
+  } else {
+    os << "    if (!gutils->isConstantValue(&call))\n";
+    os << "      setDiffe(&call, dres, Builder2);\n";
+  }
+  os << "    if (cublas)\n"
+     << "      emitCublasEndHostMode(Builder2, called, arg_handle, "
+        "cublas_saved_mode);\n";
   os << "  }\n";
 }
 
