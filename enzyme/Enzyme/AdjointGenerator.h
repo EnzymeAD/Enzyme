@@ -1414,8 +1414,10 @@ public:
       bool needs_writebarrier = false;
       if (!gutils->runtimeActivity && constantval) {
         if (anyPointer && vd[{-1, -1}] != BaseType::Integer) {
+          bool MirrorPrimal = isPointerTagSentinelConstant(orig_val, DL) ||
+                              isIntegerNullPointerConstant(orig_val, DL);
           if (!isa<UndefValue>(orig_val) &&
-              !isa<ConstantPointerNull>(orig_val)) {
+              !isa<ConstantPointerNull>(orig_val) && !MirrorPrimal) {
             std::string str;
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
@@ -1431,6 +1433,9 @@ public:
             } else
               EmitWarningAlways("MixedActivityError", I, ss.str(),
                                 MixedActivityHint);
+          } else if (MirrorPrimal) {
+            auto Rule = [&val]() { return val; };
+            diff = applyChainRule(valType, BuilderZ, Rule);
           }
         }
       }
@@ -1668,7 +1673,9 @@ public:
             if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
-                    !isa<ConstantPointerNull>(orig_val)) {
+                    !isa<ConstantPointerNull>(orig_val) &&
+                    !isPointerTagSentinelConstant(orig_val, DL) &&
+                    !isIntegerNullPointerConstant(orig_val, DL)) {
                   std::string str;
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I

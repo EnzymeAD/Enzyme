@@ -3134,4 +3134,26 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// Returns true if \p V is a pointer-width low-bit tag sentinel (uintptr_t(1)
+/// or inttoptr(1)), such as a low-bit reference-counting sentinel flag.
+static inline bool isPointerTagSentinelConstant(const llvm::Value *V,
+                                                const llvm::DataLayout &DL) {
+  if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return CI->isOne() && CI->getBitWidth() == DL.getPointerSizeInBits(0);
+  if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(V))
+    if (CE->getOpcode() == llvm::Instruction::IntToPtr)
+      if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(CE->getOperand(0)))
+        return CI->isOne();
+  return false;
+}
+
+/// Returns true if \p V is an integer zero of pointer width (an integer-typed
+/// null pointer, e.g. `select i1 %c, i64 0, i64 %ptrtoint`).
+static inline bool isIntegerNullPointerConstant(const llvm::Value *V,
+                                                const llvm::DataLayout &DL) {
+  if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return CI->isZero() && CI->getBitWidth() == DL.getPointerSizeInBits(0);
+  return false;
+}
+
 #endif // ENZYME_UTILS_H

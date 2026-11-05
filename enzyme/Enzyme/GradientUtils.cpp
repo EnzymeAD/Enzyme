@@ -5536,6 +5536,9 @@ static bool allNullOrUndef(Value *C, const DataLayout &dl, TypeTree TT) {
     if (CInt->isZero())
       return true;
   }
+  if (isPointerTagSentinelConstant(C, dl)) {
+    return true;
+  }
   if (auto CS = dyn_cast<ConstantStruct>(C)) {
     const StructLayout *Layout = dl.getStructLayout(CS->getType());
     for (unsigned i = 0; i < CS->getNumOperands(); ++i) {
@@ -5808,8 +5811,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   bool shouldNullShadow = isConstantValue(oval);
   if (shouldNullShadow) {
-    if (isa<InsertValueInst>(oval) || isa<ExtractValueInst>(oval) ||
-        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval)) {
+    bool BypassNullShadow =
+        isa<InsertValueInst>(oval) || isa<ExtractValueInst>(oval) ||
+        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval);
+    if (!BypassNullShadow) {
+      if (auto *PTII = dyn_cast<PtrToIntInst>(oval)) {
+        if (!isConstantValue(PTII->getPointerOperand()))
+          BypassNullShadow = true;
+      }
+    }
+    if (BypassNullShadow) {
       shouldNullShadow = false;
       auto orig = cast<Instruction>(oval);
       if (knownRecomputeHeuristic.count(orig)) {
@@ -6388,7 +6399,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
         if (isConstantValue(op)) {
-          if (subTT.anyPointer(op, DL) &&
+          bool SubPointerInt =
+              i == 1 && InsertedTy->isIntegerTy() &&
+              InsertedTy->getIntegerBitWidth() < DL.getPointerSizeInBits();
+          if (!SubPointerInt && subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
             if (!allNullOrUndef(op, DL, subTT)) {
               std::string str;
@@ -6508,7 +6522,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto tval = arg->getTrueValue();
       if (!runtimeActivity && TT.anyPointer(tval, DL) &&
           !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-          !isa<ConstantAggregateZero>(tval) && isConstantValue(tval)) {
+          !isa<ConstantAggregateZero>(tval) &&
+          !isPointerTagSentinelConstant(tval, DL) &&
+          !isIntegerNullPointerConstant(tval, DL) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -6531,7 +6547,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto fval = arg->getFalseValue();
       if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
           !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-          !isa<ConstantAggregateZero>(fval) && isConstantValue(fval)) {
+          !isa<ConstantAggregateZero>(fval) &&
+          !isPointerTagSentinelConstant(fval, DL) &&
+          !isIntegerNullPointerConstant(fval, DL) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
@@ -6906,6 +6924,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *val = nullptr;
           if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isPointerTagSentinelConstant(preval, DL) &&
+              !isIntegerNullPointerConstant(preval, DL) &&
               isConstantValue(preval)) {
             std::string str;
             raw_string_ostream ss(str);
@@ -6982,6 +7002,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *val = nullptr;
           if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isPointerTagSentinelConstant(preval, DL) &&
+              !isIntegerNullPointerConstant(preval, DL) &&
               isConstantValue(preval)) {
             std::string str;
             raw_string_ostream ss(str);
