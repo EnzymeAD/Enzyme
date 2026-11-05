@@ -475,6 +475,93 @@ namespace enzyme {
          
         template<class T>
         struct is_function_or_function_ptr<T*> : std::is_function<T> {};
+
+        template <typename T>
+        struct wrapped_callable {
+          static constexpr bool is_wrapped = false;
+        };
+
+        template <typename Fn>
+        struct wrapped_callable<Duplicated<Fn>> {
+          static constexpr bool is_wrapped = true;
+          using fn_type = std::remove_reference_t<Fn>;
+          __attribute__((always_inline))
+          static fn_type* value_ptr(const Duplicated<Fn>& w) {
+            if constexpr (std::is_reference_v<Fn>) {
+              return w.value;
+            } else {
+              return const_cast<fn_type*>(&w.value);
+            }
+          }
+          __attribute__((always_inline))
+          static fn_type* shadow_ptr(const Duplicated<Fn>& w) {
+            if constexpr (std::is_reference_v<Fn>) {
+              return w.shadow;
+            } else {
+              return const_cast<fn_type*>(&w.shadow);
+            }
+          }
+          __attribute__((always_inline))
+          static auto expand_primals(const Duplicated<Fn>& w) {
+            return enzyme::tuple{enzyme_dup, static_cast<const void*>(value_ptr(w))};
+          }
+          __attribute__((always_inline))
+          static auto expand_shadows(const Duplicated<Fn>& w) {
+            return enzyme::tuple{static_cast<const void*>(shadow_ptr(w))};
+          }
+        };
+
+        template <typename Fn>
+        struct wrapped_callable<DuplicatedNoNeed<Fn>> {
+          static constexpr bool is_wrapped = true;
+          using fn_type = std::remove_reference_t<Fn>;
+          __attribute__((always_inline))
+          static fn_type* value_ptr(const DuplicatedNoNeed<Fn>& w) {
+            if constexpr (std::is_reference_v<Fn>) {
+              return w.value;
+            } else {
+              return const_cast<fn_type*>(&w.value);
+            }
+          }
+          __attribute__((always_inline))
+          static fn_type* shadow_ptr(const DuplicatedNoNeed<Fn>& w) {
+            if constexpr (std::is_reference_v<Fn>) {
+              return w.shadow;
+            } else {
+              return const_cast<fn_type*>(&w.shadow);
+            }
+          }
+          __attribute__((always_inline))
+          static auto expand_primals(const DuplicatedNoNeed<Fn>& w) {
+            return enzyme::tuple{enzyme_dupnoneed, static_cast<const void*>(value_ptr(w))};
+          }
+          __attribute__((always_inline))
+          static auto expand_shadows(const DuplicatedNoNeed<Fn>& w) {
+            return enzyme::tuple{static_cast<const void*>(shadow_ptr(w))};
+          }
+        };
+
+        template <typename Fn>
+        struct wrapped_callable<Const<Fn>> {
+          static constexpr bool is_wrapped = true;
+          using fn_type = std::remove_reference_t<Fn>;
+          __attribute__((always_inline))
+          static fn_type* value_ptr(const Const<Fn>& w) {
+            if constexpr (std::is_reference_v<Fn>) {
+              return w.value;
+            } else {
+              return const_cast<fn_type*>(&w.value);
+            }
+          }
+          __attribute__((always_inline))
+          static auto expand_primals(const Const<Fn>& w) {
+            return enzyme::tuple{enzyme_const, static_cast<const void*>(value_ptr(w))};
+          }
+          __attribute__((always_inline))
+          static auto expand_shadows(const Const<Fn>&) {
+            return enzyme::tuple{};
+          }
+        };
     }  // namespace detail
 
     template < typename return_type, typename function, typename ... enz_arg_types >
@@ -484,18 +571,26 @@ namespace enzyme {
       return detail::primal_apply_impl<return_type>(std::move(f), impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
 
-    template < typename function, typename ... arg_types>
+    template < typename function, typename ... arg_types, std::enable_if_t<!detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
     auto primal_call(function && f, arg_types && ... args) {
         return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
+    }
+
+    template < typename function, typename ... arg_types, std::enable_if_t<detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
+    auto primal_call(function && f, arg_types && ... args) {
+        using WC = detail::wrapped_callable<remove_cvref_t<function>>;
+        auto* fp = WC::value_ptr(f);
+        return primal_impl<typename WC::fn_type&>(*fp, enzyme::tuple_cat(primal_args(args)...));
     }
 
     template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)&detail::templated_call<function, functy>::wrap, detail::ret_global<RetActivity>::value,
+      using FnObj = std::remove_reference_t<function>;
+      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)&detail::templated_call<FnObj, functy>::wrap, detail::ret_global<RetActivity>::value,
             impl::forward<Tuple>(arg_tup),
-            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, &enzyme_const, &f);
+            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, &enzyme_const, static_cast<const void*>(&f));
     }
 
     template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
@@ -505,7 +600,7 @@ namespace enzyme {
       return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)static_cast<functy*>(f), detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
 
-    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types>
+    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types, std::enable_if_t<!detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         static_assert(
@@ -519,7 +614,7 @@ namespace enzyme {
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
     }
 
-    template < typename DiffMode, typename function, typename ... arg_types>
+    template < typename DiffMode, typename function, typename ... arg_types, std::enable_if_t<!detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         static_assert(
@@ -532,6 +627,67 @@ namespace enzyme {
         using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
+    }
+
+    template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types, std::enable_if_t<detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
+    __attribute__((always_inline))
+    auto autodiff(function && f, arg_types && ... args) {
+        static_assert(
+            detail::verify_dup_args<DiffMode, arg_types...>::value,
+            "Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make "
+            "sense for Reverse mode AD"
+        );
+        using WC = detail::wrapped_callable<remove_cvref_t<function>>;
+        using FnObj = typename WC::fn_type;
+        using primal_return_type = decltype((*WC::value_ptr(f))(arg_type(args)...));
+        using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
+        using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
+        auto arg_tup = enzyme::tuple_cat(
+            enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value},
+            WC::expand_primals(f),
+            expand_primals(args)...,
+            enzyme::tuple{enzyme_interleave},
+            WC::expand_shadows(f),
+            expand_shadows(args)...
+        );
+        using Tuple = decltype(arg_tup);
+        return detail::autodiff_apply<DiffMode>::template impl<return_type>(
+            (void*)&detail::templated_call<FnObj, functy>::wrap,
+            detail::ret_global<RetActivity>::value,
+            std::move(arg_tup),
+            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}
+        );
+    }
+
+    template < typename DiffMode, typename function, typename ... arg_types, std::enable_if_t<detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
+    __attribute__((always_inline))
+    auto autodiff(function && f, arg_types && ... args) {
+        static_assert(
+            detail::verify_dup_args<DiffMode, arg_types...>::value,
+            "Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make "
+            "sense for Reverse mode AD"
+        );
+        using WC = detail::wrapped_callable<remove_cvref_t<function>>;
+        using FnObj = typename WC::fn_type;
+        using primal_return_type = decltype((*WC::value_ptr(f))(arg_type(args)...));
+        using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
+        using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
+        using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
+        auto arg_tup = enzyme::tuple_cat(
+            enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value},
+            WC::expand_primals(f),
+            expand_primals(args)...,
+            enzyme::tuple{enzyme_interleave},
+            WC::expand_shadows(f),
+            expand_shadows(args)...
+        );
+        using Tuple = decltype(arg_tup);
+        return detail::autodiff_apply<DiffMode>::template impl<return_type>(
+            (void*)&detail::templated_call<FnObj, functy>::wrap,
+            detail::ret_global<RetActivity>::value,
+            std::move(arg_tup),
+            std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}
+        );
     }
 #pragma clang diagnostic pop
 
