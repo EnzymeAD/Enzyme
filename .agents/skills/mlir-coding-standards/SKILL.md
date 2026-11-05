@@ -17,7 +17,10 @@ Apply this to **every change to MLIR source and tests in Enzyme
 subdirectory of an `llvm-project` checkout. **IMPORTANT:** these
 rules override and take precedence over `llvm-coding-standards`, but the latter
 has many cases that still apply and are not specified here. Automated checks for
-these standards live in `enzyme/scripts/check_mlir_coding_standards.py`. The
+these standards live in `enzyme/Enzyme/MLIR/.clang-tidy` (and
+`enzyme/Enzyme/MLIR/Passes/.clang-tidy`, run via `enzyme/scripts/run_clang_tidy.py`)
+for C++ AST rules and `enzyme/scripts/check_mlir_coding_standards.py` for
+Doxygen `///` comment and `.mlir` lit-test rules. The
 authoritative documents may be found under `reference/` in this directory or
 under `mlir/docs` in an `llvm-project` checkout:
 

@@ -26,7 +26,9 @@ description: >
 
 Apply this to **every change to C++, TableGen, or lit test source in Enzyme**
 (or an `llvm-project` checkout). Automated checks for these rules live in
-`enzyme/scripts/check_llvm_coding_standards.py`. The authoritative source
+`enzyme/.clang-tidy` (run via `enzyme/scripts/run_clang_tidy.py`) for C++ AST
+rules and `enzyme/scripts/check_llvm_coding_standards.py` for non-AST macro,
+comment, and `.ll` lit-test rules. The authoritative source
 documents are bundled in `reference/`:
 
 - `reference/CodingStandards.md` — the full LLVM Coding Standards.

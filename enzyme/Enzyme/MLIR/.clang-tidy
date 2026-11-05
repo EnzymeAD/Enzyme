@@ -1,0 +1,489 @@
+# MLIR-specific clang-tidy configuration for `enzyme/Enzyme/MLIR/`.
+# Inherits all LLVM C++ coding-standard checks from `enzyme/.clang-tidy` and
+# adds the 14 MLIR C++ AST checks (3 built-in checks + 11 CustomChecks).
+# Requires `clang-tidy --experimental-custom-checks` (LLVM 21+).
+#
+# Tier classification (for CI diff-scoping vs whole-tree enforcement):
+#   Whole-tree checks (4):
+#     - custom-mlir-const-ir-pointer
+#     - custom-mlir-builder-by-value
+#     - custom-mlir-verifier-non-local
+#     - custom-mlir-bool-error-return
+#   Diff-scoped checks (10):
+#     - llvm-use-new-mlir-op-builder
+#     - readability-redundant-inline-specifier
+#     - readability-identifier-naming
+#     - custom-mlir-const-ir-value
+#     - custom-mlir-pass-ir-by-value
+#     - custom-mlir-auto-overuse
+#     - custom-mlir-raw-builder-in-rewrite
+#     - custom-mlir-direct-ir-mutation
+#     - custom-mlir-pass-cl-opt (enabled only in `MLIR/Passes/.clang-tidy`)
+#     - custom-mlir-pass-no-abort
+
+InheritParentConfig: true
+
+Checks: >-
+  llvm-use-new-mlir-op-builder,
+  readability-redundant-inline-specifier,
+  readability-identifier-naming,
+  custom-mlir-const-ir-pointer,
+  custom-mlir-const-ir-value,
+  custom-mlir-pass-ir-by-value,
+  custom-mlir-builder-by-value,
+  custom-mlir-bool-error-return,
+  custom-mlir-auto-overuse,
+  custom-mlir-raw-builder-in-rewrite,
+  custom-mlir-direct-ir-mutation,
+  custom-mlir-verifier-non-local,
+  -custom-mlir-pass-cl-opt,
+  custom-mlir-pass-no-abort
+
+CheckOptions:
+  readability-redundant-inline-specifier.StrictMode: 'true'
+  readability-identifier-naming.IgnoreMainLikeFunctions: 'true'
+  readability-identifier-naming.VariableCase: camelBack
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.MemberCase: camelBack
+
+CustomChecks:
+  # 1. [whole-tree] Do not qualify MLIR pointer IR units (`Operation`, `Block`,
+  #    `Region`) with `const` pointee/referent across variables, parameters,
+  #    fields, and function return types (including deduced `const auto *`).
+  - Name: mlir-const-ir-pointer
+    Query: |
+      let irPtrUnit cxxRecordDecl(isSameOrDerivedFrom(cxxRecordDecl(hasAnyName(
+        "::mlir::Operation",
+        "::mlir::Block",
+        "::mlir::Region"
+      ))))
+      let constIrPointee qualType(
+        isConstQualified(),
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(recordType(hasDeclaration(irPtrUnit)))
+      )
+      let constIrPtrOrRef qualType(
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(anyOf(
+          pointerType(pointee(constIrPointee)),
+          referenceType(pointee(constIrPointee))
+        ))
+      )
+      match decl(
+        unless(isImplicit()),
+        anyOf(
+          varDecl(
+            hasType(constIrPtrOrRef),
+            unless(hasDeclContext(cxxConstructorDecl(isCopyConstructor()))),
+            unless(hasDeclContext(cxxMethodDecl(isCopyAssignmentOperator())))
+          ),
+          fieldDecl(hasType(constIrPtrOrRef)),
+          functionDecl(
+            unless(isTemplateInstantiation()),
+            returns(constIrPtrOrRef)
+          )
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not qualify MLIR pointer IR units ('Operation *', 'Block *', 'Region *') with 'const'"
+        Level: Warning
+
+  # 2. [diff-scoped] Do not qualify MLIR value-semantic IR handles (`Value`,
+  #    `Type`, `Attribute`, `Location`, `OpFoldResult`, affine handles, ranges,
+  #    `*Op`, `*OpInterface`) with top-level `const`.
+  #    Excludes pointers to const handles (e.g. C API `const mlir::Value *`) and
+  #    references (`const Value &`, which is checked by `mlir-pass-ir-by-value`).
+  - Name: mlir-const-ir-value
+    Query: |
+      let irValueHandle cxxRecordDecl(anyOf(
+        hasAnyName(
+          "::mlir::TypedValue",
+          "::mlir::detail::TypedValue"
+        ),
+        isSameOrDerivedFrom(cxxRecordDecl(hasAnyName(
+          "::mlir::Value",
+          "::mlir::Type",
+          "::mlir::TypeInterface",
+          "::mlir::Attribute",
+          "::mlir::AttributeInterface",
+          "::mlir::Location",
+          "::mlir::OpFoldResult",
+          "::mlir::AffineMap",
+          "::mlir::AffineExpr",
+          "::mlir::IntegerSet",
+          "::mlir::ValueRange",
+          "::mlir::TypeRange",
+          "::mlir::OperandRange",
+          "::mlir::ResultRange",
+          "::mlir::OpState",
+          "::mlir::OpInterface"
+        )))
+      ))
+      let constIrValueType qualType(
+        isConstQualified(),
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(recordType(hasDeclaration(irValueHandle)))
+      )
+      match decl(
+        unless(isImplicit()),
+        anyOf(
+          varDecl(hasType(constIrValueType)),
+          fieldDecl(hasType(constIrValueType))
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not qualify MLIR value-handle IR types ('Value', 'Type', 'Attribute', '*Op') with 'const'"
+        Level: Warning
+
+  # 3. [diff-scoped] Pass small value-semantic MLIR/LLVM handles (`Value`,
+  #    `Type`, `Attribute`, `Location`, `OpFoldResult`, affine handles, ranges,
+  #    `*Op`, `StringRef`, `ArrayRef`) by value rather than `const T &`.
+  - Name: mlir-pass-ir-by-value
+    Query: |
+      let smallValueHandle cxxRecordDecl(anyOf(
+        hasAnyName(
+          "::mlir::TypedValue",
+          "::mlir::detail::TypedValue",
+          "::llvm::ArrayRef",
+          "::mlir::ArrayRef"
+        ),
+        isSameOrDerivedFrom(cxxRecordDecl(hasAnyName(
+          "::mlir::Value",
+          "::mlir::Type",
+          "::mlir::TypeInterface",
+          "::mlir::Attribute",
+          "::mlir::AttributeInterface",
+          "::mlir::Location",
+          "::mlir::OpFoldResult",
+          "::mlir::AffineMap",
+          "::mlir::AffineExpr",
+          "::mlir::IntegerSet",
+          "::mlir::ValueRange",
+          "::mlir::TypeRange",
+          "::mlir::OperandRange",
+          "::mlir::ResultRange",
+          "::mlir::OpState",
+          "::mlir::OpInterface",
+          "::llvm::StringRef",
+          "::mlir::StringRef",
+          "::llvm::ArrayRef",
+          "::mlir::ArrayRef"
+        )))
+      ))
+      let constSmallHandleRef qualType(
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(lValueReferenceType(pointee(qualType(
+          isConstQualified(),
+          unless(qualType(substTemplateTypeParmType())),
+          hasUnqualifiedDesugaredType(anyOf(
+            recordType(hasDeclaration(smallValueHandle)),
+            templateSpecializationType(hasDeclaration(namedDecl(hasAnyName(
+              "::llvm::ArrayRef",
+              "::mlir::ArrayRef",
+              "::mlir::TypedValue",
+              "::mlir::detail::TypedValue"
+            ))))
+          ))
+        ))))
+      )
+      let excludedEnclosingFunc functionDecl(anyOf(
+        cxxConstructorDecl(isCopyConstructor()),
+        hasAnyOverloadedOperatorName("=", "==", "!=", "<", "<=", ">", ">=", "<=>"),
+        cxxMethodDecl(ofClass(cxxRecordDecl(hasName("DenseMapInfo"))))
+      ))
+      match parmVarDecl(
+        unless(isImplicit()),
+        hasType(constSmallHandleRef),
+        unless(hasDeclContext(excludedEnclosingFunc)),
+        unless(hasAncestor(cxxRecordDecl(hasName("DenseMapInfo"))))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "pass small value-semantic MLIR handles ('Value', 'Type', 'Attribute', 'StringRef', 'ArrayRef', '*Op') by value, not 'const &'"
+        Level: Warning
+
+  # 4. [whole-tree] Pass `OpBuilder` and `RewriterBase` subclasses by reference
+  #    (`&`), never by value in function parameters.
+  - Name: mlir-builder-by-value
+    Query: |
+      let builderRecord cxxRecordDecl(isSameOrDerivedFrom("::mlir::OpBuilder"))
+      let builderByValueType qualType(
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(recordType(hasDeclaration(builderRecord)))
+      )
+      match parmVarDecl(
+        unless(isImplicit()),
+        hasType(builderByValueType),
+        unless(hasDeclContext(cxxConstructorDecl(anyOf(
+          isCopyConstructor(),
+          isMoveConstructor()
+        )))),
+        unless(hasDeclContext(cxxMethodDecl(anyOf(
+          isCopyAssignmentOperator(),
+          isMoveAssignmentOperator(),
+          hasOverloadedOperatorName("=")
+        ))))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "pass 'OpBuilder'/'RewriterBase' subclasses by reference ('&'), never by value"
+        Level: Warning
+
+  # 5. [whole-tree] Do not use `FailureOr<bool>` or return `bool` from
+  #    `matchAndRewrite` / `verify` / `verifyRegions` / `verifySymbolUses`;
+  #    use `LogicalResult`.
+  - Name: mlir-bool-error-return
+    Query: |
+      let failureOrBoolSpec classTemplateSpecializationDecl(
+        hasAnyName("::llvm::FailureOr", "::mlir::FailureOr"),
+        hasTemplateArgument(0, refersToType(qualType(hasUnqualifiedDesugaredType(booleanType()))))
+      )
+      let failureOrBoolType qualType(
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(recordType(hasDeclaration(failureOrBoolSpec)))
+      )
+      let plainBoolType qualType(
+        unless(qualType(substTemplateTypeParmType())),
+        hasUnqualifiedDesugaredType(booleanType())
+      )
+      match decl(
+        unless(isImplicit()),
+        unless(hasDeclContext(cxxRecordDecl(hasAnyName("::llvm::FailureOr", "::mlir::FailureOr")))),
+        anyOf(
+          functionDecl(
+            unless(isTemplateInstantiation()),
+            anyOf(
+              returns(failureOrBoolType),
+              allOf(
+                hasAnyName("matchAndRewrite", "verify", "verifyRegions", "verifySymbolUses"),
+                returns(plainBoolType)
+              )
+            )
+          ),
+          varDecl(unless(isInstantiated()), hasType(failureOrBoolType)),
+          fieldDecl(unless(isInstantiated()), hasType(failureOrBoolType)),
+          typedefNameDecl(hasType(failureOrBoolType))
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not use 'FailureOr<bool>' or return 'bool' from 'matchAndRewrite'/'verify*'; return 'LogicalResult'"
+        Level: Warning
+
+  # 6. [diff-scoped] Avoid `auto` when the concrete MLIR/container type is not
+  #    obvious from the right-hand side (`getOperand`, `getResult`, `getType`,
+  #    `getLoc`, `getContext`, `getNumOperands`, `getNumResults`, `getName`,
+  #    `size`, `empty`, `front`, `back`).
+  - Name: mlir-auto-overuse
+    Query: |
+      let nonObviousCallee functionDecl(
+        hasAnyName(
+          "getOperand",
+          "getResult",
+          "getType",
+          "getLoc",
+          "getContext",
+          "getNumOperands",
+          "getNumResults",
+          "getName",
+          "size",
+          "empty",
+          "front",
+          "back"
+        ),
+        unless(cxxMethodDecl(hasAnyTemplateArgument(templateArgument())))
+      )
+      let nonObviousCall callExpr(
+        callee(nonObviousCallee),
+        unless(callee(expr(ignoringImplicit(declRefExpr(
+          hasAnyTemplateArgumentLoc(templateArgumentLoc())
+        )))))
+      )
+      match varDecl(
+        unless(parmVarDecl()),
+        unless(isImplicit()),
+        unless(decompositionDecl()),
+        anyOf(
+          hasType(autoType()),
+          hasType(pointerType(pointee(autoType()))),
+          hasType(referenceType(pointee(autoType())))
+        ),
+        hasInitializer(
+          ignoringImplicit(
+            anyOf(
+              nonObviousCall,
+              cxxConstructExpr(
+                unless(cxxTemporaryObjectExpr()),
+                hasDeclaration(cxxConstructorDecl(anyOf(
+                  isCopyConstructor(),
+                  isMoveConstructor()
+                ))),
+                hasArgument(0, ignoringImplicit(nonObviousCall))
+              )
+            )
+          )
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "spell out the concrete MLIR type instead of 'auto' when the type does not appear on the right-hand side"
+        Level: Warning
+
+  # 7. [diff-scoped] Do not construct a raw `OpBuilder`, `ImplicitLocOpBuilder`,
+  #    or `IRRewriter` inside `matchAndRewrite`.
+  - Name: mlir-raw-builder-in-rewrite
+    Query: |
+      let inMatchAndRewrite hasAncestor(cxxMethodDecl(hasName("matchAndRewrite")))
+      let rawBuilderClass cxxRecordDecl(hasAnyName(
+        "::mlir::OpBuilder",
+        "::mlir::ImplicitLocOpBuilder",
+        "::mlir::IRRewriter"
+      ))
+      let rawBuilderValueType qualType(
+        hasCanonicalType(recordType(hasDeclaration(rawBuilderClass)))
+      )
+      let rawBuilderVar varDecl(
+        unless(isImplicit()),
+        unless(parmVarDecl()),
+        hasType(rawBuilderValueType),
+        inMatchAndRewrite
+      )
+      let rawBuilderTemp expr(
+        anyOf(
+          cxxTemporaryObjectExpr(hasType(rawBuilderValueType)),
+          cxxFunctionalCastExpr(hasType(rawBuilderValueType)),
+          callExpr(
+            callee(cxxMethodDecl(ofClass(rawBuilderClass), isStaticStorageClass())),
+            hasType(rawBuilderValueType)
+          )
+        ),
+        unless(hasAncestor(varDecl(hasType(rawBuilderValueType)))),
+        unless(hasParent(cxxFunctionalCastExpr(hasType(rawBuilderValueType)))),
+        inMatchAndRewrite
+      )
+      match varDecl(rawBuilderVar).bind("diag")
+      match expr(rawBuilderTemp).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: >-
+          do not construct a raw OpBuilder, ImplicitLocOpBuilder, or IRRewriter
+          inside matchAndRewrite; insert through the provided PatternRewriter
+        Level: Warning
+
+  # 8. [diff-scoped] Do not mutate IR directly (`erase`, `moveBefore`,
+  #    `moveAfter`, `remove`, `replaceAllUsesWith`) inside `matchAndRewrite`.
+  - Name: mlir-direct-ir-mutation
+    Query: |
+      let inMatchAndRewrite hasAncestor(cxxMethodDecl(hasName("matchAndRewrite")))
+      let mlirIrEntity cxxRecordDecl(anyOf(
+        hasAnyName(
+          "::mlir::Operation",
+          "::mlir::Block",
+          "::mlir::Region",
+          "::mlir::ResultRange",
+          "::mlir::ValueRange"
+        ),
+        isSameOrDerivedFrom("::mlir::OpState"),
+        isSameOrDerivedFrom("::mlir::Value")
+      ))
+      let onMlirIrEntity expr(anyOf(
+        hasType(qualType(hasCanonicalType(recordType(hasDeclaration(mlirIrEntity))))),
+        hasType(qualType(hasCanonicalType(pointsTo(qualType(hasCanonicalType(recordType(hasDeclaration(mlirIrEntity))))))))
+      ))
+      match cxxMemberCallExpr(
+        inMatchAndRewrite,
+        on(ignoringParenImpCasts(onMlirIrEntity)),
+        callee(cxxMethodDecl(hasAnyName(
+          "erase",
+          "moveBefore",
+          "moveAfter",
+          "remove",
+          "replaceAllUsesWith"
+        )))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: >-
+          do not mutate IR directly (erase, moveBefore, moveAfter, remove,
+          replaceAllUsesWith) inside matchAndRewrite; go through RewriterBase
+        Level: Warning
+
+  # 9. [whole-tree] Op and region verifiers must check local properties only,
+  #    never walk potentially unverified SSA def-use chains.
+  - Name: mlir-verifier-non-local
+    Query: |
+      let inOpVerifier hasAncestor(cxxMethodDecl(
+        hasAnyName("verify", "verifyRegions"),
+        ofClass(cxxRecordDecl(isSameOrDerivedFrom("::mlir::OpState")))
+      ))
+      match cxxMemberCallExpr(
+        inOpVerifier,
+        callee(cxxMethodDecl(hasAnyName(
+          "getDefiningOp",
+          "getUsers",
+          "getUses",
+          "use_empty",
+          "hasOneUse"
+        )))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: >-
+          op and region verifiers must check local properties only; do not walk
+          potentially unverified SSA def-use chains (getDefiningOp, getUsers,
+          getUses, use_empty, hasOneUse)
+        Level: Warning
+
+  # 10. [diff-scoped; enabled in Passes/.clang-tidy] Forbid `llvm::cl::opt` and
+  #     `llvm::cl::list` options in MLIR pass files.
+  - Name: mlir-pass-cl-opt
+    Query: |
+      let clOptClass cxxRecordDecl(hasAnyName(
+        "::llvm::cl::opt",
+        "::llvm::cl::list"
+      ))
+      let clOptType qualType(
+        unless(referenceType()),
+        unless(pointerType()),
+        hasCanonicalType(qualType(hasDeclaration(clOptClass)))
+      )
+      match declaratorDecl(
+        unless(isImplicit()),
+        anyOf(varDecl(), fieldDecl()),
+        hasType(clOptType)
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: >-
+          do not declare llvm::cl::opt or llvm::cl::list options in MLIR pass
+          files; define TableGen pass options instead
+        Level: Warning
+
+  # 11. [diff-scoped] Passes must report errors via diagnostics and
+  #     `signalPassFailure()`, never `report_fatal_error`, `abort`, or `exit`
+  #     inside `runOnOperation()`.
+  - Name: mlir-pass-no-abort
+    Query: |
+      let inRunOnOperation hasAncestor(cxxMethodDecl(hasName("runOnOperation")))
+      match callExpr(
+        inRunOnOperation,
+        callee(functionDecl(hasAnyName(
+          "::llvm::report_fatal_error",
+          "::llvm::reportFatalInternalError",
+          "::llvm::reportFatalUsageError",
+          "::abort",
+          "::std::abort",
+          "::exit",
+          "::std::exit",
+          "::_Exit",
+          "::std::_Exit"
+        )))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: >-
+          passes must report errors via diagnostics and signalPassFailure(),
+          never report_fatal_error, abort, or exit inside runOnOperation()
+        Level: Warning
