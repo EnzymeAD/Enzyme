@@ -461,6 +461,15 @@ static bool isOpaque(llvm::Type *T) {
 #endif
 }
 
+// Erase the lifetime markers of an alloca about to be replaced by a GEP into
+// another alloca: since LLVM 22 they may only take an alloca.
+static void eraseLifetimeMarkers(AllocaInst *AI) {
+  for (auto U : llvm::make_early_inc_range(AI->users()))
+    if (auto II = dyn_cast<IntrinsicInst>(U))
+      if (II->isLifetimeStartOrEnd())
+        II->eraseFromParent();
+}
+
 static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges,
                         uint64_t start, uint64_t end) {
   std::vector<std::pair<uint64_t, uint64_t>> nextRanges;
@@ -1221,6 +1230,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                 (isOpaque(AI->getType()) &&
                  DL.getTypeSizeInBits(AI->getAllocatedType()) ==
                      DL.getTypeSizeInBits(Types[sretCount]))) {
+              eraseLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
@@ -1328,6 +1338,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
             if (AI->getAllocatedType() ==
                 ArrayType::get(T_prjlvalue, subCount)) {
+              eraseLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
