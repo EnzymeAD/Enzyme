@@ -3301,6 +3301,23 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
     }
 
+    if (auto *RmwInst = dyn_cast<AtomicRMWInst>(a)) {
+      if (UA != UseActivity::AllStores && RmwInst->getValOperand() != parent &&
+          RmwInst->getParent()->getParent() == TR.getFunction()) {
+        if (TR.query(RmwInst)[{-1}].isIntegral() ||
+            (RmwInst->getType()->isIntOrIntVectorTy() &&
+             RmwInst->getOperation() != AtomicRMWInst::Xchg &&
+             RmwInst->getOperation() != AtomicRMWInst::And &&
+             RmwInst->getOperation() != AtomicRMWInst::Or &&
+             RmwInst->getOperation() != AtomicRMWInst::Xor &&
+             TR.query(RmwInst->getPointerOperand())
+                 .Data0()[{0}]
+                 .isIntegral())) {
+          continue;
+        }
+      }
+    }
+
     if (!isa<Instruction>(a)) {
       if (auto CE = dyn_cast<ConstantExpr>(a)) {
         for (auto u : CE->users()) {
@@ -3797,6 +3814,11 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
         }
         continue;
       }
+    }
+
+    if (const auto *RmwInst = dyn_cast<AtomicRMWInst>(a)) {
+      if (RmwInst->getValOperand() != val && ignoreStoresInto)
+        continue;
     }
 
     if (auto inst = dyn_cast<Instruction>(a)) {
