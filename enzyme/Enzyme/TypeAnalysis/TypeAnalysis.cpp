@@ -3756,7 +3756,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     return;
 
-#if LLVM_VERSION_MAJOR < 22 || (defined(ROCM) && ROCM < 70300)
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:

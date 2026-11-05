@@ -270,22 +270,29 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
-# The LLVM of ROCm is a snapshot whose API can differ from the LLVM release of the same version: ENZYME_ROCM_VERSION (e.g. 7.2.3)
-# is passed to the code as ROCM = major * 10000 + minor * 100 + patch. The LLVM of ROCm < 7.3 (22.0.0git) predates some API
-# changes of the LLVM 22 release: the code takes the LLVM 21 branch where the two differ (intrinsic names, SCEVExpander,
-# PassPlugin.h).
-set(ENZYME_ROCM_VERSION "" CACHE STRING "Version of ROCm (e.g. 7.2.3) when building against its non-version compliant LLVM")
-if(ENZYME_ROCM_VERSION)
-  if(NOT ENZYME_ROCM_VERSION MATCHES "^([0-9]+)\\.([0-9]+)(\\.([0-9]+))?$")
-    message(FATAL_ERROR "ENZYME_ROCM_VERSION must be a ROCm version such as 7.2.3, not '${ENZYME_ROCM_VERSION}'")
+# A snapshot of LLVM 22, such as the LLVM of ROCm 7.2 (22.0.0git), can predate API changes of the LLVM 22 release that the code
+# uses (intrinsic names, SCEVExpander, PassPlugin.h): then ENZYME_LLVM22_PRERELEASE makes the code take the LLVM 21 branch there.
+function(enzyme_check_llvm22_release_api)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES ${LLVM_INCLUDE_DIRS})
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY) # Compile only: no LLVM library to link.
+  check_cxx_source_compiles("
+#if !__has_include(\"llvm/Plugins/PassPlugin.h\")
+#error \"no llvm/Plugins/PassPlugin.h\"
+#endif
+#include \"llvm/IR/IntrinsicsNVPTX.h\"
+#include \"llvm/Transforms/Utils/ScalarEvolutionExpander.h\"
+#include <type_traits>
+static_assert(std::is_constructible<llvm::SCEVExpander, llvm::ScalarEvolution &, const char *, bool>::value, \"\");
+int main() { return llvm::Intrinsic::nvvm_barrier_cta_red_and_aligned_all + llvm::Intrinsic::nvvm_ex2_approx; }"
+    ENZYME_LLVM22_RELEASE_API)
+endfunction()
+if(LLVM_VERSION_MAJOR EQUAL 22)
+  enzyme_check_llvm22_release_api()
+  if(NOT ENZYME_LLVM22_RELEASE_API)
+    message("LLVM 22 snapshot without the API of the LLVM 22 release: ENZYME_LLVM22_PRERELEASE")
+    add_definitions(-DENZYME_LLVM22_PRERELEASE=1)
   endif()
-  set(ROCM_PATCH 0)
-  if(CMAKE_MATCH_4)
-    set(ROCM_PATCH ${CMAKE_MATCH_4})
-  endif()
-  math(EXPR ROCM "${CMAKE_MATCH_1} * 10000 + ${CMAKE_MATCH_2} * 100 + ${ROCM_PATCH}")
-  message("building for ROCm ${ENZYME_ROCM_VERSION} (ROCM=${ROCM})")
-  add_definitions(-DROCM=${ROCM})
 endif()
 
 # Offer the user the choice of overriding the installation directories

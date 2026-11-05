@@ -3,7 +3,7 @@ include:
 
 # Builds the Clang plugin of Enzyme against the LLVM of the uenv's ROCm (the LLVM whose Clang compiles HIP code), then compiles
 # ci/hip_autodiff.hip with it and runs it on a MI300A GPU: HIP kernels that differentiate a device function in reverse and forward
-# mode, checked against the analytic derivative. ROCm's LLVM is a snapshot of an LLVM release in development: ENZYME_ROCM_VERSION.
+# mode, checked against the analytic derivative. ROCm's LLVM is a snapshot of an LLVM release in development (detected by CMake).
 mi300 - HIP:
   extends: .baremetal-runner-beverin-mi300
   variables:
@@ -17,7 +17,7 @@ mi300 - HIP:
     - |
       uenv run $UENV --view=default -- bash -euxc '
         LLVM_MAJOR=$(llvm-config --version | cut -d. -f1)
-        cmake -S enzyme -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENZYME_ROCM_VERSION=$(cat $ROCM_PATH/.info/version) \
+        cmake -S enzyme -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
           -DLLVM_DIR=$ROCM_PATH/lib/cmake/llvm -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
         ninja -C build ClangEnzyme-$LLVM_MAJOR
         clang++ -x hip --offload-arch=$OFFLOAD_ARCH --rocm-path=$ROCM_PATH -O2 -fplugin=build/Enzyme/ClangEnzyme-$LLVM_MAJOR.so \
