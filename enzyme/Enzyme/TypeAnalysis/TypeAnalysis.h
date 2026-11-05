@@ -394,6 +394,7 @@ public:
   void visitInsertValueInst(llvm::InsertValueInst &I);
 
   void visitAtomicRMWInst(llvm::AtomicRMWInst &I);
+  void visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I);
 
   void visitBinaryOperator(llvm::BinaryOperator &I);
   void visitBinaryOperation(const llvm::DataLayout &DL, llvm::Type *T,
