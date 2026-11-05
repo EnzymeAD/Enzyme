@@ -3188,6 +3188,56 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
   }
 }
 
+void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
+  const DataLayout &DL =
+      I.getParent()->getParent()->getParent()->getDataLayout();
+  Value *PtrOp = I.getPointerOperand();
+  Value *CmpOp = I.getCompareOperand();
+  Value *NewValOp = I.getNewValOperand();
+  auto ValSize = (DL.getTypeSizeInBits(CmpOp->getType()) + 7) / 8;
+  auto *ST = cast<StructType>(I.getType());
+  const StructLayout *SL = DL.getStructLayout(ST);
+  int FlagOff = (int)SL->getElementOffset(1);
+
+  if (direction & UP) {
+    TypeTree PtrTree = getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything();
+    TypeTree ValTT = getAnalysis(CmpOp).PurgeAnything();
+    bool Legal = true;
+    ValTT.checkedOrIn(getAnalysis(NewValOp).PurgeAnything(),
+                      /*PointerIntSame*/ false, Legal);
+    if (Legal)
+      ValTT.checkedOrIn(PtrTree, /*PointerIntSame*/ false, Legal);
+    if (Legal)
+      ValTT.checkedOrIn(
+          getAnalysis(&I).ShiftIndices(DL, 0, ValSize, 0).PurgeAnything(),
+          /*PointerIntSame*/ false, Legal);
+    if (CmpOp->getType()->isIntOrIntVectorTy() &&
+        ValTT[{-1}] == BaseType::Anything &&
+        (mustRemainInteger(CmpOp) || mustRemainInteger(NewValOp))) {
+      ValTT = TypeTree(BaseType::Integer).Only(-1, &I);
+    }
+    TypeTree PtrTT = ValTT.ShiftIndices(DL, 0, ValSize, 0).Only(-1, &I);
+    PtrTT.insert({-1}, BaseType::Pointer);
+    updateAnalysis(PtrOp, PtrTT, &I);
+    updateAnalysis(CmpOp, ValTT, &I);
+    updateAnalysis(NewValOp, ValTT, &I);
+  } else {
+    updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &I), &I);
+  }
+
+  if (direction & DOWN) {
+    TypeTree PtrTree = getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything();
+    if (CmpOp->getType()->isIntOrIntVectorTy() &&
+        PtrTree[{-1}] == BaseType::Anything &&
+        (mustRemainInteger(CmpOp) || mustRemainInteger(NewValOp))) {
+      PtrTree = TypeTree(BaseType::Integer).Only(-1, &I);
+    }
+    TypeTree RetTT = PtrTree.ShiftIndices(DL, 0, ValSize, 0);
+    RetTT.insert({FlagOff}, BaseType::Integer);
+    updateAnalysis(&I, RetTT, &I);
+  }
+}
+
 void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                                         llvm::Instruction::BinaryOps Opcode,
                                         Value *Args[2], TypeTree &Ret,

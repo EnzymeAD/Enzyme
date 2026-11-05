@@ -2797,6 +2797,16 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     }
   }
 
+  if (auto *CxInst = dyn_cast<AtomicCmpXchgInst>(inst)) {
+    if (isConstantValue(TR, CxInst->getPointerOperand())) {
+      if (EnzymePrintActivity)
+        llvm::errs()
+            << " constant instruction as cmpxchg pointer operand is inactive "
+            << *inst << '\n';
+      return true;
+    }
+  }
+
   if (!considerValue) {
     if (auto IEI = dyn_cast<InsertElementInst>(inst)) {
       if ((!TR.anyFloat(IEI->getOperand(0)) ||
