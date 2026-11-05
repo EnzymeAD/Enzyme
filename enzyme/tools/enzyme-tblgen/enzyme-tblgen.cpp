@@ -1791,15 +1791,15 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
             os << "  return failure();\n";
             os << "  }\n";
           } else {
-            os << " if (!gutils->isConstantValue(" << origName << ".getOperand("
-               << argIdx << "))) {\n";
-            os << "   std::string s;\n";
-            os << "   llvm::raw_string_ostream ss(s);\n";
-            os << "   ss << \"Unimplemented derivative for argument " << argIdx
-               << " in reverse mode for \" << " << origName << ";\n";
-            os << "   EmitNoDerivativeError(ss.str(), " << origName
-               << ", gutils, Builder2);\n";
-            os << " }\n";
+            os << formatv(
+                " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                "   std::string s;\n"
+                "   llvm::raw_string_ostream ss(s);\n"
+                "   ss << \"Unimplemented derivative for argument {1} in "
+                "reverse mode for \" << {0};\n"
+                "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                " }\n",
+                origName, argIdx);
           }
         }
         continue;
@@ -2224,24 +2224,27 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              Def->isSubClassOf("InactiveArgSpec")) &&
             Def->getValueAsBit("asserting")) {
           if (intrinsic == MLIRDerivatives) {
-            os << "        if (!gutils->isConstantValue(" << origName
-               << "->getOperand(" << argIdx << "))) {\n";
-            os << "          " << origName
-               << "->emitError() << \"Unimplemented derivative for argument "
-               << argIdx << " in forward mode for op \" << *" << origName
-               << " << \"\\n\";\n";
-            os << "          return failure();\n";
-            os << "        }\n";
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}->getOperand({1}))) "
+                "{{\n"
+                "          {0}->emitError() << \"Unimplemented derivative for "
+                "argument {1} in forward mode for op \" << *{0} << \"\\n\";\n"
+                "          return failure();\n"
+                "        }\n",
+                origName, argIdx);
           } else {
-            os << "        if (!gutils->isConstantValue(" << origName
-               << ".getOperand(" << argIdx << "))) {\n";
-            os << "          std::string s;\n";
-            os << "          llvm::raw_string_ostream ss(s);\n";
-            os << "          ss << \"Unimplemented derivative for argument "
-               << argIdx << " in forward mode for \" << " << origName << ";\n";
-            os << "          EmitNoDerivativeError(ss.str(), " << origName
-               << ", gutils, Builder2);\n";
-            os << "        }\n";
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}.getOperand({1}))) "
+                "{{\n"
+                "          std::string s;\n"
+                "          llvm::raw_string_ostream ss(s);\n"
+                "          ss << \"Unimplemented derivative for argument {1} "
+                "in "
+                "forward mode for \" << {0};\n"
+                "          EmitNoDerivativeError(ss.str(), {0}, gutils, "
+                "Builder2);\n"
+                "        }\n",
+                origName, argIdx);
           }
         }
       }
@@ -2460,16 +2463,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
             if (Def->getValueAsBit("asserting")) {
-              os << " if (!gutils->isConstantValue(" << origName
-                 << ".getOperand(" << argIdx << "))) {\n";
-              os << "   std::string s;\n";
-              os << "   llvm::raw_string_ostream ss(s);\n";
-              os << "   ss << \"Unimplemented derivative for argument "
-                 << argIdx << " in forward mode for \" << " << origName
-                 << ";\n";
-              os << "   EmitNoDerivativeError(ss.str(), " << origName
-                 << ", gutils, Builder2);\n";
-              os << " }\n";
+              os << formatv(
+                  " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                  "   std::string s;\n"
+                  "   llvm::raw_string_ostream ss(s);\n"
+                  "   ss << \"Unimplemented derivative for argument {1} in "
+                  "forward mode for \" << {0};\n"
+                  "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                  " }\n",
+                  origName, argIdx);
             }
             continue;
           }
