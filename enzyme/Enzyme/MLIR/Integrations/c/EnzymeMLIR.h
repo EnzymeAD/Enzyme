@@ -179,18 +179,23 @@ DEFINE_C_API_STRUCT(EnzymeGradientUtils, void);
 /// result, and may replace the primal results with
 /// enzymeGradientUtilsReplaceOrigOpWith.
 typedef MlirLogicalResult (*EnzymeForwardCallHandler)(
-    MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils,
-    void *userData);
+    MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils);
 
 /// Registers `handler` under `key`. A call's key is the `enzyme_math`
 /// attribute of the call, else of its callee, else the callee's name. Not
-/// synchronized. `userData` is passed to the handler.
-MLIR_CAPI_EXPORTED void enzymeRegisterForwardCallHandler(
-    MlirStringRef key, EnzymeForwardCallHandler handler, void *userData);
+/// synchronized.
+MLIR_CAPI_EXPORTED void
+enzymeRegisterForwardCallHandler(MlirStringRef key,
+                                 EnzymeForwardCallHandler handler);
 
 /// Returns the number of tangents computed at once.
 MLIR_CAPI_EXPORTED int64_t
 enzymeGradientUtilsGetWidth(EnzymeGradientUtils gutils);
+
+/// Returns the `externalContext` of the `mlir::enzyme::MEnzymeLogic` that
+/// `gutils` belongs to.
+MLIR_CAPI_EXPORTED void *
+enzymeGradientUtilsGetExternalContext(EnzymeGradientUtils gutils);
 
 /// Returns whether `value` of the original function is inactive.
 MLIR_CAPI_EXPORTED bool

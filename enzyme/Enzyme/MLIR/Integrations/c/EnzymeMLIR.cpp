@@ -261,15 +261,14 @@ MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
 DEFINE_C_API_PTR_METHODS(EnzymeGradientUtils, mlir::enzyme::MGradientUtils)
 
 void enzymeRegisterForwardCallHandler(MlirStringRef key,
-                                      EnzymeForwardCallHandler handler,
-                                      void *userData) {
+                                      EnzymeForwardCallHandler handler) {
   mlir::enzyme::forwardCallHandlers[unwrap(key)] =
-      [handler, userData](mlir::Operation *orig, mlir::OpBuilder &builder,
-                          mlir::enzyme::MGradientUtils *gutils) {
+      [handler](mlir::Operation *orig, mlir::OpBuilder &builder,
+                mlir::enzyme::MGradientUtils *gutils) {
         mlir::IRRewriter rewriter(builder);
         MlirLogicalResult result =
             handler(wrap(static_cast<mlir::RewriterBase *>(&rewriter)),
-                    wrap(orig), wrap(gutils), userData);
+                    wrap(orig), wrap(gutils));
         builder.restoreInsertionPoint(rewriter.saveInsertionPoint());
         return unwrap(result);
       };
@@ -277,6 +276,10 @@ void enzymeRegisterForwardCallHandler(MlirStringRef key,
 
 int64_t enzymeGradientUtilsGetWidth(EnzymeGradientUtils gutils) {
   return unwrap(gutils)->width;
+}
+
+void *enzymeGradientUtilsGetExternalContext(EnzymeGradientUtils gutils) {
+  return unwrap(gutils)->Logic.externalContext;
 }
 
 bool enzymeGradientUtilsIsConstantValue(EnzymeGradientUtils gutils,
