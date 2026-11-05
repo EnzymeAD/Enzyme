@@ -281,7 +281,7 @@ public:
   /// This will only be set when direction != Both, erring otherwise
   bool Invalid;
 
-  bool PHIRecur;
+  llvm::PHINode *PHIRecur;
 
   // propagate from instruction to operand
   static constexpr uint8_t UP = 1;
@@ -309,7 +309,7 @@ public:
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
                const TypeAnalyzer &Prev, uint8_t direction = BOTH,
-               bool PHIRecur = false);
+               llvm::PHINode *PHIRecur = nullptr);
 
   /// Get the current results for a given value
   const TypeTree &getAnalysis(llvm::Value *Val);
@@ -332,6 +332,12 @@ public:
   /// Hypothesize that undefined phi's are integers and try to prove
   /// that they are really integral
   void runPHIHypotheses();
+
+  /// During a PHI hypothesis run (\c PHIRecur), check whether \p Ptr,
+  /// dereferenced (or freed) by \p I, has \c PHIRecur as its base pointer and a
+  /// concrete non-pointer type. If so, set \c Invalid and return false to skip
+  /// the operation; otherwise return true.
+  bool checkHypothesisPointerOperand(llvm::Value *Ptr, llvm::Instruction *I);
 
   void visitValue(llvm::Value &val);
 

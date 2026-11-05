@@ -266,7 +266,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                           : nullptr),
       notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
-      PHIRecur(false),
+      PHIRecur(nullptr),
       TLI(TA.Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
       DT(TA.Logic.PPC.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
       PDT(TA.Logic.PPC.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
@@ -298,7 +298,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
 TypeAnalyzer::TypeAnalyzer(
     const FnTypeInfo &fn, TypeAnalysis &TA,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
-    const TypeAnalyzer &Prev, uint8_t direction, bool PHIRecur)
+    const TypeAnalyzer &Prev, uint8_t direction, llvm::PHINode *PHIRecur)
     : MST(Prev.MST),
       notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
@@ -1832,8 +1832,7 @@ void TypeAnalyzer::runPHIHypotheses() {
             // the incoming operands are integral
 
             TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural,
-                                     notForAnalysis, *this, DOWN,
-                                     /*PHIRecur*/ true);
+                                     notForAnalysis, *this, DOWN, phi);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] =
@@ -1865,8 +1864,7 @@ void TypeAnalyzer::runPHIHypotheses() {
             // Assume that this is an integer, does that mean we can prove that
             // the incoming operands are integral
             TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural,
-                                     notForAnalysis, *this, DOWN,
-                                     /*PHIRecur*/ true);
+                                     notForAnalysis, *this, DOWN, phi);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] =
@@ -2058,7 +2056,40 @@ void TypeAnalyzer::visitAllocaInst(AllocaInst &I) {
   updateAnalysis(&I, ptr.Only(-1, &I), &I);
 }
 
+bool TypeAnalyzer::checkHypothesisPointerOperand(Value *Ptr, Instruction *I) {
+  if (!PHIRecur)
+    return true;
+
+  TypeTree PtrTree = getAnalysis(Ptr);
+  auto CT = PtrTree.Inner0();
+  if (!CT.isKnown() || CT == BaseType::Pointer || CT == BaseType::Anything)
+    return true;
+
+  if (getBaseObject(Ptr) != PHIRecur)
+    return true;
+
+  // During runPHIHypotheses, the address operand of a memory operation rooted
+  // at PHIRecur became a concrete non-pointer (e.g. speculating that
+  //   %p = phi i64 [ %ptrtoint, %bb0 ], [ 8, %bb1 ]  ; Rust NonNull::dangling
+  // is an Integer and forwarding Integer through inttoptr/gep to a
+  // dereference). Memory operations only constrain their address in the UP
+  // direction, so the DOWN-only hypothesis analyzer refutes the guess here.
+  if (EnzymePrintType) {
+    llvm::errs() << " illegal non-pointer address " << PtrTree.str()
+                 << " in PHI hypothesis ";
+    PHIRecur->print(llvm::errs(), *MST);
+    llvm::errs() << " for ";
+    I->print(llvm::errs(), *MST);
+    llvm::errs() << "\n";
+  }
+  Invalid = true;
+  return false;
+}
+
 void TypeAnalyzer::visitLoadInst(LoadInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
   auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
 
@@ -2089,6 +2120,9 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
         return;
       }
     }
+
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
 
   // Only propagate mappings in range that aren't "Anything" into the pointer
   auto ptr = TypeTree(BaseType::Pointer);
@@ -3068,6 +3102,9 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
 }
 
 void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
   const DataLayout &Layout =
       I.getParent()->getParent()->getParent()->getDataLayout();
   Value *PointerOperand = I.getPointerOperand();
@@ -3205,6 +3242,9 @@ void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
 }
 
 void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
   Value *Args[2] = {nullptr, I.getOperand(1)};
   TypeTree Ret = getAnalysis(&I);
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
@@ -3818,6 +3858,10 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   if (MTI.getType()->isIntegerTy()) {
     updateAnalysis(&MTI, TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
   }
+
+  if (!checkHypothesisPointerOperand(MTI.getArgOperand(0), &MTI) ||
+      !checkHypothesisPointerOperand(MTI.getArgOperand(1), &MTI))
+    return;
 
   if (!(direction & UP))
     return;
@@ -4561,6 +4605,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       updateAnalysis(&I, overall, &I);
     return;
   }
+  case Intrinsic::memset:
+    checkHypothesisPointerOperand(I.getOperand(0), &I);
+    return;
+  case Intrinsic::masked_load:
+    checkHypothesisPointerOperand(I.getOperand(0), &I);
+    return;
+  case Intrinsic::masked_store:
+    checkHypothesisPointerOperand(I.getOperand(1), &I);
+    return;
   default:
     return;
   }
@@ -5859,6 +5912,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (startsWith(funcName, "__atomic_load_") && call.arg_size() == 2 &&
         call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
       auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
       auto LoadSize = (DL.getTypeSizeInBits(call.getType()) + 7) / 8;
       updateAnalysis(call.getArgOperand(1),
@@ -5880,6 +5935,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (startsWith(funcName, "__atomic_store_") && call.arg_size() == 3 &&
         call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
       auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
       Value *PtrOp = call.getArgOperand(0);
       Value *ValOp = call.getArgOperand(1);
@@ -5906,6 +5963,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (startsWith(funcName, "__atomic_exchange_") && call.arg_size() == 3 &&
         call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
       auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
       Value *PtrOp = call.getArgOperand(0);
       Value *ValOp = call.getArgOperand(1);
@@ -5948,6 +6007,9 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         call.arg_size() >= 5 &&
         call.getArgOperand(0)->getType()->isPointerTy() &&
         call.getArgOperand(1)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call) ||
+          !checkHypothesisPointerOperand(call.getArgOperand(1), &call))
+        return;
       auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
       Value *PtrOp = call.getArgOperand(0);
       Value *ExpOp = call.getArgOperand(1);
@@ -5998,6 +6060,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       unsigned ptrCount =
           (funcName == "__atomic_load" || funcName == "__atomic_store") ? 2 : 3;
+      for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+        if (call.getArgOperand(i)->getType()->isPointerTy() &&
+            !checkHypothesisPointerOperand(call.getArgOperand(i), &call))
+          return;
+      }
       for (unsigned i = 1 + ptrCount; i < call.arg_size(); ++i) {
         if (call.getArgOperand(i)->getType()->isIntegerTy())
           updateAnalysis(call.getArgOperand(i),
@@ -6251,6 +6318,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         // The allocation freed by the CUDA driver API is a CUdeviceptr, an
         // integer at the LLVM level, but still a pointer.
         if (Idx == 0 && cudaFree) {
+          if (!checkHypothesisPointerOperand(call.getOperand(Idx), &call))
+            return;
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Pointer).Only(-1, &call), &call);
           Idx++;
@@ -6261,6 +6330,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);
         }
         if (Arg.getType()->isPointerTy()) {
+          // Without strict aliasing the update below may be skipped (the
+          // free need not post-dominate the pointer), so check explicitly
+          // during a PHI hypothesis whether the freed value is a non-pointer.
+          if (!checkHypothesisPointerOperand(call.getOperand(Idx), &call))
+            return;
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Pointer).Only(-1, &call), &call);
         }
