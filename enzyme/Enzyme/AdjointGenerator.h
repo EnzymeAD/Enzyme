@@ -5700,6 +5700,7 @@ public:
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
     std::vector<bool> nowrite_shadows;
+    SmallBitVector ThreadLocalShadows;
 
     for (unsigned i = 0; i < call.arg_size(); ++i) {
 
@@ -5752,6 +5753,7 @@ public:
       ValueType revType = ValueType::Primal;
 
       nowrite_shadows.push_back(false);
+      ThreadLocalShadows.push_back(false);
 
       // Keep the existing passed value if coming from outside.
       if (readNoneNoCapture ||
@@ -5860,6 +5862,17 @@ public:
                                                    : ValueType::Both;
           }
           args.push_back(lookup(darg, Builder2));
+          if (gutils->AtomicAdd) {
+            Triple TargetTriple(
+                gutils->newFunc->getParent()->getTargetTriple());
+            if (isGPUThreadLocalPointer(call.getArgOperand(i), TargetTriple,
+                                        /*AllowByVal=*/false, gutils->oldFunc,
+                                        &gutils->ThreadLocalShadows) ||
+                allShadowLanesThreadLocal(darg, gutils->getWidth(),
+                                          TargetTriple)) {
+              ThreadLocalShadows.set(ThreadLocalShadows.size() - 1);
+            }
+          }
         }
 
         auto baseOp = getBaseObject(call.getArgOperand(i));
@@ -6456,6 +6469,13 @@ public:
         }
       }
 
+      SmallBitVector CalleeThreadLocalShadows;
+      if (ThreadLocalShadows.any()) {
+        CalleeThreadLocalShadows = ThreadLocalShadows;
+        CalleeThreadLocalShadows.resize(cast<Function>(called)->arg_size(),
+                                        false);
+      }
+
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           RequestContext(&call, &Builder2),
           (ReverseCacheKey){
@@ -6474,7 +6494,8 @@ public:
               .forceAnonymousTape = false,
               .typeInfo = nextTypeInfo,
               .runtimeActivity = gutils->runtimeActivity,
-              .strongZero = gutils->strongZero},
+              .strongZero = gutils->strongZero,
+              .ThreadLocalShadows = CalleeThreadLocalShadows},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
