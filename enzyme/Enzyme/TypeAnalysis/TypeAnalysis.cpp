@@ -3229,6 +3229,20 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FSub, Args, Ret, LHS,
                          RHS, &I);
     break;
+  case AtomicRMWInst::FMax:
+  case AtomicRMWInst::FMin: {
+    // fmax/fmin only operate on floating-point values, so the memory
+    // operand, the value operand, and the result all carry the scalar
+    // floating-point type.
+    Type *ScalarTy = I.getType()->getScalarType();
+    if (ScalarTy->isFloatingPointTy()) {
+      TypeTree FltTT = TypeTree(ConcreteType(ScalarTy)).Only(-1, &I);
+      LHS = FltTT;
+      RHS = FltTT;
+      Ret = FltTT;
+    }
+    break;
+  }
   case AtomicRMWInst::Max:
   case AtomicRMWInst::Min:
   case AtomicRMWInst::UMax:
