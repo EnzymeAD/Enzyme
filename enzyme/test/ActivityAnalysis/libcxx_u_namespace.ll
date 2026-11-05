@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=foo -S | FileCheck %s
+; RUN: %opt < %s %OPnewLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=foo -S | FileCheck %s
 
 @_ZNSt3__u4cerrE = external global [16 x i8], align 8
 
