@@ -1450,6 +1450,27 @@ public:
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
 
     std::vector<bool> nowrite_shadows(fn->arg_size(), false);
+    SmallBitVector ThreadLocalShadows;
+    if (AtomicAdd && !sizeOnly) {
+      size_t CallArgIndex = 0;
+      for (size_t ParamIndex = 0;
+           ParamIndex < constants.size() && CallArgIndex < args.size();
+           ++ParamIndex) {
+        ++CallArgIndex;
+        if (constants[ParamIndex] != DIFFE_TYPE::DUP_ARG &&
+            constants[ParamIndex] != DIFFE_TYPE::DUP_NONEED)
+          continue;
+        if (CallArgIndex >= args.size())
+          break;
+        Value *ShadowArg = args[CallArgIndex++];
+        if (ParamIndex < fn->arg_size() &&
+            allShadowLanesThreadLocal(ShadowArg, width, TT)) {
+          if (ThreadLocalShadows.empty())
+            ThreadLocalShadows.resize(fn->arg_size(), false);
+          ThreadLocalShadows[ParamIndex] = true;
+        }
+      }
+    }
 
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
@@ -1543,7 +1564,8 @@ public:
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
                             .runtimeActivity = options.runtimeActivity,
-                            .strongZero = options.strongZero},
+                            .strongZero = options.strongZero,
+                            .ThreadLocalShadows = ThreadLocalShadows},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1614,7 +1636,8 @@ public:
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
                               .runtimeActivity = options.runtimeActivity,
-                              .strongZero = options.strongZero},
+                              .strongZero = options.strongZero,
+                              .ThreadLocalShadows = ThreadLocalShadows},
             TA, aug);
     }
     }

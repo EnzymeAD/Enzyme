@@ -1282,26 +1282,108 @@ IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
     return IntegerType::get(ctx, 32);
 }
 
+/// Return whether \p PointerValue has a GPU address space private to a single
+/// thread.
+static bool hasGPUThreadLocalAddrSpace(const Value *PointerValue,
+                                       const Triple &TargetTriple) {
+  auto *PtrTy = dyn_cast<PointerType>(PointerValue->getType());
+  if (!PtrTy)
+    return false;
+  unsigned AddrSpace = PtrTy->getAddressSpace();
+  auto Arch = TargetTriple.getArch();
+  if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
+    return AddrSpace == 5 || AddrSpace == 101;
+  if (Arch == Triple::amd_target)
+    return AddrSpace == 5;
+  return false;
+}
+
+bool isGPUThreadLocalPointer(const Value *Pointer, const Triple &TargetTriple,
+                             bool AllowByVal, const Function *ArgumentParent,
+                             const SmallBitVector *ThreadLocalShadows) {
+  if (!Pointer || !isGPUArch(TargetTriple) ||
+      !Pointer->getType()->isPointerTy())
+    return false;
+
+  SmallVector<const Value *, 4> Worklist = {Pointer};
+  SmallPtrSet<const Value *, 8> Visited;
+  bool SawLeaf = false;
+
+  while (!Worklist.empty()) {
+    const Value *Current = Worklist.pop_back_val();
+    if (!Visited.insert(Current).second)
+      continue;
+    if (hasGPUThreadLocalAddrSpace(Current, TargetTriple)) {
+      SawLeaf = true;
+      continue;
+    }
+
+    const Value *Base = getBaseObject(const_cast<Value *>(Current));
+    if (Base != Current && !Visited.insert(Base).second)
+      continue;
+    if (hasGPUThreadLocalAddrSpace(Base, TargetTriple) ||
+        isa<AllocaInst>(Base)) {
+      SawLeaf = true;
+      continue;
+    }
+    if (const auto *Arg = dyn_cast<Argument>(Base)) {
+      if (AllowByVal && Arg->hasByValAttr()) {
+        SawLeaf = true;
+        continue;
+      }
+      if (ThreadLocalShadows && Arg->getParent() == ArgumentParent &&
+          Arg->getArgNo() < ThreadLocalShadows->size() &&
+          (*ThreadLocalShadows)[Arg->getArgNo()]) {
+        SawLeaf = true;
+        continue;
+      }
+      return false;
+    }
+    if (const auto *Phi = dyn_cast<PHINode>(Base)) {
+      if (Phi->getNumIncomingValues() == 0)
+        return false;
+      for (const Value *Incoming : Phi->incoming_values())
+        Worklist.push_back(Incoming);
+      continue;
+    }
+    if (const auto *Select = dyn_cast<SelectInst>(Base)) {
+      Worklist.push_back(Select->getTrueValue());
+      Worklist.push_back(Select->getFalseValue());
+      continue;
+    }
+    return false;
+  }
+
+  return SawLeaf;
+}
+
+bool allShadowLanesThreadLocal(Value *ShadowValue, unsigned Width,
+                               const Triple &TargetTriple) {
+  if (!ShadowValue || !isGPUArch(TargetTriple))
+    return false;
+  if (Width == 1)
+    return isGPUThreadLocalPointer(ShadowValue, TargetTriple);
+
+  IRBuilder<> UnusedBuilder(ShadowValue->getContext());
+  for (unsigned Lane = 0; Lane < Width; ++Lane) {
+    Value *LaneValue = GradientUtils::extractMeta(
+        UnusedBuilder, ShadowValue, {Lane}, "", /*fallback=*/false);
+    if (!isGPUThreadLocalPointer(LaneValue, TargetTriple))
+      return false;
+  }
+  return true;
+}
+
 bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
   if (!AtomicAdd)
     return false;
   if (!origptr || !newFunc)
     return AtomicAdd;
 
-  auto TmpOrig = getBaseObject(origptr);
-
-  // atomics
-  bool Atomic = AtomicAdd;
-  auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-
-  // No need to do atomic on local memory for CUDA since it can't be raced
-  // upon
-  if (isa<AllocaInst>(TmpOrig) &&
-      (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-       Arch == Triple::amd_target)) {
-    Atomic = false;
-  }
-  return Atomic;
+  Triple TargetTriple(newFunc->getParent()->getTargetTriple());
+  if (isGPUThreadLocalPointer(origptr, TargetTriple, /*AllowByVal=*/false))
+    return false;
+  return AtomicAdd;
 }
 
 Function *getOrInsertAtomicFloatMinMax(Module &M, Type *T,
