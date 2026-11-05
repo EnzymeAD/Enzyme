@@ -477,6 +477,20 @@ public:
     return width;
   }
 
+  /// Return whether a caller argument of type `ArgTy` can be coerced by
+  /// `handleArguments` to a callee parameter of type `ParamTy`.
+  static bool canCoerceArgToParam(Type *ArgTy, Type *ParamTy) {
+    if (ArgTy == ParamTy)
+      return true;
+    if (isa<PointerType>(ArgTy) && isa<PointerType>(ParamTy))
+      return true;
+    if (ArgTy->canLosslesslyBitCastTo(ParamTy))
+      return true;
+    if (ArgTy->isIntegerTy() && ParamTy->isIntegerTy(1))
+      return true;
+    return false;
+  }
+
   struct Options {
     Value *differet;
     Value *tape;
@@ -1006,15 +1020,114 @@ public:
 
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        if (interleaved == -1)
-          ++i;
-
-        Value *res = nullptr;
 #if LLVM_VERSION_MAJOR >= 16
         bool batch = batchOffset.has_value();
 #else
         bool batch = batchOffset.hasValue();
 #endif
+        // Handle non-interleaved calls where a multi-register coerced struct
+        // (`K >= 2` parameters) is passed as `(enzyme_dup, v.0..v.{K-1},
+        // dv.0..dv.{K-1})`.
+        if (interleaved == -1 && !batch && !CI->isByValArgument(i) &&
+            !fn->hasParamAttribute(truei, Attribute::ByVal) &&
+            (size_t)i + 1 < num_args &&
+            !isa<MetadataAsValue>(CI->getArgOperand(i + 1)) &&
+            !getMetadataName(CI->getArgOperand(i + 1)) &&
+            !CI->isByValArgument(i + 1) &&
+            !canCoerceArgToParam(CI->getArgOperand(i + 1)->getType(), PTy)) {
+          size_t MaxPieces = std::min<size_t>(FT->getNumParams() - truei, 8);
+          size_t CoercedK = 0;
+          for (size_t CandK = 2; CandK <= MaxPieces; ++CandK) {
+            if ((size_t)i + CandK * (1 + width) > num_args)
+              break;
+            bool TupleValid = true;
+            for (size_t Field = 0; Field < CandK && TupleValid; ++Field) {
+              Type *FieldTy = FT->getParamType(truei + Field);
+              Value *PrimalField = CI->getArgOperand(i + Field);
+              if (isa<MetadataAsValue>(PrimalField) ||
+                  getMetadataName(PrimalField) ||
+                  CI->isByValArgument(i + Field) ||
+                  !canCoerceArgToParam(PrimalField->getType(), FieldTy))
+                TupleValid = false;
+              for (unsigned Lane = 0; Lane < width && TupleValid; ++Lane) {
+                size_t ShIdx =
+                    static_cast<size_t>(i) + CandK * (1 + Lane) + Field;
+                Value *ShadowField = CI->getArgOperand(ShIdx);
+                if (isa<MetadataAsValue>(ShadowField) ||
+                    getMetadataName(ShadowField) ||
+                    CI->isByValArgument(ShIdx) ||
+                    !canCoerceArgToParam(ShadowField->getType(), FieldTy))
+                  TupleValid = false;
+              }
+            }
+            if (TupleValid) {
+              CoercedK = CandK;
+              break;
+            }
+          }
+          if (CoercedK >= 2) {
+            auto EmitCoercedShadowField = [&](size_t Field) -> Value * {
+              Type *FieldTy = FT->getParamType(truei + Field);
+              Value *PackedShadow = nullptr;
+              for (unsigned Lane = 0; Lane < width; ++Lane) {
+                size_t ShIdx =
+                    static_cast<size_t>(i) + CoercedK * (1 + Lane) + Field;
+                Value *Elem = CI->getArgOperand(ShIdx);
+                if (FieldTy != Elem->getType()) {
+                  Elem = castToDiffeFunctionArgType(Builder, CI, FT, FieldTy,
+                                                    ShIdx, mode, Elem,
+                                                    truei + Field);
+                  if (!Elem)
+                    return nullptr;
+                }
+                if (width > 1) {
+                  Value *BaseVec =
+                      PackedShadow
+                          ? PackedShadow
+                          : UndefValue::get(ArrayType::get(FieldTy, width));
+                  PackedShadow =
+                      Builder.CreateInsertValue(BaseVec, Elem, {Lane});
+                } else {
+                  PackedShadow = Elem;
+                }
+              }
+              return PackedShadow;
+            };
+            Value *Shadow0 = EmitCoercedShadowField(0);
+            if (!Shadow0)
+              return {};
+            args.push_back(Shadow0);
+            for (size_t Field = 1; Field < CoercedK; ++Field) {
+              Type *FieldTy = FT->getParamType(truei + Field);
+              overwritten_args[truei + Field] = overwritten;
+              constants.push_back(ty);
+              Value *PrimalVal = CI->getArgOperand(i + Field);
+              if (FieldTy != PrimalVal->getType()) {
+                if (PrimalVal->getType()->canLosslesslyBitCastTo(FieldTy))
+                  PrimalVal = Builder.CreateBitCast(PrimalVal, FieldTy);
+                else if (isa<PointerType>(PrimalVal->getType()) &&
+                         isa<PointerType>(FieldTy))
+                  PrimalVal = Builder.CreateAddrSpaceCast(PrimalVal, FieldTy);
+                else if (PrimalVal->getType()->isIntegerTy() &&
+                         FieldTy->isIntegerTy(1))
+                  PrimalVal = Builder.CreateTrunc(PrimalVal, FieldTy);
+              }
+              args.push_back(PrimalVal);
+              Value *ShadowField = EmitCoercedShadowField(Field);
+              if (!ShadowField)
+                return {};
+              args.push_back(ShadowField);
+            }
+            i += static_cast<ssize_t>(CoercedK * (1 + width)) - 1;
+            truei += CoercedK;
+            continue;
+          }
+        }
+
+        if (interleaved == -1)
+          ++i;
+
+        Value *res = nullptr;
 
         for (unsigned v = 0; v < width; ++v) {
           if ((size_t)((interleaved == -1) ? i : interleaved) >= num_args) {
