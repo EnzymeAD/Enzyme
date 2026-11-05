@@ -6870,6 +6870,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   if (NoFreeDemangles.count(demangledName))
     return F;
 
+  // Julia's write barriers only queue the parent for the GC. Enzyme may declare
+  // them itself, without the nofree that Enzyme.jl adds to Julia's declarations.
+  if (isJuliaWriteBarrier(F->getName()))
+    return F;
+
   for (auto Name : NoFreeDemanglesStartsWith)
     if (startsWith(demangledName, Name))
       return F;
