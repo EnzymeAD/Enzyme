@@ -5739,6 +5739,189 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       visitMemTransferCommon(call);
       return;
     }
+    if (startsWith(funcName, "__atomic_load_") && call.arg_size() == 2 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      auto LoadSize = (DL.getTypeSizeInBits(call.getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        auto ptr = getAnalysis(&call).PurgeAnything().ShiftIndices(
+            DL, /*start*/ 0, LoadSize, /*addOffset*/ 0);
+        ptr |= TypeTree(BaseType::Pointer);
+        updateAnalysis(call.getArgOperand(0), ptr.Only(-1, &call), &call);
+      } else {
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      }
+      if (direction & DOWN)
+        updateAnalysis(&call,
+                       getAnalysis(call.getArgOperand(0)).Lookup(LoadSize, DL),
+                       &call);
+      return;
+    }
+    if (startsWith(funcName, "__atomic_store_") && call.arg_size() == 3 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ValOp = call.getArgOperand(1);
+      auto StoreSize = (DL.getTypeSizeInBits(ValOp->getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        auto ptr = TypeTree(BaseType::Pointer);
+        auto purged = getAnalysis(ValOp)
+                          .PurgeAnything()
+                          .ShiftIndices(DL, /*start*/ 0, StoreSize,
+                                        /*addOffset*/ 0)
+                          .ReplaceMinus();
+        ptr |= purged;
+        updateAnalysis(PtrOp, ptr.Only(-1, &call), &call);
+        updateAnalysis(ValOp,
+                       getAnalysis(PtrOp).PurgeAnything().Lookup(StoreSize, DL),
+                       &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      return;
+    }
+    if (startsWith(funcName, "__atomic_exchange_") && call.arg_size() == 3 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ValOp = call.getArgOperand(1);
+      auto ValSize = (DL.getTypeSizeInBits(ValOp->getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        TypeTree ValTT = getAnalysis(ValOp).PurgeAnything();
+        bool Legal = true;
+        ValTT.checkedOrIn(
+            getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything(),
+            /*PointerIntSame*/ false, Legal);
+        if (Legal)
+          ValTT.checkedOrIn(getAnalysis(&call).PurgeAnything(),
+                            /*PointerIntSame*/ false, Legal);
+        if (ValOp->getType()->isIntOrIntVectorTy() &&
+            (ValTT[{-1}] == BaseType::Anything ||
+             ValTT[{-1}] == BaseType::Unknown) &&
+            mustRemainInteger(ValOp)) {
+          ValTT = TypeTree(BaseType::Integer).Only(-1, &call);
+        }
+        TypeTree PtrTT = ValTT.ShiftIndices(DL, 0, ValSize, 0).Only(-1, &call);
+        PtrTT.insert({-1}, BaseType::Pointer);
+        updateAnalysis(PtrOp, PtrTT, &call);
+        updateAnalysis(ValOp, ValTT, &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      if (direction & DOWN) {
+        TypeTree RetTT = getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything();
+        bool Legal = true;
+        RetTT.checkedOrIn(getAnalysis(ValOp).PurgeAnything(),
+                          /*PointerIntSame*/ false, Legal);
+        updateAnalysis(&call, RetTT, &call);
+      }
+      return;
+    }
+    if (startsWith(funcName, "__atomic_compare_exchange_") &&
+        call.arg_size() >= 5 &&
+        call.getArgOperand(0)->getType()->isPointerTy() &&
+        call.getArgOperand(1)->getType()->isPointerTy()) {
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ExpOp = call.getArgOperand(1);
+      Value *DesOp = call.getArgOperand(2);
+      auto ValSize = (DL.getTypeSizeInBits(DesOp->getType()) + 7) / 8;
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      for (unsigned i = 3; i < call.arg_size(); ++i)
+        updateAnalysis(call.getArgOperand(i),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        TypeTree ValTT = getAnalysis(DesOp).PurgeAnything();
+        bool Legal = true;
+        ValTT.checkedOrIn(
+            getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything(),
+            /*PointerIntSame*/ false, Legal);
+        if (Legal)
+          ValTT.checkedOrIn(
+              getAnalysis(ExpOp).Lookup(ValSize, DL).PurgeAnything(),
+              /*PointerIntSame*/ false, Legal);
+        if (DesOp->getType()->isIntOrIntVectorTy() &&
+            (ValTT[{-1}] == BaseType::Anything ||
+             ValTT[{-1}] == BaseType::Unknown) &&
+            mustRemainInteger(DesOp)) {
+          ValTT = TypeTree(BaseType::Integer).Only(-1, &call);
+        }
+        TypeTree PtrTT = ValTT.ShiftIndices(DL, 0, ValSize, 0).Only(-1, &call);
+        PtrTT.insert({-1}, BaseType::Pointer);
+        updateAnalysis(PtrOp, PtrTT, &call);
+        updateAnalysis(ExpOp, PtrTT, &call);
+        updateAnalysis(DesOp, ValTT, &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+        updateAnalysis(ExpOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      return;
+    }
+    if ((funcName == "__atomic_load" || funcName == "__atomic_store" ||
+         funcName == "__atomic_exchange" ||
+         funcName == "__atomic_compare_exchange") &&
+        call.arg_size() >= 4 &&
+        call.getArgOperand(0)->getType()->isIntegerTy()) {
+      if (call.getType()->isIntegerTy())
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      unsigned ptrCount =
+          (funcName == "__atomic_load" || funcName == "__atomic_store") ? 2 : 3;
+      for (unsigned i = 1 + ptrCount; i < call.arg_size(); ++i) {
+        if (call.getArgOperand(i)->getType()->isIntegerTy())
+          updateAnalysis(call.getArgOperand(i),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      }
+      if (direction & UP) {
+        size_t sz = 1;
+        for (auto val : fntypeinfo.knownIntegralValues(call.getArgOperand(0),
+                                                       DT, intseen, SE)) {
+          if (val >= 0)
+            sz = max(sz, (size_t)val);
+        }
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree merged;
+        bool Legal = true;
+        for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+          Value *p = call.getArgOperand(i);
+          if (!p->getType()->isPointerTy())
+            continue;
+          TypeTree sub =
+              getAnalysis(p).PurgeAnything().Data0().ShiftIndices(dl, 0, sz, 0);
+          merged.checkedOrIn(sub, /*PointerIntSame*/ false, Legal);
+        }
+        if (Legal) {
+          merged.insert({}, BaseType::Pointer);
+          merged = merged.Only(-1, &call);
+          for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+            Value *p = call.getArgOperand(i);
+            if (p->getType()->isPointerTy())
+              updateAnalysis(p, merged, &call);
+          }
+        }
+      } else {
+        for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+          Value *p = call.getArgOperand(i);
+          if (p->getType()->isPointerTy())
+            updateAnalysis(p, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+        }
+      }
+      return;
+    }
     if (funcName == "posix_memalign") {
       TypeTree ptrptr;
       ptrptr.insert({-1}, BaseType::Pointer);
