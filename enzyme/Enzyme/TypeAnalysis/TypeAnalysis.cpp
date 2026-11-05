@@ -3677,6 +3677,29 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
   visitBinaryOperation(DL, I.getType(), I.getOpcode(), Args, Ret, LHS, RHS, &I);
 
+  // `add/sub nsw` of a sub-pointer-width integer by a non-zero constant is
+  // signed integer arithmetic: `nsw` is only emitted for C/C++ signed integer
+  // operations (float bit tricks use unsigned types, pointer arithmetic through
+  // integers is pointer-width).
+  if ((I.getOpcode() == BinaryOperator::Add ||
+       I.getOpcode() == BinaryOperator::Sub) &&
+      I.hasNoSignedWrap() && I.getType()->isIntegerTy() &&
+      I.getType()->getIntegerBitWidth() < DL.getPointerSizeInBits() &&
+      I.getType()->getIntegerBitWidth() >= 16) {
+    for (int i = 0; i < 2; ++i) {
+      auto *CI = dyn_cast<ConstantInt>(Args[i]);
+      if (!CI || CI->isZero())
+        continue;
+      TypeTree IntTT = TypeTree(BaseType::Integer).Only(-1, &I);
+      bool Legal = true;
+      Ret.checkedOrIn(IntTT, /*PointerIntSame*/ false, Legal);
+      if (Legal)
+        (i == 0 ? RHS : LHS)
+            .checkedOrIn(IntTT, /*PointerIntSame*/ false, Legal);
+      break;
+    }
+  }
+
   if (direction & UP) {
     updateAnalysis(I.getOperand(0), LHS, &I);
     updateAnalysis(I.getOperand(1), RHS, &I);
