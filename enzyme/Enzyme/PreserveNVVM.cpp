@@ -43,6 +43,8 @@
 
 #include "llvm/Pass.h"
 
+#include "KokkosUtils.h"
+
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -1190,6 +1192,10 @@ bool preserveNVVM(bool Begin, Module &M,
       if (Begin) {
         changed |= preserveLinkage(Begin, F);
       }
+    } else if (Begin && !F.empty() &&
+               enzyme_kokkos::isKokkosPreservedFunctionMangled(F.getName())) {
+      changed = true;
+      changed |= preserveLinkage(Begin, F);
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
       changed = true;

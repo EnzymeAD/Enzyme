@@ -30,8 +30,10 @@
 #include <set>
 
 #include "DifferentialUseAnalysis.h"
+#include "KokkosUtils.h"
 #include "Utils.h"
 
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -614,6 +616,17 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                        << " in reverse from gc " << *CI << "\n";
         return true;
       }
+
+    if (!shadow && enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if (enzyme_kokkos::isKokkosTeamBarrierCall(funcName, NormDem)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from Kokkos team barrier " << *CI
+                       << "\n";
+        return true;
+      }
+    }
 
     if (funcName == "julia.write_barrier" ||
         funcName == "julia.write_barrier_binding") {
