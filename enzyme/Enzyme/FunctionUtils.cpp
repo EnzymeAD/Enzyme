@@ -1774,11 +1774,7 @@ void SplitPHIs(llvm::Function &F) {
   }
 }
 
-// returns if newly changed, subject to the pending calls
-// Whether a parameter carries the function's result: an sret (also one still
-// marked for Enzyme.jl's calling-convention fixup), a Julia sret union, or the
-// roots of a returned value.
-static bool isReturnLikeParam(const Function &F, unsigned argno) {
+bool isReturnLikeParam(const Function &F, unsigned argno) {
   if (F.hasParamAttribute(argno, Attribute::StructRet))
     return true;
   for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
@@ -1787,6 +1783,24 @@ static bool isReturnLikeParam(const Function &F, unsigned argno) {
       return true;
   return false;
 }
+
+bool isReturnLikeParam(const CallBase &CB, unsigned argno) {
+  if (CB.paramHasAttr(argno, Attribute::StructRet))
+    return true;
+  for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
+                    "enzymejl_sret_union_bytes"})
+    if (CB.getAttributeAtIndex(argno + AttributeList::FirstArgIndex, name)
+            .isValid())
+      return true;
+  // Only trust the callee's attributes when the call matches its signature; a
+  // Julia call wrapping its arguments into an array does not.
+  if (auto F = getFunctionFromCall(&CB))
+    if (F->getCallingConv() == CB.getCallingConv() && argno < F->arg_size())
+      return isReturnLikeParam(*F, argno);
+  return false;
+}
+
+// returns if newly changed, subject to the pending calls
 
 // Whether a derivative of F comes from a custom rule rather than from F's
 // body: one registered by a frontend (Enzyme.jl marks the function

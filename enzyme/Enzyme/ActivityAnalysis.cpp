@@ -2300,27 +2300,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (ReadOnly) {
           auto BaseVal = getBaseObject(Val);
           for (size_t i = 0; i < CB->arg_size(); i++) {
-            if (i == 0 && CB->hasStructRetAttr()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
-            }
-            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                        "enzymejl_sret_union_bytes")
-                    .isValid()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
-            }
-            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                        "enzymejl_returnRoots")
-                    .isValid()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
+            if (isReturnLikeParam(*CB, i) &&
+                getBaseObject(CB->getArgOperand(i)) == BaseVal) {
+              ReadOnly = false;
+              break;
             }
           }
         }
@@ -3789,6 +3772,26 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       bool ConstantArg = isFunctionArgumentConstant(call, val);
       if (ConstantArg) {
         continue;
+      }
+      // Unless it throws, such a call writes only memory it allocated and its
+      // result parameters, so storing the pointer into an active result
+      // parameter is the one way it can hand the pointer back to the caller.
+      if (isLocalReadOnlyOrThrow(call) && !AA.onlyReadsMemory(call)) {
+        for (unsigned Index = 0; Index < call->arg_size(); ++Index) {
+          Value *ResultArg = call->getArgOperand(Index);
+          if (ResultArg == val || !ResultArg->getType()->isPointerTy() ||
+              !isReturnLikeParam(*call, Index))
+            continue;
+          if (isConstantValue(TR, ResultArg))
+            continue;
+          StoredOrReturnedCache[key] = true;
+          if (EnzymePrintActivity)
+            llvm::errs() << " </ASOR" << (int)directions
+                         << " ignoreStoresInto=" << ignoreStoresInto
+                         << " active from-result-param>" << *val
+                         << " call=" << *call << "\n";
+          return true;
+        }
       }
     }
 
