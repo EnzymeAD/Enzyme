@@ -5116,7 +5116,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (startsWith(funcName, "_ZNKSt3__14hash")) {
+    if (startsWith(funcName, "_ZNKSt3__14hash") ||
+        startsWith(funcName, "_ZNKSt3__u4hash")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -5124,7 +5125,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (startsWith(funcName, "_ZNKSt3__112basic_string") ||
         startsWith(funcName, "_ZNSt3__112basic_string") ||
         startsWith(funcName, "_ZNSt3__112__hash_table") ||
-        startsWith(funcName, "_ZNKSt3__115basic_stringbuf")) {
+        startsWith(funcName, "_ZNKSt3__115basic_stringbuf") ||
+        startsWith(funcName, "_ZNKSt3__u12basic_string") ||
+        startsWith(funcName, "_ZNSt3__u12basic_string") ||
+        startsWith(funcName, "_ZNSt3__u12__hash_table") ||
+        startsWith(funcName, "_ZNKSt3__u15basic_stringbuf")) {
       return;
     }
 
