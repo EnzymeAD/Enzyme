@@ -16,7 +16,13 @@ else()
 endif()
 
 function(enzyme_tablegen ofn)
-  tablegen(Enzyme ${ARGV})
+  # LLVM 24 (d6a4b2ad0b90) renamed the generic tablegen() helper to
+  # tablegen_internal(), keeping only per-project wrappers public.
+  if(COMMAND tablegen)
+    tablegen(Enzyme ${ARGV})
+  else()
+    tablegen_internal(Enzyme ${ARGV})
+  endif()
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
       PARENT_SCOPE)
 endfunction()
