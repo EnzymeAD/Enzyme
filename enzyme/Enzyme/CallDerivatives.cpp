@@ -3827,7 +3827,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 }
 #endif
                 auto rule = [&](Value *anti) {
-                  bb.SetInsertPoint(cast<Instruction>(anti));
+                  Instruction *AntiInstruction = cast<Instruction>(anti);
+                  auto *ResultPointerType = cast<PointerType>(anti->getType());
+                  Instruction *FallbackAllocation = nullptr;
+                  if (ResultPointerType->getAddressSpace() != 0) {
+                    FallbackAllocation = AntiInstruction->clone();
+                    insertBeforeInst(FallbackAllocation, AntiInstruction);
+                    FallbackAllocation->setMetadata("enzyme_fromstack",
+                                                    nullptr);
+                  }
+                  bb.SetInsertPoint(AntiInstruction);
                   Value *replacement = bb.CreateAlloca(elTy, Size, name);
                   if (name.size() == 0)
                     replacement->takeName(anti);
@@ -3849,17 +3858,22 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                           getUnqual(anti->getType()->getPointerElementType()));
                   }
 #endif
-                  auto PT = cast<PointerType>(anti->getType());
-                  if (PT->getAddressSpace()) {
-                    replacement = bb.CreateAddrSpaceCast(replacement, PT);
+                  if (ResultPointerType->getAddressSpace() != 0) {
+                    MDNode *Identifier =
+                        MDNode::getDistinct(replacement->getContext(), {});
+                    FallbackAllocation->setMetadata(
+                        "enzyme_backstack_alloc",
+                        MDNode::get(replacement->getContext(), {Identifier}));
+                    replacement =
+                        bb.CreateAddrSpaceCast(replacement, ResultPointerType);
                     cast<Instruction>(replacement)
-                        ->setMetadata(
-                            "enzyme_backstack",
-                            MDNode::get(replacement->getContext(), {}));
+                        ->setMetadata("enzyme_backstack",
+                                      MDNode::get(replacement->getContext(),
+                                                  {Identifier}));
                   }
-                  gutils->replaceAWithB(cast<Instruction>(anti), replacement);
-                  bb.SetInsertPoint(cast<Instruction>(anti)->getNextNode());
-                  gutils->erase(cast<Instruction>(anti));
+                  gutils->replaceAWithB(AntiInstruction, replacement);
+                  bb.SetInsertPoint(AntiInstruction->getNextNode());
+                  gutils->erase(AntiInstruction);
                   return replacement;
                 };
 
@@ -4058,6 +4072,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
 #endif
+      auto *ResultPointerType = cast<PointerType>(call.getType());
+      Instruction *FallbackAllocation = nullptr;
+      if (ResultPointerType->getAddressSpace() != 0) {
+        FallbackAllocation = newCall->clone();
+        insertBeforeInst(FallbackAllocation, newCall);
+        FallbackAllocation->setMetadata("enzyme_fromstack", nullptr);
+      }
       Value *replacement = B.CreateAlloca(elTy, Size);
       for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
                       "enzymejl_allocart", "enzymejl_allocart_name",
@@ -4083,12 +4104,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               replacement, getUnqual(call.getType()->getPointerElementType()));
       }
 #endif
-      auto PT = cast<PointerType>(call.getType());
-      if (PT->getAddressSpace()) {
-        replacement = B.CreateAddrSpaceCast(replacement, PT);
+      if (ResultPointerType->getAddressSpace() != 0) {
+        MDNode *Identifier = MDNode::getDistinct(replacement->getContext(), {});
+        FallbackAllocation->setMetadata(
+            "enzyme_backstack_alloc",
+            MDNode::get(replacement->getContext(), {Identifier}));
+        IRBuilder<> CastBuilder(newCall);
+        replacement =
+            CastBuilder.CreateAddrSpaceCast(replacement, ResultPointerType);
         cast<Instruction>(replacement)
             ->setMetadata("enzyme_backstack",
-                          MDNode::get(replacement->getContext(), {}));
+                          MDNode::get(replacement->getContext(), {Identifier}));
       }
       gutils->replaceAWithB(newCall, replacement);
       gutils->erase(newCall);
