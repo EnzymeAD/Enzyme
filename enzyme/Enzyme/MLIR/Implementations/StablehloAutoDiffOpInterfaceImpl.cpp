@@ -949,32 +949,26 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
         return res;
       },
       // FORWARD / TERMINATE branch
+      // Run the primal body unconditionally, then select between new/old state
+      // using shSel based on whether we should actually step.
+      // This avoids nested shIf (which can crash due to builder aliasing).
       [&](OpBuilder &b2, Location l2) -> SmallVector<Value> {
-        // Advance primal one step if primalCond && !isTerminate
-        Value doStep = shAnd(b2, l2,
-            tensor::FromElementsOp::create(b2, l2, i1ty0, ValueRange{primalCondI1}),
-            shNot(b2, l2, isTerminate));
-        SmallVector<Type> stepTys;
-        for (auto v : primalCarried) stepTys.push_back(v.getType());
-        stepTys.push_back(i64ty0); // stepTaken
+        // Run one body step (always — we'll select the result below).
+        IRMapping bodyMap;
+        SmallVector<Value> steppedState = runBodyStep(b2, l2, newWhileOp, gutils,
+                                                      primalCarried, bodyMap);
 
-        auto stepIf = shIf(b2, l2, doStep, stepTys,
-          [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-            IRMapping bodyMap;
-            SmallVector<Value> ns = runBodyStep(b3, l3, newWhileOp, gutils,
-                                                primalCarried, bodyMap);
-            ns.push_back(shC(b3, l3, 1));
-            return ns;
-          },
-          [&](OpBuilder &b3, Location l3) -> SmallVector<Value> {
-            SmallVector<Value> r(primalCarried.begin(), primalCarried.end());
-            r.push_back(shC(b3, l3, 0));
-            return r;
-          });
+        // doStep = primalCond && !isTerminate
+        Value primalCondT2 = tensor::FromElementsOp::create(b2, l2, i1ty0,
+            ValueRange{primalCondI1});
+        Value doStep = shAnd(b2, l2, primalCondT2, shNot(b2, l2, isTerminate));
 
-        auto stepRes = stepIf.getResults();
-        auto newState = stepRes.drop_back(1);
-        Value stepTaken = stepRes.back();
+        // Select: if doStep use steppedState, else keep primalCarried unchanged.
+        SmallVector<Value> newState;
+        for (size_t i = 0; i < numCarried; ++i)
+          newState.push_back(shSel(b2, l2, doStep, steppedState[i], primalCarried[i]));
+
+        Value stepTaken = shSel(b2, l2, doStep, shC(b2, l2, 1), shC(b2, l2, 0));
         Value newNumFwd = shAdd(b2, l2, numFwd, stepTaken);
 
         SmallVector<Value> res = {newNumFwd};
