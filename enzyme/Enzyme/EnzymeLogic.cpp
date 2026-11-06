@@ -3502,7 +3502,21 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     for (auto &I : gutils->oldFunc->args()) {
       if (!gutils->isConstantValue(&I) &&
           argTypes[I.getArgNo()] == DIFFE_TYPE::OUT_DIFF) {
-        retargs.push_back(gutils->diffe(&I, Builder));
+        if (I.hasByValAttr()) {
+          Type *ByValType = I.getParamByValType();
+          Value *ShadowPointer = gutils->invertPointerM(&I, Builder);
+          auto LoadShadowValue = [&](Value *Pointer) -> Value * {
+            unsigned AddressSpace =
+                cast<PointerType>(Pointer->getType())->getAddressSpace();
+            Value *TypedPointer = Builder.CreateBitCast(
+                Pointer, getPointerType(ByValType, AddressSpace));
+            return Builder.CreateLoad(ByValType, TypedPointer);
+          };
+          retargs.push_back(gutils->applyChainRule(
+              ByValType, Builder, LoadShadowValue, ShadowPointer));
+        } else {
+          retargs.push_back(gutils->diffe(&I, Builder));
+        }
       }
     }
 

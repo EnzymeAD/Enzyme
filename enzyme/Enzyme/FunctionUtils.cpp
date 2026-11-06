@@ -4326,7 +4326,8 @@ FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
                                       llvm::Type *additionalArg,
                                       llvm::ArrayRef<DIFFE_TYPE> constant_args,
                                       bool diffeReturnArg, bool returnTape,
-                                      bool returnPrimal, bool returnShadow) {
+                                      bool returnPrimal, bool returnShadow,
+                                      llvm::AttributeList Attrs) {
   SmallVector<Type *, 4> RetTypes;
   if (returnPrimal)
     RetTypes.push_back(FTy->getReturnType());
@@ -4345,7 +4346,10 @@ FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(GradientUtils::getShadowType(I, width));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF && !returnTape) {
-      RetTypes.push_back(GradientUtils::getShadowType(I, width));
+      Type *OutType = Attrs.hasParamAttr(argno, Attribute::ByVal)
+                          ? Attrs.getParamByValType(argno)
+                          : I;
+      RetTypes.push_back(GradientUtils::getShadowType(OutType, width));
     }
     ++argno;
   }
@@ -4391,9 +4395,10 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   if (!F->empty())
     F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
-  llvm::FunctionType *FTy = getFunctionTypeForClone(
-      F->getFunctionType(), mode, width, additionalArg, constant_args,
-      diffeReturnArg, returnTape, returnPrimal, returnShadow);
+  llvm::FunctionType *FTy =
+      getFunctionTypeForClone(F->getFunctionType(), mode, width, additionalArg,
+                              constant_args, diffeReturnArg, returnTape,
+                              returnPrimal, returnShadow, F->getAttributes());
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
