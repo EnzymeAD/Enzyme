@@ -78,3 +78,41 @@ func.func @dtanh(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %{{.+}} = complex.tanh %[[x]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @exp(%x: complex<f64>) -> complex<f64> {
+  %res = complex.exp %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dexp(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @exp(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @fwddiffeexp(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[exp:.+]] = complex.exp %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.mul %[[dx]], %[[exp]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.exp %[[x]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @expm1(%x: complex<f64>) -> complex<f64> {
+  %res = complex.expm1 %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dexpm1(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @expm1(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @fwddiffeexpm1(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[exp:.+]] = complex.exp %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.mul %[[dx]], %[[exp]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.expm1 %[[x]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }

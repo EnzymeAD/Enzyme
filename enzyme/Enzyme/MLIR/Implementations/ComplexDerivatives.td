@@ -119,3 +119,15 @@ def : MLIRDerivative<"complex", "TanhOp", (Op $x),
                       )
                     ]
                   >;
+
+def : MLIRDerivative<"complex", "ExpOp", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexExp $x))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "Expm1Op", (Op $x),
+                    [
+                      (CheckedComplexMul (DiffeRet), (ComplexExp $x))
+                    ]
+                  >;

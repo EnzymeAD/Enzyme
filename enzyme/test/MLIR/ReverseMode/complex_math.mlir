@@ -82,3 +82,43 @@ func.func @dtanh(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @exp(%x: complex<f64>) -> complex<f64> {
+  %res = complex.exp %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dexp(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @exp(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffeexp(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[exp:.+]] = complex.exp %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.mul %[[cdr]], %[[exp]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @expm1(%x: complex<f64>) -> complex<f64> {
+  %res = complex.expm1 %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dexpm1(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @expm1(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffeexpm1(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[exp:.+]] = complex.exp %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.mul %[[cdr]], %[[exp]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
