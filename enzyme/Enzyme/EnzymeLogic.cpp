@@ -3598,13 +3598,25 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     if (activeUses.size() == 1 && inLoop &&
         gutils->getNewFromOriginal(orig->getParent()) == loopContext.header &&
         loopContext.exitBlocks.size() == 1) {
+      auto L = gutils->OrigLI->getLoopFor(orig->getParent());
       SmallVector<BasicBlock *, 1> Latches;
-      gutils->OrigLI->getLoopFor(orig->getParent())->getLoopLatches(Latches);
+      L->getLoopLatches(Latches);
       bool allIncoming = true;
       for (auto Latch : Latches) {
         if (activeUses[0] != orig->getIncomingValueForBlock(Latch)) {
           allIncoming = false;
           break;
+        }
+      }
+      if (allIncoming) {
+        for (auto u : activeUses[0]->users()) {
+          auto UI = cast<Instruction>(u);
+          if (UI != orig && L->contains(UI) &&
+              (!gutils->isConstantInstruction(UI) ||
+               (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+            allIncoming = false;
+            break;
+          }
         }
       }
       if (allIncoming) {
