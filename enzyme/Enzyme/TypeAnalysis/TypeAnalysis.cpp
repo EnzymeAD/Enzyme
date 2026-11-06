@@ -4420,9 +4420,12 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::smin:
   case Intrinsic::umax:
   case Intrinsic::umin:
+    // The result is one of the operands, so they share a type, which is a float
+    // when these act on the bits of floats.
     if (direction & UP) {
       auto returnType = getAnalysis(&I)[{-1}];
-      if (returnType == BaseType::Integer || returnType == BaseType::Pointer) {
+      if (returnType == BaseType::Integer || returnType == BaseType::Pointer ||
+          returnType.isFloat()) {
         updateAnalysis(I.getOperand(0), TypeTree(returnType).Only(-1, &I), &I);
         updateAnalysis(I.getOperand(1), TypeTree(returnType).Only(-1, &I), &I);
       }
@@ -4431,7 +4434,8 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       auto opType0 = getAnalysis(I.getOperand(0))[{-1}];
       auto opType1 = getAnalysis(I.getOperand(1))[{-1}];
       if (opType0 == opType1 &&
-          (opType0 == BaseType::Integer || opType0 == BaseType::Pointer)) {
+          (opType0 == BaseType::Integer || opType0 == BaseType::Pointer ||
+           opType0.isFloat())) {
         updateAnalysis(&I, TypeTree(opType0).Only(-1, &I), &I);
       } else if (opType0 == BaseType::Integer &&
                  opType1 == BaseType::Anything) {
