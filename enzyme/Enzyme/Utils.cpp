@@ -3315,7 +3315,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
       return false;
 
-    if (funcName == "julia.safepoint")
+    if (funcName == "julia.safepoint" || isRustNoAllocShimFunction(funcName))
       return false;
 
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
@@ -3437,7 +3437,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3465,7 +3466,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3494,7 +3496,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 

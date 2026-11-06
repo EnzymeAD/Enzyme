@@ -590,7 +590,7 @@ struct CacheAnalysis {
     if (funcName == "julia.write_barrier_binding")
       return {};
 
-    if (funcName == "julia.safepoint")
+    if (funcName == "julia.safepoint" || isRustNoAllocShimFunction(funcName))
       return {};
 
     if (funcName == "enzyme_zerotype")
@@ -670,7 +670,8 @@ struct CacheAnalysis {
           return false;
 
         if (isCertainPrint(sfuncName) || isAllocationFunction(sfuncName, TLI) ||
-            isDeallocationFunction(sfuncName, TLI)) {
+            isDeallocationFunction(sfuncName, TLI) ||
+            isRustNoAllocShimFunction(sfuncName)) {
           return false;
         }
 
@@ -6888,7 +6889,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   // These LLVM flang runtime functions do not free memory of the program.
   // They are not marked nofree, since the I/O runtime frees its own I/O
   // statement state.
-  if (isFlangRuntimeNoFree(F->getName()))
+  if (isFlangRuntimeNoFree(F->getName()) ||
+      isRustInactiveRuntimeFunction(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {

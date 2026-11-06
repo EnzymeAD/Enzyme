@@ -627,6 +627,9 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     }
   }
 
+  if (isRustInactiveRuntimeFunction(Name))
+    return true;
+
   if (!EnzymeLoadInactiveFiles.empty()) {
     for (llvm::StringRef FuncName :
          InactiveFileCache.CreateOrUse(EnzymeLoadInactiveFiles)) {
@@ -1992,7 +1995,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
                funcName == "??2@YAPAXI@Z" || funcName == "??2@YAPEAX_K@Z" ||
                funcName == "jl_gc_alloc_typed" ||
-               funcName == "ijl_gc_alloc_typed")) {
+               funcName == "ijl_gc_alloc_typed" ||
+               isRustAllocationFunction(funcName))) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =
                 std::shared_ptr<ActivityAnalyzer>(
                     new ActivityAnalyzer(*this, directions));

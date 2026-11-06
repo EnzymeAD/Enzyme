@@ -10266,18 +10266,18 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     GradientUtils *gutils) {
   assert(isAllocationFunction(allocationfn, TLI));
 
-  if (allocationfn == "__rust_alloc" || allocationfn == "__rust_alloc_zeroed") {
+  if (isRustAllocationFunction(allocationfn)) {
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
     Type *IntPtrTy = orig->getType();
     Type *RustSz = orig->getArgOperand(0)->getType();
     Type *inTys[3] = {IntPtrTy, RustSz, RustSz};
 
     auto FT = FunctionType::get(VoidTy, inTys, false);
-    Value *freevalue = builder.GetInsertBlock()
-                           ->getParent()
-                           ->getParent()
-                           ->getOrInsertFunction("__rust_dealloc", FT)
-                           .getCallee();
+    Module *ParentModule = builder.GetInsertBlock()->getParent()->getParent();
+    std::string DeallocName =
+        getRustDeallocationFunctionName(allocationfn, *ParentModule);
+    Value *freevalue =
+        ParentModule->getOrInsertFunction(DeallocName, FT).getCallee();
     Value *vals[3];
     vals[0] = builder.CreatePointerCast(tofree, IntPtrTy);
     // size
