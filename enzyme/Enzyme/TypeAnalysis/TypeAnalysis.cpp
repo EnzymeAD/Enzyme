@@ -661,6 +661,39 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
       }
     }
 
+    // Strength reduction rewrites `4 * i + 2` as `(i << 2) | 2`, so index
+    // arithmetic feeding a getelementptr frequently arrives as a bitwise
+    // or/and/xor of known constants.
+    if (bo->getOpcode() == BinaryOperator::Or) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 | val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::And) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 & val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::Xor) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 ^ val1);
+          }
+        }
+      }
+    }
+
     if (bo->getOpcode() == BinaryOperator::Shl) {
       if (inset0.size() == 1 || inset1.size() == 1) {
         for (auto val0 : inset0) {
