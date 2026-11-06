@@ -3979,12 +3979,16 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+    auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                          ? DerivativeMode::ReverseModeGradient
+                          : Mode;
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
                 Mode == DerivativeMode::ForwardModeError
             ? false
             : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                     oldUnreachable);
 
     // If we explicitly decided we need this in the reverse pass, mark it as
     // such.
