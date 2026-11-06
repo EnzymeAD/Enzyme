@@ -231,6 +231,8 @@ def ComplexCos : ComplexInst<"CosOp">;
 def ComplexAdd : ComplexInst<"AddOp">;
 def ComplexTanh : ComplexInst<"TanhOp">;
 def ComplexExp : ComplexInst<"ExpOp">;
+def ComplexSqrt : ComplexInst<"SqrtOp">;
+def ComplexRsqrt : ComplexInst<"RsqrtOp">;
 
 
 def CheckedComplexMul : SubRoutine<(Op $diffret, $x),
