@@ -3,7 +3,8 @@
 ; @f is differentiated in combined mode. Its `noalias readonly` %w reaches
 ; @kernel through a ptrtoint/inttoptr round trip and is then passed to an
 ; opaque call with no memory attributes. Nothing in the invocation can write
-; the memory %w points to, yet @kernel's loads from it are taped today.
+; the memory %w points to, so @kernel's loads from it are recomputed in the
+; reverse sweep rather than taped.
 
 declare void @__enzyme_autodiff(...)
 declare void @opaque(ptr) nofree
@@ -42,10 +43,13 @@ entry:
   ret double %r
 }
 
-; The augmented form tapes the loads from %w and hands the tape to the reverse.
-; CHECK: define internal ptr @augmented_kernel(
-; CHECK: %wv_malloccache = tail call noalias nonnull ptr @malloc(
+; Nothing is carried from the forward to the reverse sweep of @kernel.
+; CHECK: define internal void @augmented_kernel(
+; CHECK-NOT: malloc
 ; CHECK: }
 
+; The reverse sweep reloads %w instead of reading a tape.
 ; CHECK: define internal { double } @diffekernel(
-; CHECK-SAME: ptr %tapeArg)
+; CHECK-NOT: malloc
+; CHECK: %wv_unwrap = load double, ptr %pw_unwrap
+; CHECK: }

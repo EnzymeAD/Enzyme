@@ -275,6 +275,22 @@ struct CacheAnalysis {
     return seen_argument[obj] = overwritten;
   }
 
+  // A `noalias readonly` parameter is never written during the function it
+  // belongs to, and in ReverseModeCombined the reverse sweep runs inside that
+  // same invocation, so loads from it can be recomputed instead of cached.
+  // Split modes are excluded: the caller may write the region between the
+  // augmented forward and the reverse call. Checked from the attributes
+  // directly, so the answer does not depend on what alias analysis knows
+  // about later instructions.
+  bool isImmutableForWholeDerivative(Value *obj) {
+    if (mode != DerivativeMode::ReverseModeCombined)
+      return false;
+    auto *arg = dyn_cast<Argument>(obj);
+    if (!arg || arg->getParent() != oldFunc)
+      return false;
+    return arg->hasNoAliasAttr() && arg->onlyReadsMemory();
+  }
+
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
       return seen[obj];
@@ -445,6 +461,11 @@ struct CacheAnalysis {
     // of check as the loop scope caching should allow us to ignore
     // such stores.
     if (rematerializableAllocations.count(obj))
+      return false;
+
+    // Loads from a region that is immutable for the whole derivative are always
+    // recomputable in the reverse sweep.
+    if (isImmutableForWholeDerivative(obj))
       return false;
 
     // Check if pointer operand is overwritten after this function returns.
@@ -710,6 +731,10 @@ struct CacheAnalysis {
         // Any use of an arg from a rematerializable allocation
         // is definitionally reloadable in sub.
         if (rematerializableAllocations.count(objs[i]))
+          continue;
+
+        // Immutable for the whole derivative, so no later write can reach it.
+        if (isImmutableForWholeDerivative(objs[i]))
           continue;
 
         auto CD = TR.query(args[i])[{-1}];
