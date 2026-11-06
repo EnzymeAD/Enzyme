@@ -3134,4 +3134,310 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// If \p V is an `enzyme_fromstack`-upgraded `malloc` `CallInst`, returns its
+/// original stack `AllocaInst` element type (and sets \p OutElemCount when
+/// non-null).
+static inline llvm::Type *
+extractEnzymeFromStackType(const llvm::Value *V,
+                           const llvm::DataLayout *DL = nullptr,
+                           uint64_t *OutElemCount = nullptr) {
+  if (OutElemCount)
+    *OutElemCount = 1;
+  const auto *MCI = llvm::dyn_cast_or_null<llvm::CallInst>(V);
+  if (!MCI)
+    return nullptr;
+  auto *MD = hasMetadata(MCI, "enzyme_fromstack");
+  if (!MD || MD->getNumOperands() < 2)
+    return nullptr;
+  auto *CAM = llvm::dyn_cast<llvm::ConstantAsMetadata>(MD->getOperand(1));
+  if (!CAM)
+    return nullptr;
+  auto *CIVal = llvm::dyn_cast<llvm::ConstantInt>(CAM->getValue());
+  if (!CIVal)
+    return nullptr;
+  auto *ElTy = reinterpret_cast<llvm::Type *>(CIVal->getLimitedValue());
+  if (ElTy && DL && OutElemCount && MCI->arg_size() >= 1) {
+    if (auto *ByteSz =
+            llvm::dyn_cast<llvm::ConstantInt>(MCI->getArgOperand(0))) {
+      uint64_t ElemBytes = DL->getTypeAllocSize(ElTy);
+      uint64_t TotalBytes = ByteSz->getZExtValue();
+      if (ElemBytes > 0 && TotalBytes >= ElemBytes &&
+          TotalBytes % ElemBytes == 0)
+        *OutElemCount = TotalBytes / ElemBytes;
+    }
+  }
+  return ElTy;
+}
+
+/// Returns true if \p Name identifies a C++ standard library `basic_string` or
+/// character `allocator` / `allocator_traits` helper symbol in namespace `std`
+/// (excluding `basic_stringbuf`, `basic_stringstream`, and `basic_string_view`,
+/// as well as user functions that merely accept a `std::string` parameter).
+static inline bool isStdCharStringOrAllocSymbol(llvm::StringRef Name) {
+  if (startsWith(Name, "_ZNSs") || startsWith(Name, "_ZNKSs") ||
+      startsWith(Name, "_ZNSaIcE") || startsWith(Name, "_ZNSaIwE") ||
+      startsWith(Name, "_ZNSt9allocatorIcE") ||
+      startsWith(Name, "_ZNSt9allocatorIwE") ||
+      startsWith(Name, "_ZNSt3__19allocatorIcE") ||
+      startsWith(Name, "_ZNSt3__19allocatorIwE") ||
+      startsWith(Name, "_ZNSt3__u9allocatorIcE") ||
+      startsWith(Name, "_ZNSt3__u9allocatorIwE") ||
+      startsWith(Name, "_ZNSt16allocator_traitsISaIcEE") ||
+      startsWith(Name, "_ZNSt16allocator_traitsISaIwEE") ||
+      startsWith(Name, "_ZNSt3__116allocator_traitsINS_9allocatorIcEEEE") ||
+      startsWith(Name, "_ZNSt3__116allocator_traitsINS_9allocatorIwEEEE") ||
+      startsWith(Name, "_ZNSt3__u16allocator_traitsINS_9allocatorIcEEEE") ||
+      startsWith(Name, "_ZNSt3__u16allocator_traitsINS_9allocatorIwEEEE"))
+    return true;
+  if (!startsWith(Name, "_ZNSt") && !startsWith(Name, "_ZNKSt") &&
+      !startsWith(Name, "_ZSt"))
+    return false;
+  if ((Name.contains("22__operator_new_wrapper") &&
+       (Name.contains("wrapperIc") || Name.contains("wrapperIw") ||
+        Name.contains("wrapperID"))) ||
+      (Name.contains("25__operator_delete_wrapper") &&
+       (Name.contains("Pc") || Name.contains("Pw") || Name.contains("PD"))) ||
+      (Name.contains("19__allocate_at_least") &&
+       (Name.contains("9allocatorIcE") || Name.contains("9allocatorIwE") ||
+        Name.contains("9allocatorID"))))
+    return true;
+  bool IsBasicStringClassOrOp =
+      startsWith(Name, "_ZNSt12basic_string") ||
+      startsWith(Name, "_ZNKSt12basic_string") ||
+      startsWith(Name, "_ZNSt7__cxx1112basic_string") ||
+      startsWith(Name, "_ZNKSt7__cxx1112basic_string") ||
+      startsWith(Name, "_ZNSt3__112basic_string") ||
+      startsWith(Name, "_ZNKSt3__112basic_string") ||
+      startsWith(Name, "_ZNSt3__u12basic_string") ||
+      startsWith(Name, "_ZNKSt3__u12basic_string") ||
+      startsWith(Name, "_ZStplI");
+  if (!IsBasicStringClassOrOp)
+    return false;
+  return Name.contains("12basic_stringIc") ||
+         Name.contains("12basic_stringIw") ||
+         Name.contains("12basic_stringID") ||
+         (Name.contains("12basic_stringIT_") &&
+          (Name.contains("11char_traitsIcEE") ||
+           Name.contains("11char_traitsIwEE") ||
+           Name.contains("11char_traitsID")));
+}
+
+/// Returns true if \p Name is the LLVM struct type name of a C++ standard
+/// library `std::basic_string` object.
+static inline bool isBasicStringTypeName(llvm::StringRef Name) {
+  return (Name.contains("std::basic_string") ||
+          Name.contains("std::__cxx11::basic_string") ||
+          Name.contains("std::__1::basic_string") ||
+          Name.contains("std::__u::basic_string")) &&
+         !Name.contains("basic_string_view") &&
+         !Name.contains("basic_stringbuf") && !Name.contains("stringstream");
+}
+
+/// Returns true if [Offset, Offset + Size) in \p T lies within a
+/// `std::basic_string` subobject.
+static inline bool isBasicStringSlice(llvm::Type *T, uint64_t Offset,
+                                      uint64_t Size,
+                                      const llvm::DataLayout &DL) {
+  if (!T || Size == 0)
+    return false;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    llvm::Type *ET = AT->getElementType();
+    uint64_t ESize = DL.getTypeAllocSize(ET);
+    if (ESize == 0 || AT->getNumElements() == 0)
+      return false;
+    uint64_t First = Offset / ESize;
+    uint64_t Last = (Offset + Size - 1) / ESize;
+    if (Last >= AT->getNumElements() || First != Last)
+      return false;
+    return isBasicStringSlice(ET, Offset - First * ESize, Size, DL);
+  }
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    uint64_t STSize = DL.getTypeAllocSize(ST);
+    if (Offset + Size > STSize)
+      return false;
+    if (!ST->isLiteral() && isBasicStringTypeName(ST->getName()))
+      return true;
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    const llvm::StructLayout *SL = DL.getStructLayout(ST);
+    unsigned idx = SL->getElementContainingOffset(Offset);
+    uint64_t EStart = SL->getElementOffset(idx);
+    llvm::Type *ET = ST->getElementType(idx);
+    if (Offset + Size > EStart + DL.getTypeAllocSize(ET))
+      return false;
+    return isBasicStringSlice(ET, Offset - EStart, Size, DL);
+  }
+  return false;
+}
+
+/// Returns true if \p Ptr addresses \p Size bytes inside a `std::basic_string`
+/// object or subobject.
+static inline bool isPtrSliceBasicString(const llvm::Value *Ptr, uint64_t Size,
+                                         const llvm::DataLayout &DL) {
+  if (!Ptr || Size == 0 || !Ptr->getType()->isPointerTy())
+    return false;
+  const llvm::Value *Cur = Ptr;
+  int64_t AccOff = 0;
+  llvm::SmallPtrSet<const llvm::Value *, 8> Visited;
+  while (Cur && Visited.insert(Cur).second) {
+    Cur = Cur->stripPointerCasts();
+    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Cur)) {
+      llvm::APInt GepOff(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+      if (GEP->accumulateConstantOffset(DL, GepOff)) {
+        int64_t Step = GepOff.getSExtValue();
+        int64_t TotalFromGepSrc = Step + AccOff;
+        if (TotalFromGepSrc >= 0 &&
+            isBasicStringSlice(GEP->getSourceElementType(),
+                               static_cast<uint64_t>(TotalFromGepSrc), Size,
+                               DL))
+          return true;
+        AccOff += Step;
+        Cur = GEP->getPointerOperand();
+        continue;
+      }
+      if (auto *ST =
+              llvm::dyn_cast<llvm::StructType>(GEP->getSourceElementType()))
+        if (!ST->isLiteral() && isBasicStringTypeName(ST->getName()))
+          return true;
+      Cur = GEP->getPointerOperand();
+      AccOff = -1;
+      break;
+    }
+    break;
+  }
+  if (AccOff < 0) {
+    if (const auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Cur))
+      if (auto *ST = llvm::dyn_cast<llvm::StructType>(AI->getAllocatedType()))
+        if (!ST->isLiteral() && isBasicStringTypeName(ST->getName()))
+          return true;
+    return false;
+  }
+  uint64_t Off = static_cast<uint64_t>(AccOff);
+  if (const auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Cur)) {
+    if (!llvm::isa<llvm::ConstantInt>(AI->getArraySize()))
+      return false;
+    llvm::Type *ATy = AI->getAllocatedType();
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >=
+        llvm::cast<llvm::ConstantInt>(AI->getArraySize())->getLimitedValue())
+      return false;
+    return isBasicStringSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  uint64_t FromStackCount = 1;
+  if (llvm::Type *ATy = extractEnzymeFromStackType(Cur, &DL, &FromStackCount)) {
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >= FromStackCount)
+      return false;
+    return isBasicStringSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
+    llvm::Type *ParamTy = nullptr;
+    if (Arg->hasStructRetAttr())
+      ParamTy = Arg->getParamStructRetType();
+    else if (Arg->hasByValAttr())
+      ParamTy = Arg->getParamByValType();
+    if (ParamTy && isBasicStringSlice(ParamTy, Off, Size, DL))
+      return true;
+  }
+  return false;
+}
+
+/// Returns true if every leaf of \p T is an integer, a `std::basic_string`
+/// subobject (never a float or a raw pointer).
+/// Sets \p SawString when a `std::basic_string` subobject is present.
+static inline bool isPurelyInactiveAggregateImpl(llvm::Type *T,
+                                                 bool &SawString) {
+  if (!T)
+    return false;
+  if (llvm::isa<llvm::IntegerType>(T))
+    return true;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return isPurelyInactiveAggregateImpl(AT->getElementType(), SawString);
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    if (ST->isOpaque())
+      return false;
+    if (!ST->isLiteral() && isBasicStringTypeName(ST->getName())) {
+      SawString = true;
+      return true;
+    }
+    for (llvm::Type *ET : ST->elements())
+      if (!isPurelyInactiveAggregateImpl(ET, SawString))
+        return false;
+    return true;
+  }
+  return false;
+}
+
+/// Returns true if \p T is an aggregate containing a `std::basic_string`
+/// whose remaining leaves are all integers, such as
+/// `Kokkos::Impl::ViewCtorProp<[ExecSpace,] std::string>`. Such wrappers only
+/// carry metadata (labels, sizes, execution-space handles) and never
+/// differentiable data, so they are inactive.
+static inline bool isPurelyInactiveAggregate(llvm::Type *T) {
+  bool SawString = false;
+  return llvm::isa_and_nonnull<llvm::StructType>(T) &&
+         isPurelyInactiveAggregateImpl(T, SawString) && SawString;
+}
+
+/// Returns the static type of the local (`AllocaInst` / `enzyme_fromstack`)
+/// or `byval`/`sret` object that \p Ptr points into, or null.
+static inline llvm::Type *getLocalObjectType(const llvm::Value *Ptr,
+                                             const llvm::DataLayout &DL) {
+  if (!Ptr || !Ptr->getType()->isPointerTy())
+    return nullptr;
+  llvm::APInt Off(DL.getIndexTypeSizeInBits(Ptr->getType()), 0);
+  const llvm::Value *Base = Ptr->stripAndAccumulateConstantOffsets(
+      DL, Off, /*AllowNonInbounds*/ true);
+  if (const auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Base))
+    return AI->getAllocatedType();
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Base)) {
+    if (Arg->hasStructRetAttr())
+      return Arg->getParamStructRetType();
+    if (Arg->hasByValAttr())
+      return Arg->getParamByValType();
+    return nullptr;
+  }
+  return extractEnzymeFromStackType(Base, &DL);
+}
+
+/// Returns true if \p Ptr is a constant offset into a local (`AllocaInst` /
+/// `enzyme_fromstack`) or `byval`/`sret` object whose static type satisfies
+/// `isPurelyInactiveAggregate`.
+static inline bool isPtrToPurelyInactiveAggregate(const llvm::Value *Ptr,
+                                                  const llvm::DataLayout &DL) {
+  return isPurelyInactiveAggregate(getLocalObjectType(Ptr, DL));
+}
+
+/// Returns true if \p Ptr points into a local or `byval`/`sret` object whose
+/// static type has no pointer or floating-point leaves (only integers,
+/// `std::basic_string` subobjects). Such an object
+/// neither is nor holds a heap allocation that a reverse pass could need, so
+/// a callee receiving it cannot free anything of interest through it.
+static inline bool isPtrToLocalMetadataOnlyObject(const llvm::Value *Ptr,
+                                                  const llvm::DataLayout &DL) {
+  llvm::Type *T = getLocalObjectType(Ptr, DL);
+  bool SawString = false;
+  return llvm::isa_and_nonnull<llvm::StructType>(T) &&
+         isPurelyInactiveAggregateImpl(T, SawString);
+}
+
+/// Returns true if \p CB is an indirect virtual getter returning a
+/// `std::basic_string` by `sret` (`void (ptr sret(basic_string), ptr)`).
+static inline bool isIndirectBasicStringSRetGetter(const llvm::CallBase &CB) {
+  if (CB.getCalledFunction() || !CB.getType()->isVoidTy() ||
+      CB.arg_size() != 2 || !CB.paramHasAttr(0, llvm::Attribute::StructRet))
+    return false;
+  if (auto *ST =
+          llvm::dyn_cast_or_null<llvm::StructType>(CB.getParamStructRetType(0)))
+    if (!ST->isLiteral() && isBasicStringTypeName(ST->getName()))
+      return true;
+  return false;
+}
+
 #endif // ENZYME_UTILS_H

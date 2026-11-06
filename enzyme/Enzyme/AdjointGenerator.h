@@ -7324,6 +7324,7 @@ public:
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
+      noFree |= isIndirectBasicStringSRetGetter(call);
 
       std::map<UsageKey, bool> CacheResults =
           gutils->populateSeenFromKnownRecompute();
@@ -7337,6 +7338,11 @@ public:
             continue;
           // if could not be a pointer, it cannot be freed
           if (!TR.query(a)[{-1}].isPossiblePointer())
+            continue;
+          // A local metadata-only object (strings, labels, execution-space
+          // handles) neither is nor holds an allocation needed in reverse.
+          if (isPtrToLocalMetadataOnlyObject(a,
+                                             call.getModule()->getDataLayout()))
             continue;
           // if active value, we need to do memory preservation
           if (!gutils->isConstantValue(a)) {
