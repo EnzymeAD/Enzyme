@@ -838,8 +838,18 @@ public:
 
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
+            auto nex = vd[{(int)i}];
+            // Prevent fusion of {Anything, Float} into Anything, which would
+            // drop the float. Anything after a float joins the float run; a
+            // float after Anything starts a new run at its own offset.
+            if (nex == BaseType::Anything && dt.isFloat())
+              continue;
+            if (dt == BaseType::Anything && nex.isFloat()) {
+              nextStart = i;
+              break;
+            }
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -3597,8 +3607,18 @@ public:
 
           auto dt = vd[{-1}];
           for (size_t i = start; i < size; ++i) {
+            auto nex = vd[{(int)i}];
+            // Prevent fusion of {Anything, Float} into Anything, which would
+            // drop the float. Anything after a float joins the float run; a
+            // float after Anything starts a new run at its own offset.
+            if (nex == BaseType::Anything && dt.isFloat())
+              continue;
+            if (dt == BaseType::Anything && nex.isFloat()) {
+              nextStart = i;
+              break;
+            }
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
             if (!Legal) {
               nextStart = i;
               break;
