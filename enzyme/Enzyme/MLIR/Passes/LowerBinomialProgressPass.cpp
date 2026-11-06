@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
+#include "Implementations/LoopCheckpointing.h"
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -27,58 +28,6 @@ namespace enzyme {
 using namespace mlir;
 
 namespace {
-
-// Lower enzyme.binomial_progress(n, s) to the Revolve advance distance; see
-// BinomialProgressOp's description for the derivation.
-//
-//   %one = arith.constant 1
-//   %c = (n <= %one) or (s <= %one)
-//   %r = scf.if %c {
-//     // n <= 1 yields n (0 or 1); otherwise s <= 1 yields n. Both are n.
-//     scf.yield n
-//   } else {
-//     // smallest t with beta = C(s+t, t) >= n
-//     %w:2 = scf.while (%t = %zero, %beta = %one) {
-//       %lt = arith.cmpi slt, %beta, n
-//       scf.condition(%lt) %t, %beta
-//     } do {
-//     ^bb0(%t: index, %beta: index):
-//       %t2 = %t + %one
-//       %beta2 = %beta * (s + %t2) / %t2
-//       scf.yield %t2, %beta2
-//     }
-//     // window [n - beta(s-1,t), beta(s,t-1)], clamped; take the midpoint
-//     %lo = maxsi(n - (%beta * s) / (s + %t), %one)
-//     %hi = minsi((%beta * %t) / (s + %t), n - %one)
-//     scf.yield (%lo + %hi) / 2
-//   }
-//
-// The guard must be a branch, not a select: for s <= 1 the update leaves %beta
-// at 1 and the loop would spin forever.
-static int64_t binomialProgress(int64_t n, int64_t s) {
-  if (n <= 0)
-    return 0;
-  if (n == 1)
-    return 1;
-  if (s <= 1)
-    return n;
-  int64_t t = 0, beta = 1; // beta == C(s + t, t)
-  while (beta < n) {
-    ++t;
-    beta = beta * (s + t) / t;
-  }
-  int64_t lo = n - beta * s / (s + t);
-  int64_t hi = beta * t / (s + t);
-  if (lo < 1)
-    lo = 1;
-  if (hi > n - 1)
-    hi = n - 1;
-  int64_t m = (lo + hi) / 2;
-  int64_t cap = n - (s - 1); // leave a step for each slot still to be placed
-  if (m > cap)
-    m = cap;
-  return m < 1 ? 1 : m;
-}
 
 static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
   // Tensor operands are lowered elsewhere; this pass only handles the
@@ -101,8 +50,8 @@ static void lowerBinomialProgress(enzyme::BinomialProgressOp op) {
   if (matchPattern(n, m_ConstantInt(&nCst)) &&
       matchPattern(s, m_ConstantInt(&sCst)) && nCst.getSExtValue() > 0 &&
       sCst.getSExtValue() > 0) {
-    Value c =
-        constOfType(binomialProgress(nCst.getSExtValue(), sCst.getSExtValue()));
+    Value c = constOfType(mlir::enzyme::binomialProgress(nCst.getSExtValue(),
+                                                         sCst.getSExtValue()));
     op.getResult().replaceAllUsesWith(c);
     op->erase();
     return;
