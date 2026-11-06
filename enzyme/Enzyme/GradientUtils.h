@@ -218,6 +218,12 @@ public:
   llvm::Value *getOrInsertConditionalIndex(llvm::Value *val, LoopContext &lc,
                                            bool pickTrue);
 
+  /// Whether the loop-carried value \p val of the header phi \p phi (both in
+  /// the original function) has no active use inside the phi's loop other than
+  /// the phi itself, i.e. only its value after the loop is differentiated.
+  bool onlyActiveUseInLoopIsPHI(const llvm::Instruction *val,
+                                const llvm::PHINode *phi) const;
+
   bool assumeDynamicLoopOfSizeOne(llvm::Loop *L) const override;
 
   llvm::DebugLoc getNewFromOriginal(const llvm::DebugLoc L) const;

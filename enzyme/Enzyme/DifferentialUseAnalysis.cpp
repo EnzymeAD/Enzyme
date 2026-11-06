@@ -1276,6 +1276,11 @@ bool checkLoopyReductionPHI(const GradientUtils *gutils,
   L->getExitBlocks(exitBlocks);
   if (exitBlocks.size() != 1)
     return false;
+  // The reverse pass only takes the reduction rewrite, and so only reads the
+  // start value, when the division's intermediate values have no active use
+  // inside the loop.
+  if (!gutils->onlyActiveUseInLoopIsPHI(userInst, P0))
+    return false;
 
   return true;
 }
@@ -1327,6 +1332,8 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
     SmallVector<BasicBlock *, 2> exitBlocks;
     L->getExitBlocks(exitBlocks);
     if (exitBlocks.size() != 1)
+      return;
+    if (!gutils->onlyActiveUseInLoopIsPHI(userInst, P0))
       return;
 
     while (Pstart) {
