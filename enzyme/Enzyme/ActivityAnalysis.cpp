@@ -75,6 +75,151 @@ using namespace llvm;
 #define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
 
+/// Return true if \p F is an exact, read-only-or-throw function whose returned
+/// value(s) can only contain pointers derived (via pointer arithmetic, casts,
+/// non-escaping local parameter/retval allocas, or loads of pre-existing caller
+/// memory) from \p F's own arguments, never from globals, fresh allocations, or
+/// inttoptr.
+static bool doesReturnOnlyArgDerivedMemory(
+    llvm::Function *F, SmallPtrSetImpl<const llvm::Function *> &Visiting) {
+  if (!F || F->empty() || F->isInterposable())
+    return false;
+  if (!isReadOnlyOrThrow(F))
+    return false;
+  if (hasCustomRuleMetadata(F) || getFuncName(F) == "enzyme_custom" ||
+      F->hasFnAttribute("enzyme_active") ||
+      F->hasFnAttribute("enzyme_active_val") ||
+      F->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                      "enzyme_active"))
+    return false;
+  if (Visiting.size() >= 6 || !Visiting.insert(F).second)
+    return false;
+
+  SmallVector<const Value *, 16> Worklist;
+  bool SawReturn = false;
+  for (const BasicBlock &BB : *F) {
+    if (const auto *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+      if (const Value *RV = RI->getReturnValue()) {
+        SawReturn = true;
+        Worklist.push_back(RV);
+      }
+    }
+  }
+  if (!SawReturn) {
+    Visiting.erase(F);
+    return false;
+  }
+
+  SmallPtrSet<const Value *, 32> Seen;
+  while (!Worklist.empty()) {
+    const Value *V = Worklist.pop_back_val();
+    if (!Seen.insert(V).second)
+      continue;
+    if (isa<Argument>(V) || isa<ConstantPointerNull>(V) || isa<UndefValue>(V) ||
+        isa<ConstantInt>(V) || isa<ConstantFP>(V))
+      continue;
+    if (const auto *GEP = dyn_cast<GetElementPtrInst>(V)) {
+      Worklist.push_back(GEP->getPointerOperand());
+      continue;
+    }
+    if (isa<BitCastInst>(V) || isa<AddrSpaceCastInst>(V)) {
+      Worklist.push_back(cast<Operator>(V)->getOperand(0));
+      continue;
+    }
+    if (const auto *PN = dyn_cast<PHINode>(V)) {
+      for (const Value *Inc : PN->incoming_values())
+        Worklist.push_back(Inc);
+      continue;
+    }
+    if (const auto *Sel = dyn_cast<SelectInst>(V)) {
+      Worklist.push_back(Sel->getTrueValue());
+      Worklist.push_back(Sel->getFalseValue());
+      continue;
+    }
+    if (const auto *EVI = dyn_cast<ExtractValueInst>(V)) {
+      Worklist.push_back(EVI->getAggregateOperand());
+      continue;
+    }
+    if (const auto *IVI = dyn_cast<InsertValueInst>(V)) {
+      Worklist.push_back(IVI->getAggregateOperand());
+      Worklist.push_back(IVI->getInsertedValueOperand());
+      continue;
+    }
+    if (const auto *LI = dyn_cast<LoadInst>(V)) {
+      if (!LI->isSimple()) {
+        Visiting.erase(F);
+        return false;
+      }
+      const Value *PtrOp = LI->getPointerOperand();
+      if (const auto *AI =
+              dyn_cast<AllocaInst>(getBaseObject(const_cast<Value *>(PtrOp)))) {
+        if (PtrOp != AI || AI->isArrayAllocation() ||
+            AI->getAllocatedType() != LI->getType()) {
+          Visiting.erase(F);
+          return false;
+        }
+        bool SlotSafe = true;
+        for (const Use &AllocaUse : AI->uses()) {
+          const auto *AllocaUser = dyn_cast<Instruction>(AllocaUse.getUser());
+          if (!AllocaUser) {
+            SlotSafe = false;
+            break;
+          }
+          if (const auto *StoreUser = dyn_cast<StoreInst>(AllocaUser)) {
+            if (StoreUser->isSimple() &&
+                AllocaUse.getOperandNo() ==
+                    StoreInst::getPointerOperandIndex() &&
+                StoreUser->getValueOperand() != AI &&
+                StoreUser->getValueOperand()->getType() == LI->getType()) {
+              Worklist.push_back(StoreUser->getValueOperand());
+              continue;
+            }
+          }
+          if (const auto *LoadUser = dyn_cast<LoadInst>(AllocaUser)) {
+            if (LoadUser->isSimple() &&
+                AllocaUse.getOperandNo() ==
+                    LoadInst::getPointerOperandIndex() &&
+                LoadUser->getType() == LI->getType())
+              continue;
+          }
+          if (const auto *CallUser = dyn_cast<CallBase>(AllocaUser)) {
+            if (isDebugFunction(CallUser->getCalledFunction()))
+              continue;
+          }
+          SlotSafe = false;
+          break;
+        }
+        if (!SlotSafe) {
+          Visiting.erase(F);
+          return false;
+        }
+        continue;
+      }
+      Worklist.push_back(PtrOp);
+      continue;
+    }
+    if (const auto *CB = dyn_cast<CallBase>(V)) {
+      Function *SubF = getFunctionFromCall(CB);
+      if (SubF && SubF->getCallingConv() == CB->getCallingConv() &&
+          !CB->hasFnAttr("enzyme_active") &&
+          !CB->hasFnAttr("enzyme_active_val") && !hasCustomRuleMetadata(CB) &&
+          doesReturnOnlyArgDerivedMemory(SubF, Visiting)) {
+        for (const Value *SubArg : CB->args()) {
+          if (!SubArg->getType()->isIntOrIntVectorTy() &&
+              !SubArg->getType()->isFPOrFPVectorTy())
+            Worklist.push_back(SubArg);
+        }
+        continue;
+      }
+    }
+    Visiting.erase(F);
+    return false;
+  }
+
+  Visiting.erase(F);
+  return true;
+}
+
 extern "C" {
 cl::opt<bool>
     EnzymePrintActivity("enzyme-print-activity", cl::init(false), cl::Hidden,
@@ -1922,6 +2067,42 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
+        }
+
+        if (called && !called->empty() && !called->isInterposable() &&
+            called->getCallingConv() == op->getCallingConv() &&
+            !op->hasFnAttr("enzyme_active") &&
+            !op->hasFnAttr("enzyme_active_val") && !hasCustomRuleMetadata(op) &&
+            isReadOnlyOrThrow(op)) {
+          SmallPtrSet<const Function *, 4> Visiting;
+          if (doesReturnOnlyArgDerivedMemory(called, Visiting)) {
+            Value *ActiveArg = nullptr;
+            for (Value *ArgOp : op->args()) {
+              if (ArgOp->getType()->isFPOrFPVectorTy() ||
+                  ArgOp->getType()->isIntOrIntVectorTy())
+                continue;
+              bool ArgConst = (directions == UP)
+                                  ? isConstantValue(TR, ArgOp)
+                                  : UpHypothesis->isConstantValue(TR, ArgOp);
+              if (!ArgConst) {
+                ActiveArg = ArgOp;
+                break;
+              }
+            }
+            if (!ActiveArg) {
+              InsertConstantValue(TR, Val);
+              if (TmpOrig != Val)
+                InsertConstantValue(TR, TmpOrig);
+              if (directions != UP)
+                insertConstantsFrom(TR, *UpHypothesis);
+              return true;
+            }
+            if (EnzymeEnableRecursiveHypotheses) {
+              ReEvaluateValueIfInactiveValue[ActiveArg].insert(Val);
+              if (TmpOrig != Val)
+                ReEvaluateValueIfInactiveValue[ActiveArg].insert(TmpOrig);
+            }
+          }
         }
 
         // If requesting empty unknown functions to be considered inactive,
