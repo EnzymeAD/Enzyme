@@ -54,6 +54,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 
 //;
 
@@ -74,6 +75,48 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // readonly_or_throw, as they only either read externally visible state, throw
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
+
+/// Whether V is allocated by Julia's allocator of Memory objects (Julia
+/// 1.11+), or of arrays (Julia 1.10). These are recognized by name, as
+/// Enzyme.jl may not have registered them as allocation functions.
+bool isJuliaMemoryAllocation(llvm::Value *V);
+bool isJuliaArrayAllocation(llvm::Value *V);
+
+/// Finds written data that did not exist before some point of its function:
+/// before the function began (ReadOnlyOrThrowDetector), or before a call in it
+/// ran (the cache analysis). A subclass says which allocations are made after
+/// that point (isFreshAllocation); the analysis follows the pointers Julia
+/// loads from such allocations to the data they own.
+class FreshDataAnalysis {
+public:
+  using FreshFieldSet = llvm::SmallSet<std::pair<llvm::Value *, int64_t>, 4>;
+  // Objects with the offset of a field of theirs holding fresh data.
+  using FreshFields = llvm::SmallVectorImpl<std::pair<llvm::Value *, int64_t>>;
+
+  FreshDataAnalysis(llvm::TargetLibraryInfo &TLI) : TLI(TLI) {}
+  virtual ~FreshDataAnalysis() = default;
+
+  /// Whether Obj, the base object of a written pointer, is a pointer to data
+  /// that did not exist before the point of interest: data owned by an
+  /// allocation made after it. If so and bases is given, appends the objects
+  /// and fields the pointer was loaded from.
+  bool isFreshData(llvm::Value *Obj, FreshFieldSet &seen, FreshFields *bases);
+  bool isFreshData(llvm::Value *Obj, FreshFields &bases);
+
+protected:
+  llvm::TargetLibraryInfo &TLI;
+
+  /// Whether the allocation CB, with the data a Julia Memory or array it
+  /// allocates owns, is made after the point of interest.
+  virtual bool isFreshAllocation(llvm::CallBase *CB) const = 0;
+
+private:
+  bool allocatorLeavesFieldsUninitialized(llvm::CallBase *CB);
+  bool fieldOnlyHoldsFreshData(llvm::Instruction *Obj, int64_t Field,
+                               FreshFieldSet &seen, FreshFields *bases);
+  bool isFreshField(llvm::Value *V, int64_t Field, FreshFieldSet &seen,
+                    FreshFields *bases);
+};
 
 namespace llvm {
 class PassBuilder;
