@@ -63,6 +63,7 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "FunctionUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
@@ -618,6 +619,11 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosInactiveCall(Name, NormDem))
+      return true;
+  }
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -727,6 +733,24 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     return true;
   }
 
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+    auto AllocKind = enzyme_kokkos::classifyKokkosAllocCall(funcName, NormDem);
+    if (enzyme_kokkos::isKokkosFreshAllocationKind(AllocKind) ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData ||
+        AllocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor ||
+        AllocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDtor ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::
+                         SharedAllocRecordDeallocateTracked ||
+        AllocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordGetRecord ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SpaceDeallocate)
+      return true;
+  }
+
   return false;
 }
 
@@ -774,6 +798,27 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    auto AllocKind = enzyme_kokkos::classifyKokkosAllocCall(Name, NormDem);
+    if (AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData ||
+        AllocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor)
+      return CI->arg_size() < 1 || val != CI->getArgOperand(0);
+    if (AllocKind ==
+        enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor) {
+      unsigned AllocPtrIdx = CI->arg_size() >= 6 ? 2 : 1;
+      return val != CI->getArgOperand(0) &&
+             (AllocPtrIdx >= CI->arg_size() ||
+              val != CI->getArgOperand(AllocPtrIdx));
+    }
+    if (enzyme_kokkos::isKokkosFreshAllocationKind(AllocKind) ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::
+                         SharedAllocRecordDeallocateTracked ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SpaceDeallocate)
+      return true;
+  }
 
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
@@ -888,6 +933,25 @@ static inline void propagateArgumentInformation(
       Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
       Name == "__cxa_guard_abort")
     return;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    auto AllocKind = enzyme_kokkos::classifyKokkosAllocCall(Name, NormDem);
+    if (AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordData ||
+        AllocKind ==
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor) {
+      if (CI.arg_size() > 0)
+        propagateFromOperand(CI.getArgOperand(0));
+      return;
+    }
+    if (enzyme_kokkos::isKokkosFreshAllocationKind(AllocKind) ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::
+                         SharedAllocRecordDeallocateTracked ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SpaceDeallocate ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDtor ||
+        AllocKind == enzyme_kokkos::KokkosAllocKind::SharedAllocRecordGetRecord)
+      return;
+  }
 
   auto F = getFunctionFromCall(&CI);
 
@@ -1924,12 +1988,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           return true;
         }
 
+        bool IsKokkosFreshAlloc = false;
+        if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+          std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+          IsKokkosFreshAlloc = enzyme_kokkos::isKokkosFreshAllocationKind(
+              enzyme_kokkos::classifyKokkosAllocCall(funcName, NormDem));
+        }
+
         // If requesting empty unknown functions to be considered inactive,
         // abide by those rules
         if (called && EnzymeEmptyFnInactive && called->empty() &&
             !hasMetadata(called, "enzyme_gradient") &&
             !hasMetadata(called, "enzyme_derivative") &&
-            !isAllocationFunction(funcName, TLI) &&
+            !isAllocationFunction(funcName, TLI) && !IsKokkosFreshAlloc &&
             !isDeallocationFunction(funcName, TLI) && !isa<IntrinsicInst>(op)) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
@@ -2898,12 +2969,19 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       return true;
     }
 
+    bool IsKokkosFreshAlloc = false;
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      IsKokkosFreshAlloc = enzyme_kokkos::isKokkosFreshAllocationKind(
+          enzyme_kokkos::classifyKokkosAllocCall(funcName, NormDem));
+    }
+
     // If requesting empty unknown functions to be considered inactive, abide
     // by those rules
     if (called && EnzymeEmptyFnInactive && called->empty() &&
         !hasMetadata(called, "enzyme_gradient") &&
         !hasMetadata(called, "enzyme_derivative") &&
-        !isAllocationFunction(funcName, TLI) &&
+        !isAllocationFunction(funcName, TLI) && !IsKokkosFreshAlloc &&
         !isDeallocationFunction(funcName, TLI) && !isa<IntrinsicInst>(op)) {
       if (EnzymePrintActivity)
         llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "

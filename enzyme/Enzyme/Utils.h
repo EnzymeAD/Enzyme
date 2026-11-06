@@ -3067,4 +3067,163 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// If \p V is an `enzyme_fromstack`-upgraded `malloc` `CallInst`, returns its
+/// original stack `AllocaInst` element type (and sets \p OutElemCount when
+/// non-null).
+static inline llvm::Type *
+extractEnzymeFromStackType(const llvm::Value *V,
+                           const llvm::DataLayout *DL = nullptr,
+                           uint64_t *OutElemCount = nullptr) {
+  if (OutElemCount)
+    *OutElemCount = 1;
+  const auto *MCI = llvm::dyn_cast_or_null<llvm::CallInst>(V);
+  if (!MCI)
+    return nullptr;
+  auto *MD = hasMetadata(MCI, "enzyme_fromstack");
+  if (!MD || MD->getNumOperands() < 2)
+    return nullptr;
+  auto *CAM = llvm::dyn_cast<llvm::ConstantAsMetadata>(MD->getOperand(1));
+  if (!CAM)
+    return nullptr;
+  auto *CIVal = llvm::dyn_cast<llvm::ConstantInt>(CAM->getValue());
+  if (!CIVal)
+    return nullptr;
+  auto *ElTy = reinterpret_cast<llvm::Type *>(CIVal->getLimitedValue());
+  if (ElTy && DL && OutElemCount && MCI->arg_size() >= 1) {
+    if (auto *ByteSz =
+            llvm::dyn_cast<llvm::ConstantInt>(MCI->getArgOperand(0))) {
+      uint64_t ElemBytes = DL->getTypeAllocSize(ElTy);
+      uint64_t TotalBytes = ByteSz->getZExtValue();
+      if (ElemBytes > 0 && TotalBytes >= ElemBytes &&
+          TotalBytes % ElemBytes == 0)
+        *OutElemCount = TotalBytes / ElemBytes;
+    }
+  }
+  return ElTy;
+}
+
+/// Returns true if [Offset, Offset + Size) in \p T lies within a Kokkos
+/// `SharedAllocationTracker` or `ViewTracker` subobject.
+static inline bool isKokkosSharedAllocTrackerSlice(llvm::Type *T,
+                                                   uint64_t Offset,
+                                                   uint64_t Size,
+                                                   const llvm::DataLayout &DL) {
+  if (!T || Size == 0)
+    return false;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    llvm::Type *ET = AT->getElementType();
+    uint64_t ESize = DL.getTypeAllocSize(ET);
+    if (ESize == 0 || AT->getNumElements() == 0)
+      return false;
+    uint64_t First = Offset / ESize;
+    uint64_t Last = (Offset + Size - 1) / ESize;
+    if (Last >= AT->getNumElements() || First != Last)
+      return false;
+    return isKokkosSharedAllocTrackerSlice(ET, Offset - First * ESize, Size,
+                                           DL);
+  }
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    uint64_t STSize = DL.getTypeAllocSize(ST);
+    if (Offset + Size > STSize)
+      return false;
+    if (!ST->isLiteral() &&
+        (ST->getName().contains("SharedAllocationTracker") ||
+         ST->getName().contains("Kokkos::Impl::ViewTracker") ||
+         (ST->getName().contains("ReferenceCountedDataHandle") && Offset == 0 &&
+          Size <= DL.getPointerSize(0))))
+      return true;
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    const llvm::StructLayout *SL = DL.getStructLayout(ST);
+    unsigned idx = SL->getElementContainingOffset(Offset);
+    uint64_t EStart = SL->getElementOffset(idx);
+    llvm::Type *ET = ST->getElementType(idx);
+    if (Offset + Size > EStart + DL.getTypeAllocSize(ET))
+      return false;
+    return isKokkosSharedAllocTrackerSlice(ET, Offset - EStart, Size, DL);
+  }
+  return false;
+}
+
+/// Returns true if \p Ptr addresses \p Size bytes inside a Kokkos
+/// `SharedAllocationTracker` / `ViewTracker` slot (via `AllocaInst`, GEP source
+/// element type, `sret`/`byval` parameter, or `this`/tracker argument of a
+/// Kokkos View/Tracker/DataHandle method).
+static inline bool
+isPtrSliceKokkosSharedAllocTracker(const llvm::Value *Ptr, uint64_t Size,
+                                   const llvm::DataLayout &DL,
+                                   const llvm::Function *F = nullptr) {
+  if (!Ptr || Size == 0 || !Ptr->getType()->isPointerTy())
+    return false;
+  const llvm::Value *Cur = Ptr;
+  int64_t AccOff = 0;
+  llvm::SmallPtrSet<const llvm::Value *, 8> Visited;
+  while (Cur && Visited.insert(Cur).second) {
+    Cur = Cur->stripPointerCasts();
+    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Cur)) {
+      llvm::APInt GepOff(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+      if (GEP->accumulateConstantOffset(DL, GepOff)) {
+        int64_t Step = GepOff.getSExtValue();
+        int64_t TotalFromGepSrc = Step + AccOff;
+        if (TotalFromGepSrc >= 0 &&
+            isKokkosSharedAllocTrackerSlice(
+                GEP->getSourceElementType(),
+                static_cast<uint64_t>(TotalFromGepSrc), Size, DL))
+          return true;
+        AccOff += Step;
+        Cur = GEP->getPointerOperand();
+        continue;
+      }
+      return false;
+    }
+    break;
+  }
+  if (AccOff < 0)
+    return false;
+  uint64_t Off = static_cast<uint64_t>(AccOff);
+  if (const auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Cur)) {
+    if (!llvm::isa<llvm::ConstantInt>(AI->getArraySize()))
+      return false;
+    llvm::Type *ATy = AI->getAllocatedType();
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >=
+        llvm::cast<llvm::ConstantInt>(AI->getArraySize())->getLimitedValue())
+      return false;
+    return isKokkosSharedAllocTrackerSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  uint64_t FromStackCount = 1;
+  if (llvm::Type *ATy = extractEnzymeFromStackType(Cur, &DL, &FromStackCount)) {
+    uint64_t ESize = DL.getTypeAllocSize(ATy);
+    if (ESize == 0)
+      return false;
+    uint64_t idx = Off / ESize;
+    if (idx >= FromStackCount)
+      return false;
+    return isKokkosSharedAllocTrackerSlice(ATy, Off - idx * ESize, Size, DL);
+  }
+  if (const auto *Arg = llvm::dyn_cast<llvm::Argument>(Cur)) {
+    llvm::Type *ParamTy = nullptr;
+    if (Arg->hasStructRetAttr())
+      ParamTy = Arg->getParamStructRetType();
+    else if (Arg->hasByValAttr())
+      ParamTy = Arg->getParamByValType();
+    if (ParamTy && isKokkosSharedAllocTrackerSlice(ParamTy, Off, Size, DL))
+      return true;
+    if (Off == 0 && F) {
+      llvm::StringRef FN = F->getName();
+      if (FN.contains("Kokkos") &&
+          (FN.contains("SharedAllocationTracker") ||
+           FN.contains("ReferenceCountedDataHandle") ||
+           FN.contains("BasicView") || FN.contains("4View") ||
+           FN.contains("11DynRankView") || FN.contains("8DualView") ||
+           FN.contains("11ScatterView") || FN.contains("10OffsetView")))
+        return true;
+    }
+  }
+  return false;
+}
+
 #endif // ENZYME_UTILS_H
