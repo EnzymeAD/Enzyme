@@ -1,0 +1,25 @@
+include:
+  - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
+
+# Builds the Clang plugin of Enzyme against the LLVM of the uenv's ROCm (the LLVM whose Clang compiles HIP code), then compiles
+# ci/hip_autodiff.hip with it and runs it on a MI300A GPU: HIP kernels that differentiate a device function in reverse and forward
+# mode, checked against the analytic derivative. ROCm's LLVM is a snapshot of an LLVM release in development (detected by CMake).
+mi300 - HIP:
+  extends: .baremetal-runner-beverin-mi300
+  variables:
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS_PER_NODE: 1
+    SLURM_TIMELIMIT: '00:30:00'
+    UENV: '56ebb909a6164680'  # prgenv-gnu/7.2.3 (ROCm 7.2.3, LLVM 22.0.0git)
+    OFFLOAD_ARCH: 'gfx942'    # MI300A
+  script:
+    - ulimit -c 0
+    - |
+      uenv run $UENV --view=default -- bash -euxc '
+        LLVM_MAJOR=$(llvm-config --version | cut -d. -f1)
+        cmake -S enzyme -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DLLVM_DIR=$ROCM_PATH/lib/cmake/llvm -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+        ninja -C build ClangEnzyme-$LLVM_MAJOR
+        clang++ -x hip --offload-arch=$OFFLOAD_ARCH --rocm-path=$ROCM_PATH -O2 -fplugin=build/Enzyme/ClangEnzyme-$LLVM_MAJOR.so \
+          ci/hip_autodiff.hip -o build/hip_autodiff -L$ROCM_PATH/lib -lamdhip64 -Wl,-rpath,$ROCM_PATH/lib
+        build/hip_autodiff'

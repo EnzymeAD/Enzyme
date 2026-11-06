@@ -34,6 +34,14 @@
 
 using namespace llvm;
 
+// LLVM version against which the version ranges of intrinsic names are checked.
+#ifdef ENZYME_LLVM22_PRERELEASE
+// A snapshot of LLVM 22 that predates the LLVM 22 release has the intrinsic names of LLVM 21.
+static constexpr int intrVersion = 21;
+#else
+static constexpr int intrVersion = LLVM_VERSION_MAJOR;
+#endif
+
 static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
 #if LLVM_VERSION_MAJOR >= 18
   return string.starts_with(prefix);
@@ -2069,13 +2077,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           auto min = cast<StringInit>(lst->getElement(1))->getValue();
           int min_int = 100000;
           min.getAsInteger(10, min_int);
-          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
+          if (min.size() != 0 && intrVersion < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getElement(2))->getValue();
             int max_int = 0;
             max.getAsInteger(10, max_int);
-            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
+            if (max.size() != 0 && intrVersion > max_int)
               continue;
           }
         }
@@ -3056,7 +3064,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
             PrintFatalError(pattern->getLoc(),
                             "Could not parse min llvm version as int");
           }
-          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
+          if (min.size() != 0 && intrVersion < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getElement(2))->getValue();
@@ -3065,7 +3073,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
               PrintFatalError(pattern->getLoc(),
                               "Could not parse max llvm version as int");
             }
-            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
+            if (max.size() != 0 && intrVersion > max_int)
               continue;
           }
         }

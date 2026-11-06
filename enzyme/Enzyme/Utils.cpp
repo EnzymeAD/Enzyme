@@ -867,7 +867,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     if (auto ci = dyn_cast<ConstantInt>(Count)) {
 #if LLVM_VERSION_MAJOR >= 14
       malloccall->addDereferenceableRetAttr(ci->getLimitedValue() * AlignI);
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
       AttrBuilder B(ci->getContext());
 #else
       AttrBuilder B;

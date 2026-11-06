@@ -270,9 +270,29 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
-option(ENZYME_ROCM_VERSION "Build for non-version compliant ROCM" OFF)
-if(ENZYME_ROCM_VERSION)
-  add_definitions(-DROCM=1)
+# A snapshot of LLVM 22, such as the LLVM of ROCm 7.2 (22.0.0git), can predate API changes of the LLVM 22 release that the code
+# uses (intrinsic names, SCEVExpander, PassPlugin.h): then ENZYME_LLVM22_PRERELEASE makes the code take the LLVM 21 branch there.
+function(enzyme_check_llvm22_release_api)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES ${LLVM_INCLUDE_DIRS})
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY) # Compile only: no LLVM library to link.
+  check_cxx_source_compiles("
+#if !__has_include(\"llvm/Plugins/PassPlugin.h\")
+#error \"no llvm/Plugins/PassPlugin.h\"
+#endif
+#include \"llvm/IR/IntrinsicsNVPTX.h\"
+#include \"llvm/Transforms/Utils/ScalarEvolutionExpander.h\"
+#include <type_traits>
+static_assert(std::is_constructible<llvm::SCEVExpander, llvm::ScalarEvolution &, const char *, bool>::value, \"\");
+int main() { return llvm::Intrinsic::nvvm_barrier_cta_red_and_aligned_all + llvm::Intrinsic::nvvm_ex2_approx; }"
+    ENZYME_LLVM22_RELEASE_API)
+endfunction()
+if(LLVM_VERSION_MAJOR EQUAL 22)
+  enzyme_check_llvm22_release_api()
+  if(NOT ENZYME_LLVM22_RELEASE_API)
+    message("LLVM 22 snapshot without the API of the LLVM 22 release: ENZYME_LLVM22_PRERELEASE")
+    add_definitions(-DENZYME_LLVM22_PRERELEASE=1)
+  endif()
 endif()
 
 # Offer the user the choice of overriding the installation directories

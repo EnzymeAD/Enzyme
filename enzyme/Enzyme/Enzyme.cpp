@@ -2687,7 +2687,7 @@ public:
       // dead internal functions, which invalidates Enzyme's cache
       // code left here to re-enable upon Attributor patch
 
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
 
       AnalysisGetter AG(Logic.PPC.FAM);
       SetVector<Function *> Functions;
@@ -3052,7 +3052,7 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
 }
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
 #include "llvm/Plugins/PassPlugin.h"
 #else
 #include "llvm/Passes/PassPlugin.h"
