@@ -1,0 +1,6 @@
+# Enable `custom-mlir-pass-cl-opt` inside `enzyme/Enzyme/MLIR/Passes/` so that
+# MLIR pass files use TableGen pass options rather than global `llvm::cl::opt` /
+# `llvm::cl::list` flags (standalone CLI driver tools outside `Passes/` are exempt).
+
+InheritParentConfig: true
+Checks: 'custom-mlir-pass-cl-opt'
