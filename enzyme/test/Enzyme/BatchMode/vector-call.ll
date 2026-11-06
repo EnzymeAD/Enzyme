@@ -34,11 +34,11 @@ entry:
 ; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %unwrap.x1
 ; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %unwrap.x2
 ; CHECK-NEXT:   %mul3 = fmul double %unwrap.x3, %unwrap.x3
-; CHECK-NEXT:   %0 = insertvalue [4 x double] undef, double %mul0, 0
-; CHECK-NEXT:   %1 = insertvalue [4 x double] undef, double %mul1, 1
-; CHECK-NEXT:   %2 = insertvalue [4 x double] undef, double %mul2, 2
-; CHECK-NEXT:   %3 = insertvalue [4 x double] undef, double %mul3, 3
-; CHECK-NEXT:   %call = call [4 x double] @batch_add3([4 x double] undef, double %a)
+; CHECK-NEXT:   %[[LANE0:.+]] = insertvalue [4 x double] undef, double %mul0, 0
+; CHECK-NEXT:   %[[LANE1:.+]] = insertvalue [4 x double] %[[LANE0]], double %mul1, 1
+; CHECK-NEXT:   %[[LANE2:.+]] = insertvalue [4 x double] %[[LANE1]], double %mul2, 2
+; CHECK-NEXT:   %[[LANE3:.+]] = insertvalue [4 x double] %[[LANE2]], double %mul3, 3
+; CHECK-NEXT:   %call = call [4 x double] @batch_add3([4 x double] %[[LANE3]], double %a)
 ; CHECK-NEXT:   %unwrap.call0 = extractvalue [4 x double] %call, 0
 ; CHECK-NEXT:   %unwrap.call1 = extractvalue [4 x double] %call, 1
 ; CHECK-NEXT:   %unwrap.call2 = extractvalue [4 x double] %call, 2
