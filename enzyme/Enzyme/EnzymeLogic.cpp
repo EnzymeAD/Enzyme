@@ -820,6 +820,7 @@ void calculateUnusedValuesInFunction(
     PrimalSeen = CacheResults;
   }
 
+  SmallPtrSet<const CallInst *, 4> reverseFreedAllocations;
   for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
     if (pair.second.size() == 0)
       continue;
@@ -846,12 +847,44 @@ void calculateUnusedValuesInFunction(
       }
     }
 
-    for (auto freeCall : pair.second) {
-      if (!primalNeededInReverse)
-        gutils->forwardDeallocations.insert(freeCall);
-      else
-        gutils->postDominatingFrees.insert(freeCall);
+    if (primalNeededInReverse)
+      reverseFreedAllocations.insert(pair.first);
+  }
+
+  // When multiple allocations share a deallocation (such as freeing a PHI),
+  // erasing that deallocation in the forward pass requires every allocation
+  // sharing it to be freed in the reverse pass instead.
+  bool propagatedReverseFree = true;
+  while (propagatedReverseFree) {
+    propagatedReverseFree = false;
+    for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+      if (!reverseFreedAllocations.count(pair.first))
+        continue;
+      for (const CallInst *freeCall : pair.second) {
+        if (gutils->postDominatingFrees.insert(freeCall).second)
+          propagatedReverseFree = true;
+      }
     }
+    if (!propagatedReverseFree)
+      break;
+    for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+      if (reverseFreedAllocations.count(pair.first))
+        continue;
+      for (const CallInst *freeCall : pair.second) {
+        if (gutils->postDominatingFrees.count(freeCall)) {
+          reverseFreedAllocations.insert(pair.first);
+          propagatedReverseFree = true;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+    if (pair.second.size() == 0 || reverseFreedAllocations.count(pair.first))
+      continue;
+    for (const CallInst *freeCall : pair.second)
+      gutils->forwardDeallocations.insert(freeCall);
   }
   // Consider allocations which are being rematerialized, but do not
   // have a guaranteed free.

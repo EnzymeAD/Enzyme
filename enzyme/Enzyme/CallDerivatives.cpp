@@ -4086,6 +4086,20 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       gutils->erase(newCall);
     };
 
+    auto foundGuaranteedFree =
+        gutils->allocationsWithGuaranteedFree.find(&call);
+    bool hasPDFree =
+        foundGuaranteedFree != gutils->allocationsWithGuaranteedFree.end();
+    bool hasPostDominatingFree = false;
+    if (hasPDFree) {
+      for (const CallInst *freeCall : foundGuaranteedFree->second) {
+        if (gutils->postDominatingFrees.count(freeCall)) {
+          hasPostDominatingFree = true;
+          break;
+        }
+      }
+    }
+
     // Don't erase any allocation that is being rematerialized.
     {
       auto found = gutils->rematerializableAllocations.find(&call);
@@ -4156,7 +4170,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           // If in primal, do nothing (keeping the original caching behavior)
           if (Mode == DerivativeMode::ReverseModePrimal)
             return true;
-        } else if (!cacheWholeAllocation) {
+        } else if (!cacheWholeAllocation && !hasPostDominatingFree) {
           if (unnecessaryValues.count(&call)) {
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
             return true;
@@ -4178,8 +4192,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // free behavior and do not rematerialize this for the reverse. However,
     // this is only safe to perform for allocations with a guaranteed free
     // as can we can only guarantee that we don't erase those frees.
-    bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(&call);
-    if (!primalNeededInReverse && hasPDFree) {
+    if (!primalNeededInReverse && hasPDFree && !hasPostDominatingFree) {
       if (unnecessaryValues.count(&call)) {
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         return true;
