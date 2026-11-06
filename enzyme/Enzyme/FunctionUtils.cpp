@@ -2987,7 +2987,8 @@ bool ReadOnlyOrThrowDetector::run() {
         if (auto F2 = CI->getCalledFunction()) {
           if (isDebugFunction(F2))
             continue;
-          if (F2->getName() == "julia.write_barrier")
+          if (F2->getName() == "julia.write_barrier" ||
+              isRustNoAllocShimFunction(F2->getName()))
             continue;
           if (F2->getCallingConv() == CI->getCallingConv()) {
             if (F2 == &F)
