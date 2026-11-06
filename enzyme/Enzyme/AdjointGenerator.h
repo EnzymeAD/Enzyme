@@ -4061,71 +4061,91 @@ public:
             /*backwardsShadow*/ backwardsShadow);
       };
 
-      auto fwd_rule = [&](Value *ddst, Value *dsrc) {
-        if (ddst == nullptr)
-          ddst = gutils->getNewFromOriginal(orig_dst);
-        if (dsrc == nullptr)
-          dsrc = gutils->getNewFromOriginal(orig_src);
-        MaybeAlign dalign;
+      auto fwd_rule = [&](Value *destShadow, Value *sourceShadow) {
+        if (destShadow == nullptr)
+          destShadow = gutils->getNewFromOriginal(orig_dst);
+        if (sourceShadow == nullptr)
+          sourceShadow = gutils->getNewFromOriginal(orig_src);
+        MaybeAlign destAlignVal;
         if (subdstalign)
-          dalign = MaybeAlign(subdstalign);
-        MaybeAlign salign;
+          destAlignVal = MaybeAlign(subdstalign);
+        MaybeAlign sourceAlignVal;
         if (subsrcalign)
-          salign = MaybeAlign(subsrcalign);
-        if (ddst->getType()->isIntegerTy())
-          ddst =
-              BuilderZ.CreateIntToPtr(ddst, getInt8PtrTy(ddst->getContext()));
-        if (seg_start != 0) {
-          ddst = BuilderZ.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(ddst->getContext()), ddst, seg_start);
+          sourceAlignVal = MaybeAlign(subsrcalign);
+        auto normalizePointer = [&](Value *pointer) {
+          if (pointer->getType()->isIntegerTy())
+            pointer = BuilderZ.CreateIntToPtr(
+                pointer, getInt8PtrTy(pointer->getContext()));
+          if (seg_start != 0) {
+            pointer = BuilderZ.CreateConstInBoundsGEP1_64(
+                Type::getInt8Ty(pointer->getContext()), pointer, seg_start);
+          }
+          return pointer;
+        };
+        destShadow = normalizePointer(destShadow);
+        Value *destInactive = nullptr;
+        if (gutils->runtimeActivity) {
+          Value *primalDest =
+              normalizePointer(gutils->getNewFromOriginal(orig_dst));
+          if (primalDest->getType() != destShadow->getType())
+            primalDest = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                primalDest, destShadow->getType());
+          destInactive = BuilderZ.CreateICmpEQ(destShadow, primalDest);
         }
+        Value *zero = ConstantInt::get(length->getType(), 0);
         CallInst *call;
         if (floatTy && gutils->isConstantValue(orig_src)) {
+          Value *zeroLength =
+              destInactive ? BuilderZ.CreateSelect(destInactive, zero, length)
+                           : length;
           call = BuilderZ.CreateMemSet(
-              ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, dalign, cast<ConstantInt>(isVolatile)->isOne());
+              destShadow,
+              ConstantInt::get(Type::getInt8Ty(destShadow->getContext()), 0),
+              zeroLength, destAlignVal, cast<ConstantInt>(isVolatile)->isOne());
         } else {
-          auto toPtr = [&](Value *ptr) {
-            if (ptr->getType()->isIntegerTy())
-              ptr =
-                  BuilderZ.CreateIntToPtr(ptr, getInt8PtrTy(ptr->getContext()));
-            if (seg_start != 0) {
-              ptr = BuilderZ.CreateConstInBoundsGEP1_64(
-                  Type::getInt8Ty(ptr->getContext()), ptr, seg_start);
-            }
-            return ptr;
-          };
-          dsrc = toPtr(dsrc);
+          sourceShadow = normalizePointer(sourceShadow);
 
-          // With runtime activity, a source that is inactive at runtime has
-          // its primal as its shadow. Its float data has a zero derivative, so
-          // zero the shadow instead of copying the primal into it.
+          // With runtime activity, an inactive destination has its primal as
+          // its shadow and must not be overwritten, while an inactive float
+          // source has a zero derivative and must zero an active shadow
+          // destination instead of copying primal values into it.
           Value *copyLength = length;
           Value *zeroLength = nullptr;
-          if (floatTy && gutils->runtimeActivity) {
-            Value *src = toPtr(gutils->getNewFromOriginal(orig_src));
-            if (src->getType() != dsrc->getType())
-              src = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
-                  src, dsrc->getType());
-            Value *inactive = BuilderZ.CreateICmpEQ(dsrc, src);
-            Value *zero = ConstantInt::get(length->getType(), 0);
-            copyLength = BuilderZ.CreateSelect(inactive, zero, length);
-            zeroLength = BuilderZ.CreateSelect(inactive, length, zero);
+          if (gutils->runtimeActivity) {
+            if (floatTy) {
+              Value *primalSource =
+                  normalizePointer(gutils->getNewFromOriginal(orig_src));
+              if (primalSource->getType() != sourceShadow->getType())
+                primalSource = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                    primalSource, sourceShadow->getType());
+              Value *sourceInactive =
+                  BuilderZ.CreateICmpEQ(sourceShadow, primalSource);
+              Value *skipCopy = BuilderZ.CreateOr(destInactive, sourceInactive);
+              copyLength = BuilderZ.CreateSelect(skipCopy, zero, length);
+              Value *sourceZeroLength =
+                  BuilderZ.CreateSelect(sourceInactive, length, zero);
+              zeroLength =
+                  BuilderZ.CreateSelect(destInactive, zero, sourceZeroLength);
+            } else {
+              copyLength = BuilderZ.CreateSelect(destInactive, zero, length);
+            }
           }
 
           if (ID == Intrinsic::memmove) {
             call =
-                BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, copyLength);
+                BuilderZ.CreateMemMove(destShadow, destAlignVal, sourceShadow,
+                                       sourceAlignVal, copyLength);
           } else {
-            call =
-                BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, copyLength);
+            call = BuilderZ.CreateMemCpy(destShadow, destAlignVal, sourceShadow,
+                                         sourceAlignVal, copyLength);
           }
           call->setAttributes(MTI.getAttributes());
 
           if (zeroLength)
             BuilderZ.CreateMemSet(
-                ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-                zeroLength, dalign);
+                destShadow,
+                ConstantInt::get(Type::getInt8Ty(destShadow->getContext()), 0),
+                zeroLength, destAlignVal);
         }
         // TODO shadow scope/noalias (performance)
         call->setMetadata(LLVMContext::MD_alias_scope,
