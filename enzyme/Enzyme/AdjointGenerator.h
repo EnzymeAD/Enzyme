@@ -3537,6 +3537,14 @@ public:
         }
       }
       if (!vd.isKnownPastPointer()) {
+        // Memsets of pure wide-integer aggregates (such as mdspan extents,
+        // strides, and layout mappings); the static alloca type is
+        // authoritative.
+        if (isa<ConstantInt>(MS.getOperand(2)) &&
+            isAllocaSliceWideInteger(MS.getOperand(0), size, DL)) {
+          vd = TypeTree(BaseType::Integer).Only(-1, &MS);
+          goto known;
+        }
         if (looseTypeAnalysis) {
 #if LLVM_VERSION_MAJOR < 17
           if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
@@ -3857,6 +3865,16 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        // Copies of pure wide-integer aggregates (such as mdspan extents,
+        // strides, and layout mappings) are frequently never loaded from, so
+        // type analysis has no scalar evidence; the static alloca type is
+        // authoritative.
+        if (isa<ConstantInt>(new_size) &&
+            (isAllocaSliceWideInteger(orig_dst, size, DL) ||
+             isAllocaSliceWideInteger(orig_src, size, DL))) {
+          vd = TypeTree(BaseType::Integer).Only(-1, &MTI);
+          goto known;
+        }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17

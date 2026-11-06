@@ -136,6 +136,7 @@ createUnconditionalBranch(llvm::BasicBlock *Target, PosT InsertBefore) {
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -3066,5 +3067,126 @@ static bool hasTerminator(llvm::BasicBlock *BB) {
 const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
+
+/// Returns true if \p T is a non-empty aggregate (or scalar) composed solely
+/// of integer types of at least 16 bits (i.e. it cannot be an `i8` byte
+/// buffer used as placement storage for floats or pointers), such as mdspan
+/// `extents` and `layout_*::mapping` structs.
+static inline bool isPurelyWideIntegerDataType(llvm::Type *T) {
+  if (!T)
+    return false;
+  if (auto *IT = llvm::dyn_cast<llvm::IntegerType>(T))
+    return IT->getBitWidth() >= 16;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return AT->getNumElements() > 0 &&
+           isPurelyWideIntegerDataType(AT->getElementType());
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    bool AnyWide = false;
+    for (llvm::Type *ET : ST->elements()) {
+      // Allow `[N x i8]` padding arrays inside otherwise wide-integer structs
+      // (Clang emits these for empty bases / tail padding).
+      if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(ET))
+        if (AT->getElementType()->isIntegerTy(8))
+          continue;
+      if (!isPurelyWideIntegerDataType(ET))
+        return false;
+      AnyWide = true;
+    }
+    return AnyWide;
+  }
+  return false;
+}
+
+/// Returns true if the byte range [Offset, Offset + Size) within \p T overlaps
+/// only (wide) integer leaf scalars (and padding), never floats, pointers, or
+/// `i8` byte buffers.
+static inline bool isWideIntegerSlice(llvm::Type *T, uint64_t Offset,
+                                      uint64_t Size,
+                                      const llvm::DataLayout &DL) {
+  if (!T || Size == 0)
+    return false;
+  if (auto *IT = llvm::dyn_cast<llvm::IntegerType>(T))
+    return IT->getBitWidth() >= 16;
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    llvm::Type *ET = AT->getElementType();
+    uint64_t ESize = DL.getTypeAllocSize(ET);
+    if (ESize == 0 || AT->getNumElements() == 0)
+      return false;
+    uint64_t First = Offset / ESize;
+    uint64_t Last = (Offset + Size - 1) / ESize;
+    if (Last >= AT->getNumElements())
+      return false;
+    for (uint64_t I = First; I <= Last; ++I) {
+      uint64_t EStart = I * ESize;
+      uint64_t S = std::max(Offset, EStart);
+      uint64_t E = std::min(Offset + Size, EStart + ESize);
+      if (!isWideIntegerSlice(ET, S - EStart, E - S, DL))
+        return false;
+    }
+    return true;
+  }
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    if (ST->isOpaque() || ST->getNumElements() == 0)
+      return false;
+    const llvm::StructLayout *SL = DL.getStructLayout(ST);
+    if (Offset + Size > SL->getSizeInBytes())
+      return false;
+    bool AnyLeaf = false;
+    for (unsigned I = 0; I < ST->getNumElements(); ++I) {
+      uint64_t EStart = SL->getElementOffset(I);
+      llvm::Type *ET = ST->getElementType(I);
+      uint64_t EEnd = EStart + DL.getTypeAllocSize(ET);
+      if (EEnd <= Offset || EStart >= Offset + Size)
+        continue;
+      if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(ET))
+        if (AT->getElementType()->isIntegerTy(8))
+          continue;
+      uint64_t S = std::max(Offset, EStart);
+      uint64_t E = std::min(Offset + Size, EEnd);
+      if (!isWideIntegerSlice(ET, S - EStart, E - S, DL))
+        return false;
+      AnyLeaf = true;
+    }
+    return AnyLeaf;
+  }
+  return false;
+}
+
+/// Returns true if \p Ptr is a constant offset into a stack allocation whose
+/// static type guarantees that the \p Size bytes at that offset hold only
+/// wide integers (e.g. mdspan extents / strides / mapping copies).
+static inline bool isAllocaSliceWideInteger(const llvm::Value *Ptr,
+                                            uint64_t Size,
+                                            const llvm::DataLayout &DL) {
+  if (!Ptr || Size == 0)
+    return false;
+  llvm::APInt Offset(DL.getIndexTypeSizeInBits(Ptr->getType()), 0);
+  const llvm::Value *Base = Ptr->stripAndAccumulateConstantOffsets(
+      DL, Offset, /*AllowNonInbounds*/ true);
+  auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Base);
+  if (!AI || Offset.isNegative())
+    return false;
+  if (!llvm::isa<llvm::ConstantInt>(AI->getArraySize()))
+    return false;
+  uint64_t Off = Offset.getZExtValue();
+  llvm::Type *ATy = AI->getAllocatedType();
+  uint64_t N =
+      llvm::cast<llvm::ConstantInt>(AI->getArraySize())->getLimitedValue();
+  uint64_t ESize = DL.getTypeAllocSize(ATy);
+  if (ESize == 0 || N == 0 || Off + Size > ESize * N)
+    return false;
+  uint64_t First = Off / ESize;
+  uint64_t Last = (Off + Size - 1) / ESize;
+  for (uint64_t I = First; I <= Last; ++I) {
+    uint64_t EStart = I * ESize;
+    uint64_t S = std::max(Off, EStart);
+    uint64_t E = std::min(Off + Size, EStart + ESize);
+    if (!isWideIntegerSlice(ATy, S - EStart, E - S, DL))
+      return false;
+  }
+  return true;
+}
 
 #endif // ENZYME_UTILS_H
