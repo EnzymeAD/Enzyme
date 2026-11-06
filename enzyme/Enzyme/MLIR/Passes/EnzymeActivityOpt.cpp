@@ -437,8 +437,12 @@ public:
           out_idx++;
           break;
 
-        case Activity::enzyme_dup:
         case Activity::enzyme_dupnoneed:
+          out_args.push_back(out);
+          out_idx++;
+          break;
+
+        case Activity::enzyme_dup:
           out_args.push_back(out);
           out_idx++;
 
@@ -517,12 +521,22 @@ public:
         // handle all substitutions
         if (new_val == Activity::enzyme_constnoneed &&
             old_val == Activity::enzyme_dupnoneed) {
-          ++oldIdx; // skip gradient too
+          Value derivative = op.getOutputs()[oldIdx++];
+          if (!derivative.use_empty()) {
+            auto iface = cast<AutoDiffTypeInterface>(derivative.getType());
+            derivative.replaceAllUsesWith(
+                iface.createNullValue(rewriter, op.getLoc()));
+          }
         } else if (new_val == Activity::enzyme_const &&
                    old_val == Activity::enzyme_dup) {
           op.getOutputs()[oldIdx++].replaceAllUsesWith(
               newOp.getOutputs()[newIdx++]);
-          ++oldIdx; // skip derivative
+          Value derivative = op.getOutputs()[oldIdx++];
+          if (!derivative.use_empty()) {
+            auto iface = cast<AutoDiffTypeInterface>(derivative.getType());
+            derivative.replaceAllUsesWith(
+                iface.createNullValue(rewriter, op.getLoc()));
+          }
         } else {
           llvm_unreachable("unexpected demotion for return activity");
         }
