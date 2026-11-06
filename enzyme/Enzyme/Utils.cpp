@@ -522,6 +522,55 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
+  if (startsWith(name, "__atomic_load") || startsWith(name, "__atomic_store") ||
+      startsWith(name, "__atomic_exchange") ||
+      startsWith(name, "__atomic_compare_exchange")) {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    auto *FT = F.getFunctionType();
+    for (unsigned i = 0; i < FT->getNumParams(); ++i) {
+      if (FT->getParamType(i)->isPointerTy())
+        addFunctionNoCapture(&F, i);
+    }
+    if (startsWith(name, "__atomic_load_") && FT->getNumParams() == 2 &&
+        FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyReadsMemory();
+#else
+      F.addFnAttr(Attribute::ReadOnly);
+#endif
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else if (startsWith(name, "__atomic_store_") && FT->getNumParams() == 3 &&
+               FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyWritesMemory();
+#else
+      F.addFnAttr(Attribute::WriteOnly);
+#endif
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else if (name == "__atomic_load" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::ReadOnly);
+      F.addParamAttr(2, Attribute::WriteOnly);
+    } else if (name == "__atomic_store" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
