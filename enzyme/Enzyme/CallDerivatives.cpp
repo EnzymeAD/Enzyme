@@ -2816,6 +2816,29 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             else
               for (size_t i = 0; i < gutils->getWidth(); ++i)
                 args.push_back(gutils->extractMeta(Builder2, ptrshadow, i));
+          } else if (auto *LI = dyn_cast<LoadInst>(arg)) {
+            // A GC owner field loaded solely for llvm.julia.gc_preserve_begin
+            // (e.g. MemoryRef.mem loaded from an active Array while memmove
+            // uses MemoryRef.ptr_or_offset) is marked constant by
+            // down-activity, yet its shadow GC object must still be preserved.
+            if (!gutils->isConstantValue(LI->getPointerOperand())) {
+              Value *ptrshadow = gutils->lookupM(
+                  gutils->invertPointerM(LI->getPointerOperand(), BuilderZ),
+                  Builder2);
+              if (gutils->getWidth() == 1) {
+                auto *ld = Builder2.CreateLoad(LI->getType(), ptrshadow);
+                ld->setAlignment(LI->getAlign());
+                args.push_back(ld);
+              } else {
+                for (size_t i = 0; i < gutils->getWidth(); ++i) {
+                  auto *ld = Builder2.CreateLoad(
+                      LI->getType(),
+                      gutils->extractMeta(Builder2, ptrshadow, i));
+                  ld->setAlignment(LI->getAlign());
+                  args.push_back(ld);
+                }
+              }
+            }
           }
         }
 
@@ -2854,6 +2877,26 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           else
             for (size_t i = 0; i < gutils->getWidth(); ++i)
               args.push_back(gutils->extractMeta(BuilderZ, ptrshadow, i));
+        } else if (auto *LI = dyn_cast<LoadInst>(arg)) {
+          // Preserve the shadow GC owner when arg is loaded from an active
+          // aggregate solely to feed llvm.julia.gc_preserve_begin (e.g.
+          // MemoryRef.mem in Julia 1.11+ slice copies).
+          if (!gutils->isConstantValue(LI->getPointerOperand())) {
+            Value *ptrshadow =
+                gutils->invertPointerM(LI->getPointerOperand(), BuilderZ);
+            if (gutils->getWidth() == 1) {
+              auto *ld = BuilderZ.CreateLoad(LI->getType(), ptrshadow);
+              ld->setAlignment(LI->getAlign());
+              args.push_back(ld);
+            } else {
+              for (size_t i = 0; i < gutils->getWidth(); ++i) {
+                auto *ld = BuilderZ.CreateLoad(
+                    LI->getType(), gutils->extractMeta(BuilderZ, ptrshadow, i));
+                ld->setAlignment(LI->getAlign());
+                args.push_back(ld);
+              }
+            }
+          }
         }
       }
 
