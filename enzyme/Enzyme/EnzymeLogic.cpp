@@ -820,13 +820,17 @@ void calculateUnusedValuesInFunction(
     PrimalSeen = CacheResults;
   }
 
+  auto minCutMode = (mode == DerivativeMode::ReverseModePrimal)
+                        ? DerivativeMode::ReverseModeGradient
+                        : mode;
+
   for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
     if (pair.second.size() == 0)
       continue;
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
-            gutils, pair.first, mode, CacheResults, oldUnreachable);
+            gutils, pair.first, minCutMode, CacheResults, oldUnreachable);
 
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
@@ -864,7 +868,7 @@ void calculateUnusedValuesInFunction(
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
-            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+            gutils, rmat.first, minCutMode, CacheResults, oldUnreachable);
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
     if (gutils->needsCacheWholeAllocation(rmat.first)) {
