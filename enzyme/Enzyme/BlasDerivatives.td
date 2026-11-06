@@ -69,6 +69,9 @@ def Add : Binop<"Add", ["intType", "intType"]>;
 def Mul : Binop<"Mul", ["intType", "intType"]>;
 def BFMul : Binop<"FMul", ["fpType", "fpType"]>;
 def BFDiv : Binop<"FDiv", ["fpType", "fpType"]>;
+def BFCmpOEQ : Binop<"FCmpOEQ", ["fpType", "fpType"]>;
+// Forward-mode result that is zero where the divisor is zero.
+def FDivOrZero : MagicInst;
 def FSelect : Binop<"Select", ["Builder2.getInt1Ty()", "fpType", "fpType"]>;
 def ISelect : Binop<"Select", ["Builder2.getInt1Ty()", "intType", "intType"]>;
 
@@ -245,12 +248,14 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   (FAdd<""> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
 
+// The norm is not differentiable at zero; follow ChainRules and take the
+// derivative there to be zero rather than dividing zero by zero.
 def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [],[len, vinc<["n"]>],
                   [
-                  (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
+                  (BlasCall<"axpy"> $n, (FSelect (BFCmpOEQ (BlasCall<"nrm2"> $n, $x), Constant<"0.0">), Constant<"0.0">, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x))), $x, (Shadow $x))
                   ],
-		              (BFDiv (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
+                  (FDivOrZero (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
                   >;
 
 

@@ -2035,8 +2035,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "        }\n";
     return;
   }
-  if (Def->isSubClassOf("BFDiv") || Def->getName() == "BFDiv") {
+  if (Def->isSubClassOf("BFDiv") || Def->getName() == "BFDiv" ||
+      Def->getName() == "FDivOrZero") {
     assert(forward);
+    bool ZeroOnZeroDivisor = Def->getName() == "FDivOrZero";
     os << "        {\n";
     os << "      // BFDiv\n";
     auto subNum = ruleDag->getArg(0);
@@ -2058,6 +2060,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "           assert(subnum);\n";
     os << "           assert(subdenom);\n";
     os << resultVarName << " = Builder2.CreateFDiv(subnum, subdenom);\n";
+    if (ZeroOnZeroDivisor)
+      os << resultVarName << " = CreateSelect(Builder2, "
+         << "Builder2.CreateFCmpOEQ(subdenom, ConstantFP::get(fpType, 0.0)), "
+         << "ConstantFP::get(fpType, 0.0), " << resultVarName << ");\n";
     os << "         } else " << resultVarName
        << " = ConstantFP::get(fpType, 0.0);\n";
     os << "        }\n";
