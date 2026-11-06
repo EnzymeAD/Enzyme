@@ -211,6 +211,7 @@ extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
+extern llvm::cl::opt<bool> EnzymeJuliaFieldWriteBarrier;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -3039,6 +3040,37 @@ static bool anyJuliaObjects(llvm::Type *T) {
 
 llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
                                                     llvm::IRBuilder<> &B);
+
+/// Julia's write barriers: `julia.write_barrier` (before Julia 1.14) and the
+/// object and field barriers that replace it. All take the parent first.
+static inline bool isJuliaFieldWriteBarrier(llvm::StringRef name) {
+  return name == "julia.field_write_barrier.p11" ||
+         name == "julia.field_write_barrier.p13";
+}
+static inline bool isJuliaWriteBarrier(llvm::StringRef name) {
+  return name == "julia.write_barrier" ||
+         name == "julia.object_write_barrier" || isJuliaFieldWriteBarrier(name);
+}
+/// Whether operand `i` of a write barrier call is a stored child (rather than
+/// the parent, or the slot of a field barrier, whose operands alternate slot,
+/// child after the parent).
+static inline bool isJuliaWriteBarrierChild(llvm::StringRef name, size_t i) {
+  if (i == 0)
+    return false;
+  return !isJuliaFieldWriteBarrier(name) || i % 2 == 0;
+}
+
+/// Emit the write barrier for storing `val` through `ptr` into the Julia object
+/// `parent`, including when the stored references are null. Julia requires the
+/// barrier between the last safepoint and the store, so call this immediately
+/// before emitting the store. Prefer emitJuliaGCWrite, which emits both.
+void emitJuliaWriteBarrier(llvm::IRBuilder<> &B, llvm::Value *parent,
+                           llvm::Value *ptr, llvm::Value *val);
+
+/// The IR counterpart of Julia's `jl_gc_write`: store `val` through `ptr` into
+/// the Julia object `parent`, preceded by its write barrier.
+llvm::StoreInst *emitJuliaGCWrite(llvm::IRBuilder<> &B, llvm::Value *parent,
+                                  llvm::Value *ptr, llvm::Value *val);
 
 // Find all user instructions of AI, returning tuples of <instruction, value,
 // byte offet from AI> Unlike a simple get users, this will recurse through any

@@ -3459,7 +3459,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
 
       if (F) {
-        if (F->getName() == "julia.write_barrier" ||
+        if (isJuliaWriteBarrier(F->getName()) ||
             F->getName() == "julia.write_barrier_binding")
           continue;
         if (F->getIntrinsicID() == Intrinsic::memset &&

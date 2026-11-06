@@ -3498,7 +3498,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             StringRef funcName = getFuncNameFromCall(CI);
             if (funcName == "enzyme_zerotype")
               continue;
-            if (funcName == "julia.write_barrier" ||
+            if (isJuliaWriteBarrier(funcName) ||
                 funcName == "julia.write_barrier_binding" ||
                 isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -3697,19 +3697,37 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             }
           } else if (auto CI = dyn_cast<CallInst>(&I)) {
             StringRef funcName = getFuncNameFromCall(CI);
-            if (funcName == "julia.write_barrier" ||
+            if (isJuliaWriteBarrier(funcName) ||
                 funcName == "julia.write_barrier_binding") {
 
               // TODO
               SmallVector<Value *, 2> args;
+              if (isJuliaFieldWriteBarrier(funcName)) {
+                // Keep every active slot, as in the forward pass.
+                if (!isConstantValue(CI->getArgOperand(0)))
+                  for (size_t j = 0; j < CI->arg_size(); j++) {
+                    Value *arg = CI->getArgOperand(j);
+                    if (!isConstantValue(arg))
+                      args.push_back(
+                          lookupM(invertPointerM(arg, NB), NB, available));
+                    else if (isJuliaWriteBarrierChild(funcName, j))
+                      args.push_back(
+                          lookupM(getNewFromOriginal(arg), NB, available));
+                    else
+                      ++j;
+                  }
+                if (args.size() == 1)
+                  args.clear();
+              } else {
 #if LLVM_VERSION_MAJOR >= 14
-              for (auto &arg : CI->args())
+                for (auto &arg : CI->args())
 #else
-              for (auto &arg : CI->arg_operands())
+                for (auto &arg : CI->arg_operands())
 #endif
-                if (!isConstantValue(arg))
-                  args.push_back(
-                      lookupM(invertPointerM(arg, NB), NB, available));
+                  if (!isConstantValue(arg))
+                    args.push_back(
+                        lookupM(invertPointerM(arg, NB), NB, available));
+              }
 
               if (args.size()) {
                 SmallVector<ValueType, 2> BundleTypes(args.size(),
@@ -5281,10 +5299,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         newval = BuilderM.CreateLoad(ty, valptr);
       }
 
-      auto ts = BuilderM.CreateStore(newval, ptr);
-      if (align)
-        ts->setAlignment(*align);
-
+      StoreInst *ts;
       if (invertedBarrier) {
         auto T_jlvalue = StructType::get(ptr->getContext(), {});
         auto T_prjlvalue = getPointerType(T_jlvalue, 10);
@@ -5293,19 +5308,12 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
           invertedBarrier =
               BuilderM.CreateBitCast(invertedBarrier, T_prjlvalue);
         }
-
-        auto FT = FunctionType::get(Type::getVoidTy(newval->getContext()),
-                                    {T_prjlvalue}, true);
-        auto wb = BuilderM.GetInsertBlock()
-                      ->getParent()
-                      ->getParent()
-                      ->getOrInsertFunction("julia.write_barrier", FT);
-
-        auto subvals = getJuliaObjects(newval, BuilderM);
-
-        subvals.insert(subvals.begin(), invertedBarrier);
-        BuilderM.CreateCall(wb, subvals);
+        ts = emitJuliaGCWrite(BuilderM, invertedBarrier, ptr, newval);
+      } else {
+        ts = BuilderM.CreateStore(newval, ptr);
       }
+      if (align)
+        ts->setAlignment(*align);
 
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
@@ -9736,11 +9744,15 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       // The allocation arg is the first arg of the write barrier.
       //  The capturing store in subsequent args should be handled by forbidding
       //  capturing stores
-      if (funcName == "julia.write_barrier" ||
+      if (isJuliaWriteBarrier(funcName) ||
           funcName == "julia.write_barrier_binding") {
-        if (CI->getArgOperand(0) == prev) {
-          stores.insert(CI);
-        }
+        // A field barrier's slots also point into the allocation.
+        for (size_t i = 0; i < CI->arg_size(); i++)
+          if (!isJuliaWriteBarrierChild(funcName, i) &&
+              CI->getArgOperand(i) == prev) {
+            stores.insert(CI);
+            break;
+          }
         continue;
       }
       if (funcName == "enzyme_zerotype") {

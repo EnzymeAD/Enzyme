@@ -1034,6 +1034,17 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
   }
 }
 
+LLVMValueRef EnzymeEmitJuliaGCWrite(LLVMBuilderRef B, LLVMValueRef parent,
+                                    LLVMValueRef ptr, LLVMValueRef val) {
+  return wrap(
+      emitJuliaGCWrite(*unwrap(B), unwrap(parent), unwrap(ptr), unwrap(val)));
+}
+
+void EnzymeEmitJuliaWriteBarrier(LLVMBuilderRef B, LLVMValueRef parent,
+                                 LLVMValueRef ptr, LLVMValueRef val) {
+  emitJuliaWriteBarrier(*unwrap(B), unwrap(parent), unwrap(ptr), unwrap(val));
+}
+
 void EnzymeSetStringMD(LLVMValueRef Inst, const char *Kind, LLVMValueRef Val) {
   MDNode *N = Val ? extractMDNode(unwrap<MetadataAsValue>(Val)) : nullptr;
   Value *V = unwrap(Inst);

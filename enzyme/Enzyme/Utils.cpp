@@ -5294,7 +5294,6 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  SRetRootMovement direction) {
   std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = {
       {jltype, {}}};
-  SmallVector<Value *> extracted;
   Value *val = sret;
   auto rootOffset0 = rootOffset;
   while (!todo.empty()) {
@@ -5347,8 +5346,13 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       case SRetRootMovement::RootPointerToSRetPointer: {
         Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
         loc = B.CreateLoad(ty, loc);
-        extracted.push_back(loc);
-        B.CreateStore(loc, outloc);
+        auto obj = getBaseObject(sret);
+        auto AS = cast<PointerType>(obj->getType())->getAddressSpace();
+        assert(AS == 0 || AS == 10);
+        if (AS == 10)
+          emitJuliaGCWrite(B, obj, outloc, loc);
+        else
+          B.CreateStore(loc, outloc);
         break;
       }
       default:
@@ -5386,22 +5390,6 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
         todo.emplace_front(ST->getTypeAtIndex(E - 1 - i), path2);
       }
       continue;
-    }
-  }
-
-  if (direction == SRetRootMovement::RootPointerToSRetPointer) {
-    auto obj = getBaseObject(sret);
-    auto PT = cast<PointerType>(obj->getType());
-    assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
-    if (PT->getAddressSpace() == 10 && extracted.size()) {
-      extracted.insert(extracted.begin(), obj);
-      auto JLT = getPointerType(StructType::get(PT->getContext(), {}), 10);
-      auto FT = FunctionType::get(JLT, {}, true);
-      auto wb =
-          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-              "julia.write_barrier", FT);
-      assert(obj->getType() == JLT);
-      B.CreateCall(wb, extracted);
     }
   }
 
@@ -5529,4 +5517,97 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
     llvm_unreachable("unknown source of julia type");
   }
   return done;
+}
+
+// Like getJuliaObjects, but also gives each object's byte offset within `v`.
+static void
+getJuliaObjectsWithOffsets(Value *v, uint64_t off, IRBuilder<> &B,
+                           const DataLayout &DL,
+                           SmallVectorImpl<std::pair<Value *, uint64_t>> &out) {
+  auto T = v->getType();
+  if (!anyJuliaObjects(T))
+    return;
+  if (isSpecialPtr(T)) {
+    out.emplace_back(v, off);
+    return;
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto SL = DL.getStructLayout(ST);
+    for (size_t i = 0, E = ST->getNumElements(); i < E; i++)
+      if (anyJuliaObjects(ST->getElementType(i)))
+        getJuliaObjectsWithOffsets(B.CreateExtractValue(v, i),
+                                   off + SL->getElementOffset(i), B, DL, out);
+    return;
+  }
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    uint64_t sz = DL.getTypeAllocSize(AT->getElementType());
+    for (size_t i = 0, E = AT->getNumElements(); i < E; i++)
+      getJuliaObjectsWithOffsets(B.CreateExtractValue(v, i), off + i * sz, B,
+                                 DL, out);
+    return;
+  }
+  if (auto VT = dyn_cast<VectorType>(T)) {
+    assert(!VT->getElementCount().isScalable());
+    uint64_t sz = DL.getTypeAllocSize(VT->getElementType());
+    for (size_t i = 0, E = VT->getElementCount().getKnownMinValue(); i < E; i++)
+      getJuliaObjectsWithOffsets(B.CreateExtractElement(v, i), off + i * sz, B,
+                                 DL, out);
+    return;
+  }
+  llvm_unreachable("unknown source of julia type");
+}
+
+void emitJuliaWriteBarrier(IRBuilder<> &B, Value *parent, Value *ptr,
+                           Value *val) {
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+  auto &C = M.getContext();
+  auto T_prjlvalue = getPointerType(StructType::get(C, {}), 10);
+  assert(parent->getType() == T_prjlvalue);
+  unsigned AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+
+  if (!EnzymeJuliaFieldWriteBarrier || AS < 10 || AS > 13) {
+    // Without a tracked slot, fall back to a barrier on the whole object.
+    auto children = getJuliaObjects(val, B);
+    if (children.empty())
+      return;
+    children.insert(children.begin(), parent);
+    auto FT = FunctionType::get(Type::getVoidTy(C), {T_prjlvalue}, true);
+    auto wb = M.getOrInsertFunction(EnzymeJuliaFieldWriteBarrier
+                                        ? "julia.object_write_barrier"
+                                        : "julia.write_barrier",
+                                    FT);
+    B.CreateCall(wb, children);
+    return;
+  }
+
+  SmallVector<std::pair<Value *, uint64_t>, 1> children;
+  getJuliaObjectsWithOffsets(val, 0, B, M.getDataLayout(), children);
+  if (children.empty())
+    return;
+  // Memory data is addressed through Loaded (13) pointers, fields through
+  // Derived (11) ones.
+  unsigned slotAS = AS == 13 ? 13 : 11;
+  auto T_slot = getPointerType(Type::getInt8Ty(C), slotAS);
+  Value *base = AS == slotAS ? ptr : B.CreateAddrSpaceCast(ptr, T_slot);
+  SmallVector<Value *, 3> args = {parent};
+  for (auto &&[child, off] : children) {
+    args.push_back(off == 0 ? base
+                            : B.CreateConstInBoundsGEP1_64(Type::getInt8Ty(C),
+                                                           base, off));
+    assert(child->getType() == T_prjlvalue);
+    args.push_back(child);
+  }
+  auto FT = FunctionType::get(Type::getVoidTy(C),
+                              {T_prjlvalue, T_slot, T_prjlvalue}, true);
+  auto wb = M.getOrInsertFunction(slotAS == 13
+                                      ? "julia.field_write_barrier.p13"
+                                      : "julia.field_write_barrier.p11",
+                                  FT);
+  B.CreateCall(wb, args);
+}
+
+StoreInst *emitJuliaGCWrite(IRBuilder<> &B, Value *parent, Value *ptr,
+                            Value *val) {
+  emitJuliaWriteBarrier(B, parent, ptr, val);
+  return B.CreateStore(val, ptr);
 }

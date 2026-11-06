@@ -306,12 +306,12 @@ inline bool is_value_needed_in_reverse(
         isStored = inst == MS->getLength() || inst == MS->getValue();
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
-        if (name == "julia.write_barrier" ||
+        if (isJuliaWriteBarrier(name) ||
             name == "julia.write_barrier_binding") {
           auto sz = CB->arg_size();
-          // First pointer is the destination
-          for (size_t i = 1; i < sz; i++)
-            isStored |= inst == CB->getArgOperand(i);
+          for (size_t i = 0; i < sz; i++)
+            isStored |= isJuliaWriteBarrierChild(name, i) &&
+                        inst == CB->getArgOperand(i);
         }
       }
       if (isStored) {
