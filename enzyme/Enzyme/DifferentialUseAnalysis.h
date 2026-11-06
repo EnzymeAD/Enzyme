@@ -298,36 +298,38 @@ inline bool is_value_needed_in_reverse(
     // the reverse pass.
     if (!OneLevel) {
       bool isStored = false;
-      if (auto SI = dyn_cast<StoreInst>(user))
-        isStored = inst == SI->getValueOperand();
-      else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
-        isStored = inst == MTI->getSource() || inst == MTI->getLength();
+      if (auto SI = dyn_cast<StoreInst>(user)) {
+        isStored = inst == SI->getValueOperand() ||
+                   (VT == QueryType::Primal && inst == SI->getPointerOperand());
+      } else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+        isStored = inst == MTI->getSource() || inst == MTI->getLength() ||
+                   (VT == QueryType::Primal && inst == MTI->getRawDest());
       } else if (auto MS = dyn_cast<MemSetInst>(user)) {
-        isStored = inst == MS->getLength() || inst == MS->getValue();
+        isStored = inst == MS->getLength() || inst == MS->getValue() ||
+                   (VT == QueryType::Primal && inst == MS->getRawDest());
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier" ||
             name == "julia.write_barrier_binding") {
           auto sz = CB->arg_size();
           // First pointer is the destination
-          for (size_t i = 1; i < sz; i++)
+          for (size_t i = (VT == QueryType::Primal ? 0 : 1); i < sz; i++)
             isStored |= inst == CB->getArgOperand(i);
         }
       }
       if (isStored) {
         for (auto pair : gutils->rematerializableAllocations) {
+          if (inst == pair.first)
+            continue;
+
           // If already decided to cache the whole allocation, ignore
           if (gutils->needsCacheWholeAllocation(pair.first)) {
             continue;
           }
 
-          // If caching the outer allocation and have already set that this is
-          // not needed return early. This is necessary to avoid unnecessarily
-          // deciding stored values are needed if we have already decided to
-          // cache the whole allocation.
-          auto found = seen.find(std::make_pair(pair.first, QueryType::Primal));
-          if (found != seen.end() && !found->second) {
-            continue;
+          if (auto *Allocation = dyn_cast<Instruction>(pair.first)) {
+            if (gutils->unnecessaryIntermediates.count(Allocation))
+              continue;
           }
 
           // Directly consider all the load uses to avoid an illegal inductive

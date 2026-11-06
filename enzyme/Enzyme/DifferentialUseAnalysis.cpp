@@ -872,6 +872,21 @@ int DifferentialUseAnalysis::cmpLoopNest(Loop *prev, Loop *next) {
   return -1;
 }
 
+/// Return whether a pointer value is derived via pointer arithmetic from a
+/// rematerializable allocation and therefore cannot be cached directly.
+static bool isRematerializableAllocationOffset(Value *Pointer,
+                                               const GradientUtils *Utils) {
+  if (!Pointer->getType()->isPointerTy() || !isPointerArithmeticInst(Pointer))
+    return false;
+  if (EnzymeJuliaAddrLoad && Pointer->getType()->getPointerAddressSpace() == 10)
+    return false;
+  for (Value *Base : getBaseObjects(Pointer)) {
+    if (Base != Pointer && Utils->rematerializableAllocations.count(Base))
+      return true;
+  }
+  return false;
+}
+
 void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
                                      const SetVector<Value *> &Recomputes,
                                      const SetVector<Value *> &Intermediates,
@@ -975,7 +990,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     assert(MinReq.count(V));
 
     // Fix up non-cacheable calls to use their operand(s) instead
-    if (hasNoCache(V)) {
+    if (hasNoCache(V) || isRematerializableAllocationOffset(V, gutils)) {
       MinReq.remove(V);
       for (auto &pair : Orig) {
         if (pair.second.count(Node(V, false))) {
@@ -1021,7 +1036,8 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           if (G->getType()->getPointerAddressSpace() == 13)
             continue;
         }
-        if (hasNoCache((*mp.begin()).V)) {
+        if (hasNoCache((*mp.begin()).V) ||
+            isRematerializableAllocationOffset((*mp.begin()).V, gutils)) {
           continue;
         }
         // If an allocation call, we cannot cache any "capturing" users
