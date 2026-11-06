@@ -615,8 +615,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    if (funcName == "julia.write_barrier" ||
-        funcName == "julia.write_barrier_binding") {
+    if (isJuliaWriteBarrier(funcName)) {
       // Use in a write barrier requires the shadow in the forward, even
       // though the instruction is active.
       if (shadow && (mode != DerivativeMode::ReverseModeGradient &&
