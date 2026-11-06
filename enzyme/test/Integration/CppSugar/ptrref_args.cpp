@@ -81,7 +81,6 @@ void test_duplicated() {
         APPROX_EQ(dfdx, etalon, 1e-10);
     }
 
-#if 0 // Lambdas don't work with the C++ interface yet :(
     {
         const auto l = [] (const float& x) { return x * x; };
         float dfdx = 0;
@@ -90,7 +89,6 @@ void test_duplicated() {
         );
         APPROX_EQ(dfdx, etalon, 1e-10);
     }
-#endif
 }
 
 float f2(float x, float y)        { return x * y; }
