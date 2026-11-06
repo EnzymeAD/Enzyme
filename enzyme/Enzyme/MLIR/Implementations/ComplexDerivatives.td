@@ -131,3 +131,28 @@ def : MLIRDerivative<"complex", "Expm1Op", (Op $x),
                       (CheckedComplexMul (DiffeRet), (ComplexExp $x))
                     ]
                   >;
+
+def : MLIRDerivative<"complex", "RsqrtOp", (Op $x),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexDiv
+                          (ComplexNeg (ComplexRsqrt $x)),
+                          (ComplexMul (ComplexConstant<"2.0"> $x), $x)
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "SqrtOp", (Op $x),
+                    [
+                      (Arith_Select
+                        (ComplexEq $x, (ComplexConstant<"0"> $x):$zero),
+                        $zero,
+                        (ComplexDiv
+                          (DiffeRet),
+                          (ComplexMul (ComplexConstant<"2.0"> $x), (ComplexSqrt $x))
+                        )
+                      )
+                    ]
+                  >;

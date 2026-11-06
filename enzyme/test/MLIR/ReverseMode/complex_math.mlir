@@ -122,3 +122,52 @@ func.func @dexpm1(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @sqrt(%x: complex<f64>) -> complex<f64> {
+  %res = complex.sqrt %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dsqrt(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @sqrt(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffesqrt(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[two:.+]] = complex.constant [2.000000e+00, 0.000000e+00] : complex<f64>
+// CHECK-NEXT:    %[[zero:.+]] = complex.constant [0.000000e+00, 0.000000e+00] : complex<f64>
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[iszero:.+]] = complex.eq %[[x]], %[[zero]] : complex<f64>
+// CHECK-NEXT:    %[[sqrt:.+]] = complex.sqrt %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[den:.+]] = complex.mul %[[sqrt]], %[[two]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[div:.+]] = complex.div %[[cdr]], %[[den]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = arith.select %[[iszero]], %[[zero]], %[[div]] : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @rsqrt(%x: complex<f64>) -> complex<f64> {
+  %res = complex.rsqrt %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @drsqrt(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @rsqrt(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @differsqrt(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[two:.+]] = complex.constant [2.000000e+00, 0.000000e+00] : complex<f64>
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[rsqrt:.+]] = complex.rsqrt %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[neg:.+]] = complex.neg %[[rsqrt]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[den:.+]] = complex.mul %[[x]], %[[two]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[div:.+]] = complex.div %[[neg]], %[[den]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.mul %[[cdr]], %[[div]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
