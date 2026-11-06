@@ -101,6 +101,7 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
     switch (currentType) {
     case ArgType::info:
+    case ArgType::ivec:
       os << "  updateAnalysis(call.getArgOperand(" << i
          << " + offset), ttPtrInt, &call);\n";
       break;
