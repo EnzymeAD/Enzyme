@@ -30,7 +30,7 @@
 #include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
-#include "EnzymeLogic.h"
+#include "KokkosUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
@@ -6886,6 +6886,16 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   // statement state.
   if (isFlangRuntimeNoFree(F->getName()))
     return F;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(F->getName())) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(F->getName());
+    if (enzyme_kokkos::isKokkosInactiveCall(F->getName(), NormDem) ||
+        enzyme_kokkos::getDesulLockIsUnlock(F->getName(), NormDem)
+            .has_value() ||
+        enzyme_kokkos::classifyDesulAtomicFetchOper(NormDem) !=
+            enzyme_kokkos::DesulAtomicOpKind::None)
+      return F;
+  }
 
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
