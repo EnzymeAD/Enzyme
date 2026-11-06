@@ -3857,6 +3857,184 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        // Copying zero-initialized bytes from an inactive fresh local buffer
+        // into an unwritten range of a fresh local allocation writes only zero
+        // bytes and clobbers no prior active values, so integer transfer
+        // semantics are exact.
+        if (auto *ConstantSize = dyn_cast<ConstantInt>(new_size)) {
+          if (gutils->isConstantValue(orig_src) && gutils->OrigLI &&
+              gutils->OrigAA && gutils->OrigDT) {
+            Value *SourceRoot = getBaseObject(orig_src);
+            Value *DestinationRoot = getBaseObject(orig_dst);
+            bool SourceFresh = isa<AllocaInst>(SourceRoot) ||
+                               isAllocationCall(SourceRoot, gutils->TLI);
+            bool DestinationFresh =
+                isa<AllocaInst>(DestinationRoot) ||
+                isAllocationCall(DestinationRoot, gutils->TLI);
+            if (auto *DestinationArgument =
+                    dyn_cast<Argument>(DestinationRoot)) {
+              if (DestinationArgument->hasStructRetAttr())
+                DestinationFresh = true;
+            }
+            if (SourceFresh && DestinationFresh) {
+              const APInt &TransferBytes = ConstantSize->getValue();
+              auto coversTransferRange = [&](Value *LifetimePointer,
+                                             const APInt &LifetimeSize,
+                                             Value *AccessPointer) {
+                unsigned OffsetBits =
+                    DL.getIndexTypeSizeInBits(AccessPointer->getType());
+                APInt AccessOffset(OffsetBits, 0);
+                APInt LifetimeOffset(OffsetBits, 0);
+                Value *AccessBase =
+                    AccessPointer->stripAndAccumulateConstantOffsets(
+                        DL, AccessOffset, /*AllowNonInbounds=*/true);
+                Value *LifetimeBase =
+                    LifetimePointer->stripAndAccumulateConstantOffsets(
+                        DL, LifetimeOffset, /*AllowNonInbounds=*/true);
+                if (AccessBase != LifetimeBase ||
+                    AccessOffset.slt(LifetimeOffset))
+                  return false;
+                APInt RelativeOffset = AccessOffset - LifetimeOffset;
+                unsigned CombinedWidth =
+                    std::max({OffsetBits, LifetimeSize.getBitWidth(),
+                              TransferBytes.getBitWidth()}) +
+                    1;
+                return (RelativeOffset.zext(CombinedWidth) +
+                        TransferBytes.zext(CombinedWidth))
+                    .ule(LifetimeSize.zext(CombinedWidth));
+              };
+              auto findStartInstruction =
+                  [&](Value *Root, Value *AccessPointer) -> Instruction * {
+                for (DomTreeNode *DominatorNode =
+                         gutils->OrigDT->getNode(MTI.getParent());
+                     DominatorNode; DominatorNode = DominatorNode->getIDom()) {
+                  BasicBlock *Block = DominatorNode->getBlock();
+                  Instruction *Cursor = (Block == MTI.getParent())
+                                            ? MTI.getPrevNode()
+                                            : Block->getTerminator();
+                  for (; Cursor; Cursor = Cursor->getPrevNode()) {
+                    if (Cursor == Root)
+                      return Cursor;
+                    auto *IntrinsicCall = dyn_cast<IntrinsicInst>(Cursor);
+                    if (!IntrinsicCall)
+                      continue;
+                    if (IntrinsicCall->getCalledFunction()->getName() !=
+                            "llvm.enzyme.lifetime_start" &&
+                        IntrinsicCall->getIntrinsicID() !=
+                            Intrinsic::lifetime_start)
+                      continue;
+                    if (getBaseObject(IntrinsicCall->getOperand(1)) != Root)
+                      continue;
+                    if (auto *LifetimeBytes =
+                            dyn_cast<ConstantInt>(IntrinsicCall->getOperand(0)))
+                      if (coversTransferRange(IntrinsicCall->getOperand(1),
+                                              LifetimeBytes->getValue(),
+                                              AccessPointer))
+                        return Cursor;
+                  }
+                }
+                if (auto *RootInstruction = dyn_cast<Instruction>(Root))
+                  return RootInstruction;
+                return &MTI.getFunction()->getEntryBlock().front();
+              };
+              auto isIgnorableMetadataIntrinsic = [](Instruction *Candidate) {
+                if (isa<DbgInfoIntrinsic>(Candidate))
+                  return true;
+                auto *IntrinsicCall = dyn_cast<IntrinsicInst>(Candidate);
+                if (!IntrinsicCall)
+                  return false;
+                if (IntrinsicCall->getCalledFunction()->getName() ==
+                        "llvm.enzyme.lifetime_start" ||
+                    IntrinsicCall->getCalledFunction()->getName() ==
+                        "llvm.enzyme.lifetime_end")
+                  return true;
+                switch (IntrinsicCall->getIntrinsicID()) {
+                case Intrinsic::lifetime_start:
+                case Intrinsic::lifetime_end:
+                case Intrinsic::assume:
+                case Intrinsic::experimental_noalias_scope_decl:
+                  return true;
+                default:
+                  return false;
+                }
+              };
+              auto isZeroOrUndefWrite = [](Instruction *Candidate) {
+                if (auto *MemSet = dyn_cast<MemSetInst>(Candidate)) {
+                  if (auto *FillByte =
+                          dyn_cast<ConstantInt>(MemSet->getValue()))
+                    return FillByte->isZero();
+                  return false;
+                }
+                if (auto *Store = dyn_cast<StoreInst>(Candidate)) {
+                  Value *StoredValue = Store->getValueOperand();
+                  if (isa<UndefValue>(StoredValue))
+                    return true;
+                  if (auto *StoredConstant = dyn_cast<Constant>(StoredValue))
+                    return StoredConstant->isNullValue();
+                }
+                return false;
+              };
+
+              MemoryLocation SourceLocation =
+                  MemoryLocation(orig_src, LocationSize::precise(size));
+              MemoryLocation DestinationLocation =
+                  MemoryLocation(orig_dst, LocationSize::precise(size));
+              Instruction *SourceStart =
+                  findStartInstruction(SourceRoot, orig_src);
+              Instruction *DestinationStart =
+                  findStartInstruction(DestinationRoot, orig_dst);
+
+              bool SourceOnlyZero = true;
+              allInstructionsBetween(
+                  *gutils->OrigLI, SourceStart, &MTI,
+                  [&](Instruction *Candidate) -> bool {
+                    if (Candidate == &MTI ||
+                        unnecessaryStores.count(Candidate) ||
+                        isIgnorableMetadataIntrinsic(Candidate) ||
+                        !Candidate->mayWriteToMemory())
+                      return false;
+                    if (llvm::isModSet(gutils->OrigAA->getModRefInfo(
+                            Candidate, SourceLocation)) &&
+                        !isZeroOrUndefWrite(Candidate)) {
+                      SourceOnlyZero = false;
+                      return true;
+                    }
+                    return false;
+                  });
+
+              bool DestinationUntouched = SourceOnlyZero;
+              if (DestinationUntouched) {
+                auto checkDestinationInstruction =
+                    [&](Instruction *Candidate) -> bool {
+                  if (Candidate == &MTI || unnecessaryStores.count(Candidate) ||
+                      isIgnorableMetadataIntrinsic(Candidate) ||
+                      !Candidate->mayWriteToMemory())
+                    return false;
+                  if (llvm::isModSet(gutils->OrigAA->getModRefInfo(
+                          Candidate, DestinationLocation)) &&
+                      !isZeroOrUndefWrite(Candidate)) {
+                    DestinationUntouched = false;
+                    return true;
+                  }
+                  return false;
+                };
+                if (!isa<Instruction>(DestinationRoot) &&
+                    DestinationStart != &MTI &&
+                    DestinationStart ==
+                        &MTI.getFunction()->getEntryBlock().front())
+                  checkDestinationInstruction(DestinationStart);
+                if (DestinationUntouched && DestinationStart != &MTI)
+                  allInstructionsBetween(*gutils->OrigLI, DestinationStart,
+                                         &MTI, checkDestinationInstruction);
+              }
+
+              if (DestinationUntouched) {
+                vd = TypeTree(BaseType::Integer).Only(0, &MTI);
+                goto known;
+              }
+            }
+          }
+        }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
