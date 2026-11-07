@@ -38,7 +38,7 @@ entry:
 
 ; CHECK: define internal void @augmented_helper(
 ; CHECK-NOT: call {{.*}}@malloc(
-; CHECK:   %tmp = alloca [2 x i64]
+; CHECK:   %[[ALLOC:.+]] = alloca [2 x i64]
 ; CHECK:   store i64 %v, ptr %"dst'"
 ; CHECK:   store i64 %v, ptr %dst
 ; CHECK:   ret void
