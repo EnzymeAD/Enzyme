@@ -35,6 +35,7 @@
 #endif
 
 #include "TypeAnalysis/TBAA.h"
+#include "llvm/Analysis/CFG.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -3020,16 +3021,12 @@ bool overwritesToMemoryReadByLoop(
   /// to expand the number of iterations
 
   SmallPtrSet<const Loop *, 1> visitedAncestors;
-  auto skipLoop = [&](const Loop *L) {
-    assert(L);
-    if (scope && L->contains(scope))
-      return false;
-
-    if (anc && (anc == L || anc->contains(L))) {
-      visitedAncestors.insert(L);
-      return true;
-    }
-    return false;
+  auto isScopeOrOuter = [&](const Loop *loop) {
+    assert(loop && "expected valid loop");
+    return scope && loop->contains(scope);
+  };
+  auto isCommonLoop = [&](const Loop *loop) {
+    return !isScopeOrOuter(loop) && anc && loop->contains(anc);
   };
 
   // Check the boounds  of an [... endprev][startnext ...] for potential
@@ -3041,11 +3038,22 @@ bool overwritesToMemoryReadByLoop(
     for (auto slim = StartNext; slim != SE.getCouldNotCompute();) {
       bool sskip = false;
       if (!EndIsStore)
-        if (auto startL = dyn_cast<SCEVAddRecExpr>(slim))
-          if (skipLoop(startL->getLoop()) &&
-              SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
+        if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
+          const Loop *loop = startL->getLoop();
+          // Same-iteration subtraction is only sound for the outermost common
+          // loop when later store iterations move upward away from earlier
+          // loads; otherwise the recurrence must be expanded to its bound.
+          if (isCommonLoop(loop)) {
+            if (loop->getParentLoop() == scope &&
+                SE.isKnownNonNegative(startL->getStepRecurrence(SE)))
+              visitedAncestors.insert(loop);
+            else
+              sskip = true;
+          } else if (!isScopeOrOuter(loop) && anc && anc->contains(loop) &&
+                     SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
             sskip = true;
           }
+        }
 
       if (!sskip)
         for (auto elim = EndPrev; elim != SE.getCouldNotCompute();) {
@@ -3054,8 +3062,19 @@ bool overwritesToMemoryReadByLoop(
             bool eskip = false;
             if (EndIsStore)
               if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                if (skipLoop(endL->getLoop()) &&
-                    SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
+                const Loop *loop = endL->getLoop();
+                // Same-iteration subtraction is only sound for the outermost
+                // common loop when later store iterations move downward away
+                // from earlier loads; otherwise expand to the loop bound.
+                if (isCommonLoop(loop)) {
+                  if (loop->getParentLoop() == scope &&
+                      SE.isKnownNonPositive(endL->getStepRecurrence(SE)))
+                    visitedAncestors.insert(loop);
+                  else
+                    eskip = true;
+                } else if (!isScopeOrOuter(loop) && anc &&
+                           anc->contains(loop) &&
+                           SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
                   eskip = true;
                 }
               }
@@ -3091,6 +3110,8 @@ bool overwritesToMemoryReadByLoop(
 
           if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
             if (SE.isKnownNonPositive(endL->getStepRecurrence(SE))) {
+              if (EndIsStore && isCommonLoop(endL->getLoop()))
+                visitedAncestors.insert(endL->getLoop());
               elim = endL->getStart();
               continue;
             } else if (SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
@@ -3101,6 +3122,8 @@ bool overwritesToMemoryReadByLoop(
 #endif
               if (ebd == SE.getCouldNotCompute())
                 break;
+              if (EndIsStore && isCommonLoop(endL->getLoop()))
+                visitedAncestors.insert(endL->getLoop());
               elim = evaluateAtIterationWithoutExt(endL, ebd, SE);
               continue;
             }
@@ -3110,6 +3133,8 @@ bool overwritesToMemoryReadByLoop(
 
       if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
         if (SE.isKnownNonNegative(startL->getStepRecurrence(SE))) {
+          if (!EndIsStore && isCommonLoop(startL->getLoop()))
+            visitedAncestors.insert(startL->getLoop());
           slim = startL->getStart();
           continue;
         } else if (SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
@@ -3120,6 +3145,8 @@ bool overwritesToMemoryReadByLoop(
 #endif
           if (sbd == SE.getCouldNotCompute())
             break;
+          if (!EndIsStore && isCommonLoop(startL->getLoop()))
+            visitedAncestors.insert(startL->getLoop());
           slim = evaluateAtIterationWithoutExt(startL, sbd, SE);
           continue;
         }
@@ -3273,6 +3300,89 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     return false;
 
   return true;
+}
+
+// LLVM alias queries assume shared SSA values in two memory locations are
+// evaluated in the same loop iteration. When both locations depend on a value
+// produced inside a CFG cycle, widen the queried location across the object so
+// cross-iteration accesses are not dismissed as disjoint fixed offsets.
+static MemoryLocation widenLocationIfLoopVarying(const MemoryLocation &location,
+                                                 const Instruction *otherInst) {
+  if (!location.Ptr)
+    return location;
+
+  auto isVaryingRootCandidate = [](const Instruction *inst) {
+    if (isa<PHINode>(inst) || isa<CallBase>(inst) || isa<VAArgInst>(inst) ||
+        isa<LandingPadInst>(inst) || inst->mayReadFromMemory())
+      return true;
+    if (const auto *allocaInst = dyn_cast<AllocaInst>(inst))
+      return !allocaInst->isStaticAlloca();
+    return false;
+  };
+
+  SmallPtrSet<const Instruction *, 8> locationRoots;
+  {
+    SmallVector<const Value *, 16> worklist = {location.Ptr};
+    SmallPtrSet<const Value *, 16> visited = {location.Ptr};
+    while (!worklist.empty()) {
+      const Value *current = worklist.pop_back_val();
+      const auto *inst = dyn_cast<Instruction>(current);
+      if (!inst)
+        continue;
+      if (isVaryingRootCandidate(inst)) {
+        locationRoots.insert(inst);
+        if (!isa<PHINode>(inst))
+          continue;
+      }
+      for (const Value *operand : inst->operands())
+        if (visited.insert(operand).second)
+          worklist.push_back(operand);
+    }
+  }
+  if (locationRoots.empty())
+    return location;
+
+  SmallVector<const Value *, 8> worklist;
+  SmallPtrSet<const Value *, 16> visited;
+  auto enqueue = [&](const Value *value) {
+    if (value && visited.insert(value).second)
+      worklist.push_back(value);
+  };
+  if (const auto *store = dyn_cast<StoreInst>(otherInst))
+    enqueue(store->getPointerOperand());
+  else if (const auto *load = dyn_cast<LoadInst>(otherInst))
+    enqueue(load->getPointerOperand());
+  else if (const auto *rmw = dyn_cast<AtomicRMWInst>(otherInst))
+    enqueue(rmw->getPointerOperand());
+  else if (const auto *cmpxchg = dyn_cast<AtomicCmpXchgInst>(otherInst))
+    enqueue(cmpxchg->getPointerOperand());
+  else if (const auto *transfer = dyn_cast<MemTransferInst>(otherInst)) {
+    enqueue(transfer->getRawDest());
+    enqueue(transfer->getRawSource());
+  } else if (const auto *memIntrinsic = dyn_cast<MemIntrinsic>(otherInst))
+    enqueue(memIntrinsic->getRawDest());
+  else
+    for (const Value *operand : otherInst->operands())
+      enqueue(operand);
+
+  while (!worklist.empty()) {
+    const Value *current = worklist.pop_back_val();
+    const auto *inst = dyn_cast<Instruction>(current);
+    if (!inst)
+      continue;
+    if (locationRoots.count(inst)) {
+      const BasicBlock *block = inst->getParent();
+      for (const BasicBlock *successor : successors(block))
+        if (isPotentiallyReachable(successor, block))
+          return MemoryLocation::getBeforeOrAfter(location.Ptr,
+                                                  location.AATags);
+    }
+    if (isVaryingRootCandidate(inst) && !isa<PHINode>(inst))
+      continue;
+    for (const Value *operand : inst->operands())
+      enqueue(operand);
+  }
+  return location;
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
@@ -3529,31 +3639,45 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
+    return isModSet(AA.getModRefInfo(
+        maybeWriter,
+        widenLocationIfLoopVarying(MemoryLocation::get(li), maybeWriter)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(rmw)));
+    return isModSet(AA.getModRefInfo(
+        maybeWriter,
+        widenLocationIfLoopVarying(MemoryLocation::get(rmw), maybeWriter)));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(xch)));
+    return isModSet(AA.getModRefInfo(
+        maybeWriter,
+        widenLocationIfLoopVarying(MemoryLocation::get(xch), maybeWriter)));
   }
   if (auto mti = dyn_cast<MemTransferInst>(maybeReader)) {
-    return isModSet(
-        AA.getModRefInfo(maybeWriter, MemoryLocation::getForSource(mti)));
+    return isModSet(AA.getModRefInfo(
+        maybeWriter, widenLocationIfLoopVarying(
+                         MemoryLocation::getForSource(mti), maybeWriter)));
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(si)));
+    return isRefSet(AA.getModRefInfo(
+        maybeReader,
+        widenLocationIfLoopVarying(MemoryLocation::get(si), maybeReader)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(rmw)));
+    return isRefSet(AA.getModRefInfo(
+        maybeReader,
+        widenLocationIfLoopVarying(MemoryLocation::get(rmw), maybeReader)));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(xch)));
+    return isRefSet(AA.getModRefInfo(
+        maybeReader,
+        widenLocationIfLoopVarying(MemoryLocation::get(xch), maybeReader)));
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
-    return isRefSet(
-        AA.getModRefInfo(maybeReader, MemoryLocation::getForDest(mti)));
+    return isRefSet(AA.getModRefInfo(
+        maybeReader, widenLocationIfLoopVarying(MemoryLocation::getForDest(mti),
+                                                maybeReader)));
   }
 
   if (auto cb = dyn_cast<CallInst>(maybeReader)) {
