@@ -2008,6 +2008,32 @@ public:
     }
   }
 
+  /// Fill uncovered leaf and padding byte ranges from `ValueType`'s LLVM IR
+  /// layout and emit a `CannotDeduceType` warning when falling back from a
+  /// completely unknown TypeTree.
+  TypeTree
+  augmentTypeTreeWithWarning(const TypeTree &KnownTypes, llvm::Type *ValueType,
+                             llvm::Instruction &ContextInst,
+                             llvm::StringRef OperationDescription,
+                             const llvm::MDNode *TrueTypeMetadata = nullptr,
+                             bool EmitFallbackWarning = true) {
+    using namespace llvm;
+    const DataLayout &Layout = gutils->newFunc->getParent()->getDataLayout();
+    bool WasCompletelyUnknown = false;
+    TypeTree AugmentedTypes = ::augmentTypeTreeFromLLVM(
+        KnownTypes, ValueType, Layout, &ContextInst, looseTypeAnalysis,
+        TrueTypeMetadata, &WasCompletelyUnknown);
+    if (EmitFallbackWarning && WasCompletelyUnknown &&
+        EmitWarningEnabled(ContextInst.getContext())) {
+      std::string Message;
+      raw_string_ostream Stream(Message);
+      Stream << "Cannot deduce type of " << OperationDescription << ' '
+             << ContextInst << ", assumed " << AugmentedTypes.str() << '\n';
+      EmitWarning("CannotDeduceType", ContextInst, Stream.str());
+    }
+    return AugmentedTypes;
+  }
+
   void visitExtractValueInst(llvm::ExtractValueInst &EVI) {
     using namespace llvm;
 
@@ -2053,9 +2079,10 @@ public:
               8;
 
         unsigned start = 0;
-        const auto &vd = TR.query(&EVI);
+        TypeTree vd = augmentTypeTreeWithWarning(TR.query(&EVI), EVI.getType(),
+                                                 EVI, "extract");
 
-        while (1) {
+        while (storeSize > 0) {
           unsigned nextStart = storeSize;
 
           auto dt = vd[{-1}];
@@ -2075,25 +2102,12 @@ public:
           }
           unsigned size = nextStart - start;
           if (!dt.isKnown()) {
-            bool found = false;
-            if (looseTypeAnalysis) {
-              if (EVI.getType()->isFPOrFPVectorTy()) {
-                dt = ConcreteType(EVI.getType()->getScalarType());
-                found = true;
-              } else if (EVI.getType()->isIntOrIntVectorTy() ||
-                         EVI.getType()->isPointerTy()) {
-                dt = BaseType::Integer;
-                found = true;
-              }
-            }
-            if (!found) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Cannot deduce type of extract " << EVI << vd.str()
-                 << " start: " << start << " size: " << size
-                 << " extractSize: " << storeSize;
-              EmitNoTypeError(str, EVI, gutils, Builder2);
-            }
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of extract " << EVI << vd.str()
+               << " start: " << start << " size: " << size
+               << " extractSize: " << storeSize;
+            EmitNoTypeError(str, EVI, gutils, Builder2);
           }
           if (auto FT = dt.isFloat())
             ((DiffeGradientUtils *)gutils)
@@ -2160,21 +2174,39 @@ public:
         }
       }
     } else {
+      const DataLayout &Layout = gutils->newFunc->getParent()->getDataLayout();
       for (InsertValueInst *iv = &IVI;;) {
-        size_t size0 = 1;
-        if (iv->getInsertedValueOperand()->getType()->isSized() &&
-            (iv->getInsertedValueOperand()->getType()->isIntOrIntVectorTy() ||
-             iv->getInsertedValueOperand()->getType()->isFPOrFPVectorTy()))
-          size0 =
-              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   iv->getInsertedValueOperand()->getType()) +
-               7) /
-              8;
-        auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
-                             /*err*/ nullptr);
-        if (it.isFloat() || !it.isKnown()) {
-          floatingInsertion = true;
-          break;
+        Value *InsertedOperand = iv->getInsertedValueOperand();
+        Type *InsertedType = InsertedOperand->getType();
+        if (InsertedType->isSized() &&
+            !Layout.getTypeSizeInBits(InsertedType).isScalable()) {
+          size_t InsertedSize =
+              (Layout.getTypeSizeInBits(InsertedType).getFixedValue() + 7) / 8;
+          TypeTree InsertedTypes = augmentTypeTreeWithWarning(
+              TR.query(InsertedOperand), InsertedType, *iv, "insertvalue ins",
+              /*TrueTypeMetadata=*/nullptr, /*EmitFallbackWarning=*/false);
+          if (InsertedTypes[{-1}].isFloat()) {
+            floatingInsertion = true;
+            break;
+          }
+          if (!InsertedTypes[{-1}].isKnown()) {
+            bool AllNonFloatKnown = InsertedSize > 0;
+            for (size_t ByteOffset = 0; ByteOffset < InsertedSize;) {
+              ConcreteType Entry = InsertedTypes[{(int)ByteOffset}];
+              if (Entry.isFloat() || !Entry.isKnown()) {
+                AllNonFloatKnown = false;
+                break;
+              }
+              if (Entry == BaseType::Pointer)
+                ByteOffset += (Layout.getPointerSizeInBits() + 7) / 8;
+              else
+                ++ByteOffset;
+            }
+            if (!AllNonFloatKnown) {
+              floatingInsertion = true;
+              break;
+            }
+          }
         }
         Value *val = iv->getAggregateOperand();
         if (gutils->isConstantValue(val))
@@ -2218,13 +2250,15 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_inserted)) {
-        const auto &TT = TR.query(orig_inserted);
+        TypeTree TT = augmentTypeTreeWithWarning(TR.query(orig_inserted),
+                                                 orig_inserted->getType(), IVI,
+                                                 "insertvalue ins");
 
         unsigned start = 0;
         Value *dindex = nullptr;
 
         auto &dl = gutils->newFunc->getParent()->getDataLayout();
-        while (1) {
+        while (size0 > 0) {
           unsigned nextStart = size0;
 
           auto dt = TT[{-1}];
@@ -2241,9 +2275,9 @@ public:
               nextStart = i;
               break;
             }
-            if (auto fltType = dt.isFloat()) {
+            if (auto fltType = nex.isFloat()) {
               i += dl.getTypeSizeInBits(fltType) / 8;
-            } else if (dt == BaseType::Pointer) {
+            } else if (nex == BaseType::Pointer) {
               i += dl.getPointerSizeInBits() / 8;
             } else {
               i++;
@@ -2251,24 +2285,11 @@ public:
           }
           Type *flt = dt.isFloat();
           if (!dt.isKnown()) {
-            bool found = false;
-            if (looseTypeAnalysis) {
-              if (orig_inserted->getType()->isFPOrFPVectorTy()) {
-                flt = orig_inserted->getType()->getScalarType();
-                found = true;
-              } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
-                         orig_inserted->getType()->isPointerTy()) {
-                flt = nullptr;
-                found = true;
-              }
-            }
-            if (!found) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Cannot deduce type of insertvalue ins " << IVI
-                 << " size: " << size0 << " TT: " << TT.str();
-              EmitNoTypeError(str, IVI, gutils, Builder2);
-            }
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of insertvalue ins " << IVI
+               << " size: " << size0 << " TT: " << TT.str();
+            EmitNoTypeError(str, IVI, gutils, Builder2);
           }
 
           if (flt) {
@@ -2301,15 +2322,17 @@ public:
 
       if (!gutils->isConstantValue(orig_agg)) {
 
-        const auto &TT = TR.query(orig_agg);
         const MDNode *MD = hasMetadata(&IVI, "enzyme_truetype");
+        TypeTree TT =
+            augmentTypeTreeWithWarning(TR.query(orig_agg), orig_agg->getType(),
+                                       IVI, "insertvalue agg", MD);
 
         unsigned start = 0;
 
         Value *dindex = nullptr;
 
         auto &dl = gutils->newFunc->getParent()->getDataLayout();
-        while (1) {
+        while (size1 > 0) {
           unsigned nextStart = size1;
 
           auto dt = TT[{-1}];
@@ -2342,9 +2365,9 @@ public:
               nextStart = i;
               break;
             }
-            if (auto fltType = dt.isFloat()) {
+            if (auto fltType = nex.isFloat()) {
               i += dl.getTypeSizeInBits(fltType) / 8;
-            } else if (dt == BaseType::Pointer) {
+            } else if (nex == BaseType::Pointer) {
               i += dl.getPointerSizeInBits() / 8;
             } else {
               i++;
@@ -2352,25 +2375,12 @@ public:
           }
           Type *flt = dt.isFloat();
           if (!dt.isKnown()) {
-            bool found = false;
-            if (looseTypeAnalysis) {
-              if (orig_agg->getType()->isFPOrFPVectorTy()) {
-                flt = orig_agg->getType()->getScalarType();
-                found = true;
-              } else if (orig_agg->getType()->isIntOrIntVectorTy() ||
-                         orig_agg->getType()->isPointerTy()) {
-                flt = nullptr;
-                found = true;
-              }
-            }
-            if (!found) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Cannot deduce type of insertvalue agg " << IVI
-                 << " start: " << start << " size: " << size1
-                 << " TT: " << TT.str();
-              EmitNoTypeError(str, IVI, gutils, Builder2);
-            }
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of insertvalue agg " << IVI
+               << " start: " << start << " size: " << size1
+               << " TT: " << TT.str();
+            EmitNoTypeError(str, IVI, gutils, Builder2);
           }
 
           if (flt) {
@@ -6188,7 +6198,7 @@ public:
           assert(dcall);
 
           if (!gutils->isConstantValue(&call)) {
-            if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
+            if (gutils->canContainPointer(&call)) {
             } else if (Mode != DerivativeMode::ReverseModePrimal) {
               ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                   ((DiffeGradientUtils *)gutils)->differentials[newCall];
@@ -6719,7 +6729,7 @@ public:
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
-          if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
+          if (gutils->canContainPointer(&call)) {
           } else {
             ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                 ((DiffeGradientUtils *)gutils)->differentials[newCall];

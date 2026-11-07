@@ -449,6 +449,10 @@ public:
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
+  /// Whether `OriginalValue` may carry a pointer rather than purely
+  /// floating-point and non-pointer scalar/aggregate data.
+  bool canContainPointer(llvm::Value *OriginalValue) const;
+
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, bool runtimeActivity, bool strongZero,
                   unsigned width, llvm::Function *todiff,
