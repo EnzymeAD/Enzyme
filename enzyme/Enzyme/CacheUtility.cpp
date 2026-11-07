@@ -1840,11 +1840,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   // If this is a PHINode, we need to store after all phinodes,
   // otherwise just after inst sufficies
   if (&*inst->getParent()->rbegin() != inst) {
-    auto pn = dyn_cast<PHINode>(inst);
-    Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (getFirstNonPHI(inst->getParent()))
-                                : getNextNonDebugInstruction(inst);
-    assert(putafter);
+    Instruction *putafter =
+        getFirstNonPHIOrPlaceholder(getNextNonDebugInstruction(inst));
+    assert(putafter && "expected an instruction after the cached value");
     v.SetInsertPoint(putafter);
   }
   v.setFastMathFlags(getFast());
