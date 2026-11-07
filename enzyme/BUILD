@@ -234,6 +234,7 @@ cc_library(
     srcs = [
         "Enzyme/ActivityAnalysis.cpp",
         "Enzyme/CallDerivatives.cpp",
+        "Enzyme/Checkpointing.cpp",
         "Enzyme/DiffeGradientUtils.cpp",
         "Enzyme/DifferentialUseAnalysis.cpp",
         "Enzyme/EnzymeLogic.cpp",
