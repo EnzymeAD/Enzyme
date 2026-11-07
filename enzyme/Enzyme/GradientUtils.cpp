@@ -10379,6 +10379,26 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     GradientUtils *gutils) {
   assert(isAllocationFunction(allocationfn, TLI));
 
+  auto resolveDeallocationOperand = [&](Value *originalOperand) -> Value * {
+    if (gutils->mode == DerivativeMode::ReverseModePrimal ||
+        gutils->mode == DerivativeMode::ReverseModeGradient ||
+        gutils->mode == DerivativeMode::ReverseModeCombined) {
+      return gutils->lookupM(gutils->getNewFromOriginal(originalOperand),
+                             builder);
+    }
+    Value *newOperand = gutils->getNewFromOriginal(originalOperand);
+    if (auto *phiNode = dyn_cast<PHINode>(newOperand)) {
+      if (gutils->fictiousPHIs.count(phiNode)) {
+        if (Value *unwrapped =
+                gutils->unwrapM(originalOperand, builder, ValueToValueMapTy(),
+                                UnwrapMode::AttemptFullUnwrap)) {
+          return unwrapped;
+        }
+      }
+    }
+    return newOperand;
+  };
+
   if (isRustAllocationFunction(allocationfn)) {
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
     Type *IntPtrTy = orig->getType();
@@ -10394,13 +10414,10 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     Value *vals[3];
     vals[0] = builder.CreatePointerCast(tofree, IntPtrTy);
     // size
-    vals[1] = gutils->lookupM(
-        gutils->getNewFromOriginal(orig->getArgOperand(0)), builder);
+    vals[1] = resolveDeallocationOperand(orig->getArgOperand(0));
     // alignment
-    vals[2] = gutils->lookupM(
-        gutils->getNewFromOriginal(orig->getArgOperand(1)), builder);
-    CallInst *freecall = cast<CallInst>(
-        CallInst::Create(FT, freevalue, vals, "", builder.GetInsertBlock()));
+    vals[2] = resolveDeallocationOperand(orig->getArgOperand(1));
+    CallInst *freecall = builder.CreateCall(FT, freevalue, vals);
     freecall->setDebugLoc(debuglocation);
     if (isa<CallInst>(tofree) &&
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
@@ -10409,8 +10426,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     }
     if (Function *F = dyn_cast<Function>(freevalue))
       freecall->setCallingConv(F->getCallingConv());
-    if (freecall->getParent() == nullptr)
-      builder.Insert(freecall);
     return freecall;
   }
   if (allocationfn == "julia.gc_alloc_obj" ||
@@ -10437,8 +10452,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       if (ind == -1)
         vals.push_back(tofree);
       else
-        vals.push_back(gutils->lookupM(
-            gutils->getNewFromOriginal(orig->getArgOperand(ind)), builder));
+        vals.push_back(resolveDeallocationOperand(orig->getArgOperand(ind)));
     }
     auto tocall = getDeallocatorFnFromCall(orig);
     auto freecall = builder.CreateCall(tocall, vals);
@@ -10456,10 +10470,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                            ->getParent()
                            ->getOrInsertFunction("swift_release", FT)
                            .getCallee();
-    CallInst *freecall = cast<CallInst>(CallInst::Create(
-        FT, freevalue,
-        ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)), "",
-        builder.GetInsertBlock()));
+    Value *castedToFree = builder.CreatePointerCast(tofree, IntPtrTy);
+    CallInst *freecall =
+        builder.CreateCall(FT, freevalue, ArrayRef<Value *>(castedToFree));
     freecall->setDebugLoc(debuglocation);
     if (isa<CallInst>(tofree) &&
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
@@ -10468,8 +10481,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     }
     if (Function *F = dyn_cast<Function>(freevalue))
       freecall->setCallingConv(F->getCallingConv());
-    if (freecall->getParent() == nullptr)
-      builder.Insert(freecall);
     return freecall;
   }
 
@@ -10576,9 +10587,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                          ->getParent()
                          ->getOrInsertFunction(freename, FT)
                          .getCallee();
-  CallInst *freecall = cast<CallInst>(CallInst::Create(
-      FT, freevalue, {builder.CreatePointerCast(tofree, IntPtrTy)}, "",
-      builder.GetInsertBlock()));
+  Value *castedToFree = builder.CreatePointerCast(tofree, IntPtrTy);
+  CallInst *freecall = builder.CreateCall(FT, freevalue, {castedToFree});
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
@@ -10587,8 +10597,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   }
   if (Function *F = dyn_cast<Function>(freevalue))
     freecall->setCallingConv(F->getCallingConv());
-  if (freecall->getParent() == nullptr)
-    builder.Insert(freecall);
   return freecall;
 }
 

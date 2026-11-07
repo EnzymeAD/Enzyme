@@ -906,6 +906,188 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
   BuilderM.CreateStore(toset, tostore);
 }
 
+void DiffeGradientUtils::addForwardReturnFree(Value *allocationToFree,
+                                              StringRef allocationFunctionName,
+                                              const DebugLoc &debugLocation,
+                                              CallInst *originalCall,
+                                              bool isShadow,
+                                              bool markLocalCacheAlloc) {
+  pendingForwardReturnFrees.push_back(
+      {allocationToFree, allocationFunctionName.str(), debugLocation,
+       originalCall, isShadow, markLocalCacheAlloc});
+}
+
+void DiffeGradientUtils::finalizeForwardFrees() {
+  if (!FreeMemory)
+    return;
+
+  unsigned pointerAlignment = getCacheAlignment(
+      (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
+
+  for (const auto &entry : pendingForwardLoopFrees) {
+    if (!entry.cacheAlloca || !entry.storeInto)
+      continue;
+
+    auto *cacheAlloca = cast<AllocaInst>(&*entry.cacheAlloca);
+    Value *storeInto = entry.storeInto;
+    auto *staticMallocCall =
+        cast_or_null<CallInst>(static_cast<Value *>(entry.staticMallocCall));
+
+    SmallVector<Instruction *, 4> insertionPoints;
+    if (Loop *targetLoop = LI.getLoopFor(entry.loopHeader)) {
+      SmallVector<BasicBlock *, 8> rawExitBlocks;
+      targetLoop->getExitBlocks(rawExitBlocks);
+      SmallPtrSet<BasicBlock *, 4> visitedExits;
+      for (BasicBlock *exitBlock : rawExitBlocks) {
+        if (!visitedExits.insert(exitBlock).second)
+          continue;
+        if (hasTerminator(exitBlock) &&
+            isa<UnreachableInst>(exitBlock->getTerminator()))
+          continue;
+
+        SmallVector<BasicBlock *, 4> inLoopPredecessors;
+        SmallPtrSet<BasicBlock *, 4> seenInLoopPredecessors;
+        bool hasOutOfLoopPredecessor = false;
+        for (BasicBlock *predecessor : predecessors(exitBlock)) {
+          if (targetLoop->contains(predecessor)) {
+            if (seenInLoopPredecessors.insert(predecessor).second)
+              inLoopPredecessors.push_back(predecessor);
+          } else {
+            hasOutOfLoopPredecessor = true;
+          }
+        }
+        if (inLoopPredecessors.empty())
+          continue;
+
+        // Predecessors outside targetLoop may bypass the loop preheader
+        // (leaving the tape slot unallocated) or reconverge from another exit
+        // block.
+        if (hasOutOfLoopPredecessor && !exitBlock->isEHPad()) {
+          exitBlock = SplitBlockPredecessors(exitBlock, inLoopPredecessors,
+                                             ".loopexit", &DT, &LI);
+        }
+        if (exitBlock)
+          insertionPoints.push_back(getFirstNonPHIOrPlaceholder(exitBlock));
+      }
+    } else {
+      for (BasicBlock &block : *newFunc) {
+        if (!hasTerminator(&block))
+          continue;
+        if (auto *returnInstruction =
+                dyn_cast<ReturnInst>(block.getTerminator())) {
+          if (DT.dominates(entry.loopHeader, &block))
+            insertionPoints.push_back(returnInstruction);
+        }
+      }
+    }
+
+    if (insertionPoints.empty())
+      continue;
+
+    MDNode *cacheIdentifier = MDNode::getDistinct(
+        newFunc->getContext(),
+        {ConstantAsMetadata::get(
+            staticMallocCall ? ConstantInt::getTrue(newFunc->getContext())
+                             : ConstantInt::getFalse(newFunc->getContext()))});
+    MDNode *cacheMetadata =
+        MDNode::get(newFunc->getContext(), {cacheIdentifier});
+    if (staticMallocCall)
+      staticMallocCall->setMetadata("enzyme_cache_alloc", cacheMetadata);
+
+    for (Instruction *insertBefore : insertionPoints) {
+      IRBuilder<> builder(insertBefore);
+      builder.setFastMathFlags(getFast());
+
+#if LLVM_VERSION_MAJOR < 17
+      if (storeInto->getContext().supportsTypedPointers()) {
+        assert(entry.loadType ==
+                   storeInto->getType()->getPointerElementType() &&
+               "Expected cache slot pointer element type to match load type");
+      }
+#endif
+
+      LoadInst *forFree = cast<LoadInst>(
+          builder.CreateLoad(entry.loadType, storeInto, "forfree"));
+      forFree->setMetadata(LLVMContext::MD_invariant_group,
+                           entry.invariantMetadata);
+      forFree->setMetadata(
+          LLVMContext::MD_dereferenceable,
+          MDNode::get(forFree->getContext(),
+                      ArrayRef<Metadata *>(
+                          ConstantAsMetadata::get(entry.byteSizeOfType))));
+      forFree->setAlignment(Align(pointerAlignment));
+
+      CallInst *deallocationCall = CreateDealloc(builder, forFree);
+      if (deallocationCall) {
+        if (newFunc->getSubprogram())
+          deallocationCall->setDebugLoc(DILocation::get(
+              newFunc->getContext(), 0, 0, newFunc->getSubprogram(), nullptr));
+        deallocationCall->setMetadata("enzyme_cache_free", cacheMetadata);
+        scopeFrees[cacheAlloca].insert(deallocationCall);
+      }
+    }
+  }
+  pendingForwardLoopFrees.clear();
+
+  if (pendingForwardReturnFrees.empty())
+    return;
+
+  SmallVector<ReturnInst *, 4> returnInstructions;
+  for (BasicBlock &block : *newFunc) {
+    if (!hasTerminator(&block))
+      continue;
+    if (auto *returnInstruction = dyn_cast<ReturnInst>(block.getTerminator()))
+      returnInstructions.push_back(returnInstruction);
+  }
+
+  for (const auto &entry : pendingForwardReturnFrees) {
+    Value *toFree = entry.allocationToFree;
+    if (!toFree)
+      continue;
+
+    MDNode *cacheIdentifier = MDNode::getDistinct(
+        newFunc->getContext(),
+        {ConstantAsMetadata::get(
+            entry.markLocalCacheAlloc
+                ? ConstantInt::getTrue(newFunc->getContext())
+                : ConstantInt::getFalse(newFunc->getContext()))});
+    MDNode *cacheMetadata =
+        MDNode::get(newFunc->getContext(), {cacheIdentifier});
+
+    for (ReturnInst *returnInstruction : returnInstructions) {
+      if (auto *definingInstruction = dyn_cast<Instruction>(toFree)) {
+        if (definingInstruction->getParent() != inversionAllocs &&
+            !DT.dominates(definingInstruction, returnInstruction))
+          continue;
+      }
+
+      IRBuilder<> builder(returnInstruction);
+      builder.setFastMathFlags(getFast());
+      size_t laneCount = entry.isShadow ? getWidth() : 1;
+      for (size_t lane = 0; lane < laneCount; ++lane) {
+        Value *laneToFree =
+            laneCount == 1 ? toFree : extractMeta(builder, toFree, lane);
+        CallInst *freeCall = freeKnownAllocation(
+            builder, laneToFree, entry.allocationFunctionName,
+            entry.debugLocation, TLI, entry.originalCall, this);
+        if (freeCall) {
+          if (entry.isShadow) {
+            freeCall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                          Attribute::NonNull);
+          }
+          if (entry.markLocalCacheAlloc) {
+            if (auto *allocationInstruction = dyn_cast<Instruction>(laneToFree))
+              allocationInstruction->setMetadata("enzyme_cache_alloc",
+                                                 cacheMetadata);
+          }
+          freeCall->setMetadata("enzyme_cache_free", cacheMetadata);
+        }
+      }
+    }
+  }
+  pendingForwardReturnFrees.clear();
+}
+
 CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                         const SubLimitType &sublimits, int i,
                                         AllocaInst *alloc, llvm::Type *T,
@@ -913,6 +1095,19 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                         Value *storeInto, MDNode *InvariantMD) {
   if (!FreeMemory)
     return nullptr;
+  if (mode == DerivativeMode::ForwardModeSplit) {
+    const LoopContext &outerLoopContext = sublimits[i].second.back().first;
+    CallInst *staticMallocCall = nullptr;
+    if (outerLoopContext.maxLimit) {
+      auto foundAllocs = scopeAllocs.find(alloc);
+      if (foundAllocs != scopeAllocs.end() && !foundAllocs->second.empty())
+        staticMallocCall = foundAllocs->second.back();
+    }
+    pendingForwardLoopFrees.push_back({alloc, outerLoopContext.header, T,
+                                       byteSizeOfType, storeInto, InvariantMD,
+                                       staticMallocCall});
+    return nullptr;
+  }
   assert(reverseBlocks.find(forwardPreheader) != reverseBlocks.end());
   assert(reverseBlocks[forwardPreheader].size());
   IRBuilder<> tbuild(reverseBlocks[forwardPreheader].back());

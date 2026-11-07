@@ -26,8 +26,36 @@
 
 #include "AdjointGenerator.h"
 #include "FlangRuntime.h"
+#include "llvm/Analysis/CaptureTracking.h"
 
 using namespace llvm;
+
+/// Whether an allocation may escape the enclosing function rather than having
+/// strictly function-local lifetime.
+static bool mayEscapeFunction(const CallInst &call) {
+  if (hasMetadata(&call, "enzyme_fromstack"))
+    return false;
+#if LLVM_VERSION_MAJOR >= 21
+  return PointerMayBeCaptured(&call, /*ReturnCaptures=*/true);
+#else
+  return PointerMayBeCaptured(&call, /*ReturnCaptures=*/true,
+                              /*StoreCaptures=*/true);
+#endif
+}
+
+/// Whether \p call has a guaranteed post-dominating deallocation distinct from
+/// the allocation instruction itself.
+static bool hasPostDominatingDeallocation(const CallInst &call,
+                                          const GradientUtils *gutils) {
+  auto foundGuaranteed = gutils->allocationsWithGuaranteedFree.find(&call);
+  if (foundGuaranteed == gutils->allocationsWithGuaranteedFree.end())
+    return false;
+  for (const CallInst *freeCall : foundGuaranteed->second) {
+    if (freeCall != &call)
+      return true;
+  }
+  return false;
+}
 
 extern "C" {
 void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
@@ -3412,16 +3440,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           if (pair.second.stores.count(&call)) {
             backwardsShadow = true;
             forwardsShadow = pair.second.primalInitialize;
-            if (auto inst = dyn_cast<Instruction>(pair.first))
-              if (!forwardsShadow && pair.second.LI &&
-                  pair.second.LI->contains(inst->getParent()))
-                backwardsShadow = false;
+            if (Mode != DerivativeMode::ForwardModeSplit)
+              if (auto inst = dyn_cast<Instruction>(pair.first))
+                if (!forwardsShadow && pair.second.LI &&
+                    pair.second.LI->contains(inst->getParent()))
+                  backwardsShadow = false;
             break;
           }
         }
 
         if (Mode == DerivativeMode::ForwardMode ||
             Mode == DerivativeMode::ForwardModeError ||
+            (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeCombined &&
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
@@ -3647,7 +3677,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               gutils->erase(placeholder);
               anti = nullptr;
               goto endAnti;
-            } else if (inLoop) {
+            } else if (inLoop && Mode != DerivativeMode::ForwardModeSplit) {
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   placeholder);
               if (hasMetadata(&call, "enzyme_fromstack"))
@@ -3661,7 +3691,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
             if (Mode == DerivativeMode::ReverseModeCombined ||
                 (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-                (Mode == DerivativeMode::ReverseModeGradient &&
+                ((Mode == DerivativeMode::ReverseModeGradient ||
+                  Mode == DerivativeMode::ForwardModeSplit) &&
                  backwardsShadow)) {
               anti = applyChainRule(call.getType(), bb, [&]() {
                 return shadowHandlers[funcName](bb, &call, args, gutils);
@@ -3748,7 +3779,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                    backwardsShadow) ||
                   (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
-                if (!inLoop) {
+                if (!inLoop || Mode == DerivativeMode::ForwardModeSplit) {
                   zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
                                       &call);
                   zeroed = true;
@@ -3879,9 +3910,30 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               std::make_pair(&call, InvertedPointerVH(gutils, anti)));
         }
       endAnti:;
+        if (Mode == DerivativeMode::ForwardModeSplit && shouldFree() &&
+            !isAlloca && anti) {
+          bool freeShadowOnReturn = hasMetadata(&call, "enzyme_fromstack");
+          if (!freeShadowOnReturn) {
+            auto shadowFound = gutils->backwardsOnlyShadows.find(&call);
+            if (shadowFound != gutils->backwardsOnlyShadows.end()) {
+              if (shadowFound->second.frees.empty() && !inLoop)
+                freeShadowOnReturn = true;
+            } else if (EnzymeFreeInternalAllocations &&
+                       !gutils->OrigLI->getLoopFor(call.getParent()) &&
+                       !hasPostDominatingDeallocation(call, gutils) &&
+                       !mayEscapeFunction(call)) {
+              freeShadowOnReturn = true;
+            }
+          }
+          if (freeShadowOnReturn) {
+            ((DiffeGradientUtils *)gutils)
+                ->addForwardReturnFree(anti, funcName, dbgLoc, &call,
+                                       /*isShadow=*/true,
+                                       /*markLocalCacheAlloc=*/backwardsShadow);
+          }
+        }
         if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
-             (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
-             (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
+             (Mode == DerivativeMode::ReverseModeGradient && shouldFree())) &&
             !isAlloca) {
           IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
@@ -4130,10 +4182,22 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             return true;
           }
 
+          if (Mode == DerivativeMode::ForwardModeSplit) {
+            if (found->second.frees.empty() && !AllocationLoop &&
+                shouldFree()) {
+              auto debugLocation =
+                  gutils->getNewFromOriginal(call.getDebugLoc());
+              ((DiffeGradientUtils *)gutils)
+                  ->addForwardReturnFree(newCall, funcName, debugLocation,
+                                         &call, /*isShadow=*/false,
+                                         /*markLocalCacheAlloc=*/true);
+            }
+            return true;
+          }
+
           // Otherwise if in reverse pass, free the newly created allocation.
           if (Mode == DerivativeMode::ReverseModeGradient ||
-              Mode == DerivativeMode::ReverseModeCombined ||
-              Mode == DerivativeMode::ForwardModeSplit) {
+              Mode == DerivativeMode::ReverseModeCombined) {
             IRBuilder<> Builder2(&call);
             getReverseBuilder(Builder2);
             auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
@@ -4168,7 +4232,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           // If not caching allocation and not needed in the reverse, we can
           // use the original freeing behavior for the function. If in the
           // reverse pass we should not recreate this allocation.
-          if (Mode == DerivativeMode::ReverseModeGradient)
+          if (Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ForwardModeSplit)
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           else if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
             restoreFromStack(MD);
@@ -4242,10 +4307,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
       Value *nop = gutils->cacheForReverse(
           BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
+      if (hasPDFree && Mode == DerivativeMode::ForwardModeSplit &&
+          shouldFree() && !gutils->OrigLI->getLoopFor(call.getParent()) &&
+          !hasPostDominatingDeallocation(call, gutils) &&
+          !mayEscapeFunction(call)) {
+        auto debugLocation = gutils->getNewFromOriginal(call.getDebugLoc());
+        ((DiffeGradientUtils *)gutils)
+            ->addForwardReturnFree(nop, funcName, debugLocation, &call,
+                                   /*isShadow=*/false,
+                                   /*markLocalCacheAlloc=*/false);
+      }
       if (hasPDFree &&
           ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
-           Mode == DerivativeMode::ReverseModeCombined ||
-           (Mode == DerivativeMode::ForwardModeSplit && shouldFree()))) {
+           Mode == DerivativeMode::ReverseModeCombined)) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
@@ -4856,6 +4930,122 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       eraseIfUnused(call);
     }
     auto callval = call.getCalledOperand();
+
+    if (Mode == DerivativeMode::ForwardModeSplit) {
+      Value *originalFreeArg = call.getArgOperand(0);
+      Value *baseOriginal = getBaseObject(originalFreeArg);
+      if (isa<ConstantPointerNull>(baseOriginal)) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+
+      Value *newFreeArg = gutils->getNewFromOriginal(originalFreeArg);
+      bool hasLivePrimal = !unnecessaryInstructions.count(&call) &&
+                           !unnecessaryValues.count(originalFreeArg) &&
+                           !isa<UndefValue>(newFreeArg);
+      if (auto *phiNode = dyn_cast<PHINode>(newFreeArg)) {
+        if (gutils->fictiousPHIs.count(phiNode)) {
+          auto *fictitiousOriginal =
+              dyn_cast_or_null<Instruction>(gutils->fictiousPHIs[phiNode]);
+          if (!fictitiousOriginal ||
+              !gutils->knownRecomputeHeuristic.count(fictitiousOriginal) ||
+              gutils->knownRecomputeHeuristic[fictitiousOriginal]) {
+            hasLivePrimal = false;
+          }
+        }
+      }
+
+      bool isRematerializedPrimal = false;
+      for (const auto &rematEntry : gutils->rematerializableAllocations) {
+        if (gutils->allocationsToBeRematerialized.count(rematEntry.first) &&
+            rematEntry.second.frees.count(&call) &&
+            !gutils->needsCacheWholeAllocation(rematEntry.first)) {
+          isRematerializedPrimal = true;
+          break;
+        }
+      }
+
+      bool keepPrimalFree = false;
+      bool markCacheFree = false;
+      if (isRematerializedPrimal) {
+        keepPrimalFree = hasLivePrimal;
+      } else if (gutils->forwardDeallocations.count(&call)) {
+        keepPrimalFree = false;
+      } else if (gutils->postDominatingFrees.count(&call)) {
+        keepPrimalFree = shouldFree() && hasLivePrimal;
+        markCacheFree = keepPrimalFree;
+      } else if (hasMetadata(&call, "enzyme_cache_free")) {
+        bool hasGuaranteedFree = false;
+        for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+          if (pair.second.count(&call)) {
+            hasGuaranteedFree = true;
+            break;
+          }
+        }
+        keepPrimalFree = hasGuaranteedFree && shouldFree() && hasLivePrimal;
+      } else {
+        keepPrimalFree = shouldFree() && hasLivePrimal;
+      }
+
+      bool localShadow = false;
+      auto shadowFound = gutils->backwardsOnlyShadows.find(baseOriginal);
+      if (shadowFound != gutils->backwardsOnlyShadows.end() &&
+          shadowFound->second.frees.count(&call)) {
+        localShadow = true;
+      }
+      bool freeShadow = !gutils->isConstantValue(originalFreeArg) &&
+                        (shouldFree() || localShadow);
+
+      if (freeShadow) {
+        IRBuilder<> forwardBuilder(&call);
+        getForwardBuilder(forwardBuilder);
+        Value *invertedToFree =
+            gutils->invertPointerM(originalFreeArg, forwardBuilder);
+        Function *checkedFree =
+            getOrInsertCheckedFree(*call.getModule(), &call,
+                                   newFreeArg->getType(), gutils->getWidth());
+
+        SmallVector<Value *, 3> freeArguments;
+        if (keepPrimalFree)
+          freeArguments.push_back(newFreeArg);
+        else
+          freeArguments.push_back(
+              Constant::getNullValue(newFreeArg->getType()));
+
+        auto appendShadowArgument = [&freeArguments](Value *shadowPointer) {
+          freeArguments.push_back(shadowPointer);
+        };
+        applyChainRule(forwardBuilder, appendShadowArgument, invertedToFree);
+
+        for (size_t i = 1; i < call.arg_size(); i++) {
+          freeArguments.push_back(
+              gutils->getNewFromOriginal(call.getArgOperand(i)));
+        }
+
+        CallInst *checkedFreeCall = forwardBuilder.CreateCall(
+            checkedFree->getFunctionType(), checkedFree, freeArguments);
+        checkedFreeCall->setDebugLoc(
+            gutils->getNewFromOriginal(call.getDebugLoc()));
+      }
+
+      if (keepPrimalFree) {
+        if (markCacheFree) {
+          auto *primalFreeCall =
+              cast<CallInst>(gutils->getNewFromOriginal(&call));
+          auto cacheIdentifier = MDNode::getDistinct(
+              primalFreeCall->getContext(),
+              {ConstantAsMetadata::get(
+                  ConstantInt::getFalse(primalFreeCall->getContext()))});
+          primalFreeCall->setMetadata(
+              "enzyme_cache_free",
+              MDNode::get(primalFreeCall->getContext(), {cacheIdentifier}));
+        }
+        eraseIfUnused(call);
+      } else {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      }
+      return true;
+    }
 
     for (auto rmat : gutils->backwardsOnlyShadows) {
       if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
