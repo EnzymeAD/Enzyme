@@ -2464,6 +2464,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             potentiallyActiveStore = I;
         }
       }
+      // Re-evaluating pending values when an instruction is proven constant
+      // inside Hypothesis can already prove Val itself constant.
+      if (Hypothesis->ConstantValues.count(Val))
+        return true;
       if (potentiallyActiveStore && potentiallyActiveLoad)
         return true;
       return false;
@@ -2529,12 +2533,18 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         llvm::errs() << potentialStore;
       llvm::errs() << "\n";
     }
+    if (Hypothesis->ConstantValues.count(Val)) {
+      insertConstantsFrom(TR, *Hypothesis);
+      return true;
+    }
     if (potentiallyActiveLoad && potentiallyActiveStore) {
       if (EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
         ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(Val);
       }
       insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
+      if (ConstantValues.count(Val))
+        return true;
       if (TmpOrig != Val && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
         ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(TmpOrig);
@@ -2645,6 +2655,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         assert(Hypothesis->directions == directions);
         assert(Hypothesis->ActiveValues.count(Val));
         insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
+        if (ConstantValues.count(Val))
+          return true;
         if (TmpOrig != Val && EnzymeEnableRecursiveHypotheses)
           ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
         return false;
