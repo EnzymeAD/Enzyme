@@ -36,7 +36,8 @@ using namespace llvm;
 
 // LLVM version against which the version ranges of intrinsic names are checked.
 #ifdef ENZYME_LLVM22_PRERELEASE
-// A snapshot of LLVM 22 that predates the LLVM 22 release has the intrinsic names of LLVM 21.
+// A snapshot of LLVM 22 that predates the LLVM 22 release has the intrinsic
+// names of LLVM 21.
 static constexpr int intrVersion = 21;
 #else
 static constexpr int intrVersion = LLVM_VERSION_MAJOR;
