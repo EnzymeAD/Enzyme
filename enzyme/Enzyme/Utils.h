@@ -290,6 +290,10 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+void diagnoseEnzymeUnsupported(
+    llvm::LLVMContext &Context,
+    const llvm::DiagnosticInfoUnsupported &Diagnostic);
+
 /// Emit a diagnostic which is always shown, unlike EmitWarning which requires
 /// the user to opt in with -Rpass=enzyme. Use this for messages which describe
 /// a potential correctness problem (e.g. mismatched activity) as opposed to a
@@ -299,11 +303,11 @@ void EmitWarningAlways(llvm::StringRef RemarkName,
                        const llvm::DiagnosticLocation &Loc,
                        const llvm::Function &F, const Args &...args) {
   // DiagnosticInfoUnsupported does not copy its message, so keep the backing
-  // storage alive until diagnose() returns.
+  // storage alive until diagnoseEnzymeUnsupported() returns.
   std::string str = "Enzyme: ";
   llvm::raw_string_ostream ss(str);
   (ss << ... << args);
-  F.getContext().diagnose(EnzymeWarning(str, Loc, &F));
+  diagnoseEnzymeUnsupported(F.getContext(), EnzymeWarning(str, Loc, &F));
 }
 
 template <typename... Args>
@@ -356,22 +360,22 @@ template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Function *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>

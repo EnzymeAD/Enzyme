@@ -98,7 +98,7 @@ if(ENZYME_ENABLE_PLUGINS)
         LLVM)
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}
@@ -158,7 +158,7 @@ if(ENZYME_ENABLE_PLUGINS)
         ${ENZYME_FLANG_PLUGIN_TOOL})
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}
