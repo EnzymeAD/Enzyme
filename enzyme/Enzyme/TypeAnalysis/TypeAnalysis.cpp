@@ -2131,7 +2131,46 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
                     .PurgeAnything()
                     .ShiftIndices(DL, /*start*/ 0, StoreSize, /*addOffset*/ 0)
                     .ReplaceMinus();
-  ptr |= purged;
+  // A single zero byte (e.g. libc++ small-string `__data_[0] = 0` in a
+  // storage union that otherwise holds a heap pointer) says nothing about the
+  // type of the pointee: a zero byte may equally be part of a null pointer
+  // or a zero float.
+  bool ZeroByteStore = false;
+  if (auto *CI = dyn_cast<ConstantInt>(I.getValueOperand()))
+    if (CI->isZero() && CI->getBitWidth() == 8) {
+      auto HasDirectPtrAccess = [&](Value *P) {
+        if (getAnalysis(P).Data0()[{0}] == BaseType::Pointer)
+          return true;
+        for (User *U : P->users()) {
+          if (auto *LI = dyn_cast<LoadInst>(U))
+            if (LI->getType()->isPointerTy())
+              return true;
+          if (auto *SI = dyn_cast<StoreInst>(U))
+            if (SI->getPointerOperand()->stripPointerCasts() == P &&
+                SI->getValueOperand()->getType()->isPointerTy())
+              return true;
+        }
+        return false;
+      };
+      auto *BasePtr = I.getPointerOperand()->stripPointerCasts();
+      if (HasDirectPtrAccess(BasePtr)) {
+        ZeroByteStore = true;
+      } else {
+        for (User *U : BasePtr->users()) {
+          if (auto *MTI = dyn_cast<MemTransferInst>(U)) {
+            Value *Other = (MTI->getRawDest()->stripPointerCasts() == BasePtr)
+                               ? MTI->getRawSource()->stripPointerCasts()
+                               : MTI->getRawDest()->stripPointerCasts();
+            if (HasDirectPtrAccess(Other)) {
+              ZeroByteStore = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+  if (!ZeroByteStore)
+    ptr |= purged;
 
   if (direction & UP) {
     updateAnalysis(I.getPointerOperand(), ptr.Only(-1, &I), &I);
@@ -2839,7 +2878,21 @@ void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
 void TypeAnalyzer::visitSelectInst(SelectInst &I) {
   if (direction & UP) {
     auto Data = getAnalysis(&I).PurgeAnything();
-    if (EnzymeStrictAliasing || (I.getTrueValue() == I.getFalseValue())) {
+    // `select %is_long, (load ptr, %obj), %obj` is the libc++ small-string
+    // `data()` idiom: the object storage is a union of inline characters and
+    // a heap pointer, so the pointee type of the select result must not be
+    // pushed into the object itself.
+    auto IsSelfLoadUnion = [&]() {
+      for (auto [A, B] : {std::make_pair(I.getTrueValue(), I.getFalseValue()),
+                          std::make_pair(I.getFalseValue(), I.getTrueValue())})
+        if (auto *LI = dyn_cast<LoadInst>(A))
+          if (LI->getPointerOperand()->stripPointerCasts() ==
+              B->stripPointerCasts())
+            return true;
+      return false;
+    };
+    if (!IsSelfLoadUnion() &&
+        (EnzymeStrictAliasing || (I.getTrueValue() == I.getFalseValue()))) {
       updateAnalysis(I.getTrueValue(), Data, &I);
       updateAnalysis(I.getFalseValue(), Data, &I);
     } else {
@@ -3878,18 +3931,67 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   }
 
   auto &dl = MTI.getParent()->getParent()->getParent()->getDataLayout();
-  TypeTree res = getAnalysis(MTI.getArgOperand(0))
-                     .PurgeAnything()
-                     .Data0()
-                     .ShiftIndices(dl, 0, sz, 0);
-  TypeTree res2 = getAnalysis(MTI.getArgOperand(1))
-                      .PurgeAnything()
-                      .Data0()
-                      .ShiftIndices(dl, 0, sz, 0);
+  TypeTree OrigDst = getAnalysis(MTI.getArgOperand(0));
+  TypeTree OrigSrc = getAnalysis(MTI.getArgOperand(1));
+  TypeTree OrigRes = OrigDst.PurgeAnything().Data0().ShiftIndices(dl, 0, sz, 0);
+  TypeTree res = OrigRes;
+  TypeTree res2 = OrigSrc.PurgeAnything().Data0().ShiftIndices(dl, 0, sz, 0);
 
   bool Legal = true;
   res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
   if (!Legal) {
+    // Allow tagged Pointer|Integer unions (such as libc++ SSO
+    // std::basic_string move/copy or low-bit tagged pointer wrappers) to
+    // propagate non-conflicting fields without failing when neither side has
+    // Float at the conflicting byte offset.
+    auto MergeNonConflictingPtrInt =
+        [&](const TypeTree &Base, const TypeTree &Other,
+            const TypeTree &FullTarget, bool &Ok) -> TypeTree {
+      TypeTree Merged = Base;
+      for (const auto &Pair : Other.getMapping()) {
+        const auto &Seq = Pair.first;
+        const ConcreteType &CT = Pair.second;
+        TypeTree Trial = Merged;
+        bool StepLegal = true;
+        Trial.checkedOrIn(Seq, CT, /*PointerIntSame*/ false, StepLegal);
+        if (StepLegal) {
+          TypeTree FullTrial = FullTarget;
+          TypeTree AsPtr = Trial;
+          AsPtr.insert({}, BaseType::Pointer);
+          FullTrial.checkedOrIn(AsPtr.Only(-1, &MTI), /*PointerIntSame*/ false,
+                                StepLegal);
+        }
+        if (StepLegal) {
+          Merged = std::move(Trial);
+          continue;
+        }
+        if (Seq.empty() || Base[{-1}].isFloat() || Other[{-1}].isFloat() ||
+            Base[{Seq[0]}].isFloat() || Other[{Seq[0]}].isFloat() ||
+            (Seq.size() == 1 && CT.isFloat())) {
+          Ok = false;
+          return Merged;
+        }
+      }
+      return Merged;
+    };
+
+    bool OnlyPtrInt = true;
+    TypeTree ToDst =
+        MergeNonConflictingPtrInt(OrigRes, res2, OrigDst, OnlyPtrInt);
+    TypeTree ToSrc = OnlyPtrInt ? MergeNonConflictingPtrInt(res2, OrigRes,
+                                                            OrigSrc, OnlyPtrInt)
+                                : TypeTree();
+    if (OnlyPtrInt) {
+      ToDst.insert({}, BaseType::Pointer);
+      ToSrc.insert({}, BaseType::Pointer);
+      updateAnalysis(MTI.getArgOperand(0), ToDst.Only(-1, &MTI), &MTI);
+      updateAnalysis(MTI.getArgOperand(1), ToSrc.Only(-1, &MTI), &MTI);
+      for (unsigned i = 2; i < MTI.arg_size(); ++i) {
+        updateAnalysis(MTI.getArgOperand(i),
+                       TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
+      }
+      return;
+    }
     std::string str;
     raw_string_ostream ss(str);
     if (!CustomErrorHandler) {
