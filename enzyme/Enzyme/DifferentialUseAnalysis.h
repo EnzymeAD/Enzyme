@@ -88,6 +88,42 @@ void pushLoopyPHIPreheader(const GradientUtils *gutils, llvm::Value *V,
                            llvm::SetVector<llvm::Value *> &Intermediates,
                            std::deque<llvm::Value *> &todo);
 
+/// Collect the stores (and memory intrinsics) whose destination address is
+/// computed by `user` (a GEP, possibly followed by more GEPs or casts) from
+/// `inst` as an index, i.e. not as the base pointer. Replaying such a store,
+/// e.g. when rematerializing the allocation it writes to, needs `inst`.
+static inline void
+collectIndexedStores(const llvm::Value *inst, const llvm::Instruction *user,
+                     llvm::SmallVectorImpl<const llvm::Instruction *> &stores) {
+  using namespace llvm;
+  auto GEP = dyn_cast<GetElementPtrInst>(user);
+  if (!GEP || GEP->getPointerOperand() == inst)
+    return;
+  SmallVector<const Instruction *, 1> addrs = {GEP};
+  SmallPtrSet<const Instruction *, 4> seenAddrs;
+  while (addrs.size()) {
+    auto cur = addrs.pop_back_val();
+    if (!seenAddrs.insert(cur).second)
+      continue;
+    for (auto U : cur->users()) {
+      auto UI = dyn_cast<Instruction>(U);
+      if (!UI)
+        continue;
+      if (isa<GetElementPtrInst>(UI) || isa<CastInst>(UI)) {
+        addrs.push_back(UI);
+        continue;
+      }
+      if (auto SI = dyn_cast<StoreInst>(UI)) {
+        if (SI->getPointerOperand() == cur)
+          stores.push_back(SI);
+      } else if (auto MI = dyn_cast<MemIntrinsic>(UI)) {
+        if (MI->getDest() == cur)
+          stores.push_back(MI);
+      }
+    }
+  }
+}
+
 template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *inst, DerivativeMode mode,
@@ -314,7 +350,18 @@ inline bool is_value_needed_in_reverse(
             isStored |= inst == CB->getArgOperand(i);
         }
       }
-      if (isStored) {
+      // Replaying a store also needs its address. The base of that address
+      // is the allocation itself, but an index into it (e.g. one loaded from
+      // memory) must be available in the reverse pass too. This is checked
+      // from the index rather than from the address, because the query of the
+      // allocation already visited the address while the allocation itself
+      // was still assumed unneeded.
+      SmallVector<const Instruction *, 1> storeUsers;
+      if (isStored)
+        storeUsers.push_back(user);
+      else
+        collectIndexedStores(inst, user, storeUsers);
+      for (auto storeUser : storeUsers) {
         for (auto pair : gutils->rematerializableAllocations) {
           // If already decided to cache the whole allocation, ignore
           if (gutils->needsCacheWholeAllocation(pair.first)) {
@@ -335,7 +382,7 @@ inline bool is_value_needed_in_reverse(
           // we'll set it to unused, then check the gep, then here we'll
           // directly say unused by induction instead of checking the final
           // loads.
-          if (pair.second.stores.count(user)) {
+          if (pair.second.stores.count(storeUser)) {
             bool allocNeeded =
                 gutils->allocationsToBeRematerialized.count(pair.first);
             if (allocNeeded) {
@@ -596,8 +643,13 @@ forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
                         bool useCheck = false) {
   for (auto V2 : V->users()) {
     if (auto Inst = llvm::dyn_cast<llvm::Instruction>(V2)) {
+      llvm::SmallVector<const llvm::Instruction *, 1> indexedStores;
+      collectIndexedStores(V, Inst, indexedStores);
       for (const auto &pair : gutils->rematerializableAllocations) {
-        if (pair.second.stores.count(Inst)) {
+        bool storesTo = pair.second.stores.count(Inst);
+        for (auto S : indexedStores)
+          storesTo |= pair.second.stores.count(S) != 0;
+        if (storesTo) {
           f(llvm::cast<llvm::Instruction>(pair.first));
         }
       }
