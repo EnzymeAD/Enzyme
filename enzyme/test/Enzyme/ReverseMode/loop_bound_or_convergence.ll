@@ -87,13 +87,13 @@ run:
 
 ; CHECK-LABEL: define internal { double } @diffefixed_point_or(
 ; CHECK-NOT: @realloc
-; CHECK: %value_malloccache = tail call noalias nonnull dereferenceable(800) dereferenceable_or_null(800) ptr @malloc(i64 800)
+; CHECK: %[[CACHE1:.+]] = tail call noalias nonnull dereferenceable(800) dereferenceable_or_null(800) ptr @malloc(i64 800)
 ; CHECK-NOT: @realloc
 ; CHECK: ret { double }
 
 ; CHECK-LABEL: define internal { double } @diffefixed_point_select(
 ; CHECK-NOT: @realloc
-; CHECK: %value_malloccache = tail call noalias nonnull dereferenceable(800) dereferenceable_or_null(800) ptr @malloc(i64 800)
+; CHECK: %[[CACHE2:.+]] = tail call noalias nonnull dereferenceable(800) dereferenceable_or_null(800) ptr @malloc(i64 800)
 ; CHECK-NOT: @realloc
 ; CHECK: ret { double }
 
