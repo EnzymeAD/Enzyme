@@ -22,13 +22,29 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   %[[i1:.+]] = call fast double @sinc(double %x)
-; CHECK-NEXT:   %[[i2:.+]] = fsub fast double %[[i0]], %[[i1]]
-; CHECK-NEXT:   %[[i3:.+]] = fdiv fast double %[[i2]], %x
-; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %differeturn, %[[i3]]
-; CHECK-NEXT:   %[[sel:.+]] = select {{(fast )?}}i1 %[[cmp]], double 0.000000e+00, double %[[i4]]
-; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[sel]], 0
-; CHECK-NEXT:   ret { double } %[[i5]]
+; CHECK-NEXT:   %[[abs:.+]] = call fast double @llvm.fabs.f64(double %x)
+; CHECK-NEXT:   %[[small:.+]] = fcmp fast olt double %[[abs]], 4.400000e-01
+; CHECK-NEXT:   %[[usq:.+]] = fmul fast double %x, %x
+; CHECK-NEXT:   %[[p13:.+]] = fmul fast double %[[usq]], 0xBDA78AF56A4D411B
+; CHECK-NEXT:   %[[s11:.+]] = fadd fast double 0x3E208DB48EBE51C7, %[[p13]]
+; CHECK-NEXT:   %[[p11:.+]] = fmul fast double %[[usq]], %[[s11]]
+; CHECK-NEXT:   %[[s9:.+]] = fadd fast double 0xBE90CFEB60F94B0E, %[[p11]]
+; CHECK-NEXT:   %[[p9:.+]] = fmul fast double %[[usq]], %[[s9]]
+; CHECK-NEXT:   %[[s7:.+]] = fadd fast double 0x3EF71DE3A556C734, %[[p9]]
+; CHECK-NEXT:   %[[p7:.+]] = fmul fast double %[[usq]], %[[s7]]
+; CHECK-NEXT:   %[[s5:.+]] = fadd fast double 0xBF53813813813814, %[[p7]]
+; CHECK-NEXT:   %[[p5:.+]] = fmul fast double %[[usq]], %[[s5]]
+; CHECK-NEXT:   %[[s3:.+]] = fadd fast double 0x3FA1111111111111, %[[p5]]
+; CHECK-NEXT:   %[[p3:.+]] = fmul fast double %[[usq]], %[[s3]]
+; CHECK-NEXT:   %[[s1:.+]] = fadd fast double 0xBFD5555555555555, %[[p3]]
+; CHECK-NEXT:   %[[series:.+]] = fmul fast double %x, %[[s1]]
+; CHECK-NEXT:   %[[safe:.+]] = select {{(fast )?}}i1 %[[small]], double 1.000000e+00, double %x
+; CHECK-NEXT:   %[[cos:.+]] = call fast double @llvm.cos.f64(double %[[safe]])
+; CHECK-NEXT:   %[[call:.+]] = call fast double @sinc(double %[[safe]])
+; CHECK-NEXT:   %[[num:.+]] = fsub fast double %[[cos]], %[[call]]
+; CHECK-NEXT:   %[[closed:.+]] = fdiv fast double %[[num]], %[[safe]]
+; CHECK-NEXT:   %[[deriv:.+]] = select {{(fast )?}}i1 %[[small]], double %[[series]], double %[[closed]]
+; CHECK-NEXT:   %[[res:.+]] = fmul fast double %differeturn, %[[deriv]]
+; CHECK-NEXT:   %[[iv:.+]] = insertvalue { double } undef, double %[[res]], 0
+; CHECK-NEXT:   ret { double } %[[iv]]
 ; CHECK-NEXT: }

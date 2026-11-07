@@ -562,23 +562,56 @@ def : CallPattern<(Op $x), ["jl_rem2pi", "jl_rem2pif", "jl_rem2pil"],[(DiffeRet)
                   [ReadNone, NoUnwind]
                   >;
 
-// Unnormalized sinc(x) = sin(x)/x
+// Derivative of the unnormalized sinc(u) = sin(u)/u evaluated by its Taylor
+// series, sum_{k>=1} (-1)^k 2k u^(2k-1) / (2k+1)!, through the u^13 term. Near
+// zero the closed form (cos(u) - sinc(u)) / u cancels catastrophically, and
+// the series stays differentiable at u = 0 for higher-order derivatives.
+def SincDerivativeSeries : SubRoutine<(Op $u),
+                  (FMul $u,
+                    (FAdd (ConstantFP<"-0.333333333333333333333333333333333333333"> $u),
+                      (FMul (FMul $u, $u):$usq,
+                        (FAdd (ConstantFP<"0.0333333333333333333333333333333333333333"> $u),
+                          (FMul $usq,
+                            (FAdd (ConstantFP<"-0.00119047619047619047619047619047619047619"> $u),
+                              (FMul $usq,
+                                (FAdd (ConstantFP<"0.0000220458553791887125220458553791887125220"> $u),
+                                  (FMul $usq,
+                                    (FAdd (ConstantFP<"-2.50521083854417187750521083854417187750521e-7"> $u),
+                                      (FMul $usq,
+                                        (FAdd (ConstantFP<"1.92708526041859375192708526041859375192709e-9"> $u),
+                                          (FMul $usq,
+                                            (ConstantFP<"-1.07060292245477430662615847801032986218171e-11"> $u))))))))))))))
+                  >;
+
+// Below this magnitude of the sinc argument the series above is accurate to
+// double precision, while the closed form has already lost digits.
+def SincSeriesThreshold : ConstantFP<"0.44">;
+
+// Unnormalized sinc(x) = sin(x)/x. The closed form is evaluated at a safe
+// argument when |x| is small so that neither it nor its own derivatives
+// divide by zero; the series branch supplies the value there.
 def : CallPattern<(Op $x),
                   ["sinc", "sincf", "sincl"],
-                  [(Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
-                        (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                  [
+                    (FMul (DiffeRet),
+                      (Select (FCmpOLT (Intrinsic<"fabs"> $x), (SincSeriesThreshold $x)):$small,
+                        (SincDerivativeSeries $x),
+                        (FDiv (FSub (Intrinsic<"cos"> (Select $small, (ConstantFP<"1"> $x), $x):$safe), (Call<(SameFunc), [ReadNone,NoUnwind]> $safe)), $safe)))
+                  ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
 
-// Normalized sinc(x) = sin(pi x)/(pi x)
+// Normalized sinc(x) = sin(pi x)/(pi x), whose derivative is pi times the
+// unnormalized derivative at pi x.
 def : CallPattern<(Op $x),
                   ["sincn", "sincnf", "sincnl"],
                   [
-                    (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
-                        (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> (FMul (Pi $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                    (FMul (DiffeRet),
+                      (Select (FCmpOLT (Intrinsic<"fabs"> (FMul (Pi $x), $x):$scaled), (SincSeriesThreshold $x)):$small,
+                        (FMul (Pi $x), (SincDerivativeSeries $scaled)),
+                        (FDiv (FSub (Intrinsic<"cos"> (FMul (Pi $x), (Select $small, (ConstantFP<"1"> $x), $x):$safe)), (Call<(SameFunc), [ReadNone,NoUnwind]> $safe)), $safe)))
+                  ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
