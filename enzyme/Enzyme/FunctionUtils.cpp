@@ -6139,7 +6139,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (int i = 0; i < 2; i++)
         if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i)))
           if (C->isZero())
-            if (auto add = dyn_cast<BinaryOperator>(icmp->getOperand(1 - i)))
+            if (auto add = dyn_cast<BinaryOperator>(icmp->getOperand(1 - i))) {
               if (add->getOpcode() == Instruction::Add)
                 if (auto a0 = dyn_cast<CastInst>(add->getOperand(0)))
                   if (auto a1 = dyn_cast<CastInst>(add->getOperand(1)))
@@ -6151,6 +6151,38 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                       replaceAndErase(cur, cmp2);
                       return "CmpExt0Shuffle";
                     }
+              std::function<bool(Value *)> IsBooleanExtTree =
+                  [&](Value *V) -> bool {
+                if (auto CI = dyn_cast<CastInst>(V))
+                  return (isa<ZExtInst>(CI) || isa<SExtInst>(CI)) &&
+                         CI->getOperand(0)->getType()->isIntegerTy(1);
+                if (auto BO = dyn_cast<BinaryOperator>(V))
+                  if (BO->getOpcode() == Instruction::Add ||
+                      BO->getOpcode() == Instruction::Sub)
+                    return IsBooleanExtTree(BO->getOperand(0)) &&
+                           IsBooleanExtTree(BO->getOperand(1));
+                return false;
+              };
+              if ((add->getOpcode() == Instruction::Add ||
+                   add->getOpcode() == Instruction::Sub) &&
+                  IsBooleanExtTree(add)) {
+                auto LHS = add->getOperand(0);
+                auto RHS = add->getOperand(1);
+                auto LHSZero = pushcse(B.CreateICmp(ICmpInst::ICMP_EQ, LHS, C));
+                auto RHSZero = pushcse(B.CreateICmp(ICmpInst::ICMP_EQ, RHS, C));
+                auto BothZero = pushcse(B.CreateAnd(LHSZero, RHSZero));
+                auto Other = (add->getOpcode() == Instruction::Add)
+                                 ? pushcse(B.CreateNeg(RHS))
+                                 : RHS;
+                auto Cancel =
+                    pushcse(B.CreateICmp(ICmpInst::ICMP_EQ, LHS, Other));
+                auto Disjunction = pushcse(B.CreateOr(BothZero, Cancel));
+                if (icmp->getPredicate() == CmpInst::ICMP_NE)
+                  Disjunction = pushcse(B.CreateNot(Disjunction));
+                replaceAndErase(cur, Disjunction);
+                return "IntSum2ZeroSplit";
+              }
+            }
     }
   }
 
@@ -6351,6 +6383,31 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           }
         }
     }
+    if (fcmp->getPredicate() == FCmpInst::FCMP_UEQ ||
+        fcmp->getPredicate() == FCmpInst::FCMP_ONE ||
+        fcmp->getPredicate() == FCmpInst::FCMP_UNE) {
+      auto IntPred = (fcmp->getPredicate() == FCmpInst::FCMP_UEQ)
+                         ? ICmpInst::ICMP_EQ
+                         : ICmpInst::ICMP_NE;
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i)))
+          if (C->isZero()) {
+            if (auto Cast = dyn_cast<SIToFPInst>(fcmp->getOperand(1 - i))) {
+              auto IntCmp = pushcse(B.CreateICmp(
+                  IntPred, Cast->getOperand(0),
+                  ConstantInt::get(Cast->getOperand(0)->getType(), 0)));
+              replaceAndErase(cur, IntCmp);
+              return "SFCmpToICmp";
+            }
+            if (auto Cast = dyn_cast<UIToFPInst>(fcmp->getOperand(1 - i))) {
+              auto IntCmp = pushcse(B.CreateICmp(
+                  IntPred, Cast->getOperand(0),
+                  ConstantInt::get(Cast->getOperand(0)->getType(), 0)));
+              replaceAndErase(cur, IntCmp);
+              return "UFCmpToICmp";
+            }
+          }
+    }
   }
   if (auto fcmp = dyn_cast<CmpInst>(cur)) {
     if (fcmp->getPredicate() == CmpInst::ICMP_EQ ||
@@ -6399,6 +6456,15 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (int i = 0; i < 2; i++)
         if (auto CI = dyn_cast<ConstantInt>(fcmp->getOperand(i)))
           if (CI->isZero()) {
+            if (auto Cast = dyn_cast<CastInst>(fcmp->getOperand(1 - i))) {
+              if (isa<ZExtInst>(Cast) || isa<SExtInst>(Cast)) {
+                auto IntCmp = pushcse(B.CreateICmp(
+                    fcmp->getPredicate(), Cast->getOperand(0),
+                    ConstantInt::get(Cast->getOperand(0)->getType(), 0)));
+                replaceAndErase(cur, IntCmp);
+                return "ExtCmpToICmp";
+              }
+            }
             // a + a ?= 0 -> a ?= 0
             if (auto addI = dyn_cast<Instruction>(fcmp->getOperand(1 - i))) {
               if (addI->getOpcode() == Instruction::Add &&
@@ -8506,6 +8572,12 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
   }
   if (auto expr = dyn_cast<SCEVSignExtendExpr>(S)) {
     return cannotDependOnLoopIV(expr->getOperand(), L);
+  }
+  if (auto Expr = dyn_cast<SCEVZeroExtendExpr>(S)) {
+    return cannotDependOnLoopIV(Expr->getOperand(), L);
+  }
+  if (auto Expr = dyn_cast<SCEVTruncateExpr>(S)) {
+    return cannotDependOnLoopIV(Expr->getOperand(), L);
   }
   llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
   return false;
