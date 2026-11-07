@@ -200,6 +200,23 @@ public:
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
 
+  /// The Julia allocation zeroing bundles (julia.gc_alloc_ptr_offsets,
+  /// julia.gc_alloc_zeroinit[_indirect]) of orig, for use on a shadow
+  /// allocation of the same size. If zeroAllSize is given, instead return a
+  /// julia.gc_alloc_zeroinit bundle that zeroes all zeroAllSize bytes.
+  llvm::SmallVector<llvm::OperandBundleDef, 1>
+  getAllocationZeroingBundles(llvm::CallInst *orig, llvm::IRBuilder<> &Builder2,
+                              bool lookup, llvm::Value *zeroAllSize = nullptr);
+
+  /// Whether Julia can zero a shadow of orig in late-gc-lowering, in place of
+  /// a memset: orig is a julia.gc_alloc_obj that carries the zeroing bundles
+  /// of julia#60924, so this Julia version supports them.
+  static bool canZeroAllocationWithBundle(const llvm::CallInst *orig);
+
+  /// Mark a shadow allocation that a julia.gc_alloc_zeroinit bundle zeroes as
+  /// allockind("alloc,zeroed"), so that LLVM and Julia's AllocOpt know.
+  static void markAllocationZeroed(llvm::CallInst *alloc);
+
   bool usedInRooting(const llvm::CallBase *orig,
                      llvm::ArrayRef<ValueType> types, const llvm::Value *val,
                      bool shadow) const;
