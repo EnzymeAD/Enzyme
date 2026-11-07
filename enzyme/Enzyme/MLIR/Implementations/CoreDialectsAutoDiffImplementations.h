@@ -21,6 +21,9 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
+
+#include <functional>
 
 namespace mlir {
 class DialectRegistry;
@@ -31,6 +34,23 @@ class RegionSuccessor;
 namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
+
+/// Forward-mode derivative of the call `orig`. `builder` is set before the
+/// clone of `orig`. The handler must set the shadow of every active result and
+/// may replace the clone with replaceForwardCall.
+using ForwardCallHandler = std::function<LogicalResult(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils)>;
+
+/// Forward-mode call handlers, keyed by the `enzyme_math` attribute of the
+/// call, else of its flat symbol callee, else by the callee's symbol name (not
+/// unique across nested symbol tables). The callee needs no body. Not
+/// synchronized.
+extern llvm::StringMap<ForwardCallHandler> forwardCallHandlers;
+
+/// Replaces the results of `orig` with `values` and erases its clone, moving
+/// `builder` past the clone if it points there.
+void replaceForwardCall(Operation *orig, ValueRange values, OpBuilder &builder,
+                        MGradientUtils *gutils);
 
 namespace detail {
 // Non-template implementation of

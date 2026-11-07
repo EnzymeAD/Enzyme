@@ -12,11 +12,15 @@
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Pass.h"
 #include "mlir/CAPI/Registration.h"
+#include "mlir/CAPI/Rewrite.h"
+#include "mlir/CAPI/Support.h"
+#include "mlir/IR/PatternMatch.h"
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Interfaces/GradientUtils.h"
 #include "Passes/Passes.h"
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
@@ -248,4 +252,68 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
 
 MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
   return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
+}
+
+//===----------------------------------------------------------------------===//
+// Custom forward-mode derivatives of calls
+//===----------------------------------------------------------------------===//
+
+DEFINE_C_API_PTR_METHODS(EnzymeGradientUtils, mlir::enzyme::MGradientUtils)
+
+void enzymeRegisterForwardCallHandler(MlirStringRef key,
+                                      EnzymeForwardCallHandler handler) {
+  mlir::enzyme::forwardCallHandlers[unwrap(key)] =
+      [handler](mlir::Operation *orig, mlir::OpBuilder &builder,
+                mlir::enzyme::MGradientUtils *gutils) {
+        mlir::IRRewriter rewriter(builder);
+        MlirLogicalResult result =
+            handler(wrap(static_cast<mlir::RewriterBase *>(&rewriter)),
+                    wrap(orig), wrap(gutils));
+        builder.restoreInsertionPoint(rewriter.saveInsertionPoint());
+        return unwrap(result);
+      };
+}
+
+int64_t enzymeGradientUtilsGetWidth(EnzymeGradientUtils gutils) {
+  return unwrap(gutils)->width;
+}
+
+void *enzymeGradientUtilsGetExternalContext(EnzymeGradientUtils gutils) {
+  return unwrap(gutils)->Logic.externalContext;
+}
+
+bool enzymeGradientUtilsIsConstantValue(EnzymeGradientUtils gutils,
+                                        MlirValue value) {
+  return unwrap(gutils)->isConstantValue(unwrap(value));
+}
+
+MlirValue enzymeGradientUtilsGetNewFromOriginal(EnzymeGradientUtils gutils,
+                                                MlirValue value) {
+  return wrap(unwrap(gutils)->getNewFromOriginal(unwrap(value)));
+}
+
+MlirValue enzymeGradientUtilsInvertPointer(EnzymeGradientUtils gutils,
+                                           MlirValue value,
+                                           MlirRewriterBase builder) {
+  return wrap(unwrap(gutils)->invertPointerM(unwrap(value), *unwrap(builder)));
+}
+
+MlirType enzymeGradientUtilsGetShadowType(EnzymeGradientUtils gutils,
+                                          MlirType type) {
+  return wrap(unwrap(gutils)->getShadowType(unwrap(type)));
+}
+
+void enzymeGradientUtilsSetDiffe(EnzymeGradientUtils gutils, MlirValue value,
+                                 MlirValue shadow, MlirRewriterBase builder) {
+  unwrap(gutils)->setDiffe(unwrap(value), unwrap(shadow), *unwrap(builder));
+}
+
+void enzymeGradientUtilsReplaceOrigOpWith(EnzymeGradientUtils gutils,
+                                          MlirOperation call, intptr_t nValues,
+                                          MlirValue const *values,
+                                          MlirRewriterBase builder) {
+  llvm::SmallVector<mlir::Value> storage;
+  mlir::enzyme::replaceForwardCall(unwrap(call),
+                                   unwrapList(nValues, values, storage),
+                                   *unwrap(builder), unwrap(gutils));
 }

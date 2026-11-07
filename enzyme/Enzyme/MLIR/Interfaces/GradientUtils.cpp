@@ -160,12 +160,14 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     if (auto iface =
             dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()))) {
       OpBuilder::InsertionGuard guard(Builder2);
-      if (auto op = v.getDefiningOp())
-        Builder2.setInsertionPoint(getNewFromOriginal(op));
-      else {
-        auto ba = cast<BlockArgument>(v);
-        Builder2.setInsertionPointToStart(getNewFromOriginal(ba.getOwner()));
-      }
+      // The clone of v's defining op may already be replaced and erased, so
+      // anchor at the value v maps to.
+      Value newValue = getNewFromOriginal(v);
+      if (Operation *op = newValue.getDefiningOp())
+        Builder2.setInsertionPoint(op);
+      else
+        Builder2.setInsertionPointToStart(
+            cast<BlockArgument>(newValue).getOwner());
       Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;

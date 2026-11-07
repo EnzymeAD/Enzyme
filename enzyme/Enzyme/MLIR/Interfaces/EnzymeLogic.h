@@ -281,6 +281,8 @@ public:
   // solver may be null, in which case the older inductive hypothesis activity
   // analysis will be used.
   std::unique_ptr<DataFlowSolver> solver;
+  /// Provided through the frontend and only used from it.
+  void *externalContext = nullptr;
   MEnzymeLogic(bool dataflowActivity);
 
   FunctionOpInterface

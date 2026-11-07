@@ -19,6 +19,7 @@
 
 #include "mlir-c/IR.h"
 #include "mlir-c/Pass.h"
+#include "mlir-c/Rewrite.h"
 #include "mlir-c/Support.h"
 
 #ifdef __cplusplus
@@ -157,6 +158,73 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
                                                      uint64_t ptr);
+
+//===----------------------------------------------------------------------===//
+// Custom forward-mode derivatives of calls
+//===----------------------------------------------------------------------===//
+
+#define DEFINE_C_API_STRUCT(name, storage)                                     \
+  struct name {                                                                \
+    storage *ptr;                                                              \
+  };                                                                           \
+  typedef struct name name
+
+/// An `mlir::enzyme::MGradientUtils`, the derivative being built.
+DEFINE_C_API_STRUCT(EnzymeGradientUtils, void);
+
+#undef DEFINE_C_API_STRUCT
+
+/// Builds the forward-mode derivative of `call` with `builder`, which is
+/// positioned before the call's clone. It must set the shadow of every active
+/// result, and may replace the primal results with
+/// enzymeGradientUtilsReplaceOrigOpWith.
+typedef MlirLogicalResult (*EnzymeForwardCallHandler)(
+    MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils);
+
+/// Registers `handler` under `key`. A call's key is the `enzyme_math`
+/// attribute of the call, else of its callee, else the callee's name. Not
+/// synchronized.
+MLIR_CAPI_EXPORTED void
+enzymeRegisterForwardCallHandler(MlirStringRef key,
+                                 EnzymeForwardCallHandler handler);
+
+/// Returns the number of tangents computed at once.
+MLIR_CAPI_EXPORTED int64_t
+enzymeGradientUtilsGetWidth(EnzymeGradientUtils gutils);
+
+/// Returns the `externalContext` of the `mlir::enzyme::MEnzymeLogic` that
+/// `gutils` belongs to.
+MLIR_CAPI_EXPORTED void *
+enzymeGradientUtilsGetExternalContext(EnzymeGradientUtils gutils);
+
+/// Returns whether `value` of the original function is inactive.
+MLIR_CAPI_EXPORTED bool
+enzymeGradientUtilsIsConstantValue(EnzymeGradientUtils gutils, MlirValue value);
+
+/// Returns the value in the derivative that corresponds to `value` of the
+/// original function.
+MLIR_CAPI_EXPORTED MlirValue enzymeGradientUtilsGetNewFromOriginal(
+    EnzymeGradientUtils gutils, MlirValue value);
+
+/// Returns the shadow of `value`, zero if `value` is inactive.
+MLIR_CAPI_EXPORTED MlirValue enzymeGradientUtilsInvertPointer(
+    EnzymeGradientUtils gutils, MlirValue value, MlirRewriterBase builder);
+
+/// Returns the type of the shadow of a value of type `type`.
+MLIR_CAPI_EXPORTED MlirType
+enzymeGradientUtilsGetShadowType(EnzymeGradientUtils gutils, MlirType type);
+
+/// Sets `shadow` as the shadow of the active result `value` of the call.
+MLIR_CAPI_EXPORTED void enzymeGradientUtilsSetDiffe(EnzymeGradientUtils gutils,
+                                                    MlirValue value,
+                                                    MlirValue shadow,
+                                                    MlirRewriterBase builder);
+
+/// Replaces the results of `call` with `values` and erases its clone, moving
+/// `builder` past the clone if it points there.
+MLIR_CAPI_EXPORTED void enzymeGradientUtilsReplaceOrigOpWith(
+    EnzymeGradientUtils gutils, MlirOperation call, intptr_t nValues,
+    MlirValue const *values, MlirRewriterBase builder);
 
 #ifdef __cplusplus
 } // extern "C"

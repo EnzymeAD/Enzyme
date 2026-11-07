@@ -592,6 +592,38 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
+llvm::StringMap<ForwardCallHandler> mlir::enzyme::forwardCallHandlers;
+
+void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
+                                      OpBuilder &builder,
+                                      MGradientUtils *gutils) {
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  Block *block = newOp->getBlock();
+  if (builder.getInsertionBlock() == block &&
+      builder.getInsertionPoint() == Block::iterator(newOp))
+    builder.setInsertionPoint(block, std::next(Block::iterator(newOp)));
+  gutils->replaceOrigOpWith(orig, values);
+  gutils->erase(newOp);
+}
+
+/// Returns the key of the call `op` in forwardCallHandlers, or an empty string
+/// if it has none.
+static StringRef getForwardCallHandlerKey(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return {};
+  if (auto key = op->getAttrOfType<StringAttr>("enzyme_math"))
+    return key.getValue();
+  auto callee = dyn_cast_if_present<FlatSymbolRefAttr>(
+      dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee()));
+  if (!callee)
+    return {};
+  if (Operation *calleeOp = SymbolTable::lookupNearestSymbolFrom(op, callee))
+    if (auto key = calleeOp->getAttrOfType<StringAttr>("enzyme_math"))
+      return key.getValue();
+  return callee.getValue();
+}
+
 // The callee of `op`, or null where it is not a direct call to something this
 // can see the body of.
 static FunctionOpInterface getDirectCallee(Operation *op) {
@@ -608,6 +640,13 @@ static FunctionOpInterface getDirectCallee(Operation *op) {
 LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  StringRef key = getForwardCallHandlerKey(orig);
+  if (!key.empty()) {
+    auto found = forwardCallHandlers.find(key);
+    if (found != forwardCallHandlers.end())
+      return found->second(orig, builder, gutils);
+  }
 
   auto fn = getDirectCallee(orig);
   if (!fn) {
