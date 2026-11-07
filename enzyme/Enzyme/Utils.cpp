@@ -52,6 +52,7 @@
 #endif
 
 #include "llvm-c/Core.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 
 #include "BlasAttributor.inc"
 #include "LibraryFuncs.h"
@@ -1036,6 +1037,36 @@ EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Function *CodeRegion)
     : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
+
+#if defined(ENZYME_FLANG_PLUGIN) && LLVM_VERSION_MAJOR < 22
+static constexpr bool DefaultUnsupportedDiagnosticFallback = true;
+#else
+static constexpr bool DefaultUnsupportedDiagnosticFallback = false;
+#endif
+
+static cl::opt<bool> EnzymeUnsupportedDiagnosticFallback(
+    "enzyme-unsupported-diag-fallback",
+    cl::init(DefaultUnsupportedDiagnosticFallback), cl::Hidden,
+    cl::desc("Print unsupported diagnostics directly when the host diagnostic "
+             "handler drops non-remark diagnostics"));
+
+/// Report an unsupported diagnostic, printing directly to stderr and exiting
+/// on errors when the host diagnostic handler drops non-remark diagnostics.
+void diagnoseEnzymeUnsupported(LLVMContext &Context,
+                               const DiagnosticInfoUnsupported &Diagnostic) {
+  if (!EnzymeUnsupportedDiagnosticFallback) {
+    Context.diagnose(Diagnostic);
+    return;
+  }
+  DiagnosticPrinterRawOStream Printer(errs());
+  errs() << LLVMContext::getDiagnosticMessagePrefix(Diagnostic.getSeverity())
+         << ": ";
+  Diagnostic.print(Printer);
+  errs() << '\n';
+  errs().flush();
+  if (Diagnostic.getSeverity() == DS_Error)
+    exit(1);
+}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
