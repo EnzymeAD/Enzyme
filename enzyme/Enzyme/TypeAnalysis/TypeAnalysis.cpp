@@ -1429,17 +1429,18 @@ static bool isGuardedByNonNullPointerInequality(
   if (Targets.empty())
     return false;
 
-  if (EdgeTargetBlock) {
-    if (auto *Branch = dyn_cast<BranchInst>(UseBlock->getTerminator())) {
-      if (Branch->isConditional() &&
-          Branch->getSuccessor(0) != Branch->getSuccessor(1)) {
-        for (unsigned SuccIndex = 0; SuccIndex < 2; ++SuccIndex) {
-          if (Branch->getSuccessor(SuccIndex) == EdgeTargetBlock &&
-              conditionProvesPointerInequality(
-                  Branch->getCondition(), SuccIndex == 0, Targets,
-                  AssumedCondition, AssumedConditionValue))
-            return true;
-        }
+  if (EdgeTargetBlock && hasTerminator(const_cast<BasicBlock *>(UseBlock))) {
+    const Instruction *Terminator = UseBlock->getTerminator();
+    if (isConditionalBranch(Terminator) &&
+        Terminator->getSuccessor(0) != Terminator->getSuccessor(1)) {
+      const Value *Condition =
+          getBranchCondition(const_cast<Instruction *>(Terminator));
+      for (unsigned SuccIndex = 0; SuccIndex < 2; ++SuccIndex) {
+        if (Terminator->getSuccessor(SuccIndex) == EdgeTargetBlock &&
+            conditionProvesPointerInequality(Condition, SuccIndex == 0, Targets,
+                                             AssumedCondition,
+                                             AssumedConditionValue))
+          return true;
       }
     }
   }
@@ -1450,16 +1451,20 @@ static bool isGuardedByNonNullPointerInequality(
   for (const DomTreeNode *DomNode = Node->getIDom(); DomNode;
        DomNode = DomNode->getIDom()) {
     const BasicBlock *DomBlock = DomNode->getBlock();
-    auto *Branch = dyn_cast<BranchInst>(DomBlock->getTerminator());
-    if (!Branch || !Branch->isConditional() ||
-        Branch->getSuccessor(0) == Branch->getSuccessor(1))
+    if (!hasTerminator(const_cast<BasicBlock *>(DomBlock)))
       continue;
+    const Instruction *Terminator = DomBlock->getTerminator();
+    if (!isConditionalBranch(Terminator) ||
+        Terminator->getSuccessor(0) == Terminator->getSuccessor(1))
+      continue;
+    const Value *Condition =
+        getBranchCondition(const_cast<Instruction *>(Terminator));
     for (unsigned SuccIndex = 0; SuccIndex < 2; ++SuccIndex) {
-      BasicBlockEdge Edge(DomBlock, Branch->getSuccessor(SuccIndex));
+      BasicBlockEdge Edge(DomBlock, Terminator->getSuccessor(SuccIndex));
       if (DomTree.dominates(Edge, UseBlock) &&
-          conditionProvesPointerInequality(
-              Branch->getCondition(), SuccIndex == 0, Targets, AssumedCondition,
-              AssumedConditionValue))
+          conditionProvesPointerInequality(Condition, SuccIndex == 0, Targets,
+                                           AssumedCondition,
+                                           AssumedConditionValue))
         return true;
     }
   }
