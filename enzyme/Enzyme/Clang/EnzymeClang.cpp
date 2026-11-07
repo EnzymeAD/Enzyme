@@ -314,6 +314,7 @@ public:
       return;
     auto name = V->getName();
     if (!(name.contains("__enzyme_inactive_global") ||
+          name.contains("__enzyme_shadow_global") ||
           name.contains("__enzyme_inactivefn") ||
           name.contains("__enzyme_inactivenoblockfn") ||
           name.contains("__enzyme_shouldrecompute") ||
@@ -717,5 +718,162 @@ static ParsedAttrInfoRegistry::Add<EnzymeNoTypeAnalysisAttrInfo>
     enzyme_notypeanalysis("enzyme_notypeanalysis", "");
 
 } // namespace
+
+/// Emit a used `__enzyme_shadow_global_<name>` pair `{&VD, &Shadow}` in each
+/// translation unit that sees the attribute.
+static void registerEnzymeShadowGlobal(Sema &S, VarDecl *VD, VarDecl *Shadow) {
+  ASTContext &AST = S.getASTContext();
+  SourceLocation Loc = VD->getLocation();
+
+  DeclContext *DeclCtx = VD->getDeclContext();
+  for (DeclContext *CurrentCtx = DeclCtx; CurrentCtx;
+       CurrentCtx = CurrentCtx->getParent()) {
+    if (CurrentCtx->isRecord())
+      DeclCtx = CurrentCtx->getParent();
+  }
+
+  auto AddressOf = [&](VarDecl *TargetDecl) -> Expr * {
+    QualType TargetType = TargetDecl->getType();
+    DeclRefExpr *DeclRef = DeclRefExpr::Create(
+        AST, NestedNameSpecifierLoc(), Loc, TargetDecl,
+        /*RefersToEnclosingVariableOrCapture=*/false, Loc, TargetType,
+        ExprValueKind::VK_LValue, TargetDecl, /*TemplateArgs=*/nullptr);
+    UnaryOperator *Address = UnaryOperator::Create(
+        AST, DeclRef, UnaryOperatorKind::UO_AddrOf,
+        AST.getPointerType(TargetType), ExprValueKind::VK_PRValue,
+        clang::ExprObjectKind::OK_Ordinary, Loc, /*CanOverflow=*/false,
+        FPOptionsOverride());
+    return ImplicitCastExpr::Create(
+        AST, AST.VoidPtrTy, CastKind::CK_BitCast, Address,
+        /*BasePath=*/nullptr, ExprValueKind::VK_PRValue, FPOptionsOverride());
+  };
+  Expr *Pair[] = {AddressOf(VD), AddressOf(Shadow)};
+  auto *Init = cast<InitListExpr>(S.ActOnInitList(Loc, Pair, Loc).get());
+  QualType PairArrayType =
+      AST.getConstantArrayType(AST.VoidPtrTy, llvm::APInt(32, 2), nullptr,
+#if LLVM_VERSION_MAJOR >= 18
+                               ArraySizeModifier::Normal,
+#else
+                               ArrayType::Normal,
+#endif
+                               0);
+  Init->setType(PairArrayType);
+
+  llvm::SmallString<64> GlobalName("__enzyme_shadow_global_");
+  GlobalName += VD->getQualifiedNameAsString();
+  IdentifierInfo &Id = AST.Idents.get(GlobalName);
+  VarDecl *RegistrationVar = VarDecl::Create(
+      AST, DeclCtx, Loc, Loc, &Id, PairArrayType, /*TInfo=*/nullptr, SC_None);
+  RegistrationVar->setStorageClass(SC_PrivateExtern);
+  RegistrationVar->addAttr(clang::UsedAttr::CreateImplicit(AST));
+  RegistrationVar->setInit(Init);
+  S.MarkVariableReferenced(Loc, RegistrationVar);
+  S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(RegistrationVar));
+}
+
+namespace {
+
+/// Declares a global variable (or an array with one element per vector lane) as
+/// the shadow of another global variable.
+struct EnzymeShadowAttrInfo : public ParsedAttrInfo {
+  EnzymeShadowAttrInfo() {
+    OptArgs = 1;
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_shadow"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_shadow"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_shadow"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_shadow"},
+      {ParsedAttr::AS_CXX11, "enzyme::shadow"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    if (isGlobalDecl(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "global variables";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    auto EmitError = [&](StringRef Message) {
+      unsigned ID =
+          S.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "%0");
+      S.Diag(Attr.getLoc(), ID) << Message;
+      return AttributeNotApplied;
+    };
+    if (Attr.getNumArgs() != 1) {
+      // Clang drops plugin [[...]] arguments before Clang 18 and in scoped
+      // spellings such as [[enzyme::shadow(x)]].
+      return EmitError("'enzyme_shadow' attribute requires the global variable "
+                       "holding the shadow as its argument, as in "
+                       "__attribute__((enzyme_shadow(x_shadow)))");
+    }
+    auto *VD = cast<VarDecl>(D);
+    VarDecl *Shadow = nullptr;
+    if (Attr.isArgIdent(0)) {
+      // Plain identifier arguments reach plugin attributes unresolved.
+      IdentifierLoc *IdentArg = Attr.getArgAsIdent(0);
+#if LLVM_VERSION_MAJOR >= 21
+      IdentifierInfo *Ident = IdentArg->getIdentifierInfo();
+      SourceLocation IdentLoc = IdentArg->getLoc();
+#else
+      IdentifierInfo *Ident = IdentArg->Ident;
+      SourceLocation IdentLoc = IdentArg->Loc;
+#endif
+      Shadow = dyn_cast_or_null<VarDecl>(S.LookupSingleName(
+          S.getCurScope(), Ident, IdentLoc, Sema::LookupOrdinaryName));
+    } else if (auto *DeclRef = dyn_cast<DeclRefExpr>(
+                   Attr.getArgAsExpr(0)->IgnoreParenImpCasts())) {
+      Shadow = dyn_cast<VarDecl>(DeclRef->getDecl());
+    }
+    if (!Shadow || !Shadow->hasGlobalStorage())
+      return EmitError(
+          "the argument of 'enzyme_shadow' must be a global variable");
+    if (VD->getType()->isDependentType() ||
+        Shadow->getType()->isDependentType())
+      return EmitError("'enzyme_shadow' does not support templated globals");
+
+    ASTContext &AST = S.getASTContext();
+    QualType GlobalType = VD->getType();
+    QualType ShadowType = Shadow->getType();
+    bool Matches = AST.hasSameUnqualifiedType(GlobalType, ShadowType);
+    if (!Matches) {
+      if (const ConstantArrayType *ArrayType =
+              AST.getAsConstantArrayType(ShadowType))
+        Matches =
+            AST.hasSameUnqualifiedType(GlobalType, ArrayType->getElementType());
+    }
+    if (!Matches)
+      return EmitError("the shadow given to 'enzyme_shadow' must have the type "
+                       "of the global, or be an array of that type (one "
+                       "element per vector lane)");
+
+    // Avoid emitting duplicate pairs on redeclarations.
+    for (VarDecl *Redecl : VD->redecls()) {
+      if (Redecl == VD)
+        continue;
+      for (const auto *Annot : Redecl->specific_attrs<AnnotateAttr>()) {
+        if (Annot->getAnnotation() == "enzyme_shadow")
+          return AttributeApplied;
+      }
+    }
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_shadow", nullptr, 0,
+                                    Attr.getRange()));
+    registerEnzymeShadowGlobal(S, VD, Shadow);
+    return AttributeApplied;
+  }
+};
+
+} // namespace
+
+static ParsedAttrInfoRegistry::Add<EnzymeShadowAttrInfo>
+    EnzymeShadowAttr("enzyme_shadow", "");
 
 #endif
