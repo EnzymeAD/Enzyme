@@ -101,7 +101,7 @@ def PlaceholderOp : Enzyme_Op<"placeholder",
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero); 
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -173,6 +173,123 @@ def JacobianOp : Enzyme_Op<"jacobian",
   }];
 }
 
+def AnyTape : Type<CPred<"::llvm::isa<mlir::enzyme::TapeType>($_self)">, "enzyme tape">;
+
+def AutoDiffSplitModePrimalOp : Enzyme_Op<"autodiff_split_mode.primal",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Runs an augmented primal that can later be used to generate reverse with enzyme.autodiff_deferred_reverse";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let results = (outs Variadic<AnyType>:$outputs, AnyTape:$tape);
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def AutoDiffSplitModeReverseOp : Enzyme_Op<"autodiff_split_mode.reverse",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Runs the reverse from an enzyme.autodiff_deferred_primal result";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape,
+                   ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` operands `)` attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, SymbolName, SymbolVisibility, Symbol]> {
+  let summary = "Parent operation for custom reverse rule declaration.";
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttrOf<FunctionType>:$function_type, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, OptionalAttr<StrAttr>:$sym_visibility);
+  let regions = (region AnyRegion:$body);
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $sym_name $body attr-dict-with-keyword
+  }];
+
+  let extraClassDeclaration = [{
+    // Whether this rule can serve a call with the given activities.
+    llvm::LogicalResult activityMatch(llvm::ArrayRef<enzyme::Activity> ArgActivity,
+                                      llvm::ArrayRef<enzyme::Activity> RetActivity);
+    // Whether this rule's activities are exactly the given ones.
+    bool activityEquals(llvm::ArrayRef<enzyme::Activity> ArgActivity,
+                        llvm::ArrayRef<enzyme::Activity> RetActivity);
+    // How many arguments and results this rule differentiates.
+    unsigned numDifferentiated();
+  }];
+}
+
+def CustomReverseRuleAugmentedPrimalOp : Enzyme_Op<"custom_reverse_rule.augmented_primal", [
+    HasParent<"CustomReverseRuleOp">,
+    AutomaticAllocationScope,
+    AffineScope]> {
+  let summary = "Defines the augmented primal for a custom reverse rule";
+  let arguments = (ins TypeAttrOf<FunctionType>:$function_type,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       UnitAttr:$no_inline);
+  let regions = (region AnyRegion:$body);
+  let results = (outs);
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
+    HasParent<"CustomReverseRuleOp">,
+    AutomaticAllocationScope,
+    AffineScope]> {
+  let summary = "Defined the reverse for a custom rule.";
+  let arguments = (ins TypeAttrOf<FunctionType>:$function_type,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       UnitAttr:$no_inline);
+  let regions = (region AnyRegion:$body);
+  let results = (outs);
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    AttrSizedResultSegments]> {
+  let summary = "Calls the augmented primal of a custom reverse rule";
+  let description = [{
+    Runs the augmented primal of the custom reverse rule `fn` on `inputs`.
+    Returns the primal results (`outputs`), followed by the values the rule
+    caches for its reverse (`caches`): one per `enzyme.init` at the top level
+    of the rule, in order. They are ordinary values, so a caller caches them
+    like any other value (in loops, branches, checkpoints) and hands them back
+    to `enzyme.call_custom_reverse`.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs);
+  let results = (outs Variadic<AnyType>:$outputs, Variadic<AnyType>:$caches);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    (`caches` type($caches)^)?
+  }];
+}
+
+def CallCustomReverseOp : Enzyme_Op<"call_custom_reverse", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    AttrSizedOperandSegments]> {
+  let summary = "Calls the reverse of a custom reverse rule";
+  let description = [{
+    Runs the reverse of the custom reverse rule `fn`: `inputs` are the
+    cotangents of the results the rule differentiates, `caches` the values
+    the matching `enzyme.call_augmented_primal` returned. Returns the
+    cotangents of the arguments the rule differentiates.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs,
+                       Variadic<AnyType>:$caches);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` (`caches` `(` $caches^ `:` type($caches) `)`)?
+    attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, DefaultValuedAttr<BoolAttr, "false">:$atomic_add, OptionalAttr<StrAttr>:$fn);
@@ -219,7 +336,7 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
   let assemblyFormat = [{
     `(` $inputs `)` $body prop-dict attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-  
+
   let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
 
@@ -240,8 +357,8 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region";
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "CustomReverseRuleReverseOp", "CustomReverseRuleAugmentedPrimalOp", "CustomReverseRuleOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region, or custom reverse rules ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
@@ -338,6 +455,15 @@ def Cache : Enzyme_Type<"Cache"> {
   let parameters = (ins "Type":$type);
   let mnemonic = "Cache";
   let assemblyFormat = "`<` $type `>`";
+}
+
+def Tape : Enzyme_Type<"Tape"> {
+  let summary = "Tape for reverse deferred";
+  let description = [{
+    "Tape for reverse deferred"
+  }];
+  let parameters = (ins);
+  let mnemonic = "Tape";
 }
 
 def Gradient : Enzyme_Type<"Gradient"> {
@@ -438,7 +564,7 @@ def GenericAdjointOp : Enzyme_Op<"genericAdjoint", [AttrSizedOperandSegments]> {
                        OptionalAttr<StrAttr>:$library_call);
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   let regions = (region AnyRegion:$region);
-  
+
 }
 
 def BroadcastOp : Enzyme_Op<"broadcast"> {
@@ -476,7 +602,7 @@ def ConcatOp : Enzyme_Op<"concat"> {
 
   let arguments = (ins Variadic<AnyType>:$inputs);
   let results = (outs AnyType:$output);
-  
+
   let assemblyFormat = [{
     `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
@@ -490,7 +616,7 @@ def ExtractOp : Enzyme_Op<"extract"> {
 
   let arguments = (ins AnyType:$input, I64Attr:$index);
   let results = (outs AnyType:$output);
-  
+
   let assemblyFormat = [{
      $input `[` $index `]` attr-dict `:` functional-type($input, results)
   }];

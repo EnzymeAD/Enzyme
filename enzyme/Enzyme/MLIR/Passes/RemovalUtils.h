@@ -64,6 +64,14 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
+// Finalize the rule's top-level caches before calls capture their types.
+// Apply min-cut unless disabled, then mark enzyme.caches_final so subsequent
+// calls reuse the same cache layout. Recursive derivations cannot be finalized.
+LogicalResult finalizeCustomReverseRule(CustomReverseRuleOp rule);
+
+// Lower custom reverse rules and their calls to func.func and func.call.
+LogicalResult lowerCustomReverseRulesToFunc(Operation *root);
+
 // Tries to limit the amount of values cache from block `forward` to `reverse`
 // using a mincut algorithm and heuristics based on the size of values.
 // All pushes must go after `lastFwd`, if non null

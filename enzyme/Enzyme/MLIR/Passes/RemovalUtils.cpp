@@ -751,6 +751,70 @@ static void pushCachesDownstream(const Graph &Orig,
 
 } // namespace
 
+LogicalResult
+mlir::enzyme::finalizeCustomReverseRule(enzyme::CustomReverseRuleOp rule) {
+  if (rule->hasAttr("enzyme.caches_final"))
+    return success();
+  if (rule->hasAttr("enzyme.in_progress"))
+    return rule->emitError()
+           << "todo: split-mode differentiation of a recursive call (a rule "
+              "whose derivation reaches itself) is not supported";
+
+  if (!rule.getBody().hasOneBlock())
+    return rule->emitError() << "a custom reverse rule needs one body block";
+
+  enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
+  enzyme::CustomReverseRuleReverseOp reverse = nullptr;
+  for (Operation &op : rule.getBody().front()) {
+    if (auto AP = dyn_cast<enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
+      if (primal)
+        return AP->emitError() << "multiple augmented primal ops in a custom "
+                                  "rule";
+      primal = AP;
+    } else if (auto RO = dyn_cast<enzyme::CustomReverseRuleReverseOp>(op)) {
+      if (reverse)
+        return RO->emitError() << "multiple reverse op in a custom rule";
+      reverse = RO;
+    }
+  }
+  if (!primal || !reverse)
+    return rule->emitError()
+           << "a custom reverse rule needs one augmented primal and one "
+              "reverse";
+
+  SmallVector<CacheInfo> caches;
+  for (enzyme::InitOp init : getCustomReverseRuleCacheInits(rule)) {
+    if (std::distance(init.getResult().user_begin(),
+                      init.getResult().user_end()) != 2)
+      return init->emitError()
+             << "a custom rule cache needs one push and one pop";
+    CacheInfo info(init.getResult());
+    if (!info.pushOp || !info.popOp)
+      return init->emitError() << "a custom rule cache needs one push and one "
+                                  "pop";
+    if (info.pushOp->getParentOp() != primal.getOperation())
+      return info.pushOp->emitError()
+             << "push operation not hoisted to the top level.";
+    if (info.popOp->getParentOp() != reverse.getOperation())
+      return info.popOp->emitError()
+             << "pop operation not hoisted to the top level.";
+    caches.push_back(info);
+  }
+
+  bool singleBlock =
+      primal.getBody().hasOneBlock() && reverse.getBody().hasOneBlock();
+  if (singleBlock && !rule->hasAttr("enzyme.disable_mincut")) {
+    IRMapping fwdrevmap;
+    PatternRewriter rewriter(rule.getContext());
+    rewriter.setInsertionPointToStart(&reverse.getBody().front());
+    minCutCache(&primal.getBody().front(), &reverse.getBody().front(), caches,
+                rewriter, fwdrevmap);
+  }
+
+  rule->setAttr("enzyme.caches_final", UnitAttr::get(rule.getContext()));
+  return success();
+}
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live

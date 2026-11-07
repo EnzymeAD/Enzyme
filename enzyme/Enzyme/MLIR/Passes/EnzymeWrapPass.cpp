@@ -16,6 +16,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
+#include "Passes/RemovalUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -169,6 +170,13 @@ struct DifferentiateWrapperPass
     }
 
     getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
+
+    // Split-mode differentiation of a call leaves calls to custom rules. As in
+    // the enzyme pass, a pipeline that does not know about them must not see
+    // them.
+    if (lowerCustomRules &&
+        failed(lowerCustomReverseRulesToFunc(getOperation())))
+      signalPassFailure();
   }
 };
 

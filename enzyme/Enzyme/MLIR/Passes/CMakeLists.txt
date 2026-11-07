@@ -19,6 +19,7 @@ add_mlir_dialect_library(
   HoistEnzymeRegions.cpp
   HoistLoopAllocations.cpp
   LowerLLVMExtPass.cpp
+  LowerEnzymeCustomRulesToFuncPass.cpp
   PrintActivityAnalysis.cpp
   PrintAliasAnalysis.cpp
   PrintBaseObject.cpp

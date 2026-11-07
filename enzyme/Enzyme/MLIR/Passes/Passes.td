@@ -53,6 +53,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"false",
       /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
+    Option<
+      /*C++ variable name=*/"lowerCustomRules",
+      /*CLI argument=*/"lower-custom-rules",
+      /*type=*/"bool",
+      /*default=*/"true",
+      /*description=*/"Once differentiation is done, lower custom reverse rules and the split-mode calls to them to func.func / func.call (what lower-enzyme-custom-rules-to-func does), so no enzyme op of a differentiated call survives the pass"
+    >,
   ];
 }
 
@@ -203,6 +210,13 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
       /*default=*/"false",
       /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
+    Option<
+      /*C++ variable name=*/"lowerCustomRules",
+      /*CLI argument=*/"lower-custom-rules",
+      /*type=*/"bool",
+      /*default=*/"true",
+      /*description=*/"Once differentiation is done, lower custom reverse rules and the split-mode calls to them to func.func / func.call, as the enzyme pass does"
+    >,
   ];
 }
 
@@ -297,6 +311,14 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   let summary = "Outlines enzyme.autodiff_region ops into enzyme.autodiff ops.";
   let dependentDialects = [
     "func::FuncDialect"
+  ];
+}
+
+def LowerEnzymeCustomRulesToFuncPass : Pass<"lower-enzyme-custom-rules-to-func"> {
+  let summary = "Lower enzyme custom rules";
+  let dependentDialects = [
+    "func::FuncDialect",
+    "enzyme::EnzymeDialect"
   ];
 }
 
