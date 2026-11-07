@@ -875,14 +875,24 @@ std::pair<const SCEV *, const SCEV *> CacheUtility::computeLoopLimit(Loop *L) {
       }
     }
     if (seenHeaders) {
+      // An exit whose exact count is unknown, such as a convergence check
+      // combined with an iteration bound, may still bound the loop through
+      // the constant maximum of the exit limit.
+      const SCEV *ExitBound = EL.ExactNotTaken;
+      if (ExitBound == SE.getCouldNotCompute())
+#if LLVM_VERSION_MAJOR >= 16
+        ExitBound = EL.ConstantMaxNotTaken;
+#else
+        ExitBound = EL.MaxNotTaken;
+#endif
       if (MaxIterations == nullptr ||
           MaxIterations == SE.getCouldNotCompute()) {
-        MaxIterations = EL.ExactNotTaken;
+        MaxIterations = ExitBound;
       }
       if (MaxIterations != SE.getCouldNotCompute()) {
-        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+        if (ExitBound != SE.getCouldNotCompute()) {
           MaxIterations =
-              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+              SE.getUMaxFromMismatchedTypes(MaxIterations, ExitBound);
         }
       }
 
