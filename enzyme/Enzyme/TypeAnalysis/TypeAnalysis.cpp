@@ -947,6 +947,16 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
+
+    // Itanium C++ ABI guard variables (@_ZGV...) hold integer initialization
+    // state for static variables.
+    if (startsWith(GV->getName(), "_ZGV")) {
+      TypeTree GuardType;
+      GuardType.insert({-1}, BaseType::Pointer);
+      GuardType.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = GuardType;
+      return;
+    }
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       // Record that this global is a pointer before analyzing its initializer.
@@ -6696,6 +6706,17 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       }
       updateAnalysis(call.getOperand(1), ival.Only(-1, &call), &call);
       return;
+    }
+
+    if (funcName == "__cxa_guard_acquire" ||
+        funcName == "__cxa_guard_release" || funcName == "__cxa_guard_abort") {
+      if (call.arg_size() >= 1 &&
+          call.getArgOperand(0)->getType()->isPointerTy()) {
+        TypeTree GuardPointer(BaseType::Pointer);
+        GuardPointer.insert({0}, BaseType::Integer);
+        updateAnalysis(call.getArgOperand(0), GuardPointer.Only(-1, &call),
+                       &call);
+      }
     }
 
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
