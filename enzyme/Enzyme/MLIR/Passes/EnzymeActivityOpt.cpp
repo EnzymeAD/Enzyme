@@ -291,10 +291,13 @@ static FailureOr<ActivityOptimization> computeDataFlowActivityOptimization(
   };
 
   auto isConstantValue = [&](Value value) {
-    if (isa<LLVM::LLVMPointerType, MemRefType, UnrankedMemRefType>(
-            value.getType()))
-      return isConstantPointer(value);
-    return !isActiveData(value);
+    bool constantPtr = true;
+    if (containsPointerLike(value.getType()))
+      constantPtr = isConstantPointer(value);
+    if (containsValueActiveType(value.getType()) ||
+        !containsPointerLike(value.getType()))
+      return constantPtr && !isActiveData(value);
+    return constantPtr;
   };
 
   // Initialize activity results to be the same as that of the callsite
