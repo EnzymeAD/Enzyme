@@ -9391,6 +9391,9 @@ std::shared_ptr<const Constraints>
 getSparseConditions(bool &legal, Value *val,
                     std::shared_ptr<const Constraints> defaultFloat,
                     Instruction *scope, const ConstraintContext &ctx) {
+  if (auto CI = dyn_cast<ConstantInt>(val)) {
+    return CI->isZero() ? Constraints::none() : Constraints::all();
+  }
   if (auto I = dyn_cast<Instruction>(val)) {
     // Binary `and` is a bit-wise `umin`.
     if (I->getOpcode() == Instruction::And) {
@@ -9855,7 +9858,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       continue;
     }
 
-    if (solutions == Constraints::none() || solutions == Constraints::all()) {
+    if (solutions == Constraints::all()) {
       EmitFailure(
           "NoSparsification", context->getDebugLoc(), context, "F: ", F,
           "\nL: ", *L, "\ncond: ", *cond, " negated:", negated,
@@ -9932,9 +9935,29 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 
   if (forSparsification.size() == 0) {
-    auto context = &F.getEntryBlock().front();
-    EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F,
-                "\n Found no stores for sparsification");
+    auto Context = &F.getEntryBlock().front();
+    bool HasSparseAccumulate = false;
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        if (auto CI = dyn_cast<CallInst>(&I)) {
+          if (auto CalledFunction = CI->getCalledFunction()) {
+            if (CalledFunction->hasFnAttribute("enzyme_sparse_accumulate")) {
+              HasSparseAccumulate = true;
+              break;
+            }
+          }
+        }
+      }
+      if (HasSparseAccumulate)
+        break;
+    }
+    if (HasSparseAccumulate) {
+      EmitFailure("NoSparsification", Context->getDebugLoc(), Context, "F: ", F,
+                  "\n Found no stores for sparsification");
+    } else {
+      EmitWarning("NoSparsification", *Context, "F: ", F,
+                  "\n Found no stores for sparsification");
+    }
     lowerSparsePlaceholders(F);
     return;
   }
