@@ -4661,6 +4661,19 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   return getReturnDiffeType(orig, primalReturnUsedP, shadowReturnUsedP, mode);
 }
 
+bool GradientUtils::canContainPointer(llvm::Value *OriginalValue) const {
+  Type *ValueType = OriginalValue->getType();
+  if (ValueType->isFPOrFPVectorTy() || !TR.anyPointer(OriginalValue))
+    return false;
+  if (!isa<StructType>(ValueType) && !isa<ArrayType>(ValueType))
+    return true;
+  const DataLayout &Layout = oldFunc->getParent()->getDataLayout();
+  TypeTree Augmented = augmentTypeTreeFromLLVM(
+      TR.query(OriginalValue), ValueType, Layout,
+      dyn_cast<Instruction>(OriginalValue), looseTypeAnalysis);
+  return !isKnownNonPointerWithFloat(Augmented, ValueType, Layout);
+}
+
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP,
@@ -4682,7 +4695,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
         subretType = DIFFE_TYPE::CONSTANT;
       }
     } else {
-      if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
+      if (canContainPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
@@ -4738,7 +4751,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
 
   auto argType = v->getType();
 
-  if (!argType->isFPOrFPVectorTy() && (TR.anyPointer(v) || foreignFunction)) {
+  if ((!argType->isFPOrFPVectorTy() && foreignFunction) ||
+      canContainPointer(v)) {
     if (argType->isPointerTy()) {
       auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
