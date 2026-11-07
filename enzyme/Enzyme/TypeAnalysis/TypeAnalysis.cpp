@@ -1631,6 +1631,7 @@ void TypeAnalyzer::considerTBAA() {
               "ijl_alloc_genericmemory",
               "jl_alloc_genericmemory_unchecked",
               "ijl_alloc_genericmemory_unchecked",
+              "julia.gc_alloc_memory",
               "jl_new_array",
               "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
