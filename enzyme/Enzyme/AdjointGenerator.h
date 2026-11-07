@@ -623,20 +623,46 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
-            // TODO handle mask
-            assert(!mask);
-
-            auto rule = [&](Value *inop, Value *newip) -> Value * {
-              Value *shadow = BuilderZ.CreateICmpNE(
-                  gutils->getNewFromOriginal(I.getOperand(0)), inop);
-              newip = CreateSelect(BuilderZ, shadow, newip,
-                                   Constant::getNullValue(newip->getType()));
-              return newip;
-            };
-            newip = applyChainRule(
-                I.getType(), BuilderZ, rule,
-                gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
+          if ((gutils->runtimeActivity ||
+               gutils->hasInactivePointerOrigin(I.getOperand(0))) &&
+              vd.allFloat(&I, DL)) {
+            if (!mask) {
+              auto ApplyActiveShadowMask = [&](Value *InvertedOperand,
+                                               Value *ShadowLoad) -> Value * {
+                Value *IsActiveShadow = BuilderZ.CreateICmpNE(
+                    gutils->getNewFromOriginal(I.getOperand(0)),
+                    InvertedOperand);
+                return CreateSelect(
+                    BuilderZ, IsActiveShadow, ShadowLoad,
+                    Constant::getNullValue(ShadowLoad->getType()));
+              };
+              newip = applyChainRule(
+                  I.getType(), BuilderZ, ApplyActiveShadowMask,
+                  gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
+            } else {
+              Value *InvertedDefault =
+                  orig_maskInit
+                      ? gutils->invertPointerM(orig_maskInit, BuilderZ, vd)
+                      : Constant::getNullValue(
+                            gutils->getShadowType(I.getType()));
+              Value *NewMask = gutils->getNewFromOriginal(mask);
+              auto ApplyMaskedShadowMask = [&](Value *InvertedOperand,
+                                               Value *ShadowLoad,
+                                               Value *DefaultValue) -> Value * {
+                Value *IsActiveShadow = BuilderZ.CreateICmpNE(
+                    gutils->getNewFromOriginal(I.getOperand(0)),
+                    InvertedOperand);
+                Value *InactiveValue = BuilderZ.CreateSelect(
+                    NewMask, Constant::getNullValue(ShadowLoad->getType()),
+                    DefaultValue);
+                return CreateSelect(BuilderZ, IsActiveShadow, ShadowLoad,
+                                    InactiveValue);
+              };
+              newip = applyChainRule(
+                  I.getType(), BuilderZ, ApplyMaskedShadowMask,
+                  gutils->invertPointerM(I.getOperand(0), BuilderZ), newip,
+                  InvertedDefault);
+            }
           }
           assert(newip->getType() == type);
           placeholder->replaceAllUsesWith(newip);
@@ -1285,32 +1311,23 @@ public:
         case DerivativeMode::ReverseModeGradient:
         case DerivativeMode::ReverseModeCombined: {
 
-          if (!merge && gutils->runtimeActivity) {
-            auto basePtr = getBaseObject(orig_ptr);
-
-            // If runtime activity, first see if we can prove that the
-            // shadow/primal are distinct statically as they are
-            // allocas/mallocs, if not compare the pointers and conditionally
-            // execute.
-            if (!isa<AllocaInst>(basePtr) &&
-                !isAllocationCall(basePtr, gutils->TLI)) {
-              auto shadow_ptr =
-                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
-              auto primal_ptr =
-                  lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
-              if (gutils->getWidth() != 1) {
-                shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
-              }
-              Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
-
-              BasicBlock *current = Builder2.GetInsertBlock();
-              BasicBlock *conditional = gutils->addReverseBlock(
-                  current, current->getName() + "_active");
-              merge = gutils->addReverseBlock(conditional,
-                                              current->getName() + "_amerge");
-              Builder2.CreateCondBr(shadow, conditional, merge);
-              Builder2.SetInsertPoint(conditional);
+          if (!merge && gutils->needsRuntimeShadowPointerCheck(orig_ptr)) {
+            Value *ShadowPtr =
+                lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+            Value *PrimalPtr =
+                lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
+            if (gutils->getWidth() != 1) {
+              ShadowPtr = gutils->extractMeta(Builder2, ShadowPtr, 0);
             }
+            Value *IsActiveShadow = Builder2.CreateICmpNE(PrimalPtr, ShadowPtr);
+
+            BasicBlock *CurrentBlock = Builder2.GetInsertBlock();
+            BasicBlock *ActiveBlock = gutils->addReverseBlock(
+                CurrentBlock, CurrentBlock->getName() + "_active");
+            merge = gutils->addReverseBlock(
+                ActiveBlock, CurrentBlock->getName() + "_amerge");
+            Builder2.CreateCondBr(IsActiveShadow, ActiveBlock, merge);
+            Builder2.SetInsertPoint(ActiveBlock);
           }
 
           if (constantval) {

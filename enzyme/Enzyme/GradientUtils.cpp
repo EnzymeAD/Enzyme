@@ -5160,6 +5160,178 @@ void GradientUtils::getForwardBuilder(IRBuilder<> &Builder2) {
   Builder2.setFastMathFlags(getFast());
 }
 
+/// Return whether an LLVM type contains any pointer component.
+static bool containsPointerType(const Type *CandidateType) {
+  if (CandidateType->isPointerTy())
+    return true;
+  if (auto *ArrayTy = dyn_cast<ArrayType>(CandidateType))
+    return containsPointerType(ArrayTy->getElementType());
+  if (auto *VectorTy = dyn_cast<VectorType>(CandidateType))
+    return containsPointerType(VectorTy->getElementType());
+  if (auto *StructTy = dyn_cast<StructType>(CandidateType))
+    return llvm::any_of(StructTy->elements(), containsPointerType);
+  return false;
+}
+
+bool GradientUtils::hasInactivePointerOrigin(const Value *OriginalPtr) const {
+  if (!OriginalPtr || isConstantValue(const_cast<Value *>(OriginalPtr)))
+    return false;
+
+  auto IsInactivePointerValue = [&](const Value *Candidate,
+                                    ArrayRef<unsigned> ExtractPath) {
+    const Value *Target = Candidate;
+    if (!ExtractPath.empty()) {
+      if (const auto *ConstAgg = dyn_cast<Constant>(Candidate)) {
+        for (unsigned Index : ExtractPath) {
+          ConstAgg = ConstAgg->getAggregateElement(Index);
+          if (!ConstAgg)
+            break;
+        }
+        if (ConstAgg)
+          Target = ConstAgg;
+      }
+    }
+    return containsPointerType(Target->getType()) && !isa<UndefValue>(Target) &&
+           !isa<ConstantPointerNull>(Target) &&
+           !isa<ConstantAggregateZero>(Target) &&
+           isConstantValue(const_cast<Value *>(Target));
+  };
+
+  using WorkItem = std::pair<const Value *, SmallVector<unsigned, 4>>;
+  SmallVector<WorkItem, 8> Worklist;
+  Worklist.emplace_back(OriginalPtr, SmallVector<unsigned, 4>());
+  std::set<std::pair<const Value *, SmallVector<unsigned, 4>>> Visited;
+  while (!Worklist.empty()) {
+    auto [Current, ExtractPath] = Worklist.pop_back_val();
+    if (!Current || !Visited.insert({Current, ExtractPath}).second)
+      continue;
+
+    if (IsInactivePointerValue(Current, ExtractPath))
+      return true;
+
+    const Value *Base = ExtractPath.empty() ? getBaseObject(Current) : Current;
+    if (Base != Current) {
+      if (!Visited.insert({Base, ExtractPath}).second)
+        continue;
+      if (IsInactivePointerValue(Base, ExtractPath))
+        return true;
+    }
+
+    if (auto *Select = dyn_cast<SelectInst>(Base)) {
+      Worklist.emplace_back(Select->getTrueValue(), ExtractPath);
+      Worklist.emplace_back(Select->getFalseValue(), ExtractPath);
+      continue;
+    }
+    if (auto *Phi = dyn_cast<PHINode>(Base)) {
+      for (const Value *Incoming : Phi->incoming_values())
+        Worklist.emplace_back(Incoming, ExtractPath);
+      continue;
+    }
+    if (auto *Freeze = dyn_cast<FreezeInst>(Base)) {
+      Worklist.emplace_back(Freeze->getOperand(0), ExtractPath);
+      continue;
+    }
+    if (auto *Load = dyn_cast<LoadInst>(Base)) {
+      Worklist.emplace_back(Load->getPointerOperand(),
+                            SmallVector<unsigned, 4>());
+      if (OrigAA && containsPointerType(Load->getType())) {
+        MemoryLocation LoadLocation = MemoryLocation::get(Load);
+        for (const BasicBlock &Block : *oldFunc) {
+          for (const Instruction &Inst : Block) {
+            auto *Store = dyn_cast<StoreInst>(&Inst);
+            if (!Store)
+              continue;
+            Value *PointerOperand =
+                const_cast<Value *>(Store->getPointerOperand());
+            Value *ValueOperand = const_cast<Value *>(Store->getValueOperand());
+            if (isConstantValue(PointerOperand) ||
+                !containsPointerType(ValueOperand->getType()))
+              continue;
+            if (llvm::isModSet(OrigAA->getModRefInfo(Store, LoadLocation))) {
+              SmallVector<unsigned, 4> StorePath;
+              if (ValueOperand->getType() == Load->getType())
+                StorePath = ExtractPath;
+              Worklist.emplace_back(ValueOperand, std::move(StorePath));
+            }
+          }
+        }
+      }
+      continue;
+    }
+    if (auto *ExtractVal = dyn_cast<ExtractValueInst>(Base)) {
+      SmallVector<unsigned, 4> CombinedPath(ExtractVal->idx_begin(),
+                                            ExtractVal->idx_end());
+      CombinedPath.append(ExtractPath.begin(), ExtractPath.end());
+      if (Value *Inserted = llvm::FindInsertedValue(
+              const_cast<Value *>(ExtractVal->getAggregateOperand()),
+              CombinedPath)) {
+        Worklist.emplace_back(Inserted, SmallVector<unsigned, 4>());
+      } else {
+        Worklist.emplace_back(ExtractVal->getAggregateOperand(),
+                              std::move(CombinedPath));
+      }
+      continue;
+    }
+    if (auto *InsertVal = dyn_cast<InsertValueInst>(Base)) {
+      ArrayRef<unsigned> InsertIndices = InsertVal->getIndices();
+      if (ExtractPath.empty()) {
+        Worklist.emplace_back(InsertVal->getAggregateOperand(),
+                              SmallVector<unsigned, 4>());
+        Worklist.emplace_back(InsertVal->getInsertedValueOperand(),
+                              SmallVector<unsigned, 4>());
+      } else {
+        size_t CommonLen = std::min(InsertIndices.size(), ExtractPath.size());
+        bool PrefixMatches =
+            InsertIndices.slice(0, CommonLen) ==
+            ArrayRef<unsigned>(ExtractPath).slice(0, CommonLen);
+        if (!PrefixMatches) {
+          Worklist.emplace_back(InsertVal->getAggregateOperand(), ExtractPath);
+        } else if (InsertIndices.size() <= ExtractPath.size()) {
+          SmallVector<unsigned, 4> RemainingPath(
+              ExtractPath.begin() + InsertIndices.size(), ExtractPath.end());
+          Worklist.emplace_back(InsertVal->getInsertedValueOperand(),
+                                std::move(RemainingPath));
+        } else {
+          Worklist.emplace_back(InsertVal->getAggregateOperand(), ExtractPath);
+          Worklist.emplace_back(InsertVal->getInsertedValueOperand(),
+                                SmallVector<unsigned, 4>());
+        }
+      }
+      continue;
+    }
+    if (auto *ExtractElem = dyn_cast<ExtractElementInst>(Base)) {
+      Worklist.emplace_back(ExtractElem->getVectorOperand(),
+                            SmallVector<unsigned, 4>());
+      continue;
+    }
+    if (auto *InsertElem = dyn_cast<InsertElementInst>(Base)) {
+      Worklist.emplace_back(InsertElem->getOperand(0),
+                            SmallVector<unsigned, 4>());
+      Worklist.emplace_back(InsertElem->getOperand(1),
+                            SmallVector<unsigned, 4>());
+      continue;
+    }
+    if (auto *Shuffle = dyn_cast<ShuffleVectorInst>(Base)) {
+      Worklist.emplace_back(Shuffle->getOperand(0), SmallVector<unsigned, 4>());
+      Worklist.emplace_back(Shuffle->getOperand(1), SmallVector<unsigned, 4>());
+      continue;
+    }
+  }
+  return false;
+}
+
+bool GradientUtils::needsRuntimeShadowPointerCheck(
+    const Value *OriginalPtr) const {
+  if (!OriginalPtr || isConstantValue(const_cast<Value *>(OriginalPtr)))
+    return false;
+  const Value *BasePtr = getBaseObject(OriginalPtr);
+  if (isa<AllocaInst>(BasePtr) || isAllocationCall(BasePtr, TLI))
+    return false;
+  if (runtimeActivity)
+    return true;
+  return hasInactivePointerOrigin(OriginalPtr);
+}
+
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, MaybeAlign align,
                                 unsigned start, unsigned size, bool isVolatile,
@@ -5237,8 +5409,45 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     }
   }
 
+  AllocaInst *InactiveSink = nullptr;
+  Value *PrimalPtrForCheck = nullptr;
+  if ((mode == DerivativeMode::ForwardMode ||
+       mode == DerivativeMode::ForwardModeError ||
+       mode == DerivativeMode::ForwardModeSplit) &&
+      needsRuntimeShadowPointerCheck(origptr)) {
+    PrimalPtrForCheck = getNewFromOriginal(origptr);
+    if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
+        mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
+      PrimalPtrForCheck = lookupM(PrimalPtrForCheck, BuilderM);
+  }
+
   auto rule = [&](Value *ptr, Value *newval, Value *invertedBarrier) {
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
+    if (PrimalPtrForCheck) {
+      if (auto *PointerTy = dyn_cast<PointerType>(ptr->getType())) {
+        if (PointerTy->getAddressSpace() == DL.getAllocaAddrSpace()) {
+          if (!InactiveSink) {
+            size_t SinkBytes = start + std::max<size_t>(size, storeSize);
+            ArrayType *SinkType =
+                ArrayType::get(Type::getInt8Ty(ptr->getContext()), SinkBytes);
+            InactiveSink = IRBuilder<>(inversionAllocs).CreateAlloca(SinkType);
+            Align RequiredAlign = DL.getPrefTypeAlign(newval->getType());
+            if (align)
+              RequiredAlign = std::max(RequiredAlign, *align);
+            InactiveSink->setAlignment(RequiredAlign);
+          }
+          Value *SinkPtr =
+              BuilderM.CreatePointerCast(InactiveSink, ptr->getType());
+          Value *ComparablePrimalPtr = PrimalPtrForCheck;
+          if (ComparablePrimalPtr->getType() != ptr->getType())
+            ComparablePrimalPtr =
+                BuilderM.CreatePointerCast(ComparablePrimalPtr, ptr->getType());
+          ptr = BuilderM.CreateSelect(
+              BuilderM.CreateICmpEQ(ptr, ComparablePrimalPtr), SinkPtr, ptr);
+        }
+      }
+    }
     if (!mask) {
 
       if (size != storeSize) {
