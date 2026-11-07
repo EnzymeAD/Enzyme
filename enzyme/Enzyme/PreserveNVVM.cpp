@@ -48,6 +48,7 @@
 
 #include <map>
 
+#include "EnzymeCallMarkers.h"
 #include "PreserveNVVM.h"
 #include "Utils.h"
 
@@ -1029,6 +1030,25 @@ bool preserveNVVM(bool Begin, Module &M,
     changed = true;
     G->replaceAllUsesWith(ConstantPointerNull::get(G->getType()));
     G->eraseFromParent();
+  }
+
+  // Keep loads from internalized or static `enzyme_*` call-marker globals from
+  // folding to their zero initializer before Enzyme reads the global name.
+  for (GlobalVariable &Global : M.globals()) {
+    if (!enzyme_markers::isEnzymeCallMarkerGlobalName(Global.getName()))
+      continue;
+    if (Begin) {
+      if (Global.hasInitializer() && !Global.isExternallyInitialized()) {
+        Global.setExternallyInitialized(true);
+        Global.setMetadata("prev_externally_initialized",
+                           MDNode::get(Global.getContext(), {}));
+        changed = true;
+      }
+    } else if (hasMetadata(&Global, "prev_externally_initialized")) {
+      Global.setExternallyInitialized(false);
+      Global.setMetadata("prev_externally_initialized", nullptr);
+      changed = true;
+    }
   }
 
   StringMap<std::pair<std::string, std::string>> Implements;

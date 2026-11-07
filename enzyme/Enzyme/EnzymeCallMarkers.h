@@ -124,6 +124,13 @@ inline std::optional<MarkerInfo> lookupEnzymeMarker(llvm::StringRef name) {
       .Default(std::nullopt);
 }
 
+/// Whether `name` names a global marker recognized on `__enzyme_*` call
+/// arguments (including `__enzyme_batch` operand classifications).
+inline bool isEnzymeCallMarkerGlobalName(llvm::StringRef name) {
+  return lookupEnzymeMarker(name).has_value() || name == "enzyme_scalar" ||
+         name == "enzyme_vector" || name == "enzyme_buffer";
+}
+
 /// Whether an activity is one that a shadow goes with.
 inline bool markerActivityTakesShadow(DIFFE_TYPE a) {
   return a == DIFFE_TYPE::DUP_ARG || a == DIFFE_TYPE::DUP_NONEED;
